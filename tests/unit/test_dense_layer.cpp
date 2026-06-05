@@ -355,6 +355,64 @@ TEST_CASE("LayerNormLayer computes forward and backward values", "[norm][layer]"
     REQUIRE(grad_beta_data[2] == Catch::Approx(0.0f));
 }
 
+TEST_CASE("InstanceNorm2DLayer normalizes each instance independently", "[norm][layer]") {
+    cyxwiz::InstanceNorm2DLayer norm(1, 1e-5f, true);
+
+    float gamma_values[] = {2.0f};
+    float beta_values[] = {-1.0f};
+    norm.SetParameters({
+        {"gamma", cyxwiz::Tensor({1}, gamma_values, cyxwiz::DataType::Float32)},
+        {"beta", cyxwiz::Tensor({1}, beta_values, cyxwiz::DataType::Float32)},
+    });
+
+    float input_values[] = {
+        1.0f, 2.0f,
+        2.0f, 4.0f,
+        3.0f, 6.0f,
+        4.0f, 8.0f,
+    };
+    cyxwiz::Tensor input({2, 2, 1, 2}, input_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::Tensor output = norm.Forward(input);
+    REQUIRE(output.Shape() == std::vector<size_t>{2, 2, 1, 2});
+    const float* output_data = output.Data<float>();
+    const float expected_output[] = {
+        -3.6832708f, -3.6832789f,
+        -1.8944236f, -1.8944263f,
+        -0.1055764f, -0.1055737f,
+        1.6832708f, 1.6832789f,
+    };
+    for (size_t i = 0; i < 8; ++i) {
+        REQUIRE(output_data[i] == Catch::Approx(expected_output[i]).margin(1e-5f));
+    }
+
+    float grad_values[] = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        0.0f, 0.0f,
+        0.0f, 0.0f,
+    };
+    cyxwiz::Tensor grad_output({2, 2, 1, 2}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = norm.Backward(grad_output);
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{2, 2, 1, 2});
+    const float* grad_input_data = grad_input.Data<float>();
+    const float expected_grad_input[] = {
+        0.5366606f, -0.3577703f,
+        -0.7155367f, 0.6260985f,
+        -0.1788869f, -0.1788853f,
+        0.3577630f, -0.0894429f,
+    };
+    for (size_t i = 0; i < 8; ++i) {
+        REQUIRE(grad_input_data[i] == Catch::Approx(expected_grad_input[i]).margin(1e-5f));
+    }
+
+    const std::map<std::string, cyxwiz::Tensor> params = norm.GetParameters();
+    const float* grad_gamma_data = params.at("grad_gamma").Data<float>();
+    REQUIRE(grad_gamma_data[0] == Catch::Approx(-1.7888486f).margin(1e-5f));
+    const float* grad_beta_data = params.at("grad_beta").Data<float>();
+    REQUIRE(grad_beta_data[0] == Catch::Approx(2.0f));
+}
+
 TEST_CASE("DropoutLayer passes values through in eval mode", "[dropout][layer]") {
     float input_values[] = {1.0f, -2.0f, 3.5f, 4.0f};
     cyxwiz::Tensor input({2, 2}, input_values, cyxwiz::DataType::Float32);

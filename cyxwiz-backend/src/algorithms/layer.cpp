@@ -2218,6 +2218,9 @@ void LayerNormLayer::SetParameters(const std::map<std::string, Tensor>& params) 
 
 InstanceNorm2DLayer::InstanceNorm2DLayer(int num_features, float eps, bool affine)
     : num_features_(num_features), eps_(eps), affine_(affine) {
+    if (num_features_ <= 0 || eps_ <= 0.0f) {
+        throw std::invalid_argument("InstanceNorm2D requires positive features and eps");
+    }
 
     if (affine) {
         gamma_ = Tensor::Ones({static_cast<size_t>(num_features)});
@@ -2230,100 +2233,145 @@ InstanceNorm2DLayer::InstanceNorm2DLayer(int num_features, float eps, bool affin
 Tensor InstanceNorm2DLayer::Forward(const Tensor& input) {
     cached_input_ = input;
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array x = TensorToAf(input);
-        // Input shape: [N, C, H, W] -> AF: [W, H, C, N]
-        dim_t W = x.dims(0);
-        dim_t H = x.dims(1);
-        dim_t C = x.dims(2);
-        dim_t N = x.dims(3);
-
-        // Reshape to [H*W, C, N] for per-instance normalization
-        af::array x_reshaped = af::moddims(x, af::dim4(W * H, C, N));
-
-        // Compute mean and variance per (C, N) instance
-        af::array mean = af::mean(x_reshaped, 0);  // [1, C, N]
-        af::array var = af::var(x_reshaped, AF_VARIANCE_POPULATION, 0);
-
-        // Broadcast and normalize
-        af::array mean_bc = af::tile(mean, af::dim4(W * H, 1, 1));
-        af::array var_bc = af::tile(var, af::dim4(W * H, 1, 1));
-
-        af::array std_inv = 1.0f / af::sqrt(var_bc + eps_);
-        af::array normalized = (x_reshaped - mean_bc) * std_inv;
-
-        // Store for backward
-        normalized_ = AfToTensor(af::moddims(normalized, x.dims()));
-        std_inv_ = AfToTensor(std_inv);
-
-        // Apply affine if enabled
-        if (affine_) {
-            af::array gamma = TensorToAf(gamma_);
-            af::array beta = TensorToAf(beta_);
-            // Reshape to [1, C, 1] for broadcasting
-            af::array gamma_bc = af::tile(af::moddims(gamma, af::dim4(1, C, 1)), af::dim4(W * H, 1, N));
-            af::array beta_bc = af::tile(af::moddims(beta, af::dim4(1, C, 1)), af::dim4(W * H, 1, N));
-            normalized = gamma_bc * normalized + beta_bc;
-        }
-
-        af::array output = af::moddims(normalized, x.dims());
-        return AfToTensor(output);
-
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire InstanceNorm2DLayer::Forward failed: {}", e.what());
+    ValidateSpatial4DInput(input, "InstanceNorm2D");
+    if (input.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("InstanceNorm2D forward CPU fallback requires Float32 input");
     }
-#endif
 
-    throw std::runtime_error("InstanceNorm2D forward requires ArrayFire");
+    const std::vector<size_t>& shape = input.Shape();
+    const size_t height = shape[0];
+    const size_t width = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+    if (channels != static_cast<size_t>(num_features_)) {
+        throw std::runtime_error("InstanceNorm2D forward channel mismatch");
+    }
+    const std::vector<size_t> channel_shape{channels};
+    if (affine_ &&
+        (gamma_.GetDataType() != DataType::Float32 || beta_.GetDataType() != DataType::Float32 ||
+         gamma_.Shape() != channel_shape || beta_.Shape() != channel_shape)) {
+        throw std::runtime_error("InstanceNorm2D forward affine parameter mismatch");
+    }
+
+    Tensor output(shape, DataType::Float32);
+    normalized_ = Tensor(shape, DataType::Float32);
+    std_inv_ = Tensor({channels, batch_size}, DataType::Float32);
+
+    const float* input_data = input.Data<float>();
+    const float* gamma_data = affine_ ? gamma_.Data<float>() : nullptr;
+    const float* beta_data = affine_ ? beta_.Data<float>() : nullptr;
+    float* output_data = output.Data<float>();
+    float* normalized_data = normalized_.Data<float>();
+    float* std_inv_data = std_inv_.Data<float>();
+    const float sample_count = static_cast<float>(height * width);
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            float mean = 0.0f;
+            for (size_t h = 0; h < height; ++h) {
+                for (size_t w = 0; w < width; ++w) {
+                    mean += input_data[Pool4DIndex(h, w, c, b, width, channels, batch_size)];
+                }
+            }
+            mean /= sample_count;
+
+            float variance = 0.0f;
+            for (size_t h = 0; h < height; ++h) {
+                for (size_t w = 0; w < width; ++w) {
+                    const size_t index = Pool4DIndex(h, w, c, b, width, channels, batch_size);
+                    const float centered = input_data[index] - mean;
+                    variance += centered * centered;
+                }
+            }
+            variance /= sample_count;
+            const float std_inv = 1.0f / std::sqrt(variance + eps_);
+            std_inv_data[c * batch_size + b] = std_inv;
+
+            for (size_t h = 0; h < height; ++h) {
+                for (size_t w = 0; w < width; ++w) {
+                    const size_t index = Pool4DIndex(h, w, c, b, width, channels, batch_size);
+                    normalized_data[index] = (input_data[index] - mean) * std_inv;
+                    output_data[index] = affine_
+                                             ? gamma_data[c] * normalized_data[index] + beta_data[c]
+                                             : normalized_data[index];
+                }
+            }
+        }
+    }
+
+    return output;
 }
 
 Tensor InstanceNorm2DLayer::Backward(const Tensor& grad_output) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array grad_out = TensorToAf(grad_output);
-        af::array x = TensorToAf(cached_input_);
-        af::array normalized = TensorToAf(normalized_);
-        af::array std_inv = TensorToAf(std_inv_);
-
-        dim_t W = grad_out.dims(0);
-        dim_t H = grad_out.dims(1);
-        dim_t C = grad_out.dims(2);
-        dim_t N = grad_out.dims(3);
-
-        af::array grad_reshaped = af::moddims(grad_out, af::dim4(W * H, C, N));
-        af::array norm_reshaped = af::moddims(normalized, af::dim4(W * H, C, N));
-
-        if (affine_) {
-            af::array gamma = TensorToAf(gamma_);
-
-            // Gradients for gamma and beta
-            af::array grad_gamma_arr = af::sum(af::sum(grad_reshaped * norm_reshaped, 0), 2);
-            af::array grad_beta_arr = af::sum(af::sum(grad_reshaped, 0), 2);
-
-            grad_gamma_ = AfToTensor(af::moddims(grad_gamma_arr, af::dim4(C)));
-            grad_beta_ = AfToTensor(af::moddims(grad_beta_arr, af::dim4(C)));
-
-            // Scale by gamma
-            af::array gamma_bc = af::tile(af::moddims(gamma, af::dim4(1, C, 1)), af::dim4(W * H, 1, N));
-            grad_reshaped = grad_reshaped * gamma_bc;
-        }
-
-        // Input gradient
-        float M = static_cast<float>(W * H);
-        af::array sum_dy = af::tile(af::sum(grad_reshaped, 0), af::dim4(W * H, 1, 1));
-        af::array sum_dy_norm = af::tile(af::sum(grad_reshaped * norm_reshaped, 0), af::dim4(W * H, 1, 1));
-
-        af::array dx = (1.0f / M) * std_inv * (M * grad_reshaped - sum_dy - norm_reshaped * sum_dy_norm);
-
-        return AfToTensor(af::moddims(dx, grad_out.dims()));
-
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire InstanceNorm2DLayer::Backward failed: {}", e.what());
+    ValidateSpatial4DInput(cached_input_, "InstanceNorm2D");
+    if (grad_output.GetDataType() != DataType::Float32 ||
+        normalized_.GetDataType() != DataType::Float32 ||
+        std_inv_.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("InstanceNorm2D backward CPU fallback requires Float32 tensors");
     }
-#endif
+    if (grad_output.Shape() != cached_input_.Shape() || normalized_.Shape() != cached_input_.Shape()) {
+        throw std::runtime_error("InstanceNorm2D backward gradient/cache shape mismatch");
+    }
 
-    throw std::runtime_error("InstanceNorm2D backward requires ArrayFire");
+    const std::vector<size_t>& shape = cached_input_.Shape();
+    const size_t height = shape[0];
+    const size_t width = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+    const std::vector<size_t> channel_shape{channels};
+    const std::vector<size_t> instance_shape{channels, batch_size};
+    if (channels != static_cast<size_t>(num_features_) || std_inv_.Shape() != instance_shape) {
+        throw std::runtime_error("InstanceNorm2D backward parameter/cache shape mismatch");
+    }
+    if (affine_ && (gamma_.GetDataType() != DataType::Float32 || gamma_.Shape() != channel_shape)) {
+        throw std::runtime_error("InstanceNorm2D backward gamma shape mismatch");
+    }
+
+    Tensor grad_input(shape, DataType::Float32);
+    if (affine_) {
+        grad_gamma_ = Tensor(channel_shape, DataType::Float32);
+        grad_beta_ = Tensor(channel_shape, DataType::Float32);
+    }
+
+    const float* grad_data = grad_output.Data<float>();
+    const float* normalized_data = normalized_.Data<float>();
+    const float* std_inv_data = std_inv_.Data<float>();
+    const float* gamma_data = affine_ ? gamma_.Data<float>() : nullptr;
+    float* grad_input_data = grad_input.Data<float>();
+    float* grad_gamma_data = affine_ ? grad_gamma_.Data<float>() : nullptr;
+    float* grad_beta_data = affine_ ? grad_beta_.Data<float>() : nullptr;
+    const float sample_count = static_cast<float>(height * width);
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            float sum_dy = 0.0f;
+            float sum_dy_norm = 0.0f;
+            for (size_t h = 0; h < height; ++h) {
+                for (size_t w = 0; w < width; ++w) {
+                    const size_t index = Pool4DIndex(h, w, c, b, width, channels, batch_size);
+                    const float upstream = affine_ ? grad_data[index] * gamma_data[c] : grad_data[index];
+                    sum_dy += upstream;
+                    sum_dy_norm += upstream * normalized_data[index];
+                    if (affine_) {
+                        grad_gamma_data[c] += grad_data[index] * normalized_data[index];
+                        grad_beta_data[c] += grad_data[index];
+                    }
+                }
+            }
+
+            const float scale = std_inv_data[c * batch_size + b] / sample_count;
+            for (size_t h = 0; h < height; ++h) {
+                for (size_t w = 0; w < width; ++w) {
+                    const size_t index = Pool4DIndex(h, w, c, b, width, channels, batch_size);
+                    const float upstream = affine_ ? grad_data[index] * gamma_data[c] : grad_data[index];
+                    grad_input_data[index] =
+                        scale * (sample_count * upstream - sum_dy - normalized_data[index] * sum_dy_norm);
+                }
+            }
+        }
+    }
+
+    return grad_input;
 }
 
 std::map<std::string, Tensor> InstanceNorm2DLayer::GetParameters() {

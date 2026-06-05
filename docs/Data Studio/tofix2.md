@@ -499,6 +499,21 @@ Thirty-second slice status:
 - Remaining: `InstanceNorm2DLayer`, `GroupNormLayer`, attention, and
   linalg decompositions remain follow-up slices.
 
+Thirty-third slice status:
+
+- Completed: added direct CPU implementation for legacy
+  `InstanceNorm2DLayer` forward/backward using the established
+  `[H, W, C, N]` Float32 tensor layout and per-instance/per-channel
+  spatial statistics.
+- Completed: removed the old `InstanceNorm2DLayer` ArrayFire-first
+  forward/backward branches so affine gamma/beta gradients follow the
+  tested row-major Tensor contract.
+- Completed: added focused deterministic `InstanceNorm2DLayer`
+  forward/backward/parameter-gradient regression coverage that checks
+  independent normalization across batch instances.
+- Remaining: `GroupNormLayer`, attention, and linalg decompositions
+  remain follow-up slices.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -951,10 +966,10 @@ but they must say so honestly and be tracked by group. Factory
 `Upsample2DLayer` nearest and bilinear modes, `PixelShuffleLayer`, and
 legacy `Conv2DLayer`, legacy `Conv1DLayer`, and legacy
 `ConvTranspose2DLayer`, legacy `BatchNorm2DLayer`, and legacy
-`LayerNormLayer` now have CPU fallback coverage with tests. Remaining
-fallback work should proceed by operator group, starting with the
-remaining normalization layers (`InstanceNorm2DLayer`,
-`GroupNormLayer`), then attention, and linalg decompositions.
+`LayerNormLayer`, and legacy `InstanceNorm2DLayer` now have CPU
+fallback coverage with tests. Remaining fallback work should proceed by
+operator group, starting with the remaining normalization layer
+(`GroupNormLayer`), then attention, and linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 
