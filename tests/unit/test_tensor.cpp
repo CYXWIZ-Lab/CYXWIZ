@@ -1143,6 +1143,29 @@ TEST_CASE("Tensor ArrayFire construction materializes host data lazily", "[tenso
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() >= before + t.NumBytes());
 }
 
+TEST_CASE("Tensor ArrayFire factories materialize host data lazily", "[tensor][arrayfire]") {
+    const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
+
+    cyxwiz::Tensor zeros = cyxwiz::Tensor::Zeros({4}, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor ones = cyxwiz::Tensor::Ones({4}, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor random = cyxwiz::Tensor::Random({4}, cyxwiz::DataType::Float32);
+
+    REQUIRE(zeros.Shape() == std::vector<size_t>{4});
+    REQUIRE(ones.Shape() == std::vector<size_t>{4});
+    REQUIRE(random.Shape() == std::vector<size_t>{4});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
+
+    const float* zeros_host = zeros.Data<float>();
+    const float* ones_host = ones.Data<float>();
+    const float* random_host = random.Data<float>();
+    REQUIRE(zeros_host[0] == 0.0f);
+    REQUIRE(ones_host[0] == 1.0f);
+    REQUIRE(random_host[0] >= 0.0f);
+    REQUIRE(random_host[0] < 1.0f);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() >=
+            before + zeros.NumBytes() + ones.NumBytes() + random.NumBytes());
+}
+
 TEST_CASE("Tensor host mutation invalidates cached ArrayFire data", "[tensor][arrayfire]") {
     float data[] = {1.0f, 2.0f, 3.0f};
     cyxwiz::Tensor t({3}, data, cyxwiz::DataType::Float32);

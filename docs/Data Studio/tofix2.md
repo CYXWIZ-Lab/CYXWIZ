@@ -215,6 +215,19 @@ Twelfth slice status:
   some convolution/backward paths. Those should be handled as targeted
   layer-group slices, not as one broad refactor.
 
+Thirteenth slice status:
+
+- Completed: audited Tensor factory helpers. The original claim that
+  `Tensor::Zeros()`, `Tensor::Ones()`, and `Tensor::Random()` allocate on
+  GPU only to return CPU-owned tensors is stale for ArrayFire builds:
+  successful factory paths now return `Tensor(af::array)` and keep host
+  memory unmaterialized until explicit CPU access.
+- Completed: added ArrayFire regression coverage proving factory-created
+  tensors do not allocate tracked host memory until `Data()` is read.
+- Remaining: fallback behavior and operation-specific GPU failure paths
+  should be handled under the CPU fallback and performance profiling
+  items, not this factory ownership item.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -622,6 +635,12 @@ on device throughout the step.
 ### 11. Some "GPU helpers" do GPU work only to return CPU-owned tensors
 
 **Severity:** Medium
+
+**Status 2026-06-05:** Fixed/stale for Tensor factories. `Tensor::Zeros`,
+`Tensor::Ones`, and `Tensor::Random` return device-backed tensors through
+the ArrayFire constructor on successful ArrayFire paths, and host buffers
+are allocated lazily only when CPU data is requested. Regression coverage
+now checks this behavior for all three factories.
 
 Examples:
 
