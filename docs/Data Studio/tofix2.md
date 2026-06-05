@@ -458,6 +458,20 @@ Twenty-ninth slice status:
 - Remaining: `ConvTranspose2DLayer`, normalization, attention, and
   linalg decompositions remain follow-up slices.
 
+Thirtieth slice status:
+
+- Completed: added direct CPU implementation for legacy
+  `ConvTranspose2DLayer` forward/backward using `[H, W, C, N]`
+  Float32 inputs and the existing `[kernel, kernel, out_channels,
+  in_channels]` weight storage contract.
+- Completed: removed the old `ConvTranspose2DLayer` ArrayFire-first
+  forward/backward branches so the tested row-major Tensor contract is
+  canonical for the legacy convolution family.
+- Completed: added focused deterministic `ConvTranspose2DLayer`
+  forward/backward/parameter-gradient regression coverage.
+- Remaining: normalization, attention, and linalg decompositions remain
+  follow-up slices.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -908,11 +922,10 @@ but they must say so honestly and be tracked by group. Factory
 `DenseLayer`, legacy `DropoutLayer`, legacy pooling layers
 (`MaxPool2DLayer`, `AvgPool2DLayer`, `GlobalAvgPool2DLayer`),
 `Upsample2DLayer` nearest and bilinear modes, `PixelShuffleLayer`, and
-legacy `Conv2DLayer`, and legacy `Conv1DLayer` now have CPU fallback
-coverage with tests. Remaining fallback work should proceed by operator
-group, starting with the remaining convolution layer
-(`ConvTranspose2DLayer`), normalization, attention, and linalg
-decompositions.
+legacy `Conv2DLayer`, legacy `Conv1DLayer`, and legacy
+`ConvTranspose2DLayer` now have CPU fallback coverage with tests.
+Remaining fallback work should proceed by operator group, starting with
+normalization, then attention, and linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 
