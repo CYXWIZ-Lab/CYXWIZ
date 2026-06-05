@@ -154,3 +154,33 @@ TEST_CASE("Class-index losses compute backward values", "[loss]") {
     REQUIRE(nll_data[4] == Catch::Approx(0.0f));
     REQUIRE(nll_data[5] == Catch::Approx(0.0f));
 }
+
+TEST_CASE("KL divergence computes forward reductions", "[loss]") {
+    float log_pred_values[] = {std::log(0.2f), std::log(0.5f), std::log(0.3f)};
+    float target_values[] = {0.1f, 0.7f, 0.2f};
+    cyxwiz::Tensor log_predictions({3}, log_pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({3}, target_values, cyxwiz::DataType::Float32);
+
+    auto kl_sum = cyxwiz::CreateLoss(cyxwiz::LossType::KLDivergence, cyxwiz::Reduction::Sum);
+    cyxwiz::Tensor loss = kl_sum->Forward(log_predictions, targets);
+
+    const float expected =
+        0.1f * (std::log(0.1f) - std::log(0.2f)) +
+        0.7f * (std::log(0.7f) - std::log(0.5f)) +
+        0.2f * (std::log(0.2f) - std::log(0.3f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected));
+}
+
+TEST_CASE("KL divergence computes backward values", "[loss]") {
+    float log_pred_values[] = {std::log(0.2f), std::log(0.5f), std::log(0.3f)};
+    float target_values[] = {0.1f, 0.7f, 0.0f};
+    cyxwiz::Tensor log_predictions({3}, log_pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({3}, target_values, cyxwiz::DataType::Float32);
+
+    auto kl_mean = cyxwiz::CreateLoss(cyxwiz::LossType::KLDivergence, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor grad = kl_mean->Backward(log_predictions, targets);
+
+    REQUIRE(grad.Data<float>()[0] == Catch::Approx(-0.1f / 3.0f));
+    REQUIRE(grad.Data<float>()[1] == Catch::Approx(-0.7f / 3.0f));
+    REQUIRE(grad.Data<float>()[2] == Catch::Approx(0.0f));
+}

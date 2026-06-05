@@ -209,6 +209,48 @@ Tensor CpuBCEWithLogitsBackward(const Tensor& predictions, const Tensor& targets
     return grad;
 }
 
+Tensor CpuKLDivForward(const Tensor& predictions,
+                       const Tensor& targets,
+                       bool log_target,
+                       Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "KLDiv");
+    const size_t count = predictions.NumElements();
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    std::vector<float> losses(count, 0.0f);
+    for (size_t i = 0; i < count; ++i) {
+        if (target[i] <= 0.0f) {
+            continue;
+        }
+        if (log_target) {
+            losses[i] = std::exp(target[i]) * (target[i] - pred[i]);
+        } else {
+            losses[i] = target[i] * (std::log(target[i]) - pred[i]);
+        }
+    }
+    return ApplyCpuReduction(predictions.Shape(), losses, reduction);
+}
+
+Tensor CpuKLDivBackward(const Tensor& predictions,
+                        const Tensor& targets,
+                        bool log_target,
+                        Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "KLDiv");
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    const size_t count = predictions.NumElements();
+    const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
+    const float* target = targets.Data<float>();
+    float* out = grad.Data<float>();
+    for (size_t i = 0; i < count; ++i) {
+        if (target[i] <= 0.0f) {
+            out[i] = 0.0f;
+            continue;
+        }
+        out[i] = (log_target ? -std::exp(target[i]) : -target[i]) * scale;
+    }
+    return grad;
+}
+
 struct ClassAxisShape {
     size_t batch = 1;
     size_t classes = 0;
@@ -1005,7 +1047,7 @@ Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire KLDivLoss::Forward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("KLDiv forward requires ArrayFire");
+    return CpuKLDivForward(predictions, targets, log_target_, reduction_);
 }
 
 Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -1034,7 +1076,7 @@ Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         spdlog::warn("ArrayFire KLDivLoss::Backward failed: {}", e.what());
     }
 #endif
-    throw std::runtime_error("KLDiv backward requires ArrayFire");
+    return CpuKLDivBackward(predictions, targets, log_target_, reduction_);
 }
 
 // ============================================================================

@@ -294,6 +294,17 @@ Seventeenth slice status:
   separate fallback slices; legacy layer and linalg fallback work remains
   deferred.
 
+Eighteenth slice status:
+
+- Completed: added CPU fallback for `KLDivLoss` forward and backward,
+  matching the existing default contract where predictions are log
+  probabilities and non-positive probability targets contribute zero.
+- Completed: added focused `KLDivLoss` forward and backward regression
+  coverage.
+- Remaining: focal and metric-learning losses still need separate
+  fallback slices; legacy layer and linalg fallback work remains
+  deferred.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -741,8 +752,8 @@ but they must say so honestly and be tracked by group. Factory
 `SmoothL1Loss`/`HuberLoss`, `CrossEntropyLoss`, `NLLLoss`, `BCELoss`,
 and `BCEWithLogitsLoss` now have CPU fallback coverage with tests.
 Remaining fallback work should proceed by operator group, starting with
-`KLDiv`, focal, and metric-learning losses before legacy layers and
-linalg decompositions.
+focal and metric-learning losses before legacy layers and linalg
+decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 
