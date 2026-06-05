@@ -345,6 +345,7 @@ Fix applied:
 ### 7. `DataInputDialog` is powerful but overgrown
 
 **Severity:** High
+**Status:** Partially fixed on 2026-06-06
 
 Relevant file:
 
@@ -374,6 +375,19 @@ That capability is good. The implementation and UX are overloaded.
 - harder to keep behavior consistent across modalities
 - easier to regress persisted state
 - users face a dialog that does too much in one place
+
+Audit result: this issue is still real. The dialog already had a small cluster
+of source/category capability helpers near the bottom of the file, which made
+for a safe first behavior-preserving extraction.
+
+Fix applied:
+
+- added `gui/data_input_capabilities.{h,cpp}`
+- moved source-type enum ownership, apply support checks, preview support
+  checks, unsupported-status messages, preview-unavailable messages, and byte
+  formatting into the helper
+- kept `DataInputDialog` methods as thin wrappers so existing render/apply
+  code paths and user-visible behavior stay unchanged
 
 **Recommendation:**
 

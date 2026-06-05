@@ -21,6 +21,7 @@
 #include <chrono>
 #include <imgui.h>
 #include "node_editor.h"
+#include "data_input_capabilities.h"
 #include "loaders/data_loader.h"
 
 namespace gui {
@@ -192,7 +193,7 @@ protected:
 
 private:
     // Data source types
-    enum class SourceType { File, MLDataset, Database, Cloud };
+    using SourceType = gui::data_input::SourceType;
 
     // FileCategory lives in cyxwiz::loaders now so the dialog and the
     // loader module share a single definition. Aliased here so existing

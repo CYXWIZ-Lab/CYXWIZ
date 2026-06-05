@@ -214,6 +214,7 @@ set(ENGINE_SOURCES
     src/gui/viewport.cpp
     src/gui/properties.cpp
     src/gui/node_config_dialog.cpp
+    src/gui/data_input_capabilities.cpp
     src/gui/data_input_dialog.cpp
     src/gui/loaders/audio_loader.cpp
     src/gui/loaders/data_loader.cpp

@@ -3624,48 +3624,19 @@ const char* DataInputDialog::BackendSummary() const {
 }
 
 bool DataInputDialog::IsApplySupported() const {
-    if (source_type_ != SourceType::File) {
-        return false;
-    }
-    return file_category_ != FileCategory::Video;
+    return data_input::IsApplySupported(source_type_, file_category_);
 }
 
 bool DataInputDialog::IsPreviewSupported() const {
-    return source_type_ == SourceType::File &&
-           (file_category_ == FileCategory::Tabular ||
-            file_category_ == FileCategory::Text ||
-            file_category_ == FileCategory::TimeSeries);
+    return data_input::IsPreviewSupported(source_type_, file_category_);
 }
 
 const char* DataInputDialog::UnsupportedApplyMessage() const {
-    if (source_type_ == SourceType::File && file_category_ == FileCategory::Video) {
-        return "Video loading is planned but not wired yet.";
-    }
-    if (source_type_ == SourceType::MLDataset) {
-        return "ML dataset downloads are planned but not wired yet. Use File source for loadable datasets.";
-    }
-    if (source_type_ == SourceType::Database) {
-        return "Database loading is planned but not wired yet.";
-    }
-    if (source_type_ == SourceType::Cloud) {
-        return "Cloud storage loading is planned but not wired yet.";
-    }
-    return "This data source is not available yet.";
+    return data_input::UnsupportedApplyMessage(source_type_, file_category_);
 }
 
 const char* DataInputDialog::PreviewUnavailableMessage() const {
-    if (source_type_ == SourceType::File) {
-        if (file_category_ == FileCategory::Image) {
-            return "Image preview is not wired yet. Apply can still scan supported image folders.";
-        }
-        if (file_category_ == FileCategory::Audio) {
-            return "Audio preview is not wired yet. Apply can still scan supported audio folders.";
-        }
-        if (file_category_ == FileCategory::Video) {
-            return "Video preview is not available because video loading is not wired yet.";
-        }
-    }
-    return UnsupportedApplyMessage();
+    return data_input::PreviewUnavailableMessage(source_type_, file_category_);
 }
 
 void DataInputDialog::MarkApplyUnsupported(const char* message) {
@@ -3683,22 +3654,7 @@ void DataInputDialog::MarkApplyUnsupported(const char* message) {
 // ==================== DataInputDialog Helper Methods ====================
 
 std::string DataInputDialog::FormatBytes(size_t bytes) {
-    const char* units[] = {"B", "KB", "MB", "GB", "TB"};
-    int unit_idx = 0;
-    double size = static_cast<double>(bytes);
-
-    while (size >= 1024.0 && unit_idx < 4) {
-        size /= 1024.0;
-        unit_idx++;
-    }
-
-    char buffer[32];
-    if (unit_idx == 0) {
-        snprintf(buffer, sizeof(buffer), "%zu %s", bytes, units[unit_idx]);
-    } else {
-        snprintf(buffer, sizeof(buffer), "%.1f %s", size, units[unit_idx]);
-    }
-    return std::string(buffer);
+    return data_input::FormatBytes(bytes);
 }
 
 std::string DataInputDialog::GenerateDatasetName() const {
