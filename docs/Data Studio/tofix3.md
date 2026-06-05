@@ -786,6 +786,7 @@ live next to active source files.
 ### 18. Frontend state ownership needs stronger boundaries
 
 **Severity:** Medium
+**Status:** Fixed on 2026-06-05
 
 Current behavior suggests state is spread across:
 
@@ -803,15 +804,26 @@ The `DataInputDialog` code in particular contains multiple restore and
 re-sync paths because persisted params, registry state, and async apply
 results can diverge.
 
-**Recommendation:**
+Audit result: this issue was still present. The new node-editor workflow
+contract defined some ownership boundaries, but the broader frontend state
+model was not documented as an explicit source-of-truth matrix.
 
-- document state ownership for each core workflow:
-  - project/session
-  - graph/node configuration
-  - loaded dataset state
-  - active training state
-  - debug result state
-- define which source is authoritative in each case
+Fix applied:
+
+- added `docs/Data Studio/frontend_state_ownership.md`
+- documented authoritative owners for project/session, graph structure, node
+  configuration, loaded datasets, async load state, compile results, debug
+  results, training runs, layout state, and generated output
+- documented Data Input restore/apply rules, graph compile invalidation,
+  debugger snapshot rules, and training run ownership
+- added a review checklist for future panels, dialogs, commands, and async
+  tasks
+
+**Follow-up:**
+
+- use the ownership matrix during future Data Input and Properties refactors
+- update the matrix when a workflow gains a new durable run/session store
+- keep UI caches explicit and invalidated when their owner changes
 
 ---
 
