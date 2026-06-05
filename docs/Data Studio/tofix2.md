@@ -160,6 +160,19 @@ Eighth slice status:
 - Remaining: keep auditing per-algorithm public headers as each subsystem
   is touched; broad product/marketing docs should be handled separately.
 
+Ninth slice status:
+
+- Completed: audited Tensor arithmetic ArrayFire exception paths. The
+  original raw `new af::array`/manual delete leak pattern is stale in the
+  current implementation: Tensor arithmetic uses stack `af::array`
+  temporaries, and cached device state is held through
+  `std::unique_ptr<af::array>`.
+- Completed: no code change was needed for item 7; the existing tensor
+  and full backend tests continue covering the current RAII path.
+- Remaining: continue RAII audits in other ArrayFire-heavy subsystems
+  when those files are touched, but do not mix that broader cleanup into
+  the Tensor arithmetic item.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -419,6 +432,16 @@ it yet.
 ### 7. Tensor GPU operator exception paths can leak heap objects
 
 **Severity:** High
+
+**Status 2026-06-05:** Fixed/stale. The current Tensor arithmetic
+implementation no longer allocates `af::array*` with raw `new` in
+`operator+`, `operator-`, `operator*`, or `operator/`. These paths use
+stack `af::array` temporaries and return device-resident `Tensor`
+instances. Tensor cached ArrayFire state is owned by
+`std::unique_ptr<af::array>`, so exception cleanup is handled by RAII.
+Broader ArrayFire interop should still prefer stack objects or
+`std::unique_ptr`, but the specific Tensor arithmetic leak risk described
+below is no longer present.
 
 In Tensor arithmetic operators:
 
