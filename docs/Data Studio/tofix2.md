@@ -150,6 +150,16 @@ Seventh slice status:
 - Remaining: continue the broader public header audit by subsystem; do
   not batch large algorithm fallback work into the C API contract slice.
 
+Eighth slice status:
+
+- Completed: corrected clustering public header comments so they no
+  longer claim unconditional GPU acceleration. The header now states that
+  clustering is ArrayFire-backed when built with ArrayFire and that
+  non-ArrayFire builds keep the API available but return
+  unsuccessful/empty results with error messages.
+- Remaining: keep auditing per-algorithm public headers as each subsystem
+  is touched; broad product/marketing docs should be handled separately.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -381,7 +391,9 @@ The backend surface must be honest.
 header comments now describe acceleration as optional ArrayFire-backed
 coverage rather than a uniformly transparent GPU path. Remaining work is
 to continue auditing detailed per-algorithm docs and examples as each
-operation group is hardened.
+operation group is hardened. The clustering public header has also been
+corrected to describe its ArrayFire build requirement and non-ArrayFire
+unsupported result behavior.
 
 The docs present the backend as a coherent high-performance ML compute
 library with GPU acceleration and device transfer semantics.

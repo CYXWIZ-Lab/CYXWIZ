@@ -110,9 +110,12 @@ struct CYXWIZ_API ElbowAnalysis {
 };
 
 /**
- * Clustering - Static class with GPU-accelerated clustering algorithms using ArrayFire
+ * Clustering - Static class with ArrayFire-backed clustering algorithms
  *
- * All algorithms use ArrayFire for GPU computation (CUDA/OpenCL/CPU backends).
+ * These algorithms require an ArrayFire-enabled build for computation.
+ * ArrayFire may run on CUDA, OpenCL, or its CPU backend depending on the
+ * active ArrayFire backend. Non-ArrayFire builds keep the API available but
+ * return unsuccessful/empty results with an error message.
  * Public interface uses std::vector for easy integration with GUI panels.
  */
 class CYXWIZ_API Clustering {
@@ -120,7 +123,7 @@ public:
     // ==================== K-Means ====================
 
     /**
-     * K-Means clustering algorithm (GPU-accelerated)
+     * K-Means clustering algorithm (ArrayFire-backed when available)
      *
      * @param data Input data [n_samples x n_features]
      * @param n_clusters Number of clusters (k)
@@ -163,7 +166,7 @@ public:
 
     /**
      * DBSCAN (Density-Based Spatial Clustering of Applications with Noise)
-     * GPU-accelerated distance matrix computation
+     * ArrayFire-backed distance matrix computation when available
      *
      * @param data Input data [n_samples x n_features]
      * @param eps Maximum distance for neighborhood
@@ -179,7 +182,8 @@ public:
     );
 
     /**
-     * Suggest epsilon for DBSCAN using k-distance graph (GPU-accelerated)
+     * Suggest epsilon for DBSCAN using an ArrayFire-backed k-distance graph
+     * when available
      *
      * @param data Input data
      * @param k Number of nearest neighbors (usually min_samples)
@@ -193,7 +197,8 @@ public:
     // ==================== Hierarchical ====================
 
     /**
-     * Agglomerative Hierarchical Clustering (GPU-accelerated distance matrix)
+     * Agglomerative Hierarchical Clustering with an ArrayFire-backed distance
+     * matrix when available
      *
      * @param data Input data [n_samples x n_features]
      * @param n_clusters Number of clusters (for cutting dendrogram)
@@ -225,7 +230,7 @@ public:
     // ==================== Gaussian Mixture Model ====================
 
     /**
-     * Gaussian Mixture Model (EM algorithm, GPU-accelerated)
+     * Gaussian Mixture Model (EM algorithm, ArrayFire-backed when available)
      *
      * @param data Input data [n_samples x n_features]
      * @param n_components Number of Gaussian components
@@ -251,7 +256,7 @@ public:
     // ==================== Cluster Evaluation ====================
 
     /**
-     * Compute clustering quality metrics (GPU-accelerated)
+     * Compute clustering quality metrics (ArrayFire-backed when available)
      *
      * @param data Input data [n_samples x n_features]
      * @param labels Cluster labels
