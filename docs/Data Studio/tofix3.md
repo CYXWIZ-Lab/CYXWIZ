@@ -498,20 +498,29 @@ oriented.
 ### 11. Start-page implementation still carries thread-unsafe time conversion helpers
 
 **Severity:** Low
+**Status:** Fixed on 2026-06-05
 
 Relevant file:
 
 - `cyxwiz-engine/src/gui/dialogs/start_page.cpp`
 
-The code uses `std::localtime`, which is not thread-safe.
+Audit result: this issue was still present. The code used `std::localtime`,
+including a month-grouping path that called it twice and compared pointers to
+the same static buffer.
+
+Fix applied:
+
+- added a small platform-safe local-time helper using `localtime_s` on Windows
+  and `localtime_r` elsewhere
+- copied `std::tm` values before comparison in `IsThisMonth`
+- reused one timestamp formatter for all recent-project groups
 
 This is not the biggest issue in this file, but it is a recurring
 quality smell in UI code that may eventually run across multiple
 background-driven surfaces.
 
-**Recommendation:**
+**Follow-up:**
 
-- use safer/local wrappers for time formatting
 - keep UI formatting helpers centralized
 
 ---

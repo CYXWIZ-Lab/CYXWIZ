@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <cstring>
 #include <algorithm>
+#include <ctime>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -16,6 +18,31 @@
 #endif
 
 namespace cyxwiz {
+
+namespace {
+
+bool LocalTime(std::time_t time, std::tm& out) {
+#ifdef _WIN32
+    return localtime_s(&out, &time) == 0;
+#else
+    return localtime_r(&time, &out) != nullptr;
+#endif
+}
+
+std::string FormatRecentProjectTime(std::time_t time) {
+    std::tm tm_info{};
+    if (!LocalTime(time, tm_info)) {
+        return "Unknown time";
+    }
+
+    char time_str[64] = {};
+    if (std::strftime(time_str, sizeof(time_str), "%m/%d/%Y %I:%M %p", &tm_info) == 0) {
+        return "Unknown time";
+    }
+    return time_str;
+}
+
+} // namespace
 
 StartPage::StartPage() {
     LoadRecentProjects();
@@ -87,11 +114,14 @@ bool StartPage::IsThisWeek(std::time_t time) const {
 
 bool StartPage::IsThisMonth(std::time_t time) const {
     std::time_t now = std::time(nullptr);
-    std::tm* now_tm = std::localtime(&now);
-    std::tm* time_tm = std::localtime(&time);
+    std::tm now_tm{};
+    std::tm time_tm{};
+    if (!LocalTime(now, now_tm) || !LocalTime(time, time_tm)) {
+        return false;
+    }
 
-    return (now_tm->tm_year == time_tm->tm_year &&
-            now_tm->tm_mon == time_tm->tm_mon);
+    return (now_tm.tm_year == time_tm.tm_year &&
+            now_tm.tm_mon == time_tm.tm_mon);
 }
 
 bool StartPage::Render() {
@@ -225,11 +255,8 @@ void StartPage::RenderRecentProjects() {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
                 ImGui::TextWrapped("%s", proj.path.c_str());
 
-                // Format timestamp
-                char time_str[64];
-                std::tm* tm_info = std::localtime(&proj.last_opened);
-                std::strftime(time_str, sizeof(time_str), "%m/%d/%Y %I:%M %p", tm_info);
-                ImGui::Text("%s", time_str);
+                const std::string time_str = FormatRecentProjectTime(proj.last_opened);
+                ImGui::Text("%s", time_str.c_str());
                 ImGui::PopStyleColor();
                 ImGui::Unindent(30);
 
@@ -265,10 +292,8 @@ void StartPage::RenderRecentProjects() {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
                 ImGui::TextWrapped("%s", proj.path.c_str());
 
-                char time_str[64];
-                std::tm* tm_info = std::localtime(&proj.last_opened);
-                std::strftime(time_str, sizeof(time_str), "%m/%d/%Y %I:%M %p", tm_info);
-                ImGui::Text("%s", time_str);
+                const std::string time_str = FormatRecentProjectTime(proj.last_opened);
+                ImGui::Text("%s", time_str.c_str());
                 ImGui::PopStyleColor();
                 ImGui::Unindent(30);
 
@@ -304,10 +329,8 @@ void StartPage::RenderRecentProjects() {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
                 ImGui::TextWrapped("%s", proj.path.c_str());
 
-                char time_str[64];
-                std::tm* tm_info = std::localtime(&proj.last_opened);
-                std::strftime(time_str, sizeof(time_str), "%m/%d/%Y %I:%M %p", tm_info);
-                ImGui::Text("%s", time_str);
+                const std::string time_str = FormatRecentProjectTime(proj.last_opened);
+                ImGui::Text("%s", time_str.c_str());
                 ImGui::PopStyleColor();
                 ImGui::Unindent(30);
 
