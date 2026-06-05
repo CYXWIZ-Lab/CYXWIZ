@@ -2335,40 +2335,26 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::TimeSeriesWindow: {
             NodePin in;
             in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Sequential Data";
+            in.type = PinType::Dataset;
+            in.name = "Data";
             in.is_input = true;
             in.description =
-                "Time-ordered tabular stream from DataInput (or "
-                "TimeSeriesFeatures). Must contain the value_col plus "
-                "any feature_cols you want windowed. Rows are assumed "
-                "to be in chronological order — TimeSeriesSplit "
-                "preserves that ordering.";
+                "Time-ordered tabular stream from DataInput or "
+                "TimeSeriesFeatures. Must contain value_col plus any "
+                "feature_cols you want windowed.";
             node.inputs.push_back(in);
-            NodePin out_x;
-            out_x.id = next_pin_id_++;
-            out_x.type = PinType::Tensor;
-            out_x.name = "Windows";
-            out_x.is_input = false;
-            out_x.description =
-                "Sliding-window inputs of shape [num_windows, "
-                "input_width, num_features]. Each row is one "
-                "input_width-step lookback window. Connect into a "
-                "DataLoader → recurrent / dense forecasting model.";
-            node.outputs.push_back(out_x);
-            NodePin out_y;
-            out_y.id = next_pin_id_++;
-            out_y.type = PinType::Labels;
-            out_y.name = "Targets";
-            out_y.is_input = false;
-            out_y.description =
-                "Forecast targets of shape [num_windows, label_width] "
-                "— the next label_width steps starting `shift` "
-                "positions after the window. Wire to a regression "
-                "loss (MSE/L1/Huber).";
-            node.outputs.push_back(out_y);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Dataset;
+            out.name = "Windowed";
+            out.is_input = false;
+            out.description =
+                "Windowed Arrow table with x_* feature columns and a "
+                "y label column. Optional __window_start_time metadata "
+                "is emitted when time_col is set.";
+            node.outputs.push_back(out);
             // Phase 4 canonical params read by TimeSeriesWindowOperator.
-            // value_col is required and has no reasonable default — the
+            // value_col is required and has no reasonable default; the
             // user must fill it in via Properties before training. Leaving
             // it empty here trips the operator's Configure error which
             // the compile gate surfaces before training launch.
@@ -2392,8 +2378,8 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::TimeSeriesFeatures: {
             NodePin in;
             in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Input";
+            in.type = PinType::Dataset;
+            in.name = "Data";
             in.is_input = true;
             in.description =
                 "Time-ordered tabular stream containing value_col. "
@@ -2402,16 +2388,16 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.inputs.push_back(in);
             NodePin out;
             out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
+            out.type = PinType::Dataset;
             out.name = "Enriched";
             out.is_input = false;
             out.description =
-                "Same rows as Input plus lag_<n> and rolling_<agg>_<w> "
+                "Same rows as Data plus lag_<n> and rolling_<agg>_<w> "
                 "columns. Feed into TimeSeriesWindow so feature_cols "
                 "can pick up the new columns alongside value_col.";
             node.outputs.push_back(out);
             // Phase 4 canonical params read by TimeSeriesFeaturesOperator.
-            // value_col is required and has no default — user must fill
+            // value_col is required and has no default; user must fill
             // via Properties before training. Operator's Configure errors
             // if empty; compile gate surfaces it.
             node.parameters["value_col"] = "";

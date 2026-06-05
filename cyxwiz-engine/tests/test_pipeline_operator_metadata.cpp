@@ -124,6 +124,32 @@ int main() {
           HasEnumValue(logical, "op", "or"),
           "TensorLogicalMask should expose binary and/or");
 
+    const auto* ts_window = metadata.GetMetadata(gui::NodeType::TimeSeriesWindow);
+    Check(ts_window != nullptr, "missing TimeSeriesWindow metadata");
+    Check(HasInputType(ts_window, "Data", gui::PinType::Dataset),
+          "TimeSeriesWindow should expose Dataset input");
+    Check(HasOutputType(ts_window, "Windowed", gui::PinType::Dataset),
+          "TimeSeriesWindow should expose one windowed Dataset output");
+    Check(HasParameter(ts_window, "value_col") &&
+          HasParameter(ts_window, "feature_cols") &&
+          HasParameter(ts_window, "time_col") &&
+          HasParameter(ts_window, "input_width") &&
+          HasParameter(ts_window, "label_width") &&
+          HasParameter(ts_window, "shift"),
+          "TimeSeriesWindow should expose canonical operator parameters");
+
+    const auto* ts_features = metadata.GetMetadata(gui::NodeType::TimeSeriesFeatures);
+    Check(ts_features != nullptr, "missing TimeSeriesFeatures metadata");
+    Check(HasInputType(ts_features, "Data", gui::PinType::Dataset),
+          "TimeSeriesFeatures should expose Dataset input");
+    Check(HasOutputType(ts_features, "Enriched", gui::PinType::Dataset),
+          "TimeSeriesFeatures should expose one enriched Dataset output");
+    Check(HasParameter(ts_features, "value_col") &&
+          HasParameter(ts_features, "lag_values") &&
+          HasParameter(ts_features, "rolling_windows") &&
+          HasParameter(ts_features, "rolling_aggregations"),
+          "TimeSeriesFeatures should expose canonical operator parameters");
+
     const auto* ts_split = metadata.GetMetadata(gui::NodeType::TimeSeriesSplit);
     Check(ts_split != nullptr, "missing TimeSeriesSplit metadata");
     Check(HasInputType(ts_split, "Data", gui::PinType::Dataset),

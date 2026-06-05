@@ -2267,13 +2267,13 @@ void NodeEditor::RenderNodes() {
 
             // Time-Series
             case NodeType::TimeSeriesWindow: {
-                auto ws = node.parameters.find("window_size");
-                auto fh = node.parameters.find("forecast_horizon");
-                if (ws != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Window: %s", ws->second.c_str());
+                auto iw = node.parameters.find("input_width");
+                auto shift = node.parameters.find("shift");
+                if (iw != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Width: %s", iw->second.c_str());
                 }
-                if (fh != node.parameters.end()) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Horizon: %s", fh->second.c_str());
+                if (shift != node.parameters.end()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Shift: %s", shift->second.c_str());
                 }
                 break;
             }
@@ -2281,6 +2281,10 @@ void NodeEditor::RenderNodes() {
                 auto lag = node.parameters.find("lag_values");
                 if (lag != node.parameters.end()) {
                     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Lags: %s", lag->second.c_str());
+                }
+                auto rolling = node.parameters.find("rolling_windows");
+                if (rolling != node.parameters.end() && !rolling->second.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Rolling: %s", rolling->second.c_str());
                 }
                 break;
             }

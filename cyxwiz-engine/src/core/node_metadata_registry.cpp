@@ -1475,16 +1475,24 @@ void NodeMetadataRegistry::InitializeTextNodes() {
 void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
     RegisterNode({NodeType::TimeSeriesWindow, NodeCategory::TimeSeries, "Sliding Window", ICON_FA_CHART_LINE,
         {"window", "sliding", "sequence"}, 0, false, "Create sliding windows", "", "",
-        {{"Data", PinType::Tensor, true, "Time series"}},
-        {{"Windows", PinType::Tensor, true, "Windows"}, {"Targets", PinType::Tensor, true, "Targets"}},
-        {{"window_size", "int", "10", "Window size", {}, ""}},
+        {{"Data", PinType::Dataset, true, "Input time-ordered table"}},
+        {{"Windowed", PinType::Dataset, true, "Windowed table with x_* feature columns and y label"}},
+        {{"value_col", "string", "", "Numeric source/target column", {}, ""},
+         {"feature_cols", "string", "", "Extra numeric feature columns to window", {}, ""},
+         {"time_col", "string", "", "Optional numeric time column", {}, ""},
+         {"input_width", "int", "12", "Lookback steps per sample", {}, ""},
+         {"label_width", "int", "1", "Forecast steps (v1 requires 1)", {}, ""},
+         {"shift", "int", "1", "Forecast offset", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TimeSeriesFeatures, NodeCategory::TimeSeries, "TS Features", ICON_FA_SLIDERS,
         {"features", "lag", "rolling"}, 0, false, "Extract TS features", "", "",
-        {{"Data", PinType::Tensor, true, "Time series"}},
-        {{"Features", PinType::Tensor, true, "Features"}},
-        {{"lag_values", "string", "1,2,3", "Lag values", {}, ""}},
+        {{"Data", PinType::Dataset, true, "Input time-ordered table"}},
+        {{"Enriched", PinType::Dataset, true, "Input table plus lag and rolling feature columns"}},
+        {{"value_col", "string", "", "Numeric column to featurize", {}, ""},
+         {"lag_values", "string", "", "Lag values", {}, ""},
+         {"rolling_windows", "string", "", "Rolling window sizes", {}, ""},
+         {"rolling_aggregations", "string", "mean", "Rolling aggregations", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TimeSeriesSplit, NodeCategory::TimeSeries, "TS Split", ICON_FA_SCISSORS,

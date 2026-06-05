@@ -835,6 +835,15 @@ appends `__partition__` values where 0=train, 1=validation, and 2=test.
 The metadata drift guard now checks the Dataset pins and train/val/test
 ratio parameters.
 
+**2026-06-05 update:** resolved the remaining time-series Cat-1 table
+contract drift for `TimeSeriesWindow` and `TimeSeriesFeatures`.
+`TimeSeriesWindow` now exposes one Dataset input, one `Windowed` Dataset
+output, and the operator-readable params `value_col`, `feature_cols`,
+`time_col`, `input_width`, `label_width`, and `shift`. `TimeSeriesFeatures`
+now exposes Dataset input/output pins and the canonical `value_col`,
+`lag_values`, `rolling_windows`, and `rolling_aggregations` params. The
+metadata drift guard now checks all three time-series table nodes.
+
 ## Build Health Follow-Up
 
 ### Full engine Debug build duplicate DataSources case
