@@ -522,6 +522,39 @@ TEST_CASE("MultiHeadAttentionLayer computes deterministic self-attention", "[att
     REQUIRE(grad_wq[3] == Catch::Approx(0.3127972f).margin(1e-5f));
 }
 
+TEST_CASE("MultiHeadAttentionLayer reuses attention dropout mask during backward", "[attention][layer]") {
+    cyxwiz::MultiHeadAttentionLayer attention(1, 1, 0.5f, false);
+
+    float identity_values[] = {1.0f};
+    attention.SetParameters({
+        {"W_q", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_k", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_v", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_o", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+    });
+
+    float input_values[] = {1.0f};
+    cyxwiz::Tensor input({1, 1, 1}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor output = attention.Forward(input);
+
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 1, 1});
+    const float* output_data = output.Data<float>();
+    const bool output_matches_dropout_mask =
+        output_data[0] == Catch::Approx(0.0f) ||
+        output_data[0] == Catch::Approx(2.0f);
+    REQUIRE(output_matches_dropout_mask);
+
+    cyxwiz::Tensor weights = attention.GetAttentionWeights();
+    REQUIRE(weights.Shape() == std::vector<size_t>{1, 1, 1, 1});
+    REQUIRE(weights.Data<float>()[0] == Catch::Approx(1.0f));
+
+    float grad_values[] = {1.0f};
+    cyxwiz::Tensor grad_output({1, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = attention.Backward(grad_output);
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{1, 1, 1});
+    REQUIRE(grad_input.Data<float>()[0] == Catch::Approx(output_data[0]));
+}
+
 TEST_CASE("DropoutLayer passes values through in eval mode", "[dropout][layer]") {
     float input_values[] = {1.0f, -2.0f, 3.5f, 4.0f};
     cyxwiz::Tensor input({2, 2}, input_values, cyxwiz::DataType::Float32);

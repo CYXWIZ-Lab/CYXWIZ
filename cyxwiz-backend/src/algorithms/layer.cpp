@@ -5025,9 +5025,6 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
         v_shape[2] != static_cast<size_t>(embed_dim_)) {
         throw std::runtime_error("MultiHeadAttention forward shape mismatch");
     }
-    if (training_ && dropout_ > 0.0f) {
-        throw std::runtime_error("MultiHeadAttention CPU fallback does not implement attention dropout");
-    }
     if (attn_mask != nullptr &&
         (attn_mask->GetDataType() != DataType::Float32 ||
          attn_mask->Shape() != std::vector<size_t>{q_shape[1], k_shape[1]})) {
@@ -5062,6 +5059,12 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
     cached_V_ = Tensor({batch_size, seq_len_kv, embed_dim}, DataType::Float32);
     cached_attn_weights_ = Tensor({seq_len_q, seq_len_kv, batch_size, num_heads}, DataType::Float32);
     cached_context_ = Tensor({batch_size, seq_len_q, embed_dim}, DataType::Float32);
+    cached_attention_dropout_ = training_ && dropout_ > 0.0f;
+    if (cached_attention_dropout_) {
+        dropout_mask_ = Tensor({seq_len_q, seq_len_kv, batch_size, num_heads}, DataType::Float32);
+    } else {
+        dropout_mask_ = Tensor();
+    }
     Tensor output({batch_size, seq_len_q, embed_dim}, DataType::Float32);
 
     const auto seq_index = [embed_dim](size_t b, size_t s, size_t e, size_t seq_len) {
@@ -5098,7 +5101,11 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
     const float* V = cached_V_.Data<float>();
     const float* mask_data = attn_mask != nullptr ? attn_mask->Data<float>() : nullptr;
     float* attn_data = cached_attn_weights_.Data<float>();
+    float* dropout_mask_data = cached_attention_dropout_ ? dropout_mask_.Data<float>() : nullptr;
     float* context_data = cached_context_.Data<float>();
+    static thread_local std::mt19937 dropout_rng(std::random_device{}());
+    std::bernoulli_distribution keep_dist(1.0f - dropout_);
+    const float dropout_scale = cached_attention_dropout_ ? 1.0f / (1.0f - dropout_) : 1.0f;
 
     for (size_t b = 0; b < batch_size; ++b) {
         for (size_t h = 0; h < num_heads; ++h) {
@@ -5123,12 +5130,22 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
                 }
                 for (size_t k = 0; k < seq_len_kv; ++k) {
                     attn_data[attn_index(q, k, b, h)] /= sum_exp;
+                    if (cached_attention_dropout_) {
+                        dropout_mask_data[attn_index(q, k, b, h)] =
+                            keep_dist(dropout_rng) ? 1.0f : 0.0f;
+                    }
                 }
 
                 for (size_t d = 0; d < head_dim; ++d) {
                     float value_sum = 0.0f;
                     for (size_t k = 0; k < seq_len_kv; ++k) {
-                        value_sum += attn_data[attn_index(q, k, b, h)] *
+                        const size_t attention_index = attn_index(q, k, b, h);
+                        const float dropped_attention = cached_attention_dropout_
+                                                            ? attn_data[attention_index] *
+                                                                  dropout_mask_data[attention_index] *
+                                                                  dropout_scale
+                                                            : attn_data[attention_index];
+                        value_sum += dropped_attention *
                                      V[seq_index(b, k, head_offset + d, seq_len_kv)];
                     }
                     context_data[seq_index(b, q, head_offset + d, seq_len_q)] = value_sum;
@@ -5181,6 +5198,11 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
         W_q_.Shape() != weight_shape || W_k_.Shape() != weight_shape ||
         W_v_.Shape() != weight_shape || W_o_.Shape() != weight_shape) {
         throw std::runtime_error("MultiHeadAttention backward cache/parameter shape mismatch");
+    }
+    if (cached_attention_dropout_ &&
+        (dropout_mask_.GetDataType() != DataType::Float32 ||
+         dropout_mask_.Shape() != std::vector<size_t>{seq_len_q, seq_len_kv, batch_size, num_heads})) {
+        throw std::runtime_error("MultiHeadAttention backward dropout mask shape mismatch");
     }
 
     const auto seq_index = [embed_dim](size_t b, size_t s, size_t e, size_t seq_len) {
@@ -5235,10 +5257,12 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
     const float* K = cached_K_.Data<float>();
     const float* V = cached_V_.Data<float>();
     const float* attn = cached_attn_weights_.Data<float>();
+    const float* dropout_mask_data = cached_attention_dropout_ ? dropout_mask_.Data<float>() : nullptr;
     float* grad_Q_data = grad_Q.Data<float>();
     float* grad_K_data = grad_K.Data<float>();
     float* grad_V_data = grad_V.Data<float>();
     std::vector<float> grad_attn(seq_len_kv, 0.0f);
+    const float dropout_scale = cached_attention_dropout_ ? 1.0f / (1.0f - dropout_) : 1.0f;
 
     for (size_t b = 0; b < batch_size; ++b) {
         for (size_t h = 0; h < num_heads; ++h) {
@@ -5246,13 +5270,19 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
             for (size_t q = 0; q < seq_len_q; ++q) {
                 std::fill(grad_attn.begin(), grad_attn.end(), 0.0f);
                 for (size_t k = 0; k < seq_len_kv; ++k) {
+                    const size_t attention_index = attn_index(q, k, b, h);
+                    const float attention_multiplier = cached_attention_dropout_
+                                                           ? dropout_mask_data[attention_index] * dropout_scale
+                                                           : 1.0f;
+                    const float dropped_attention = attn[attention_index] * attention_multiplier;
                     for (size_t d = 0; d < head_dim; ++d) {
                         grad_V_data[seq_index(b, k, head_offset + d, seq_len_kv)] +=
-                            attn[attn_index(q, k, b, h)] *
+                            dropped_attention *
                             grad_context_data[seq_index(b, q, head_offset + d, seq_len_q)];
                         grad_attn[k] +=
                             grad_context_data[seq_index(b, q, head_offset + d, seq_len_q)] *
-                            V[seq_index(b, k, head_offset + d, seq_len_kv)];
+                            V[seq_index(b, k, head_offset + d, seq_len_kv)] *
+                            attention_multiplier;
                     }
                 }
 

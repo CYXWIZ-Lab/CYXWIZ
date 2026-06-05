@@ -564,6 +564,21 @@ Thirty-sixth slice status:
   the CPU fallback. General nonsymmetric full eigendecomposition remains
   a follow-up slice.
 
+Thirty-seventh slice status:
+
+- Completed: added CPU attention-dropout support for legacy
+  `MultiHeadAttentionLayer` training mode.
+- Completed: cached and reused the dropout mask across attention
+  forward/backward so gradient flow matches the sampled attention path.
+- Completed: added focused regression coverage for one-token attention
+  dropout that validates mask-scaled forward output, cached softmax
+  weights, and backward mask reuse without depending on a fixed RNG
+  seed.
+- Remaining: cross-attention `Backward()` still returns only query
+  gradients because the current `Layer::Backward` API cannot return
+  key/value gradients. `full_matrices=true` SVD and general
+  nonsymmetric eigendecomposition also remain follow-up slices.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -1021,8 +1036,8 @@ legacy `Conv2DLayer`, legacy `Conv1DLayer`, and legacy
 now have CPU fallback coverage with tests. Vector-matrix thin SVD,
 rank, condition number, and low-rank approximation also have CPU
 fallback coverage with tests. Remaining fallback work should proceed by
-operator group, starting with attention dropout / cross-attention
-gradient API limitations, full SVD, and general eigendecomposition.
+operator group, starting with cross-attention gradient API limitations,
+full SVD, and general eigendecomposition.
 
 The build can run without ArrayFire, but many public operations cannot:
 

@@ -782,6 +782,7 @@ private:
     Tensor cached_context_;  // Before output projection
     Tensor dropout_mask_;  // Dropout mask for attention weights
     bool cached_self_attention_ = false;
+    bool cached_attention_dropout_ = false;
 
     void InitializeWeights();
 };
