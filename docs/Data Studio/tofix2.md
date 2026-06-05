@@ -608,6 +608,22 @@ Thirty-ninth slice status:
 - Remaining: general nonsymmetric eigendecomposition remains a
   follow-up slice.
 
+Fortieth slice status:
+
+- Completed: replaced the partial CPU `LinearAlgebra::Eigen()` fallback
+  that returned only a dominant eigenpair as a successful result.
+- Completed: added full CPU eigendecomposition for real symmetric
+  matrices by reusing the private Jacobi symmetric eigensolver already
+  used by SVD.
+- Completed: added exact CPU support for nonsymmetric 2x2 matrices with
+  distinct real or complex eigenvalues.
+- Completed: added regression tests that verify returned eigenpairs with
+  `A*v = lambda*v`, including a complex 2x2 rotation case.
+- Completed: larger nonsymmetric matrices now fail explicitly instead of
+  returning an incomplete successful decomposition.
+- Remaining: a general nonsymmetric eigensolver for matrices larger than
+  2x2 remains a follow-up numerical-methods slice.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -1065,7 +1081,8 @@ legacy `Conv2DLayer`, legacy `Conv1DLayer`, and legacy
 now have CPU fallback coverage with tests. Vector-matrix thin SVD,
 rank, condition number, and low-rank approximation also have CPU
 fallback coverage with tests. Remaining fallback work should proceed by
-operator group, starting with general eigendecomposition.
+operator group, starting with general nonsymmetric eigendecomposition
+for matrices larger than 2x2.
 
 The build can run without ArrayFire, but many public operations cannot:
 

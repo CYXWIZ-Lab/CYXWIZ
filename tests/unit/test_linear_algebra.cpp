@@ -1,6 +1,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cyxwiz/linear_algebra.h>
+#include <complex>
+#include <string>
 #include <vector>
 
 namespace {
@@ -30,6 +32,23 @@ double ColumnDot(const std::vector<std::vector<double>>& matrix, size_t left, si
         result += row[left] * row[right];
     }
     return result;
+}
+
+void RequireEigenpair(
+    const std::vector<std::vector<double>>& matrix,
+    const cyxwiz::EigenResult& eigen,
+    size_t column,
+    double tolerance = 1e-10) {
+    for (size_t row = 0; row < matrix.size(); ++row) {
+        std::complex<double> actual(0.0, 0.0);
+        for (size_t inner = 0; inner < matrix.size(); ++inner) {
+            actual += matrix[row][inner] * eigen.eigenvectors[inner][column];
+        }
+        const std::complex<double> expected =
+            eigen.eigenvalues[column] * eigen.eigenvectors[row][column];
+        REQUIRE(actual.real() == Catch::Approx(expected.real()).margin(tolerance));
+        REQUIRE(actual.imag() == Catch::Approx(expected.imag()).margin(tolerance));
+    }
 }
 
 }  // namespace
@@ -120,4 +139,58 @@ TEST_CASE("LinearAlgebra CPU SVD powers rank condition and low-rank helpers", "[
     REQUIRE(low_rank.matrix[1][1] == Catch::Approx(0.0).margin(1e-10));
     REQUIRE(low_rank.matrix[2][0] == Catch::Approx(0.0).margin(1e-10));
     REQUIRE(low_rank.matrix[2][1] == Catch::Approx(0.0).margin(1e-10));
+}
+
+TEST_CASE("LinearAlgebra CPU Eigen returns full symmetric eigendecomposition", "[linalg][eigen]") {
+    const std::vector<std::vector<double>> matrix = {
+        {2.0, 1.0},
+        {1.0, 2.0},
+    };
+
+    cyxwiz::EigenResult eigen = cyxwiz::LinearAlgebra::Eigen(matrix);
+    REQUIRE(eigen.success);
+    REQUIRE(eigen.n == 2);
+    REQUIRE(eigen.eigenvalues.size() == 2);
+    REQUIRE(eigen.eigenvectors.size() == 2);
+    REQUIRE(eigen.eigenvectors[0].size() == 2);
+    REQUIRE(eigen.eigenvalues[0].real() == Catch::Approx(3.0).margin(1e-10));
+    REQUIRE(eigen.eigenvalues[1].real() == Catch::Approx(1.0).margin(1e-10));
+    REQUIRE(eigen.eigenvalues[0].imag() == Catch::Approx(0.0).margin(1e-10));
+    REQUIRE(eigen.eigenvalues[1].imag() == Catch::Approx(0.0).margin(1e-10));
+    RequireEigenpair(matrix, eigen, 0);
+    RequireEigenpair(matrix, eigen, 1);
+}
+
+TEST_CASE("LinearAlgebra CPU Eigen supports nonsymmetric 2x2 complex pairs", "[linalg][eigen]") {
+    const std::vector<std::vector<double>> matrix = {
+        {0.0, -1.0},
+        {1.0, 0.0},
+    };
+
+    cyxwiz::EigenResult eigen = cyxwiz::LinearAlgebra::Eigen(matrix);
+    REQUIRE(eigen.success);
+    REQUIRE(eigen.n == 2);
+    REQUIRE(eigen.eigenvalues.size() == 2);
+    REQUIRE(eigen.eigenvectors.size() == 2);
+    REQUIRE(eigen.eigenvectors[0].size() == 2);
+    REQUIRE(eigen.eigenvalues[0].real() == Catch::Approx(0.0).margin(1e-10));
+    REQUIRE(eigen.eigenvalues[1].real() == Catch::Approx(0.0).margin(1e-10));
+    REQUIRE(std::abs(eigen.eigenvalues[0].imag()) == Catch::Approx(1.0).margin(1e-10));
+    REQUIRE(std::abs(eigen.eigenvalues[1].imag()) == Catch::Approx(1.0).margin(1e-10));
+    RequireEigenpair(matrix, eigen, 0);
+    RequireEigenpair(matrix, eigen, 1);
+}
+
+TEST_CASE("LinearAlgebra CPU Eigen rejects unsupported larger nonsymmetric matrices", "[linalg][eigen]") {
+    const std::vector<std::vector<double>> matrix = {
+        {1.0, 2.0, 0.0},
+        {0.0, 1.0, 3.0},
+        {4.0, 0.0, 1.0},
+    };
+
+    cyxwiz::EigenResult eigen = cyxwiz::LinearAlgebra::Eigen(matrix);
+    REQUIRE_FALSE(eigen.success);
+    REQUIRE(eigen.n == 3);
+    REQUIRE(eigen.eigenvalues.empty());
+    REQUIRE(eigen.error_message.find("symmetric matrices") != std::string::npos);
 }

@@ -324,6 +324,37 @@ static bool JacobiEigenSymmetric(std::vector<std::vector<double>> matrix,
     return true;
 }
 
+static std::vector<std::complex<double>> Eigenvector2x2(
+    const std::vector<std::vector<double>>& A,
+    const std::complex<double>& lambda) {
+    const std::complex<double> a(A[0][0], 0.0);
+    const std::complex<double> b(A[0][1], 0.0);
+    const std::complex<double> c(A[1][0], 0.0);
+    const std::complex<double> d(A[1][1], 0.0);
+
+    std::vector<std::complex<double>> vector;
+    if (std::abs(b) >= std::abs(c) && std::abs(b) > 1e-12) {
+        vector = {b, lambda - a};
+    } else if (std::abs(c) > 1e-12) {
+        vector = {lambda - d, c};
+    } else {
+        vector = {std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 0.0)};
+    }
+
+    double norm = 0.0;
+    for (const auto& value : vector) {
+        norm += std::norm(value);
+    }
+    norm = std::sqrt(norm);
+    if (norm <= 1e-12) {
+        return {std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 0.0)};
+    }
+    for (auto& value : vector) {
+        value /= norm;
+    }
+    return vector;
+}
+
 static bool CompleteOrthonormalColumns(std::vector<std::vector<double>>& matrix,
                                        int rows,
                                        int cols,
@@ -890,6 +921,11 @@ EigenResult LinearAlgebra::Eigen(const std::vector<std::vector<double>>& A) {
         return result;
     }
 
+    if (!IsRectangularMatrix(A)) {
+        result.error_message = "Input matrix must be rectangular and non-empty";
+        return result;
+    }
+
     if (!IsSquare(A)) {
         result.error_message = "Matrix must be square for eigendecomposition";
         return result;
@@ -899,55 +935,79 @@ EigenResult LinearAlgebra::Eigen(const std::vector<std::vector<double>>& A) {
     result.n = n;
 
     // Note: ArrayFire v3 does not have built-in eigendecomposition (af::eigen removed)
-    // Using CPU implementation via QR iteration algorithm
     // For future ArrayFire versions, GPU acceleration can be added back
 
-    // CPU fallback: Power iteration for dominant eigenvalue (simplified)
-    // For a full implementation, use QR algorithm or Jacobi method
-    result.error_message = "CPU eigendecomposition not fully implemented - requires ArrayFire";
+    if (IsSymmetric(A)) {
+        std::vector<double> eigenvalues;
+        std::vector<std::vector<double>> eigenvectors;
+        if (!JacobiEigenSymmetric(A, eigenvalues, eigenvectors)) {
+            result.error_message = "CPU symmetric eigensolver failed";
+            return result;
+        }
 
-    // Simple power iteration for largest eigenvalue
-    std::vector<double> v(n, 1.0);
-    double lambda = 0.0;
+        std::vector<int> order(n);
+        std::iota(order.begin(), order.end(), 0);
+        std::sort(order.begin(), order.end(), [&](int left, int right) {
+            return eigenvalues[left] > eigenvalues[right];
+        });
 
-    for (int iter = 0; iter < 1000; ++iter) {
-        // Compute Av
-        std::vector<double> Av(n, 0.0);
-        for (int i = 0; i < n; ++i) {
-            for (int j = 0; j < n; ++j) {
-                Av[i] += A[i][j] * v[j];
+        result.eigenvalues.resize(n);
+        result.eigenvectors.assign(n, std::vector<std::complex<double>>(n));
+        for (int out_col = 0; out_col < n; ++out_col) {
+            const int source_col = order[out_col];
+            result.eigenvalues[out_col] = std::complex<double>(eigenvalues[source_col], 0.0);
+            for (int row = 0; row < n; ++row) {
+                result.eigenvectors[row][out_col] =
+                    std::complex<double>(eigenvectors[row][source_col], 0.0);
             }
         }
 
-        // Find max absolute value
-        double maxVal = 0.0;
-        for (double x : Av) {
-            maxVal = std::max(maxVal, std::abs(x));
-        }
-
-        if (maxVal < 1e-12) break;
-
-        // Normalize
-        double newLambda = maxVal;
-        for (int i = 0; i < n; ++i) {
-            v[i] = Av[i] / maxVal;
-        }
-
-        if (std::abs(newLambda - lambda) < 1e-10) {
-            lambda = newLambda;
-            break;
-        }
-        lambda = newLambda;
+        result.success = true;
+        return result;
     }
 
-    result.eigenvalues.push_back(std::complex<double>(lambda, 0.0));
-    result.eigenvectors.resize(n, std::vector<std::complex<double>>(1));
-    for (int i = 0; i < n; ++i) {
-        result.eigenvectors[i][0] = std::complex<double>(v[i], 0.0);
+    if (n == 2) {
+        const double a = A[0][0];
+        const double b = A[0][1];
+        const double c = A[1][0];
+        const double d = A[1][1];
+        const double trace = a + d;
+        const double determinant = a * d - b * c;
+        const double discriminant = trace * trace - 4.0 * determinant;
+
+        std::complex<double> sqrt_discriminant;
+        if (discriminant >= 0.0) {
+            sqrt_discriminant = std::complex<double>(std::sqrt(discriminant), 0.0);
+        } else {
+            sqrt_discriminant = std::complex<double>(0.0, std::sqrt(-discriminant));
+        }
+
+        const std::complex<double> lambda0 =
+            (std::complex<double>(trace, 0.0) + sqrt_discriminant) / 2.0;
+        const std::complex<double> lambda1 =
+            (std::complex<double>(trace, 0.0) - sqrt_discriminant) / 2.0;
+
+        if (std::abs(lambda0 - lambda1) <= 1e-12) {
+            result.error_message =
+                "CPU nonsymmetric 2x2 eigendecomposition does not support repeated eigenvalues";
+            return result;
+        }
+
+        result.eigenvalues = {lambda0, lambda1};
+        result.eigenvectors.assign(2, std::vector<std::complex<double>>(2));
+        const auto vector0 = Eigenvector2x2(A, lambda0);
+        const auto vector1 = Eigenvector2x2(A, lambda1);
+        for (int row = 0; row < 2; ++row) {
+            result.eigenvectors[row][0] = vector0[row];
+            result.eigenvectors[row][1] = vector1[row];
+        }
+
+        result.success = true;
+        return result;
     }
 
-    result.success = true;
-    result.error_message = "Note: Only dominant eigenvalue computed (CPU fallback)";
+    result.error_message =
+        "CPU eigendecomposition supports symmetric matrices and nonsymmetric 2x2 matrices only";
     return result;
 }
 
