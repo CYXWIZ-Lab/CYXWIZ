@@ -1,11 +1,50 @@
 # To Fix 2 - CyxWiz Backend Review for Engineering Pickup
 
+**Status:** DONE / CLOSED on 2026-06-05.
+
 This document captures a broader backend-library review of
 `cyxwiz-backend` with emphasis on architecture, API coherence,
 correctness, memory behavior, and performance.
 
-The goal is to give engineers a practical backlog they can pick up in
-priority order.
+The goal was to give engineers a practical backlog they can pick up in
+priority order. That implementation pass is now complete for the
+bounded fixes that fit this audit file.
+
+Do not append new active work here. Use this file as the closed review
+record for the 2026-06-05 backend cleanup/fallback/modularity pass.
+
+## Closure Boundary
+
+The completed `tofix2.md` pass covered:
+
+- stale public/backend API cleanup,
+- Tensor/C API correctness and tests,
+- DataLoader naming conflict cleanup,
+- MemoryManager honesty and Tensor residency improvements already
+  verified during this audit,
+- operation-group CPU fallback coverage through losses, legacy layers,
+  attention, SVD, and bounded eigendecomposition,
+- first modularity cleanup for monolithic layer helpers,
+- placeholder source cleanup,
+- backend lifecycle synchronization,
+- seeded Tensor random factory,
+- default distributed process-group lifecycle serialization.
+
+The remaining items are intentionally not part of this closed fix pass
+because they require separate design, benchmark, or multi-process
+validation:
+
+- full Tensor residency/performance refactor,
+- larger nonsymmetric eigensolver for matrices bigger than 2x2,
+- continued `layer.cpp` implementation-group splits,
+- global RNG policy across layers/dropout/time-series/text generators,
+- distributed raw-pointer ownership/API decision,
+- NCCL average reduction, dtype/device validation, and multi-rank stress
+  tests,
+- broader GPU execution inventory and CPU fallback policy hardening.
+
+Those are roadmap follow-ups, not incomplete work inside this closed
+audit file.
 
 ---
 
@@ -1401,19 +1440,19 @@ Audit README and public headers against actual backend behavior.
 
 ## Final Note
 
-The backend is already feature-rich, but it needs consolidation more
-than it needs more surface area.
+This file is now closed. The backend cleanup pass fixed the bounded
+correctness, API honesty, fallback, modularity, and lifecycle issues
+that were appropriate to handle here.
 
-The highest-value engineering work now is:
+The highest-value remaining work is roadmap-level consolidation:
 
 - reduce abstraction overlap
-- make the API honest
-- make Tensor/device behavior explicit
-- remove unnecessary host-device churn
+- continue making Tensor/device behavior explicit
+- reduce unnecessary host-device churn
+- split large implementation files only when each group has focused
+  tests
+- harden distributed and GPU behavior with real multi-process or
+  backend-specific validation
 
-That work will improve:
-
-- maintainability
-- correctness
-- debuggability
-- training speed
+Do not reopen this file for new fixes. Create or use a focused follow-up
+file for each remaining roadmap item.
