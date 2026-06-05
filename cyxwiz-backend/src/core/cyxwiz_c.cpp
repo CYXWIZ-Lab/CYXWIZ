@@ -3,6 +3,7 @@
 #include "cyxwiz/linear_algebra.h"
 #include <string>
 #include <cstring>
+#include <vector>
 
 // Thread-local error storage
 thread_local std::string g_last_error;
@@ -13,6 +14,44 @@ static void SetLastError(const std::string& error) {
 
 static void ClearLastError() {
     g_last_error.clear();
+}
+
+static bool TryConvertDataType(CyxWizDataType dtype, cyxwiz::DataType& out) {
+    switch (dtype) {
+        case CYXWIZ_DTYPE_FLOAT32:
+            out = cyxwiz::DataType::Float32;
+            return true;
+        case CYXWIZ_DTYPE_FLOAT64:
+            out = cyxwiz::DataType::Float64;
+            return true;
+        case CYXWIZ_DTYPE_INT32:
+            out = cyxwiz::DataType::Int32;
+            return true;
+        case CYXWIZ_DTYPE_INT64:
+            out = cyxwiz::DataType::Int64;
+            return true;
+        case CYXWIZ_DTYPE_UINT8:
+            out = cyxwiz::DataType::UInt8;
+            return true;
+    }
+
+    SetLastError("Invalid tensor data type");
+    return false;
+}
+
+static bool TryBuildShape(const size_t* shape, size_t ndim, std::vector<size_t>& out) {
+    if (ndim > 0 && !shape) {
+        SetLastError("Null tensor shape pointer");
+        return false;
+    }
+
+    if (ndim == 0) {
+        out.clear();
+        return true;
+    }
+
+    out.assign(shape, shape + ndim);
+    return true;
 }
 
 // Initialization
@@ -71,8 +110,13 @@ int cyxwiz_device_get_count(CyxWizDeviceType type) {
 // Tensor Operations
 CyxWizTensor* cyxwiz_tensor_create(const size_t* shape, size_t ndim, CyxWizDataType dtype) {
     try {
-        std::vector<size_t> shape_vec(shape, shape + ndim);
-        auto* tensor = new cyxwiz::Tensor(shape_vec, static_cast<cyxwiz::DataType>(dtype));
+        std::vector<size_t> shape_vec;
+        cyxwiz::DataType tensor_dtype;
+        if (!TryBuildShape(shape, ndim, shape_vec) || !TryConvertDataType(dtype, tensor_dtype)) {
+            return nullptr;
+        }
+
+        auto* tensor = new cyxwiz::Tensor(shape_vec, tensor_dtype);
         return reinterpret_cast<CyxWizTensor*>(tensor);
     } catch (const std::exception& e) {
         SetLastError(e.what());
@@ -83,8 +127,18 @@ CyxWizTensor* cyxwiz_tensor_create(const size_t* shape, size_t ndim, CyxWizDataT
 CyxWizTensor* cyxwiz_tensor_create_with_data(const size_t* shape, size_t ndim,
                                                const void* data, CyxWizDataType dtype) {
     try {
-        std::vector<size_t> shape_vec(shape, shape + ndim);
-        auto* tensor = new cyxwiz::Tensor(shape_vec, data, static_cast<cyxwiz::DataType>(dtype));
+        if (!data) {
+            SetLastError("Null tensor data pointer");
+            return nullptr;
+        }
+
+        std::vector<size_t> shape_vec;
+        cyxwiz::DataType tensor_dtype;
+        if (!TryBuildShape(shape, ndim, shape_vec) || !TryConvertDataType(dtype, tensor_dtype)) {
+            return nullptr;
+        }
+
+        auto* tensor = new cyxwiz::Tensor(shape_vec, data, tensor_dtype);
         return reinterpret_cast<CyxWizTensor*>(tensor);
     } catch (const std::exception& e) {
         SetLastError(e.what());
@@ -98,8 +152,13 @@ void cyxwiz_tensor_destroy(CyxWizTensor* tensor) {
 
 CyxWizTensor* cyxwiz_tensor_zeros(const size_t* shape, size_t ndim, CyxWizDataType dtype) {
     try {
-        std::vector<size_t> shape_vec(shape, shape + ndim);
-        auto tensor = cyxwiz::Tensor::Zeros(shape_vec, static_cast<cyxwiz::DataType>(dtype));
+        std::vector<size_t> shape_vec;
+        cyxwiz::DataType tensor_dtype;
+        if (!TryBuildShape(shape, ndim, shape_vec) || !TryConvertDataType(dtype, tensor_dtype)) {
+            return nullptr;
+        }
+
+        auto tensor = cyxwiz::Tensor::Zeros(shape_vec, tensor_dtype);
         return reinterpret_cast<CyxWizTensor*>(new cyxwiz::Tensor(std::move(tensor)));
     } catch (const std::exception& e) {
         SetLastError(e.what());
@@ -109,8 +168,13 @@ CyxWizTensor* cyxwiz_tensor_zeros(const size_t* shape, size_t ndim, CyxWizDataTy
 
 CyxWizTensor* cyxwiz_tensor_ones(const size_t* shape, size_t ndim, CyxWizDataType dtype) {
     try {
-        std::vector<size_t> shape_vec(shape, shape + ndim);
-        auto tensor = cyxwiz::Tensor::Ones(shape_vec, static_cast<cyxwiz::DataType>(dtype));
+        std::vector<size_t> shape_vec;
+        cyxwiz::DataType tensor_dtype;
+        if (!TryBuildShape(shape, ndim, shape_vec) || !TryConvertDataType(dtype, tensor_dtype)) {
+            return nullptr;
+        }
+
+        auto tensor = cyxwiz::Tensor::Ones(shape_vec, tensor_dtype);
         return reinterpret_cast<CyxWizTensor*>(new cyxwiz::Tensor(std::move(tensor)));
     } catch (const std::exception& e) {
         SetLastError(e.what());
@@ -120,8 +184,13 @@ CyxWizTensor* cyxwiz_tensor_ones(const size_t* shape, size_t ndim, CyxWizDataTyp
 
 CyxWizTensor* cyxwiz_tensor_random(const size_t* shape, size_t ndim, CyxWizDataType dtype) {
     try {
-        std::vector<size_t> shape_vec(shape, shape + ndim);
-        auto tensor = cyxwiz::Tensor::Random(shape_vec, static_cast<cyxwiz::DataType>(dtype));
+        std::vector<size_t> shape_vec;
+        cyxwiz::DataType tensor_dtype;
+        if (!TryBuildShape(shape, ndim, shape_vec) || !TryConvertDataType(dtype, tensor_dtype)) {
+            return nullptr;
+        }
+
+        auto tensor = cyxwiz::Tensor::Random(shape_vec, tensor_dtype);
         return reinterpret_cast<CyxWizTensor*>(new cyxwiz::Tensor(std::move(tensor)));
     } catch (const std::exception& e) {
         SetLastError(e.what());

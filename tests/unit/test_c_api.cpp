@@ -75,3 +75,33 @@ TEST_CASE("C API tensor matmul reports invalid shapes", "[c_api]") {
     cyxwiz_tensor_destroy(b);
     cyxwiz_tensor_destroy(a);
 }
+
+TEST_CASE("C API tensor factories validate public inputs", "[c_api]") {
+    cyxwiz_clear_last_error();
+    CyxWizTensor* missing_shape = cyxwiz_tensor_create(nullptr, 2, CYXWIZ_DTYPE_FLOAT32);
+    REQUIRE(missing_shape == nullptr);
+    std::string shape_error = cyxwiz_get_last_error();
+    REQUIRE(shape_error.find("shape") != std::string::npos);
+
+    const size_t shape[] = {2, 2};
+
+    cyxwiz_clear_last_error();
+    CyxWizTensor* missing_data = cyxwiz_tensor_create_with_data(
+        shape, 2, nullptr, CYXWIZ_DTYPE_FLOAT32);
+    REQUIRE(missing_data == nullptr);
+    std::string data_error = cyxwiz_get_last_error();
+    REQUIRE(data_error.find("data") != std::string::npos);
+
+    cyxwiz_clear_last_error();
+    CyxWizTensor* invalid_dtype = cyxwiz_tensor_zeros(
+        shape, 2, static_cast<CyxWizDataType>(999));
+    REQUIRE(invalid_dtype == nullptr);
+    std::string dtype_error = cyxwiz_get_last_error();
+    REQUIRE(dtype_error.find("data type") != std::string::npos);
+
+    cyxwiz_clear_last_error();
+    CyxWizTensor* scalar = cyxwiz_tensor_create(nullptr, 0, CYXWIZ_DTYPE_FLOAT32);
+    REQUIRE(scalar != nullptr);
+    REQUIRE(cyxwiz_tensor_num_dimensions(scalar) == 0);
+    cyxwiz_tensor_destroy(scalar);
+}

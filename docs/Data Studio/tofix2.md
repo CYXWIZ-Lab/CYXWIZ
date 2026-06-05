@@ -139,6 +139,17 @@ Sixth slice status:
   MemoryManager-routed host buffers and do not include ArrayFire or other
   third-party allocator state.
 
+Seventh slice status:
+
+- Completed: hardened the public C tensor factory boundary. Tensor
+  creation now rejects null shape pointers for nonzero-rank tensors,
+  rejects null data for `cyxwiz_tensor_create_with_data()`, and rejects
+  invalid C data type enum values before constructing backend tensors.
+- Completed: added C API regression coverage for invalid factory inputs
+  and the valid zero-rank scalar creation path.
+- Remaining: continue the broader public header audit by subsystem; do
+  not batch large algorithm fallback work into the C API contract slice.
+
 ---
 
 ## Priority 0: Core Architectural Problems
@@ -331,9 +342,10 @@ tracking remains part of the public surface.
 **Status 2026-06-05:** Partially fixed. `cyxwiz_tensor_matmul()` now
 routes through `LinearAlgebra::Multiply(const Tensor&, const Tensor&)`
 and has focused C API tests for success and invalid-shape error
-reporting. Remaining work in this item is the broader public API audit:
-unsupported APIs must be implemented, removed, or explicitly marked
-deferred.
+reporting. C tensor factories now validate null shape/data pointers and
+invalid dtype enum values before constructing backend tensors. Remaining
+work in this item is the broader public API audit: unsupported APIs must
+be implemented, removed, or explicitly marked deferred.
 
 Examples:
 
