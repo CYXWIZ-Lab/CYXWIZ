@@ -1,6 +1,7 @@
 #include "cyxwiz/cyxwiz.h"
 #include "cyxwiz/engine.h"
 #include <spdlog/spdlog.h>
+#include <mutex>
 #include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -10,6 +11,15 @@
 namespace cyxwiz {
 
 static bool g_initialized = false;
+
+namespace {
+
+std::mutex& LifecycleMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+} // namespace
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 namespace {
@@ -106,6 +116,8 @@ bool TryActivateCpuBackend() {
 #endif
 
 bool Initialize() {
+    std::lock_guard<std::mutex> lock(LifecycleMutex());
+
     if (g_initialized) {
         spdlog::warn("CyxWiz backend already initialized");
         return true;
@@ -158,6 +170,8 @@ bool Initialize() {
 }
 
 void Shutdown() {
+    std::lock_guard<std::mutex> lock(LifecycleMutex());
+
     if (!g_initialized) {
         return;
     }
@@ -172,12 +186,11 @@ void Shutdown() {
 }
 
 const char* GetVersionString() {
-    static char version[32];
-    snprintf(version, sizeof(version), "%d.%d.%d",
-             CYXWIZ_VERSION_MAJOR,
-             CYXWIZ_VERSION_MINOR,
-             CYXWIZ_VERSION_PATCH);
-    return version;
+    static const std::string version =
+        std::to_string(CYXWIZ_VERSION_MAJOR) + "." +
+        std::to_string(CYXWIZ_VERSION_MINOR) + "." +
+        std::to_string(CYXWIZ_VERSION_PATCH);
+    return version.c_str();
 }
 
 } // namespace cyxwiz

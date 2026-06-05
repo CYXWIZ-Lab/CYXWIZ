@@ -1217,6 +1217,19 @@ Global state exists in several places:
 - default distributed process group
 - global stopword and lexicon caches
 
+Status 2026-06-05:
+
+- Completed: serialized backend `Initialize()` / `Shutdown()` state
+  mutation with a private lifecycle mutex instead of a plain unsynchronized
+  global initialization flag.
+- Completed: made `GetVersionString()` return a stable immutable local
+  static string instead of rewriting a static buffer on every call.
+- Completed: added a concurrent lifecycle smoke test covering repeated
+  `Initialize()` calls and version-string reads from multiple threads.
+- Remaining: document and harden other process-global caches, especially
+  active device selection, distributed default process group ownership,
+  and text stopword/lexicon initialization.
+
 This is not inherently wrong, but it means the backend is not simply
 "thread-safe for independent tensors" in any broad sense.
 
