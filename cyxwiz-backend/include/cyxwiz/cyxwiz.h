@@ -39,13 +39,13 @@
 // Learning rate schedulers
 #include "scheduler.h"
 
-// Clustering algorithms (GPU-accelerated)
+// Clustering algorithms (ArrayFire-backed where available)
 #include "clustering.h"
 
-// Data transformation (GPU-accelerated)
+// Data transformation (ArrayFire-backed where available)
 #include "data_transform.h"
 
-// Model evaluation metrics (GPU-accelerated)
+// Model evaluation metrics (ArrayFire-backed where available)
 #include "model_evaluation.h"
 
 // Dimensionality reduction (PCA, t-SNE, UMAP)
@@ -57,7 +57,7 @@
 // Model interpretability (Grad-CAM, Saliency Maps)
 #include "model_interpretability.h"
 
-// Linear algebra operations (GPU-accelerated)
+// Linear algebra operations (ArrayFire-backed where available)
 #include "linear_algebra.h"
 
 // Signal processing (FFT, Convolution, Filters, Wavelets)

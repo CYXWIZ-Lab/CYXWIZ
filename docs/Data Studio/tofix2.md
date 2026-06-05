@@ -50,8 +50,8 @@ Confirmed active issues for the first implementation slice were:
   should be removed from the source tree.
 - Two different `cyxwiz::DataLoader` classes still exist in separate
   headers; this needs a compatibility migration, not a quick rename.
-- Tensor CPU random generation still uses raw `rand()` in the fallback
-  path.
+- Tensor CPU random generation used raw `rand()` in the fallback path
+  before the 2026-06-05 second-slice fix.
 - CPU fallback policy remains inconsistent and should be audited
   operation group by operation group.
 
@@ -76,6 +76,21 @@ First slice status:
   export macro, removing the C API DLL-linkage warning storm.
 - Verified: `cyxwiz-tests.exe "[c_api]"` and `cyxwiz-tests.exe
   "[tensor]"` pass.
+
+Second slice status:
+
+- Completed: clarified `engine.h` as an intentional compatibility
+  header and kept lifecycle declarations in `cyxwiz.h`.
+- Completed: changed broad public header comments from
+  "GPU-accelerated" to "ArrayFire-backed where available" for algorithm
+  groups whose fallback coverage varies by operation.
+- Completed: updated backend README wording to describe optional
+  ArrayFire acceleration, operation-specific coverage, no public
+  `Tensor::ToDevice()` / `Tensor::ToCPU()`, and the process-global
+  device/backend selection caveat.
+- Completed: removed raw `rand()` usage from `Tensor::Random()` CPU
+  fallback and replaced it with a private thread-local C++ RNG helper.
+- Completed: added a focused Tensor random factory range/shape test.
 
 ---
 
@@ -268,6 +283,12 @@ The backend surface must be honest.
 ### 6. README and public docs overstate backend capabilities
 
 **Severity:** High
+
+**Status 2026-06-05:** Partially fixed. The backend README and umbrella
+header comments now describe acceleration as optional ArrayFire-backed
+coverage rather than a uniformly transparent GPU path. Remaining work is
+to continue auditing detailed per-algorithm docs and examples as each
+operation group is hardened.
 
 The docs present the backend as a coherent high-performance ML compute
 library with GPU acceleration and device transfer semantics.
@@ -559,9 +580,15 @@ and which are not safe for concurrent mutation.
 
 **Severity:** Medium
 
+**Status 2026-06-05:** Partially fixed. Core `Tensor::Random()` CPU
+fallback no longer uses raw `rand()` or shared C RNG state. A full
+reproducibility API is still deferred: seeded Tensor random factories and
+cross-subsystem RNG policy should be designed together.
+
 Different subsystems use different random sources:
 
-- `rand()` in Tensor random generation
+- raw `rand()` in Tensor random generation before the 2026-06-05
+  second-slice fix
 - `mt19937` in some algorithms
 - `random_device` in others
 

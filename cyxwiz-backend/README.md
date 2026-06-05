@@ -1,6 +1,6 @@
 # CyxWiz Backend
 
-**High-Performance ML Compute Library with GPU Acceleration**
+**ML Compute Library with Optional ArrayFire Acceleration**
 
 CyxWiz Backend is a shared library (DLL/SO) that provides the core ML computation primitives for the CyxWiz distributed ML platform. It is used by both the **CyxWiz Engine** (desktop client) and **CyxWiz Server Node** (compute worker).
 
@@ -296,7 +296,7 @@ cx.shutdown()
 ### Core Components
 
 #### Tensor
-Multi-dimensional array with GPU acceleration.
+Multi-dimensional array with CPU storage and ArrayFire-backed operations where available.
 
 ```cpp
 // Create tensors
@@ -309,7 +309,8 @@ Tensor sum = t1 + t2;
 Tensor prod = t1 * t2;
 Tensor reshaped = t1.Reshape({100, 28, 28});
 
-// Device metadata is tracked separately from Tensor storage.
+// Device selection controls the active ArrayFire backend.
+// Tensor storage is synchronized lazily between host and ArrayFire data.
 Device* gpu = new Device(DeviceType::CUDA, 0);
 std::cout << "Device type: " << static_cast<int>(gpu->GetType()) << "\n";
 ```
@@ -516,20 +517,20 @@ cmake --build build/windows-release --target cyxwiz-backend
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `CYXWIZ_HAS_ARRAYFIRE` | ON if found | Enable GPU acceleration |
+| `CYXWIZ_HAS_ARRAYFIRE` | ON if found | Enable ArrayFire-backed acceleration |
 | `CYXWIZ_BUILD_PYTHON` | ON | Build Python bindings |
 | `CYXWIZ_DEBUG` | Debug builds | Enable debug logging |
 
-## GPU Acceleration
+## Acceleration Policy
 
-The backend automatically uses GPU when available:
+The backend can use ArrayFire backends when available:
 
 1. **ArrayFire Detection**: CMake checks for ArrayFire installation
 2. **Backend Selection**: Runtime selection of CUDA/OpenCL/CPU
-3. **Transparent API**: Same code works on CPU and GPU
+3. **Operation Coverage**: Tensor and algorithm groups use ArrayFire where implemented; other paths may use CPU fallback or report that the operation requires ArrayFire
 
 ```cpp
-// Check GPU availability at runtime
+// Check accelerator availability at runtime
 auto devices = Device::GetAvailableDevices();
 bool has_cuda = false;
 for (const auto& d : devices) {
@@ -542,16 +543,20 @@ for (const auto& d : devices) {
 }
 
 if (!has_cuda) {
-    // Falls back to CPU automatically
+    // Select the ArrayFire CPU backend when no CUDA device is chosen.
     Device cpu(DeviceType::CPU, 0);
     cpu.SetActive();
 }
 ```
 
+Tensor does not currently expose public `ToDevice()` / `ToCPU()` methods.
+Host inspection through `Tensor::Data()` materializes host data when needed,
+while ArrayFire-backed operations can keep device data resident internally.
+
 ## Thread Safety
 
-- **Tensor operations**: Thread-safe for independent tensors
-- **Device selection**: Use separate Device instances per thread
+- **Tensor operations**: Independent tensor instances can be used concurrently, but shared tensor mutation requires external synchronization
+- **Device/backend selection**: Process-global ArrayFire backend/device state can affect concurrent callers; configure it during initialization or synchronize changes
 - **Model training**: Single-threaded per model instance
 - **Memory Manager**: Thread-safe allocation/deallocation
 

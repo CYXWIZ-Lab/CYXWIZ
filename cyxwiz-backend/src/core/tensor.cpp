@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <new>
+#include <random>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -74,6 +75,11 @@ void* HostData(const std::unique_ptr<TensorHostBuffer>& buffer) {
 
 std::unique_ptr<TensorHostBuffer> AllocateHostBuffer(size_t bytes) {
     return bytes > 0 ? std::make_unique<TensorHostBuffer>(bytes) : nullptr;
+}
+
+std::mt19937& CpuRandomEngine() {
+    thread_local std::mt19937 engine{std::random_device{}()};
+    return engine;
 }
 
 } // namespace
@@ -603,39 +609,45 @@ Tensor Tensor::Random(const std::vector<size_t>& shape, DataType dtype) {
 
     // Fill with random values [0, 1) based on data type
     size_t num_elements = t.NumElements();
+    auto& engine = CpuRandomEngine();
     switch (dtype) {
         case DataType::Float32: {
+            std::uniform_real_distribution<float> dist(0.0f, 1.0f);
             float* data = static_cast<float*>(t.Data());
             for (size_t i = 0; i < num_elements; i++) {
-                data[i] = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+                data[i] = dist(engine);
             }
             break;
         }
         case DataType::Float64: {
+            std::uniform_real_distribution<double> dist(0.0, 1.0);
             double* data = static_cast<double*>(t.Data());
             for (size_t i = 0; i < num_elements; i++) {
-                data[i] = static_cast<double>(rand()) / static_cast<double>(RAND_MAX);
+                data[i] = dist(engine);
             }
             break;
         }
         case DataType::Int32: {
+            std::uniform_int_distribution<int32_t> dist(0, 99);
             int32_t* data = static_cast<int32_t*>(t.Data());
             for (size_t i = 0; i < num_elements; i++) {
-                data[i] = rand() % 100;  // Random int [0, 99]
+                data[i] = dist(engine);
             }
             break;
         }
         case DataType::Int64: {
+            std::uniform_int_distribution<int64_t> dist(0, 99);
             int64_t* data = static_cast<int64_t*>(t.Data());
             for (size_t i = 0; i < num_elements; i++) {
-                data[i] = rand() % 100;  // Random int [0, 99]
+                data[i] = dist(engine);
             }
             break;
         }
         case DataType::UInt8: {
+            std::uniform_int_distribution<int> dist(0, 255);
             uint8_t* data = static_cast<uint8_t*>(t.Data());
             for (size_t i = 0; i < num_elements; i++) {
-                data[i] = rand() % 256;  // Random byte [0, 255]
+                data[i] = static_cast<uint8_t>(dist(engine));
             }
             break;
         }

@@ -23,6 +23,19 @@ TEST_CASE("Tensor zeros", "[tensor]") {
     REQUIRE(t.NumElements() == 16);
 }
 
+TEST_CASE("Tensor random float factory preserves shape and range", "[tensor]") {
+    auto t = cyxwiz::Tensor::Random({4, 4}, cyxwiz::DataType::Float32);
+
+    REQUIRE(t.Shape() == std::vector<size_t>{4, 4});
+    REQUIRE(t.GetDataType() == cyxwiz::DataType::Float32);
+
+    const float* data = t.Data<float>();
+    for (size_t i = 0; i < t.NumElements(); ++i) {
+        REQUIRE(data[i] >= 0.0f);
+        REQUIRE(data[i] <= 1.0f);
+    }
+}
+
 TEST_CASE("Tensor RangeN fills sequential values", "[tensor]") {
     auto t = cyxwiz::Tensor::RangeN({2, 3}, cyxwiz::DataType::Int32);
 
