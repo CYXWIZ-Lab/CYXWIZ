@@ -316,10 +316,28 @@ void ValidateSpatial4DInput(const Tensor& input, const char* name) {
     if (input.Shape().size() != 4) {
         throw std::runtime_error(std::string(name) + " CPU fallback expects [H, W, C, N] input");
     }
+    if (input.Shape()[0] == 0 || input.Shape()[1] == 0 ||
+        input.Shape()[2] == 0 || input.Shape()[3] == 0) {
+        throw std::runtime_error(std::string(name) + " CPU fallback does not support empty dimensions");
+    }
 }
 
 void ValidatePoolInput(const Tensor& input, const char* name) {
     ValidateSpatial4DInput(input, name);
+}
+
+struct ResizeLinearSample {
+    size_t lower = 0;
+    size_t upper = 0;
+    float upper_weight = 0.0f;
+};
+
+ResizeLinearSample ComputeResizeLinearSample(size_t out_index, size_t in_size, int scale_factor) {
+    float source = (static_cast<float>(out_index) + 0.5f) / static_cast<float>(scale_factor) - 0.5f;
+    source = std::clamp(source, 0.0f, static_cast<float>(in_size - 1));
+    const size_t lower = static_cast<size_t>(std::floor(source));
+    const size_t upper = std::min(lower + 1, in_size - 1);
+    return {lower, upper, source - static_cast<float>(lower)};
 }
 
 } // namespace
@@ -6050,166 +6068,115 @@ Upsample2DLayer::Upsample2DLayer(int scale_factor, UpsampleMode mode)
 
 Tensor Upsample2DLayer::Forward(const Tensor& input) {
     cached_input_ = input;
+    ValidateSpatial4DInput(input, "Upsample2D");
 
-    if (mode_ == UpsampleMode::Nearest) {
-        ValidateSpatial4DInput(input, "Upsample2D");
-        const std::vector<size_t>& shape = input.Shape();
-        const size_t in_h = shape[0];
-        const size_t in_w = shape[1];
-        const size_t channels = shape[2];
-        const size_t batch_size = shape[3];
-        const size_t out_h = in_h * static_cast<size_t>(scale_factor_);
-        const size_t out_w = in_w * static_cast<size_t>(scale_factor_);
+    const std::vector<size_t>& shape = input.Shape();
+    const size_t in_h = shape[0];
+    const size_t in_w = shape[1];
+    const size_t channels = shape[2];
+    const size_t batch_size = shape[3];
+    const size_t scale = static_cast<size_t>(scale_factor_);
+    const size_t out_h = in_h * scale;
+    const size_t out_w = in_w * scale;
 
-        Tensor output({out_h, out_w, channels, batch_size}, DataType::Float32);
-        const float* input_data = input.Data<float>();
-        float* output_data = output.Data<float>();
-        for (size_t b = 0; b < batch_size; ++b) {
-            for (size_t c = 0; c < channels; ++c) {
-                for (size_t oh = 0; oh < out_h; ++oh) {
-                    for (size_t ow = 0; ow < out_w; ++ow) {
-                        const size_t ih = oh / static_cast<size_t>(scale_factor_);
-                        const size_t iw = ow / static_cast<size_t>(scale_factor_);
-                        output_data[Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size)] =
+    Tensor output({out_h, out_w, channels, batch_size}, DataType::Float32);
+    const float* input_data = input.Data<float>();
+    float* output_data = output.Data<float>();
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            for (size_t oh = 0; oh < out_h; ++oh) {
+                for (size_t ow = 0; ow < out_w; ++ow) {
+                    const size_t out_index = Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size);
+                    if (mode_ == UpsampleMode::Nearest) {
+                        const size_t ih = oh / scale;
+                        const size_t iw = ow / scale;
+                        output_data[out_index] =
                             input_data[Pool4DIndex(ih, iw, c, b, in_w, channels, batch_size)];
+                        continue;
                     }
+
+                    const ResizeLinearSample h_sample = ComputeResizeLinearSample(oh, in_h, scale_factor_);
+                    const ResizeLinearSample w_sample = ComputeResizeLinearSample(ow, in_w, scale_factor_);
+                    const float h0_weight = 1.0f - h_sample.upper_weight;
+                    const float w0_weight = 1.0f - w_sample.upper_weight;
+                    const float v00 = input_data[Pool4DIndex(h_sample.lower, w_sample.lower, c, b, in_w, channels, batch_size)];
+                    const float v01 = input_data[Pool4DIndex(h_sample.lower, w_sample.upper, c, b, in_w, channels, batch_size)];
+                    const float v10 = input_data[Pool4DIndex(h_sample.upper, w_sample.lower, c, b, in_w, channels, batch_size)];
+                    const float v11 = input_data[Pool4DIndex(h_sample.upper, w_sample.upper, c, b, in_w, channels, batch_size)];
+                    output_data[out_index] =
+                        h0_weight * (w0_weight * v00 + w_sample.upper_weight * v01) +
+                        h_sample.upper_weight * (w0_weight * v10 + w_sample.upper_weight * v11);
                 }
             }
         }
-
-        return output;
     }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array x = TensorToAf(input);
-
-        dim_t in_h = x.dims(0);
-        dim_t in_w = x.dims(1);
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
-
-        dim_t out_h = in_h * scale_factor_;
-        dim_t out_w = in_w * scale_factor_;
-
-        af::array output = af::constant(0.0f, af::dim4(out_h, out_w, channels, batch_size));
-
-        if (mode_ == UpsampleMode::Nearest) {
-            // Nearest neighbor: repeat each pixel scale_factor times
-            for (dim_t c = 0; c < channels; c++) {
-                for (dim_t b = 0; b < batch_size; b++) {
-                    af::array slice = x(af::span, af::span, c, b);
-                    // Use af::resize for nearest interpolation
-                    af::array resized = af::resize(slice, out_h, out_w, AF_INTERP_NEAREST);
-                    output(af::span, af::span, c, b) = resized;
-                }
-            }
-        } else {
-            // Bilinear interpolation
-            for (dim_t c = 0; c < channels; c++) {
-                for (dim_t b = 0; b < batch_size; b++) {
-                    af::array slice = x(af::span, af::span, c, b);
-                    af::array resized = af::resize(slice, out_h, out_w, AF_INTERP_BILINEAR_COSINE);
-                    output(af::span, af::span, c, b) = resized;
-                }
-            }
-        }
-
-        return AfToTensor(output);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Upsample2DLayer::Forward failed: {}", e.what());
-    }
-#endif
-
-    throw std::runtime_error("Upsample2D bilinear CPU fallback is not implemented");
+    return output;
 }
 
 Tensor Upsample2DLayer::Backward(const Tensor& grad_output) {
-    if (mode_ == UpsampleMode::Nearest) {
-        ValidateSpatial4DInput(cached_input_, "Upsample2D");
-        if (grad_output.GetDataType() != DataType::Float32) {
-            throw std::runtime_error("Upsample2D backward CPU fallback requires Float32 grad_output");
-        }
-        const std::vector<size_t>& input_shape = cached_input_.Shape();
-        const size_t in_h = input_shape[0];
-        const size_t in_w = input_shape[1];
-        const size_t channels = input_shape[2];
-        const size_t batch_size = input_shape[3];
-        const size_t out_h = in_h * static_cast<size_t>(scale_factor_);
-        const size_t out_w = in_w * static_cast<size_t>(scale_factor_);
-        if (grad_output.Shape() != std::vector<size_t>{out_h, out_w, channels, batch_size}) {
-            throw std::runtime_error("Upsample2D backward gradient shape mismatch");
-        }
+    ValidateSpatial4DInput(cached_input_, "Upsample2D");
+    if (grad_output.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("Upsample2D backward CPU fallback requires Float32 grad_output");
+    }
 
-        Tensor grad_input = Tensor::Zeros(input_shape, DataType::Float32);
-        const float* grad_data = grad_output.Data<float>();
-        float* grad_input_data = grad_input.Data<float>();
-        for (size_t b = 0; b < batch_size; ++b) {
-            for (size_t c = 0; c < channels; ++c) {
+    const std::vector<size_t>& input_shape = cached_input_.Shape();
+    const size_t in_h = input_shape[0];
+    const size_t in_w = input_shape[1];
+    const size_t channels = input_shape[2];
+    const size_t batch_size = input_shape[3];
+    const size_t scale = static_cast<size_t>(scale_factor_);
+    const size_t out_h = in_h * scale;
+    const size_t out_w = in_w * scale;
+    if (grad_output.Shape() != std::vector<size_t>{out_h, out_w, channels, batch_size}) {
+        throw std::runtime_error("Upsample2D backward gradient shape mismatch");
+    }
+
+    Tensor grad_input = Tensor::Zeros(input_shape, DataType::Float32);
+    const float* grad_data = grad_output.Data<float>();
+    float* grad_input_data = grad_input.Data<float>();
+
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t c = 0; c < channels; ++c) {
+            if (mode_ == UpsampleMode::Nearest) {
                 for (size_t ih = 0; ih < in_h; ++ih) {
                     for (size_t iw = 0; iw < in_w; ++iw) {
                         float sum = 0.0f;
                         for (int sh = 0; sh < scale_factor_; ++sh) {
                             for (int sw = 0; sw < scale_factor_; ++sw) {
-                                const size_t oh = ih * static_cast<size_t>(scale_factor_) + static_cast<size_t>(sh);
-                                const size_t ow = iw * static_cast<size_t>(scale_factor_) + static_cast<size_t>(sw);
+                                const size_t oh = ih * scale + static_cast<size_t>(sh);
+                                const size_t ow = iw * scale + static_cast<size_t>(sw);
                                 sum += grad_data[Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size)];
                             }
                         }
                         grad_input_data[Pool4DIndex(ih, iw, c, b, in_w, channels, batch_size)] = sum;
                     }
                 }
+                continue;
             }
-        }
 
-        return grad_input;
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array grad_out = TensorToAf(grad_output);
-        af::array x = TensorToAf(cached_input_);
-
-        dim_t in_h = x.dims(0);
-        dim_t in_w = x.dims(1);
-        dim_t channels = x.dims(2);
-        dim_t batch_size = (x.numdims() > 3) ? x.dims(3) : 1;
-
-        af::array dx = af::constant(0.0f, x.dims());
-
-        if (mode_ == UpsampleMode::Nearest) {
-            // Backward of nearest: sum gradients in each scale_factor block
-            for (dim_t c = 0; c < channels; c++) {
-                for (dim_t b = 0; b < batch_size; b++) {
-                    af::array grad_slice = grad_out(af::span, af::span, c, b);
-                    for (dim_t ih = 0; ih < in_h; ih++) {
-                        for (dim_t iw = 0; iw < in_w; iw++) {
-                            af::array block = grad_slice(
-                                af::seq(ih * scale_factor_, (ih + 1) * scale_factor_ - 1),
-                                af::seq(iw * scale_factor_, (iw + 1) * scale_factor_ - 1));
-                            dx(ih, iw, c, b) = af::sum<float>(af::flat(block));
-                        }
-                    }
-                }
-            }
-        } else {
-            // Bilinear backward: downsample gradient
-            for (dim_t c = 0; c < channels; c++) {
-                for (dim_t b = 0; b < batch_size; b++) {
-                    af::array grad_slice = grad_out(af::span, af::span, c, b);
-                    af::array resized = af::resize(grad_slice, in_h, in_w, AF_INTERP_BILINEAR_COSINE);
-                    dx(af::span, af::span, c, b) = resized * static_cast<float>(scale_factor_ * scale_factor_);
+            for (size_t oh = 0; oh < out_h; ++oh) {
+                for (size_t ow = 0; ow < out_w; ++ow) {
+                    const ResizeLinearSample h_sample = ComputeResizeLinearSample(oh, in_h, scale_factor_);
+                    const ResizeLinearSample w_sample = ComputeResizeLinearSample(ow, in_w, scale_factor_);
+                    const float h0_weight = 1.0f - h_sample.upper_weight;
+                    const float w0_weight = 1.0f - w_sample.upper_weight;
+                    const float grad_value = grad_data[Pool4DIndex(oh, ow, c, b, out_w, channels, batch_size)];
+                    grad_input_data[Pool4DIndex(h_sample.lower, w_sample.lower, c, b, in_w, channels, batch_size)] +=
+                        grad_value * h0_weight * w0_weight;
+                    grad_input_data[Pool4DIndex(h_sample.lower, w_sample.upper, c, b, in_w, channels, batch_size)] +=
+                        grad_value * h0_weight * w_sample.upper_weight;
+                    grad_input_data[Pool4DIndex(h_sample.upper, w_sample.lower, c, b, in_w, channels, batch_size)] +=
+                        grad_value * h_sample.upper_weight * w0_weight;
+                    grad_input_data[Pool4DIndex(h_sample.upper, w_sample.upper, c, b, in_w, channels, batch_size)] +=
+                        grad_value * h_sample.upper_weight * w_sample.upper_weight;
                 }
             }
         }
-
-        return AfToTensor(dx);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Upsample2DLayer::Backward failed: {}", e.what());
     }
-#endif
 
-    throw std::runtime_error("Upsample2D bilinear CPU fallback is not implemented");
+    return grad_input;
 }
 
 // ============================================================================

@@ -213,6 +213,40 @@ TEST_CASE("Upsample2DLayer nearest computes forward and backward values", "[upsa
     }
 }
 
+TEST_CASE("Upsample2DLayer bilinear computes forward and backward values", "[upsample][layer]") {
+    float input_values[] = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+    cyxwiz::Tensor input({2, 2, 1, 1}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::Upsample2DLayer upsample(2, cyxwiz::UpsampleMode::Bilinear);
+
+    cyxwiz::Tensor output = upsample.Forward(input);
+    REQUIRE(output.NumElements() == 16);
+    const float* output_data = output.Data<float>();
+    const float expected_output[] = {
+        1.0f, 1.25f, 1.75f, 2.0f,
+        1.5f, 1.75f, 2.25f, 2.5f,
+        2.5f, 2.75f, 3.25f, 3.5f,
+        3.0f, 3.25f, 3.75f, 4.0f,
+    };
+    for (size_t i = 0; i < 16; ++i) {
+        REQUIRE(output_data[i] == Catch::Approx(expected_output[i]));
+    }
+
+    float grad_values[16];
+    for (float& value : grad_values) {
+        value = 1.0f;
+    }
+    cyxwiz::Tensor grad_output({4, 4, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad_input = upsample.Backward(grad_output);
+    REQUIRE(grad_input.NumElements() == 4);
+    const float* grad_input_data = grad_input.Data<float>();
+    for (size_t i = 0; i < 4; ++i) {
+        REQUIRE(grad_input_data[i] == Catch::Approx(4.0f));
+    }
+}
+
 TEST_CASE("PixelShuffleLayer computes forward and backward values", "[pixelshuffle][layer]") {
     float input_values[] = {1.0f, 2.0f, 3.0f, 4.0f};
     cyxwiz::Tensor input({1, 1, 4, 1}, input_values, cyxwiz::DataType::Float32);

@@ -411,10 +411,20 @@ Twenty-sixth slice status:
   `Upsample2DLayer` and `PixelShuffleLayer`.
 - Completed: added focused deterministic nearest upsample and
   pixel-shuffle forward/backward regression coverage.
-- Remaining: bilinear `Upsample2DLayer` CPU fallback is intentionally
-  deferred as a separate interpolation-gradient slice. Convolution,
-  normalization, attention, and linalg decompositions remain larger
-  follow-up slices.
+- Remaining at this checkpoint: bilinear `Upsample2DLayer` CPU
+  fallback was intentionally deferred as a separate
+  interpolation-gradient slice. Convolution, normalization, attention,
+  and linalg decompositions remained larger follow-up slices.
+
+Twenty-seventh slice status:
+
+- Completed: added direct CPU implementation for legacy
+  `Upsample2DLayer` bilinear forward/backward using center-aligned
+  interpolation under the existing `[H, W, C, N]` Float32 contract.
+- Completed: added focused deterministic bilinear upsample
+  forward/backward regression coverage.
+- Remaining: convolution, normalization, attention, and linalg
+  decompositions remain larger follow-up slices.
 
 ---
 
@@ -863,12 +873,12 @@ but they must say so honestly and be tracked by group. Factory
 `SmoothL1Loss`/`HuberLoss`, `CrossEntropyLoss`, `NLLLoss`, `BCELoss`,
 `BCEWithLogitsLoss`, `KLDivLoss`, `FocalLoss`,
 `CosineEmbeddingLoss`, `TripletLoss`, `ContrastiveLoss`, legacy
-`DenseLayer`, legacy `DropoutLayer`, and legacy pooling layers
-(`MaxPool2DLayer`, `AvgPool2DLayer`, `GlobalAvgPool2DLayer`), nearest
-`Upsample2DLayer`, and `PixelShuffleLayer` now have CPU fallback
-coverage with tests. Remaining fallback work should proceed by operator
-group, starting with bilinear upsample, convolution, normalization,
-attention, and linalg decompositions.
+`DenseLayer`, legacy `DropoutLayer`, legacy pooling layers
+(`MaxPool2DLayer`, `AvgPool2DLayer`, `GlobalAvgPool2DLayer`),
+`Upsample2DLayer` nearest and bilinear modes, and `PixelShuffleLayer`
+now have CPU fallback coverage with tests. Remaining fallback work
+should proceed by operator group, starting with convolution,
+normalization, attention, and linalg decompositions.
 
 The build can run without ArrayFire, but many public operations cannot:
 
