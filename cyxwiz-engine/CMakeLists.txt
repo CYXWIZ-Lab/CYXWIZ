@@ -243,6 +243,8 @@ set(ENGINE_SOURCES
     src/gui/visualization/visualization_nodes.cpp
     src/gui/visualization/bar_chart_dialog.cpp
     src/gui/panels/toolbar.cpp
+    src/gui/panels/toolbar_search.cpp
+    src/gui/panels/toolbar_file_dialogs.cpp
     src/gui/panels/toolbar_command_palette.cpp
     src/gui/panels/toolbar_file_menu.cpp
     src/gui/panels/toolbar_edit_menu.cpp

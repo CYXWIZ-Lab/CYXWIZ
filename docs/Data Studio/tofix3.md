@@ -1014,6 +1014,12 @@ Fix applied:
 - reduced `theme.cpp` from roughly 3010 lines to roughly 1004 lines while
   leaving preset selection, style config, ImNodes styling, and dock styling in
   the main file
+- added `gui/panels/toolbar_search.cpp` and
+  `gui/panels/toolbar_file_dialogs.cpp`
+- moved Toolbar find-in-files helpers and file dialog wrappers out of
+  `toolbar.cpp`
+- reduced `toolbar.cpp` further to roughly 2455 lines while leaving the main
+  render body and command initialization in place
 
 **Recommendation:**
 
