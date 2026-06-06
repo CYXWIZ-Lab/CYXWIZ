@@ -1054,6 +1054,11 @@ Fix applied:
   `toolbar.cpp`
 - reduced `toolbar.cpp` further to roughly 365 lines while leaving command
   initialization and top-level render orchestration in the main file
+- added `gui/panels/toolbar_search_dialogs.cpp`
+- moved Toolbar find, replace, find-in-files, and replace-in-files modal
+  rendering out of `toolbar_dialogs.cpp`
+- reduced `toolbar_dialogs.cpp` to roughly 1767 lines while leaving account,
+  wallet, preferences, and project dialogs in that file
 
 **Recommendation:**
 
