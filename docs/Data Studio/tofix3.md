@@ -1093,6 +1093,13 @@ Fix applied:
 - moved ImNodes styling and dock tab styling out of `theme.cpp`
 - reduced `theme.cpp` from roughly 1004 lines to roughly 171 lines while
   leaving theme preset selection and base ImGui style configuration in place
+- added `gui/panels/script_editor_file_workflow.cpp`
+- moved Script Editor new/open/async load/generated code/save/close workflow
+  out of `script_editor.cpp`
+- reused `CreatePythonLanguage()` in file workflow setup instead of duplicating
+  Python keyword lists
+- reduced `script_editor.cpp` further to roughly 969 lines while leaving main
+  render composition, menus, editor rendering, status, and shortcuts in place
 
 **Recommendation:**
 

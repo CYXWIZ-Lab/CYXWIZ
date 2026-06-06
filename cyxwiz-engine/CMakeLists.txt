@@ -276,6 +276,7 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_save.cpp
     src/gui/panels/script_editor_execution.cpp
     src/gui/panels/script_editor_files.cpp
+    src/gui/panels/script_editor_file_workflow.cpp
     src/gui/panels/table_viewer.cpp
     src/gui/panels/data_explorer_panel.cpp
     src/gui/panels/visualization_panel.cpp
