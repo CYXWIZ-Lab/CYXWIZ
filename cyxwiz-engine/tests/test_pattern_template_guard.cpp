@@ -77,6 +77,8 @@ int main() {
           "failed to load template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_multihead_attention", "MultiHeadAttention").string()),
           "failed to load attention template-node pattern");
+    Check(library.LoadPatternFromFile(WritePattern("guard_cosine_scheduler", "CosineAnnealing").string()),
+          "failed to load scheduler template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_typo", "DefinitelyNotANode").string()),
           "failed to load unknown-node pattern");
 
@@ -139,6 +141,14 @@ int main() {
           "template MultiHeadAttention pattern should be rejected");
     Check(nodes.empty() && links.empty(), "attention template rejection should leave no partial graph");
     Check(creator_calls == 4, "attention template rejection should not call node creator");
+
+    nodes.clear();
+    links.clear();
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_cosine_scheduler", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
+          "template CosineAnnealing pattern should be rejected");
+    Check(nodes.empty() && links.empty(), "scheduler template rejection should leave no partial graph");
+    Check(creator_calls == 4, "scheduler template rejection should not call node creator");
 
     nodes.clear();
     links.clear();

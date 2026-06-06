@@ -254,6 +254,15 @@ Affected nodes:
 
 **Severity:** High
 
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- `GraphCompiler` now hard-blocks scheduler nodes because they are not wired into training execution.
+- the guard covers loaded/imported graphs for `StepLR`, `CosineAnnealing`, `ReduceOnPlateau`, `ExponentialLR`, and `WarmupScheduler`.
+- registered `CosineAnnealing` metadata is now `Template`, so metadata-driven UI/pattern paths no longer advertise it as implemented.
+- tests cover both compiler rejection and template-pattern rejection.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/node_metadata_registry.cpp:1052`

@@ -132,6 +132,14 @@ bool IsUnsupportedSequentialModelLayer(gui::NodeType type) {
            type == gui::NodeType::Bidirectional;
 }
 
+bool IsUnsupportedTrainingControlNode(gui::NodeType type) {
+    return type == gui::NodeType::StepLR ||
+           type == gui::NodeType::CosineAnnealing ||
+           type == gui::NodeType::ReduceOnPlateau ||
+           type == gui::NodeType::ExponentialLR ||
+           type == gui::NodeType::WarmupScheduler;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -971,6 +979,22 @@ void ValidateTrainingPathImplementationStatus(
     }
 }
 
+void ValidateUnsupportedTrainingControlNodes(
+    const std::vector<gui::MLNode>& nodes,
+    TrainingConfiguration& config) {
+
+    for (const auto& node : nodes) {
+        if (!IsUnsupportedTrainingControlNode(node.type)) {
+            continue;
+        }
+
+        std::ostringstream msg;
+        msg << "Node '" << node.name << "' is configurable in the editor "
+            << "but is not connected to training execution yet";
+        AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+    }
+}
+
 void CollectGraphRuntimeOpNodeIds(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
@@ -1109,6 +1133,7 @@ TrainingConfiguration GraphCompiler::Compile(
         ValidateLossTargetsReachLabels(nodes, links, config);
         ValidateLossPredictionsReachModel(nodes, links, config);
         ValidateOptimizerReachesLoss(nodes, links, config);
+        ValidateUnsupportedTrainingControlNodes(nodes, config);
     }
 
     // Extract dataset configuration

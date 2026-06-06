@@ -312,6 +312,36 @@ int main() {
               std::string("unsupported layer should report backend gap: ") + unsupported_case.name);
     }
 
+    const std::vector<UnsupportedLayerCase> unsupported_scheduler_cases = {
+        {gui::NodeType::StepLR, "StepLR"},
+        {gui::NodeType::CosineAnnealing, "CosineAnnealing"},
+        {gui::NodeType::ReduceOnPlateau, "ReduceOnPlateau"},
+        {gui::NodeType::ExponentialLR, "ExponentialLR"},
+        {gui::NodeType::WarmupScheduler, "WarmupScheduler"},
+    };
+
+    for (const auto& scheduler_case : unsupported_scheduler_cases) {
+        auto scheduler = Node(18,
+                              scheduler_case.node_type,
+                              scheduler_case.name,
+                              {},
+                              {});
+
+        nodes = {data, dense, loss, optimizer, scheduler};
+        links = {
+            Link(1, 1, 101, 2, 201),
+            Link(2, 2, 202, 4, 401),
+            Link(3, 1, 102, 4, 402),
+            Link(4, 4, 403, 5, 501),
+        };
+
+        config = compiler.Compile(nodes, links, true);
+        Check(!config.is_valid,
+              std::string("unsupported scheduler should block compile: ") + scheduler_case.name);
+        Check(HasIssueText(config, "not connected to training execution yet"),
+              std::string("unsupported scheduler should report execution gap: ") + scheduler_case.name);
+    }
+
     auto abs = Node(8,
                     gui::NodeType::TensorAbs,
                     "Abs",

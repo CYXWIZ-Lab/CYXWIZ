@@ -1415,7 +1415,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
         {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
         {{"T_max", "int", "100", "Max iterations", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0});
 
     RegisterNode({NodeType::Output, NodeCategory::Training, "Output", ICON_FA_ARROW_RIGHT,
         {"output", "final"}, 0, false, "Model output", "", "",
