@@ -1039,6 +1039,11 @@ Fix applied:
   `script_editor.cpp`
 - reduced `script_editor.cpp` further to roughly 2719 lines while leaving
   debug UI and completion handling in the main file
+- added `gui/panels/script_editor_debug.cpp`
+- moved Script Editor debugger toolbar, breakpoint gutter rendering, and debug
+  keyboard handling out of `script_editor.cpp`
+- reduced `script_editor.cpp` further to roughly 2344 lines while leaving
+  completion handling in the main file
 
 **Recommendation:**
 
