@@ -211,7 +211,11 @@ void ToolbarPanel::RenderCommandPalette() {
 
         for (int i = 0; i < static_cast<int>(filtered_tools_.size()); ++i) {
             const auto* tool = filtered_tools_[i];
-            const bool can_execute = tool->availability == ToolAvailability::Working && tool->callback;
+            const bool runtime_enabled = !tool->is_enabled || tool->is_enabled();
+            const bool can_execute =
+                tool->availability == ToolAvailability::Working &&
+                runtime_enabled &&
+                tool->callback;
 
             ImGui::PushID(i);
 
@@ -250,8 +254,12 @@ void ToolbarPanel::RenderCommandPalette() {
                 ImGui::Text("%s", tool->name.c_str());
             }
 
-            if (!tool->status_detail.empty() && ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", tool->status_detail.c_str());
+            if (ImGui::IsItemHovered()) {
+                if (!runtime_enabled) {
+                    ImGui::SetTooltip("Unavailable in this workspace state");
+                } else if (!tool->status_detail.empty()) {
+                    ImGui::SetTooltip("%s", tool->status_detail.c_str());
+                }
             }
 
             // Category badge (right-aligned)

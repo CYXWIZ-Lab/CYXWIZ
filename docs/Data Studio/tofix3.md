@@ -842,7 +842,7 @@ Fix applied:
 ### 15. Panel discoverability is improving, but the command surface needs rationalization
 
 **Severity:** Medium
-**Status:** Partially fixed on 2026-06-06
+**Status:** Fixed on 2026-06-06
 
 Relevant files:
 
@@ -894,6 +894,15 @@ Additional fix applied on 2026-06-06:
   palette if they are added as visible search results
 - removed the duplicate `Theme Editor` command-palette entry and kept the View
   command as the canonical entry
+- added runtime availability checks for callback-backed command-palette
+  entries so missing workspace/panel wiring renders disabled instead of
+  silently doing nothing
+
+**Status after follow-up:**
+
+Fixed for the current toolbar and command-palette surfaces. Future commands
+should be added with an explicit surface type and availability rule before they
+are exposed.
 
 **Recommendation:**
 

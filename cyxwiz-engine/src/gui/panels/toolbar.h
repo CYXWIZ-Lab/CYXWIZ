@@ -38,6 +38,7 @@ struct ToolEntry {
     std::string icon;           // FontAwesome icon code
     std::string shortcut;       // Keyboard shortcut if any (e.g., "Ctrl+P")
     std::function<void()> callback;  // Action to execute
+    std::function<bool()> is_enabled;  // Optional runtime availability check
     ToolSurface surface = ToolSurface::Command;
     ToolAvailability availability = ToolAvailability::Working;
     std::string status_detail;

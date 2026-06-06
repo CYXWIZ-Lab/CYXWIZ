@@ -357,6 +357,102 @@ void ToolbarPanel::InitializeToolEntries() {
     // Development tools
     all_tools_.push_back({"Custom Node Editor", "Developer", "custom node create define", ICON_FA_GEARS, "", [this]() { if (open_custom_node_editor_callback_) open_custom_node_editor_callback_(); }});
 
+    auto require_tool_callback = [this](const char* tool_name, std::function<bool()> is_enabled) {
+        for (auto& tool : all_tools_) {
+            if (tool.name == tool_name) {
+                tool.is_enabled = std::move(is_enabled);
+                return;
+            }
+        }
+    };
+
+    require_tool_callback("Save All", [this]() { return static_cast<bool>(save_all_callback_); });
+    require_tool_callback("Undo", [this]() { return static_cast<bool>(undo_callback_); });
+    require_tool_callback("Redo", [this]() { return static_cast<bool>(redo_callback_); });
+    require_tool_callback("Cut", [this]() { return static_cast<bool>(cut_callback_); });
+    require_tool_callback("Copy", [this]() { return static_cast<bool>(copy_callback_); });
+    require_tool_callback("Paste", [this]() { return static_cast<bool>(paste_callback_); });
+    require_tool_callback("Delete", [this]() { return static_cast<bool>(delete_callback_); });
+    require_tool_callback("Select All", [this]() { return static_cast<bool>(select_all_callback_); });
+    require_tool_callback("Python Console", [this]() { return static_cast<bool>(open_python_console_callback_); });
+    require_tool_callback("New Script", [this]() { return static_cast<bool>(new_script_callback_); });
+    require_tool_callback("Open Script", [this]() { return static_cast<bool>(open_script_callback_); });
+    require_tool_callback("Connect to Server", [this]() { return static_cast<bool>(connect_to_server_callback_); });
+    require_tool_callback("Export Model", [this]() { return static_cast<bool>(export_model_callback_); });
+    require_tool_callback("Import Model", [this]() { return static_cast<bool>(import_model_callback_); });
+    require_tool_callback("Reset Layout", [this]() { return static_cast<bool>(reset_layout_callback_); });
+    require_tool_callback("Save Layout", [this]() { return static_cast<bool>(save_layout_callback_); });
+    require_tool_callback("Theme Editor", [this]() { return static_cast<bool>(open_theme_editor_callback_); });
+    require_tool_callback("Model Summary", [this]() { return static_cast<bool>(open_model_summary_callback_); });
+    require_tool_callback("Architecture Diagram", [this]() { return static_cast<bool>(open_architecture_diagram_callback_); });
+    require_tool_callback("LR Finder", [this]() { return static_cast<bool>(open_lr_finder_callback_); });
+    require_tool_callback("Data Profiler", [this]() { return static_cast<bool>(open_data_profiler_callback_); });
+    require_tool_callback("Correlation Matrix", [this]() { return static_cast<bool>(open_correlation_matrix_callback_); });
+    require_tool_callback("Missing Values", [this]() { return static_cast<bool>(open_missing_value_callback_); });
+    require_tool_callback("Outlier Detection", [this]() { return static_cast<bool>(open_outlier_detection_callback_); });
+    require_tool_callback("Descriptive Statistics", [this]() { return static_cast<bool>(open_descriptive_stats_callback_); });
+    require_tool_callback("Hypothesis Test", [this]() { return static_cast<bool>(open_hypothesis_test_callback_); });
+    require_tool_callback("Distribution Fitter", [this]() { return static_cast<bool>(open_distribution_fitter_callback_); });
+    require_tool_callback("Regression Analysis", [this]() { return static_cast<bool>(open_regression_callback_); });
+    require_tool_callback("Dimensionality Reduction", [this]() { return static_cast<bool>(open_dim_reduction_callback_); });
+    require_tool_callback("GradCAM", [this]() { return static_cast<bool>(open_gradcam_callback_); });
+    require_tool_callback("Feature Importance", [this]() { return static_cast<bool>(open_feature_importance_callback_); });
+    require_tool_callback("Neural Architecture Search", [this]() { return static_cast<bool>(open_nas_callback_); });
+    require_tool_callback("Hyperparameter Search", [this]() { return static_cast<bool>(open_hyperparam_search_callback_); });
+    require_tool_callback("Model Serving", [this]() { return static_cast<bool>(open_serving_callback_); });
+    require_tool_callback("DNN Inference", [this]() { return static_cast<bool>(open_dnn_inference_callback_); });
+    require_tool_callback("K-Means Clustering", [this]() { return static_cast<bool>(open_kmeans_callback_); });
+    require_tool_callback("DBSCAN", [this]() { return static_cast<bool>(open_dbscan_callback_); });
+    require_tool_callback("Hierarchical Clustering", [this]() { return static_cast<bool>(open_hierarchical_callback_); });
+    require_tool_callback("GMM", [this]() { return static_cast<bool>(open_gmm_callback_); });
+    require_tool_callback("Cluster Evaluation", [this]() { return static_cast<bool>(open_cluster_eval_callback_); });
+    require_tool_callback("Confusion Matrix", [this]() { return static_cast<bool>(open_confusion_matrix_callback_); });
+    require_tool_callback("ROC AUC", [this]() { return static_cast<bool>(open_roc_auc_callback_); });
+    require_tool_callback("PR Curve", [this]() { return static_cast<bool>(open_pr_curve_callback_); });
+    require_tool_callback("Cross Validation", [this]() { return static_cast<bool>(open_cross_validation_callback_); });
+    require_tool_callback("Learning Curves", [this]() { return static_cast<bool>(open_learning_curves_callback_); });
+    require_tool_callback("Normalization", [this]() { return static_cast<bool>(open_normalization_callback_); });
+    require_tool_callback("Standardization", [this]() { return static_cast<bool>(open_standardization_callback_); });
+    require_tool_callback("Log Transform", [this]() { return static_cast<bool>(open_log_transform_callback_); });
+    require_tool_callback("Box-Cox Transform", [this]() { return static_cast<bool>(open_boxcox_callback_); });
+    require_tool_callback("Feature Scaling", [this]() { return static_cast<bool>(open_feature_scaling_callback_); });
+    require_tool_callback("Matrix Calculator", [this]() { return static_cast<bool>(open_matrix_calculator_callback_); });
+    require_tool_callback("Eigendecomposition", [this]() { return static_cast<bool>(open_eigen_decomp_callback_); });
+    require_tool_callback("SVD", [this]() { return static_cast<bool>(open_svd_callback_); });
+    require_tool_callback("QR Decomposition", [this]() { return static_cast<bool>(open_qr_callback_); });
+    require_tool_callback("Cholesky Decomposition", [this]() { return static_cast<bool>(open_cholesky_callback_); });
+    require_tool_callback("FFT", [this]() { return static_cast<bool>(open_fft_callback_); });
+    require_tool_callback("Spectrogram", [this]() { return static_cast<bool>(open_spectrogram_callback_); });
+    require_tool_callback("Filter Designer", [this]() { return static_cast<bool>(open_filter_designer_callback_); });
+    require_tool_callback("Convolution", [this]() { return static_cast<bool>(open_convolution_callback_); });
+    require_tool_callback("Wavelet Transform", [this]() { return static_cast<bool>(open_wavelet_callback_); });
+    require_tool_callback("Gradient Descent", [this]() { return static_cast<bool>(open_gradient_descent_callback_); });
+    require_tool_callback("Convexity Analysis", [this]() { return static_cast<bool>(open_convexity_callback_); });
+    require_tool_callback("Linear Programming", [this]() { return static_cast<bool>(open_lp_callback_); });
+    require_tool_callback("Quadratic Programming", [this]() { return static_cast<bool>(open_qp_callback_); });
+    require_tool_callback("Differentiation", [this]() { return static_cast<bool>(open_differentiation_callback_); });
+    require_tool_callback("Integration", [this]() { return static_cast<bool>(open_integration_callback_); });
+    require_tool_callback("Decomposition", [this]() { return static_cast<bool>(open_decomposition_callback_); });
+    require_tool_callback("ACF/PACF", [this]() { return static_cast<bool>(open_acf_pacf_callback_); });
+    require_tool_callback("Stationarity Test", [this]() { return static_cast<bool>(open_stationarity_callback_); });
+    require_tool_callback("Seasonality Detection", [this]() { return static_cast<bool>(open_seasonality_callback_); });
+    require_tool_callback("Forecasting", [this]() { return static_cast<bool>(open_forecasting_callback_); });
+    require_tool_callback("Tokenization", [this]() { return static_cast<bool>(open_tokenization_callback_); });
+    require_tool_callback("Word Frequency", [this]() { return static_cast<bool>(open_word_frequency_callback_); });
+    require_tool_callback("TF-IDF", [this]() { return static_cast<bool>(open_tfidf_callback_); });
+    require_tool_callback("Embeddings", [this]() { return static_cast<bool>(open_embeddings_callback_); });
+    require_tool_callback("Sentiment Analysis", [this]() { return static_cast<bool>(open_sentiment_callback_); });
+    require_tool_callback("Calculator", [this]() { return static_cast<bool>(open_calculator_callback_); });
+    require_tool_callback("Unit Converter", [this]() { return static_cast<bool>(open_unit_converter_callback_); });
+    require_tool_callback("Random Generator", [this]() { return static_cast<bool>(open_random_generator_callback_); });
+    require_tool_callback("Hash Generator", [this]() { return static_cast<bool>(open_hash_generator_callback_); });
+    require_tool_callback("JSON Viewer", [this]() { return static_cast<bool>(open_json_viewer_callback_); });
+    require_tool_callback("Regex Tester", [this]() { return static_cast<bool>(open_regex_tester_callback_); });
+    require_tool_callback("Performance Profiler", [this]() { return static_cast<bool>(open_profiler_callback_); });
+    require_tool_callback("Memory Visualization", [this]() { return static_cast<bool>(open_memory_panel_callback_); });
+    require_tool_callback("System Monitor", [this]() { return static_cast<bool>(open_memory_monitor_callback_); });
+    require_tool_callback("Custom Node Editor", [this]() { return static_cast<bool>(open_custom_node_editor_callback_); });
+
     AnnotateCommandSurface(all_tools_);
 
     spdlog::debug("Initialized {} tool entries for command palette", all_tools_.size());
