@@ -756,6 +756,7 @@ Fix applied:
 ### 14. The engine has many standalone analysis panels, which weakens the graph-first product story
 
 **Severity:** High
+**Status:** Partially fixed on 2026-06-06
 
 Observed under:
 
@@ -780,6 +781,21 @@ This is useful capability, but it creates two product modes:
 
 Those two modes can coexist, but right now they appear insufficiently
 unified.
+
+Audit result: this issue is still real, but many of the apparent standalone
+tool areas already have graph-facing `NodeType` coverage and several have
+registered pipeline operators. The main gap is a current migration contract,
+not another competing implementation surface.
+
+Fix applied:
+
+- added `docs/Data Studio/tool_panel_graph_migration_plan.md`
+- classified which panels should remain standalone because they are inspectors,
+  utilities, monitoring surfaces, or project/system management surfaces
+- classified graph-backed tool families that should stop gaining duplicated
+  panel-local configuration
+- documented migration rules for future menu, command-palette, metadata, and
+  pipeline-operator work
 
 **Impact:**
 
