@@ -297,6 +297,14 @@ Affected nodes:
 
 **Severity:** High
 
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- `GraphCompiler` now hard-blocks `L1Regularization`, `L2Regularization`, and `ElasticNet`.
+- the guard covers loaded/imported graphs even though these node types are not metadata-registered.
+- `test_graph_compiler_deferred_nodes` verifies all three fail compile with the training-execution gap message.
+
 Relevant files:
 
 - `cyxwiz-engine/src/gui/node_editor_nodes.cpp`

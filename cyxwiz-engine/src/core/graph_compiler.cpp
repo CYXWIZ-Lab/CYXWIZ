@@ -137,7 +137,10 @@ bool IsUnsupportedTrainingControlNode(gui::NodeType type) {
            type == gui::NodeType::CosineAnnealing ||
            type == gui::NodeType::ReduceOnPlateau ||
            type == gui::NodeType::ExponentialLR ||
-           type == gui::NodeType::WarmupScheduler;
+           type == gui::NodeType::WarmupScheduler ||
+           type == gui::NodeType::L1Regularization ||
+           type == gui::NodeType::L2Regularization ||
+           type == gui::NodeType::ElasticNet;
 }
 
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {

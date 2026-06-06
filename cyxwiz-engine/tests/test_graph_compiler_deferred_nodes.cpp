@@ -342,6 +342,34 @@ int main() {
               std::string("unsupported scheduler should report execution gap: ") + scheduler_case.name);
     }
 
+    const std::vector<UnsupportedLayerCase> unsupported_regularization_cases = {
+        {gui::NodeType::L1Regularization, "L1Regularization"},
+        {gui::NodeType::L2Regularization, "L2Regularization"},
+        {gui::NodeType::ElasticNet, "ElasticNet"},
+    };
+
+    for (const auto& regularization_case : unsupported_regularization_cases) {
+        auto regularization = Node(19,
+                                   regularization_case.node_type,
+                                   regularization_case.name,
+                                   {},
+                                   {});
+
+        nodes = {data, dense, loss, optimizer, regularization};
+        links = {
+            Link(1, 1, 101, 2, 201),
+            Link(2, 2, 202, 4, 401),
+            Link(3, 1, 102, 4, 402),
+            Link(4, 4, 403, 5, 501),
+        };
+
+        config = compiler.Compile(nodes, links, true);
+        Check(!config.is_valid,
+              std::string("unsupported regularization should block compile: ") + regularization_case.name);
+        Check(HasIssueText(config, "not connected to training execution yet"),
+              std::string("unsupported regularization should report execution gap: ") + regularization_case.name);
+    }
+
     auto abs = Node(8,
                     gui::NodeType::TensorAbs,
                     "Abs",
