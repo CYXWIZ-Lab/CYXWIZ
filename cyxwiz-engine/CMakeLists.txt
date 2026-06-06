@@ -416,6 +416,7 @@ set(ENGINE_SOURCES
     src/gui/panels/wallet_panel.cpp
     src/gui/panels/plugin_manager_panel.cpp
     src/gui/theme.cpp
+    src/gui/theme_presets.cpp
     src/gui/dock_style.cpp
     # Data Studio (Phase 1 Week 1)
     # src/gui/data_studio/pipeline_canvas.cpp  # Unified Canvas Phase 5: Replaced by Node Editor

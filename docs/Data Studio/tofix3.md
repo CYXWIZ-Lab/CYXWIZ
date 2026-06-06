@@ -1009,6 +1009,11 @@ Fix applied:
 - reduced `data_input_dialog.cpp` further to roughly 428 lines while leaving
   constructor restore, content composition, reset, and unload ownership in
   the main file
+- added `gui/theme_presets.cpp`
+- moved Theme preset color definitions out of `theme.cpp`
+- reduced `theme.cpp` from roughly 3010 lines to roughly 1004 lines while
+  leaving preset selection, style config, ImNodes styling, and dock styling in
+  the main file
 
 **Recommendation:**
 
