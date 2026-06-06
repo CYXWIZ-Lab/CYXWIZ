@@ -990,6 +990,13 @@ Fix applied:
 - reduced `data_input_dialog.cpp` further to roughly 1989 lines while leaving
   Apply, async polling, database/cloud rendering, and summary rendering in the
   main file
+- added `gui/data_input_dialog_external_sources.cpp`
+- moved Data Input database and cloud source rendering out of
+  `data_input_dialog.cpp`
+- added `gui/data_input_dialog_summary.cpp`
+- moved Data Input dataset summary rendering out of `data_input_dialog.cpp`
+- reduced `data_input_dialog.cpp` further to roughly 1926 lines while leaving
+  Apply, async polling, and file/source option rendering in the main file
 
 **Recommendation:**
 
