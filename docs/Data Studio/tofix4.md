@@ -47,6 +47,14 @@ do not execute truthfully.
 
 **Severity:** High
 
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- `GraphCompiler` now hard-blocks these nodes when they are on the selected training path.
+- the error names the compiler/model-builder mismatch instead of allowing `ModelBuilder` to skip the layer.
+- `test_graph_compiler_deferred_nodes` verifies each affected CNN/pooling node fails compile before model construction.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/graph_compiler.cpp:922`
@@ -76,6 +84,14 @@ Effect:
 ### 2. `ConvTranspose2D`, `Upsample`, `PixelShuffle`
 
 **Severity:** High
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- `GraphCompiler` now hard-blocks these upsampling nodes on the selected training path.
+- loaded/imported graphs are covered even when a node has no metadata registration.
+- `test_graph_compiler_deferred_nodes` verifies each affected node fails compile with the backend-gap message.
 
 Relevant files:
 
@@ -143,6 +159,14 @@ Effect:
 ### 4. `RNN` and `Bidirectional`
 
 **Severity:** High
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- `GraphCompiler` now hard-blocks `RNN` and `Bidirectional` on the selected training path because `ModelBuilder` has no corresponding module cases.
+- the guard is independent of metadata status, so imported graphs cannot bypass it.
+- `test_graph_compiler_deferred_nodes` verifies both node types fail compile before model construction.
 
 Relevant files:
 

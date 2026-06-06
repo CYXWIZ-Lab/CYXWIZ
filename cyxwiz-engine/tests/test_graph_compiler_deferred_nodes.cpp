@@ -272,6 +272,46 @@ int main() {
               std::string("compiler should extract learning rate for ") + optimizer_case.name);
     }
 
+    struct UnsupportedLayerCase {
+        gui::NodeType node_type;
+        const char* name;
+    };
+
+    const std::vector<UnsupportedLayerCase> unsupported_layer_cases = {
+        {gui::NodeType::Conv2D, "Conv2D"},
+        {gui::NodeType::MaxPool2D, "MaxPool2D"},
+        {gui::NodeType::AvgPool2D, "AvgPool2D"},
+        {gui::NodeType::GlobalMaxPool, "GlobalMaxPool"},
+        {gui::NodeType::GlobalAvgPool, "GlobalAvgPool"},
+        {gui::NodeType::ConvTranspose2D, "ConvTranspose2D"},
+        {gui::NodeType::Upsample, "Upsample"},
+        {gui::NodeType::PixelShuffle, "PixelShuffle"},
+        {gui::NodeType::RNN, "RNN"},
+        {gui::NodeType::Bidirectional, "Bidirectional"},
+    };
+
+    for (const auto& unsupported_case : unsupported_layer_cases) {
+        auto unsupported = Node(17,
+                                unsupported_case.node_type,
+                                unsupported_case.name,
+                                {Pin(1701, gui::PinType::Tensor, "Input", true)},
+                                {Pin(1702, gui::PinType::Tensor, "Output", false)});
+
+        nodes = {data, unsupported, loss, optimizer};
+        links = {
+            Link(1, 1, 101, 17, 1701),
+            Link(2, 17, 1702, 4, 401),
+            Link(3, 1, 102, 4, 402),
+            Link(4, 4, 403, 5, 501),
+        };
+
+        config = compiler.Compile(nodes, links, true);
+        Check(!config.is_valid,
+              std::string("unsupported layer should block compile: ") + unsupported_case.name);
+        Check(HasIssueText(config, "not supported by ModelBuilder/SequentialModel"),
+              std::string("unsupported layer should report backend gap: ") + unsupported_case.name);
+    }
+
     auto abs = Node(8,
                     gui::NodeType::TensorAbs,
                     "Abs",

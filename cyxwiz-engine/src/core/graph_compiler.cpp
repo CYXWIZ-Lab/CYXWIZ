@@ -119,6 +119,19 @@ bool IsGraphRuntimeFanInOp(gui::NodeType type) {
            IsGraphRuntimeLinalgOp(type);
 }
 
+bool IsUnsupportedSequentialModelLayer(gui::NodeType type) {
+    return type == gui::NodeType::Conv2D ||
+           type == gui::NodeType::MaxPool2D ||
+           type == gui::NodeType::AvgPool2D ||
+           type == gui::NodeType::GlobalMaxPool ||
+           type == gui::NodeType::GlobalAvgPool ||
+           type == gui::NodeType::ConvTranspose2D ||
+           type == gui::NodeType::Upsample ||
+           type == gui::NodeType::PixelShuffle ||
+           type == gui::NodeType::RNN ||
+           type == gui::NodeType::Bidirectional;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -925,6 +938,14 @@ void ValidateTrainingPathImplementationStatus(
 
     for (const auto& node : nodes) {
         if (training_path_ids.count(node.id) == 0) {
+            continue;
+        }
+
+        if (IsUnsupportedSequentialModelLayer(node.type)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name << "' is recognized by the graph compiler "
+                << "but is not supported by ModelBuilder/SequentialModel yet";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
 
