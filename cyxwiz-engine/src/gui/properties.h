@@ -60,11 +60,6 @@ private:
     // Metadata-driven parameter rendering
     void RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition& param);
 
-    // Preset management
-    void SavePreset(const MLNode& node, const std::string& name);
-    void LoadPreset(MLNode& node, const std::string& name);
-    std::vector<std::string> GetPresetsForNodeType(NodeType type);
-
     // Shape inference methods
     NodeShapeInfo ComputeNodeShape(int node_id);
     std::vector<size_t> GetInputShapeFromDataset();

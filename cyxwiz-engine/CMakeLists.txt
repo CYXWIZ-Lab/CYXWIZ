@@ -214,6 +214,7 @@ set(ENGINE_SOURCES
     src/gui/viewport.cpp
     src/gui/properties.cpp
     src/gui/properties_parameter_rules.cpp
+    src/gui/properties_presets.cpp
     src/gui/properties_shape_info.cpp
     src/gui/node_config_dialog.cpp
     src/gui/data_input_capabilities.cpp

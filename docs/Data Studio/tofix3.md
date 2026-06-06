@@ -661,11 +661,14 @@ Fix applied:
   into the shape helper
 - kept the existing `Properties` shape methods as thin wrappers so rendering
   code and existing call sites stay stable
+- added `gui/properties_presets.{h,cpp}`
+- moved built-in preset discovery and placeholder save/load policy out of
+  `Properties`, leaving the panel responsible only for rendering preset
+  controls and invalidating shape state after a load
 
 Remaining responsibility still in `properties.cpp`:
 
 - node-specific property editors
-- preset UI and placeholder preset persistence
 - executor integration UI
 - advanced/debug raw-parameter display
 

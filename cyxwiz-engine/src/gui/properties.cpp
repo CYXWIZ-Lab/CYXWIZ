@@ -16,6 +16,7 @@
 
 #include "properties.h"
 #include "properties_parameter_rules.h"
+#include "properties_presets.h"
 #include "../core/node_metadata_registry.h"
 #include "../core/worker_defaults.h"
 #include "node_editor.h"
@@ -1806,12 +1807,13 @@ void Properties::RenderPresetsSection(MLNode& node) {
         section_presets_open_ = true;
 
         // List available presets
-        auto presets = GetPresetsForNodeType(node.type);
+        auto presets = properties_presets::GetPresetsForNodeType(node.type);
         if (!presets.empty()) {
             ImGui::Text("Available Presets:");
             for (const auto& preset : presets) {
                 if (ImGui::Button(preset.c_str())) {
-                    LoadPreset(node, preset);
+                    properties_presets::LoadPreset(node, preset);
+                    InvalidateShapes();
                 }
                 ImGui::SameLine();
             }
@@ -1825,7 +1827,7 @@ void Properties::RenderPresetsSection(MLNode& node) {
         ImGui::InputText("##preset_name", preset_name_buffer_, sizeof(preset_name_buffer_));
         ImGui::SameLine();
         if (ImGui::Button("Save") && preset_name_buffer_[0] != '\0') {
-            SavePreset(node, preset_name_buffer_);
+            properties_presets::SavePreset(node, preset_name_buffer_);
             preset_name_buffer_[0] = '\0';
         }
     } else {
@@ -2013,39 +2015,6 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
     }
 
     ImGui::PopID();
-}
-
-void Properties::SavePreset(const MLNode& node, const std::string& name) {
-    // TODO: Implement preset persistence (save to JSON file)
-    spdlog::info("Saved preset '{}' for node type {}", name, static_cast<int>(node.type));
-}
-
-void Properties::LoadPreset(MLNode& node, const std::string& name) {
-    // TODO: Implement preset loading (read from JSON file)
-    spdlog::info("Loading preset '{}' for node type {}", name, static_cast<int>(node.type));
-    InvalidateShapes();
-}
-
-std::vector<std::string> Properties::GetPresetsForNodeType(NodeType type) {
-    // TODO: Implement preset discovery (scan presets directory)
-    std::vector<std::string> presets;
-
-    // Return some built-in presets for common node types
-    switch (type) {
-        case NodeType::Conv2D:
-            presets = {"VGG-style", "ResNet-style", "MobileNet-style"};
-            break;
-        case NodeType::Dense:
-            presets = {"Small (64)", "Medium (256)", "Large (1024)"};
-            break;
-        case NodeType::Adam:
-            presets = {"Default", "Fast Learning", "Fine-tuning"};
-            break;
-        default:
-            break;
-    }
-
-    return presets;
 }
 
 // ==================== Node Executor Integration ====================
