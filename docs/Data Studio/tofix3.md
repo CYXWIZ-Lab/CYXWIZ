@@ -1044,6 +1044,10 @@ Fix applied:
   keyboard handling out of `script_editor.cpp`
 - reduced `script_editor.cpp` further to roughly 2344 lines while leaving
   completion handling in the main file
+- added `gui/panels/script_editor_completion.cpp`
+- moved Script Editor auto-completion popup, query, and insertion handling out
+  of `script_editor.cpp`
+- reduced `script_editor.cpp` further to roughly 2126 lines
 
 **Recommendation:**
 
