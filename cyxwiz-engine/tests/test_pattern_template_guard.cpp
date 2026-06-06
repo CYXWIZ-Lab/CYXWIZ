@@ -75,6 +75,8 @@ int main() {
           "failed to load graph-runtime dot pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_batch_matmul", "TensorBatchMatMul").string()),
           "failed to load template-node pattern");
+    Check(library.LoadPatternFromFile(WritePattern("guard_multihead_attention", "MultiHeadAttention").string()),
+          "failed to load attention template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_typo", "DefinitelyNotANode").string()),
           "failed to load unknown-node pattern");
 
@@ -129,6 +131,14 @@ int main() {
           "template TensorBatchMatMul pattern should be rejected");
     Check(nodes.empty() && links.empty(), "template rejection should leave no partial graph");
     Check(creator_calls == 4, "template rejection should not call node creator");
+
+    nodes.clear();
+    links.clear();
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_multihead_attention", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
+          "template MultiHeadAttention pattern should be rejected");
+    Check(nodes.empty() && links.empty(), "attention template rejection should leave no partial graph");
+    Check(creator_calls == 4, "attention template rejection should not call node creator");
 
     nodes.clear();
     links.clear();

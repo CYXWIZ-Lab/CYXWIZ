@@ -1095,7 +1095,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Query", PinType::Tensor, true, "Query"}, {"Key", PinType::Tensor, false, "Key"}},
         {{"Output", PinType::Tensor, true, "Output"}},
         {{"embed_dim", "int", "512", "Dim", {}, ""}, {"num_heads", "int", "8", "Heads", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0});
 
     RegisterNode({NodeType::MaxPool2D, NodeCategory::Pooling, "MaxPool2D", ICON_FA_COMPRESS,
         {"maxpool", "pooling"}, 0, false, "Max pooling", "", "",

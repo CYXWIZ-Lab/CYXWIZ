@@ -106,6 +106,14 @@ Effect:
 
 **Severity:** High
 
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- `MultiHeadAttention` metadata is now `Template`, so add-search and pattern instantiation treat it as planned/unavailable instead of implemented.
+- the Nodes > Add Layer > Attention quick-add entry is disabled, preventing toolbar bypass of the metadata guard.
+- `test_pattern_template_guard` verifies patterns containing `MultiHeadAttention` are rejected without creating partial graphs.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/node_metadata_registry.cpp:951`

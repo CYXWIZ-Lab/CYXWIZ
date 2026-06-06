@@ -51,9 +51,7 @@ void ToolbarPanel::RenderNodesMenu() {
             if (ImGui::MenuItem(ICON_FA_CHART_BAR " Batch Normalization")) {
                 if (add_batchnorm_node_callback_) add_batchnorm_node_callback_();
             }
-            if (ImGui::MenuItem(ICON_FA_BULLSEYE " Attention")) {
-                if (add_attention_node_callback_) add_attention_node_callback_();
-            }
+            RenderPlannedMenuItem(ICON_FA_BULLSEYE " Attention");
             ImGui::EndMenu();
         }
 
