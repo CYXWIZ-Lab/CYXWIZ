@@ -911,7 +911,7 @@ Additional fix applied on 2026-06-06:
 ### 16. Several frontend files are large enough to slow safe iteration
 
 **Severity:** High
-**Status:** Partially fixed on 2026-06-06
+**Status:** Fixed on 2026-06-06
 
 Notable files:
 
@@ -936,6 +936,17 @@ Audit result: this is still real. `properties.cpp` and `DataInputDialog` have
 already had several concern-specific helpers extracted, and `toolbar.cpp`
 already had menu-specific split files. The next low-risk boundary was command
 palette search/rendering, which was still embedded in the main toolbar file.
+
+Final audit: the original large frontend files and the largest extracted
+helpers are now below the target size for this pass:
+
+- `data_input_dialog.cpp`: roughly 428 lines
+- `properties.cpp`: roughly 270 lines
+- `properties_node_editors.cpp`: roughly 751 lines
+- `theme.cpp`: roughly 166 lines
+- `theme_nodes.cpp`: roughly 560 lines
+- `toolbar.cpp`: roughly 365 lines
+- `script_editor.cpp`: roughly 964 lines
 
 Fix applied:
 
