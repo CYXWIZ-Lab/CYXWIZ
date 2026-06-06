@@ -223,6 +223,7 @@ set(ENGINE_SOURCES
     src/gui/node_config_dialog.cpp
     src/gui/data_input_capabilities.cpp
     src/gui/data_input_preview.cpp
+    src/gui/data_input_dialog_preview.cpp
     src/gui/data_io_dialogs.cpp
     src/gui/data_input_dialog.cpp
     src/gui/loaders/audio_loader.cpp

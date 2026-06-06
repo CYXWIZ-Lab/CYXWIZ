@@ -958,6 +958,11 @@ Fix applied:
   implementations out of `data_input_dialog.cpp`
 - reduced `data_input_dialog.cpp` from roughly 3651 lines to roughly 3331
   lines while keeping the existing node configuration dialog API
+- added `gui/data_input_dialog_preview.cpp`
+- moved Data Input preview rendering and text label distribution UI out of
+  `data_input_dialog.cpp`
+- reduced `data_input_dialog.cpp` further to roughly 3059 lines while keeping
+  preview loading and parsing on the existing helper paths
 
 **Recommendation:**
 
