@@ -526,7 +526,7 @@ Fix applied:
 ### 10. Start page exists, but onboarding is still shallow
 
 **Severity:** Medium
-**Status:** Partially fixed on 2026-06-06
+**Status:** Fixed on 2026-06-06
 
 Relevant file:
 
@@ -587,13 +587,20 @@ Additional fix applied on 2026-06-06:
   implementation via `MainWindow::OpenGraphInNodeEditor`
 - reused the same graph-open wrapper from the asset browser to keep graph
   loading behavior centralized
+- added first-class Tabular, Vision, and NLP project template entry points to
+  the start page
+- added a project-template selector to the create-project modal and persisted
+  the selected template intent in the project description
 
 **What is missing:**
 
-- "new tabular project / new vision project / new NLP project"
-- recent examples or guided demos
 - "resume last graph" / "continue last training session"
 - repository clone workflow
+
+**Status after follow-up:**
+
+Fixed for current onboarding. Remaining items are larger lifecycle workflows
+and should be tracked separately from the first-run start-page entry points.
 
 **Recommendation:**
 

@@ -69,6 +69,7 @@ private:
     void RenderStarterGraphs();
     void RenderRecentProjects();
     void RenderActionCards();
+    void RenderProjectTemplateButton(const char* label, int template_index);
     void RenderBottomBar();
     void RenderCreateProjectDialog();
 
@@ -86,6 +87,7 @@ private:
     void OpenProject(const std::string& path);
     void OpenStarterGraph(const StarterGraph& starter);
     void CreateNewProject();
+    void CreateNewProjectFromTemplate(int template_index);
     void OpenExistingProject();
     void OpenProjectFolder();
     void ContinueWithoutProject();
@@ -119,6 +121,7 @@ private:
     // Create project dialog state
     char project_name_buf_[256] = {0};
     char project_location_buf_[512] = {0};
+    int selected_project_template_index_ = 0;
 };
 
 } // namespace cyxwiz

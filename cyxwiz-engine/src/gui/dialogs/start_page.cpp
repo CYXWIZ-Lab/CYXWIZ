@@ -18,6 +18,19 @@ namespace cyxwiz {
 
 namespace {
 
+struct ProjectTemplateDefinition {
+    const char* name;
+    const char* description;
+    const char* default_project_name;
+};
+
+static constexpr std::array<ProjectTemplateDefinition, 4> kProjectTemplates = {{
+    {"Blank project", "General CyxWiz workspace.", "New CyxWiz Project"},
+    {"Tabular project", "Tables, preprocessing, classical ML, and evaluation.", "Tabular ML Project"},
+    {"Vision project", "Image datasets, augmentation, model training, and evaluation.", "Vision ML Project"},
+    {"NLP project", "Text datasets, tokenization, vectorization, and language workflows.", "NLP Project"}
+}};
+
 bool LocalTime(std::time_t time, std::tm& out) {
 #ifdef _WIN32
     return localtime_s(&out, &time) == 0;
@@ -488,6 +501,13 @@ void StartPage::RenderActionCards() {
 
     ImGui::Spacing();
 
+    ImGui::TextDisabled("New from template");
+    RenderProjectTemplateButton(ICON_FA_TABLE " Tabular project", 1);
+    RenderProjectTemplateButton(ICON_FA_IMAGE " Vision project", 2);
+    RenderProjectTemplateButton(ICON_FA_COMMENTS " NLP project", 3);
+
+    ImGui::Spacing();
+
     // Open project
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
@@ -523,6 +543,18 @@ void StartPage::RenderActionCards() {
     ImGui::PopStyleColor(3);
 
     ImGui::PopStyleVar(2);
+}
+
+void StartPage::RenderProjectTemplateButton(const char* label, int template_index) {
+    float button_width = ImGui::GetContentRegionAvail().x;
+    if (ImGui::Button(label, ImVec2(button_width, 0))) {
+        CreateNewProjectFromTemplate(template_index);
+    }
+    if (ImGui::IsItemHovered() &&
+        template_index >= 0 &&
+        template_index < static_cast<int>(kProjectTemplates.size())) {
+        ImGui::SetTooltip("%s", kProjectTemplates[template_index].description);
+    }
 }
 
 void StartPage::RenderBottomBar() {
@@ -561,6 +593,24 @@ void StartPage::OpenStarterGraph(const StarterGraph& starter) {
 }
 
 void StartPage::CreateNewProject() {
+    selected_project_template_index_ = 0;
+    show_create_dialog_ = true;
+}
+
+void StartPage::CreateNewProjectFromTemplate(int template_index) {
+    selected_project_template_index_ = std::clamp(
+        template_index,
+        0,
+        static_cast<int>(kProjectTemplates.size()) - 1);
+
+    if (project_name_buf_[0] == '\0') {
+        strncpy(
+            project_name_buf_,
+            kProjectTemplates[selected_project_template_index_].default_project_name,
+            sizeof(project_name_buf_) - 1);
+        project_name_buf_[sizeof(project_name_buf_) - 1] = '\0';
+    }
+
     show_create_dialog_ = true;
 }
 
@@ -569,9 +619,24 @@ void StartPage::RenderCreateProjectDialog() {
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(500, 260), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(520, 340), ImGuiCond_Appearing);
 
     if (ImGui::BeginPopupModal("Create New Project", &show_create_dialog_, ImGuiWindowFlags_NoResize)) {
+        ImGui::Text("Project Template:");
+        const char* template_names[kProjectTemplates.size()] = {};
+        for (size_t i = 0; i < kProjectTemplates.size(); ++i) {
+            template_names[i] = kProjectTemplates[i].name;
+        }
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo(
+            "##ProjectTemplate",
+            &selected_project_template_index_,
+            template_names,
+            static_cast<int>(kProjectTemplates.size()));
+        ImGui::TextDisabled("%s", kProjectTemplates[selected_project_template_index_].description);
+
+        ImGui::Spacing();
+
         ImGui::Text("Project Name:");
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##ProjectName", project_name_buf_, sizeof(project_name_buf_));
@@ -614,6 +679,8 @@ void StartPage::RenderCreateProjectDialog() {
         if (ImGui::Button("Create", ImVec2(button_width, 0))) {
             auto& pm = ProjectManager::Instance();
             if (pm.CreateProject(project_name_buf_, project_location_buf_)) {
+                pm.GetConfig().description = kProjectTemplates[selected_project_template_index_].description;
+                pm.SaveProject();
                 selected_project_path_ = pm.GetProjectFilePath();
                 result_ = Result::ProjectSelected;
                 show_create_dialog_ = false;
