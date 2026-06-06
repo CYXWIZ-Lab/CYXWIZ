@@ -887,6 +887,7 @@ Additional fix applied on 2026-06-06:
 ### 16. Several frontend files are large enough to slow safe iteration
 
 **Severity:** High
+**Status:** Partially fixed on 2026-06-06
 
 Notable files:
 
@@ -906,6 +907,21 @@ Large files are not automatically wrong, but these files appear to mix:
 - async coordination
 
 That makes changes slower and more error-prone.
+
+Audit result: this is still real. `properties.cpp` and `DataInputDialog` have
+already had several concern-specific helpers extracted, and `toolbar.cpp`
+already had menu-specific split files. The next low-risk boundary was command
+palette search/rendering, which was still embedded in the main toolbar file.
+
+Fix applied:
+
+- added `gui/panels/toolbar_command_palette.cpp`
+- moved command-palette open/shortcut handling, fuzzy search, result filtering,
+  and palette rendering out of `toolbar.cpp`
+- kept `InitializeToolEntries()` in `toolbar.cpp` for now because it owns the
+  callback wiring and command list declaration
+- reduced `toolbar.cpp` from roughly 2446 lines to roughly 2229 lines without
+  changing command behavior
 
 **Recommendation:**
 
