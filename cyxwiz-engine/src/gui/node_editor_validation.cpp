@@ -15,6 +15,14 @@
 
 namespace gui {
 
+namespace {
+
+bool IsGraphInputNode(NodeType type) {
+    return type == NodeType::DataInput || type == NodeType::DatasetInput;
+}
+
+} // namespace
+
 bool NodeEditor::ValidateGraph(std::string& error_message) {
     if (nodes_.empty()) {
         error_message = "Graph is empty. Add nodes first.";
@@ -167,8 +175,8 @@ bool NodeEditor::IsGraphValid() const {
     bool has_model_layer = false;
 
     for (const auto& node : nodes_) {
-        // Both smart DataInput and legacy DatasetInput nodes are valid data sources
-        if (node.type == NodeType::DataInput || node.type == NodeType::DatasetInput) {
+        // Both smart DataInput and legacy DatasetInput nodes are valid data sources.
+        if (IsGraphInputNode(node.type)) {
             has_dataset_input = true;
         }
         // All loss functions
@@ -382,10 +390,10 @@ bool NodeEditor::HasCycle() {
 bool NodeEditor::AllNodesReachable() {
     if (nodes_.empty()) return true;
 
-    // Find all DatasetInput nodes
+    // Find all graph input nodes
     std::vector<int> input_nodes;
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::DatasetInput) {
+        if (IsGraphInputNode(node.type)) {
             input_nodes.push_back(node.id);
         }
     }
@@ -441,8 +449,7 @@ bool NodeEditor::AllNodesReachable() {
 
 bool NodeEditor::HasInputNode() {
     for (const auto& node : nodes_) {
-        // DatasetInput is the valid input source for the graph
-        if (node.type == NodeType::DatasetInput) {
+        if (IsGraphInputNode(node.type)) {
             return true;
         }
     }

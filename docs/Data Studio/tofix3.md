@@ -228,7 +228,7 @@ Implemented behavior:
 ### 5. Graph validation is still structurally correct but too shallow for ML workflow guidance
 
 **Severity:** High
-**Status:** Partially fixed on 2026-06-05
+**Status:** Fixed on 2026-06-06
 
 Relevant file:
 
@@ -268,10 +268,15 @@ Additional fix applied:
 - domain-specific preprocessing nodes now block compile when they do not match
   the selected DataInput category, e.g. image `Resize` on a tabular data path
 - covered the domain mismatch check in `test_graph_compiler_deferred_nodes`
+- aligned editor-side structural validation with the compiler data-source
+  contract so both smart `DataInput` and legacy `DatasetInput` nodes count as
+  graph roots for input presence, reachability, and quick training-readiness
+  checks
 
-That is useful, but still not enough for a visual ML tool.
+That gives the current graph editor/compiler path semantic coverage without
+duplicating compile-gate checks in `node_editor_validation.cpp`.
 
-**Missing validation depth:**
+**Future validation depth:**
 
 - dataset/task-type mismatches
 - label tensor wiring problems
@@ -280,6 +285,12 @@ That is useful, but still not enough for a visual ML tool.
 - dtype warnings
 - suspicious data path warnings beyond the selected training path
 - invalid training graphs that are graph-valid but compile-invalid
+
+**Status after follow-up:**
+
+Fixed for the current compile gate and editor validation boundary. Additional
+semantic checks should be added to `GraphCompiler` with focused regression
+coverage instead of growing duplicate editor-only validation.
 
 **Recommendation:**
 
