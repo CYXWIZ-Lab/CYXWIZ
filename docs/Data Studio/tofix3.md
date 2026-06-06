@@ -1074,6 +1074,11 @@ Fix applied:
   of `script_editor.cpp`
 - reduced `script_editor.cpp` further to roughly 1964 lines while leaving file
   operations, execution, and save-confirmation dialogs in the main file
+- added `gui/panels/script_editor_save.cpp`
+- moved Script Editor unsaved-file checks, save-all handling, and save
+  confirmation dialogs out of `script_editor.cpp`
+- reduced `script_editor.cpp` further to roughly 1764 lines while leaving file
+  operations and execution in the main file
 
 **Recommendation:**
 
