@@ -1020,6 +1020,11 @@ Fix applied:
   `toolbar.cpp`
 - reduced `toolbar.cpp` further to roughly 2455 lines while leaving the main
   render body and command initialization in place
+- added `gui/panels/script_editor_search.cpp`
+- moved Script Editor find/replace operations out of `script_editor.cpp`
+- reduced `script_editor.cpp` from roughly 4077 lines to roughly 3596 lines
+  while leaving rendering, file I/O, comments, cell mode, debug UI, and
+  completion handling in the main file
 
 **Recommendation:**
 
