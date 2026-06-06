@@ -625,6 +625,7 @@ background-driven surfaces.
 ### 12. `properties.cpp` is carrying too much responsibility
 
 **Severity:** High
+**Status:** Partially fixed on 2026-06-06
 
 Relevant file:
 
@@ -642,6 +643,26 @@ The properties panel appears to handle:
 
 This file is very large and likely acting as a generic sink for
 configuration logic.
+
+Audit result: this issue is still real. `properties.cpp` had pure generic
+parameter policy mixed into the panel implementation: hidden-parameter rules,
+strict numeric parsing, numeric range parsing, and metadata validation.
+
+Fix applied:
+
+- added `gui/properties_parameter_rules.{h,cpp}`
+- moved generic parameter hiding policy, strict int/float parsing, validation
+  range parsing, and metadata parameter validation into that helper
+- removed the `Properties::ValidateParameter` member so the panel keeps the
+  ImGui rendering while the reusable parameter rules live outside the panel
+
+Remaining responsibility still in `properties.cpp`:
+
+- shape inference and dataset-shape lookup
+- node-specific property editors
+- preset UI and placeholder preset persistence
+- executor integration UI
+- advanced/debug raw-parameter display
 
 **Impact:**
 

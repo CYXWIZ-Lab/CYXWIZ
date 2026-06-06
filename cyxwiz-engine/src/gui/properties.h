@@ -80,7 +80,6 @@ private:
 
     // Metadata-driven parameter rendering
     void RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition& param);
-    bool ValidateParameter(const std::string& value, const cyxwiz::ParameterDefinition& param, std::string& error);
 
     // Preset management
     void SavePreset(const MLNode& node, const std::string& name);
