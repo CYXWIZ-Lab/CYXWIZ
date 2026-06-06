@@ -322,6 +322,9 @@ struct TrainingConfiguration {
             case gui::NodeType::SGD: return OptimizerType::SGD;
             case gui::NodeType::Adam: return OptimizerType::Adam;
             case gui::NodeType::AdamW: return OptimizerType::AdamW;
+            case gui::NodeType::RMSprop: return OptimizerType::RMSprop;
+            case gui::NodeType::Adagrad: return OptimizerType::AdaGrad;
+            case gui::NodeType::NAdam: return OptimizerType::NAdam;
             default: return OptimizerType::Adam;
         }
     }
@@ -345,6 +348,9 @@ struct TrainingConfiguration {
             case gui::NodeType::SGD: return "SGD";
             case gui::NodeType::Adam: return "Adam";
             case gui::NodeType::AdamW: return "AdamW";
+            case gui::NodeType::RMSprop: return "RMSprop";
+            case gui::NodeType::Adagrad: return "Adagrad";
+            case gui::NodeType::NAdam: return "NAdam";
             default: return "Adam";
         }
     }

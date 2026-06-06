@@ -230,6 +230,48 @@ int main() {
           "graph plan should include loss-to-optimizer edge");
     Check(plan.edges.size() == 4, "graph plan should contain only selected path edges");
 
+    struct OptimizerCase {
+        gui::NodeType node_type;
+        cyxwiz::OptimizerType optimizer_type;
+        const char* name;
+    };
+
+    const std::vector<OptimizerCase> optimizer_cases = {
+        {gui::NodeType::SGD, cyxwiz::OptimizerType::SGD, "SGD"},
+        {gui::NodeType::Adam, cyxwiz::OptimizerType::Adam, "Adam"},
+        {gui::NodeType::AdamW, cyxwiz::OptimizerType::AdamW, "AdamW"},
+        {gui::NodeType::RMSprop, cyxwiz::OptimizerType::RMSprop, "RMSprop"},
+        {gui::NodeType::Adagrad, cyxwiz::OptimizerType::AdaGrad, "Adagrad"},
+        {gui::NodeType::NAdam, cyxwiz::OptimizerType::NAdam, "NAdam"},
+    };
+
+    for (const auto& optimizer_case : optimizer_cases) {
+        auto selected_optimizer = optimizer;
+        selected_optimizer.type = optimizer_case.node_type;
+        selected_optimizer.name = optimizer_case.name;
+        selected_optimizer.parameters["learning_rate"] = "0.002";
+
+        nodes = {data, dense, loss, selected_optimizer};
+        links = {
+            Link(1, 1, 101, 2, 201),
+            Link(2, 2, 202, 4, 401),
+            Link(3, 1, 102, 4, 402),
+            Link(4, 4, 403, 5, 501),
+        };
+
+        config = compiler.Compile(nodes, links, true);
+        Check(config.is_valid,
+              std::string("compiler should accept optimizer ") + optimizer_case.name);
+        Check(config.optimizer_node_id == 5,
+              std::string("compiler should select optimizer ") + optimizer_case.name);
+        Check(config.GetOptimizerType() == optimizer_case.optimizer_type,
+              std::string("compiler should map backend type for ") + optimizer_case.name);
+        Check(config.GetOptimizerName() == optimizer_case.name,
+              std::string("compiler should preserve optimizer name for ") + optimizer_case.name);
+        Check(config.learning_rate == 0.002f,
+              std::string("compiler should extract learning rate for ") + optimizer_case.name);
+    }
+
     auto abs = Node(8,
                     gui::NodeType::TensorAbs,
                     "Abs",

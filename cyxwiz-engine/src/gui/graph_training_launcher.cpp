@@ -89,7 +89,9 @@ void ApplyLegacyOptimizerLoopParams(
         if (node.type != NodeType::Adam &&
             node.type != NodeType::SGD &&
             node.type != NodeType::AdamW &&
-            node.type != NodeType::RMSprop) {
+            node.type != NodeType::RMSprop &&
+            node.type != NodeType::Adagrad &&
+            node.type != NodeType::NAdam) {
             continue;
         }
 

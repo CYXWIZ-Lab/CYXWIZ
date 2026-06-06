@@ -56,7 +56,10 @@ bool IsLossNodeType(gui::NodeType type) {
 bool IsSupportedOptimizerNodeType(gui::NodeType type) {
     return type == gui::NodeType::SGD ||
            type == gui::NodeType::Adam ||
-           type == gui::NodeType::AdamW;
+           type == gui::NodeType::AdamW ||
+           type == gui::NodeType::RMSprop ||
+           type == gui::NodeType::Adagrad ||
+           type == gui::NodeType::NAdam;
 }
 
 const char* IssueLevelLabel(IssueLevel level) {
@@ -1060,7 +1063,7 @@ TrainingConfiguration GraphCompiler::Compile(
         }
         if (!optimizer_node) {
             AddIssue(config, IssueLevel::Error,
-                     "Graph must have an optimizer (SGD, Adam, or AdamW)");
+                     "Graph must have an optimizer (SGD, Adam, AdamW, RMSprop, Adagrad, or NAdam)");
         }
         bool has_model_layer = false;
         for (const auto& node : nodes) {
@@ -1971,7 +1974,7 @@ bool GraphCompiler::ValidateGraph(
 
     // Check for optimizer
     if (!FindOptimizerNode(nodes)) {
-        error = "Graph must have an optimizer (SGD, Adam, or AdamW)";
+        error = "Graph must have an optimizer (SGD, Adam, AdamW, RMSprop, Adagrad, or NAdam)";
         return false;
     }
 
