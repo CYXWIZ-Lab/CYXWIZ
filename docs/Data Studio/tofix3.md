@@ -979,6 +979,11 @@ Fix applied:
   of `data_input_dialog.cpp`
 - reduced `data_input_dialog.cpp` further to roughly 2496 lines while leaving
   memory, audit, and dataset-source rendering in the main file for now
+- added `gui/data_input_dialog_status_tabs.cpp`
+- moved Data Input memory-management and dataset-audit tab rendering out of
+  `data_input_dialog.cpp`, including audit issue parsing helpers
+- reduced `data_input_dialog.cpp` further to roughly 2201 lines while leaving
+  Apply, async polling, and dataset-source rendering in the main file
 
 **Recommendation:**
 

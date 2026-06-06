@@ -227,6 +227,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_profile.cpp
     src/gui/data_input_dialog_helpers.cpp
     src/gui/data_input_dialog_filter_tabs.cpp
+    src/gui/data_input_dialog_status_tabs.cpp
     src/gui/data_io_dialogs.cpp
     src/gui/data_input_dialog.cpp
     src/gui/loaders/audio_loader.cpp
