@@ -18,6 +18,18 @@ namespace cyxwiz {
 
 namespace cyxwiz {
 
+enum class ToolSurface {
+    Command,
+    StandalonePanel,
+    GraphBackedPanel,
+    Utility
+};
+
+enum class ToolAvailability {
+    Working,
+    Planned
+};
+
 // Tool entry for command palette search
 struct ToolEntry {
     std::string name;           // Display name (e.g., "K-Means Clustering")
@@ -26,6 +38,9 @@ struct ToolEntry {
     std::string icon;           // FontAwesome icon code
     std::string shortcut;       // Keyboard shortcut if any (e.g., "Ctrl+P")
     std::function<void()> callback;  // Action to execute
+    ToolSurface surface = ToolSurface::Command;
+    ToolAvailability availability = ToolAvailability::Working;
+    std::string status_detail;
 
     // Fuzzy match score (used during search)
     mutable int match_score = 0;

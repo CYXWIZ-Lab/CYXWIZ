@@ -15,11 +15,95 @@
 #include <regex>
 #include <sstream>
 #include <chrono>
+#include <initializer_list>
 #include "../dock_style.h"
 #include "../../core/project_manager.h"
 #include "../icons.h"
 
 namespace cyxwiz {
+
+namespace {
+
+bool IsCategory(const ToolEntry& tool, const char* category) {
+    return tool.category == category;
+}
+
+bool IsAnyCategory(const ToolEntry& tool, std::initializer_list<const char*> categories) {
+    for (const char* category : categories) {
+        if (IsCategory(tool, category)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsAnyToolName(const ToolEntry& tool, std::initializer_list<const char*> names) {
+    for (const char* name : names) {
+        if (tool.name == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* ToolSurfaceLabel(ToolSurface surface) {
+    switch (surface) {
+        case ToolSurface::StandalonePanel: return "Panel";
+        case ToolSurface::GraphBackedPanel: return "Graph-backed";
+        case ToolSurface::Utility: return "Utility";
+        case ToolSurface::Command:
+        default: return "Command";
+    }
+}
+
+void AnnotateCommandSurface(std::vector<ToolEntry>& tools) {
+    for (auto& tool : tools) {
+        if (IsCategory(tool, "Utilities")) {
+            tool.surface = ToolSurface::Utility;
+            tool.status_detail = "Transient utility";
+            tool.keywords += " utility transient standalone";
+            continue;
+        }
+
+        if (IsAnyCategory(tool, {
+                "Clustering",
+                "Transform",
+                "Signal Processing",
+                "Time Series",
+                "Text",
+                "Linear Algebra"
+            }) ||
+            IsAnyToolName(tool, {
+                "Correlation Matrix",
+                "Outlier Detection",
+                "Regression Analysis",
+                "Dimensionality Reduction",
+                "GradCAM",
+                "Feature Importance"
+            })) {
+            tool.surface = ToolSurface::GraphBackedPanel;
+            tool.status_detail = "Also available as graph workflow";
+            tool.keywords += " graph node pipeline durable";
+            continue;
+        }
+
+        if (IsAnyCategory(tool, {
+                "Model Analysis",
+                "Data Science",
+                "Statistics",
+                "Advanced",
+                "Evaluation",
+                "Profile",
+                "Developer"
+            })) {
+            tool.surface = ToolSurface::StandalonePanel;
+            tool.status_detail = "Standalone panel";
+            tool.keywords += " panel inspector";
+        }
+    }
+}
+
+} // namespace
 
 ToolbarPanel::ToolbarPanel()
     : Panel("Toolbar", true)
@@ -2556,8 +2640,9 @@ void ToolbarPanel::InitializeToolEntries() {
     all_tools_.push_back({"System Monitor", "Profile", "system monitor cpu ram gpu usage", ICON_FA_MICROCHIP, "", [this]() { if (open_memory_monitor_callback_) open_memory_monitor_callback_(); }});
 
     // Development tools
-    all_tools_.push_back({"Theme Editor", "Developer", "theme editor colors style", ICON_FA_PALETTE, "", [this]() { if (open_theme_editor_callback_) open_theme_editor_callback_(); }});
     all_tools_.push_back({"Custom Node Editor", "Developer", "custom node create define", ICON_FA_GEARS, "", [this]() { if (open_custom_node_editor_callback_) open_custom_node_editor_callback_(); }});
+
+    AnnotateCommandSurface(all_tools_);
 
     spdlog::debug("Initialized {} tool entries for command palette", all_tools_.size());
 }
@@ -2736,9 +2821,12 @@ void ToolbarPanel::RenderCommandPalette() {
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !filtered_tools_.empty()) {
             if (selected_index_ >= 0 && selected_index_ < static_cast<int>(filtered_tools_.size())) {
-                auto callback = filtered_tools_[selected_index_]->callback;
-                show_command_palette_ = false;
-                if (callback) callback();
+                const ToolEntry* tool = filtered_tools_[selected_index_];
+                if (tool->availability == ToolAvailability::Working && tool->callback) {
+                    auto callback = tool->callback;
+                    show_command_palette_ = false;
+                    callback();
+                }
             }
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
@@ -2750,6 +2838,7 @@ void ToolbarPanel::RenderCommandPalette() {
 
         for (int i = 0; i < static_cast<int>(filtered_tools_.size()); ++i) {
             const auto* tool = filtered_tools_[i];
+            const bool can_execute = tool->availability == ToolAvailability::Working && tool->callback;
 
             ImGui::PushID(i);
 
@@ -2760,8 +2849,10 @@ void ToolbarPanel::RenderCommandPalette() {
 
             // Selectable row
             if (ImGui::Selectable("##ToolRow", isSelected, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, 32))) {
-                show_command_palette_ = false;
-                if (tool->callback) tool->callback();
+                if (can_execute) {
+                    show_command_palette_ = false;
+                    tool->callback();
+                }
             }
 
             if (isSelected) {
@@ -2780,10 +2871,20 @@ void ToolbarPanel::RenderCommandPalette() {
             ImGui::SameLine(40);
 
             // Tool name
-            ImGui::Text("%s", tool->name.c_str());
+            if (!can_execute) {
+                ImGui::TextDisabled("%s", tool->name.c_str());
+            } else {
+                ImGui::Text("%s", tool->name.c_str());
+            }
+
+            if (!tool->status_detail.empty() && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", tool->status_detail.c_str());
+            }
 
             // Category badge (right-aligned)
-            ImGui::SameLine(ImGui::GetWindowWidth() - 120);
+            ImGui::SameLine(ImGui::GetWindowWidth() - 210);
+            ImGui::TextDisabled("[%s]", ToolSurfaceLabel(tool->surface));
+            ImGui::SameLine(ImGui::GetWindowWidth() - 110);
             ImGui::TextDisabled("[%s]", tool->category.c_str());
 
             ImGui::PopID();

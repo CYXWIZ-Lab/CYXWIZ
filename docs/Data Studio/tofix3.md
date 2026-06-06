@@ -857,6 +857,19 @@ The remaining problem is command coherence:
 - some launch panels
 - some imply future execution paths
 
+Additional fix applied on 2026-06-06:
+
+- extended command-palette `ToolEntry` metadata with a typed command surface
+  and availability state
+- annotated graph-backed standalone panel families in the existing
+  `all_tools_` list instead of adding a second command registry
+- rendered command-surface badges in the command palette so users can
+  distinguish commands, panels, graph-backed panels, and utilities
+- blocked future planned/unavailable command entries from executing through the
+  palette if they are added as visible search results
+- removed the duplicate `Theme Editor` command-palette entry and kept the View
+  command as the canonical entry
+
 **Recommendation:**
 
 - audit every command-palette and toolbar action
