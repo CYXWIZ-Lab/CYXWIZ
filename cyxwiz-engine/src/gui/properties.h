@@ -9,6 +9,7 @@
 #include "../core/node_metadata.h"
 #include "../core/node_executors/node_executor_factory.h"
 #include "node_config_dialog.h"
+#include "properties_shape_info.h"
 
 namespace gui {
 
@@ -18,30 +19,8 @@ struct MLNode;
 struct NodeLink;
 class NodeEditor;
 
-/**
- * Parameter information for a layer
- */
-struct LayerParameters {
-    std::vector<size_t> weight_shape;   // Weight tensor shape
-    std::vector<size_t> bias_shape;     // Bias tensor shape
-    size_t weight_count = 0;            // Number of weight parameters
-    size_t bias_count = 0;              // Number of bias parameters
-    size_t total_params = 0;            // Total trainable parameters
-    bool has_parameters = false;        // Whether this layer has learnable params
-};
-
-/**
- * Computed shape information for a node
- */
-struct NodeShapeInfo {
-    std::vector<size_t> input_shape;
-    std::vector<size_t> output_shape;
-    size_t input_size = 0;   // Flattened input size
-    size_t output_size = 0;  // Flattened output size
-    bool is_valid = false;
-    std::string error;
-    LayerParameters params;  // Learnable parameters info
-};
+using LayerParameters = properties_shape::LayerParameters;
+using NodeShapeInfo = properties_shape::NodeShapeInfo;
 
 class Properties {
 public:

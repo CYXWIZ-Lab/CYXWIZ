@@ -655,10 +655,15 @@ Fix applied:
   range parsing, and metadata parameter validation into that helper
 - removed the `Properties::ValidateParameter` member so the panel keeps the
   ImGui rendering while the reusable parameter rules live outside the panel
+- added `gui/properties_shape_info.{h,cpp}`
+- moved shape formatting, batch-size lookup, dataset-shape resolution,
+  output-shape inference, layer-parameter counting, and graph shape traversal
+  into the shape helper
+- kept the existing `Properties` shape methods as thin wrappers so rendering
+  code and existing call sites stay stable
 
 Remaining responsibility still in `properties.cpp`:
 
-- shape inference and dataset-shape lookup
 - node-specific property editors
 - preset UI and placeholder preset persistence
 - executor integration UI
