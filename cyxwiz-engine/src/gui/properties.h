@@ -7,7 +7,6 @@
 #include <functional>
 #include <memory>
 #include "../core/node_metadata.h"
-#include "../core/node_executors/node_executor_factory.h"
 #include "node_config_dialog.h"
 #include "properties_shape_info.h"
 
@@ -54,8 +53,6 @@ private:
 
     // Node executor integration (Phase: Node Executor Architecture)
     void RenderExecutorSection(MLNode& node);
-    bool HasNodeExecutor(NodeType type);
-    void SetupExecutorInputData(cyxwiz::INodeExecutor* executor, MLNode& node);
 
     // Metadata-driven parameter rendering
     void RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition& param);

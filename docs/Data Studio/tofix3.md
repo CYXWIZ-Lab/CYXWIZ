@@ -665,11 +665,14 @@ Fix applied:
 - moved built-in preset discovery and placeholder save/load policy out of
   `Properties`, leaving the panel responsible only for rendering preset
   controls and invalidating shape state after a load
+- added `gui/properties_executor.{h,cpp}`
+- moved executor availability checks, executor config/result rendering, and
+  placeholder executor input setup out of `Properties`, removing the executor
+  factory dependency from the panel header
 
 Remaining responsibility still in `properties.cpp`:
 
 - node-specific property editors
-- executor integration UI
 - advanced/debug raw-parameter display
 
 **Impact:**

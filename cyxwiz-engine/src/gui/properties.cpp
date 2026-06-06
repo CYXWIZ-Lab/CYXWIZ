@@ -15,6 +15,7 @@
 #endif
 
 #include "properties.h"
+#include "properties_executor.h"
 #include "properties_parameter_rules.h"
 #include "properties_presets.h"
 #include "../core/node_metadata_registry.h"
@@ -2020,84 +2021,7 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
 // ==================== Node Executor Integration ====================
 
 void Properties::RenderExecutorSection(MLNode& node) {
-    // Check if this node type has an executor
-    if (!HasNodeExecutor(node.type)) {
-        return;  // No executor for this node type
-    }
-
-    auto* executor = cyxwiz::NodeExecutorFactory::Instance().GetExecutor(node.type);
-    if (!executor) return;
-
-    ImGui::Separator();
-
-    // Executor header with name
-    bool executor_open = ImGui::CollapsingHeader(
-        (std::string(executor->GetName()) + " Configuration").c_str(),
-        ImGuiTreeNodeFlags_DefaultOpen
-    );
-
-    if (executor_open) {
-        ImGui::Indent(10.0f);
-
-        // Setup input data from connected nodes if available
-        SetupExecutorInputData(executor, node);
-
-        // Render configuration UI
-        ImGui::PushID("ExecutorConfig");
-        executor->RenderConfigUI();
-        ImGui::PopID();
-
-        ImGui::Unindent(10.0f);
-    }
-
-    // Results section (shown after execution)
-    if (executor->GetState() == cyxwiz::ExecutorState::Completed ||
-        executor->GetState() == cyxwiz::ExecutorState::Executing ||
-        executor->GetState() == cyxwiz::ExecutorState::Error) {
-
-        bool results_open = ImGui::CollapsingHeader("Results", ImGuiTreeNodeFlags_DefaultOpen);
-
-        if (results_open) {
-            ImGui::Indent(10.0f);
-
-            ImGui::PushID("ExecutorResults");
-            executor->RenderResultsUI();
-            ImGui::PopID();
-
-            ImGui::Unindent(10.0f);
-        }
-    }
-}
-
-bool Properties::HasNodeExecutor(NodeType type) {
-    return cyxwiz::NodeExecutorFactory::Instance().HasExecutor(type);
-}
-
-void Properties::SetupExecutorInputData(cyxwiz::INodeExecutor* executor, MLNode& node) {
-    if (!node_editor_) return;
-
-    // TODO: Get input data from connected upstream nodes
-    // For now, check if there's a DatasetInput node connected
-    // and load its data
-    //
-    // This is a placeholder - in a real implementation:
-    // 1. Find all nodes connected to this node's input pins
-    // 2. Get their output data (Arrow tables or raw vectors)
-    // 3. Pass to executor via SetInputData()
-    //
-    // Silence unused-parameter warnings until the real implementation
-    // lands — the signature is already part of the Properties API so
-    // changing names doesn't help.
-    (void)executor;
-    (void)node;
-
-    // For demo/testing, we could generate sample data
-    // if (executor->GetState() == cyxwiz::ExecutorState::Idle) {
-    //     // Generate sample data for testing
-    //     std::vector<std::vector<double>> sample_data;
-    //     // ... generate random cluster data
-    //     executor->SetInputData(sample_data);
-    // }
+    properties_executor::RenderExecutorSection(node_editor_, node);
 }
 
 } // namespace gui
