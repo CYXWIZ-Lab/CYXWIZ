@@ -1,78 +1,17 @@
-// Include Windows headers first, then undef conflicting macros
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-// Undefine Windows macros that conflict with our method names
-#ifdef CreateDialog
-#undef CreateDialog
-#endif
-#ifdef CreateDialogA
-#undef CreateDialogA
-#endif
-#ifdef CreateDialogW
-#undef CreateDialogW
-#endif
-#endif
-
 #include "properties.h"
 #include "properties_advanced.h"
 #include "properties_executor.h"
+#include "properties_metadata_editor.h"
 #include "properties_node_editors.h"
-#include "properties_parameter_rules.h"
 #include "properties_presets.h"
 #include "../core/node_metadata_registry.h"
 #include "node_editor.h"
 #include "node_config_dialog.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
-#include <algorithm>
-#include <cctype>
-#include <cstdio>
 #include <cstring>
-#include <utility>
 
 namespace gui {
-
-namespace {
-
-std::string HumanizeParameterName(const std::string& name) {
-    std::string label;
-    label.reserve(name.size());
-
-    bool capitalize_next = true;
-    for (char ch : name) {
-        if (ch == '_' || ch == '-') {
-            label.push_back(' ');
-            capitalize_next = true;
-            continue;
-        }
-
-        unsigned char c = static_cast<unsigned char>(ch);
-        if (capitalize_next) {
-            label.push_back(static_cast<char>(std::toupper(c)));
-            capitalize_next = false;
-        } else {
-            label.push_back(ch);
-        }
-    }
-
-    return label.empty() ? name : label;
-}
-
-std::string GetParameterLabel(const cyxwiz::ParameterDefinition& param) {
-    return param.display_name.empty() ? HumanizeParameterName(param.name) : param.display_name;
-}
-
-bool ShouldUseIntSlider(const properties_rules::NumericRange& range) {
-    if (!range.has_range) {
-        return false;
-    }
-
-    const double span = range.max_value - range.min_value;
-    return span >= 1.0 && span <= 10000.0;
-}
-
-} // namespace
 
 Properties::Properties() : show_window_(true) {
 }
@@ -428,66 +367,12 @@ void Properties::RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadat
     ImGui::SetNextItemOpen(section_parameters_open_, ImGuiCond_Once);
     if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
         section_parameters_open_ = true;
-
-        if (metadata && !metadata->parameters.empty()) {
-            using ParameterGroup = std::pair<std::string, std::vector<const cyxwiz::ParameterDefinition*>>;
-
-            std::vector<ParameterGroup> groups;
-            std::vector<const cyxwiz::ParameterDefinition*> advanced_params;
-            bool rendered_any = false;
-
-            auto add_to_group = [&](const std::string& group_name, const cyxwiz::ParameterDefinition& param) {
-                for (auto& group : groups) {
-                    if (group.first == group_name) {
-                        group.second.push_back(&param);
-                        return;
-                    }
-                }
-                groups.push_back({group_name, {&param}});
-            };
-
-            for (const auto& param : metadata->parameters) {
-                if (properties_rules::ShouldHideGenericParameter(node.type, param)) {
-                    validation_errors_.erase(param.name);
-                    continue;
-                }
-
-                if (param.advanced) {
-                    advanced_params.push_back(&param);
-                } else {
-                    add_to_group(param.group, param);
-                }
-            }
-
-            auto render_params = [&](const std::vector<const cyxwiz::ParameterDefinition*>& params) {
-                for (const auto* param : params) {
-                    RenderParameter(node, *param);
-                    rendered_any = true;
-                }
-            };
-
-            for (const auto& group : groups) {
-                if (group.first.empty()) {
-                    render_params(group.second);
-                } else if (ImGui::TreeNodeEx(group.first.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-                    render_params(group.second);
-                    ImGui::TreePop();
-                }
-            }
-
-            if (!advanced_params.empty() &&
-                ImGui::TreeNodeEx("Advanced Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
-                render_params(advanced_params);
-                ImGui::TreePop();
-            }
-
-            if (!rendered_any) {
-                ImGui::TextDisabled("Configure this node from its dialog.");
-            }
-        } else {
-            // Fallback to existing node-specific rendering
-            RenderNodeProperties(node);
-        }
+        properties_metadata::RenderParametersContent(
+            node,
+            metadata,
+            validation_errors_,
+            [this](MLNode& fallback_node) { RenderNodeProperties(fallback_node); },
+            [this]() { InvalidateShapes(); });
     } else {
         section_parameters_open_ = false;
     }
@@ -525,210 +410,6 @@ void Properties::RenderPresetsSection(MLNode& node) {
     } else {
         section_presets_open_ = false;
     }
-}
-
-void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition& param) {
-    ImGui::PushID(param.name.c_str());
-
-    std::string& value = node.parameters[param.name];
-
-    // Initialize with default if empty
-    if (value.empty() && !param.default_value.empty()) {
-        value = param.default_value;
-    }
-
-    std::string initial_error;
-    if (!properties_rules::ValidateParameter(value, param, initial_error)) {
-        validation_errors_[param.name] = initial_error;
-    } else {
-        validation_errors_.erase(param.name);
-    }
-
-    // Check for validation errors
-    bool has_error = validation_errors_.count(param.name) > 0;
-    if (has_error) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-    }
-
-    const std::string label = GetParameterLabel(param);
-
-    // Label
-    ImGui::Text("%s%s:", label.c_str(), param.required ? " *" : "");
-    if (has_error) {
-        ImGui::PopStyleColor();
-    }
-
-    // Tooltip with description
-    if (!param.description.empty() && ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::TextUnformatted(param.description.c_str());
-        if (!param.default_value.empty()) {
-            ImGui::TextDisabled("Default: %s", param.default_value.c_str());
-        }
-        ImGui::TextDisabled(param.required ? "Required" : "Optional");
-        ImGui::EndTooltip();
-    }
-
-    ImGui::SameLine();
-
-    bool changed = false;
-
-    // Render based on parameter type
-    if (param.type == "int") {
-        int int_val = 0;
-        properties_rules::TryParseIntStrict(value, int_val);
-        ImGui::SetNextItemWidth(120.0f);
-        properties_rules::NumericRange range = properties_rules::ParseNumericRange(param.validation);
-        if (ShouldUseIntSlider(range)) {
-            int min_v = static_cast<int>(range.min_value);
-            int max_v = static_cast<int>(range.max_value);
-            int_val = std::clamp(int_val, min_v, max_v);
-            if (ImGui::SliderInt("##value", &int_val, min_v, max_v)) {
-                value = std::to_string(int_val);
-                changed = true;
-            }
-        } else if (ImGui::InputInt("##value", &int_val)) {
-            if (range.has_range) {
-                int_val = std::clamp(
-                    int_val,
-                    static_cast<int>(range.min_value),
-                    static_cast<int>(range.max_value));
-            }
-            value = std::to_string(int_val);
-            changed = true;
-        }
-    }
-    else if (param.type == "float") {
-        double parsed_float = 0.0;
-        properties_rules::TryParseDoubleStrict(value, parsed_float);
-        float float_val = static_cast<float>(parsed_float);
-        ImGui::SetNextItemWidth(120.0f);
-
-        properties_rules::NumericRange range = properties_rules::ParseNumericRange(param.validation);
-        if (range.has_range) {
-            float min_v = static_cast<float>(range.min_value);
-            float max_v = static_cast<float>(range.max_value);
-            float_val = std::clamp(float_val, min_v, max_v);
-            if (ImGui::SliderFloat("##value", &float_val, min_v, max_v, "%.4f")) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.4f", float_val);
-                value = buf;
-                changed = true;
-            }
-        } else {
-            if (ImGui::InputFloat("##value", &float_val, 0.01f, 0.1f, "%.4f")) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%.4f", float_val);
-                value = buf;
-                changed = true;
-            }
-        }
-    }
-    else if (param.type == "bool") {
-        bool bool_val = (value == "true" || value == "1");
-        if (ImGui::Checkbox("##value", &bool_val)) {
-            value = bool_val ? "true" : "false";
-            changed = true;
-        }
-    }
-    else if ((param.type == "enum" || param.type == "dropdown") && !param.enum_values.empty()) {
-        // Find current index
-        int current_idx = 0;
-        for (size_t i = 0; i < param.enum_values.size(); i++) {
-            if (param.enum_values[i] == value) {
-                current_idx = static_cast<int>(i);
-                break;
-            }
-        }
-
-        // Build combo items
-        std::vector<const char*> items;
-        for (const auto& ev : param.enum_values) {
-            items.push_back(ev.c_str());
-        }
-
-        ImGui::SetNextItemWidth(150.0f);
-        if (ImGui::Combo("##value", &current_idx, items.data(), static_cast<int>(items.size()))) {
-            value = param.enum_values[current_idx];
-            changed = true;
-        }
-    }
-    else if (param.type == "file") {
-        char file_buf[512];
-        strncpy(file_buf, value.c_str(), sizeof(file_buf) - 1);
-        file_buf[sizeof(file_buf) - 1] = '\0';
-
-        ImGui::SetNextItemWidth(180.0f);
-        if (ImGui::InputText("##value", file_buf, sizeof(file_buf))) {
-            value = file_buf;
-            changed = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Browse")) {
-#ifdef _WIN32
-            OPENFILENAMEA ofn = {};
-            char file[512] = {};
-            strncpy(file, value.c_str(), sizeof(file) - 1);
-            ofn.lStructSize = sizeof(ofn);
-            ofn.lpstrFilter = "All Files\0*.*\0";
-            ofn.lpstrFile = file;
-            ofn.nMaxFile = sizeof(file);
-            ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-            if (GetOpenFileNameA(&ofn)) {
-                value = file;
-                changed = true;
-            }
-#endif
-        }
-    }
-    else {
-        // Default: string input
-        char str_buf[256];
-        strncpy(str_buf, value.c_str(), sizeof(str_buf) - 1);
-        str_buf[sizeof(str_buf) - 1] = '\0';
-
-        ImGui::SetNextItemWidth(180.0f);
-        if (ImGui::InputText("##value", str_buf, sizeof(str_buf))) {
-            value = str_buf;
-            changed = true;
-        }
-    }
-
-    if (!param.default_value.empty() && value != param.default_value) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Reset")) {
-            value = param.default_value;
-            changed = true;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Reset to default: %s", param.default_value.c_str());
-        }
-    }
-
-    // Validation on change
-    if (changed) {
-        std::string error;
-        if (!properties_rules::ValidateParameter(value, param, error)) {
-            validation_errors_[param.name] = error;
-        } else {
-            validation_errors_.erase(param.name);
-        }
-        InvalidateShapes();
-        has_error = validation_errors_.count(param.name) > 0;
-    }
-
-    // Show validation error
-    if (has_error) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", validation_errors_[param.name].c_str());
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", validation_errors_[param.name].c_str());
-            ImGui::EndTooltip();
-        }
-    }
-
-    ImGui::PopID();
 }
 
 // ==================== Node Executor Integration ====================

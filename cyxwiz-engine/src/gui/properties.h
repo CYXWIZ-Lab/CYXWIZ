@@ -54,9 +54,6 @@ private:
     // Node executor integration (Phase: Node Executor Architecture)
     void RenderExecutorSection(MLNode& node);
 
-    // Metadata-driven parameter rendering
-    void RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition& param);
-
     // Shape inference methods
     NodeShapeInfo ComputeNodeShape(int node_id);
     std::vector<size_t> GetInputShapeFromDataset();

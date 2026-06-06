@@ -687,10 +687,16 @@ Fix applied:
 - moved the long node-type-specific parameter editor switch into a helper with
   an explicit render context for shape invalidation, dynamic pins, and signal
   scope demo state
+- added `gui/properties_metadata_editor.{h,cpp}`
+- moved metadata-backed parameter grouping, advanced-parameter grouping, typed
+  ImGui controls, default reset handling, and inline validation rendering out
+  of `Properties`
+- removed the Windows file-dialog dependency from `properties.cpp`; the helper
+  now owns file-parameter browsing alongside the rest of metadata parameter UI
 
 Remaining responsibility still in `properties.cpp`:
 
-- section composition and generic metadata-driven parameter controls
+- section composition and high-level panel orchestration
 
 **Impact:**
 
