@@ -336,6 +336,7 @@ private:
     void HandleAutoSaveTimer();
     void RenderEditorDialogs();
     void RenderSearchDialogs();
+    void RenderAccountDialogs();
 
     // Command Palette functionality
     void InitializeToolEntries();

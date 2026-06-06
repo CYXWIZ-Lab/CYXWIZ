@@ -1059,6 +1059,11 @@ Fix applied:
   rendering out of `toolbar_dialogs.cpp`
 - reduced `toolbar_dialogs.cpp` to roughly 1767 lines while leaving account,
   wallet, preferences, and project dialogs in that file
+- added `gui/panels/toolbar_account_dialogs.cpp`
+- moved Toolbar account settings and wallet connection modal rendering out of
+  `toolbar_dialogs.cpp`
+- reduced `toolbar_dialogs.cpp` further to roughly 1101 lines while leaving
+  project, script, exit, preferences, and go-to-line dialogs in that file
 
 **Recommendation:**
 
