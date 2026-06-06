@@ -20,8 +20,8 @@
         {"name": "bucket", "type": "string", "default": "", "description": "S3 bucket name"},
         {"name": "key", "type": "string", "default": "", "description": "Object key (file path)"},
         {"name": "region", "type": "string", "default": "us-east-1", "description": "AWS region"},
-        {"name": "access_key", "type": "string", "default": "", "description": "AWS access key ID"},
-        {"name": "secret_key", "type": "string", "default": "", "description": "AWS secret access key"}
+        {"name": "access_key", "type": "password", "default": "", "description": "AWS access key ID"},
+        {"name": "secret_key", "type": "password", "default": "", "description": "AWS secret access key"}
       ],
       "implementation_notes": "Use aws-sdk-cpp",
       "target_phase": "Phase 3",

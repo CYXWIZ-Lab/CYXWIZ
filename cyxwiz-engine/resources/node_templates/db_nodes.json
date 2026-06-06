@@ -18,10 +18,10 @@
       ],
       "parameters": [
         {"name": "host", "type": "string", "default": "localhost", "description": "Database host"},
-        {"name": "port", "type": "int", "default": "5432", "description": "Port number"},
+        {"name": "port", "type": "int", "default": "5432", "description": "Port number", "validation": "1-65535"},
         {"name": "database", "type": "string", "default": "", "description": "Database name"},
         {"name": "username", "type": "string", "default": "", "description": "Username"},
-        {"name": "password", "type": "string", "default": "", "description": "Password (stored securely)"}
+        {"name": "password", "type": "password", "default": "", "description": "Password (stored securely)"}
       ],
       "implementation_notes": "Use libpq for connection. Consider connection pooling.",
       "target_phase": "Phase 2",
@@ -44,10 +44,10 @@
       ],
       "parameters": [
         {"name": "host", "type": "string", "default": "localhost", "description": "Database host"},
-        {"name": "port", "type": "int", "default": "3306", "description": "Port number"},
+        {"name": "port", "type": "int", "default": "3306", "description": "Port number", "validation": "1-65535"},
         {"name": "database", "type": "string", "default": "", "description": "Database name"},
         {"name": "username", "type": "string", "default": "", "description": "Username"},
-        {"name": "password", "type": "string", "default": "", "description": "Password"}
+        {"name": "password", "type": "password", "default": "", "description": "Password"}
       ],
       "implementation_notes": "Use mysql-connector-c++ library",
       "target_phase": "Phase 2",
@@ -121,7 +121,7 @@
         {"name": "database", "type": "string", "default": "", "description": "Database name"},
         {"name": "schema", "type": "string", "default": "PUBLIC", "description": "Schema name"},
         {"name": "username", "type": "string", "default": "", "description": "Username"},
-        {"name": "password", "type": "string", "default": "", "description": "Password"}
+        {"name": "password", "type": "password", "default": "", "description": "Password"}
       ],
       "implementation_notes": "Use Snowflake ODBC driver or REST API",
       "target_phase": "Phase 3",
@@ -145,8 +145,8 @@
         {"name": "Result", "type": "Dataset", "description": "Query result as table"}
       ],
       "parameters": [
-        {"name": "query", "type": "string", "default": "SELECT * FROM table_name", "description": "SQL query to execute"},
-        {"name": "fetch_size", "type": "int", "default": "1000", "description": "Batch fetch size"}
+        {"name": "query", "type": "multiline", "default": "SELECT * FROM table_name", "description": "SQL query to execute"},
+        {"name": "fetch_size", "type": "int", "default": "1000", "description": "Batch fetch size", "validation": "1-1000000"}
       ],
       "implementation_notes": "Generic executor that works with any DB connector",
       "target_phase": "Phase 2",
@@ -173,7 +173,7 @@
       "parameters": [
         {"name": "table_name", "type": "string", "default": "", "description": "Target table name"},
         {"name": "mode", "type": "enum", "default": "append", "description": "Write mode", "enum_values": ["append", "overwrite", "upsert"]},
-        {"name": "batch_size", "type": "int", "default": "1000", "description": "Insert batch size"}
+        {"name": "batch_size", "type": "int", "default": "1000", "description": "Insert batch size", "validation": "1-1000000"}
       ],
       "implementation_notes": "Use prepared statements for efficiency",
       "target_phase": "Phase 2",

@@ -16,6 +16,7 @@
 #include "properties_metadata_editor.h"
 #include "properties_parameter_rules.h"
 #include "node_editor.h"
+#include "../core/file_dialogs.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cctype>
@@ -63,6 +64,45 @@ bool ShouldUseIntSlider(const properties_rules::NumericRange& range) {
 
     const double span = range.max_value - range.min_value;
     return span >= 1.0 && span <= 10000.0;
+}
+
+std::string ToLower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return text;
+}
+
+bool ContainsAny(const std::string& text, const std::vector<const char*>& needles) {
+    const std::string lower_text = ToLower(text);
+    for (const char* needle : needles) {
+        if (lower_text.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsFolderParameterType(const cyxwiz::ParameterDefinition& param) {
+    return param.type == "directory" || param.type == "folder";
+}
+
+bool ShouldUseMultilineText(const cyxwiz::ParameterDefinition& param) {
+    if (param.type == "multiline" || param.type == "text") {
+        return true;
+    }
+
+    return param.type == "string" &&
+           ContainsAny(param.name, {"query", "sql", "body", "prompt", "template", "expression"});
+}
+
+bool ShouldUsePasswordText(const cyxwiz::ParameterDefinition& param) {
+    if (param.type == "password") {
+        return true;
+    }
+
+    return param.type == "string" &&
+           ContainsAny(param.name, {"password", "api_key", "token", "secret", "credential"});
 }
 
 void RenderParameter(
@@ -216,13 +256,46 @@ void RenderParameter(
 #endif
         }
     }
+    else if (IsFolderParameterType(param)) {
+        char folder_buf[512];
+        strncpy(folder_buf, value.c_str(), sizeof(folder_buf) - 1);
+        folder_buf[sizeof(folder_buf) - 1] = '\0';
+
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::InputText("##value", folder_buf, sizeof(folder_buf))) {
+            value = folder_buf;
+            changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Browse")) {
+            auto selected_folder = cyxwiz::FileDialogs::SelectFolder(
+                "Select Folder",
+                value.empty() ? nullptr : value.c_str());
+            if (selected_folder) {
+                value = *selected_folder;
+                changed = true;
+            }
+        }
+    }
+    else if (ShouldUseMultilineText(param)) {
+        char text_buf[2048];
+        strncpy(text_buf, value.c_str(), sizeof(text_buf) - 1);
+        text_buf[sizeof(text_buf) - 1] = '\0';
+
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::InputTextMultiline("##value", text_buf, sizeof(text_buf), ImVec2(260.0f, 72.0f))) {
+            value = text_buf;
+            changed = true;
+        }
+    }
     else {
-        char str_buf[256];
+        char str_buf[512];
         strncpy(str_buf, value.c_str(), sizeof(str_buf) - 1);
         str_buf[sizeof(str_buf) - 1] = '\0';
 
+        ImGuiInputTextFlags flags = ShouldUsePasswordText(param) ? ImGuiInputTextFlags_Password : 0;
         ImGui::SetNextItemWidth(180.0f);
-        if (ImGui::InputText("##value", str_buf, sizeof(str_buf))) {
+        if (ImGui::InputText("##value", str_buf, sizeof(str_buf), flags)) {
             value = str_buf;
             changed = true;
         }

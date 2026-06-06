@@ -36,7 +36,7 @@ struct PortDefinition {
  */
 struct ParameterDefinition {
     std::string name;
-    std::string type;           // "string", "int", "float", "enum", "bool", "file"
+    std::string type;           // "string", "multiline", "password", "int", "float", "enum", "bool", "file", "directory"
     std::string default_value;
     std::string description;
     std::vector<std::string> enum_values;  // For enum type

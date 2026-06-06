@@ -729,7 +729,7 @@ Remaining responsibility still in `properties.cpp`:
 ### 13. Parameter editing still looks more implementation-driven than user-driven
 
 **Severity:** Medium
-**Status:** Partially fixed on 2026-06-06
+**Status:** Fixed on 2026-06-06
 
 Relevant files:
 
@@ -757,15 +757,16 @@ Fix applied:
 - changed validation feedback from a bare marker to the actual inline error
   message
 - hid underscore-prefixed/internal metadata keys from generic editing
+- loaded JSON-template `validation` metadata so template-backed numeric
+  parameters get the same range checks and slider behavior as built-in nodes
+- added schema-backed directory, multiline, and password controls to the
+  generic renderer, then corrected obvious template parameter types for cache
+  folders, SQL/email text, and credentials
 
-**What to improve:**
+**Status after follow-up:**
 
-- stronger typed controls
-- grouped settings with better defaults
-- hidden advanced/internal settings
-- validation beside controls
-- reset-to-default support
-- required vs optional distinction
+Fixed for the metadata-backed generic editor. Remaining improvements should be
+node-specific schema refinement rather than another generic editor path.
 
 **Recommendation:**
 

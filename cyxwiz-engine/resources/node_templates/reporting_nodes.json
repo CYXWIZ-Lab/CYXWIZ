@@ -74,12 +74,12 @@
       ],
       "parameters": [
         {"name": "smtp_server", "type": "string", "default": "", "description": "SMTP server address"},
-        {"name": "smtp_port", "type": "int", "default": "587", "description": "SMTP port"},
+        {"name": "smtp_port", "type": "int", "default": "587", "description": "SMTP port", "validation": "1-65535"},
         {"name": "username", "type": "string", "default": "", "description": "SMTP username"},
-        {"name": "password", "type": "string", "default": "", "description": "SMTP password"},
+        {"name": "password", "type": "password", "default": "", "description": "SMTP password"},
         {"name": "to", "type": "string", "default": "", "description": "Recipient email"},
         {"name": "subject", "type": "string", "default": "", "description": "Email subject"},
-        {"name": "body", "type": "string", "default": "", "description": "Email body"}
+        {"name": "body", "type": "multiline", "default": "", "description": "Email body"}
       ],
       "implementation_notes": "Use libcurl with SMTP",
       "target_phase": "Phase 3",

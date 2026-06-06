@@ -419,6 +419,7 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
                                 pdef.type = param.value("type", "string");
                                 pdef.default_value = param.value("default", "");
                                 pdef.description = param.value("description", "");
+                                pdef.validation = param.value("validation", "");
                                 pdef.display_name = param.value("display_name", param.value("label", ""));
                                 pdef.group = param.value("group", "");
                                 pdef.required = param.value("required", false);
