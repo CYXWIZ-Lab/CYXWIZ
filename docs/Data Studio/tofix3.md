@@ -963,6 +963,11 @@ Fix applied:
   `data_input_dialog.cpp`
 - reduced `data_input_dialog.cpp` further to roughly 3059 lines while keeping
   preview loading and parsing on the existing helper paths
+- added `gui/data_input_dialog_profile.cpp`
+- moved Data Input profiling tab rendering and Arrow column-statistics
+  computation out of `data_input_dialog.cpp`
+- reduced `data_input_dialog.cpp` further to roughly 2816 lines while keeping
+  loaded-dataset state cleanup in the main dialog implementation
 
 **Recommendation:**
 
