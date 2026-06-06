@@ -953,6 +953,11 @@ Fix applied:
   join lines
 - reduced `script_editor.cpp` from roughly 4642 lines to roughly 4077 lines
   without changing the public Script Editor command API
+- added `gui/data_io_dialogs.cpp`
+- moved `DataOutputDialog`, `DataLoaderDialog`, and `DataSplitDialog`
+  implementations out of `data_input_dialog.cpp`
+- reduced `data_input_dialog.cpp` from roughly 3651 lines to roughly 3331
+  lines while keeping the existing node configuration dialog API
 
 **Recommendation:**
 
