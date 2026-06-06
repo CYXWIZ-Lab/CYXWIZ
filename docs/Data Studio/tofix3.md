@@ -1048,6 +1048,12 @@ Fix applied:
 - moved Script Editor auto-completion popup, query, and insertion handling out
   of `script_editor.cpp`
 - reduced `script_editor.cpp` further to roughly 2126 lines
+- added `gui/panels/toolbar_dialogs.cpp`
+- moved Toolbar project/session dialogs, account and wallet dialogs, search
+  modals, preferences, go-to-line, and auto-save timer handling out of
+  `toolbar.cpp`
+- reduced `toolbar.cpp` further to roughly 365 lines while leaving command
+  initialization and top-level render orchestration in the main file
 
 **Recommendation:**
 

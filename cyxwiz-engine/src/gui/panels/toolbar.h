@@ -332,6 +332,9 @@ private:
     void RenderHelpMenu();
     void RenderUserAvatar();
     void RenderUserProfilePopup();
+    void RenderProjectDialogs();
+    void HandleAutoSaveTimer();
+    void RenderEditorDialogs();
 
     // Command Palette functionality
     void InitializeToolEntries();
