@@ -10,6 +10,7 @@
 #include <thread>
 #include <chrono>
 #include <set>
+#include <mutex>
 
 namespace cyxwiz {
 
@@ -161,10 +162,77 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         return false;
     }
 
-    // TODO: Phase 1 Week 2 - More thorough validation
-    // - Check for disconnected nodes
-    // - Verify node parameters are valid
-    // - Check data type compatibility
+    const std::set<std::string> source_nodes = {
+        "FileInput", "DataInput", "ExcelInput", "ImageFolderDataset",
+        "MNISTDataset", "CIFAR10Dataset", "HuggingFaceDataset",
+        "KaggleDataset", "ParquetInput"
+    };
+    const std::set<std::string> two_input_nodes = {
+        "Join"
+    };
+
+    std::set<int> ids;
+    for (const auto& node : nodes) {
+        if (!ids.insert(node.id).second) {
+            last_error_ = "Pipeline contains duplicate node id: " + std::to_string(node.id);
+            return false;
+        }
+    }
+
+    for (const auto& node : nodes) {
+        for (int input_id : node.inputs) {
+            if (ids.find(input_id) == ids.end()) {
+                last_error_ = "Node '" + node.name + "' has missing input node id: " +
+                              std::to_string(input_id);
+                return false;
+            }
+            if (input_id == node.id) {
+                last_error_ = "Node '" + node.name + "' cannot connect to itself";
+                return false;
+            }
+        }
+
+        for (int output_id : node.outputs) {
+            if (ids.find(output_id) == ids.end()) {
+                last_error_ = "Node '" + node.name + "' has missing output node id: " +
+                              std::to_string(output_id);
+                return false;
+            }
+            if (output_id == node.id) {
+                last_error_ = "Node '" + node.name + "' cannot connect to itself";
+                return false;
+            }
+        }
+
+        const bool is_source = source_nodes.find(node.type) != source_nodes.end();
+        const bool is_two_input = two_input_nodes.find(node.type) != two_input_nodes.end();
+
+        if (is_source && !node.inputs.empty()) {
+            last_error_ = "Source node '" + node.name + "' must not have input connections";
+            return false;
+        }
+
+        if (!is_source && node.inputs.empty()) {
+            last_error_ = "Node '" + node.name + "' requires an input connection";
+            return false;
+        }
+
+        if (is_two_input && node.inputs.size() != 2) {
+            last_error_ = "Node '" + node.name + "' requires exactly two input connections";
+            return false;
+        }
+
+        if (!is_two_input && node.inputs.size() > 1) {
+            last_error_ = "Node '" + node.name + "' has multiple inputs, but node type '" +
+                          node.type + "' does not define multi-input execution";
+            return false;
+        }
+    }
+
+    if (TopologicalSort(nodes).empty() && !nodes.empty()) {
+        last_error_ = "Pipeline contains a cycle";
+        return false;
+    }
 
     return true;
 }
@@ -259,7 +327,9 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
     }
     // Phase 6 Week 8-9 - Feature Engineering
     else if (node.type == "PCA") {
-        return ExecutePCA(node, ctx);
+        return FailUnsupportedNode(node, "legacy PCA execution is still a passthrough placeholder");
+    } else if (node.type == "PCANode") {
+        return FailUnsupportedNode(node, "legacy PCA execution is still a passthrough placeholder");
     } else if (node.type == "PolynomialFeatures") {
         return ExecutePolynomialFeatures(node, ctx);
     } else if (node.type == "Binning") {
@@ -302,145 +372,157 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
     // ===== Phase 4: Machine Learning Algorithm Nodes =====
     // Clustering
     else if (node.type == "KMeansCluster") {
-        return ExecuteKMeans(node, ctx);
+        return FailUnsupportedNode(node, "legacy K-Means execution is still a passthrough placeholder");
     } else if (node.type == "DBSCANCluster") {
-        return ExecuteDBSCAN(node, ctx);
+        return FailUnsupportedNode(node, "legacy DBSCAN execution is still a passthrough placeholder");
     } else if (node.type == "HierarchicalCluster") {
-        return ExecuteHierarchical(node, ctx);
+        return FailUnsupportedNode(node, "legacy hierarchical clustering execution is still a passthrough placeholder");
     } else if (node.type == "GMMCluster") {
-        return ExecuteGMM(node, ctx);
+        return FailUnsupportedNode(node, "legacy GMM execution is still a passthrough placeholder");
     }
     // Dimensionality Reduction
     else if (node.type == "TSNENode") {
-        return ExecuteTSNE(node, ctx);
+        return FailUnsupportedNode(node, "legacy t-SNE execution is still a passthrough placeholder");
     } else if (node.type == "UMAPNode") {
-        return ExecuteUMAP(node, ctx);
+        return FailUnsupportedNode(node, "legacy UMAP execution is still a passthrough placeholder");
     }
     // Classification
     else if (node.type == "DecisionTreeClassifier") {
-        return ExecuteDecisionTree(node, ctx);
+        return FailUnsupportedNode(node, "legacy decision-tree execution is still a passthrough placeholder");
     } else if (node.type == "RandomForestClassifier") {
-        return ExecuteRandomForest(node, ctx);
+        return FailUnsupportedNode(node, "legacy random-forest execution is still a passthrough placeholder");
     } else if (node.type == "GradientBoostingClassifier") {
-        return ExecuteGradientBoosting(node, ctx);
+        return FailUnsupportedNode(node, "legacy gradient-boosting execution is still a passthrough placeholder");
     } else if (node.type == "SVMClassifier") {
-        return ExecuteSVM(node, ctx);
+        return FailUnsupportedNode(node, "legacy SVM execution is still a passthrough placeholder");
     } else if (node.type == "KNNClassifier") {
-        return ExecuteKNN(node, ctx);
+        return FailUnsupportedNode(node, "legacy KNN execution is still a passthrough placeholder");
     } else if (node.type == "NaiveBayesClassifier") {
-        return ExecuteNaiveBayes(node, ctx);
+        return FailUnsupportedNode(node, "legacy Naive Bayes execution is still a passthrough placeholder");
     } else if (node.type == "LogisticRegressionNode") {
-        return ExecuteLogisticRegression(node, ctx);
+        return FailUnsupportedNode(node, "legacy logistic-regression execution is still a passthrough placeholder");
     }
     // Regression
     else if (node.type == "LinearRegressionNode") {
-        return ExecuteLinearRegression(node, ctx);
+        return FailUnsupportedNode(node, "legacy linear-regression execution is still a passthrough placeholder");
     } else if (node.type == "PolynomialRegressionNode") {
-        return ExecutePolynomialRegression(node, ctx);
+        return FailUnsupportedNode(node, "legacy polynomial-regression execution is still a passthrough placeholder");
     } else if (node.type == "SVMRegressor") {
-        return ExecuteSVMRegressor(node, ctx);
+        return FailUnsupportedNode(node, "legacy SVM regressor execution is still a passthrough placeholder");
     }
     // ===== Phase 4: Model Evaluation Nodes =====
     else if (node.type == "ConfusionMatrixNode") {
-        return ExecuteConfusionMatrix(node, ctx);
+        return FailUnsupportedNode(node, "confusion-matrix graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "ROCCurveNode") {
-        return ExecuteROCCurve(node, ctx);
+        return FailUnsupportedNode(node, "ROC-curve graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "PRCurveNode") {
-        return ExecutePRCurve(node, ctx);
+        return FailUnsupportedNode(node, "precision-recall curve graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "LearningCurvesNode") {
-        return ExecuteLearningCurves(node, ctx);
+        return FailUnsupportedNode(node, "learning-curve graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "FeatureImportanceNode") {
-        return ExecuteFeatureImportance(node, ctx);
+        return FailUnsupportedNode(node, "feature-importance graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "CrossValidationNode") {
-        return ExecuteCrossValidation(node, ctx);
+        return FailUnsupportedNode(node, "cross-validation graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "RegressionMetricsNode") {
-        return ExecuteRegressionMetrics(node, ctx);
+        return FailUnsupportedNode(node, "regression-metrics graph execution is not implemented in PipelineExecutor");
     }
     // ===== Phase 4: Data Preprocessing Nodes =====
     else if (node.type == "StandardScaler") {
-        return ExecuteStandardScaler(node, ctx);
+        return FailUnsupportedNode(node, "legacy StandardScaler execution is still a passthrough placeholder");
     } else if (node.type == "MinMaxScaler") {
-        return ExecuteMinMaxScaler(node, ctx);
+        return FailUnsupportedNode(node, "legacy MinMaxScaler execution is still a passthrough placeholder");
     } else if (node.type == "RobustScaler") {
-        return ExecuteRobustScaler(node, ctx);
+        return FailUnsupportedNode(node, "legacy RobustScaler execution is still a passthrough placeholder");
     } else if (node.type == "LabelEncoder") {
-        return ExecuteLabelEncoder(node, ctx);
+        return FailUnsupportedNode(node, "legacy LabelEncoder execution is still a passthrough placeholder");
     } else if (node.type == "OrdinalEncoder") {
-        return ExecuteOrdinalEncoder(node, ctx);
+        return FailUnsupportedNode(node, "legacy OrdinalEncoder execution is still a passthrough placeholder");
     } else if (node.type == "TargetEncoder") {
-        return ExecuteTargetEncoder(node, ctx);
+        return FailUnsupportedNode(node, "legacy TargetEncoder execution is still a passthrough placeholder");
     } else if (node.type == "TrainTestSplit") {
-        return ExecuteTrainTestSplit(node, ctx);
+        return FailUnsupportedNode(node, "legacy TrainTestSplit execution is still a passthrough placeholder");
     }
     // ===== Phase 8: Advanced Preprocessing Nodes (UI Consolidation) =====
     else if (node.type == "OutlierDetector") {
-        return ExecuteOutlierDetector(node, ctx);
+        return FailUnsupportedNode(node, "legacy OutlierDetector execution is still a passthrough placeholder");
     } else if (node.type == "ImagePreprocessor") {
-        return ExecuteImagePreprocessor(node, ctx);
+        return FailUnsupportedNode(node, "legacy ImagePreprocessor execution is still a passthrough placeholder");
     } else if (node.type == "QualityAnalyzer") {
-        return ExecuteQualityAnalyzer(node, ctx);
+        return FailUnsupportedNode(node, "legacy QualityAnalyzer execution is still a passthrough placeholder");
     } else if (node.type == "DataValidator") {
-        return ExecuteDataValidator(node, ctx);
+        return FailUnsupportedNode(node, "legacy DataValidator execution is still a passthrough placeholder");
     }
     // ===== Phase 8: Dataset Source Nodes (UI Consolidation) =====
     else if (node.type == "ImageFolderDataset") {
-        return ExecuteImageFolderDataset(node, ctx);
+        return FailUnsupportedNode(node, "legacy ImageFolderDataset execution creates placeholder metadata only");
     } else if (node.type == "MNISTDataset") {
-        return ExecuteMNISTDataset(node, ctx);
+        return FailUnsupportedNode(node, "legacy MNISTDataset execution creates placeholder metadata only");
     } else if (node.type == "CIFAR10Dataset") {
-        return ExecuteCIFAR10Dataset(node, ctx);
+        return FailUnsupportedNode(node, "legacy CIFAR10Dataset execution creates placeholder metadata only");
     } else if (node.type == "HuggingFaceDataset") {
-        return ExecuteHuggingFaceDataset(node, ctx);
+        return FailUnsupportedNode(node, "legacy HuggingFaceDataset execution creates placeholder metadata only");
     } else if (node.type == "KaggleDataset") {
-        return ExecuteKaggleDataset(node, ctx);
+        return FailUnsupportedNode(node, "legacy KaggleDataset execution creates placeholder metadata only");
     }
     // ===== Phase 6: Advanced Augmentation Nodes (UI Consolidation) =====
     else if (node.type == "AugmentationPreset") {
-        return ExecuteAugmentationPreset(node, ctx);
+        return FailUnsupportedNode(node, "legacy AugmentationPreset execution is still a placeholder");
     } else if (node.type == "GeometricTransform") {
-        return ExecuteGeometricTransform(node, ctx);
+        return FailUnsupportedNode(node, "legacy GeometricTransform execution is still a placeholder");
     } else if (node.type == "ColorTransform") {
-        return ExecuteColorTransform(node, ctx);
+        return FailUnsupportedNode(node, "legacy ColorTransform execution is still a placeholder");
     } else if (node.type == "MorphologyTransform") {
-        return ExecuteMorphologyTransform(node, ctx);
+        return FailUnsupportedNode(node, "legacy MorphologyTransform execution is still a placeholder");
     } else if (node.type == "AdvancedAugment") {
-        return ExecuteAdvancedAugment(node, ctx);
+        return FailUnsupportedNode(node, "legacy AdvancedAugment execution is still a placeholder");
     }
     // ===== Phase 4: Signal Processing Nodes =====
     else if (node.type == "FFTNode") {
-        return ExecuteFFT(node, ctx);
+        return FailUnsupportedNode(node, "FFT has an operator-backed path but is not wired into PipelineExecutor");
     } else if (node.type == "IFFTNode") {
-        return ExecuteIFFT(node, ctx);
+        return FailUnsupportedNode(node, "legacy IFFT execution is still a placeholder");
     } else if (node.type == "FilterDesigner") {
-        return ExecuteFilterDesigner(node, ctx);
+        return FailUnsupportedNode(node, "FilterDesigner has an operator-backed path but is not wired into PipelineExecutor");
     } else if (node.type == "Convolution1D") {
-        return ExecuteConvolution1D(node, ctx);
+        return FailUnsupportedNode(node, "Convolution1D has an operator-backed path but is not wired into PipelineExecutor");
     } else if (node.type == "WaveletTransform") {
-        return ExecuteWavelet(node, ctx);
+        return FailUnsupportedNode(node, "legacy WaveletTransform execution is still a placeholder");
     }
     // ===== Phase 4: Text Analytics Nodes =====
     else if (node.type == "TFIDFVectorizer") {
-        return ExecuteTFIDF(node, ctx);
+        return FailUnsupportedNode(node, "TFIDF has an operator-backed path but is not wired into PipelineExecutor");
     } else if (node.type == "CountVectorizer") {
-        return ExecuteCountVectorizer(node, ctx);
+        return FailUnsupportedNode(node, "CountVectorizer has an operator-backed path but is not wired into PipelineExecutor");
     } else if (node.type == "WordEmbeddings") {
-        return ExecuteWordEmbeddings(node, ctx);
+        return FailUnsupportedNode(node, "word-embedding graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "SentimentAnalyzer") {
-        return ExecuteSentiment(node, ctx);
+        return FailUnsupportedNode(node, "SentimentAnalyzer has an operator-backed path but is not wired into PipelineExecutor");
     } else if (node.type == "NamedEntityRecognizer") {
-        return ExecuteNER(node, ctx);
+        return FailUnsupportedNode(node, "NER graph execution is not implemented in PipelineExecutor");
+    } else if (node.type == "TimeSeriesDecomposition") {
+        return FailUnsupportedNode(node, "TimeSeriesDecomposition has an operator-backed path but is not wired into PipelineExecutor");
+    } else if (node.type == "ARIMAForecaster") {
+        return FailUnsupportedNode(node, "ARIMAForecaster has an operator-backed path but is not wired into PipelineExecutor");
+    } else if (node.type == "ExponentialSmoothing") {
+        return FailUnsupportedNode(node, "ExponentialSmoothing has an operator-backed path but is not wired into PipelineExecutor");
+    } else if (node.type == "DNNModelLoad") {
+        return FailUnsupportedNode(node, "DNN model loading is not implemented in PipelineExecutor");
+    } else if (node.type == "DNNDetect") {
+        return FailUnsupportedNode(node, "DNN object detection is not implemented in PipelineExecutor");
+    } else if (node.type == "PretrainedYOLO") {
+        return FailUnsupportedNode(node, "pretrained YOLO execution is not implemented in PipelineExecutor");
     }
     // ===== Phase 4: Utility Nodes =====
     else if (node.type == "CalculatorNode") {
-        return ExecuteCalculator(node, ctx);
+        return FailUnsupportedNode(node, "calculator graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "UnitConverter") {
-        return ExecuteUnitConverter(node, ctx);
+        return FailUnsupportedNode(node, "unit-converter graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "RegexTester") {
-        return ExecuteRegex(node, ctx);
+        return FailUnsupportedNode(node, "regex graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "JSONPathExtractor") {
-        return ExecuteJSONPath(node, ctx);
+        return FailUnsupportedNode(node, "JSONPath graph execution is not implemented in PipelineExecutor");
     } else if (node.type == "DataProfiler") {
-        return ExecuteDataProfiler(node, ctx);
+        return FailUnsupportedNode(node, "DataProfiler is a panel/report workflow, not a real PipelineExecutor transform");
     } else {
         ReportError("Unknown node type: " + node.type);
         return false;
@@ -1378,12 +1460,22 @@ std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionCon
     if (node.inputs.empty()) {
         return "";
     }
+    if (node.inputs.size() > 1) {
+        ReportError(node.type + ": multiple inputs are not supported by this executor path");
+        return "";
+    }
     int input_node_id = node.inputs[0];
     auto result_it = ctx.node_results.find(input_node_id);
     if (result_it == ctx.node_results.end()) {
         return "";
     }
     return result_it->second;
+}
+
+bool PipelineExecutor::FailUnsupportedNode(const Node& node, const std::string& reason) {
+    ReportError(node.type + " is not executable in the legacy Data Studio pipeline path: " +
+                reason);
+    return false;
 }
 
 // ============================================================================
@@ -2210,6 +2302,12 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     std::set<int> completed;
     std::set<int> executing;
     ExecutionContext ctx;
+    std::mutex execution_mutex;
+
+    struct NodeExecutionResult {
+        bool success = false;
+        ExecutionContext ctx;
+    };
 
     int total_nodes_to_execute = 0;
     for (const auto& node : nodes) {
@@ -2220,8 +2318,12 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
             if (!node.cached_output_dataset.empty()) {
                 ctx.node_results[node.id] = node.cached_output_dataset;
                 spdlog::info("[Data Studio] Using cached result for node: {}", node.name);
+                completed.insert(node.id);
+            } else {
+                ReportError("Cached node '" + node.name +
+                            "' has no cached output dataset and cannot be marked complete");
+                return false;
             }
-            completed.insert(node.id);
         }
     }
 
@@ -2259,7 +2361,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
 
         // Execute ready nodes in parallel (up to 4 concurrent for now)
         const size_t max_parallel = std::min<size_t>(4, ready.size());
-        std::vector<std::future<bool>> futures;
+        std::vector<std::future<NodeExecutionResult>> futures;
         std::vector<int> batch_node_ids;
 
         for (size_t i = 0; i < max_parallel && i < ready.size(); i++) {
@@ -2272,8 +2374,12 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
 
             // Execute node asynchronously
             futures.push_back(std::async(std::launch::async,
-                [this, node, &ctx]() mutable {
-                    return ExecuteNode(*node, ctx);
+                [this, node, &ctx, &execution_mutex]() mutable {
+                    NodeExecutionResult result;
+                    result.ctx.node_results = ctx.node_results;
+                    std::lock_guard<std::mutex> lock(execution_mutex);
+                    result.success = ExecuteNode(*node, result.ctx);
+                    return result;
                 }
             ));
 
@@ -2282,13 +2388,27 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
 
         // Wait for batch to complete
         for (size_t i = 0; i < futures.size(); i++) {
-            bool success = futures[i].get();
+            NodeExecutionResult result = futures[i].get();
             int node_id = batch_node_ids[i];
             auto* node = FindNodeById(nodes, node_id);
 
             executing.erase(node_id);
 
-            if (success && node) {
+            if (result.success && node) {
+                for (const auto& [result_node_id, dataset_name] : result.ctx.node_results) {
+                    ctx.node_results[result_node_id] = dataset_name;
+                }
+                if (result.ctx.deployment_ready) {
+                    ctx.deployment_ready = true;
+                    ctx.deployment_dataset = result.ctx.deployment_dataset;
+                }
+                if (!result.ctx.output_dataset.empty()) {
+                    ctx.output_dataset = result.ctx.output_dataset;
+                }
+                if (!result.ctx.deployment_dataset.empty()) {
+                    ctx.deployment_dataset = result.ctx.deployment_dataset;
+                }
+
                 completed.insert(node_id);
                 nodes_executed++;
 

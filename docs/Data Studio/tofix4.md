@@ -334,6 +334,8 @@ return success while passing input through unchanged.
 
 ### 8. Analytics / ML nodes with placeholder `PipelineExecutor` behavior
 
+**Status:** Fixed in current branch for the legacy `PipelineExecutor` path. The affected legacy branches now fail closed with explicit runtime errors instead of returning passthrough/fake success. Operator-backed implementations remain the canonical path to wire later.
+
 Affected nodes include:
 
 - `KMeansCluster`
@@ -384,6 +386,8 @@ Effect:
 
 ### 9. Evaluation nodes with placeholder success paths
 
+**Status:** Fixed in current branch for the legacy `PipelineExecutor` path. Evaluation nodes now fail closed instead of registering fake output datasets.
+
 Affected nodes:
 
 - `ConfusionMatrixNode`
@@ -418,6 +422,8 @@ Effect:
 ---
 
 ### 10. Text analytics nodes have real operators in one path, but placeholder logic in another
+
+**Status:** Partially fixed in current branch. The legacy `PipelineExecutor` path no longer masks the real operator-backed path with passthrough success. Full completion still requires routing these nodes through `PipelineOperatorFactory` as the canonical executor.
 
 Affected nodes:
 
@@ -455,6 +461,8 @@ Effect:
 
 ### 11. Time-series analysis nodes have the same split-brain problem
 
+**Status:** Partially fixed in current branch. The legacy `PipelineExecutor` dispatch now gives explicit unsupported errors for the advanced time-series nodes that only have operator-backed coverage. Full completion still requires canonical operator routing.
+
 Affected nodes:
 
 - `TimeSeriesDecomposition`
@@ -489,6 +497,8 @@ Effect:
 ---
 
 ## Priority 3: DNN Nodes That Look Real But Have No Visible Backend Execution Path
+
+**Status:** Partially fixed in current branch for runtime truth. `PipelineExecutor` now fails closed if these DNN nodes reach the legacy execution path. Metadata/UI status still needs a separate pass so the frontend does not present them as fully implemented.
 
 Affected nodes:
 
@@ -529,6 +539,8 @@ Effect:
 
 ### 12. `DataProfiler`
 
+**Status:** Fixed in current branch for the legacy `PipelineExecutor` path. It now fails closed as a panel/report workflow instead of pretending to transform data.
+
 **Severity:** Medium
 
 Relevant files:
@@ -553,6 +565,8 @@ Effect:
 ---
 
 ### 13. Utility nodes returning placeholder success
+
+**Status:** Fixed in current branch for the legacy `PipelineExecutor` path. The affected utility nodes now return explicit unsupported execution errors instead of placeholder success.
 
 Affected nodes:
 
