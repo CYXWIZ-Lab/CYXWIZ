@@ -1029,6 +1029,11 @@ Fix applied:
   `gui/panels/script_editor_edit.cpp`
 - reduced `script_editor.cpp` further to roughly 3509 lines while leaving
   settings, cell mode, debug UI, and completion handling in the main file
+- added `gui/panels/script_editor_settings.cpp`
+- moved Script Editor settings mutators and tab accessors out of
+  `script_editor.cpp`
+- reduced `script_editor.cpp` further to roughly 3445 lines while leaving
+  cell mode, debug UI, and completion handling in the main file
 
 **Recommendation:**
 
