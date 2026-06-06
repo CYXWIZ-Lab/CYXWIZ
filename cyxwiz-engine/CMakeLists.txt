@@ -254,6 +254,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_tools_menu.cpp
     src/gui/panels/toolbar_dialogs.cpp
     src/gui/panels/toolbar_account_dialogs.cpp
+    src/gui/panels/toolbar_preferences_dialog.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp

@@ -1064,6 +1064,11 @@ Fix applied:
   `toolbar_dialogs.cpp`
 - reduced `toolbar_dialogs.cpp` further to roughly 1101 lines while leaving
   project, script, exit, preferences, and go-to-line dialogs in that file
+- added `gui/panels/toolbar_preferences_dialog.cpp`
+- moved Toolbar preferences modal rendering, including editor, Python,
+  shortcut, and device tabs, out of `toolbar_dialogs.cpp`
+- reduced `toolbar_dialogs.cpp` further to roughly 505 lines while leaving
+  project, script, exit, and go-to-line dialogs in that file
 
 **Recommendation:**
 

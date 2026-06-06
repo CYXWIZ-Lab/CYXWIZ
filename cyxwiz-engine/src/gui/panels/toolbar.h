@@ -337,6 +337,7 @@ private:
     void RenderEditorDialogs();
     void RenderSearchDialogs();
     void RenderAccountDialogs();
+    void RenderPreferencesDialog();
 
     // Command Palette functionality
     void InitializeToolEntries();
