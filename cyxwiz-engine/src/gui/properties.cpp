@@ -26,159 +26,8 @@ void Properties::ClearSelection() {
     selected_node_ = nullptr;
 }
 
-std::string Properties::FormatShape(const std::vector<size_t>& shape) {
-    return properties_shape::FormatShape(shape);
-}
-
-size_t Properties::GetBatchSize() {
-    return properties_shape::GetBatchSize(node_editor_);
-}
-
-std::string Properties::FormatShapeMatrix(const std::vector<size_t>& shape, size_t batch_size) {
-    return properties_shape::FormatShapeMatrix(shape, batch_size);
-}
-
-std::vector<size_t> Properties::GetInputShapeFromDataset() {
-    return properties_shape::GetInputShapeFromDataset(node_editor_);
-}
-
-std::vector<size_t> Properties::InferOutputShape(
-    NodeType type,
-    const std::vector<size_t>& input_shape,
-    const std::map<std::string, std::string>& params)
-{
-    return properties_shape::InferOutputShape(node_editor_, type, input_shape, params);
-}
-
-LayerParameters Properties::ComputeLayerParameters(
-    NodeType type,
-    const std::vector<size_t>& input_shape,
-    const std::map<std::string, std::string>& params)
-{
-    return properties_shape::ComputeLayerParameters(type, input_shape, params);
-}
-
 NodeShapeInfo Properties::ComputeNodeShape(int node_id) {
     return properties_shape::ComputeNodeShape(node_editor_, node_id);
-}
-
-void Properties::RenderShapeInfo(const NodeShapeInfo& shape_info) {
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    size_t batch_size = GetBatchSize();
-
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Tensor Shape (batch = %zu)", batch_size);
-    ImGui::Spacing();
-
-    if (!shape_info.is_valid) {
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Cannot compute shape");
-        if (!shape_info.error.empty()) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Error: %s", shape_info.error.c_str());
-        }
-        return;
-    }
-
-    // Calculate memory sizes (assuming Float32 = 4 bytes)
-    size_t input_memory = batch_size * shape_info.input_size * sizeof(float);
-    size_t output_memory = batch_size * shape_info.output_size * sizeof(float);
-
-    // Input shape section
-    ImGui::Text("Input:");
-    ImGui::Indent();
-    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", FormatShapeMatrix(shape_info.input_shape, batch_size).c_str());
-    if (shape_info.input_shape.size() > 1) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Per-sample: %s", FormatShape(shape_info.input_shape).c_str());
-    }
-    // Show memory size
-    if (input_memory >= 1024 * 1024) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory: %.2f MB (%zu elements)",
-                           input_memory / (1024.0f * 1024.0f), batch_size * shape_info.input_size);
-    } else if (input_memory >= 1024) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory: %.2f KB (%zu elements)",
-                           input_memory / 1024.0f, batch_size * shape_info.input_size);
-    } else {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory: %zu bytes (%zu elements)",
-                           input_memory, batch_size * shape_info.input_size);
-    }
-    ImGui::Unindent();
-
-    ImGui::Spacing();
-
-    // Output shape section
-    ImGui::Text("Output:");
-    ImGui::Indent();
-    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s", FormatShapeMatrix(shape_info.output_shape, batch_size).c_str());
-    if (shape_info.output_shape.size() > 1) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Per-sample: %s", FormatShape(shape_info.output_shape).c_str());
-    }
-    // Show memory size
-    if (output_memory >= 1024 * 1024) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory: %.2f MB (%zu elements)",
-                           output_memory / (1024.0f * 1024.0f), batch_size * shape_info.output_size);
-    } else if (output_memory >= 1024) {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory: %.2f KB (%zu elements)",
-                           output_memory / 1024.0f, batch_size * shape_info.output_size);
-    } else {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory: %zu bytes (%zu elements)",
-                           output_memory, batch_size * shape_info.output_size);
-    }
-    ImGui::Unindent();
-
-    // Shape transformation summary
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Transform: %zu x %zu -> %zu x %zu",
-                       batch_size, shape_info.input_size, batch_size, shape_info.output_size);
-
-    // Display learnable parameters if this layer has any
-    if (shape_info.params.has_parameters) {
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Learnable Parameters");
-        ImGui::Spacing();
-
-        // Weight info
-        ImGui::Text("Weight:");
-        ImGui::Indent();
-        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", FormatShape(shape_info.params.weight_shape).c_str());
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%zu parameters", shape_info.params.weight_count);
-        size_t weight_memory = shape_info.params.weight_count * sizeof(float);
-        if (weight_memory >= 1024 * 1024) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory: %.2f MB", weight_memory / (1024.0f * 1024.0f));
-        } else if (weight_memory >= 1024) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory: %.2f KB", weight_memory / 1024.0f);
-        } else {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Memory: %zu bytes", weight_memory);
-        }
-        ImGui::Unindent();
-
-        ImGui::Spacing();
-
-        // Bias info
-        ImGui::Text("Bias:");
-        ImGui::Indent();
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s", FormatShape(shape_info.params.bias_shape).c_str());
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%zu parameters", shape_info.params.bias_count);
-        ImGui::Unindent();
-
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        // Total parameters summary
-        size_t total_memory = shape_info.params.total_params * sizeof(float);
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "Total: %zu params", shape_info.params.total_params);
-        if (total_memory >= 1024 * 1024) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Parameter Memory: %.2f MB", total_memory / (1024.0f * 1024.0f));
-        } else if (total_memory >= 1024) {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Parameter Memory: %.2f KB", total_memory / 1024.0f);
-        } else {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Parameter Memory: %zu bytes", total_memory);
-        }
-    }
 }
 
 void Properties::Render() {
@@ -229,7 +78,7 @@ void Properties::Render() {
                 // Shape information section
                 if (ImGui::CollapsingHeader("Shape Info", ImGuiTreeNodeFlags_DefaultOpen)) {
                     NodeShapeInfo shape_info = ComputeNodeShape(selected_node_->id);
-                    RenderShapeInfo(shape_info);
+                    properties_shape::RenderShapeInfo(node_editor_, shape_info);
                 }
 
                 ImGui::Spacing();

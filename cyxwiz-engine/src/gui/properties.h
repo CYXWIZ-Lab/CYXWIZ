@@ -19,7 +19,6 @@ struct MLNode;
 struct NodeLink;
 class NodeEditor;
 
-using LayerParameters = properties_shape::LayerParameters;
 using NodeShapeInfo = properties_shape::NodeShapeInfo;
 
 class Properties {
@@ -44,7 +43,6 @@ public:
 
 private:
     void RenderNodeProperties(MLNode& node);
-    void RenderShapeInfo(const NodeShapeInfo& shape_info);
 
     // Enhanced property sections (Phase 3)
     void RenderGeneralSection(MLNode& node);
@@ -54,22 +52,7 @@ private:
     // Node executor integration (Phase: Node Executor Architecture)
     void RenderExecutorSection(MLNode& node);
 
-    // Shape inference methods
     NodeShapeInfo ComputeNodeShape(int node_id);
-    std::vector<size_t> GetInputShapeFromDataset();
-    std::vector<size_t> InferOutputShape(
-        NodeType type,
-        const std::vector<size_t>& input_shape,
-        const std::map<std::string, std::string>& params);
-    LayerParameters ComputeLayerParameters(
-        NodeType type,
-        const std::vector<size_t>& input_shape,
-        const std::map<std::string, std::string>& params);
-
-    // Helper to format shape as string
-    std::string FormatShape(const std::vector<size_t>& shape);
-    std::string FormatShapeMatrix(const std::vector<size_t>& shape, size_t batch_size);
-    size_t GetBatchSize();
 
     bool show_window_;
     MLNode* selected_node_ = nullptr;

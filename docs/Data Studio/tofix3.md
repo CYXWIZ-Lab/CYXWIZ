@@ -693,6 +693,11 @@ Fix applied:
   of `Properties`
 - removed the Windows file-dialog dependency from `properties.cpp`; the helper
   now owns file-parameter browsing alongside the rest of metadata parameter UI
+- moved tensor-shape and learnable-parameter rendering into
+  `gui/properties_shape_info.{h,cpp}` next to the shape computation and
+  formatting helpers
+- removed private shape formatting/inference wrappers from `Properties`, so
+  the panel no longer mirrors helper APIs it does not own
 
 Remaining responsibility still in `properties.cpp`:
 

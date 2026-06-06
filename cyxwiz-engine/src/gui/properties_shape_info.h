@@ -41,5 +41,6 @@ LayerParameters ComputeLayerParameters(
     const std::vector<size_t>& input_shape,
     const std::map<std::string, std::string>& params);
 NodeShapeInfo ComputeNodeShape(NodeEditor* node_editor, int node_id);
+void RenderShapeInfo(NodeEditor* node_editor, const NodeShapeInfo& shape_info);
 
 } // namespace gui::properties_shape
