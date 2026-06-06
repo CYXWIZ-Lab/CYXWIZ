@@ -272,6 +272,7 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_cells.cpp
     src/gui/panels/script_editor_debug.cpp
     src/gui/panels/script_editor_completion.cpp
+    src/gui/panels/script_editor_language.cpp
     src/gui/panels/table_viewer.cpp
     src/gui/panels/data_explorer_panel.cpp
     src/gui/panels/visualization_panel.cpp

@@ -1069,6 +1069,11 @@ Fix applied:
   shortcut, and device tabs, out of `toolbar_dialogs.cpp`
 - reduced `toolbar_dialogs.cpp` further to roughly 505 lines while leaving
   project, script, exit, and go-to-line dialogs in that file
+- added `gui/panels/script_editor_language.cpp`
+- moved Script Editor Python language definition and custom editor palettes out
+  of `script_editor.cpp`
+- reduced `script_editor.cpp` further to roughly 1964 lines while leaving file
+  operations, execution, and save-confirmation dialogs in the main file
 
 **Recommendation:**
 
