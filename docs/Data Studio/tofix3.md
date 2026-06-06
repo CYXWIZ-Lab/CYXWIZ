@@ -946,6 +946,13 @@ Fix applied:
   callback wiring and command list declaration
 - reduced `toolbar.cpp` from roughly 2446 lines to roughly 2229 lines without
   changing command behavior
+- added `gui/panels/script_editor_edit.cpp`
+- moved Script Editor edit/navigation/line/text transformation operations out
+  of `script_editor.cpp`, including undo/redo, cut/copy/paste/delete,
+  go-to-line, duplicate/move line, indent/outdent, case transforms, sort, and
+  join lines
+- reduced `script_editor.cpp` from roughly 4642 lines to roughly 4077 lines
+  without changing the public Script Editor command API
 
 **Recommendation:**
 
