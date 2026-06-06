@@ -997,6 +997,12 @@ Fix applied:
 - moved Data Input dataset summary rendering out of `data_input_dialog.cpp`
 - reduced `data_input_dialog.cpp` further to roughly 1926 lines while leaving
   Apply, async polling, and file/source option rendering in the main file
+- added `gui/data_input_dialog_source_options.cpp`
+- moved Data Input source selector, file source picker, and tabular/image/
+  audio/video/text option rendering out of `data_input_dialog.cpp`
+- reduced `data_input_dialog.cpp` further to roughly 1111 lines while leaving
+  Apply, async polling, content composition, reset, and unload ownership in
+  the main file
 
 **Recommendation:**
 
