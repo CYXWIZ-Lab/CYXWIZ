@@ -8,6 +8,7 @@
 #include <memory>
 #include "../core/node_metadata.h"
 #include "node_config_dialog.h"
+#include "properties_node_editors.h"
 #include "properties_shape_info.h"
 
 namespace gui {
@@ -81,22 +82,8 @@ private:
     bool shapes_valid_ = false;
     std::map<int, NodeShapeInfo> cached_shapes_;
 
-    // Scope data buffers (node_id → time/value ring buffer)
-    struct ScopeBuffer {
-        std::deque<float> times;
-        std::deque<float> values;
-        int max_samples = 500;
-        void Push(float t, float v) {
-            times.push_back(t);
-            values.push_back(v);
-            while (static_cast<int>(times.size()) > max_samples) {
-                times.pop_front();
-                values.pop_front();
-            }
-        }
-        void Clear() { times.clear(); values.clear(); }
-    };
-    std::map<int, ScopeBuffer> scope_buffers_;
+    // Scope data buffers (node_id -> time/value ring buffer)
+    std::map<int, properties_node_editors::ScopeBuffer> scope_buffers_;
     float scope_demo_time_ = 0.0f;  // Demo animation timer
 
     // Phase 3: Enhanced properties state

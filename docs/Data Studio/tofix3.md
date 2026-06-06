@@ -673,10 +673,14 @@ Fix applied:
 - moved initial-position, graph connection counts, and raw debug parameter
   rendering out of `Properties` while keeping the section open-state owned by
   the panel
+- added `gui/properties_node_editors.{h,cpp}`
+- moved the long node-type-specific parameter editor switch into a helper with
+  an explicit render context for shape invalidation, dynamic pins, and signal
+  scope demo state
 
 Remaining responsibility still in `properties.cpp`:
 
-- node-specific property editors
+- section composition and generic metadata-driven parameter controls
 
 **Impact:**
 
