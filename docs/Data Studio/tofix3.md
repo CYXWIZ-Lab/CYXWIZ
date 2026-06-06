@@ -1089,6 +1089,10 @@ Fix applied:
   content/dialog helpers into `script_editor_files.cpp`
 - reduced `script_editor.cpp` further to roughly 1374 lines while leaving
   open/save workflow orchestration in the main file
+- added `gui/theme_nodes.cpp` and `gui/theme_dock.cpp`
+- moved ImNodes styling and dock tab styling out of `theme.cpp`
+- reduced `theme.cpp` from roughly 1004 lines to roughly 171 lines while
+  leaving theme preset selection and base ImGui style configuration in place
 
 **Recommendation:**
 

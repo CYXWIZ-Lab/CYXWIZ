@@ -431,6 +431,8 @@ set(ENGINE_SOURCES
     src/gui/panels/wallet_panel.cpp
     src/gui/panels/plugin_manager_panel.cpp
     src/gui/theme.cpp
+    src/gui/theme_nodes.cpp
+    src/gui/theme_dock.cpp
     src/gui/theme_presets.cpp
     src/gui/dock_style.cpp
     # Data Studio (Phase 1 Week 1)
