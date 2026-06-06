@@ -573,10 +573,20 @@ Fix applied:
   `ProjectManager::ResolveProjectFilePath`, then reused it from command-line
   startup, the start page, and `ProjectSelectionDialog`
 
+Additional fix applied on 2026-06-06:
+
+- added a `Starter graphs` section to the start page using real
+  `examples/cyxgraph/*.cyxgraph` files
+- listed bounded first-run workflows for vision, NLP, and audio examples
+- added a distinct `ExampleGraphSelected` start-page result so `.cyxgraph`
+  templates are not treated as `.cyxwiz` project files
+- routed start-page graph opening through the existing `NodeEditor::LoadGraph`
+  implementation via `MainWindow::OpenGraphInNodeEditor`
+- reused the same graph-open wrapper from the asset browser to keep graph
+  loading behavior centralized
+
 **What is missing:**
 
-- example templates
-- starter graphs
 - "new tabular project / new vision project / new NLP project"
 - recent examples or guided demos
 - "resume last graph" / "continue last training session"

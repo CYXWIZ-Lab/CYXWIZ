@@ -192,6 +192,18 @@ void CyxWizApp::OpenStartupProjectIfRequested() {
     }
 }
 
+void CyxWizApp::OpenStartupGraphIfRequested() {
+    if (startup_graph_path_.empty() || !main_window_) {
+        return;
+    }
+
+    if (main_window_->OpenGraphInNodeEditor(startup_graph_path_)) {
+        spdlog::info("Opened starter graph from start page: {}", startup_graph_path_);
+    } else {
+        spdlog::error("Failed to open starter graph from start page: {}", startup_graph_path_);
+    }
+}
+
 void CyxWizApp::UpdateWindowTitle() {
     if (!window_) {
         return;  // Window not created yet
@@ -858,12 +870,21 @@ void CyxWizApp::Render() {
             if (result == cyxwiz::StartPage::Result::ProjectSelected) {
                 spdlog::info("Project selected from start page");
                 startup_project_path_ = start_page_->GetSelectedProjectPath();
+                startup_graph_path_.clear();
+                project_selected_ = true;
+                start_page_.reset();
+
+            } else if (result == cyxwiz::StartPage::Result::ExampleGraphSelected) {
+                spdlog::info("Starter graph selected from start page");
+                startup_project_path_.clear();
+                startup_graph_path_ = start_page_->GetSelectedGraphPath();
                 project_selected_ = true;
                 start_page_.reset();
 
             } else if (result == cyxwiz::StartPage::Result::ContinueWithout) {
                 spdlog::info("User chose to continue without project");
                 startup_project_path_ = "";  // No project
+                startup_graph_path_.clear();
                 project_selected_ = true;    // But allow main window to open
                 start_page_.reset();
 
@@ -881,6 +902,7 @@ void CyxWizApp::Render() {
 
         main_window_ = std::make_unique<gui::MainWindow>();
         OpenStartupProjectIfRequested();  // This will call UpdateWindowTitle() if project opens
+        OpenStartupGraphIfRequested();
         UpdateWindowTitle();  // Update window title regardless (shows project name or just "CyxWiz Engine")
         grpc_client_ = std::make_unique<network::GRPCClient>();
         job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());

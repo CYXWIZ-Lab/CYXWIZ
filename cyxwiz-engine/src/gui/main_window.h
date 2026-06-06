@@ -162,6 +162,7 @@ public:
     cyxwiz::PlotTestControlPanel* GetPlotTestControl() { return plot_test_control_.get(); }
     cyxwiz::ScriptEditorPanel* GetScriptEditor() { return script_editor_.get(); }
     NodeEditor* GetNodeEditor() { return node_editor_.get(); }
+    bool OpenGraphInNodeEditor(const std::string& path);
 
     // Set network components (called by Application after construction)
     void SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager);

@@ -33,6 +33,7 @@ private:
     bool Initialize();
     void ProcessCommandLine(int argc, char** argv);
     void OpenStartupProjectIfRequested();
+    void OpenStartupGraphIfRequested();
     void UpdateWindowTitle();
     void ScanForPython();  // Scan for Python on startup (no initialization)
     void MainLoop();
@@ -101,4 +102,5 @@ private:
 
     // Startup project path (from command line)
     std::string startup_project_path_;
+    std::string startup_graph_path_;
 };

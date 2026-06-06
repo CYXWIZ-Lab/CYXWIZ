@@ -20,6 +20,7 @@ public:
     enum class Result {
         InProgress,        // Still showing the page
         ProjectSelected,   // User selected a project
+        ExampleGraphSelected, // User selected a starter graph template
         ContinueWithout,   // Continue without project
         Exit               // User closed the window
     };
@@ -28,6 +29,14 @@ public:
         std::string name;
         std::string path;
         std::time_t last_opened;
+    };
+
+    struct StarterGraph {
+        std::string title;
+        std::string description;
+        std::string domain;
+        std::string icon;
+        std::string path;
     };
 
     StartPage();
@@ -49,9 +58,15 @@ public:
      */
     std::string GetSelectedProjectPath() const { return selected_project_path_; }
 
+    /**
+     * @brief Get the selected starter graph path (valid when result is ExampleGraphSelected)
+     */
+    std::string GetSelectedGraphPath() const { return selected_graph_path_; }
+
 private:
     // Rendering sections
     void RenderSearchBar();
+    void RenderStarterGraphs();
     void RenderRecentProjects();
     void RenderActionCards();
     void RenderBottomBar();
@@ -59,6 +74,7 @@ private:
 
     // Project grouping by time
     void LoadRecentProjects();
+    void LoadStarterGraphs();
     void GroupProjectsByTime();
     bool IsThisWeek(std::time_t time) const;
     bool IsThisMonth(std::time_t time) const;
@@ -68,6 +84,7 @@ private:
 
     // Actions
     void OpenProject(const std::string& path);
+    void OpenStarterGraph(const StarterGraph& starter);
     void CreateNewProject();
     void OpenExistingProject();
     void OpenProjectFolder();
@@ -76,12 +93,16 @@ private:
     // State
     Result result_ = Result::InProgress;
     std::string selected_project_path_;
+    std::string selected_graph_path_;
 
     // Recent projects
     std::vector<RecentProject> all_projects_;
     std::vector<RecentProject> this_week_;
     std::vector<RecentProject> this_month_;
     std::vector<RecentProject> older_;
+
+    // Starter graph templates
+    std::vector<StarterGraph> starter_graphs_;
 
     // Search
     char search_buffer_[256] = {0};

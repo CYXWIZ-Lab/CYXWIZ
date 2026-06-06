@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <array>
 #include <ctime>
 #include <string>
 
@@ -38,10 +39,43 @@ std::string FormatRecentProjectTime(std::time_t time) {
     return time_str;
 }
 
+std::string ResolveStarterGraphPath(const char* filename) {
+    namespace fs = std::filesystem;
+
+    std::array<fs::path, 7> roots = {
+        fs::current_path(),
+        fs::current_path().parent_path(),
+        fs::current_path().parent_path().parent_path(),
+        fs::current_path().parent_path().parent_path().parent_path(),
+        fs::current_path().parent_path().parent_path().parent_path().parent_path(),
+        fs::current_path() / "cyxwiz-engine",
+        fs::current_path() / ".." / "cyxwiz-engine"
+    };
+
+    if (auto* launch_cwd = std::getenv("CYXWIZ_LAUNCH_CWD")) {
+        fs::path candidate = fs::path(launch_cwd) / "examples" / "cyxgraph" / filename;
+        std::error_code ec;
+        if (fs::exists(candidate, ec)) {
+            return fs::weakly_canonical(candidate, ec).string();
+        }
+    }
+
+    for (const auto& root : roots) {
+        fs::path candidate = root / "examples" / "cyxgraph" / filename;
+        std::error_code ec;
+        if (fs::exists(candidate, ec)) {
+            return fs::weakly_canonical(candidate, ec).string();
+        }
+    }
+
+    return {};
+}
+
 } // namespace
 
 StartPage::StartPage() {
     LoadRecentProjects();
+    LoadStarterGraphs();
     GroupProjectsByTime();
 
     // Set default project location
@@ -71,6 +105,40 @@ void StartPage::LoadRecentProjects() {
             proj.last_opened = rp.last_opened;
             all_projects_.push_back(proj);
         }
+    }
+}
+
+void StartPage::LoadStarterGraphs() {
+    struct StarterDefinition {
+        const char* title;
+        const char* description;
+        const char* domain;
+        const char* icon;
+        const char* filename;
+    };
+
+    static constexpr std::array<StarterDefinition, 5> starters = {{
+        {"MNIST classifier", "Compact image-classification graph for handwritten digits.", "Vision", ICON_FA_IMAGE, "mnist_mlp.cyxgraph"},
+        {"Cats vs dogs", "Image pipeline starter for binary classification.", "Vision", ICON_FA_IMAGES, "cats_dogs_classifier.cyxgraph"},
+        {"Call-center sentiment", "Text workflow starter for customer conversation sentiment.", "NLP", ICON_FA_COMMENTS, "call_center_sentiment.cyxgraph"},
+        {"Speech commands", "Audio classification starter using command utterances.", "Audio", ICON_FA_WAVE_SQUARE, "speech_command_classifier.cyxgraph"},
+        {"Drone sound detector", "Signal classification starter for acoustic detection.", "Audio", ICON_FA_WAVE_SINE, "drone_sound_detector.cyxgraph"}
+    }};
+
+    starter_graphs_.clear();
+    for (const auto& starter : starters) {
+        std::string path = ResolveStarterGraphPath(starter.filename);
+        if (path.empty()) {
+            continue;
+        }
+
+        starter_graphs_.push_back({
+            starter.title,
+            starter.description,
+            starter.domain,
+            starter.icon,
+            path
+        });
     }
 }
 
@@ -170,6 +238,8 @@ bool StartPage::Render() {
         {
             RenderSearchBar();
             ImGui::Spacing();
+            RenderStarterGraphs();
+            ImGui::Spacing();
             RenderRecentProjects();
         }
         ImGui::EndChild();
@@ -219,6 +289,59 @@ void StartPage::RenderSearchBar() {
 
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
+}
+
+void StartPage::RenderStarterGraphs() {
+    if (starter_graphs_.empty()) {
+        return;
+    }
+
+    ImGui::Text("Starter graphs");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.58f, 0.58f, 0.58f, 1.0f));
+    ImGui::TextWrapped("Open a real example graph in CyxWiz Studio.");
+    ImGui::PopStyleColor();
+
+    ImGui::BeginChild("##StarterGraphs", ImVec2(0, 185), false);
+
+    const float button_width = 96.0f;
+    const float row_height = 48.0f;
+    const float button_x = ImGui::GetWindowContentRegionMax().x - button_width;
+    const float text_width = std::max(120.0f, ImGui::GetContentRegionAvail().x - button_width - 28.0f);
+
+    for (const auto& starter : starter_graphs_) {
+        ImGui::PushID(starter.path.c_str());
+
+        ImGui::BeginGroup();
+        ImGui::Text("%s", starter.icon.c_str());
+        ImGui::SameLine();
+
+        ImGui::BeginGroup();
+        ImGui::Text("%s", starter.title.c_str());
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.68f, 0.95f, 1.0f));
+        ImGui::Text("%s", starter.domain.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + text_width);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.58f, 0.58f, 0.58f, 1.0f));
+        ImGui::TextWrapped("%s", starter.description.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        ImGui::EndGroup();
+
+        ImGui::SameLine(button_x);
+        if (ImGui::Button(ICON_FA_DIAGRAM_PROJECT " Open", ImVec2(button_width, row_height))) {
+            OpenStarterGraph(starter);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", starter.path.c_str());
+        }
+
+        ImGui::Separator();
+        ImGui::PopID();
+    }
+
+    ImGui::EndChild();
 }
 
 void StartPage::RenderRecentProjects() {
@@ -429,6 +552,12 @@ void StartPage::OpenProject(const std::string& path) {
     } else {
         spdlog::error("Failed to open project: {}", path);
     }
+}
+
+void StartPage::OpenStarterGraph(const StarterGraph& starter) {
+    selected_graph_path_ = starter.path;
+    result_ = Result::ExampleGraphSelected;
+    spdlog::info("Opening starter graph: {}", starter.path);
 }
 
 void StartPage::CreateNewProject() {

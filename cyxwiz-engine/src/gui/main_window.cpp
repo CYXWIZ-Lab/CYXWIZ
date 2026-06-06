@@ -1835,14 +1835,7 @@ MainWindow::MainWindow()
 
     // Set up asset browser callback for "Open in Node Editor" (.cyxgraph files)
     asset_browser_->SetOnOpenInNodeEditor([this](const std::string& path) {
-        if (node_editor_) {
-            if (node_editor_->LoadGraph(path)) {
-                node_editor_->Show();
-                spdlog::info("Opened graph in Node Editor: {}", std::filesystem::path(path).filename().string());
-            } else {
-                spdlog::error("Failed to open graph file: {}", path);
-            }
-        }
+        OpenGraphInNodeEditor(path);
     });
 
     // Initialize startup script manager
@@ -2111,6 +2104,21 @@ void MainWindow::SetIdleLogPtr(bool* ptr) {
     if (toolbar_) {
         toolbar_->SetIdleLogPtr(ptr);
     }
+}
+
+bool MainWindow::OpenGraphInNodeEditor(const std::string& path) {
+    if (!node_editor_) {
+        return false;
+    }
+
+    if (!node_editor_->LoadGraph(path)) {
+        spdlog::error("Failed to open graph file: {}", path);
+        return false;
+    }
+
+    node_editor_->Show();
+    spdlog::info("Opened graph in Node Editor: {}", std::filesystem::path(path).filename().string());
+    return true;
 }
 
 void MainWindow::SetNetworkComponents(network::GRPCClient* client, network::JobManager* job_manager) {
