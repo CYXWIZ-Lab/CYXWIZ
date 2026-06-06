@@ -974,6 +974,11 @@ Fix applied:
   `data_input_dialog.cpp`
 - reduced `data_input_dialog.cpp` further to roughly 2585 lines while keeping
   Apply, async result polling, and source/options rendering in the main file
+- added `gui/data_input_dialog_filter_tabs.cpp`
+- moved Data Input transformation, row-limit, and encoding tab rendering out
+  of `data_input_dialog.cpp`
+- reduced `data_input_dialog.cpp` further to roughly 2496 lines while leaving
+  memory, audit, and dataset-source rendering in the main file for now
 
 **Recommendation:**
 
