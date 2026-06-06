@@ -1003,6 +1003,12 @@ Fix applied:
 - reduced `data_input_dialog.cpp` further to roughly 1111 lines while leaving
   Apply, async polling, content composition, reset, and unload ownership in
   the main file
+- added `gui/data_input_dialog_apply.cpp`
+- moved Data Input Apply dispatch and async load result polling out of
+  `data_input_dialog.cpp`
+- reduced `data_input_dialog.cpp` further to roughly 428 lines while leaving
+  constructor restore, content composition, reset, and unload ownership in
+  the main file
 
 **Recommendation:**
 
