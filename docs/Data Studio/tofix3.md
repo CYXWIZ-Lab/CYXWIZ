@@ -638,7 +638,7 @@ background-driven surfaces.
 ### 12. `properties.cpp` is carrying too much responsibility
 
 **Severity:** High
-**Status:** Partially fixed on 2026-06-06
+**Status:** Fixed on 2026-06-06
 
 Relevant file:
 
@@ -705,6 +705,13 @@ Fix applied:
 Remaining responsibility still in `properties.cpp`:
 
 - section composition and high-level panel orchestration
+
+**Status after follow-up:**
+
+Fixed for the current panel boundary. `properties.cpp` now owns orchestration
+and section composition, while parameter rules, metadata rendering, node-type
+editors, shape details, presets, executor details, and advanced debug details
+live in dedicated helpers.
 
 **Impact:**
 
@@ -781,7 +788,7 @@ node-specific schema refinement rather than another generic editor path.
 ### 14. The engine has many standalone analysis panels, which weakens the graph-first product story
 
 **Severity:** High
-**Status:** Partially fixed on 2026-06-06
+**Status:** Fixed on 2026-06-06
 
 Observed under:
 
@@ -821,6 +828,15 @@ Fix applied:
   panel-local configuration
 - documented migration rules for future menu, command-palette, metadata, and
   pipeline-operator work
+- labeled graph-backed command-palette entries in the command surface so users
+  can distinguish durable graph workflows from transient utilities and
+  standalone inspectors
+
+**Status after follow-up:**
+
+Fixed for current product coherence. Future panel work should follow the
+migration contract instead of adding another duplicate standalone configuration
+surface.
 
 **Impact:**
 
