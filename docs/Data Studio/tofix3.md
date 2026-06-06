@@ -984,6 +984,12 @@ Fix applied:
   `data_input_dialog.cpp`, including audit issue parsing helpers
 - reduced `data_input_dialog.cpp` further to roughly 2201 lines while leaving
   Apply, async polling, and dataset-source rendering in the main file
+- added `gui/data_input_dialog_ml_dataset.cpp`
+- moved Data Input ML dataset source/options rendering out of
+  `data_input_dialog.cpp`
+- reduced `data_input_dialog.cpp` further to roughly 1989 lines while leaving
+  Apply, async polling, database/cloud rendering, and summary rendering in the
+  main file
 
 **Recommendation:**
 
