@@ -705,6 +705,7 @@ Remaining responsibility still in `properties.cpp`:
 ### 13. Parameter editing still looks more implementation-driven than user-driven
 
 **Severity:** Medium
+**Status:** Partially fixed on 2026-06-06
 
 Relevant files:
 
@@ -714,6 +715,24 @@ Relevant files:
 The engine already has many parameters and node types. The UX risk is
 that parameter editing becomes a direct reflection of internal fields
 instead of a task-oriented control surface.
+
+Audit result: the existing metadata-driven renderer already had a usable
+schema foundation through `ParameterDefinition` fields for type, default,
+description, enum values, and validation. The right fix was to improve that
+path rather than create a second renderer.
+
+Fix applied:
+
+- extended `ParameterDefinition` with optional UI label, group, required, and
+  advanced fields while preserving existing aggregate initializers
+- parsed the new optional fields from JSON node templates
+- improved the generic properties renderer to show human-readable labels,
+  required markers, grouped parameters, and an advanced-parameters subgroup
+- added reset-to-default controls for metadata-backed parameters
+- made bounded integer parameters render as sliders
+- changed validation feedback from a bare marker to the actual inline error
+  message
+- hid underscore-prefixed/internal metadata keys from generic editing
 
 **What to improve:**
 

@@ -26,10 +26,53 @@
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 namespace gui {
+
+namespace {
+
+std::string HumanizeParameterName(const std::string& name) {
+    std::string label;
+    label.reserve(name.size());
+
+    bool capitalize_next = true;
+    for (char ch : name) {
+        if (ch == '_' || ch == '-') {
+            label.push_back(' ');
+            capitalize_next = true;
+            continue;
+        }
+
+        unsigned char c = static_cast<unsigned char>(ch);
+        if (capitalize_next) {
+            label.push_back(static_cast<char>(std::toupper(c)));
+            capitalize_next = false;
+        } else {
+            label.push_back(ch);
+        }
+    }
+
+    return label.empty() ? name : label;
+}
+
+std::string GetParameterLabel(const cyxwiz::ParameterDefinition& param) {
+    return param.display_name.empty() ? HumanizeParameterName(param.name) : param.display_name;
+}
+
+bool ShouldUseIntSlider(const properties_rules::NumericRange& range) {
+    if (!range.has_range) {
+        return false;
+    }
+
+    const double span = range.max_value - range.min_value;
+    return span >= 1.0 && span <= 10000.0;
+}
+
+} // namespace
 
 Properties::Properties() : show_window_(true) {
 }
@@ -387,15 +430,57 @@ void Properties::RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadat
         section_parameters_open_ = true;
 
         if (metadata && !metadata->parameters.empty()) {
+            using ParameterGroup = std::pair<std::string, std::vector<const cyxwiz::ParameterDefinition*>>;
+
+            std::vector<ParameterGroup> groups;
+            std::vector<const cyxwiz::ParameterDefinition*> advanced_params;
             bool rendered_any = false;
+
+            auto add_to_group = [&](const std::string& group_name, const cyxwiz::ParameterDefinition& param) {
+                for (auto& group : groups) {
+                    if (group.first == group_name) {
+                        group.second.push_back(&param);
+                        return;
+                    }
+                }
+                groups.push_back({group_name, {&param}});
+            };
+
             for (const auto& param : metadata->parameters) {
                 if (properties_rules::ShouldHideGenericParameter(node.type, param)) {
                     validation_errors_.erase(param.name);
                     continue;
                 }
-                RenderParameter(node, param);
-                rendered_any = true;
+
+                if (param.advanced) {
+                    advanced_params.push_back(&param);
+                } else {
+                    add_to_group(param.group, param);
+                }
             }
+
+            auto render_params = [&](const std::vector<const cyxwiz::ParameterDefinition*>& params) {
+                for (const auto* param : params) {
+                    RenderParameter(node, *param);
+                    rendered_any = true;
+                }
+            };
+
+            for (const auto& group : groups) {
+                if (group.first.empty()) {
+                    render_params(group.second);
+                } else if (ImGui::TreeNodeEx(group.first.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    render_params(group.second);
+                    ImGui::TreePop();
+                }
+            }
+
+            if (!advanced_params.empty() &&
+                ImGui::TreeNodeEx("Advanced Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+                render_params(advanced_params);
+                ImGui::TreePop();
+            }
+
             if (!rendered_any) {
                 ImGui::TextDisabled("Configure this node from its dialog.");
             }
@@ -465,8 +550,10 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
     }
 
+    const std::string label = GetParameterLabel(param);
+
     // Label
-    ImGui::Text("%s:", param.name.c_str());
+    ImGui::Text("%s%s:", label.c_str(), param.required ? " *" : "");
     if (has_error) {
         ImGui::PopStyleColor();
     }
@@ -478,6 +565,7 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
         if (!param.default_value.empty()) {
             ImGui::TextDisabled("Default: %s", param.default_value.c_str());
         }
+        ImGui::TextDisabled(param.required ? "Required" : "Optional");
         ImGui::EndTooltip();
     }
 
@@ -490,8 +578,16 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
         int int_val = 0;
         properties_rules::TryParseIntStrict(value, int_val);
         ImGui::SetNextItemWidth(120.0f);
-        if (ImGui::InputInt("##value", &int_val)) {
-            properties_rules::NumericRange range = properties_rules::ParseNumericRange(param.validation);
+        properties_rules::NumericRange range = properties_rules::ParseNumericRange(param.validation);
+        if (ShouldUseIntSlider(range)) {
+            int min_v = static_cast<int>(range.min_value);
+            int max_v = static_cast<int>(range.max_value);
+            int_val = std::clamp(int_val, min_v, max_v);
+            if (ImGui::SliderInt("##value", &int_val, min_v, max_v)) {
+                value = std::to_string(int_val);
+                changed = true;
+            }
+        } else if (ImGui::InputInt("##value", &int_val)) {
             if (range.has_range) {
                 int_val = std::clamp(
                     int_val,
@@ -598,6 +694,17 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
         }
     }
 
+    if (!param.default_value.empty() && value != param.default_value) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset")) {
+            value = param.default_value;
+            changed = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Reset to default: %s", param.default_value.c_str());
+        }
+    }
+
     // Validation on change
     if (changed) {
         std::string error;
@@ -613,7 +720,7 @@ void Properties::RenderParameter(MLNode& node, const cyxwiz::ParameterDefinition
     // Show validation error
     if (has_error) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "!");
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", validation_errors_[param.name].c_str());
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", validation_errors_[param.name].c_str());

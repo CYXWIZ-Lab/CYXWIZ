@@ -71,6 +71,10 @@ bool IsDialogOwnedNode(NodeType type) {
 }
 
 bool IsInternalParameterName(const std::string& name) {
+    if (!name.empty() && name[0] == '_') {
+        return true;
+    }
+
     static const std::set<std::string> internal_params = {
         "configured",
         "data_loaded",
@@ -110,6 +114,10 @@ bool ValidateParameter(
     const cyxwiz::ParameterDefinition& param,
     std::string& error) {
     if (value.empty()) {
+        if (param.required) {
+            error = "Required";
+            return false;
+        }
         return true;
     }
 

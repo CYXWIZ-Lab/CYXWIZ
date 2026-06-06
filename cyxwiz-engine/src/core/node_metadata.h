@@ -41,6 +41,10 @@ struct ParameterDefinition {
     std::string description;
     std::vector<std::string> enum_values;  // For enum type
     std::string validation;     // Regex or range "0-100"
+    std::string display_name;   // Optional UI label; falls back to humanized name
+    std::string group;          // Optional UI grouping label
+    bool required = false;
+    bool advanced = false;
 };
 
 /**

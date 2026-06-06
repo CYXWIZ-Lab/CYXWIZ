@@ -419,6 +419,10 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
                                 pdef.type = param.value("type", "string");
                                 pdef.default_value = param.value("default", "");
                                 pdef.description = param.value("description", "");
+                                pdef.display_name = param.value("display_name", param.value("label", ""));
+                                pdef.group = param.value("group", "");
+                                pdef.required = param.value("required", false);
+                                pdef.advanced = param.value("advanced", false);
 
                                 if (param.contains("enum_values") && param["enum_values"].is_array()) {
                                     for (const auto& ev : param["enum_values"]) {
