@@ -3,11 +3,14 @@
 #include "script_editor.h"
 #include "../icons.h"
 #include "../../scripting/debugger.h"
+#include "../../scripting/scripting_engine.h"
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 #include <imgui.h>
+#include <spdlog/spdlog.h>
 
 namespace cyxwiz {
 // ============================================================================
@@ -384,4 +387,67 @@ void ScriptEditorPanel::HandleDebugKeyboardShortcuts() {
         }
     }
 }
+
+void ScriptEditorPanel::Debug() {
+    if (tabs_.empty() || active_tab_index_ < 0) {
+        spdlog::warn("No script to debug");
+        return;
+    }
+
+    auto& tab = tabs_[active_tab_index_];
+
+    // Initialize debugger if not already done
+    if (!debugger_) {
+        debugger_ = std::make_unique<scripting::DebuggerManager>();
+        if (scripting_engine_ && scripting_engine_->IsInitialized()) {
+            // Get the raw ScriptingEngine pointer from the shared_ptr
+            debugger_->Initialize(scripting_engine_.get());
+
+            // Set up callbacks
+            debugger_->SetBreakpointHitCallback([this](const std::string& cell_id, int line) {
+                debug_mode_active_ = true;
+                debug_current_cell_ = cell_id;
+                debug_current_line_ = line;
+                spdlog::info("Breakpoint hit at {}:{}", cell_id, line);
+            });
+
+            debugger_->SetStateChangedCallback([this](scripting::DebugState state) {
+                if (state == scripting::DebugState::Disconnected) {
+                    debug_mode_active_ = false;
+                    debug_current_line_ = -1;
+                    debug_current_cell_.clear();
+                } else if (state == scripting::DebugState::Running) {
+                    debug_mode_active_ = true;
+                }
+            });
+
+            spdlog::info("Debugger initialized");
+        } else {
+            spdlog::error("Cannot initialize debugger: scripting engine not ready");
+            debugger_.reset();
+            return;
+        }
+    }
+
+    // Get current cell content to debug
+    if (tab->cell_mode && tab->selected_cell >= 0 &&
+        tab->selected_cell < static_cast<int>(tab->cell_manager.GetCellCount())) {
+        Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
+        if (cell.type == CellType::Code) {
+            cell.SyncSourceFromEditor();
+
+            // Execute with debugging enabled
+            debugger_->ExecuteWithDebug(cell.source, cell.id);
+            debug_mode_active_ = true;
+            spdlog::info("Started debugging cell {}", cell.id);
+        }
+    } else {
+        // Debug whole script (traditional mode)
+        std::string script = tab->editor.GetText();
+        debugger_->ExecuteWithDebug(script, tab->filepath.empty() ? tab->filename : tab->filepath);
+        debug_mode_active_ = true;
+        spdlog::info("Started debugging script");
+    }
+}
+
 } // namespace cyxwiz

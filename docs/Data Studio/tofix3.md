@@ -1084,6 +1084,11 @@ Fix applied:
   parsing helpers out of `script_editor.cpp`
 - reduced `script_editor.cpp` further to roughly 1474 lines while leaving file
   operations and debugger startup in the main file
+- added `gui/panels/script_editor_files.cpp`
+- moved Script Editor debugger startup into `script_editor_debug.cpp` and file
+  content/dialog helpers into `script_editor_files.cpp`
+- reduced `script_editor.cpp` further to roughly 1374 lines while leaving
+  open/save workflow orchestration in the main file
 
 **Recommendation:**
 
