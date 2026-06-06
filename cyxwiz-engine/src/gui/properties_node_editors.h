@@ -28,6 +28,8 @@ struct RenderNodePropertiesContext {
 };
 
 void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context);
+void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext context);
+void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext context);
 
 } // namespace properties_node_editors
 

@@ -1100,6 +1100,12 @@ Fix applied:
   Python keyword lists
 - reduced `script_editor.cpp` further to roughly 969 lines while leaving main
   render composition, menus, editor rendering, status, and shortcuts in place
+- added `gui/properties_data_node_editors.cpp` and
+  `gui/properties_plugin_node_editors.cpp`
+- moved Data Pipeline and PluginCustom node property editors out of
+  `properties_node_editors.cpp`
+- reduced `properties_node_editors.cpp` from roughly 1417 lines to roughly 751
+  lines while leaving core layer/signal/loss/optimizer editors in place
 
 **Recommendation:**
 
