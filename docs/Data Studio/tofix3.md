@@ -1034,6 +1034,11 @@ Fix applied:
   `script_editor.cpp`
 - reduced `script_editor.cpp` further to roughly 3445 lines while leaving
   cell mode, debug UI, and completion handling in the main file
+- added `gui/panels/script_editor_cells.cpp`
+- moved Script Editor cell-mode rendering and cell keyboard handling out of
+  `script_editor.cpp`
+- reduced `script_editor.cpp` further to roughly 2719 lines while leaving
+  debug UI and completion handling in the main file
 
 **Recommendation:**
 
