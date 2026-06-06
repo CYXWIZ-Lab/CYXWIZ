@@ -968,6 +968,12 @@ Fix applied:
   computation out of `data_input_dialog.cpp`
 - reduced `data_input_dialog.cpp` further to roughly 2816 lines while keeping
   loaded-dataset state cleanup in the main dialog implementation
+- added `gui/data_input_dialog_helpers.cpp`
+- moved Data Input file detection, preview loading, browse dialogs, source
+  labeling, capability messages, and dataset-name helpers out of
+  `data_input_dialog.cpp`
+- reduced `data_input_dialog.cpp` further to roughly 2585 lines while keeping
+  Apply, async result polling, and source/options rendering in the main file
 
 **Recommendation:**
 
