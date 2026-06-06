@@ -1079,6 +1079,11 @@ Fix applied:
   confirmation dialogs out of `script_editor.cpp`
 - reduced `script_editor.cpp` further to roughly 1764 lines while leaving file
   operations and execution in the main file
+- added `gui/panels/script_editor_execution.cpp`
+- moved Script Editor run, selection/section execution, dedent, and section
+  parsing helpers out of `script_editor.cpp`
+- reduced `script_editor.cpp` further to roughly 1474 lines while leaving file
+  operations and debugger startup in the main file
 
 **Recommendation:**
 
