@@ -15,6 +15,7 @@
 #endif
 
 #include "properties.h"
+#include "properties_advanced.h"
 #include "properties_executor.h"
 #include "properties_parameter_rules.h"
 #include "properties_presets.h"
@@ -253,7 +254,8 @@ void Properties::Render() {
                 ImGui::Spacing();
 
                 // Advanced section
-                RenderAdvancedSection(*selected_node_);
+                section_advanced_open_ = properties_advanced::RenderAdvancedSection(
+                    node_editor_, *selected_node_, section_advanced_open_);
 
                 ImGui::Spacing();
 
@@ -1766,39 +1768,6 @@ void Properties::RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadat
         }
     } else {
         section_parameters_open_ = false;
-    }
-}
-
-void Properties::RenderAdvancedSection(MLNode& node) {
-    ImGui::SetNextItemOpen(section_advanced_open_, ImGuiCond_Once);
-    if (ImGui::CollapsingHeader("Advanced")) {
-        section_advanced_open_ = true;
-
-        // Initial position (if set for pattern insertion)
-        if (node.has_initial_position) {
-            ImGui::Text("Initial Position: (%.1f, %.1f)", node.initial_pos_x, node.initial_pos_y);
-        }
-
-        // Connections info
-        if (node_editor_) {
-            const auto& links = node_editor_->GetLinks();
-            int input_count = 0, output_count = 0;
-            for (const auto& link : links) {
-                if (link.to_node == node.id) input_count++;
-                if (link.from_node == node.id) output_count++;
-            }
-            ImGui::Text("Connections: %d in, %d out", input_count, output_count);
-        }
-
-        // Raw parameters (debug)
-        if (ImGui::TreeNode("Raw Parameters")) {
-            for (const auto& [key, value] : node.parameters) {
-                ImGui::Text("%s: %s", key.c_str(), value.c_str());
-            }
-            ImGui::TreePop();
-        }
-    } else {
-        section_advanced_open_ = false;
     }
 }
 

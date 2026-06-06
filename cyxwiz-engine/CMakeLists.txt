@@ -213,6 +213,7 @@ set(ENGINE_SOURCES
     src/gui/console.cpp
     src/gui/viewport.cpp
     src/gui/properties.cpp
+    src/gui/properties_advanced.cpp
     src/gui/properties_executor.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_presets.cpp

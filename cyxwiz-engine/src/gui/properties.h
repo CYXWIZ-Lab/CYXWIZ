@@ -48,7 +48,6 @@ private:
     // Enhanced property sections (Phase 3)
     void RenderGeneralSection(MLNode& node);
     void RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadata* metadata);
-    void RenderAdvancedSection(MLNode& node);
     void RenderPresetsSection(MLNode& node);
 
     // Node executor integration (Phase: Node Executor Architecture)

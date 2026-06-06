@@ -669,11 +669,14 @@ Fix applied:
 - moved executor availability checks, executor config/result rendering, and
   placeholder executor input setup out of `Properties`, removing the executor
   factory dependency from the panel header
+- added `gui/properties_advanced.{h,cpp}`
+- moved initial-position, graph connection counts, and raw debug parameter
+  rendering out of `Properties` while keeping the section open-state owned by
+  the panel
 
 Remaining responsibility still in `properties.cpp`:
 
 - node-specific property editors
-- advanced/debug raw-parameter display
 
 **Impact:**
 
