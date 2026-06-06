@@ -82,6 +82,18 @@ const char* ImplementationStatusLabel(NodeImplementationStatus status) {
     return "unknown";
 }
 
+const char* PreprocessingDomainLabel(PreprocessingDomain domain) {
+    switch (domain) {
+        case PreprocessingDomain::Tabular:    return "tabular";
+        case PreprocessingDomain::Image:      return "image";
+        case PreprocessingDomain::Audio:      return "audio";
+        case PreprocessingDomain::Text:       return "text";
+        case PreprocessingDomain::TimeSeries: return "time-series";
+        case PreprocessingDomain::General:    return "general";
+    }
+    return "unknown";
+}
+
 bool IsGraphRuntimeMergeOp(gui::NodeType type) {
     return type == gui::NodeType::Add ||
            type == gui::NodeType::Multiply ||
@@ -1709,6 +1721,28 @@ TrainingConfiguration GraphCompiler::Compile(
             config.preprocessing_domain = cat_loader->Domain(cat);
         }
 
+        for (const auto& node : nodes) {
+            if (!ContainsWhenFiltered(training_path_ids, node.id)) {
+                continue;
+            }
+
+            auto node_domain = GetPreprocessingNodeDomain(node.type);
+            if (!node_domain ||
+                *node_domain == PreprocessingDomain::General ||
+                *node_domain == config.preprocessing_domain) {
+                continue;
+            }
+
+            std::ostringstream msg;
+            msg << "Preprocessing node '" << node.name << "' is for "
+                << PreprocessingDomainLabel(*node_domain)
+                << " data, but the selected DataInput is "
+                << PreprocessingDomainLabel(config.preprocessing_domain)
+                << ". Use a matching DataInput category or replace this "
+                   "preprocessing node.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+        }
+
         // is_image kept as a local for the image-specific checks below
         // (Resize, Augmentation, etc.) — those stay domain-scoped and
         // don't need to move into the loader yet.
@@ -2393,6 +2427,15 @@ bool GraphCompiler::IsPreprocessing(gui::NodeType type) const {
         if (spec.type == type) return true;
     }
     return false;
+}
+
+std::optional<PreprocessingDomain> GraphCompiler::GetPreprocessingNodeDomain(gui::NodeType type) const {
+    for (const auto& spec : kPreprocessingSpecs) {
+        if (spec.type == type) {
+            return spec.domain;
+        }
+    }
+    return std::nullopt;
 }
 
 CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {

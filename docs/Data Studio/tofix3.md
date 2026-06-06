@@ -264,6 +264,10 @@ Additional fix applied:
 - `CrossEntropyLoss` now blocks single-logit outputs and mismatches between
   Output node class count and model output size
 - covered the new checks in `test_graph_compiler_deferred_nodes`
+- added selected-path preprocessing/domain validation in `GraphCompiler`
+- domain-specific preprocessing nodes now block compile when they do not match
+  the selected DataInput category, e.g. image `Resize` on a tabular data path
+- covered the domain mismatch check in `test_graph_compiler_deferred_nodes`
 
 That is useful, but still not enough for a visual ML tool.
 
@@ -274,8 +278,7 @@ That is useful, but still not enough for a visual ML tool.
 - train/val/test split semantic checks
 - loss/input shape compatibility
 - dtype warnings
-- suspicious data path warnings
-- incompatible preprocessing/model chains
+- suspicious data path warnings beyond the selected training path
 - invalid training graphs that are graph-valid but compile-invalid
 
 **Recommendation:**

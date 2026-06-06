@@ -468,6 +468,29 @@ int main() {
     Check(HasIssueText(config, "class count"),
           "CrossEntropy loss should report class/output mismatch");
 
+    auto resize = Node(17,
+                       gui::NodeType::Resize,
+                       "Image Resize",
+                       {Pin(1701, gui::PinType::Tensor, "Input", true)},
+                       {Pin(1702, gui::PinType::Tensor, "Output", false)});
+    resize.parameters["width"] = "64";
+    resize.parameters["height"] = "64";
+
+    nodes = {data, resize, dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 17, 1701),
+        Link(2, 17, 1702, 2, 201),
+        Link(3, 2, 202, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "image preprocessing on a tabular data path should be invalid");
+    Check(HasIssueText(config, "is for image data"),
+          "compile should report preprocessing/domain mismatch");
+
     std::cout << "Graph compiler deferred node guard and graph plan passed\n";
     return 0;
 }

@@ -423,6 +423,7 @@ private:
 
     // Check if node is preprocessing
     bool IsPreprocessing(gui::NodeType type) const;
+    std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type) const;
 
     // Extract layer parameters from node
     CompiledLayer ExtractLayerConfig(const gui::MLNode& node) const;
