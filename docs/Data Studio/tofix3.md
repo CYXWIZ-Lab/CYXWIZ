@@ -1025,6 +1025,10 @@ Fix applied:
 - reduced `script_editor.cpp` from roughly 4077 lines to roughly 3596 lines
   while leaving rendering, file I/O, comments, cell mode, debug UI, and
   completion handling in the main file
+- moved Script Editor line/block comment operations into
+  `gui/panels/script_editor_edit.cpp`
+- reduced `script_editor.cpp` further to roughly 3509 lines while leaving
+  settings, cell mode, debug UI, and completion handling in the main file
 
 **Recommendation:**
 
