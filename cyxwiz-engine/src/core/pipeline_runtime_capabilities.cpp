@@ -91,6 +91,50 @@ GetPipelineFailClosedRuntimeCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineLegacyRuntimeCapability>&
+GetPipelineLegacyRuntimeCapabilities() {
+    static const std::vector<PipelineLegacyRuntimeCapability> capabilities = {
+        {"FileInput"},
+        {"DataInput"},
+        {"DataOutput"},
+        {"FilterRows"},
+        {"SelectColumns"},
+        {"RemoveDuplicates"},
+        {"SaveDataset"},
+        {"FillMissing"},
+        {"SortRows"},
+        {"Join"},
+        {"GroupBy"},
+        {"DeployToNodeEditor"},
+        {"TextClean"},
+        {"TextTokenize"},
+        {"TextVectorize"},
+        {"TSWindow"},
+        {"TSFeatures"},
+        {"TSLag"},
+        {"TSDiff"},
+        {"PolynomialFeatures"},
+        {"Binning"},
+        {"ExcelInput"},
+        {"ExportExcel"},
+        {"ExportCSV"},
+        {"ExportJSON"},
+        {"RowToColumnNames"},
+        {"TableSplitter"},
+        {"CellExtractor"},
+        {"CellUpdater"},
+        {"TableCropper"},
+        {"ColumnAppender"},
+        {"RowAppender"},
+        {"Unpivot"},
+        {"StringManipulation"},
+        {"MathFormula"},
+        {"RuleEngine"},
+        {"RenameColumns"},
+    };
+    return capabilities;
+}
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
@@ -100,6 +144,10 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
     if (const char* reason = ResolvePipelineFailClosedReason(legacy_type_name);
         reason != nullptr) {
         return {PipelineRuntimeSupportMode::FailClosed, std::nullopt, reason};
+    }
+
+    if (IsPipelineLegacyRuntimeNode(legacy_type_name)) {
+        return {PipelineRuntimeSupportMode::LegacyExecutor, std::nullopt, nullptr};
     }
 
     return {};
@@ -136,6 +184,15 @@ const char* ResolvePipelineFailClosedReason(const std::string& legacy_type_name)
 
 bool IsPipelineFailClosedRuntimeNode(const std::string& legacy_type_name) {
     return ResolvePipelineFailClosedReason(legacy_type_name) != nullptr;
+}
+
+bool IsPipelineLegacyRuntimeNode(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineLegacyRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineLegacyRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    return it != capabilities.end();
 }
 
 } // namespace cyxwiz

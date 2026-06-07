@@ -183,8 +183,10 @@ now covers duplicate ids, missing/self links, invalid source/input
 shapes, unsupported multi-input paths, cycles, and required
 source/export parameters such as `DataInput.file_path`,
 `DataInput.folder_path`, `FileInput.path`, and output `file_path`
-settings. Validation errors now preserve the specific failed rule.
-Full schema/type-aware validation remains future work.
+settings. Validation also rejects node types that are unknown to the
+central runtime capability registry before execution starts. Validation
+errors now preserve the specific failed rule. Full schema/type-aware
+validation remains future work.
 
 Relevant files:
 
@@ -210,7 +212,8 @@ Recommendation:
   - cycles for DAG-only paths
   - missing required params beyond the current source/export baseline
   - missing required inputs
-  - unsupported node types for the selected execution path
+  - unsupported node types for execution paths beyond the current legacy
+    executor/runtime registry baseline
   - obvious type/schema mismatches
 
 ---
@@ -494,15 +497,16 @@ Recommendation:
 
 **Status 2026-06-07:** Started. Exact legacy runtime names that route
 through `PipelineOperatorFactory`, plus known fail-closed legacy runtime
-names and reasons, now live in `pipeline_runtime_capabilities.{h,cpp}`
-instead of being embedded in `PipelineExecutor`. `PipelineExecutor` now
-asks that registry for one explicit runtime-support mode before routing
-operator-backed nodes or hard-failing known unsupported nodes. The
-metadata drift test verifies every listed operator runtime capability has
-a real factory operator and that fail-closed names do not overlap
-operator-backed names. Remaining work is to expand this into a fuller
-multi-axis capability matrix for compile, training, materializer, and
-backend availability.
+names and reasons, and active legacy-executor node names now live in
+`pipeline_runtime_capabilities.{h,cpp}` instead of being embedded only in
+`PipelineExecutor`. `PipelineExecutor` now asks that registry for one
+explicit runtime-support mode before routing operator-backed nodes or
+hard-failing known unsupported nodes. Validation also rejects unknown
+runtime-support modes before execution. The metadata drift test verifies
+every listed operator runtime capability has a real factory operator and
+that operator, fail-closed, and legacy-dispatched names do not overlap.
+Remaining work is to expand this into a fuller multi-axis capability
+matrix for compile, training, materializer, and backend availability.
 
 Problem:
 

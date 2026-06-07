@@ -18,8 +18,13 @@ struct PipelineFailClosedRuntimeCapability {
     const char* reason;
 };
 
+struct PipelineLegacyRuntimeCapability {
+    const char* legacy_type_name;
+};
+
 enum class PipelineRuntimeSupportMode {
     Unknown,
+    LegacyExecutor,
     OperatorBacked,
     FailClosed,
 };
@@ -36,6 +41,9 @@ GetPipelineOperatorRuntimeCapabilities();
 const std::vector<PipelineFailClosedRuntimeCapability>&
 GetPipelineFailClosedRuntimeCapabilities();
 
+const std::vector<PipelineLegacyRuntimeCapability>&
+GetPipelineLegacyRuntimeCapabilities();
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name);
 
 std::optional<gui::NodeType>
@@ -46,5 +54,7 @@ bool IsPipelineOperatorRuntimeNode(const std::string& legacy_type_name);
 const char* ResolvePipelineFailClosedReason(const std::string& legacy_type_name);
 
 bool IsPipelineFailClosedRuntimeNode(const std::string& legacy_type_name);
+
+bool IsPipelineLegacyRuntimeNode(const std::string& legacy_type_name);
 
 } // namespace cyxwiz

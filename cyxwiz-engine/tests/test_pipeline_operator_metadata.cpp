@@ -131,6 +131,9 @@ int main() {
         Check(!cyxwiz::IsPipelineOperatorRuntimeNode(capability.legacy_type_name),
               std::string("fail-closed runtime name is also operator-backed: ") +
                   capability.legacy_type_name);
+        Check(!cyxwiz::IsPipelineLegacyRuntimeNode(capability.legacy_type_name),
+              std::string("fail-closed runtime name is also legacy-dispatched: ") +
+                  capability.legacy_type_name);
         Check(cyxwiz::ResolvePipelineFailClosedReason(capability.legacy_type_name) != nullptr,
               std::string("fail-closed runtime name does not resolve: ") +
                   capability.legacy_type_name);
@@ -144,6 +147,20 @@ int main() {
                   capability.legacy_type_name);
         Check(support.fail_closed_reason != nullptr,
               std::string("runtime support fail-closed reason missing: ") +
+                  capability.legacy_type_name);
+    }
+
+    for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {
+        Check(!cyxwiz::IsPipelineOperatorRuntimeNode(capability.legacy_type_name),
+              std::string("legacy runtime name is also operator-backed: ") +
+                  capability.legacy_type_name);
+        Check(!cyxwiz::IsPipelineFailClosedRuntimeNode(capability.legacy_type_name),
+              std::string("legacy runtime name is also fail-closed: ") +
+                  capability.legacy_type_name);
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            capability.legacy_type_name);
+        Check(support.mode == cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+              std::string("runtime support mode is not legacy executor: ") +
                   capability.legacy_type_name);
     }
 

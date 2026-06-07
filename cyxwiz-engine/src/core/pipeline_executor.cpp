@@ -321,6 +321,13 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             last_error_ = "Node '" + node.name + "': " + parameter_error;
             return false;
         }
+
+        if (ResolvePipelineRuntimeSupport(node.type).mode ==
+            PipelineRuntimeSupportMode::Unknown) {
+            last_error_ = "Node '" + node.name + "' has unsupported node type '" +
+                          node.type + "' for PipelineExecutor";
+            return false;
+        }
     }
 
     if (TopologicalSort(nodes).empty() && !nodes.empty()) {

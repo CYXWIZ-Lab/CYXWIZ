@@ -145,6 +145,22 @@ int main() {
           "unsupported source_type validation should be specific: " +
               unsupported_source_executor.GetLastError());
 
+    const std::string unknown_node_json =
+        R"({"nodes":[)"
+        R"({"id":9,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":10,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
+        R"(],"links":[{"start_node":9,"end_node":10}]})";
+
+    cyxwiz::PipelineExecutor unknown_node_executor;
+    Check(!unknown_node_executor.ExecutePipeline(unknown_node_json),
+          "unknown node type should fail validation");
+    Check(unknown_node_executor.GetLastError().find(
+              "unsupported node type 'DefinitelyMissingNode'") !=
+              std::string::npos,
+          "unknown node validation should be specific: " +
+              unknown_node_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");

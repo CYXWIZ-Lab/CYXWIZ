@@ -109,3 +109,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: extended `PipelineExecutor::ValidatePipeline()`
   with required source/export parameter checks and preserved specific
   validation failure messages.
+- 2026-06-07 follow-up: added active legacy-executor node names to
+  `pipeline_runtime_capabilities` as `LegacyExecutor` support and used
+  that resolver to reject unknown pipeline node types during validation.
