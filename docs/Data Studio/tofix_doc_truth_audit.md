@@ -103,3 +103,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: added `ResolvePipelineRuntimeSupport()` so the
   executor branches on one explicit runtime-support mode instead of
   separate capability lookups.
+- 2026-06-07 follow-up: deleted the historical compile-excluded
+  `PipelineExecutor` placeholder helper block after support decisions were
+  moved into `pipeline_runtime_capabilities`.

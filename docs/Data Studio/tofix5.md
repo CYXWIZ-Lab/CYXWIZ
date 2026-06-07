@@ -359,8 +359,8 @@ Recommendation:
 These nodes now return explicit unsupported execution errors through
 `FailUnsupportedNode()` instead of passthrough/fake success. The old
 placeholder helper bodies have been removed from the header contract and
-quarantined behind compile-time exclusion, including the legacy PCA helper,
-so they cannot be called from active dispatch.
+the historical compile-excluded placeholder block has been deleted, so
+they cannot be called from active dispatch.
 
 Relevant files:
 
@@ -383,23 +383,20 @@ Representative examples:
 
 Problem now:
 
-- old placeholder helper bodies remain only as quarantined historical
-  TODOs in the `.cpp`, not as active methods
 - exact registered operator-backed node names now route through
-  `PipelineOperatorFactory`, but the runtime still lacks one central
-  capability owner
+  `PipelineOperatorFactory`
+- known unsupported legacy node names fail closed through the central
+  runtime capability registry
+- broader support truth still needs the next multi-axis capability matrix
 
 Effect:
 
 - user-facing fake success is fixed for the audited branches
 - engineering truth is cleaner because fake-success helpers are no
-  longer part of the compiled API, but scattered capability decisions
-  still need central ownership
+  longer part of the compiled API or retained as dead TODO code
 
 Recommendation:
 
-- delete the quarantined historical helper block after canonical runtime
-  capability ownership is settled
 - keep unsupported nodes failing closed by default
 
 ---
@@ -443,8 +440,8 @@ Problem now:
 
 - the engine now exposes real operator implementations from the older
   `PipelineExecutor` for exact registered node names
-- the code still contains a quarantined historical helper block for
-  several placeholder-era TODOs
+- the placeholder-era historical helper block has been deleted instead
+  of preserved as dead source
 
 Effect now:
 
@@ -458,8 +455,7 @@ Effect now:
 Recommendation:
 
 - add a capability matrix owned by runtime, not scattered comments
-- remove the quarantined historical helper block once runtime capability
-  ownership is centralized
+- continue converging support truth into runtime-owned capability data
 
 ---
 
