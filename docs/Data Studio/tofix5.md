@@ -627,23 +627,35 @@ Recommendation:
 
 **Severity:** Medium
 
+**Status 2026-06-07:** Fixed for current compiler-known backend gaps.
+Training and debug still share `BuildExecutableFromConfig`, but the
+graph compiler now checks centralized `PipelineTrainingBackendSupport`
+before either surface starts execution. Unsupported sequential-model
+layers and unsupported training-control nodes are blocked during
+compile with explicit registry reasons, and the graph compiler drift
+test walks those capability lists to verify the block remains active.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/training_executor.cpp:79`
 - `cyxwiz-engine/src/core/debug_executor.cpp:84`
+- `cyxwiz-engine/src/core/graph_compiler.cpp`
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
+- `cyxwiz-engine/tests/test_graph_compiler_deferred_nodes.cpp`
 
 Problem:
 
 - both training and debug rely on `BuildSequentialFromConfig(config_)`
 - this is good for consistency
-- but it also means any missing layer support or build mismatch affects
-  both product surfaces
+- missing layer support or build mismatch would affect both product
+  surfaces if the compiler allowed those graphs through
 
 Recommendation:
 
 - keep the shared builder
-- strengthen compile-time capability checks so unsupported layer graphs
-  are blocked before either training or debug starts
+- keep compile-time capability checks in front of training/debug
+- add new backend gaps to `PipelineTrainingBackendSupport` when the
+  compiler recognizes a node before the model builder can execute it
 
 ---
 
