@@ -326,6 +326,12 @@ Recommendation:
 
 **Severity:** High
 
+**Status 2026-06-07:** Partially fixed for support truth. Runtime
+support, materializer scope, and implementation ownership now live in
+`pipeline_runtime_capabilities.{h,cpp}` and are covered by drift tests.
+The remaining issue is not a missing support list; it is execution-path
+ownership and migration.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`
@@ -339,22 +345,25 @@ Problem:
 - `PipelineMaterializer` is a newer operator-based path using
   `PipelineOperatorFactory` and `IPipelineOperator`.
 - Both are graph execution mechanisms.
-- They do not share one canonical notion of node support.
+- They now share central support and owner truth, but still do not have
+  one canonical graph execution owner.
 
 Effect:
 
 - duplicated runtime logic
-- duplicated node capability decisions
-- placeholder behavior survives even after real operators exist
-- engineers can add support in one path and still leave the user-facing
-  path misleading
+- lower risk of duplicated node capability decisions than before, but
+  support still depends on which execution path actually owns the graph
+- operator-backed nodes can be available through `PipelineOperatorFactory`
+  while legacy-only nodes still execute through `PipelineExecutor`
+- future migrations need to move ownership, not add another support list
 
 Recommendation:
 
-- declare one canonical Data Studio execution path
-- treat the other as compatibility scaffolding only
-- create an explicit migration plan from legacy dispatcher to operator
-  framework
+- use `implementation_owner` as the migration source of truth
+- migrate legacy-dispatched nodes to operator-backed ownership in small
+  slices with tests
+- keep `PipelineExecutor` compatibility paths explicit until their nodes
+  move or are removed
 
 ---
 
