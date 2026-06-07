@@ -30,9 +30,9 @@ The highest-risk runtime issue in the engine today is `execution drift`.
 The product surface suggests a graph-first platform with consistent node
 execution. The implementation is still split between:
 
-- a legacy string-dispatch executor that now fails closed for the
-  audited placeholder branches, but still duplicates real operator
-  families
+- a legacy string-dispatch executor that now fails closed for audited
+  placeholder branches and routes exact operator-backed names through
+  the operator framework, while still retaining legacy-only branches
 - a newer operator framework with real implementations for a growing
   subset of nodes
 - a separate training/debug model path that builds sequential models
@@ -49,14 +49,19 @@ Current truth after the 2026-06-07 cleanup:
 3. Done for the legacy single-input path: `GetInputDatasetName()` now
    fails closed on multiple inputs instead of silently selecting the
    first input edge.
-4. Done for baseline structure: `ValidatePipeline()` now rejects
-   duplicate ids, missing/self links, invalid source/input shapes,
-   unsupported multi-input paths, and cycles/topology failures.
+4. Done for baseline structure/runtime support: `ValidatePipeline()`
+   now rejects duplicate ids, missing/self links, invalid source/input
+   shapes, unsupported multi-input paths, cycles/topology failures,
+   missing source/export parameters, unsupported source/export parameter
+   values, and node types unknown to the central runtime capability
+   registry.
 5. Still pending: `PipelineMaterializer` only materializes in-memory Arrow graphs and
    explicitly skips Parquet-backed, image, audio, and text sources.
 6. Partially fixed: audited placeholder branches in `PipelineExecutor`
-   now fail closed instead of returning fake success. Remaining work is
-   to route operator-backed nodes through one canonical executor.
+   now fail closed instead of returning fake success, and exact
+   operator-backed names route through `PipelineOperatorFactory`.
+   Remaining work is to choose the canonical executor/materializer
+   ownership model for all Data Studio graph execution.
 7. Done: `TrainingManager::StartTrainingArrow()` and
    `StartTrainingParquet()` now use the same shared input-size resolver,
    including the GraphCompiler time-series override.
