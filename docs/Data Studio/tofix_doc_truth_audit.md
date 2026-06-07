@@ -119,3 +119,6 @@ scanning so stale or duplicate work is not reintroduced.
   `pipeline_runtime_capabilities` and marked standalone `ParquetInput` as
   known fail-closed; executable parquet loading remains `DataInput`
   with `type=parquet`.
+- 2026-06-07 follow-up: moved fixed multi-input arity truth for legacy
+  `Join` into `pipeline_runtime_capabilities`, replacing the local
+  validator-only list.

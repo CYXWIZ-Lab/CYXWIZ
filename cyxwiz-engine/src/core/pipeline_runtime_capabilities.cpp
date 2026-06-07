@@ -152,6 +152,14 @@ GetPipelineSourceRuntimeCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineInputArityRuntimeCapability>&
+GetPipelineInputArityRuntimeCapabilities() {
+    static const std::vector<PipelineInputArityRuntimeCapability> capabilities = {
+        {"Join", 2},
+    };
+    return capabilities;
+}
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
@@ -219,6 +227,18 @@ bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name) {
             return legacy_type_name == capability.legacy_type_name;
         });
     return it != capabilities.end();
+}
+
+std::optional<int> ResolvePipelineRequiredInputCount(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineInputArityRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineInputArityRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (it == capabilities.end()) {
+        return std::nullopt;
+    }
+    return it->required_input_count;
 }
 
 } // namespace cyxwiz

@@ -174,6 +174,24 @@ int main() {
                   capability.legacy_type_name);
     }
 
+    for (const auto& capability : cyxwiz::GetPipelineInputArityRuntimeCapabilities()) {
+        const auto required_count = cyxwiz::ResolvePipelineRequiredInputCount(
+            capability.legacy_type_name);
+        Check(required_count.has_value(),
+              std::string("input arity runtime name does not resolve: ") +
+                  capability.legacy_type_name);
+        Check(*required_count == capability.required_input_count,
+              std::string("input arity runtime count mismatch: ") +
+                  capability.legacy_type_name);
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
+                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+              std::string("input arity runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        Check(capability.required_input_count > 1,
+              std::string("input arity override should only list multi-input nodes: ") +
+                  capability.legacy_type_name);
+    }
+
     const std::vector<gui::NodeType> supported_model_nodes = {
         gui::NodeType::LSTM,
         gui::NodeType::GRU,

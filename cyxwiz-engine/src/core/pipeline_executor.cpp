@@ -242,10 +242,6 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         return false;
     }
 
-    const std::set<std::string> two_input_nodes = {
-        "Join"
-    };
-
     std::set<int> ids;
     for (const auto& node : nodes) {
         if (!ids.insert(node.id).second) {
@@ -280,7 +276,8 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         }
 
         const bool is_source = IsPipelineSourceRuntimeNode(node.type);
-        const bool is_two_input = two_input_nodes.find(node.type) != two_input_nodes.end();
+        const auto required_input_count =
+            ResolvePipelineRequiredInputCount(node.type);
 
         if (is_source && !node.inputs.empty()) {
             last_error_ = "Source node '" + node.name + "' must not have input connections";
@@ -292,12 +289,15 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             return false;
         }
 
-        if (is_two_input && node.inputs.size() != 2) {
-            last_error_ = "Node '" + node.name + "' requires exactly two input connections";
+        if (required_input_count.has_value() &&
+            static_cast<int>(node.inputs.size()) != *required_input_count) {
+            last_error_ = "Node '" + node.name + "' requires exactly " +
+                          std::to_string(*required_input_count) +
+                          " input connections";
             return false;
         }
 
-        if (!is_two_input && node.inputs.size() > 1) {
+        if (!required_input_count.has_value() && node.inputs.size() > 1) {
             last_error_ = "Node '" + node.name + "' has multiple inputs, but node type '" +
                           node.type + "' does not define multi-input execution";
             return false;
