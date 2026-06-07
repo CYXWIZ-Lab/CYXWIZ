@@ -1443,6 +1443,8 @@ add_executable(test_text_arrow_materializer
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
 )
 
 target_include_directories(test_text_arrow_materializer PRIVATE
@@ -1515,6 +1517,8 @@ add_executable(test_text_gui_training_launch
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_base.cpp

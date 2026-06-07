@@ -4,6 +4,7 @@
 #include "../src/core/model_builder.h"
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
+#include "../src/core/pipeline_materializer.h"
 #include "../src/gui/graph_training_launcher.h"
 
 #include <arrow/api.h>
@@ -21,6 +22,8 @@ namespace {
 constexpr const char* kDatasetName = "gui_text_runtime";
 constexpr const char* kMaterializedDatasetName = "gui_text_runtime__materialized";
 constexpr const char* kUnusedDatasetName = "unused_gui_text_runtime";
+constexpr const char* kScopeArrowDatasetName = "gui_text_runtime_scope_arrow";
+constexpr const char* kScopeTextDatasetName = "gui_text_runtime_scope_legacy_text";
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -63,14 +66,15 @@ std::shared_ptr<arrow::Table> MakeTextTable() {
     return arrow::Table::Make(schema, {text, label}, 4);
 }
 
-gui::MLNode MakeDataInputNode() {
+gui::MLNode MakeDataInputNode(
+    const std::string& dataset_name = kDatasetName) {
     gui::MLNode node;
     node.id = 1;
     node.type = gui::NodeType::DataInput;
     node.category = gui::NodeCategory::DataPipeline;
     node.name = "Data Input";
     node.parameters = {
-        {"dataset_name", kDatasetName},
+        {"dataset_name", dataset_name},
         {"data_loaded", "true"},
         {"file_category", "text"},
         {"label_column", "label"},
@@ -216,6 +220,51 @@ int main() {
     std::vector<gui::NodeLink> links = {
         {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
     };
+
+    registry.UnregisterTabularDataset(kScopeArrowDatasetName);
+    registry.UnregisterTabularDataset(
+        std::string(kScopeArrowDatasetName) +
+        cyxwiz::PipelineMaterializer::kMaterializedSuffix);
+    Check(registry.RegisterArrowTable(MakeTextTable(), kScopeArrowDatasetName) != nullptr,
+          "Arrow source should register for materializer scope test");
+    std::vector<gui::MLNode> scope_nodes = {
+        MakeDataInputNode(kScopeArrowDatasetName),
+        MakeTokenizerNode(),
+    };
+    auto arrow_scope = cyxwiz::PipelineMaterializer::Materialize(
+        scope_nodes, links, registry, kScopeArrowDatasetName);
+    Check(arrow_scope.success, arrow_scope.error_message);
+    Check(arrow_scope.source_kind ==
+              cyxwiz::PipelineMaterializerSourceKind::ArrowTable,
+          "Arrow source should report ArrowTable source kind");
+    Check(!arrow_scope.skipped_unsupported_source,
+          "Arrow source should not report unsupported-source skip");
+    Check(arrow_scope.operators_applied == 1,
+          "Arrow source should apply tokenizer through registry materializer");
+    registry.UnregisterTabularDataset(kScopeArrowDatasetName);
+    registry.UnregisterTabularDataset(
+        std::string(kScopeArrowDatasetName) +
+        cyxwiz::PipelineMaterializer::kMaterializedSuffix);
+
+    cyxwiz::DataRegistry::TextDatasetEntry text_entry;
+    text_entry.source_path = "legacy_text.csv";
+    text_entry.text_column = "text";
+    text_entry.label_column = "label";
+    text_entry.num_samples = 3;
+    registry.RegisterTextDataset(kScopeTextDatasetName, text_entry);
+    auto text_scope = cyxwiz::PipelineMaterializer::Materialize(
+        scope_nodes, links, registry, kScopeTextDatasetName);
+    Check(text_scope.success, text_scope.error_message);
+    Check(text_scope.effective_dataset_name == kScopeTextDatasetName,
+          "legacy text source should pass through unchanged");
+    Check(text_scope.operators_applied == 0,
+          "legacy text source should not apply Arrow operators");
+    Check(text_scope.source_kind ==
+              cyxwiz::PipelineMaterializerSourceKind::TextDataset,
+          "legacy text source should report TextDataset source kind");
+    Check(text_scope.skipped_unsupported_source,
+          "legacy text source should report unsupported-source skip");
+    registry.UnregisterTextDataset(kScopeTextDatasetName);
 
     bool dispatch_called = false;
     bool callback_started = false;

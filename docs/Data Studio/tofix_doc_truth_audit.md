@@ -135,3 +135,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: added validation-time checks for required active
   legacy transform parameters such as `FilterRows.condition`,
   `Join.on_column`, `GroupBy` fields, and `StringManipulation.column`.
+- 2026-06-07 follow-up: made PipelineMaterializer source-scope truth
+  explicit in `MaterializeResult`, including Arrow-table support and
+  non-Arrow source skips for legacy text/parquet/image/audio-style paths.

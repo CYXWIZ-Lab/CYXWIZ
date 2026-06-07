@@ -14,6 +14,22 @@ namespace cyxwiz {
 
 class DataRegistry;
 
+enum class PipelineMaterializerSourceKind {
+    Unknown,
+    ArrowTable,
+    ParquetBacked,
+    ImageDataset,
+    AudioDataset,
+    TextDataset,
+};
+
+const char* PipelineMaterializerSourceKindName(
+    PipelineMaterializerSourceKind kind);
+
+PipelineMaterializerSourceKind ResolvePipelineMaterializerSourceKind(
+    const DataRegistry& registry,
+    const std::string& source_dataset_name);
+
 /**
  * MaterializeResult - outcome of a PipelineMaterializer::Materialize pass.
  *
@@ -23,6 +39,8 @@ class DataRegistry;
  *   registered "<source>__materialized" Arrow dataset.
  * - operators_applied: how many Cat-1 IPipelineOperator instances ran.
  *   Zero means pass-through.
+ * - source_kind / skipped_unsupported_source: records the storage scope that
+ *   caused a pass-through when the source is not an in-memory Arrow table.
  * - success: false only if a Configure(), Apply(), or registry operation
  *   reported a hard error.
  * - error_message: populated only when success=false.
@@ -30,6 +48,9 @@ class DataRegistry;
 struct MaterializeResult {
     std::string effective_dataset_name;
     int operators_applied = 0;
+    PipelineMaterializerSourceKind source_kind =
+        PipelineMaterializerSourceKind::Unknown;
+    bool skipped_unsupported_source = false;
     bool success = true;
     std::string error_message;
 };

@@ -8,6 +8,46 @@
 
 namespace cyxwiz {
 
+const char* PipelineMaterializerSourceKindName(
+    PipelineMaterializerSourceKind kind) {
+    switch (kind) {
+    case PipelineMaterializerSourceKind::ArrowTable:
+        return "ArrowTable";
+    case PipelineMaterializerSourceKind::ParquetBacked:
+        return "ParquetBacked";
+    case PipelineMaterializerSourceKind::ImageDataset:
+        return "ImageDataset";
+    case PipelineMaterializerSourceKind::AudioDataset:
+        return "AudioDataset";
+    case PipelineMaterializerSourceKind::TextDataset:
+        return "TextDataset";
+    case PipelineMaterializerSourceKind::Unknown:
+        return "Unknown";
+    }
+    return "Unknown";
+}
+
+PipelineMaterializerSourceKind ResolvePipelineMaterializerSourceKind(
+    const DataRegistry& registry,
+    const std::string& source_dataset_name) {
+    if (registry.IsArrowDataset(source_dataset_name)) {
+        return PipelineMaterializerSourceKind::ArrowTable;
+    }
+    if (registry.IsParquetBackedDataset(source_dataset_name)) {
+        return PipelineMaterializerSourceKind::ParquetBacked;
+    }
+    if (registry.IsImageDataset(source_dataset_name)) {
+        return PipelineMaterializerSourceKind::ImageDataset;
+    }
+    if (registry.IsAudioDataset(source_dataset_name)) {
+        return PipelineMaterializerSourceKind::AudioDataset;
+    }
+    if (registry.IsTextDataset(source_dataset_name)) {
+        return PipelineMaterializerSourceKind::TextDataset;
+    }
+    return PipelineMaterializerSourceKind::Unknown;
+}
+
 MaterializeResult PipelineMaterializer::Materialize(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
@@ -23,11 +63,17 @@ MaterializeResult PipelineMaterializer::Materialize(
         return result;
     }
 
+    result.source_kind = ResolvePipelineMaterializerSourceKind(
+        registry, source_dataset_name);
+
     // v1: only the in-memory Arrow path is materialized. Parquet-backed,
     // image, audio, and legacy text sources fall through unchanged.
-    if (!registry.IsArrowDataset(source_dataset_name)) {
-        spdlog::debug("PipelineMaterializer: source '{}' is not an Arrow dataset, "
-                      "skipping materialization", source_dataset_name);
+    if (result.source_kind != PipelineMaterializerSourceKind::ArrowTable) {
+        result.skipped_unsupported_source = true;
+        spdlog::debug("PipelineMaterializer: source '{}' has kind '{}', "
+                      "skipping materialization",
+                      source_dataset_name,
+                      PipelineMaterializerSourceKindName(result.source_kind));
         return result;
     }
 

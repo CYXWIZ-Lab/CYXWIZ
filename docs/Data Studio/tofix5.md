@@ -312,6 +312,13 @@ Recommendation:
 
 **Severity:** Medium
 
+**Status 2026-06-07:** Partially fixed for truth reporting. The
+materializer still only transforms in-memory Arrow tables, but
+`MaterializeResult` now reports the detected source kind and whether a
+non-Arrow source was skipped as unsupported for materialization. Tests
+cover Arrow-table materialization and legacy text pass-through. Parquet,
+image, audio, and legacy text sources remain non-materialized paths.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_materializer.h:34`
@@ -322,7 +329,8 @@ Problem:
 
 - materialization only runs for in-memory Arrow datasets
 - Parquet-backed, image, audio, and text datasets are explicitly
-  skipped
+  skipped; this is now explicit in the materializer result instead of
+  only implicit in a debug log
 - traversal is a BFS from `DataInput`
 - comments acknowledge that parallel preprocessing branches are a v1
   limitation
