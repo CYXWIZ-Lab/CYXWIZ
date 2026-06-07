@@ -766,6 +766,62 @@ int main() {
           "StringManipulation unknown operation error should be specific: " +
               bad_string_operation_executor.GetLastError());
 
+    const std::string binning_json =
+        R"({"nodes":[)"
+        R"({"id":71,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":72,"type":"Binning","name":"Bin","parameters":{)"
+        R"("columns":"x","method":"equal_width","n_bins":"2"}})"
+        R"(],"links":[{"start_node":71,"end_node":72}]})";
+
+    cyxwiz::PipelineExecutor binning_executor;
+    Check(binning_executor.ExecutePipeline(binning_json),
+          "Binning equal_width should execute real bins: " +
+              binning_executor.GetLastError());
+    auto binned = registry.GetArrowDataset("ds_binning_72");
+    Check(binned != nullptr, "Binning output dataset is registered");
+    auto binned_table = binned->GetArrowTable();
+    Check(binned_table != nullptr, "Binning output table exists");
+    Check(binned_table->num_columns() == 3,
+          "Binning output should only add the requested bin column");
+    Check(ReadNumericValue(binned_table, "x_bin", 0) == 1.0,
+          "Binning equal_width should place minimum in first bin");
+    Check(ReadNumericValue(binned_table, "x_bin", 2) == 2.0,
+          "Binning equal_width should place maximum in last bin");
+
+    const std::string missing_binning_column_json =
+        R"({"nodes":[)"
+        R"({"id":73,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":74,"type":"Binning","name":"MissingBinColumn","parameters":{)"
+        R"("method":"equal_width","n_bins":"2"}})"
+        R"(],"links":[{"start_node":73,"end_node":74}]})";
+
+    cyxwiz::PipelineExecutor missing_binning_column_executor;
+    Check(!missing_binning_column_executor.ExecutePipeline(missing_binning_column_json),
+          "Binning missing columns should fail validation");
+    Check(missing_binning_column_executor.GetLastError().find(
+              "missing required parameter 'columns'") != std::string::npos,
+          "Binning missing columns validation should be specific: " +
+              missing_binning_column_executor.GetLastError());
+
+    const std::string bad_binning_method_json =
+        R"({"nodes":[)"
+        R"({"id":75,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":76,"type":"Binning","name":"BadBinMethod","parameters":{)"
+        R"("columns":"x","method":"quantile","n_bins":"2"}})"
+        R"(],"links":[{"start_node":75,"end_node":76}]})";
+
+    cyxwiz::PipelineExecutor bad_binning_method_executor;
+    Check(!bad_binning_method_executor.ExecutePipeline(bad_binning_method_json),
+          "Binning unknown method should fail validation");
+    Check(bad_binning_method_executor.GetLastError().find(
+              "Binning method 'quantile' is not supported") != std::string::npos,
+          "Binning unknown method validation should be specific: " +
+              bad_binning_method_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
@@ -788,6 +844,8 @@ int main() {
     registry.UnloadDataset("ds_string_66");
     registry.UnloadDataset("ds_datainput_67");
     registry.UnloadDataset("ds_string_68");
+    registry.UnloadDataset("ds_datainput_71");
+    registry.UnloadDataset("ds_binning_72");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
     fs::remove(missing_csv_path);

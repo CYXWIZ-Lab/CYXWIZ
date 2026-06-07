@@ -450,6 +450,10 @@ Problem now:
 - legacy `FillMissing` now builds per-column fill expressions for
   `mean`, `median`, `mode`, and `constant` strategies instead of using
   a placeholder zero fill for statistic-based strategies
+- legacy `Binning` now requires an explicit single column, validates
+  `equal_width` / `equal_freq` methods centrally, quotes SQL identifiers,
+  and computes equal-width bins without relying on an unverified placeholder
+  column default
 - legacy `StringManipulation` now executes its advertised `replace` and
   `substring` operations, validates the operation enum centrally, and
   rejects unknown operations instead of returning a successful no-op

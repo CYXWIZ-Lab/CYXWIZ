@@ -194,3 +194,7 @@ scanning so stale or duplicate work is not reintroduced.
   advertised `replace` and `substring` operations and centralized
   operation enum validation so unsupported operations fail before
   execution.
+- 2026-06-07 follow-up: tightened legacy `Binning` to require one
+  explicit column, validate supported methods centrally, quote SQL
+  identifiers, and compute equal-width bins through a tested DuckDB
+  expression.

@@ -173,6 +173,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"Join", {"on_column"}},
         {"GroupBy", {"group_columns", "aggregations"}},
         {"PolynomialFeatures", {"columns"}},
+        {"Binning", {"columns"}},
         {"StringManipulation", {"column"}},
         {"MathFormula", {"formula"}},
     };
@@ -185,6 +186,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"DataInput", "source_type", "file", {"file", "folder", "ml_dataset"}},
         {"DataOutput", "format", "csv", {"csv", "parquet", "json"}},
         {"FillMissing", "strategy", "mean", {"mean", "median", "mode", "constant"}},
+        {"Binning", "method", "equal_width", {"equal_width", "equal_freq"}},
         {"StringManipulation", "operation", "trim", {"trim", "upper", "lower", "replace", "substring"}},
     };
     return capabilities;

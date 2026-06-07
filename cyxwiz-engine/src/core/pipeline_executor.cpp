@@ -278,6 +278,15 @@ bool HasSupportedParameterValues(
         }
     }
 
+    if (node_type == "Binning") {
+        const auto columns_it = parameters.find("columns");
+        if (columns_it != parameters.end() &&
+            columns_it->second.find(',') != std::string::npos) {
+            error = "Binning columns supports exactly one column";
+            return false;
+        }
+    }
+
     if (node_type == "DataInput") {
         const auto source_it = parameters.find("source_type");
         const std::string source_type =
@@ -2347,7 +2356,11 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
     }
 
     auto column_it = node.parameters.find("columns");
-    std::string columns = (column_it != node.parameters.end()) ? column_it->second : "value";
+    std::string column = (column_it != node.parameters.end()) ? column_it->second : "";
+    if (column.empty()) {
+        ReportError("Binning: Column name required");
+        return false;
+    }
 
     auto n_bins_it = node.parameters.find("n_bins");
     int n_bins = (n_bins_it != node.parameters.end()) ? std::stoi(n_bins_it->second) : 10;
@@ -2358,7 +2371,7 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
     std::string output_dataset_name = "ds_binning_" + std::to_string(node.id);
 
     spdlog::info("[Data Studio] Binning (method={}, bins={}) on '{}' from '{}'",
-                method, n_bins, columns, input_dataset_name);
+                method, n_bins, column, input_dataset_name);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -2376,17 +2389,29 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
             return false;
         }
 
-        // Use DuckDB's NTILE for equal frequency binning
+        const std::string quoted_column = QuoteSqlIdentifier(column);
+        const std::string quoted_bin_column = QuoteSqlIdentifier(column + "_bin");
+        const std::string base_column = "base." + quoted_column;
+
         std::string sql;
         if (method == "equal_freq") {
             sql = "SELECT *, NTILE(" + std::to_string(n_bins) + ") OVER (ORDER BY " +
-                  columns + ") AS " + columns + "_bin FROM " + temp_table;
+                  quoted_column + ") AS " + quoted_bin_column + " FROM " + temp_table;
+        } else if (method == "equal_width") {
+            const std::string n_bins_text = std::to_string(n_bins);
+            sql = "SELECT base.*, CASE "
+                  "WHEN stats.min_value = stats.max_value THEN 1 "
+                  "ELSE LEAST(" + n_bins_text + ", GREATEST(1, CAST(FLOOR(((CAST(" +
+                  base_column + " AS DOUBLE) - stats.min_value) / "
+                  "NULLIF(stats.max_value - stats.min_value, 0)) * " +
+                  n_bins_text + ") + 1 AS BIGINT))) END AS " + quoted_bin_column +
+                  " FROM " + temp_table + " base CROSS JOIN (SELECT CAST(MIN(" +
+                  quoted_column + ") AS DOUBLE) AS min_value, CAST(MAX(" +
+                  quoted_column + ") AS DOUBLE) AS max_value FROM " + temp_table +
+                  ") stats";
         } else {
-            // Equal width binning using WIDTH_BUCKET
-            sql = "SELECT *, WIDTH_BUCKET(" + columns + ", "
-                  "(SELECT MIN(" + columns + ") FROM " + temp_table + "), "
-                  "(SELECT MAX(" + columns + ") FROM " + temp_table + "), "
-                  + std::to_string(n_bins) + ") AS " + columns + "_bin FROM " + temp_table;
+            ReportError("Binning: Unsupported method '" + method + "'");
+            return false;
         }
 
         auto result_table = duckdb_->Query(sql);
