@@ -8,6 +8,10 @@
 #include <atomic>
 #include <set>
 
+namespace gui {
+enum class NodeType;
+}
+
 namespace cyxwiz {
 
 // Forward declaration
@@ -288,6 +292,7 @@ private:
     void NotifyCompletion(bool success);
     std::string GetInputDatasetName(const Node& node, ExecutionContext& ctx);
     bool FailUnsupportedNode(const Node& node, const std::string& reason);
+    bool ExecutePipelineOperatorNode(const Node& node, ExecutionContext& ctx, gui::NodeType type);
 
     // Phase 7: Improved error messages with suggestions
     std::string GetImprovedErrorMessage(const std::string& node_type, const std::string& error_category, const std::string& details = "");

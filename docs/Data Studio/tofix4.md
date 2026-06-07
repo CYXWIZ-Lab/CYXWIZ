@@ -442,7 +442,11 @@ Effect now:
 
 ### 10. Text analytics nodes have real operators in one path, but placeholder logic in another
 
-**Status:** Partially fixed in current branch. The legacy `PipelineExecutor` path no longer masks the real operator-backed path with passthrough success. Full completion still requires routing these nodes through `PipelineOperatorFactory` as the canonical executor.
+**Status:** Fixed for exact registered runtime names in current branch.
+The legacy `PipelineExecutor` path no longer masks the real
+operator-backed path with passthrough success, and these exact node names
+now route through `PipelineOperatorFactory`. Broader runtime convergence
+and dead legacy branch cleanup remain tracked in `tofix5.md`.
 
 Affected nodes:
 
@@ -454,36 +458,37 @@ Affected nodes:
 
 Relevant files:
 
-- `cyxwiz-engine/src/core/node_executors/pipeline_operator_factory.cpp:58`
-- `cyxwiz-engine/src/core/pipeline_executor.cpp:4110`
-- `cyxwiz-engine/src/core/pipeline_executor.cpp:4136`
-- `cyxwiz-engine/src/core/pipeline_executor.cpp:4188`
+- `cyxwiz-engine/src/core/node_executors/pipeline_operator_factory.cpp`
+- `cyxwiz-engine/src/core/pipeline_executor.cpp`
 
-Problem:
+Problem now:
 
 - `node_executors/*` contains real operator implementations
 - `PipelineOperatorFactory` registers them
-- the legacy `PipelineExecutor` now fails closed for the audited branch
-  instead of using placeholder passthrough behavior, but it still does
-  not route these nodes through the operator-backed implementation
+- the legacy `PipelineExecutor` now routes the exact registered node
+  names through the operator-backed implementation
+- stale placeholder-era helper bodies still need cleanup after canonical
+  runtime ownership is settled
 
 Effect:
 
-- duplicate execution systems still disagree on ownership
-- the newer real path is no longer masked by fake success, but it is not
-  yet the canonical path
+- duplicate execution systems still need ownership cleanup
+- the newer real path is no longer masked by fake success for these
+  exact runtime names
 
 **Recommendation:**
 
 - pick one execution path as canonical
-- route these nodes through the real operator implementation
 - remove placeholder executor branches once migrated
 
 ---
 
 ### 11. Time-series analysis nodes have the same split-brain problem
 
-**Status:** Partially fixed in current branch. The legacy `PipelineExecutor` dispatch now gives explicit unsupported errors for the advanced time-series nodes that only have operator-backed coverage. Full completion still requires canonical operator routing.
+**Status:** Fixed for exact registered runtime names in current branch.
+The legacy `PipelineExecutor` now routes these advanced time-series node
+names through `PipelineOperatorFactory`. Broader runtime convergence and
+dead legacy branch cleanup remain tracked in `tofix5.md`.
 
 Affected nodes:
 
@@ -498,17 +503,21 @@ Relevant files:
 - `cyxwiz-engine/src/core/node_executors/pipeline_operator_factory.cpp:135`
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`
 
-Problem:
+Problem now:
 
 - operator implementations exist and are registered in
   `PipelineOperatorFactory`
-- but the main `PipelineExecutor` dispatch does not provide a matching,
-  obvious active execution path for them
+- the main `PipelineExecutor` dispatch now has a matching active
+  execution path for the exact registered node names
+- stale placeholder-era helper bodies still need cleanup after canonical
+  runtime ownership is settled
 
 Effect:
 
-- node support depends on which executor path is actually used
-- coverage is inconsistent and easy to misread
+- node support is visible through the legacy executor for these exact
+  runtime names
+- ownership remains split until the runtime convergence work in
+  `tofix5.md` is complete
 
 **Recommendation:**
 

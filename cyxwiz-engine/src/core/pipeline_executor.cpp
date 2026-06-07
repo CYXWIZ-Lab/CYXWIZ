@@ -2,6 +2,8 @@
 #include "duckdb_connector.h"
 #include "data_registry.h"
 #include "arrow_dataset.h"
+#include "node_executors/pipeline_operator_factory.h"
+#include <arrow/table.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -11,8 +13,54 @@
 #include <chrono>
 #include <set>
 #include <mutex>
+#include <optional>
+#include <unordered_map>
 
 namespace cyxwiz {
+
+namespace {
+
+std::optional<gui::NodeType> OperatorNodeTypeFromLegacyString(const std::string& type) {
+    static const std::unordered_map<std::string, gui::NodeType> kOperatorNodeTypes = {
+        {"TimeSeriesWindow", gui::NodeType::TimeSeriesWindow},
+        {"TimeSeriesSplit", gui::NodeType::TimeSeriesSplit},
+        {"TimeSeriesFeatures", gui::NodeType::TimeSeriesFeatures},
+        {"LogTransform", gui::NodeType::LogTransform},
+        {"Differencing", gui::NodeType::Differencing},
+        {"TextTokenizer", gui::NodeType::TextTokenizer},
+        {"TFIDFVectorizer", gui::NodeType::TFIDFVectorizer},
+        {"CountVectorizer", gui::NodeType::CountVectorizer},
+        {"SentimentAnalyzer", gui::NodeType::SentimentAnalyzer},
+        {"PCANode", gui::NodeType::PCANode},
+        {"KMeansCluster", gui::NodeType::KMeansCluster},
+        {"DBSCANCluster", gui::NodeType::DBSCANCluster},
+        {"HierarchicalCluster", gui::NodeType::HierarchicalCluster},
+        {"GMMCluster", gui::NodeType::GMMCluster},
+        {"FFTNode", gui::NodeType::FFTNode},
+        {"Convolution1D", gui::NodeType::Convolution1D},
+        {"FilterDesigner", gui::NodeType::FilterDesigner},
+        {"LinearRegressionNode", gui::NodeType::LinearRegressionNode},
+        {"PolynomialRegressionNode", gui::NodeType::PolynomialRegressionNode},
+        {"StandardScaler", gui::NodeType::StandardScaler},
+        {"MinMaxScaler", gui::NodeType::MinMaxScaler},
+        {"RobustScaler", gui::NodeType::RobustScaler},
+        {"LabelEncoder", gui::NodeType::LabelEncoder},
+        {"OrdinalEncoder", gui::NodeType::OrdinalEncoder},
+        {"TargetEncoder", gui::NodeType::TargetEncoder},
+        {"OutlierDetector", gui::NodeType::OutlierDetector},
+        {"TimeSeriesDecomposition", gui::NodeType::TimeSeriesDecomposition},
+        {"ARIMAForecaster", gui::NodeType::ARIMAForecaster},
+        {"ExponentialSmoothing", gui::NodeType::ExponentialSmoothing},
+    };
+
+    auto it = kOperatorNodeTypes.find(type);
+    if (it == kOperatorNodeTypes.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+} // namespace
 
 PipelineExecutor::PipelineExecutor()
     : executing_(false)
@@ -306,6 +354,8 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteGroupBy(node, ctx);
     } else if (node.type == "DeployToNodeEditor") {
         return ExecuteDeployToNodeEditor(node, ctx);
+    } else if (auto operator_type = OperatorNodeTypeFromLegacyString(node.type); operator_type) {
+        return ExecutePipelineOperatorNode(node, ctx, *operator_type);
     }
     // Phase 6 Week 8-9 - Text Processing
     else if (node.type == "TextClean") {
@@ -1476,6 +1526,74 @@ bool PipelineExecutor::FailUnsupportedNode(const Node& node, const std::string& 
     ReportError(node.type + " is not executable in the legacy Data Studio pipeline path: " +
                 reason);
     return false;
+}
+
+bool PipelineExecutor::ExecutePipelineOperatorNode(
+    const Node& node,
+    ExecutionContext& ctx,
+    gui::NodeType type) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError(node.type + ": No input connection or dataset not found");
+        return false;
+    }
+
+    auto& registry = DataRegistry::Instance();
+    auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+    if (!input_dataset) {
+        ReportError(node.type + ": input dataset '" + input_dataset_name +
+                    "' is not an in-memory Arrow dataset");
+        return false;
+    }
+
+    auto input_table = input_dataset->GetArrowTable();
+    if (!input_table) {
+        ReportError(node.type + ": input Arrow table is null");
+        return false;
+    }
+
+    auto& factory = PipelineOperatorFactory::Instance();
+    if (!factory.HasOperator(type)) {
+        ReportError(node.type + ": no PipelineOperatorFactory registration exists");
+        return false;
+    }
+
+    auto op = factory.Create(type);
+    if (!op) {
+        ReportError(node.type + ": PipelineOperatorFactory returned null operator");
+        return false;
+    }
+
+    std::string configure_error;
+    if (!op->Configure(node.parameters, configure_error)) {
+        ReportError(configure_error.empty()
+                        ? node.type + ": operator configuration failed"
+                        : configure_error);
+        return false;
+    }
+
+    auto result = op->Apply(input_table);
+    if (!result.ok()) {
+        ReportError(node.type + ": operator execution failed: " +
+                    result.status().ToString());
+        return false;
+    }
+
+    auto output_table = result.ValueOrDie();
+    const std::string output_dataset_name =
+        "ds_operator_" + node.type + "_" + std::to_string(node.id);
+    auto output_dataset = registry.RegisterArrowTable(output_table, output_dataset_name);
+    if (!output_dataset) {
+        ReportError(node.type + ": failed to register operator output dataset");
+        return false;
+    }
+
+    ctx.node_results[node.id] = output_dataset_name;
+    ctx.output_dataset = output_dataset_name;
+
+    spdlog::info("[Data Studio] {} routed through PipelineOperatorFactory: {} rows, {} columns",
+                 node.type, output_table->num_rows(), output_table->num_columns());
+    return true;
 }
 
 // ============================================================================

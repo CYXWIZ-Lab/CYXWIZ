@@ -405,9 +405,12 @@ Recommendation:
 **Severity:** High
 
 **Status 2026-06-07:** Partially fixed. The legacy runtime no longer
-masks these paths with fake success for the audited branches. It still
-does not consistently route operator-backed nodes through
-`PipelineOperatorFactory`, so support truth remains split.
+masks these paths with fake success for the audited branches. Exact
+node names with registered `PipelineOperatorFactory` implementations now
+route through the operator framework from `PipelineExecutor`.
+Remaining work is architectural: choose the canonical runtime, expand
+coverage where storage-mode support is still narrow, and remove or
+quarantine dead legacy placeholder bodies.
 
 Relevant files:
 
@@ -431,26 +434,25 @@ Confirmed operator-backed families include:
 - time-series analysis: `TimeSeriesDecomposition`,
   `ARIMAForecaster`, `ExponentialSmoothing`
 
-Problem:
+Problem now:
 
-- the engine already contains real operator implementations for a large
-  subset of nodes
-- the older `PipelineExecutor` path still contains duplicate or dead
-  placeholder-era branches for several of the same conceptual areas
+- the engine now exposes real operator implementations from the older
+  `PipelineExecutor` for exact registered node names
+- the code still contains duplicate or dead placeholder-era branches for
+  several of the same conceptual areas
 
-Effect:
+Effect now:
 
-- the codebase has real progress that the active runtime does not
-  reliably surface
-- support truth is harder to reason about
+- real operator progress is surfaced in the legacy runtime for the
+  registered exact node names
+- support truth is still harder to reason about because executor
+  ownership remains split
 - node audits become more expensive because "implemented" depends on
   which path ran
 
 Recommendation:
 
 - add a capability matrix owned by runtime, not scattered comments
-- route supported operator-backed nodes through the operator framework
-  first
 - remove or hard-fail placeholder branches once an operator-backed
   implementation is canonical
 

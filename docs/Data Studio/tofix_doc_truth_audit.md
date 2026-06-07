@@ -78,3 +78,8 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: updated `tofix4.md` Priority 5 to reflect the
   existing compile-time guard that rejects template/deferred metadata nodes
   on the selected training path.
+- 2026-06-07 follow-up: routed exact registered operator-backed node names
+  from legacy `PipelineExecutor` through `PipelineOperatorFactory`, added a
+  `StandardScaler` executor regression test, and updated `tofix4.md` /
+  `tofix5.md` to keep the remaining work scoped to canonical runtime
+  convergence and dead branch cleanup.
