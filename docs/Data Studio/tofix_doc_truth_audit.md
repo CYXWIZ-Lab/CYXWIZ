@@ -226,6 +226,10 @@ scanning so stale or duplicate work is not reintroduced.
   column skipping, and regression label shape; extended
   `test_training_batcher_setup` with real Parquet-backed tabular and
   time-series parity coverage.
+- 2026-06-07 follow-up: extended `test_training_batcher_setup` again
+  with explicit multi-row-group Parquet tabular splitting and
+  time-series partition-filtering coverage. `tofix5.md` now leaves only
+  the broader Arrow/Parquet full training-loop parity under Ticket E.
 - 2026-06-07 follow-up: added loaded-table schema/type checks for active
   column transforms (`StringManipulation`, `Binning`, and
   `PolynomialFeatures`) so missing columns and text-vs-numeric mistakes

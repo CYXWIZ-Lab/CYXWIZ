@@ -4,6 +4,8 @@
 #include "../src/core/worker_defaults.h"
 
 #include <arrow/api.h>
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -71,6 +73,20 @@ std::shared_ptr<cyxwiz::ArrowDataset> MakeDataset() {
     return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup");
 }
 
+std::shared_ptr<cyxwiz::ArrowDataset> MakeMultiGroupDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::int32()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f, 50.0f, 60.0f}),
+        FinishIntArray({0, 1, 0, 1, 0, 1}),
+    }, 6);
+    return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup_multi");
+}
+
 std::shared_ptr<cyxwiz::ArrowDataset> MakeTimeSeriesDataset() {
     auto schema = arrow::schema({
         arrow::field("x0", arrow::float32()),
@@ -85,6 +101,23 @@ std::shared_ptr<cyxwiz::ArrowDataset> MakeTimeSeriesDataset() {
         FinishInt8Array({0, 0, 0, 1}),
     }, 4);
     return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup_ts");
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset> MakeMultiGroupTimeSeriesDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("y", arrow::float32()),
+        arrow::field("__partition__", arrow::int8()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f, 50.0f, 60.0f}),
+        FinishFloatArray({1.5f, 2.5f, 3.5f, 4.5f, 5.5f, 6.5f}),
+        FinishInt8Array({0, 1, 0, 1, 0, 1}),
+    }, 6);
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "batcher_setup_ts_multi");
 }
 
 cyxwiz::TrainingConfiguration MakeConfig() {
@@ -116,6 +149,20 @@ void CheckFeatureAndLabelShapes(const cyxwiz::Batch& batch,
     Check(batch.labels.Shape().size() == 2, label + " label tensor should be 2D");
     Check(batch.labels.Shape()[0] == batch_rows, label + " label rows should match");
     Check(batch.labels.Shape()[1] == label_width, label + " label width should match");
+}
+
+void WriteParquetWithRowGroupSize(const cyxwiz::ArrowDataset& dataset,
+                                  const std::string& path,
+                                  int64_t row_group_size) {
+    auto table = dataset.GetArrowTable();
+    Check(table != nullptr, "source table should exist for row-group parquet write");
+    auto output = arrow::io::FileOutputStream::Open(path);
+    Check(output.ok(), output.status().ToString());
+    auto status = parquet::arrow::WriteTable(*table,
+                                             arrow::default_memory_pool(),
+                                             *output,
+                                             row_group_size);
+    Check(status.ok(), status.ToString());
 }
 
 } // namespace
@@ -192,8 +239,14 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_training_batcher_setup.parquet";
     const fs::path ts_parquet_path =
         fs::temp_directory_path() / "cyxwiz_training_batcher_setup_ts.parquet";
+    const fs::path multi_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup_multi.parquet";
+    const fs::path multi_ts_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup_ts_multi.parquet";
     fs::remove(parquet_path);
     fs::remove(ts_parquet_path);
+    fs::remove(multi_parquet_path);
+    fs::remove(multi_ts_parquet_path);
 
     auto parquet_source = MakeDataset();
     Check(parquet_source->ExportParquet(parquet_path.string()),
@@ -245,15 +298,72 @@ int main() {
     auto ts_parquet_batch = ts_parquet_batchers.train->GetNextBatch();
     CheckFeatureAndLabelShapes(ts_parquet_batch, 2, 2, 1, "time-series Parquet");
 
+    auto multi_source = MakeMultiGroupDataset();
+    WriteParquetWithRowGroupSize(*multi_source, multi_parquet_path.string(), 2);
+    auto multi_parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        multi_parquet_path.string(), "batcher_setup_multi_parquet");
+    Check(multi_parquet_dataset != nullptr, "multi-row-group Parquet dataset should open");
+    Check(multi_parquet_dataset->GetNumRowGroups() == 3,
+          "tabular Parquet test fixture should have three row groups");
+    auto multi_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeConfig(),
+        multi_parquet_dataset,
+        "label",
+        /*batch_size=*/3);
+    Check(multi_parquet_batchers.num_train_samples == 4,
+          "multi-row-group Parquet train split should use first two row groups");
+    Check(multi_parquet_batchers.val->GetNumSamples() == 2,
+          "multi-row-group Parquet val split should use remaining row group");
+    auto multi_parquet_first = multi_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(multi_parquet_first, 3, 2, 2,
+                               "multi-row-group tabular Parquet first");
+    auto multi_parquet_second = multi_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(multi_parquet_second, 1, 2, 2,
+                               "multi-row-group tabular Parquet second");
+
+    auto multi_ts_source = MakeMultiGroupTimeSeriesDataset();
+    WriteParquetWithRowGroupSize(*multi_ts_source,
+                                 multi_ts_parquet_path.string(),
+                                 2);
+    auto multi_ts_parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        multi_ts_parquet_path.string(), "batcher_setup_ts_multi_parquet");
+    Check(multi_ts_parquet_dataset != nullptr,
+          "multi-row-group time-series Parquet dataset should open");
+    Check(multi_ts_parquet_dataset->GetNumRowGroups() == 3,
+          "time-series Parquet test fixture should have three row groups");
+    auto multi_ts_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeTimeSeriesConfig(),
+        multi_ts_parquet_dataset,
+        "ignored_label",
+        /*batch_size=*/2);
+    Check(multi_ts_parquet_batchers.num_train_samples == 3,
+          "multi-row-group time-series Parquet train split should count partition 0 rows");
+    Check(multi_ts_parquet_batchers.val->GetNumSamples() == 3,
+          "multi-row-group time-series Parquet val split should count partition 1 rows");
+    auto multi_ts_parquet_first = multi_ts_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(multi_ts_parquet_first, 2, 2, 1,
+                               "multi-row-group time-series Parquet first");
+    auto multi_ts_parquet_second = multi_ts_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(multi_ts_parquet_second, 1, 2, 1,
+                               "multi-row-group time-series Parquet second");
+
     parquet_batchers = cyxwiz::TrainingBatcherSet{};
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    multi_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    multi_ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     parquet_dataset.reset();
     ts_parquet_dataset.reset();
+    multi_parquet_dataset.reset();
+    multi_ts_parquet_dataset.reset();
     parquet_source.reset();
     ts_arrow_dataset.reset();
+    multi_source.reset();
+    multi_ts_source.reset();
 
     fs::remove(parquet_path);
     fs::remove(ts_parquet_path);
+    fs::remove(multi_parquet_path);
+    fs::remove(multi_ts_parquet_path);
 
     std::cout << "Training batcher setup passed\n";
     return 0;

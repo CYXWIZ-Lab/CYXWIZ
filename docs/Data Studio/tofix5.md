@@ -261,7 +261,9 @@ otherwise reserves one label column for normal multi-column tabular data.
 using `__partition__`, label `y`, and regression labels. A focused
 `test_training_batcher_setup` regression now covers tabular fallback,
 time-series override preservation, real Parquet-backed tabular batches,
-and Arrow/Parquet time-series feature/label shape parity.
+multi-row-group tabular splitting, and Arrow/Parquet time-series
+feature/label shape parity, including multi-row-group partition
+filtering.
 
 Relevant files:
 
@@ -287,7 +289,7 @@ Recommendation:
 - keep the shared resolver as the single schema-to-model input-size
   decision point for tabular Arrow/Parquet training paths
 - continue auditing deeper Arrow/Parquet parity separately, especially
-  multi-row-group splitting and full training-loop behavior
+  full training-loop behavior
 
 ---
 
@@ -685,7 +687,8 @@ Recommendation:
    time-series paths.
 2. Move schema-to-model logic into shared helpers.
 3. Add execution-path tests for storage-mode parity. Started with
-   tabular and time-series batcher-shape parity.
+   tabular/time-series batcher-shape parity and multi-row-group
+   Parquet batcher coverage.
 
 ---
 
@@ -755,9 +758,10 @@ Deliverable:
 
 Status: in progress. The shared setup test now creates real
 Parquet-backed datasets and verifies tabular batch shape plus
-time-series Arrow/Parquet partition and regression-label shape parity.
-Remaining parity work is broader training-loop coverage and multi-row
-group behavior.
+multi-row-group tabular split behavior, time-series Arrow/Parquet
+partition and regression-label shape parity, and multi-row-group
+time-series partition filtering. Remaining parity work is broader
+training-loop coverage.
 
 Scope:
 
