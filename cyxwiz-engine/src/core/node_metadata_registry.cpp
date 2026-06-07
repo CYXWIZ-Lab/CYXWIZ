@@ -271,6 +271,45 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             AppendHelpTextSection(metadata, summary);
         }
     }
+
+    const auto apply_training_backend_status =
+        [this](gui::NodeType node_type) {
+            auto it = metadata_.find(node_type);
+            if (it == metadata_.end()) {
+                return;
+            }
+
+            const auto support = ResolvePipelineTrainingBackendSupport(node_type);
+            if (support.mode == PipelineTrainingBackendSupportMode::Allowed) {
+                return;
+            }
+
+            auto& metadata = it->second;
+            metadata.status = NodeImplementationStatus::Template;
+            metadata.badge = "Blocked";
+
+            std::string summary = "Training backend support: mode=";
+            summary += PipelineTrainingBackendSupportModeName(support.mode);
+            summary += "; compile=";
+            summary += support.compile_supported ? "supported" : "unsupported";
+            summary += "; training=";
+            summary += support.training_supported ? "supported" : "unsupported";
+            if (support.reason != nullptr) {
+                summary += "; reason=";
+                summary += support.reason;
+            }
+            AppendHelpTextSection(metadata, summary);
+        };
+
+    for (const auto& capability :
+         GetPipelineUnsupportedSequentialModelLayerCapabilities()) {
+        apply_training_backend_status(capability.node_type);
+    }
+
+    for (const auto& capability :
+         GetPipelineUnsupportedTrainingControlCapabilities()) {
+        apply_training_backend_status(capability.node_type);
+    }
 }
 
 void NodeMetadataRegistry::RegisterNode(NodeMetadata metadata) {

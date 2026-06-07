@@ -704,23 +704,50 @@ int main() {
                   capability.legacy_type_name);
     }
 
-    const std::vector<gui::NodeType> unsupported_training_nodes = {
-        gui::NodeType::Conv2D,
-        gui::NodeType::MaxPool2D,
-        gui::NodeType::AvgPool2D,
-        gui::NodeType::GlobalMaxPool,
-        gui::NodeType::GlobalAvgPool,
-        gui::NodeType::ConvTranspose2D,
-        gui::NodeType::Upsample,
-        gui::NodeType::PixelShuffle,
-    };
-    for (auto type : unsupported_training_nodes) {
+    for (const auto& capability :
+         cyxwiz::GetPipelineUnsupportedSequentialModelLayerCapabilities()) {
+        const auto type = capability.node_type;
         const auto* meta = metadata.GetMetadata(type);
         Check(meta != nullptr,
               "missing unsupported training metadata for type " + TypeId(type));
         Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
               "unsupported training type " + TypeId(type) +
                   " should not be marked implemented");
+        Check(meta->badge == "Blocked",
+              "unsupported training type " + TypeId(type) +
+                  " should carry blocked badge");
+        Check(meta->help_text.find(cyxwiz::PipelineTrainingBackendSupportModeName(
+                  cyxwiz::PipelineTrainingBackendSupportMode::
+                      UnsupportedSequentialModelLayer)) != std::string::npos,
+              "unsupported training type " + TypeId(type) +
+                  " should expose training backend support mode");
+        Check(capability.reason != nullptr &&
+                  meta->help_text.find(capability.reason) != std::string::npos,
+              "unsupported training type " + TypeId(type) +
+                  " should expose central training backend reason");
+    }
+
+    for (const auto& capability :
+         cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
+        const auto* meta = metadata.GetMetadata(capability.node_type);
+        if (meta == nullptr) {
+            continue;
+        }
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
+              "unsupported training control " + TypeId(capability.node_type) +
+                  " should not be marked implemented");
+        Check(meta->badge == "Blocked",
+              "unsupported training control " + TypeId(capability.node_type) +
+                  " should carry blocked badge");
+        Check(meta->help_text.find(cyxwiz::PipelineTrainingBackendSupportModeName(
+                  cyxwiz::PipelineTrainingBackendSupportMode::
+                      UnsupportedTrainingControl)) != std::string::npos,
+              "unsupported training control " + TypeId(capability.node_type) +
+                  " should expose training backend support mode");
+        Check(capability.reason != nullptr &&
+                  meta->help_text.find(capability.reason) != std::string::npos,
+              "unsupported training control " + TypeId(capability.node_type) +
+                  " should expose central training backend reason");
     }
 
     const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);

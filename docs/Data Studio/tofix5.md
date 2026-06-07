@@ -759,6 +759,13 @@ clear legacy-dispatched mappings are covered by the drift suite.
 Ambiguous legacy aliases remain string-only until they are migrated or
 renamed to first-class typed nodes.
 
+**Status 2026-06-07 follow-up 8:** Browser-visible metadata now consumes
+the centralized training-backend support axis for registered unsupported
+sequential-model layers and training-control nodes. Matching metadata
+entries are forced to template/blocked state and expose the stable
+training backend support mode plus the central reason in help text. The
+drift suite verifies those labels and reasons.
+
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit
@@ -904,8 +911,11 @@ pushes the blocked badge/reason into the existing add-node search and
 node browser metadata path. Operator-backed metadata now also exposes
 runtime mode, fail mode, PipelineExecutor support, and materializer
 storage scope, and implementation owner from the same registry.
-Remaining work is broader frontend presentation of non-runtime support
-axes, not another parallel UI support list.
+Registered unsupported training-backend nodes now expose the central
+training support mode and reason through the same metadata path.
+Remaining work is broader frontend presentation for capability axes that
+still have no registered metadata entry or visible UI affordance, not
+another parallel UI support list.
 
 Scope:
 
