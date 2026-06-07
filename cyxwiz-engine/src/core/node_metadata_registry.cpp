@@ -839,6 +839,16 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"max_features", "enum", "sqrt", "Features per split", {"sqrt", "log2", "all"}, ""}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
+    RegisterNode({NodeType::GradientBoostingClassifier, NodeCategory::Analytics, "Gradient Boosting", ICON_FA_CHART_LINE,
+        {"gradient", "boosting", "classifier", "trees"}, 0, false, "Gradient Boosted Trees classifier",
+        "Boosted decision-tree classifier. Not wired to a real graph executor yet.", "",
+        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
+        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}},
+        {{"n_estimators", "int", "100", "Number of trees", {}, ""},
+         {"learning_rate", "float", "0.1", "Learning rate", {}, ""},
+         {"max_depth", "int", "3", "Max tree depth", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
     RegisterNode({NodeType::SVMClassifier, NodeCategory::Analytics, "SVM Classifier", ICON_FA_BORDER_ALL,
         {"svm", "support", "vector"}, 0, false, "Support Vector Machine classifier",
         "Finds optimal hyperplane for classification using kernel trick.", "",
@@ -857,6 +867,14 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"n_neighbors", "int", "5", "Number of neighbors", {}, "1-100"},
          {"weights", "enum", "uniform", "Weight function", {"uniform", "distance"}, ""},
          {"metric", "enum", "euclidean", "Distance metric", {"euclidean", "manhattan", "cosine"}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::NaiveBayesClassifier, NodeCategory::Analytics, "Naive Bayes", ICON_FA_PERCENT,
+        {"naive", "bayes", "classifier"}, 0, false, "Naive Bayes classifier",
+        "Probabilistic classifier. Not wired to a real graph executor yet.", "",
+        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
+        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}},
+        {{"variant", "enum", "gaussian", "Bayes variant", {"gaussian", "multinomial", "bernoulli"}, ""}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::LogisticRegressionNode, NodeCategory::Analytics, "Logistic Regression", ICON_FA_PERCENT,
@@ -1102,6 +1120,49 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Pooled"}},
         {{"kernel_size", "int", "2", "Kernel", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::AvgPool2D, NodeCategory::Pooling, "AvgPool2D", ICON_FA_COMPRESS,
+        {"avgpool", "average", "pooling"}, 0, false, "Average pooling", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Pooled"}},
+        {{"kernel_size", "int", "2", "Kernel", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::GlobalMaxPool, NodeCategory::Pooling, "Global Max Pool", ICON_FA_COMPRESS,
+        {"global", "max", "pooling"}, 0, false, "Global max pooling", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Pooled"}},
+        {}, NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::GlobalAvgPool, NodeCategory::Pooling, "Global Avg Pool", ICON_FA_COMPRESS,
+        {"global", "average", "pooling"}, 0, false, "Global average pooling", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Pooled"}},
+        {}, NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::ConvTranspose2D, NodeCategory::Upsampling, "ConvTranspose2D", ICON_FA_EXPAND,
+        {"convtranspose", "transposed", "convolution", "upsample"}, 0, false, "Transposed convolution", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Upsampled"}},
+        {{"filters", "int", "32", "Filters", {}, ""},
+         {"kernel_size", "int", "3", "Kernel", {}, ""},
+         {"stride", "int", "2", "Stride", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::Upsample, NodeCategory::Upsampling, "Upsample", ICON_FA_EXPAND,
+        {"upsample", "resize", "interpolate"}, 0, false, "Tensor upsampling", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Upsampled"}},
+        {{"scale_factor", "int", "2", "Scale factor", {}, ""},
+         {"mode", "enum", "nearest", "Interpolation mode", {"nearest", "bilinear"}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::PixelShuffle, NodeCategory::Upsampling, "Pixel Shuffle", ICON_FA_EXPAND,
+        {"pixel", "shuffle", "subpixel", "upsample"}, 0, false, "Pixel shuffle upsampling", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Upsampled"}},
+        {{"scale_factor", "int", "2", "Scale factor", {}, ""}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::Flatten, NodeCategory::ShapeOps, "Flatten", ICON_FA_ARROWS_LEFT_RIGHT,

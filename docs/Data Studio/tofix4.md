@@ -349,8 +349,10 @@ Affected nodes include:
 - `TSNENode`
 - `DecisionTreeClassifier`
 - `RandomForestClassifier`
+- `GradientBoostingClassifier`
 - `SVMClassifier`
 - `KNNClassifier`
+- `NaiveBayesClassifier`
 - `LogisticRegressionNode`
 - `LinearRegressionNode`
 - `PolynomialRegressionNode`

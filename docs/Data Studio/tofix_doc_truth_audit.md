@@ -68,3 +68,7 @@ scanning so stale or duplicate work is not reintroduced.
   template/blocked, while supported `LSTM` and `GRU` metadata is marked
   implemented. Legacy GUI-visible nodes without registry entries remain a
   separate visibility/registration cleanup.
+- 2026-06-07 follow-up: registered the remaining known fail-closed
+  CNN/pooling/upsampling and classic classifier nodes as template/blocked
+  metadata entries, so the compiler and node browser now agree that they are
+  visible but unsupported.

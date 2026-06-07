@@ -86,12 +86,12 @@ Current recurring patterns:
 |---|---|---:|---:|---|---|---|
 | `Conv2D` | Template/blocked | Blocked with error | No | `Blocked` | Compiler and metadata now fail closed before `ModelBuilder` can silently miss CNN support. | Implement CNN wrappers before unblocking. |
 | `MaxPool2D` | Template/blocked | Blocked with error | No | `Blocked` | Compiler and metadata now fail closed. | Implement CNN wrappers before unblocking. |
-| `AvgPool2D` | Yes | Blocked with error | No | `Blocked` | Same as above. | Implement CNN wrappers before unblocking. |
-| `GlobalMaxPool` | Yes | Blocked with error | No | `Blocked` | Visible/documented beyond build support, but no longer accepted as trainable. | Implement before unblocking. |
-| `GlobalAvgPool` | Yes | Blocked with error | No | `Blocked` | Visible/documented beyond build support, but no longer accepted as trainable. | Implement before unblocking. |
-| `ConvTranspose2D` | Yes | Blocked with error | No | `Blocked` | No longer accepted as trainable. | Implement before unblocking. |
-| `Upsample` | Yes | Blocked with error | No | `Blocked` | No longer accepted as trainable. | Implement before unblocking. |
-| `PixelShuffle` | Yes | Blocked with error | No | `Blocked` | No longer accepted as trainable. | Implement before unblocking. |
+| `AvgPool2D` | Template/blocked | Blocked with error | No | `Blocked` | Compiler and metadata now fail closed. | Implement CNN wrappers before unblocking. |
+| `GlobalMaxPool` | Template/blocked | Blocked with error | No | `Blocked` | Visible/documented beyond build support, but no longer accepted as trainable. Metadata now marks it blocked. | Implement before unblocking. |
+| `GlobalAvgPool` | Template/blocked | Blocked with error | No | `Blocked` | Visible/documented beyond build support, but no longer accepted as trainable. Metadata now marks it blocked. | Implement before unblocking. |
+| `ConvTranspose2D` | Template/blocked | Blocked with error | No | `Blocked` | No longer accepted as trainable; metadata now marks it blocked. | Implement before unblocking. |
+| `Upsample` | Template/blocked | Blocked with error | No | `Blocked` | No longer accepted as trainable; metadata now marks it blocked. | Implement before unblocking. |
+| `PixelShuffle` | Template/blocked | Blocked with error | No | `Blocked` | No longer accepted as trainable; metadata now marks it blocked. | Implement before unblocking. |
 | `MultiHeadAttention` | Yes | Guarded/unavailable | No | `Blocked` | Pattern/template guards prevent unavailable attention from being imported as a real training node. | Add end-to-end support before unblocking. |
 | `LayerNorm` | Yes | No current primary build path | No | `Misleading` | Documented/visible beyond current training builder support. | Hide or implement. |
 | `GroupNorm` | Yes | No current primary build path | No | `Misleading` | Same issue. | Hide or implement. |
@@ -124,10 +124,10 @@ Current recurring patterns:
 | `LogisticRegression` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
 | `DecisionTree` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
 | `RandomForest` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
-| `GradientBoosting` | Yes, legacy GUI path | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; this node still needs a metadata/visibility registration pass. | Hide or implement. |
+| `GradientBoosting` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata now marks it blocked. | Hide or implement. |
 | `SVM` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
 | `KNN` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
-| `NaiveBayes` | Yes, legacy GUI path | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; this node still needs a metadata/visibility registration pass. | Hide or implement. |
+| `NaiveBayes` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata now marks it blocked. | Hide or implement. |
 
 ---
 
