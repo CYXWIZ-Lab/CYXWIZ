@@ -259,6 +259,33 @@ GetPipelineUnsupportedTrainingControlCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineMaterializerStorageBackendCapability>&
+GetPipelineMaterializerStorageBackendCapabilities() {
+    static const std::vector<PipelineMaterializerStorageBackendCapability> capabilities = {
+        {PipelineStorageBackend::ArrowTable,
+         PipelineMaterializerStorageSupport::ArrowTableOnly,
+         true,
+         "in-memory Arrow tables are the only PipelineMaterializer storage backend"},
+        {PipelineStorageBackend::ParquetBacked,
+         PipelineMaterializerStorageSupport::None,
+         false,
+         "PipelineMaterializer does not rewrite disk-backed Parquet row groups yet"},
+        {PipelineStorageBackend::ImageDataset,
+         PipelineMaterializerStorageSupport::None,
+         false,
+         "PipelineMaterializer only applies Arrow-table operators; image datasets use domain batchers"},
+        {PipelineStorageBackend::AudioDataset,
+         PipelineMaterializerStorageSupport::None,
+         false,
+         "PipelineMaterializer only applies Arrow-table operators; audio datasets use domain batchers"},
+        {PipelineStorageBackend::TextDataset,
+         PipelineMaterializerStorageSupport::None,
+         false,
+         "PipelineMaterializer only applies Arrow-table operators; text datasets use domain batchers"},
+    };
+    return capabilities;
+}
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
@@ -287,6 +314,40 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
     }
 
     return {};
+}
+
+const char* PipelineStorageBackendName(PipelineStorageBackend backend) {
+    switch (backend) {
+    case PipelineStorageBackend::ArrowTable:
+        return "ArrowTable";
+    case PipelineStorageBackend::ParquetBacked:
+        return "ParquetBacked";
+    case PipelineStorageBackend::ImageDataset:
+        return "ImageDataset";
+    case PipelineStorageBackend::AudioDataset:
+        return "AudioDataset";
+    case PipelineStorageBackend::TextDataset:
+        return "TextDataset";
+    case PipelineStorageBackend::Unknown:
+        return "Unknown";
+    }
+    return "Unknown";
+}
+
+PipelineMaterializerStorageBackendCapability
+ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend) {
+    const auto& capabilities = GetPipelineMaterializerStorageBackendCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [backend](const PipelineMaterializerStorageBackendCapability& capability) {
+            return capability.backend == backend;
+        });
+    if (it != capabilities.end()) {
+        return *it;
+    }
+    return {backend,
+            PipelineMaterializerStorageSupport::None,
+            false,
+            "storage backend is unknown to PipelineMaterializer"};
 }
 
 std::optional<gui::NodeType>

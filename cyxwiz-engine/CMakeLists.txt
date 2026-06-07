@@ -1513,6 +1513,7 @@ add_executable(test_text_gui_training_launch
     tests/test_text_gui_training_launch.cpp
     src/gui/graph_training_launcher.cpp
     src/core/pipeline_materializer.cpp
+    src/core/pipeline_runtime_capabilities.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/arrow_dataset.cpp

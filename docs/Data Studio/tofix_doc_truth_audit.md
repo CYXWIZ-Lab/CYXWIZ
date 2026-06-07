@@ -235,6 +235,11 @@ scanning so stale or duplicate work is not reintroduced.
   `BuildSequentialFromConfig()` train/validation model-step coverage for
   Arrow and multi-row-group Parquet batchers. Full `TrainingExecutor`
   end-to-end parity remains pending.
+- 2026-06-07 follow-up: centralized materializer storage-backend
+  availability in `pipeline_runtime_capabilities`; Arrow tables are the
+  only supported materializer backend, with explicit unsupported reasons
+  for Parquet-backed, image, audio, and text datasets. `PipelineMaterializer`
+  now consults that registry before pass-through.
 - 2026-06-07 follow-up: added loaded-table schema/type checks for active
   column transforms (`StringManipulation`, `Binning`, and
   `PolynomialFeatures`) so missing columns and text-vs-numeric mistakes

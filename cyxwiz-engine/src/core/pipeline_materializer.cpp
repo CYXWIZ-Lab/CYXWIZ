@@ -2,11 +2,34 @@
 
 #include "arrow_dataset.h"
 #include "data_registry.h"
+#include "pipeline_runtime_capabilities.h"
 
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz {
+
+namespace {
+
+PipelineStorageBackend ToStorageBackend(PipelineMaterializerSourceKind kind) {
+    switch (kind) {
+    case PipelineMaterializerSourceKind::ArrowTable:
+        return PipelineStorageBackend::ArrowTable;
+    case PipelineMaterializerSourceKind::ParquetBacked:
+        return PipelineStorageBackend::ParquetBacked;
+    case PipelineMaterializerSourceKind::ImageDataset:
+        return PipelineStorageBackend::ImageDataset;
+    case PipelineMaterializerSourceKind::AudioDataset:
+        return PipelineStorageBackend::AudioDataset;
+    case PipelineMaterializerSourceKind::TextDataset:
+        return PipelineStorageBackend::TextDataset;
+    case PipelineMaterializerSourceKind::Unknown:
+        return PipelineStorageBackend::Unknown;
+    }
+    return PipelineStorageBackend::Unknown;
+}
+
+} // namespace
 
 const char* PipelineMaterializerSourceKindName(
     PipelineMaterializerSourceKind kind) {
@@ -66,14 +89,18 @@ MaterializeResult PipelineMaterializer::Materialize(
     result.source_kind = ResolvePipelineMaterializerSourceKind(
         registry, source_dataset_name);
 
-    // v1: only the in-memory Arrow path is materialized. Parquet-backed,
-    // image, audio, and legacy text sources fall through unchanged.
-    if (result.source_kind != PipelineMaterializerSourceKind::ArrowTable) {
+    const auto backend_support =
+        ResolvePipelineMaterializerStorageBackendSupport(
+            ToStorageBackend(result.source_kind));
+
+    if (!backend_support.materializer_supported) {
         result.skipped_unsupported_source = true;
         spdlog::debug("PipelineMaterializer: source '{}' has kind '{}', "
-                      "skipping materialization",
+                      "skipping materialization: {}",
                       source_dataset_name,
-                      PipelineMaterializerSourceKindName(result.source_kind));
+                      PipelineMaterializerSourceKindName(result.source_kind),
+                      backend_support.reason ? backend_support.reason
+                                             : "storage backend is unsupported");
         return result;
     }
 

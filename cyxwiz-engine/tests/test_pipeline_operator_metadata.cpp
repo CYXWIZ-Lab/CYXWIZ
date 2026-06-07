@@ -190,6 +190,52 @@ int main() {
                   "unsupported training control capability does not resolve: " +
                       TypeId(capability.node_type));
         }
+
+        std::set<int> materializer_storage_backends;
+        int materializer_supported_backends = 0;
+        for (const auto& capability :
+             cyxwiz::GetPipelineMaterializerStorageBackendCapabilities()) {
+            const int key = static_cast<int>(capability.backend);
+            Check(materializer_storage_backends.insert(key).second,
+                  "duplicate materializer storage backend capability: " +
+                      std::string(cyxwiz::PipelineStorageBackendName(
+                          capability.backend)));
+            const auto resolved =
+                cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(
+                    capability.backend);
+            Check(resolved.backend == capability.backend,
+                  "materializer storage backend capability does not resolve: " +
+                      std::string(cyxwiz::PipelineStorageBackendName(
+                          capability.backend)));
+            Check(resolved.materializer_supported ==
+                      capability.materializer_supported,
+                  "materializer storage backend support mismatch: " +
+                      std::string(cyxwiz::PipelineStorageBackendName(
+                          capability.backend)));
+            Check(resolved.storage_support == capability.storage_support,
+                  "materializer storage support scope mismatch: " +
+                      std::string(cyxwiz::PipelineStorageBackendName(
+                          capability.backend)));
+            Check(capability.reason != nullptr &&
+                      std::string(capability.reason).size() > 16,
+                  "materializer storage backend reason is too weak: " +
+                      std::string(cyxwiz::PipelineStorageBackendName(
+                          capability.backend)));
+            if (capability.materializer_supported) {
+                ++materializer_supported_backends;
+                Check(capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable,
+                      "only ArrowTable should be materializer-supported today");
+                Check(capability.storage_support ==
+                          cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly,
+                      "ArrowTable materializer support should be ArrowTableOnly");
+            } else {
+                Check(capability.storage_support ==
+                          cyxwiz::PipelineMaterializerStorageSupport::None,
+                      "unsupported materializer backend should advertise no storage scope");
+            }
+        }
+        Check(materializer_supported_backends == 1,
+              "exactly one materializer storage backend should be supported today");
     }
 
     for (auto type : supported) {

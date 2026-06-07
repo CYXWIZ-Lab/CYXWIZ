@@ -617,9 +617,13 @@ parameter rules for active legacy transforms. The metadata drift test
 verifies every listed operator runtime capability has a real factory
 operator, that operator/fail-closed/legacy-dispatched names do not
 overlap, and that validation capability entries resolve to known
-runtime-supported names. Remaining work is to expand this into a fuller
-multi-axis capability matrix for compile, training, materializer storage
-scope, and backend availability.
+runtime-supported names. Materializer storage-backend truth is now
+centralized too: Arrow tables are the only supported materializer
+backend, while Parquet-backed, image, audio, and text datasets carry
+explicit unsupported reasons and `PipelineMaterializer` consults that
+registry before pass-through. Remaining work is to expand this into a
+fuller multi-axis capability matrix for compile and training backend
+availability.
 
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
@@ -747,9 +751,10 @@ Deliverable:
 
 Status: in progress. Runtime support now has centralized operator,
 legacy, fail-closed, required-parameter, enum, integer-validation,
-compiler-blocked training, and Arrow-table materializer-scope truth. The
-remaining work is the broader multi-axis matrix for compile success,
-training backend availability, and materializer storage parity.
+compiler-blocked training, Arrow-table materializer-scope truth, and
+materializer storage-backend availability. The remaining work is the
+broader multi-axis matrix for compile success and training backend
+availability.
 
 Scope:
 

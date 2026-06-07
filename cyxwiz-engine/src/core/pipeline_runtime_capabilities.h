@@ -56,6 +56,15 @@ struct PipelineUnsupportedTrainingNodeCapability {
     const char* reason;
 };
 
+enum class PipelineStorageBackend {
+    Unknown,
+    ArrowTable,
+    ParquetBacked,
+    ImageDataset,
+    AudioDataset,
+    TextDataset,
+};
+
 enum class PipelineRuntimeSupportMode {
     Unknown,
     LegacyExecutor,
@@ -66,6 +75,14 @@ enum class PipelineRuntimeSupportMode {
 enum class PipelineMaterializerStorageSupport {
     None,
     ArrowTableOnly,
+};
+
+struct PipelineMaterializerStorageBackendCapability {
+    PipelineStorageBackend backend = PipelineStorageBackend::Unknown;
+    PipelineMaterializerStorageSupport storage_support =
+        PipelineMaterializerStorageSupport::None;
+    bool materializer_supported = false;
+    const char* reason = nullptr;
 };
 
 struct PipelineRuntimeSupport {
@@ -107,7 +124,15 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities();
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingControlCapabilities();
 
+const std::vector<PipelineMaterializerStorageBackendCapability>&
+GetPipelineMaterializerStorageBackendCapabilities();
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name);
+
+const char* PipelineStorageBackendName(PipelineStorageBackend backend);
+
+PipelineMaterializerStorageBackendCapability
+ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend);
 
 std::optional<gui::NodeType>
 ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name);
