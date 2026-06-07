@@ -1,4 +1,5 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/model_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/training_batcher_setup.h"
 #include "../src/core/worker_defaults.h"
@@ -7,6 +8,7 @@
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -137,6 +139,28 @@ cyxwiz::TrainingConfiguration MakeTimeSeriesConfig() {
     return config;
 }
 
+cyxwiz::TrainingConfiguration MakeTrainingLoopConfig(
+    const std::filesystem::path& checkpoint_dir) {
+    auto config = MakeConfig();
+    config.input_size = 2;
+    config.input_shape = {2};
+    config.output_size = 2;
+    config.loss_type = gui::NodeType::CrossEntropyLoss;
+    config.optimizer_type = gui::NodeType::Adam;
+    config.learning_rate = 0.001f;
+    config.batch_size = 2;
+    config.epochs = 1;
+    config.save_best_checkpoint = false;
+    config.early_stopping_patience = 0;
+    config.checkpoint_dir = checkpoint_dir.string();
+
+    cyxwiz::CompiledLayer dense;
+    dense.type = gui::NodeType::Dense;
+    dense.units = 2;
+    config.layers.push_back(dense);
+    return config;
+}
+
 void CheckFeatureAndLabelShapes(const cyxwiz::Batch& batch,
                                 size_t batch_rows,
                                 size_t feature_width,
@@ -163,6 +187,50 @@ void WriteParquetWithRowGroupSize(const cyxwiz::ArrowDataset& dataset,
                                              *output,
                                              row_group_size);
     Check(status.ok(), status.ToString());
+}
+
+void RunModelTrainValidationSmoke(cyxwiz::IBatcher& train,
+                                  cyxwiz::IBatcher& val,
+                                  const cyxwiz::TrainingConfiguration& config,
+                                  const std::string& label) {
+    auto built = cyxwiz::BuildSequentialFromConfig(config);
+    Check(built.ok(), label + " model/loss/optimizer should build");
+    Check(built.model != nullptr, label + " model should exist");
+    Check(built.loss != nullptr, label + " loss should exist");
+    Check(built.optimizer != nullptr, label + " optimizer should exist");
+
+    built.model->SetTraining(true);
+    train.Reset();
+    int train_batches = 0;
+    while (!train.IsEpochComplete()) {
+        auto batch = train.GetNextBatch();
+        if (!batch.IsValid()) break;
+        auto predictions = built.model->Forward(batch.data);
+        auto loss = built.loss->Forward(predictions, batch.labels);
+        Check(loss.NumElements() == 1, label + " train loss should be scalar");
+        Check(std::isfinite(loss.Data<float>()[0]),
+              label + " train loss should be finite");
+        auto grad = built.loss->Backward(predictions, batch.labels);
+        built.model->Backward(grad);
+        built.model->UpdateParameters(built.optimizer.get());
+        ++train_batches;
+    }
+    Check(train_batches == 2, label + " train pass should consume two batches");
+
+    built.model->SetTraining(false);
+    val.Reset();
+    int val_batches = 0;
+    while (!val.IsEpochComplete()) {
+        auto batch = val.GetNextBatch();
+        if (!batch.IsValid()) break;
+        auto predictions = built.model->Forward(batch.data);
+        auto loss = built.loss->Forward(predictions, batch.labels);
+        Check(loss.NumElements() == 1, label + " validation loss should be scalar");
+        Check(std::isfinite(loss.Data<float>()[0]),
+              label + " validation loss should be finite");
+        ++val_batches;
+    }
+    Check(val_batches == 1, label + " validation pass should consume one batch");
 }
 
 } // namespace
@@ -347,10 +415,38 @@ int main() {
     CheckFeatureAndLabelShapes(multi_ts_parquet_second, 1, 2, 1,
                                "multi-row-group time-series Parquet second");
 
+    const fs::path work_dir =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup_work";
+    fs::remove_all(work_dir);
+    fs::create_directories(work_dir);
+    auto training_config = MakeTrainingLoopConfig(work_dir / "checkpoints");
+    auto loop_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        training_config,
+        MakeMultiGroupDataset(),
+        "label",
+        /*batch_size=*/2);
+    RunModelTrainValidationSmoke(
+        *loop_arrow_batchers.train,
+        *loop_arrow_batchers.val,
+        training_config,
+        "Arrow model-step");
+    auto loop_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        training_config,
+        multi_parquet_dataset,
+        "label",
+        /*batch_size=*/2);
+    RunModelTrainValidationSmoke(
+        *loop_parquet_batchers.train,
+        *loop_parquet_batchers.val,
+        training_config,
+        "Parquet model-step");
+
     parquet_batchers = cyxwiz::TrainingBatcherSet{};
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    loop_arrow_batchers = cyxwiz::TrainingBatcherSet{};
+    loop_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     parquet_dataset.reset();
     ts_parquet_dataset.reset();
     multi_parquet_dataset.reset();
@@ -364,6 +460,7 @@ int main() {
     fs::remove(ts_parquet_path);
     fs::remove(multi_parquet_path);
     fs::remove(multi_ts_parquet_path);
+    fs::remove_all(work_dir);
 
     std::cout << "Training batcher setup passed\n";
     return 0;

@@ -263,7 +263,11 @@ using `__partition__`, label `y`, and regression labels. A focused
 time-series override preservation, real Parquet-backed tabular batches,
 multi-row-group tabular splitting, and Arrow/Parquet time-series
 feature/label shape parity, including multi-row-group partition
-filtering.
+filtering. The same regression now also drives a tiny
+`BuildSequentialFromConfig()` train/validation model-step pass over
+matching Arrow and multi-row-group Parquet batchers, proving that both
+storage paths can feed forward, loss, backward, update, and validation
+steps with finite losses.
 
 Relevant files:
 
@@ -289,7 +293,8 @@ Recommendation:
 - keep the shared resolver as the single schema-to-model input-size
   decision point for tabular Arrow/Parquet training paths
 - continue auditing deeper Arrow/Parquet parity separately, especially
-  full training-loop behavior
+  full `TrainingExecutor` end-to-end behavior such as callbacks,
+  checkpoint policy, and manager dispatch
 
 ---
 
@@ -760,8 +765,10 @@ Status: in progress. The shared setup test now creates real
 Parquet-backed datasets and verifies tabular batch shape plus
 multi-row-group tabular split behavior, time-series Arrow/Parquet
 partition and regression-label shape parity, and multi-row-group
-time-series partition filtering. Remaining parity work is broader
-training-loop coverage.
+time-series partition filtering. It also runs matching Arrow and
+multi-row-group Parquet model train/validation steps through the shared
+model builder. Remaining parity work is full `TrainingExecutor`
+end-to-end coverage.
 
 Scope:
 

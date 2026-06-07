@@ -1558,6 +1558,9 @@ add_executable(test_training_batcher_setup
     src/core/training_batcher_setup.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
+    src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/parquet_arrow_batcher.cpp
     src/core/dataset_base.cpp
