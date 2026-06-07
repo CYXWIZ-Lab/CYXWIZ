@@ -17,6 +17,80 @@
 
 namespace cyxwiz {
 
+namespace {
+
+bool HasNonEmptyParameter(const std::map<std::string, std::string>& parameters,
+                          const std::string& name) {
+    auto it = parameters.find(name);
+    return it != parameters.end() && !it->second.empty();
+}
+
+const char* MissingRequiredParameter(
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters) {
+    if (node_type == "FileInput" || node_type == "ExcelInput") {
+        return HasNonEmptyParameter(parameters, "path") ? nullptr : "path";
+    }
+
+    if (node_type == "DataInput") {
+        const auto source_it = parameters.find("source_type");
+        const std::string source_type =
+            (source_it != parameters.end() && !source_it->second.empty())
+                ? source_it->second
+                : "file";
+        if (source_type == "file") {
+            return HasNonEmptyParameter(parameters, "file_path") ? nullptr : "file_path";
+        }
+        if (source_type == "folder") {
+            return HasNonEmptyParameter(parameters, "folder_path") ? nullptr : "folder_path";
+        }
+        return nullptr;
+    }
+
+    if (node_type == "DataOutput" || node_type == "ExportExcel" ||
+        node_type == "ExportCSV" || node_type == "ExportJSON") {
+        return HasNonEmptyParameter(parameters, "file_path") ? nullptr : "file_path";
+    }
+
+    return nullptr;
+}
+
+bool HasSupportedParameterValues(
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (node_type == "DataInput") {
+        const auto source_it = parameters.find("source_type");
+        const std::string source_type =
+            (source_it != parameters.end() && !source_it->second.empty())
+                ? source_it->second
+                : "file";
+        if (source_type != "file" && source_type != "folder" &&
+            source_type != "ml_dataset") {
+            error = "DataInput source_type '" + source_type +
+                    "' is not supported by PipelineExecutor";
+            return false;
+        }
+    }
+
+    if (node_type == "DataOutput") {
+        const auto format_it = parameters.find("format");
+        const std::string format =
+            (format_it != parameters.end() && !format_it->second.empty())
+                ? format_it->second
+                : "csv";
+        if (format != "csv" && format != "parquet" && format != "json") {
+            error = "DataOutput format '" + format +
+                    "' is not supported by PipelineExecutor";
+            return false;
+        }
+    }
+
+    return true;
+}
+
+} // namespace
+
 PipelineExecutor::PipelineExecutor()
     : executing_(false)
     , progress_(0.0f)
@@ -61,7 +135,10 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
 
     // Validate pipeline
     if (!ValidatePipeline(nodes)) {
-        ReportError("Pipeline validation failed");
+        const std::string validation_error = last_error_.empty()
+            ? "Pipeline validation failed"
+            : "Pipeline validation failed: " + last_error_;
+        ReportError(validation_error);
         executing_ = false;
         NotifyCompletion(false);
         return false;
@@ -228,6 +305,20 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         if (!is_two_input && node.inputs.size() > 1) {
             last_error_ = "Node '" + node.name + "' has multiple inputs, but node type '" +
                           node.type + "' does not define multi-input execution";
+            return false;
+        }
+
+        if (const char* missing_parameter =
+                MissingRequiredParameter(node.type, node.parameters);
+            missing_parameter != nullptr) {
+            last_error_ = "Node '" + node.name + "' of type '" + node.type +
+                          "' is missing required parameter '" + missing_parameter + "'";
+            return false;
+        }
+
+        std::string parameter_error;
+        if (!HasSupportedParameterValues(node.type, node.parameters, parameter_error)) {
+            last_error_ = "Node '" + node.name + "': " + parameter_error;
             return false;
         }
     }

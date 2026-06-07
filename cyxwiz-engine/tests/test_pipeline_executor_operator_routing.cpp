@@ -113,6 +113,38 @@ int main() {
           "TSNENode fail-closed error should come from runtime capabilities: " +
               unsupported_executor.GetLastError());
 
+    const std::string missing_parameter_json =
+        R"({"nodes":[)"
+        R"({"id":5,"type":"DataInput","name":"MissingPath","parameters":{)"
+        R"("source_type":"file","type":"csv"}},)"
+        R"({"id":6,"type":"StandardScaler","name":"Scale","parameters":{)"
+        R"("columns":"x"}})"
+        R"(],"links":[{"start_node":5,"end_node":6}]})";
+
+    cyxwiz::PipelineExecutor missing_parameter_executor;
+    Check(!missing_parameter_executor.ExecutePipeline(missing_parameter_json),
+          "DataInput missing file_path should fail validation");
+    Check(missing_parameter_executor.GetLastError().find(
+              "missing required parameter 'file_path'") != std::string::npos,
+          "missing file_path validation should be specific: " +
+              missing_parameter_executor.GetLastError());
+
+    const std::string unsupported_source_json =
+        R"({"nodes":[)"
+        R"({"id":7,"type":"DataInput","name":"BadSource","parameters":{)"
+        R"("source_type":"database","file_path":"ignored.csv"}},)"
+        R"({"id":8,"type":"StandardScaler","name":"Scale","parameters":{)"
+        R"("columns":"x"}})"
+        R"(],"links":[{"start_node":7,"end_node":8}]})";
+
+    cyxwiz::PipelineExecutor unsupported_source_executor;
+    Check(!unsupported_source_executor.ExecutePipeline(unsupported_source_json),
+          "DataInput unsupported source_type should fail validation");
+    Check(unsupported_source_executor.GetLastError().find(
+              "source_type 'database' is not supported") != std::string::npos,
+          "unsupported source_type validation should be specific: " +
+              unsupported_source_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");

@@ -180,8 +180,11 @@ Recommendation:
 
 **Status 2026-06-07:** Partially fixed. Baseline structural validation
 now covers duplicate ids, missing/self links, invalid source/input
-shapes, unsupported multi-input paths, and cycles. Full parameter-level
-validation remains future work.
+shapes, unsupported multi-input paths, cycles, and required
+source/export parameters such as `DataInput.file_path`,
+`DataInput.folder_path`, `FileInput.path`, and output `file_path`
+settings. Validation errors now preserve the specific failed rule.
+Full schema/type-aware validation remains future work.
 
 Relevant files:
 
@@ -196,7 +199,7 @@ Problem:
 
 Effect:
 
-- parameter-invalid graphs can still reach runtime for node families
+- schema/type-invalid graphs can still reach runtime for node families
   without dedicated validation
 - some runtime correctness still depends on late execution-time failures
 
@@ -205,7 +208,7 @@ Recommendation:
 - validation must at minimum reject:
   - disconnected graphs
   - cycles for DAG-only paths
-  - missing required params
+  - missing required params beyond the current source/export baseline
   - missing required inputs
   - unsupported node types for the selected execution path
   - obvious type/schema mismatches

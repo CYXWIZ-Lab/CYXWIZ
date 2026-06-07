@@ -106,3 +106,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: deleted the historical compile-excluded
   `PipelineExecutor` placeholder helper block after support decisions were
   moved into `pipeline_runtime_capabilities`.
+- 2026-06-07 follow-up: extended `PipelineExecutor::ValidatePipeline()`
+  with required source/export parameter checks and preserved specific
+  validation failure messages.
