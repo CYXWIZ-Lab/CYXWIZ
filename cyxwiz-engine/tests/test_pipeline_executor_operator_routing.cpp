@@ -289,7 +289,7 @@ int main() {
         R"({"id":13,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
         R"({"id":14,"type":"TSWindow","name":"BadWindow","parameters":{)"
-        R"("window_size":"0","stride":"1"}})"
+        R"("target_column":"x","window_size":"0","stride":"1"}})"
         R"(],"links":[{"start_node":13,"end_node":14}]})";
 
     cyxwiz::PipelineExecutor bad_window_executor;
@@ -305,7 +305,7 @@ int main() {
         R"({"id":15,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
         R"({"id":16,"type":"TSLag","name":"BadLag","parameters":{)"
-        R"("lag_periods":"1,nope,3"}})"
+        R"("columns":"x","lag_periods":"1,nope,3"}})"
         R"(],"links":[{"start_node":15,"end_node":16}]})";
 
     cyxwiz::PipelineExecutor bad_lags_executor;
@@ -316,6 +316,125 @@ int main() {
               std::string::npos,
           "bad TSLag validation should be specific: " +
               bad_lags_executor.GetLastError());
+
+    const std::string missing_text_clean_column_json =
+        R"({"nodes":[)"
+        R"({"id":166,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":167,"type":"TextClean","name":"MissingTextColumn","parameters":{)"
+        R"("lowercase":"true"}})"
+        R"(],"links":[{"start_node":166,"end_node":167}]})";
+
+    cyxwiz::PipelineExecutor missing_text_clean_column_executor;
+    Check(!missing_text_clean_column_executor.ExecutePipeline(
+              missing_text_clean_column_json),
+          "TextClean missing text_column should fail validation");
+    Check(missing_text_clean_column_executor.GetLastError().find(
+              "missing required parameter 'text_column'") != std::string::npos,
+          "TextClean missing text_column validation should be specific: " +
+              missing_text_clean_column_executor.GetLastError());
+
+    const std::string missing_text_tokenize_column_json =
+        R"({"nodes":[)"
+        R"({"id":168,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":169,"type":"TextTokenize","name":"MissingTokenColumn","parameters":{)"
+        R"("method":"word"}})"
+        R"(],"links":[{"start_node":168,"end_node":169}]})";
+
+    cyxwiz::PipelineExecutor missing_text_tokenize_column_executor;
+    Check(!missing_text_tokenize_column_executor.ExecutePipeline(
+              missing_text_tokenize_column_json),
+          "TextTokenize missing text_column should fail validation");
+    Check(missing_text_tokenize_column_executor.GetLastError().find(
+              "missing required parameter 'text_column'") != std::string::npos,
+          "TextTokenize missing text_column validation should be specific: " +
+              missing_text_tokenize_column_executor.GetLastError());
+
+    const std::string missing_text_vectorize_column_json =
+        R"({"nodes":[)"
+        R"({"id":170,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":171,"type":"TextVectorize","name":"MissingVectorColumn","parameters":{)"
+        R"("method":"count"}})"
+        R"(],"links":[{"start_node":170,"end_node":171}]})";
+
+    cyxwiz::PipelineExecutor missing_text_vectorize_column_executor;
+    Check(!missing_text_vectorize_column_executor.ExecutePipeline(
+              missing_text_vectorize_column_json),
+          "TextVectorize missing text_column should fail validation");
+    Check(missing_text_vectorize_column_executor.GetLastError().find(
+              "missing required parameter 'text_column'") != std::string::npos,
+          "TextVectorize missing text_column validation should be specific: " +
+              missing_text_vectorize_column_executor.GetLastError());
+
+    const std::string missing_ts_window_target_json =
+        R"({"nodes":[)"
+        R"({"id":172,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":173,"type":"TSWindow","name":"MissingTarget","parameters":{)"
+        R"("window_size":"2","stride":"1"}})"
+        R"(],"links":[{"start_node":172,"end_node":173}]})";
+
+    cyxwiz::PipelineExecutor missing_ts_window_target_executor;
+    Check(!missing_ts_window_target_executor.ExecutePipeline(
+              missing_ts_window_target_json),
+          "TSWindow missing target_column should fail validation");
+    Check(missing_ts_window_target_executor.GetLastError().find(
+              "missing required parameter 'target_column'") != std::string::npos,
+          "TSWindow missing target_column validation should be specific: " +
+              missing_ts_window_target_executor.GetLastError());
+
+    const std::string missing_ts_features_columns_json =
+        R"({"nodes":[)"
+        R"({"id":174,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":175,"type":"TSFeatures","name":"MissingColumns","parameters":{)"
+        R"("rolling_window":"2"}})"
+        R"(],"links":[{"start_node":174,"end_node":175}]})";
+
+    cyxwiz::PipelineExecutor missing_ts_features_columns_executor;
+    Check(!missing_ts_features_columns_executor.ExecutePipeline(
+              missing_ts_features_columns_json),
+          "TSFeatures missing columns should fail validation");
+    Check(missing_ts_features_columns_executor.GetLastError().find(
+              "missing required parameter 'columns'") != std::string::npos,
+          "TSFeatures missing columns validation should be specific: " +
+              missing_ts_features_columns_executor.GetLastError());
+
+    const std::string missing_ts_lag_columns_json =
+        R"({"nodes":[)"
+        R"({"id":176,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":177,"type":"TSLag","name":"MissingColumns","parameters":{)"
+        R"("lag_periods":"1"}})"
+        R"(],"links":[{"start_node":176,"end_node":177}]})";
+
+    cyxwiz::PipelineExecutor missing_ts_lag_columns_executor;
+    Check(!missing_ts_lag_columns_executor.ExecutePipeline(
+              missing_ts_lag_columns_json),
+          "TSLag missing columns should fail validation");
+    Check(missing_ts_lag_columns_executor.GetLastError().find(
+              "missing required parameter 'columns'") != std::string::npos,
+          "TSLag missing columns validation should be specific: " +
+              missing_ts_lag_columns_executor.GetLastError());
+
+    const std::string missing_ts_diff_columns_json =
+        R"({"nodes":[)"
+        R"({"id":178,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":179,"type":"TSDiff","name":"MissingColumns","parameters":{)"
+        R"("order":"1"}})"
+        R"(],"links":[{"start_node":178,"end_node":179}]})";
+
+    cyxwiz::PipelineExecutor missing_ts_diff_columns_executor;
+    Check(!missing_ts_diff_columns_executor.ExecutePipeline(
+              missing_ts_diff_columns_json),
+          "TSDiff missing columns should fail validation");
+    Check(missing_ts_diff_columns_executor.GetLastError().find(
+              "missing required parameter 'columns'") != std::string::npos,
+          "TSDiff missing columns validation should be specific: " +
+              missing_ts_diff_columns_executor.GetLastError());
 
     const std::string bad_crop_json =
         R"({"nodes":[)"

@@ -281,6 +281,14 @@ registry. Unsupported values such as `ngram` for the legacy tokenizer or
 `tfidf` for the legacy count-style vectorizer fail validation instead of
 falling back to a weaker execution path.
 
+**Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
+branches now require their explicit source-column selectors in the
+central required-parameter registry. `TextClean`, `TextTokenize`, and
+`TextVectorize` require `text_column`; `TSWindow` requires
+`target_column`; and `TSFeatures`, `TSLag`, and `TSDiff` require
+`columns`, so validation no longer falls through to implicit `text` or
+`value` defaults.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`
