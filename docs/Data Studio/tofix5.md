@@ -433,6 +433,8 @@ Problem now:
   fields instead of registering the input table unchanged
 - legacy `RowToColumnNames` now promotes a row to Arrow schema names and
   removes the promoted row instead of registering the input table unchanged
+- legacy `TableCropper` now validates crop bounds against the loaded
+  Arrow table instead of relying on Arrow slice clamping behavior
 - broader support truth still needs the next multi-axis capability matrix
 
 Effect:

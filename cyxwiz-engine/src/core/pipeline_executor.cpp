@@ -2947,8 +2947,14 @@ bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& c
     auto start_row_it = node.parameters.find("start_row");
     auto end_row_it = node.parameters.find("end_row");
 
-    int64_t start_row = (start_row_it != node.parameters.end()) ? std::stoll(start_row_it->second) : 0;
-    int64_t end_row = (end_row_it != node.parameters.end()) ? std::stoll(end_row_it->second) : -1;
+    int64_t start_row =
+        (start_row_it != node.parameters.end() && !start_row_it->second.empty())
+            ? std::stoll(start_row_it->second)
+            : 0;
+    int64_t end_row =
+        (end_row_it != node.parameters.end() && !end_row_it->second.empty())
+            ? std::stoll(end_row_it->second)
+            : -1;
 
     std::string output_dataset_name = "ds_cropped_" + std::to_string(node.id);
     spdlog::info("[Data Studio] Cropping table rows {}:{}", start_row, end_row);
@@ -2962,9 +2968,25 @@ bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& c
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        if (!input_table) {
+            ReportError("TableCropper: Input table is null");
+            return false;
+        }
         int64_t num_rows = input_table->num_rows();
 
         if (end_row < 0) end_row = num_rows;
+        if (start_row > num_rows) {
+            ReportError("TableCropper: start_row out of bounds");
+            return false;
+        }
+        if (end_row > num_rows) {
+            ReportError("TableCropper: end_row out of bounds");
+            return false;
+        }
+        if (end_row < start_row) {
+            ReportError("TableCropper: end_row must be >= start_row");
+            return false;
+        }
         int64_t length = end_row - start_row;
 
         auto cropped_table = input_table->Slice(start_row, length);

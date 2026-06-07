@@ -520,6 +520,43 @@ int main() {
           "RowToColumnNames bad row_index validation should be specific: " +
               bad_row_index_executor.GetLastError());
 
+    const std::string table_cropper_json =
+        R"({"nodes":[)"
+        R"({"id":53,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":54,"type":"TableCropper","name":"Crop","parameters":{)"
+        R"("start_row":"1","end_row":"3"}})"
+        R"(],"links":[{"start_node":53,"end_node":54}]})";
+
+    cyxwiz::PipelineExecutor table_cropper_executor;
+    Check(table_cropper_executor.ExecutePipeline(table_cropper_json),
+          "TableCropper should produce a bounded Arrow slice: " +
+              table_cropper_executor.GetLastError());
+    auto cropped = registry.GetArrowDataset("ds_cropped_54");
+    Check(cropped != nullptr, "TableCropper output dataset is registered");
+    auto cropped_table = cropped->GetArrowTable();
+    Check(cropped_table != nullptr, "TableCropper output table exists");
+    Check(cropped_table->num_rows() == 2,
+          "TableCropper should crop to the requested row range");
+
+    const std::string bad_crop_range_json =
+        R"({"nodes":[)"
+        R"({"id":55,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":56,"type":"TableCropper","name":"Crop","parameters":{)"
+        R"("start_row":"2","end_row":"1"}})"
+        R"(],"links":[{"start_node":55,"end_node":56}]})";
+
+    cyxwiz::PipelineExecutor bad_crop_range_executor;
+    Check(!bad_crop_range_executor.ExecutePipeline(bad_crop_range_json),
+          "TableCropper invalid row range should fail execution");
+    Check(bad_crop_range_executor.GetLastError().find(
+              "end_row must be >= start_row") != std::string::npos,
+          "TableCropper invalid row range error should be specific: " +
+              bad_crop_range_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
@@ -530,6 +567,9 @@ int main() {
     registry.UnloadDataset("ds_datainput_47");
     registry.UnloadDataset("ds_datainput_49");
     registry.UnloadDataset("ds_newheaders_50");
+    registry.UnloadDataset("ds_datainput_53");
+    registry.UnloadDataset("ds_cropped_54");
+    registry.UnloadDataset("ds_datainput_55");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
 

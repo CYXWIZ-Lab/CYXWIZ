@@ -171,3 +171,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: made legacy `RowToColumnNames` perform a real
   Arrow schema promotion, remove the promoted row, and validate
   `row_index` before execution.
+- 2026-06-07 follow-up: tightened legacy `TableCropper` runtime bounds
+  checks so invalid crop ranges fail with explicit errors instead of
+  depending on Arrow slice behavior.
