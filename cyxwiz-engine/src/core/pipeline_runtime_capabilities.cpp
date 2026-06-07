@@ -186,6 +186,9 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"DataInput", "source_type", "file", {"file", "folder", "ml_dataset"}},
         {"DataOutput", "format", "csv", {"csv", "parquet", "json"}},
         {"FillMissing", "strategy", "mean", {"mean", "median", "mode", "constant"}},
+        {"SortRows", "order", "asc", {"asc", "desc"}},
+        {"SortRows", "ascending", "true", {"true", "false"}},
+        {"Join", "join_type", "inner", {"inner", "left", "right", "outer"}},
         {"Binning", "method", "equal_width", {"equal_width", "equal_freq"}},
         {"StringManipulation", "operation", "trim", {"trim", "upper", "lower", "replace", "substring"}},
     };

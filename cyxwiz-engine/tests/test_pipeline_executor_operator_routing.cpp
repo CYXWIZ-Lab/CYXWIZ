@@ -347,7 +347,7 @@ int main() {
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":103,"type":"Join","name":"Join","parameters":{)"
-        R"("on_column":" x ","join_type":"INNER"}})"
+        R"("on_column":" x ","join_type":"outer"}})"
         R"(],"links":[{"start_node":101,"end_node":103},{"start_node":102,"end_node":103}]})";
 
     cyxwiz::PipelineExecutor join_executor;
@@ -360,6 +360,26 @@ int main() {
     Check(joined_table != nullptr, "Join output table exists");
     Check(joined_table->num_rows() == 3,
           "Join on x should match all rows in the self-join fixture");
+
+    const std::string bad_join_type_json =
+        R"({"nodes":[)"
+        R"({"id":111,"type":"DataInput","name":"Left","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":112,"type":"DataInput","name":"Right","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":113,"type":"Join","name":"JoinBadType","parameters":{)"
+        R"("on_column":"x","join_type":"sideways"}})"
+        R"(],"links":[{"start_node":111,"end_node":113},{"start_node":112,"end_node":113}]})";
+
+    cyxwiz::PipelineExecutor bad_join_type_executor;
+    Check(!bad_join_type_executor.ExecutePipeline(bad_join_type_json),
+          "Join unsupported join_type should fail validation");
+    Check(bad_join_type_executor.GetLastError().find(
+              "Join join_type 'sideways' is not supported") != std::string::npos,
+          "Join unsupported join_type error should be specific: " +
+              bad_join_type_executor.GetLastError());
 
     const std::string missing_join_input_column_json =
         R"({"nodes":[)"
@@ -1084,6 +1104,43 @@ int main() {
           "SortRows missing column error should be specific: " +
               missing_sort_column_executor.GetLastError());
 
+    const std::string sort_ascending_false_json =
+        R"({"nodes":[)"
+        R"({"id":114,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":115,"type":"SortRows","name":"SortLegacyAscending","parameters":{)"
+        R"("columns":" y ","ascending":"false"}})"
+        R"(],"links":[{"start_node":114,"end_node":115}]})";
+
+    cyxwiz::PipelineExecutor sort_ascending_false_executor;
+    Check(sort_ascending_false_executor.ExecutePipeline(sort_ascending_false_json),
+          "SortRows should honor legacy ascending=false: " +
+              sort_ascending_false_executor.GetLastError());
+    auto sorted_desc = registry.GetArrowDataset("ds_sort_115");
+    Check(sorted_desc != nullptr, "SortRows ascending=false output dataset is registered");
+    auto sorted_desc_table = sorted_desc->GetArrowTable();
+    Check(sorted_desc_table != nullptr, "SortRows ascending=false output table exists");
+    Check(ReadNumericValue(sorted_desc_table, "y", 0) == 30.0,
+          "SortRows ascending=false should sort descending");
+
+    const std::string bad_sort_order_json =
+        R"({"nodes":[)"
+        R"({"id":116,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":117,"type":"SortRows","name":"SortBadOrder","parameters":{)"
+        R"("columns":"y","order":"SIDEWAYS"}})"
+        R"(],"links":[{"start_node":116,"end_node":117}]})";
+
+    cyxwiz::PipelineExecutor bad_sort_order_executor;
+    Check(!bad_sort_order_executor.ExecutePipeline(bad_sort_order_json),
+          "SortRows unsupported order should fail validation");
+    Check(bad_sort_order_executor.GetLastError().find(
+              "SortRows order 'SIDEWAYS' is not supported") != std::string::npos,
+          "SortRows unsupported order error should be specific: " +
+              bad_sort_order_executor.GetLastError());
+
     const std::string group_by_json =
         R"({"nodes":[)"
         R"({"id":107,"type":"DataInput","name":"Input","parameters":{)"
@@ -1183,6 +1240,8 @@ int main() {
     registry.UnloadDataset("ds_datainput_97");
     registry.UnloadDataset("ds_sort_98");
     registry.UnloadDataset("ds_datainput_99");
+    registry.UnloadDataset("ds_datainput_114");
+    registry.UnloadDataset("ds_sort_115");
     registry.UnloadDataset("ds_datainput_107");
     registry.UnloadDataset("ds_groupby_108");
     registry.UnloadDataset("ds_datainput_109");

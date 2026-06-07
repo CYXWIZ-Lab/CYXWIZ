@@ -252,3 +252,6 @@ scanning so stale or duplicate work is not reintroduced.
   checks to `Join.on_column` and `GroupBy.group_columns`; `GroupBy`
   aggregation expressions remain free-form SQL pending a separate
   expression policy.
+- 2026-06-07 follow-up: added central enum validation and runtime SQL
+  normalization for `SortRows.order`, legacy `SortRows.ascending`, and
+  `Join.join_type`, including frontend-style `outer` to `FULL OUTER`.

@@ -39,6 +39,22 @@ std::string TrimString(const std::string& value) {
     return std::string(begin, end);
 }
 
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
+
+std::string ToUpperAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::toupper(c));
+                   });
+    return value;
+}
+
 std::map<std::string, std::string> ParseRenameMapping(const std::string& mapping) {
     std::map<std::string, std::string> result;
     std::stringstream pairs(mapping);
@@ -281,11 +297,43 @@ bool ValidateCommaSeparatedIntegersAtLeast(
 bool IsAllowedParameterValue(
     const PipelineAllowedParameterValuesRuntimeCapability& capability,
     const std::string& value) {
+    const std::string normalized_value = ToLowerAscii(TrimString(value));
     return std::find_if(capability.allowed_values.begin(),
                         capability.allowed_values.end(),
-                        [&value](const char* allowed) {
-                            return allowed != nullptr && value == allowed;
+                        [&normalized_value](const char* allowed) {
+                            return allowed != nullptr &&
+                                   normalized_value ==
+                                       ToLowerAscii(TrimString(allowed));
                         }) != capability.allowed_values.end();
+}
+
+std::string NormalizeSortOrder(
+    const std::map<std::string, std::string>& parameters) {
+    auto order_it = parameters.find("order");
+    if (order_it != parameters.end() && !order_it->second.empty()) {
+        return ToUpperAscii(TrimString(order_it->second));
+    }
+
+    auto ascending_it = parameters.find("ascending");
+    if (ascending_it != parameters.end() && !ascending_it->second.empty() &&
+        ToLowerAscii(TrimString(ascending_it->second)) == "false") {
+        return "DESC";
+    }
+    return "ASC";
+}
+
+std::string NormalizeJoinTypeSql(const std::string& value) {
+    const std::string join_type = ToLowerAscii(TrimString(value));
+    if (join_type == "left") {
+        return "LEFT";
+    }
+    if (join_type == "right") {
+        return "RIGHT";
+    }
+    if (join_type == "outer") {
+        return "FULL OUTER";
+    }
+    return "INNER";
 }
 
 const char* MissingRequiredParameter(
@@ -1454,8 +1502,7 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
         return false;
     }
 
-    auto order_it = node.parameters.find("order");
-    std::string order = (order_it != node.parameters.end()) ? order_it->second : "ASC";
+    const std::string order = NormalizeSortOrder(node.parameters);
 
     const std::string& input_dataset_name = result_it->second;
     const std::string& sort_columns = columns_it->second;
@@ -1538,7 +1585,9 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
 
     // Get parameters
     auto join_type_it = node.parameters.find("join_type");
-    std::string join_type = (join_type_it != node.parameters.end()) ? join_type_it->second : "INNER";
+    const std::string raw_join_type =
+        (join_type_it != node.parameters.end()) ? join_type_it->second : "inner";
+    const std::string join_type = NormalizeJoinTypeSql(raw_join_type);
 
     auto on_column_it = node.parameters.find("on_column");
     if (on_column_it == node.parameters.end() || on_column_it->second.empty()) {
