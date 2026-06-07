@@ -958,6 +958,87 @@ int main() {
           "PolynomialFeatures missing column error should be specific: " +
               missing_polynomial_column_executor.GetLastError());
 
+    const std::string select_columns_json =
+        R"({"nodes":[)"
+        R"({"id":93,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":94,"type":"SelectColumns","name":"Select","parameters":{)"
+        R"("columns":" y , x "}})"
+        R"(],"links":[{"start_node":93,"end_node":94}]})";
+
+    cyxwiz::PipelineExecutor select_columns_executor;
+    Check(select_columns_executor.ExecutePipeline(select_columns_json),
+          "SelectColumns should validate and quote requested columns: " +
+              select_columns_executor.GetLastError());
+    auto selected = registry.GetArrowDataset("ds_select_94");
+    Check(selected != nullptr, "SelectColumns output dataset is registered");
+    auto selected_table = selected->GetArrowTable();
+    Check(selected_table != nullptr, "SelectColumns output table exists");
+    Check(selected_table->num_columns() == 2,
+          "SelectColumns should keep only requested columns");
+    Check(selected_table->schema()->field(0)->name() == "y",
+          "SelectColumns should preserve requested order");
+    Check(selected_table->schema()->field(1)->name() == "x",
+          "SelectColumns should trim requested column names");
+
+    const std::string missing_select_column_json =
+        R"({"nodes":[)"
+        R"({"id":95,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":96,"type":"SelectColumns","name":"SelectMissing","parameters":{)"
+        R"("columns":"x,missing"}})"
+        R"(],"links":[{"start_node":95,"end_node":96}]})";
+
+    cyxwiz::PipelineExecutor missing_select_column_executor;
+    Check(!missing_select_column_executor.ExecutePipeline(
+              missing_select_column_json),
+          "SelectColumns missing input column should fail schema validation");
+    Check(missing_select_column_executor.GetLastError().find(
+              "SelectColumns: column 'missing' not found") !=
+              std::string::npos,
+          "SelectColumns missing column error should be specific: " +
+              missing_select_column_executor.GetLastError());
+
+    const std::string sort_rows_json =
+        R"({"nodes":[)"
+        R"({"id":97,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":98,"type":"SortRows","name":"Sort","parameters":{)"
+        R"("columns":" y ","order":"DESC"}})"
+        R"(],"links":[{"start_node":97,"end_node":98}]})";
+
+    cyxwiz::PipelineExecutor sort_rows_executor;
+    Check(sort_rows_executor.ExecutePipeline(sort_rows_json),
+          "SortRows should validate and quote requested columns: " +
+              sort_rows_executor.GetLastError());
+    auto sorted = registry.GetArrowDataset("ds_sort_98");
+    Check(sorted != nullptr, "SortRows output dataset is registered");
+    auto sorted_table = sorted->GetArrowTable();
+    Check(sorted_table != nullptr, "SortRows output table exists");
+    Check(ReadNumericValue(sorted_table, "y", 0) == 30.0,
+          "SortRows should apply requested descending order");
+
+    const std::string missing_sort_column_json =
+        R"({"nodes":[)"
+        R"({"id":99,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":100,"type":"SortRows","name":"SortMissing","parameters":{)"
+        R"("columns":"missing","order":"ASC"}})"
+        R"(],"links":[{"start_node":99,"end_node":100}]})";
+
+    cyxwiz::PipelineExecutor missing_sort_column_executor;
+    Check(!missing_sort_column_executor.ExecutePipeline(
+              missing_sort_column_json),
+          "SortRows missing input column should fail schema validation");
+    Check(missing_sort_column_executor.GetLastError().find(
+              "SortRows: column 'missing' not found") != std::string::npos,
+          "SortRows missing column error should be specific: " +
+              missing_sort_column_executor.GetLastError());
+
     const std::string table_splitter_json =
         R"({"nodes":[)"
         R"({"id":83,"type":"DataInput","name":"Input","parameters":{)"
@@ -1006,6 +1087,12 @@ int main() {
     registry.UnloadDataset("ds_datainput_77");
     registry.UnloadDataset("ds_poly_78");
     registry.UnloadDataset("ds_datainput_91");
+    registry.UnloadDataset("ds_datainput_93");
+    registry.UnloadDataset("ds_select_94");
+    registry.UnloadDataset("ds_datainput_95");
+    registry.UnloadDataset("ds_datainput_97");
+    registry.UnloadDataset("ds_sort_98");
+    registry.UnloadDataset("ds_datainput_99");
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
     fs::remove(export_csv_path);

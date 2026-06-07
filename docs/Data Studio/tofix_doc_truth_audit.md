@@ -244,3 +244,7 @@ scanning so stale or duplicate work is not reintroduced.
   column transforms (`StringManipulation`, `Binning`, and
   `PolynomialFeatures`) so missing columns and text-vs-numeric mistakes
   fail with explicit errors before DuckDB query construction.
+- 2026-06-07 follow-up: extended active legacy transform schema checks
+  to `SelectColumns` and `SortRows`; both now validate requested loaded
+  table columns and quote resolved column identifiers before building
+  DuckDB SQL.

@@ -98,6 +98,55 @@ std::string QuoteSqlStringLiteral(const std::string& value) {
     return quoted;
 }
 
+std::vector<std::string> ParseCommaSeparatedNames(const std::string& value) {
+    std::vector<std::string> result;
+    std::stringstream stream(value);
+    std::string name;
+    while (std::getline(stream, name, ',')) {
+        name = TrimString(name);
+        if (!name.empty()) {
+            result.push_back(name);
+        }
+    }
+    return result;
+}
+
+bool ResolveExistingColumns(const std::shared_ptr<arrow::Table>& table,
+                            const std::string& node_type,
+                            const std::string& columns,
+                            std::vector<std::string>& column_names,
+                            std::string& error) {
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+
+    column_names = ParseCommaSeparatedNames(columns);
+    if (column_names.empty()) {
+        error = node_type + ": no columns were provided";
+        return false;
+    }
+
+    for (const auto& column : column_names) {
+        if (table->schema()->GetFieldIndex(column) < 0) {
+            error = node_type + ": column '" + column + "' not found";
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string JoinQuotedColumns(const std::vector<std::string>& column_names) {
+    std::string result;
+    for (size_t i = 0; i < column_names.size(); ++i) {
+        if (i > 0) {
+            result += ", ";
+        }
+        result += QuoteSqlIdentifier(column_names[i]);
+    }
+    return result;
+}
+
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
     if (!type) {
         return false;
@@ -1090,6 +1139,14 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::vector<std::string> selected_columns;
+        std::string schema_error;
+        if (!ResolveExistingColumns(input_table, "SelectColumns", columns,
+                                    selected_columns, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_columns = JoinQuotedColumns(selected_columns);
 
         // Register input table with DuckDB
         std::string temp_table = "temp_" + std::to_string(node.id);
@@ -1099,7 +1156,7 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
         }
 
         // Execute SELECT columns query
-        std::string sql = "SELECT " + columns + " FROM " + temp_table;
+        std::string sql = "SELECT " + quoted_columns + " FROM " + temp_table;
         auto result_table = duckdb_->Query(sql);
 
         // Unregister temp table
@@ -1399,6 +1456,14 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::vector<std::string> selected_columns;
+        std::string schema_error;
+        if (!ResolveExistingColumns(input_table, "SortRows", sort_columns,
+                                    selected_columns, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_columns = JoinQuotedColumns(selected_columns);
 
         // Register input table with DuckDB
         std::string temp_table = "temp_" + std::to_string(node.id);
@@ -1408,7 +1473,8 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
         }
 
         // Execute ORDER BY query
-        std::string sql = "SELECT * FROM " + temp_table + " ORDER BY " + sort_columns + " " + order;
+        std::string sql = "SELECT * FROM " + temp_table +
+                          " ORDER BY " + quoted_columns + " " + order;
         auto result_table = duckdb_->Query(sql);
 
         // Unregister temp table
