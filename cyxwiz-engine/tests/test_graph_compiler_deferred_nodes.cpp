@@ -312,6 +312,54 @@ int main() {
               std::string("unsupported layer should report backend gap: ") + unsupported_case.name);
     }
 
+    auto encoded_ner = Node(20,
+                            gui::NodeType::Dense,
+                            "Sentence Sequences",
+                            {Pin(2001, gui::PinType::Tensor, "Input", true)},
+                            {Pin(2002, gui::PinType::Tensor, "Output", false)});
+    encoded_ner.parameters["units"] = "128";
+    encoded_ner.parameters["bio_scheme"] = "BIO";
+    encoded_ner.parameters["token_column"] = "tokens";
+    encoded_ner.parameters["tag_column"] = "ner_tags";
+
+    nodes = {data, encoded_ner, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 20, 2001),
+        Link(2, 20, 2002, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "Dense-encoded NER target-design node should block compile");
+    Check(HasIssueText(config, "encoded as Dense"),
+          "Dense-encoded NER node should report Dense encoding mismatch");
+    Check(HasIssueText(config, "first-class sequence/NER nodes"),
+          "Dense-encoded NER node should report missing NER contract");
+
+    auto encoded_side_output = Node(21,
+                                    gui::NodeType::Output,
+                                    "Encoded Side Output",
+                                    {Pin(2101, gui::PinType::Tensor, "Input", true)},
+                                    {});
+
+    nodes = {data, dense, loss, optimizer, encoded_ner, encoded_side_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 1, 101, 20, 2001),
+        Link(6, 20, 2002, 21, 2101),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side Dense-encoded target-design node should not block selected path");
+    Check(!HasIssueText(config, "Sentence Sequences"),
+          "side Dense-encoded target-design node should not be reported");
+
     const std::vector<UnsupportedLayerCase> unsupported_scheduler_cases = {
         {gui::NodeType::StepLR, "StepLR"},
         {gui::NodeType::CosineAnnealing, "CosineAnnealing"},

@@ -143,6 +143,59 @@ bool IsUnsupportedTrainingControlNode(gui::NodeType type) {
            type == gui::NodeType::ElasticNet;
 }
 
+bool HasParam(const std::map<std::string, std::string>& params,
+              const char* key) {
+    return params.find(key) != params.end();
+}
+
+bool LooksLikeDenseEncodedTargetDesignNode(const gui::MLNode& node,
+                                           std::string& matched_key) {
+    if (node.type != gui::NodeType::Dense) {
+        return false;
+    }
+
+    const auto& params = node.parameters;
+    const char* keys[] = {
+        "bio_scheme",
+        "token_column",
+        "tag_column",
+        "pos_column",
+        "pad_token",
+        "unk_token",
+        "pad_tag",
+        "outside_tag",
+        "create_attention_mask",
+        "token_pad_value",
+        "pos_pad_value",
+        "tag_pad_value",
+        "decode_scheme",
+        "tag_vocab_file",
+        "ignore_index",
+        "from_logits"
+    };
+
+    for (const char* key : keys) {
+        if (HasParam(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    if (HasParam(params, "vocab_file") &&
+        (HasParam(params, "max_vocab_size") ||
+         HasParam(params, "min_freq"))) {
+        matched_key = "vocab_file";
+        return true;
+    }
+
+    if (HasParam(params, "axis") && params.size() > 1) {
+        matched_key = "axis";
+        return true;
+    }
+
+    return false;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -949,6 +1002,18 @@ void ValidateTrainingPathImplementationStatus(
 
     for (const auto& node : nodes) {
         if (training_path_ids.count(node.id) == 0) {
+            continue;
+        }
+
+        std::string target_design_key;
+        if (LooksLikeDenseEncodedTargetDesignNode(node, target_design_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' is encoded as Dense but contains target-design parameter '"
+                << target_design_key
+                << "'. This graph needs first-class sequence/NER nodes and "
+                   "cannot be compiled as a Dense layer.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
 
