@@ -174,3 +174,7 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: tightened legacy `TableCropper` runtime bounds
   checks so invalid crop ranges fail with explicit errors instead of
   depending on Arrow slice behavior.
+- 2026-06-07 follow-up: removed dead executor declarations, dispatch
+  branches, and fake-success bodies for fail-closed legacy helpers
+  (`ExportExcel`, `ExportJSON`, `CellExtractor`, `CellUpdater`,
+  `ColumnAppender`, `RowAppender`, `Unpivot`).

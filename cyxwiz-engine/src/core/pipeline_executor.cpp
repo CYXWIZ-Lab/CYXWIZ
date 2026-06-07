@@ -633,28 +633,14 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
     // KNIME-Style Table Manipulation Nodes
     else if (node.type == "ExcelInput") {
         return ExecuteExcelInput(node, ctx);
-    } else if (node.type == "ExportExcel") {
-        return ExecuteExportExcel(node, ctx);
     } else if (node.type == "ExportCSV") {
         return ExecuteExportCSV(node, ctx);
-    } else if (node.type == "ExportJSON") {
-        return ExecuteExportJSON(node, ctx);
     } else if (node.type == "RowToColumnNames") {
         return ExecuteRowToColumnNames(node, ctx);
     } else if (node.type == "TableSplitter") {
         return ExecuteTableSplitter(node, ctx);
-    } else if (node.type == "CellExtractor") {
-        return ExecuteCellExtractor(node, ctx);
-    } else if (node.type == "CellUpdater") {
-        return ExecuteCellUpdater(node, ctx);
     } else if (node.type == "TableCropper") {
         return ExecuteTableCropper(node, ctx);
-    } else if (node.type == "ColumnAppender") {
-        return ExecuteColumnAppender(node, ctx);
-    } else if (node.type == "RowAppender") {
-        return ExecuteRowAppender(node, ctx);
-    } else if (node.type == "Unpivot") {
-        return ExecuteUnpivot(node, ctx);
     } else if (node.type == "StringManipulation") {
         return ExecuteStringManipulation(node, ctx);
     } else if (node.type == "MathFormula") {
@@ -2655,24 +2641,6 @@ bool PipelineExecutor::ExecuteExcelInput(const Node& node, ExecutionContext& ctx
     }
 }
 
-bool PipelineExecutor::ExecuteExportExcel(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("ExportExcel: No input dataset");
-        return false;
-    }
-
-    auto path_it = node.parameters.find("file_path");
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
-        ReportError("ExportExcel: Missing output file path");
-        return false;
-    }
-
-    spdlog::info("[Data Studio] Exporting to Excel: {}", path_it->second);
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
-}
-
 bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
@@ -2699,24 +2667,6 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = path_it->second;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("ExportJSON: No input dataset");
-        return false;
-    }
-
-    auto path_it = node.parameters.find("file_path");
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
-        ReportError("ExportJSON: Missing output file path");
-        return false;
-    }
-
-    spdlog::info("[Data Studio] Exporting to JSON: {}", path_it->second);
-    ctx.node_results[node.id] = input_dataset_name;
     return true;
 }
 
@@ -2915,28 +2865,6 @@ bool PipelineExecutor::ExecuteTableSplitter(const Node& node, ExecutionContext& 
     }
 }
 
-bool PipelineExecutor::ExecuteCellExtractor(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("CellExtractor: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Extracting cell value");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("CellUpdater: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Updating cell value");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
-}
-
 bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
@@ -2997,39 +2925,6 @@ bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& c
         ReportError("TableCropper error: " + std::string(e.what()));
         return false;
     }
-}
-
-bool PipelineExecutor::ExecuteColumnAppender(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("ColumnAppender: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Appending columns");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteRowAppender(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("RowAppender: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Appending rows (UNION)");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
-}
-
-bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("Unpivot: No input dataset");
-        return false;
-    }
-    spdlog::info("[Data Studio] Unpivoting table");
-    ctx.node_results[node.id] = input_dataset_name;
-    return true;
 }
 
 bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionContext& ctx) {

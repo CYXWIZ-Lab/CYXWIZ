@@ -192,21 +192,14 @@ private:
 
     // KNIME-Style Table Manipulation Nodes
     bool ExecuteExcelInput(const Node& node, ExecutionContext& ctx);
-    bool ExecuteExportExcel(const Node& node, ExecutionContext& ctx);
     bool ExecuteRowToColumnNames(const Node& node, ExecutionContext& ctx);
     bool ExecuteTableSplitter(const Node& node, ExecutionContext& ctx);
-    bool ExecuteCellExtractor(const Node& node, ExecutionContext& ctx);
-    bool ExecuteCellUpdater(const Node& node, ExecutionContext& ctx);
     bool ExecuteTableCropper(const Node& node, ExecutionContext& ctx);
-    bool ExecuteColumnAppender(const Node& node, ExecutionContext& ctx);
-    bool ExecuteRowAppender(const Node& node, ExecutionContext& ctx);
-    bool ExecuteUnpivot(const Node& node, ExecutionContext& ctx);
     bool ExecuteStringManipulation(const Node& node, ExecutionContext& ctx);
     bool ExecuteMathFormula(const Node& node, ExecutionContext& ctx);
     bool ExecuteRuleEngine(const Node& node, ExecutionContext& ctx);
     bool ExecuteRenameColumns(const Node& node, ExecutionContext& ctx);
     bool ExecuteExportCSV(const Node& node, ExecutionContext& ctx);
-    bool ExecuteExportJSON(const Node& node, ExecutionContext& ctx);
     // Helper methods
     void UpdateProgress(float progress, const std::string& status = "");  // Phase 8: Added status parameter
     void ReportError(const std::string& error);

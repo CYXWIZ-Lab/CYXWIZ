@@ -435,6 +435,11 @@ Problem now:
   removes the promoted row instead of registering the input table unchanged
 - legacy `TableCropper` now validates crop bounds against the loaded
   Arrow table instead of relying on Arrow slice clamping behavior
+- fail-closed legacy helper bodies such as `ExportExcel`,
+  `ExportJSON`, `CellExtractor`, `CellUpdater`, `ColumnAppender`,
+  `RowAppender`, and `Unpivot` have been removed from the active
+  executor contract; the runtime capability registry now owns their
+  unsupported behavior
 - broader support truth still needs the next multi-axis capability matrix
 
 Effect:
