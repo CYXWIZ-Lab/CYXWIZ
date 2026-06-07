@@ -5,6 +5,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <utility>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 
@@ -65,6 +66,31 @@ void AppendHelpTextSection(NodeMetadata& metadata, const std::string& section) {
         metadata.help_text += "\n\n";
     }
     metadata.help_text += section;
+}
+
+void UpsertSupportAxis(NodeMetadata& metadata,
+                       std::string name,
+                       std::string value,
+                       bool supported,
+                       std::string reason = {}) {
+    auto existing = std::find_if(
+        metadata.support_axes.begin(),
+        metadata.support_axes.end(),
+        [&name](const SupportAxisDefinition& axis) {
+            return axis.name == name;
+        });
+    if (existing != metadata.support_axes.end()) {
+        existing->value = std::move(value);
+        existing->supported = supported;
+        existing->reason = std::move(reason);
+        return;
+    }
+    metadata.support_axes.push_back({
+        std::move(name),
+        std::move(value),
+        supported,
+        std::move(reason),
+    });
 }
 
 } // namespace
@@ -236,6 +262,35 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
 
         const auto support =
             ResolvePipelineRuntimeSupport(capability.legacy_type_name);
+        auto& metadata = it->second;
+        UpsertSupportAxis(
+            metadata,
+            "Runtime",
+            PipelineRuntimeSupportModeName(support.mode),
+            true);
+        UpsertSupportAxis(
+            metadata,
+            "Fail Mode",
+            PipelineRuntimeFailModeName(support.fail_mode),
+            support.fail_mode == PipelineRuntimeFailMode::Real);
+        UpsertSupportAxis(
+            metadata,
+            "Pipeline Executor",
+            support.pipeline_executor_supported ? "supported" : "unsupported",
+            support.pipeline_executor_supported);
+        UpsertSupportAxis(
+            metadata,
+            "Materializer",
+            PipelineMaterializerStorageSupportName(
+                support.materializer_storage_support),
+            support.materializer_arrow_table_supported);
+        UpsertSupportAxis(
+            metadata,
+            "Implementation Owner",
+            PipelineRuntimeImplementationOwnerName(
+                support.implementation_owner),
+            true);
+
         std::string summary = "Runtime support: mode=";
         summary += PipelineRuntimeSupportModeName(support.mode);
         summary += "; fail_mode=";
@@ -248,7 +303,7 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         summary += "; owner=";
         summary += PipelineRuntimeImplementationOwnerName(
             support.implementation_owner);
-        AppendHelpTextSection(it->second, summary);
+        AppendHelpTextSection(metadata, summary);
     }
 
     for (const auto& capability : GetPipelineFailClosedRuntimeCapabilities()) {
@@ -264,6 +319,27 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         auto& metadata = it->second;
         metadata.status = NodeImplementationStatus::Template;
         metadata.badge = "Blocked";
+
+        const std::string reason =
+            capability.reason != nullptr ? capability.reason : "";
+        UpsertSupportAxis(
+            metadata,
+            "Runtime",
+            "fail_closed",
+            false,
+            reason);
+        UpsertSupportAxis(
+            metadata,
+            "Fail Mode",
+            PipelineRuntimeFailModeName(PipelineRuntimeFailMode::HardFail),
+            false,
+            reason);
+        UpsertSupportAxis(
+            metadata,
+            "Pipeline Executor",
+            "unsupported",
+            false,
+            reason);
 
         if (capability.reason != nullptr) {
             std::string summary = "Runtime support: ";
@@ -287,6 +363,27 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             auto& metadata = it->second;
             metadata.status = NodeImplementationStatus::Template;
             metadata.badge = "Blocked";
+
+            const std::string reason =
+                support.reason != nullptr ? support.reason : "";
+            UpsertSupportAxis(
+                metadata,
+                "Training Backend",
+                PipelineTrainingBackendSupportModeName(support.mode),
+                false,
+                reason);
+            UpsertSupportAxis(
+                metadata,
+                "Compile",
+                support.compile_supported ? "supported" : "unsupported",
+                support.compile_supported,
+                reason);
+            UpsertSupportAxis(
+                metadata,
+                "Training",
+                support.training_supported ? "supported" : "unsupported",
+                support.training_supported,
+                reason);
 
             std::string summary = "Training backend support: mode=";
             summary += PipelineTrainingBackendSupportModeName(support.mode);

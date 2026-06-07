@@ -859,6 +859,16 @@ L1/L2 regularization, and ElasticNet. They register as blocked templates
 and inherit the central training-backend support reason; the drift suite
 now requires metadata for every unsupported training-control capability.
 
+**Status 2026-06-07 follow-up 10:** Browser-visible metadata now carries
+structured support axes in addition to the existing help-text summaries.
+`NodeMetadataRegistry` populates runtime, fail-mode, pipeline-executor,
+materializer, implementation-owner, compile, training, and training-backend
+axes from the central capability registry, and the Node Info panel renders
+those axes directly. The drift suite verifies the structured axes for
+operator-backed, fail-closed, and training-blocked nodes, so the frontend
+no longer has to parse prose or maintain a parallel support list for this
+view.
+
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit

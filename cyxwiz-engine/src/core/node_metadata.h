@@ -48,6 +48,16 @@ struct ParameterDefinition {
 };
 
 /**
+ * Support axis for frontend/runtime capability display
+ */
+struct SupportAxisDefinition {
+    std::string name;
+    std::string value;
+    bool supported = true;
+    std::string reason;
+};
+
+/**
  * NodeMetadata - Complete metadata for a node type
  * Used by NodeBrowserPanel for display and by Info Panel for documentation
  */
@@ -78,7 +88,8 @@ struct NodeMetadata {
     // Status
     NodeImplementationStatus status = NodeImplementationStatus::Implemented;
     int user_votes = 0;         // For template nodes (feature requests)
-    std::string badge;          // Optional badge text (e.g., "Coming Soon", "Beta") - must be last for aggregate init compatibility
+    std::string badge;          // Optional badge text (e.g., "Coming Soon", "Beta")
+    std::vector<SupportAxisDefinition> support_axes;
 
     // Helper methods
     bool IsTemplate() const { return status == NodeImplementationStatus::Template; }

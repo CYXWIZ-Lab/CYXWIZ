@@ -2,6 +2,7 @@
 #include "../src/core/node_metadata_registry.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <set>
@@ -81,6 +82,33 @@ bool HasEnumValue(const cyxwiz::NodeMetadata* meta,
         }
     }
     return false;
+}
+
+const cyxwiz::SupportAxisDefinition* FindSupportAxis(
+    const cyxwiz::NodeMetadata* meta,
+    const std::string& name) {
+    if (!meta) return nullptr;
+    for (const auto& axis : meta->support_axes) {
+        if (axis.name == name) {
+            return &axis;
+        }
+    }
+    return nullptr;
+}
+
+void CheckSupportAxis(const cyxwiz::NodeMetadata* meta,
+                      const std::string& name,
+                      const std::string& value,
+                      bool supported,
+                      const std::string& context) {
+    const auto* axis = FindSupportAxis(meta, name);
+    Check(axis != nullptr, "missing support axis " + name + ": " + context);
+    Check(axis->value == value,
+          "support axis " + name + " has wrong value for " + context +
+              ": " + axis->value);
+    Check(axis->supported == supported,
+          "support axis " + name + " has wrong supported flag for " +
+              context);
 }
 
 } // namespace
@@ -355,6 +383,38 @@ int main() {
                   support.implementation_owner)) != std::string::npos,
               std::string("operator-backed metadata should expose implementation owner: ") +
                   capability.legacy_type_name);
+        CheckSupportAxis(
+            meta,
+            "Runtime",
+            cyxwiz::PipelineRuntimeSupportModeName(support.mode),
+            true,
+            capability.legacy_type_name);
+        CheckSupportAxis(
+            meta,
+            "Fail Mode",
+            cyxwiz::PipelineRuntimeFailModeName(support.fail_mode),
+            true,
+            capability.legacy_type_name);
+        CheckSupportAxis(
+            meta,
+            "Pipeline Executor",
+            "supported",
+            true,
+            capability.legacy_type_name);
+        CheckSupportAxis(
+            meta,
+            "Materializer",
+            cyxwiz::PipelineMaterializerStorageSupportName(
+                support.materializer_storage_support),
+            true,
+            capability.legacy_type_name);
+        CheckSupportAxis(
+            meta,
+            "Implementation Owner",
+            cyxwiz::PipelineRuntimeImplementationOwnerName(
+                support.implementation_owner),
+            true,
+            capability.legacy_type_name);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
@@ -729,6 +789,25 @@ int main() {
                   meta->help_text.find(capability.reason) != std::string::npos,
               std::string("fail-closed runtime metadata should expose central reason: ") +
                   capability.legacy_type_name);
+        CheckSupportAxis(
+            meta,
+            "Runtime",
+            "fail_closed",
+            false,
+            capability.legacy_type_name);
+        const auto* runtime_axis = FindSupportAxis(meta, "Runtime");
+        Check(runtime_axis != nullptr &&
+                  capability.reason != nullptr &&
+                  runtime_axis->reason.find(capability.reason) !=
+                      std::string::npos,
+              std::string("fail-closed runtime support axis should expose reason: ") +
+                  capability.legacy_type_name);
+        CheckSupportAxis(
+            meta,
+            "Pipeline Executor",
+            "unsupported",
+            false,
+            capability.legacy_type_name);
     }
 
     for (const auto& capability :
@@ -752,6 +831,23 @@ int main() {
                   meta->help_text.find(capability.reason) != std::string::npos,
               "unsupported training type " + TypeId(type) +
                   " should expose central training backend reason");
+        CheckSupportAxis(
+            meta,
+            "Training Backend",
+            cyxwiz::PipelineTrainingBackendSupportModeName(
+                cyxwiz::PipelineTrainingBackendSupportMode::
+                    UnsupportedSequentialModelLayer),
+            false,
+            TypeId(type));
+        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
+        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
+        const auto* training_axis = FindSupportAxis(meta, "Training Backend");
+        Check(training_axis != nullptr &&
+                  capability.reason != nullptr &&
+                  training_axis->reason.find(capability.reason) !=
+                      std::string::npos,
+              "unsupported training type " + TypeId(type) +
+                  " should expose reason on structured support axis");
     }
 
     for (const auto& capability :
@@ -775,6 +871,33 @@ int main() {
                   meta->help_text.find(capability.reason) != std::string::npos,
               "unsupported training control " + TypeId(capability.node_type) +
                   " should expose central training backend reason");
+        CheckSupportAxis(
+            meta,
+            "Training Backend",
+            cyxwiz::PipelineTrainingBackendSupportModeName(
+                cyxwiz::PipelineTrainingBackendSupportMode::
+                    UnsupportedTrainingControl),
+            false,
+            TypeId(capability.node_type));
+        CheckSupportAxis(
+            meta,
+            "Compile",
+            "unsupported",
+            false,
+            TypeId(capability.node_type));
+        CheckSupportAxis(
+            meta,
+            "Training",
+            "unsupported",
+            false,
+            TypeId(capability.node_type));
+        const auto* training_axis = FindSupportAxis(meta, "Training Backend");
+        Check(training_axis != nullptr &&
+                  capability.reason != nullptr &&
+                  training_axis->reason.find(capability.reason) !=
+                      std::string::npos,
+              "unsupported training control " + TypeId(capability.node_type) +
+                  " should expose reason on structured support axis");
     }
 
     const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);

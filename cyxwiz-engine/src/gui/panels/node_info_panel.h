@@ -54,6 +54,7 @@ private:
     // Render sections
     void RenderHeader();
     void RenderDescription();
+    void RenderSupport();
     void RenderPorts();
     void RenderParameters();
     void RenderExamples();

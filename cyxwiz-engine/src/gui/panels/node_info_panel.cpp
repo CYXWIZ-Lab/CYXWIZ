@@ -19,6 +19,10 @@ void NodeInfoPanel::Render() {
             RenderHeader();
             ImGui::Separator();
             RenderDescription();
+            if (!metadata_->support_axes.empty()) {
+                ImGui::Separator();
+                RenderSupport();
+            }
             ImGui::Separator();
             RenderPorts();
             ImGui::Separator();
@@ -111,6 +115,42 @@ void NodeInfoPanel::RenderDescription() {
         ImGui::PopStyleColor();
     }
 
+    ImGui::Spacing();
+}
+
+void NodeInfoPanel::RenderSupport() {
+    if (!metadata_ || metadata_->support_axes.empty()) return;
+
+    ImGui::Text("%s Support", ICON_FA_CIRCLE_INFO);
+    ImGui::Indent(16.0f);
+
+    for (const auto& axis : metadata_->support_axes) {
+        const ImVec4 color = axis.supported
+            ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
+            : ImVec4(1.0f, 0.55f, 0.35f, 1.0f);
+        const char* icon = axis.supported
+            ? ICON_FA_CIRCLE_CHECK
+            : ICON_FA_TRIANGLE_EXCLAMATION;
+
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::TextUnformatted(icon);
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        ImGui::Text("%s", axis.name.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", axis.value.c_str());
+
+        if (!axis.reason.empty()) {
+            ImGui::Indent(18.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.68f, 0.68f, 0.68f, 1.0f));
+            ImGui::TextWrapped("%s", axis.reason.c_str());
+            ImGui::PopStyleColor();
+            ImGui::Unindent(18.0f);
+        }
+    }
+
+    ImGui::Unindent(16.0f);
     ImGui::Spacing();
 }
 
