@@ -332,8 +332,9 @@ Effect:
 
 These were especially risky because they did not fail fast. The audited
 legacy `PipelineExecutor` dispatch now fails closed for the listed
-placeholder families, but the docs keep this section open until metadata
-truth and canonical operator routing are also fixed.
+placeholder families, and metadata truth has been corrected for the
+registered blocked/UI-only nodes. This section remains active for the
+canonical operator-routing work.
 
 ### 8. Analytics / ML nodes with placeholder `PipelineExecutor` behavior
 
@@ -646,22 +647,38 @@ Effect now:
 
 ## Priority 5: Template Nodes Are Correctly Blocked, But Need Import-Time Guardrails
 
+**Status:** Fixed in current branch for compile-time training-path guardrails.
+
+Implemented:
+
+- `GraphCompiler` validates every node on the selected training path
+  against `NodeMetadataRegistry`.
+- nodes marked `Template`, `Deprecated`, or `External` now produce a
+  compile error before training can start.
+- the guard applies to loaded/imported/hand-edited graphs because it is
+  not only a UI add-search check.
+- `test_graph_compiler_deferred_nodes` verifies template/deferred nodes
+  on the training path fail compile, while disconnected side-path
+  template nodes do not block the selected trainable path.
+
 Template nodes in metadata are currently blocked in add-search:
 
 - `cyxwiz-engine/src/gui/node_editor_add_search.cpp`
 
-This is good. However:
+This is good. Before the compile guard:
 
 - old graphs
 - imported graphs
 - hand-edited project files
 
-can still contain template node types.
+could still contain template node types.
 
 **Recommendation:**
 
-- add compile-time/project-load validation that rejects template nodes
-- do not rely only on UI add-search blocking
+- keep compile-time validation as the source of truth for training
+  execution
+- add project-load warnings later if users need earlier feedback, but do
+  not rely on project load alone for safety
 
 ---
 

@@ -75,3 +75,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: fixed `tofix5.md` Priority 0 item 5 by sharing
   Arrow/Parquet tabular input-size derivation, including the time-series
   GraphCompiler override.
+- 2026-06-07 follow-up: updated `tofix4.md` Priority 5 to reflect the
+  existing compile-time guard that rejects template/deferred metadata nodes
+  on the selected training path.
