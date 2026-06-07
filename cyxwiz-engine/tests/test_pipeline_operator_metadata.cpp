@@ -310,6 +310,26 @@ int main() {
                   cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly,
               std::string("operator-backed runtime should advertise Arrow-only materializer scope: ") +
                   capability.legacy_type_name);
+        const auto* meta = metadata.GetMetadata(capability.node_type);
+        Check(meta != nullptr,
+              std::string("operator-backed runtime metadata missing: ") +
+                  capability.legacy_type_name);
+        Check(meta->help_text.find(cyxwiz::PipelineRuntimeSupportModeName(
+                  support.mode)) != std::string::npos,
+              std::string("operator-backed metadata should expose runtime support mode: ") +
+                  capability.legacy_type_name);
+        Check(meta->help_text.find(cyxwiz::PipelineRuntimeFailModeName(
+                  support.fail_mode)) != std::string::npos,
+              std::string("operator-backed metadata should expose fail mode: ") +
+                  capability.legacy_type_name);
+        Check(meta->help_text.find("pipeline_executor=supported") !=
+                  std::string::npos,
+              std::string("operator-backed metadata should expose pipeline executor support: ") +
+                  capability.legacy_type_name);
+        Check(meta->help_text.find(cyxwiz::PipelineMaterializerStorageSupportName(
+                  support.materializer_storage_support)) != std::string::npos,
+              std::string("operator-backed metadata should expose materializer support scope: ") +
+                  capability.legacy_type_name);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {

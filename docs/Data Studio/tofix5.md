@@ -680,6 +680,12 @@ central blocked status and reason instead of relying on parallel
 frontend assumptions. The drift suite verifies the badge and reason
 alongside template status.
 
+**Status 2026-06-07 follow-up 5:** Operator-backed node metadata now
+also exposes the central runtime axes in help text: runtime mode,
+fail mode, PipelineExecutor support, and materializer storage scope.
+The drift suite verifies those labels use the same stable names as the
+capability registry.
+
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit
@@ -821,8 +827,11 @@ PipelineExecutor routing, and PipelineMaterializer now consume the
 central capability truth for their covered axes. Browser-visible node
 metadata now consumes fail-closed runtime truth for matching nodes and
 pushes the blocked badge/reason into the existing add-node search and
-node browser metadata path. Remaining work is broader frontend
-presentation of all support axes, not another parallel UI support list.
+node browser metadata path. Operator-backed metadata now also exposes
+runtime mode, fail mode, PipelineExecutor support, and materializer
+storage scope from the same registry. Remaining work is broader
+frontend presentation of non-runtime support axes, not another parallel
+UI support list.
 
 Scope:
 

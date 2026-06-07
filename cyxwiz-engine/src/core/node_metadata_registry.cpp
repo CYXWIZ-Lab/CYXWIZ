@@ -57,6 +57,16 @@ PinType ParseTemplatePinType(const std::string& type_name) {
     return PinType::Dataset;
 }
 
+void AppendHelpTextSection(NodeMetadata& metadata, const std::string& section) {
+    if (section.empty() || metadata.help_text.find(section) != std::string::npos) {
+        return;
+    }
+    if (!metadata.help_text.empty()) {
+        metadata.help_text += "\n\n";
+    }
+    metadata.help_text += section;
+}
+
 } // namespace
 
 // Category display order
@@ -218,6 +228,26 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
 }
 
 void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
+    for (const auto& capability : GetPipelineOperatorRuntimeCapabilities()) {
+        auto it = metadata_.find(capability.node_type);
+        if (it == metadata_.end()) {
+            continue;
+        }
+
+        const auto support =
+            ResolvePipelineRuntimeSupport(capability.legacy_type_name);
+        std::string summary = "Runtime support: mode=";
+        summary += PipelineRuntimeSupportModeName(support.mode);
+        summary += "; fail_mode=";
+        summary += PipelineRuntimeFailModeName(support.fail_mode);
+        summary += "; pipeline_executor=";
+        summary += support.pipeline_executor_supported ? "supported" : "unsupported";
+        summary += "; materializer=";
+        summary += PipelineMaterializerStorageSupportName(
+            support.materializer_storage_support);
+        AppendHelpTextSection(it->second, summary);
+    }
+
     for (const auto& capability : GetPipelineFailClosedRuntimeCapabilities()) {
         if (!capability.metadata_node_type.has_value()) {
             continue;
@@ -233,14 +263,9 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         metadata.badge = "Blocked";
 
         if (capability.reason != nullptr) {
-            const std::string reason = capability.reason;
-            if (metadata.help_text.find(reason) == std::string::npos) {
-                if (!metadata.help_text.empty()) {
-                    metadata.help_text += "\n\n";
-                }
-                metadata.help_text += "Runtime support: ";
-                metadata.help_text += reason;
-            }
+            std::string summary = "Runtime support: ";
+            summary += capability.reason;
+            AppendHelpTextSection(metadata, summary);
         }
     }
 }
