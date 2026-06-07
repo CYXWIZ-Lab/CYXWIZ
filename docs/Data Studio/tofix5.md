@@ -538,9 +538,9 @@ masks these paths with fake success for the audited branches. Exact
 node names with registered `PipelineOperatorFactory` implementations now
 route through the operator framework from `PipelineExecutor`, and their
 old unreachable fail-closed dispatch branches have been removed.
-Remaining work is architectural: choose the canonical runtime, expand
-coverage where storage-mode support is still narrow, and remove or
-delete the quarantined historical helper block.
+Remaining work is architectural: choose the canonical runtime and expand
+coverage where storage-mode support is still narrow. The quarantined
+historical helper block has already been deleted.
 
 Relevant files:
 
