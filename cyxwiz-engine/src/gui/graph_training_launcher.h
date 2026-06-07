@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/graph_compiler.h"
+#include "../core/pipeline_materializer.h"
 
 #include <functional>
 #include <memory>
@@ -20,6 +21,10 @@ struct GraphTrainingLaunchResult {
     std::string effective_dataset_name;
     std::string label_column;
     int operators_applied = 0;
+    cyxwiz::PipelineMaterializerSourceKind materializer_source_kind =
+        cyxwiz::PipelineMaterializerSourceKind::Unknown;
+    bool materializer_skipped_unsupported_source = false;
+    std::string materializer_unsupported_source_reason;
     int epochs = 0;
     int batch_size = 0;
 };

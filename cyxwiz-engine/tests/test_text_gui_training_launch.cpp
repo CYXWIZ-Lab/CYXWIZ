@@ -361,12 +361,79 @@ int main() {
           "result should report materialized dataset");
     Check(result.label_column == "y", "result should report resolved y label");
     Check(result.operators_applied == 1, "expected one tokenizer operator");
+    Check(result.materializer_source_kind ==
+              cyxwiz::PipelineMaterializerSourceKind::ArrowTable,
+          "result should report ArrowTable materializer source kind");
+    Check(!result.materializer_skipped_unsupported_source,
+          "result should not report unsupported materializer skip for Arrow source");
+    Check(result.materializer_unsupported_source_reason.empty(),
+          "result should not report unsupported materializer reason for Arrow source");
     Check(result.epochs == 1, "result epochs should match config");
     Check(result.batch_size == 2, "result batch size should match config");
 
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(kMaterializedDatasetName);
     registry.UnregisterTabularDataset(kUnusedDatasetName);
+
+    cyxwiz::DataRegistry::TextDatasetEntry launch_text_entry = text_entry;
+    launch_text_entry.num_samples = 3;
+    registry.RegisterTextDataset(kScopeTextDatasetName, launch_text_entry);
+
+    auto legacy_text_config = MakeTrainingConfig(work_dir / "legacy_text_checkpoints");
+    legacy_text_config.dataset_name = kScopeTextDatasetName;
+    bool legacy_text_dispatch_called = false;
+    auto legacy_text_dispatch = [&](cyxwiz::TrainingConfiguration dispatch_config,
+                                    const std::string& dataset_name,
+                                    const std::string& label_column,
+                                    int epochs,
+                                    int batch_size,
+                                    std::weak_ptr<cyxwiz::TrainingPlotPanel>,
+                                    std::function<void(bool)> callback) {
+        legacy_text_dispatch_called = true;
+        Check(dispatch_config.dataset_name == kScopeTextDatasetName,
+              "legacy text config should keep original dataset");
+        Check(dataset_name == kScopeTextDatasetName,
+              "legacy text dispatch should receive original dataset");
+        Check(label_column == "label",
+              "legacy text dispatch should keep configured label column");
+        Check(epochs == 1, "legacy text epochs should match config");
+        Check(batch_size == 2, "legacy text batch size should match config");
+        if (callback) {
+            callback(true);
+        }
+        return true;
+    };
+
+    std::vector<gui::MLNode> legacy_text_nodes = {
+        MakeDataInputNode(kScopeTextDatasetName),
+        MakeTokenizerNode(),
+        MakeOptimizerNode(4, "Text Adam", "", ""),
+    };
+    auto legacy_text_result = gui::StartGraphTrainingFromCompiledConfig(
+        legacy_text_nodes,
+        links,
+        std::move(legacy_text_config),
+        registry,
+        std::weak_ptr<cyxwiz::TrainingPlotPanel>{},
+        [](bool) {},
+        legacy_text_dispatch);
+
+    Check(legacy_text_result.started, legacy_text_result.error_message);
+    Check(legacy_text_dispatch_called,
+          "legacy text dispatch should be called");
+    Check(legacy_text_result.effective_dataset_name == kScopeTextDatasetName,
+          "legacy text result should keep original dataset");
+    Check(legacy_text_result.operators_applied == 0,
+          "legacy text result should not apply Arrow materializer operators");
+    Check(legacy_text_result.materializer_source_kind ==
+              cyxwiz::PipelineMaterializerSourceKind::TextDataset,
+          "legacy text result should report TextDataset source kind");
+    Check(legacy_text_result.materializer_skipped_unsupported_source,
+          "legacy text result should report unsupported materializer skip");
+    Check(legacy_text_result.materializer_unsupported_source_reason ==
+              text_backend_support.reason,
+          "legacy text result should expose central skip reason");
+    registry.UnregisterTextDataset(kScopeTextDatasetName);
 
     std::cout << "Text GUI training launch helper passed\n";
     return 0;

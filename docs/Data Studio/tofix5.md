@@ -373,6 +373,11 @@ the central unsupported-source reason from the materializer storage
 backend capability registry, and the graph training launcher logs that
 reason when materialization passes through a non-Arrow source.
 
+**Status 2026-06-07 follow-up 2:** `GraphTrainingLaunchResult` now
+carries the materializer source kind, unsupported-source skip flag, and
+central skip reason, so callers can surface the same materializer truth
+without scraping logs.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_materializer.h:34`
@@ -665,9 +670,10 @@ tables are the only supported materializer backend, while
 Parquet-backed, image, audio, and text datasets carry explicit
 unsupported reasons and `PipelineMaterializer` consults that registry
 before pass-through. `MaterializeResult` now returns that unsupported
-source reason to callers instead of leaving it only in debug logs. The
-first compile/training backend availability axis is now explicit through
-`PipelineTrainingBackendSupport`.
+source reason to callers instead of leaving it only in debug logs, and
+`GraphTrainingLaunchResult` carries the same source kind / skip reason
+for frontend launch callers. The first compile/training backend
+availability axis is now explicit through `PipelineTrainingBackendSupport`.
 Resolved runtime support now also carries an explicit
 `pipeline_executor_supported` axis. Operator-backed and active
 legacy-dispatched nodes are marked executable, fail-closed and unknown

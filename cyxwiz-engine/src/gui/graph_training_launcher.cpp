@@ -209,6 +209,11 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     }
 
     result.operators_applied = materialize_result.operators_applied;
+    result.materializer_source_kind = materialize_result.source_kind;
+    result.materializer_skipped_unsupported_source =
+        materialize_result.skipped_unsupported_source;
+    result.materializer_unsupported_source_reason =
+        materialize_result.unsupported_source_reason;
     if (materialize_result.skipped_unsupported_source) {
         spdlog::info("StartTrainingFromGraph: materializer skipped '{}' "
                      "({}): {}",
