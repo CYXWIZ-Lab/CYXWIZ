@@ -42,6 +42,7 @@ struct PipelineRuntimeSupport {
     PipelineRuntimeSupportMode mode = PipelineRuntimeSupportMode::Unknown;
     std::optional<gui::NodeType> operator_type = std::nullopt;
     const char* fail_closed_reason = nullptr;
+    bool materializer_arrow_table_supported = false;
 };
 
 const std::vector<PipelineOperatorRuntimeCapability>&

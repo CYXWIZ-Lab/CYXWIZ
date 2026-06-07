@@ -125,6 +125,9 @@ int main() {
                   *support.operator_type == capability.node_type,
               std::string("runtime support operator type mismatch: ") +
                   capability.legacy_type_name);
+        Check(support.materializer_arrow_table_supported,
+              std::string("operator-backed runtime should be Arrow-materializer capable: ") +
+                  capability.legacy_type_name);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
@@ -148,6 +151,9 @@ int main() {
         Check(support.fail_closed_reason != nullptr,
               std::string("runtime support fail-closed reason missing: ") +
                   capability.legacy_type_name);
+        Check(!support.materializer_arrow_table_supported,
+              std::string("fail-closed runtime should not be Arrow-materializer capable: ") +
+                  capability.legacy_type_name);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {
@@ -161,6 +167,9 @@ int main() {
             capability.legacy_type_name);
         Check(support.mode == cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
               std::string("runtime support mode is not legacy executor: ") +
+                  capability.legacy_type_name);
+        Check(!support.materializer_arrow_table_supported,
+              std::string("legacy-dispatched runtime should not claim Arrow materializer support: ") +
                   capability.legacy_type_name);
     }
 

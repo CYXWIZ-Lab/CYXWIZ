@@ -509,11 +509,14 @@ explicit runtime-support mode before routing operator-backed nodes or
 hard-failing known unsupported nodes. Validation also rejects unknown
 runtime-support modes before execution, and source-node role truth now
 lives in the same module. Fixed multi-input arity overrides, currently
-`Join`, are also centralized there. The metadata drift test verifies
-every listed operator runtime capability has a real factory operator and
-that operator, fail-closed, and legacy-dispatched names do not overlap.
-Remaining work is to expand this into a fuller multi-axis capability
-matrix for compile, training, materializer, and backend availability.
+`Join`, are also centralized there. Runtime support now carries the
+first materializer dimension: exact operator-backed nodes are marked
+Arrow-table materializer capable, while fail-closed and legacy-dispatched
+nodes are not. The metadata drift test verifies every listed operator
+runtime capability has a real factory operator and that operator,
+fail-closed, and legacy-dispatched names do not overlap. Remaining work
+is to expand this into a fuller multi-axis capability matrix for compile,
+training, materializer storage scope, and backend availability.
 
 Problem:
 

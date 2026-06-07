@@ -122,3 +122,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: moved fixed multi-input arity truth for legacy
   `Join` into `pipeline_runtime_capabilities`, replacing the local
   validator-only list.
+- 2026-06-07 follow-up: added the first materializer capability dimension
+  to `PipelineRuntimeSupport`: operator-backed nodes are marked
+  Arrow-table materializer capable; legacy and fail-closed nodes are not.
