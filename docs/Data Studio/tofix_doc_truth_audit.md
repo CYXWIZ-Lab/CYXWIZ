@@ -202,3 +202,7 @@ scanning so stale or duplicate work is not reintroduced.
   explicit column, degree `>= 2`, quoted SQL identifiers, and generated
   powers through the requested degree instead of retaining no-column or
   partial-degree behavior.
+- 2026-06-07 follow-up: moved legacy `TableSplitter` to fail-closed
+  support because Data Studio pipeline links do not preserve output-pin
+  identity, so the executor cannot route its advertised `Top` and
+  `Bottom` outputs truthfully.

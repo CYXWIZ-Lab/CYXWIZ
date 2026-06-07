@@ -373,6 +373,7 @@ int main() {
         gui::NodeType::RegexTester,
         gui::NodeType::JSONPathExtractor,
         gui::NodeType::RuleEngine,
+        gui::NodeType::TableSplitter,
     };
     for (auto type : fail_closed_nodes) {
         const auto* meta = metadata.GetMetadata(type);

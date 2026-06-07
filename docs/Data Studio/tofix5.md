@@ -435,6 +435,9 @@ Problem now:
   removes the promoted row instead of registering the input table unchanged
 - legacy `TableCropper` now validates crop bounds against the loaded
   Arrow table instead of relying on Arrow slice clamping behavior
+- legacy `TableSplitter` now fails closed because the pipeline JSON
+  links do not carry output-pin identity, so the executor cannot route
+  the advertised `Top` and `Bottom` outputs truthfully
 - legacy `MathFormula` now requires an explicit `formula` and runs
   through the repaired DuckDB registration path instead of silently
   creating a constant zero column when the expression is missing
@@ -463,9 +466,9 @@ Problem now:
   rejects unknown operations instead of returning a successful no-op
 - fail-closed legacy helper bodies such as `ExportExcel`,
   `ExportJSON`, `CellExtractor`, `CellUpdater`, `ColumnAppender`,
-  `RowAppender`, and `Unpivot` have been removed from the active
-  executor contract; the runtime capability registry now owns their
-  unsupported behavior
+  `RowAppender`, `Unpivot`, and `TableSplitter` have been removed from
+  the active executor contract; the runtime capability registry now owns
+  their unsupported behavior
 - broader support truth still needs the next multi-axis capability matrix
 
 Effect:

@@ -93,6 +93,7 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"ColumnAppender", "legacy ColumnAppender execution is still a passthrough placeholder"},
         {"RowAppender", "legacy RowAppender execution is still a passthrough placeholder"},
         {"Unpivot", "legacy Unpivot execution is still a passthrough placeholder"},
+        {"TableSplitter", "legacy TableSplitter needs pin-aware multi-output routing; PipelineExecutor can only carry one dataset per node"},
         {"ExportExcel", "legacy ExportExcel execution is still a fake-success placeholder"},
         {"ExportJSON", "legacy ExportJSON execution is still a fake-success placeholder"},
         {"RuleEngine", "legacy RuleEngine execution ignores rules and is not implemented truthfully"},
@@ -127,7 +128,6 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"ExcelInput"},
         {"ExportCSV"},
         {"RowToColumnNames"},
-        {"TableSplitter"},
         {"TableCropper"},
         {"StringManipulation"},
         {"MathFormula"},
@@ -204,7 +204,6 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"Binning", "n_bins", 1, false},
         {"RowToColumnNames", "row_index", 0, false},
         {"CellExtractor", "row_index", 0, false},
-        {"TableSplitter", "split_row", 0, false},
         {"TableCropper", "start_row", 0, false},
         {"TableCropper", "end_row", -1, false},
     };

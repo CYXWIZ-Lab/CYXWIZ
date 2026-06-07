@@ -726,8 +726,6 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteExportCSV(node, ctx);
     } else if (node.type == "RowToColumnNames") {
         return ExecuteRowToColumnNames(node, ctx);
-    } else if (node.type == "TableSplitter") {
-        return ExecuteTableSplitter(node, ctx);
     } else if (node.type == "TableCropper") {
         return ExecuteTableCropper(node, ctx);
     } else if (node.type == "StringManipulation") {
@@ -2959,51 +2957,6 @@ bool PipelineExecutor::ExecuteRowToColumnNames(const Node& node, ExecutionContex
         return true;
     } catch (const std::exception& e) {
         ReportError("RowToColumnNames error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteTableSplitter(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("TableSplitter: No input dataset");
-        return false;
-    }
-
-    auto split_row_it = node.parameters.find("split_row");
-    int split_row = (split_row_it != node.parameters.end()) ? std::stoi(split_row_it->second) : 0;
-
-    spdlog::info("[Data Studio] Splitting table at row {}", split_row);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("TableSplitter: Input dataset not found");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
-        int64_t num_rows = input_table->num_rows();
-
-        if (split_row < 0 || split_row >= num_rows) {
-            ReportError("TableSplitter: Split row out of bounds");
-            return false;
-        }
-
-        auto top_table = input_table->Slice(0, split_row);
-        auto bottom_table = input_table->Slice(split_row);
-
-        std::string top_name = "ds_split_top_" + std::to_string(node.id);
-        std::string bottom_name = "ds_split_bottom_" + std::to_string(node.id);
-
-        registry.RegisterArrowTable(top_table, top_name);
-        registry.RegisterArrowTable(bottom_table, bottom_name);
-
-        ctx.node_results[node.id] = top_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("TableSplitter error: " + std::string(e.what()));
         return false;
     }
 }

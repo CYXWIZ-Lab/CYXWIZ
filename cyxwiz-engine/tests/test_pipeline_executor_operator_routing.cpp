@@ -880,6 +880,23 @@ int main() {
           "PolynomialFeatures multi-column validation should be specific: " +
               multi_column_polynomial_executor.GetLastError());
 
+    const std::string table_splitter_json =
+        R"({"nodes":[)"
+        R"({"id":83,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":84,"type":"TableSplitter","name":"Split","parameters":{)"
+        R"("split_row":"1"}})"
+        R"(],"links":[{"start_node":83,"end_node":84}]})";
+
+    cyxwiz::PipelineExecutor table_splitter_executor;
+    Check(!table_splitter_executor.ExecutePipeline(table_splitter_json),
+          "TableSplitter should fail closed until multi-output routing exists");
+    Check(table_splitter_executor.GetLastError().find(
+              "pin-aware multi-output routing") != std::string::npos,
+          "TableSplitter fail-closed error should explain routing limitation: " +
+              table_splitter_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
@@ -906,6 +923,7 @@ int main() {
     registry.UnloadDataset("ds_binning_72");
     registry.UnloadDataset("ds_datainput_77");
     registry.UnloadDataset("ds_poly_78");
+    registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
     fs::remove(missing_csv_path);

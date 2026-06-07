@@ -1709,7 +1709,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
         {{"Top", PinType::Dataset, true, "Rows above split"},
          {"Bottom", PinType::Dataset, true, "Rows below split"}},
         {{"split_row", "int", "0", "Row index to split at", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::CellExtractor, NodeCategory::DataTransform, "Cell Extractor", ICON_FA_CROSSHAIRS,
         {"cell", "extract", "value"}, 0, false,

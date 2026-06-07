@@ -193,7 +193,6 @@ private:
     // KNIME-Style Table Manipulation Nodes
     bool ExecuteExcelInput(const Node& node, ExecutionContext& ctx);
     bool ExecuteRowToColumnNames(const Node& node, ExecutionContext& ctx);
-    bool ExecuteTableSplitter(const Node& node, ExecutionContext& ctx);
     bool ExecuteTableCropper(const Node& node, ExecutionContext& ctx);
     bool ExecuteStringManipulation(const Node& node, ExecutionContext& ctx);
     bool ExecuteMathFormula(const Node& node, ExecutionContext& ctx);
