@@ -517,7 +517,10 @@ Effect:
 
 ## Priority 3: DNN Nodes That Look Real But Have No Visible Backend Execution Path
 
-**Status:** Partially fixed in current branch for runtime truth. `PipelineExecutor` now fails closed if these DNN nodes reach the legacy execution path. Metadata/UI status still needs a separate pass so the frontend does not present them as fully implemented.
+**Status:** Fixed in current branch for runtime and metadata truth.
+`PipelineExecutor` now fails closed if these DNN nodes reach the legacy
+execution path, and `NodeMetadataRegistry` marks them as template/blocked
+instead of implemented.
 
 Affected nodes:
 
@@ -537,15 +540,22 @@ Relevant files:
   - `model_builder.cpp`
   - `pipeline_executor.cpp`
 
-Problem:
+Problem before this pass:
 
-- metadata marks them as implemented
-- they are visible as real DNN nodes
-- there is no clear end-to-end execution path in the current node backend
+- metadata marked them as implemented
+- they were visible as real DNN nodes
+- there was no clear end-to-end execution path in the current node backend
 
-Effect:
+Current remaining problem:
 
-- these nodes over-promise capability in the graph UI
+- real DNN inference/training support is still not implemented; the UI
+  should keep treating these as blocked/template unless a real runtime
+  path lands
+
+Effect now:
+
+- these nodes no longer over-promise through metadata status
+- implementation remains future work
 
 **Recommendation:**
 
@@ -558,7 +568,10 @@ Effect:
 
 ### 12. `DataProfiler`
 
-**Status:** Fixed in current branch for the legacy `PipelineExecutor` path. It now fails closed as a panel/report workflow instead of pretending to transform data.
+**Status:** Fixed in current branch for the legacy `PipelineExecutor`
+path and metadata truth. It now fails closed as a panel/report workflow
+instead of pretending to transform data, and metadata marks it
+template/UI-only rather than implemented.
 
 **Severity:** Medium
 
@@ -574,8 +587,8 @@ Problem before the runtime-truth pass:
 
 Current remaining problem:
 
-- the legacy path now fails closed, but the node still needs either a
-  real profiling output contract or UI-only/report labeling
+- the node still needs either a real profiling output contract or a
+  polished UI-only/report workflow
 
 Effect now:
 
@@ -591,7 +604,10 @@ Effect now:
 
 ### 13. Utility nodes that historically returned placeholder success
 
-**Status:** Fixed in current branch for the legacy `PipelineExecutor` path. The affected utility nodes now return explicit unsupported execution errors instead of placeholder success.
+**Status:** Fixed in current branch for the legacy `PipelineExecutor`
+path and metadata truth. The affected utility nodes now return explicit
+unsupported execution errors instead of placeholder success, and metadata
+marks them template/blocked instead of implemented.
 
 Affected nodes:
 
@@ -608,17 +624,21 @@ Relevant files:
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:4230`
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:4240`
 
-Problem:
+Problem before this pass:
 
-- several utility nodes still use placeholder logic or passthrough behavior
+- several utility nodes used placeholder logic or passthrough behavior
 
-Effect:
+Current remaining problem:
 
-- same issue as analytics nodes: apparent success without real work
+- real graph execution for these utility nodes is still not implemented
+
+Effect now:
+
+- apparent success without real work is blocked in runtime and metadata
 
 **Recommendation:**
 
-- fail closed until implemented
+- keep them blocked until implemented
 
 ---
 

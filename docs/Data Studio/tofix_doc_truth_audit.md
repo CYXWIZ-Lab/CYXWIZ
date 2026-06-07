@@ -63,3 +63,8 @@ scanning so stale or duplicate work is not reintroduced.
   closed docs.
 - Updated `tofix8.md`, `tofix12.md`, `tofix14.md`, and `tofix19.md` for
   model-family source-of-truth boundaries and the NER compile guard.
+- 2026-06-07 follow-up: updated metadata truth for registered fail-closed
+  nodes: unsupported classical ML/evaluation/DNN/utility/signal nodes are now
+  template/blocked, while supported `LSTM` and `GRU` metadata is marked
+  implemented. Legacy GUI-visible nodes without registry entries remain a
+  separate visibility/registration cleanup.

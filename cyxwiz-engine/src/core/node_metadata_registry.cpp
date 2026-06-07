@@ -816,7 +816,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"n_components", "int", "2", "Output dimensions", {}, "2-3"},
          {"perplexity", "float", "30.0", "Perplexity", {}, "5-50"},
          {"learning_rate", "float", "200.0", "Learning rate", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     // Classification
     RegisterNode({NodeType::DecisionTreeClassifier, NodeCategory::Analytics, "Decision Tree", ICON_FA_SITEMAP,
@@ -827,7 +827,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"max_depth", "int", "10", "Max depth", {}, ""},
          {"min_samples_split", "int", "2", "Min samples to split", {}, ""},
          {"criterion", "enum", "gini", "Split criterion", {"gini", "entropy"}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::RandomForestClassifier, NodeCategory::Analytics, "Random Forest", ICON_FA_CUBES,
         {"random", "forest", "ensemble"}, 0, false, "Random Forest ensemble",
@@ -837,7 +837,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"n_estimators", "int", "100", "Number of trees", {}, ""},
          {"max_depth", "int", "10", "Max depth per tree", {}, ""},
          {"max_features", "enum", "sqrt", "Features per split", {"sqrt", "log2", "all"}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::SVMClassifier, NodeCategory::Analytics, "SVM Classifier", ICON_FA_BORDER_ALL,
         {"svm", "support", "vector"}, 0, false, "Support Vector Machine classifier",
@@ -847,7 +847,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"kernel", "enum", "rbf", "Kernel function", {"linear", "rbf", "poly", "sigmoid"}, ""},
          {"C", "float", "1.0", "Regularization", {}, ""},
          {"gamma", "enum", "scale", "Kernel coefficient", {"scale", "auto"}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::KNNClassifier, NodeCategory::Analytics, "KNN Classifier", ICON_FA_USERS,
         {"knn", "nearest", "neighbor"}, 0, false, "K-Nearest Neighbors classifier",
@@ -857,7 +857,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"n_neighbors", "int", "5", "Number of neighbors", {}, "1-100"},
          {"weights", "enum", "uniform", "Weight function", {"uniform", "distance"}, ""},
          {"metric", "enum", "euclidean", "Distance metric", {"euclidean", "manhattan", "cosine"}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::LogisticRegressionNode, NodeCategory::Analytics, "Logistic Regression", ICON_FA_PERCENT,
         {"logistic", "regression", "classifier"}, 0, false, "Logistic Regression classifier",
@@ -866,7 +866,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}, {"Probabilities", PinType::Dataset, true, "Class probabilities"}},
         {{"penalty", "enum", "l2", "Regularization", {"l1", "l2", "elasticnet", "none"}, ""},
          {"C", "float", "1.0", "Inverse regularization strength", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     // Regression
     RegisterNode({NodeType::LinearRegressionNode, NodeCategory::Analytics, "Linear Regression", ICON_FA_CHART_LINE,
@@ -896,14 +896,14 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"y_true", PinType::Labels, true, "True labels"}, {"y_pred", PinType::Labels, true, "Predictions"}},
         {{"Matrix", PinType::Dataset, true, "Confusion matrix"}},
         {{"normalize", "enum", "none", "Normalization", {"none", "true", "pred", "all"}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "UI-only"});
 
     RegisterNode({NodeType::ROCCurveNode, NodeCategory::Analytics, "ROC Curve", ICON_FA_CHART_AREA,
         {"roc", "auc", "curve"}, 0, false, "ROC curve and AUC",
         "Receiver Operating Characteristic curve for binary classification.", "",
         {{"y_true", PinType::Labels, true, "True labels"}, {"y_score", PinType::Dataset, true, "Prediction scores"}},
         {{"FPR", PinType::Dataset, true, "False positive rates"}, {"TPR", PinType::Dataset, true, "True positive rates"}, {"AUC", PinType::Dataset, true, "Area under curve"}},
-        {}, NodeImplementationStatus::Implemented, 0});
+        {}, NodeImplementationStatus::Template, 0, "UI-only"});
 
     RegisterNode({NodeType::LearningCurvesNode, NodeCategory::Analytics, "Learning Curves", ICON_FA_CHART_LINE,
         {"learning", "curves", "training"}, 0, false, "Training/validation learning curves",
@@ -912,7 +912,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"TrainScores", PinType::Dataset, true, "Train scores"}, {"ValScores", PinType::Dataset, true, "Validation scores"}},
         {{"cv", "int", "5", "Cross-validation folds", {}, ""},
          {"train_sizes", "string", "0.1,0.3,0.5,0.7,0.9,1.0", "Training sizes", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "UI-only"});
 
     RegisterNode({NodeType::CrossValidationNode, NodeCategory::Analytics, "Cross-Validation", ICON_FA_ROTATE,
         {"cross", "validation", "cv"}, 0, false, "K-Fold cross-validation",
@@ -921,7 +921,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Scores", PinType::Dataset, true, "CV scores"}, {"Mean", PinType::Dataset, true, "Mean score"}, {"Std", PinType::Dataset, true, "Std deviation"}},
         {{"cv", "int", "5", "Number of folds", {}, "2-20"},
          {"scoring", "enum", "accuracy", "Scoring metric", {"accuracy", "f1", "precision", "recall", "roc_auc"}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "UI-only"});
 
     RegisterNode({NodeType::FeatureImportanceNode, NodeCategory::Analytics, "Feature Importance", ICON_FA_RANKING_STAR,
         {"feature", "importance", "selection"}, 0, false, "Feature importance analysis",
@@ -929,7 +929,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Model", PinType::Parameters, true, "Trained tree model"}},
         {{"Importances", PinType::Dataset, true, "Feature importance scores"}},
         {{"method", "enum", "impurity", "Importance method", {"impurity", "permutation"}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "UI-only"});
 
     // Preprocessing (Phase 4)
     RegisterNode({NodeType::StandardScaler, NodeCategory::Preprocessing, "Standard Scaler", ICON_FA_SCALE_BALANCED,
@@ -1016,7 +1016,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Data", PinType::Dataset, true, "Input dataset"}},
         {{"Report", PinType::Dataset, true, "Profiling report"}},
         {{"minimal", "bool", "false", "Minimal mode (faster)", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "UI-only"});
 }
 
 // =============================================================================
@@ -1035,7 +1035,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input", PinType::Tensor, true, "Input [N,C,H,W]"}},
         {{"Output", PinType::Tensor, true, "Output"}},
         {{"filters", "int", "32", "Filters", {}, ""}, {"kernel_size", "int", "3", "Kernel", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::LSTM, NodeCategory::Recurrent, "LSTM", ICON_FA_REPEAT,
         {"lstm", "recurrent", "sequence"}, 0, false, "LSTM layer", "", "",
@@ -1046,7 +1046,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"num_layers", "int", "1", "Stacked layers", {}, ""},
          {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
          {"dropout", "float", "0.0", "Dropout", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GRU, NodeCategory::Recurrent, "GRU", ICON_FA_REPEAT,
         {"gru", "recurrent", "sequence"}, 0, false, "GRU layer", "", "",
@@ -1057,7 +1057,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"num_layers", "int", "1", "Stacked layers", {}, ""},
          {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
          {"dropout", "float", "0.0", "Dropout", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RNN, NodeCategory::Recurrent, "RNN", ICON_FA_REPEAT,
         {"rnn", "recurrent", "sequence"}, 0, false, "Simple RNN layer", "", "",
@@ -1102,7 +1102,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Pooled"}},
         {{"kernel_size", "int", "2", "Kernel", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::Flatten, NodeCategory::ShapeOps, "Flatten", ICON_FA_ARROWS_LEFT_RIGHT,
         {"flatten", "reshape"}, 0, false, "Flatten tensor", "", "",
@@ -1431,21 +1431,21 @@ void NodeMetadataRegistry::InitializeDNNNodes() {
         {"dnn", "model", "load"}, 0, false, "Load pre-trained model", "", "",
         {}, {{"Model", PinType::Parameters, true, "Model"}},
         {{"model_path", "file", "", "Model file", {}, "*.onnx"}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::DNNDetect, NodeCategory::DNN, "Object Detector", ICON_FA_CROSSHAIRS,
         {"detect", "yolo", "object"}, 0, false, "Object detection", "", "",
         {{"Image", PinType::Tensor, true, "Image"}, {"Model", PinType::Parameters, true, "Model"}},
         {{"Detections", PinType::Dataset, true, "Detections"}},
         {{"confidence", "float", "0.5", "Threshold", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::PretrainedYOLO, NodeCategory::DNN, "YOLOv4", ICON_FA_CROSSHAIRS,
         {"yolo", "detection"}, 0, false, "YOLOv4 detector", "", "",
         {{"Image", PinType::Tensor, true, "Image"}},
         {{"Detections", PinType::Dataset, true, "Detections"}},
         {{"confidence", "float", "0.5", "Threshold", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 }
 
 // =============================================================================
@@ -1790,7 +1790,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         "Convert frequency domain back to time domain.", "",
         {{"Spectrum", PinType::Tensor, true, "Frequency spectrum"}},
         {{"Signal", PinType::Tensor, true, "Time-domain signal"}},
-        {}, NodeImplementationStatus::Implemented, 0});
+        {}, NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::FilterDesigner, NodeCategory::Signal, "Filter Designer", ICON_FA_FILTER,
         {"filter", "fir", "iir", "lowpass"}, 0, false, "Design digital filters",
@@ -1812,7 +1812,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"Coefficients", PinType::Tensor, true, "Wavelet coefficients"}, {"Approximation", PinType::Tensor, true, "Approximation"}, {"Detail", PinType::Tensor, true, "Detail coefficients"}},
         {{"wavelet", "enum", "db4", "Wavelet family", {"db4", "haar", "sym4", "coif2"}, ""},
          {"level", "int", "3", "Decomposition level", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     // ===== Text Analytics Nodes (Phase 4) =====
     RegisterNode({NodeType::TFIDFVectorizer, NodeCategory::TextProcessing, "TF-IDF", ICON_FA_ALIGN_LEFT,
@@ -1851,7 +1851,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"Result", PinType::Dataset, true, "Computed result"}},
         {{"expression", "string", "2 + 2", "Math expression", {}, ""},
          {"precision", "int", "6", "Decimal precision", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::UnitConverter, NodeCategory::Utility, "Unit Converter", ICON_FA_SCALE_BALANCED,
         {"unit", "convert", "conversion"}, 0, false, "Unit conversion utility",
@@ -1861,7 +1861,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"category", "enum", "length", "Unit category", {"length", "mass", "temperature", "time", "area", "volume"}, ""},
          {"from_unit", "string", "m", "From unit", {}, ""},
          {"to_unit", "string", "ft", "To unit", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::RegexTester, NodeCategory::Utility, "Regex Tester", ICON_FA_CODE,
         {"regex", "regular", "expression", "pattern"}, 0, false, "Regular expression tester",
@@ -1870,7 +1870,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"Matches", PinType::Dataset, true, "Match results"}, {"Groups", PinType::Dataset, true, "Capture groups"}},
         {{"pattern", "string", ".*", "Regex pattern", {}, ""},
          {"flags", "string", "", "Flags (i=ignorecase, m=multiline)", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::JSONPathExtractor, NodeCategory::Utility, "JSONPath", ICON_FA_CODE_BRANCH,
         {"json", "jsonpath", "extract"}, 0, false, "Extract data using JSONPath",
@@ -1878,7 +1878,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"JSON", PinType::Dataset, true, "JSON data"}},
         {{"Result", PinType::Dataset, true, "Extracted values"}},
         {{"path", "string", "$.data[*].value", "JSONPath expression", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 }
 
 // =============================================================================

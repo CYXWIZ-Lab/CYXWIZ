@@ -84,8 +84,8 @@ Current recurring patterns:
 
 | Node | Visible | Compiler | Builder | Truth | Notes | Recommended action |
 |---|---|---:|---:|---|---|---|
-| `Conv2D` | Yes | Blocked with error | No | `Blocked` | Compiler now fails closed before `ModelBuilder` can silently miss CNN support. | Implement CNN wrappers before unblocking. |
-| `MaxPool2D` | Yes | Blocked with error | No | `Blocked` | Same as above. | Implement CNN wrappers before unblocking. |
+| `Conv2D` | Template/blocked | Blocked with error | No | `Blocked` | Compiler and metadata now fail closed before `ModelBuilder` can silently miss CNN support. | Implement CNN wrappers before unblocking. |
+| `MaxPool2D` | Template/blocked | Blocked with error | No | `Blocked` | Compiler and metadata now fail closed. | Implement CNN wrappers before unblocking. |
 | `AvgPool2D` | Yes | Blocked with error | No | `Blocked` | Same as above. | Implement CNN wrappers before unblocking. |
 | `GlobalMaxPool` | Yes | Blocked with error | No | `Blocked` | Visible/documented beyond build support, but no longer accepted as trainable. | Implement before unblocking. |
 | `GlobalAvgPool` | Yes | Blocked with error | No | `Blocked` | Visible/documented beyond build support, but no longer accepted as trainable. | Implement before unblocking. |
@@ -101,8 +101,8 @@ Current recurring patterns:
 
 | Node | Visible | Compiler | Builder | Truth | Notes | Recommended action |
 |---|---|---:|---:|---|---|---|
-| `LSTM` | Yes | Yes | Yes | `Partial` | Sequential text/time-series path exists; broader sequence-output tasks such as NER are not complete. | Keep visible with task limits. |
-| `GRU` | Yes | Yes | Yes | `Partial` | Sequential text/time-series path exists; broader sequence-output tasks are not complete. | Keep visible with task limits. |
+| `LSTM` | Yes | Yes | Yes | `Partial` | Sequential text/time-series path exists; metadata now correctly marks it implemented. Broader sequence-output tasks such as NER are not complete. | Keep visible with task limits. |
+| `GRU` | Yes | Yes | Yes | `Partial` | Sequential text/time-series path exists; metadata now correctly marks it implemented. Broader sequence-output tasks are not complete. | Keep visible with task limits. |
 | `RNN` | Yes | Blocked with error | No | `Blocked` | Compiler now fails closed because the sequential builder path is not ready. | Implement or keep hidden. |
 | `Bidirectional` | Yes | Blocked with error | No | `Blocked` | Compiler now fails closed; NER-style bidirectional tagging still needs first-class contracts. | Implement under `tofix14.md` / `tofix19.md`. |
 
@@ -121,13 +121,13 @@ Current recurring patterns:
 
 | Node | Visible | Pipeline | Operator | Truth | Notes | Recommended action |
 |---|---|---:|---:|---|---|---|
-| `LogisticRegression` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
-| `DecisionTree` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
-| `RandomForest` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
-| `GradientBoosting` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
-| `SVM` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
-| `KNN` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
-| `NaiveBayes` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
+| `LogisticRegression` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
+| `DecisionTree` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
+| `RandomForest` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
+| `GradientBoosting` | Yes, legacy GUI path | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; this node still needs a metadata/visibility registration pass. | Hide or implement. |
+| `SVM` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
+| `KNN` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
+| `NaiveBayes` | Yes, legacy GUI path | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; this node still needs a metadata/visibility registration pass. | Hide or implement. |
 
 ---
 
@@ -169,10 +169,10 @@ Current recurring patterns:
 
 | Node | Visible | Pipeline | Operator | Truth | Notes | Recommended action |
 |---|---|---:|---:|---|---|---|
-| `t-SNE` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
-| `DataProfiler` | Yes | Fails closed | No | `Blocked/UI-only` | Now treated as a panel/report workflow, not a transform. | Keep as panel or implement real output. |
-| `Regex` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
-| `JSONPath` | Yes | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error. | Hide or implement. |
+| `t-SNE` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
+| `DataProfiler` | Template/UI-only | Fails closed | No | `Blocked/UI-only` | Now treated as a panel/report workflow, not a transform. | Keep as panel or implement real output. |
+| `Regex` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
+| `JSONPath` | Template/blocked | Fails closed | No | `Blocked` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Hide or implement. |
 
 ---
 
@@ -180,11 +180,11 @@ Current recurring patterns:
 
 | Node | Visible | Pipeline | Truth | Notes | Recommended action |
 |---|---|---:|---|---|---|
-| `ConfusionMatrix` | Yes | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error. | Treat as panel/tool until real graph execution exists. |
-| `ROCCurve` | Yes | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error. | Same. |
-| `LearningCurves` | Yes | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error. | Same. |
-| `FeatureImportance` | Yes | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error. | Same. |
-| `CrossValidation` | Yes | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error. | Same. |
+| `ConfusionMatrix` | Template/UI-only | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Treat as panel/tool until real graph execution exists. |
+| `ROCCurve` | Template/UI-only | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Same. |
+| `LearningCurves` | Template/UI-only | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Same. |
+| `FeatureImportance` | Template/UI-only | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Same. |
+| `CrossValidation` | Template/UI-only | Fails closed | `Blocked/UI-only` | Legacy placeholder success was replaced with explicit unsupported error; metadata no longer marks it implemented. | Same. |
 
 ---
 

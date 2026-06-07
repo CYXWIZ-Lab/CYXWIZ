@@ -103,6 +103,49 @@ int main() {
               "factory type " + TypeId(type) + " has unknown category");
     }
 
+    const std::vector<gui::NodeType> supported_model_nodes = {
+        gui::NodeType::LSTM,
+        gui::NodeType::GRU,
+    };
+    for (auto type : supported_model_nodes) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr, "missing supported model metadata for type " + TypeId(type));
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "supported model type " + TypeId(type) + " should be marked implemented");
+    }
+
+    const std::vector<gui::NodeType> fail_closed_nodes = {
+        gui::NodeType::TSNENode,
+        gui::NodeType::DecisionTreeClassifier,
+        gui::NodeType::RandomForestClassifier,
+        gui::NodeType::SVMClassifier,
+        gui::NodeType::KNNClassifier,
+        gui::NodeType::LogisticRegressionNode,
+        gui::NodeType::ConfusionMatrixNode,
+        gui::NodeType::ROCCurveNode,
+        gui::NodeType::LearningCurvesNode,
+        gui::NodeType::CrossValidationNode,
+        gui::NodeType::FeatureImportanceNode,
+        gui::NodeType::DataProfiler,
+        gui::NodeType::Conv2D,
+        gui::NodeType::MaxPool2D,
+        gui::NodeType::DNNModelLoad,
+        gui::NodeType::DNNDetect,
+        gui::NodeType::PretrainedYOLO,
+        gui::NodeType::IFFTNode,
+        gui::NodeType::WaveletTransform,
+        gui::NodeType::CalculatorNode,
+        gui::NodeType::UnitConverter,
+        gui::NodeType::RegexTester,
+        gui::NodeType::JSONPathExtractor,
+    };
+    for (auto type : fail_closed_nodes) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr, "missing fail-closed metadata for type " + TypeId(type));
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
+              "fail-closed type " + TypeId(type) + " should not be marked implemented");
+    }
+
     const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);
     Check(compare != nullptr, "missing TensorCompare metadata");
     Check(HasInput(compare, "A", true),
