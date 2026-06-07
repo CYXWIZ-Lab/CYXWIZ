@@ -293,6 +293,7 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
         return {PipelineRuntimeSupportMode::OperatorBacked,
+                PipelineRuntimeFailMode::Real,
                 operator_type,
                 nullptr,
                 PipelineMaterializerStorageSupport::ArrowTableOnly,
@@ -302,6 +303,7 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
     if (const char* reason = ResolvePipelineFailClosedReason(legacy_type_name);
         reason != nullptr) {
         return {PipelineRuntimeSupportMode::FailClosed,
+                PipelineRuntimeFailMode::HardFail,
                 std::nullopt,
                 reason,
                 PipelineMaterializerStorageSupport::None,
@@ -310,6 +312,7 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
 
     if (IsPipelineLegacyRuntimeNode(legacy_type_name)) {
         return {PipelineRuntimeSupportMode::LegacyExecutor,
+                PipelineRuntimeFailMode::Real,
                 std::nullopt,
                 nullptr,
                 PipelineMaterializerStorageSupport::None,
@@ -335,6 +338,22 @@ const char* PipelineStorageBackendName(PipelineStorageBackend backend) {
         return "Unknown";
     }
     return "Unknown";
+}
+
+const char* PipelineRuntimeFailModeName(PipelineRuntimeFailMode fail_mode) {
+    switch (fail_mode) {
+    case PipelineRuntimeFailMode::Real:
+        return "real";
+    case PipelineRuntimeFailMode::HardFail:
+        return "hard_fail";
+    case PipelineRuntimeFailMode::Simulated:
+        return "simulated";
+    case PipelineRuntimeFailMode::Passthrough:
+        return "passthrough";
+    case PipelineRuntimeFailMode::Unknown:
+        return "unknown";
+    }
+    return "unknown";
 }
 
 PipelineMaterializerStorageBackendCapability

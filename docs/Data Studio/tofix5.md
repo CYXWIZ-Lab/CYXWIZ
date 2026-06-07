@@ -629,12 +629,16 @@ parameter rules for active legacy transforms. The metadata drift test
 verifies every listed operator runtime capability has a real factory
 operator, that operator/fail-closed/legacy-dispatched names do not
 overlap, and that validation capability entries resolve to known
-runtime-supported names. Materializer storage-backend truth is now
-centralized too: Arrow tables are the only supported materializer
-backend, while Parquet-backed, image, audio, and text datasets carry
-explicit unsupported reasons and `PipelineMaterializer` consults that
-registry before pass-through. Remaining work is to expand this into a
-fuller multi-axis capability matrix for compile and training backend
+runtime-supported names. The first explicit `fail_mode` axis now lives
+on resolved runtime support too: operator-backed and active
+legacy-dispatched paths report `real`, while known unsupported paths
+report `hard_fail`; stable fail-mode names are covered by the drift
+test. Materializer storage-backend truth is now centralized too: Arrow
+tables are the only supported materializer backend, while
+Parquet-backed, image, audio, and text datasets carry explicit
+unsupported reasons and `PipelineMaterializer` consults that registry
+before pass-through. Remaining work is to expand this into a fuller
+multi-axis capability matrix for compile and training backend
 availability.
 
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
@@ -762,11 +766,11 @@ Deliverable:
 ### Ticket D: Capability registry
 
 Status: in progress. Runtime support now has centralized operator,
-legacy, fail-closed, required-parameter, enum, integer-validation,
-compiler-blocked training, Arrow-table materializer-scope truth, and
-materializer storage-backend availability. The remaining work is the
-broader multi-axis matrix for compile success and training backend
-availability.
+legacy, fail-closed, fail-mode, required-parameter, enum,
+integer-validation, compiler-blocked training, Arrow-table
+materializer-scope truth, and materializer storage-backend availability.
+The remaining work is the broader multi-axis matrix for compile success
+and training backend availability.
 
 Scope:
 

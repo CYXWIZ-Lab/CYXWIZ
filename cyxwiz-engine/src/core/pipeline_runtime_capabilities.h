@@ -72,6 +72,14 @@ enum class PipelineRuntimeSupportMode {
     FailClosed,
 };
 
+enum class PipelineRuntimeFailMode {
+    Unknown,
+    Real,
+    HardFail,
+    Simulated,
+    Passthrough,
+};
+
 enum class PipelineMaterializerStorageSupport {
     None,
     ArrowTableOnly,
@@ -87,6 +95,7 @@ struct PipelineMaterializerStorageBackendCapability {
 
 struct PipelineRuntimeSupport {
     PipelineRuntimeSupportMode mode = PipelineRuntimeSupportMode::Unknown;
+    PipelineRuntimeFailMode fail_mode = PipelineRuntimeFailMode::Unknown;
     std::optional<gui::NodeType> operator_type = std::nullopt;
     const char* fail_closed_reason = nullptr;
     PipelineMaterializerStorageSupport materializer_storage_support =
@@ -130,6 +139,8 @@ GetPipelineMaterializerStorageBackendCapabilities();
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name);
 
 const char* PipelineStorageBackendName(PipelineStorageBackend backend);
+
+const char* PipelineRuntimeFailModeName(PipelineRuntimeFailMode fail_mode);
 
 PipelineMaterializerStorageBackendCapability
 ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend);

@@ -267,6 +267,9 @@ int main() {
         Check(support.mode == cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
               std::string("runtime support mode is not operator-backed: ") +
                   capability.legacy_type_name);
+        Check(support.fail_mode == cyxwiz::PipelineRuntimeFailMode::Real,
+              std::string("operator-backed runtime should advertise real fail mode: ") +
+                  capability.legacy_type_name);
         Check(support.operator_type.has_value() &&
                   *support.operator_type == capability.node_type,
               std::string("runtime support operator type mismatch: ") +
@@ -298,6 +301,9 @@ int main() {
         Check(support.mode == cyxwiz::PipelineRuntimeSupportMode::FailClosed,
               std::string("runtime support mode is not fail-closed: ") +
                   capability.legacy_type_name);
+        Check(support.fail_mode == cyxwiz::PipelineRuntimeFailMode::HardFail,
+              std::string("fail-closed runtime should advertise hard-fail mode: ") +
+                  capability.legacy_type_name);
         Check(support.fail_closed_reason != nullptr,
               std::string("runtime support fail-closed reason missing: ") +
                   capability.legacy_type_name);
@@ -322,6 +328,9 @@ int main() {
         Check(support.mode == cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
               std::string("runtime support mode is not legacy executor: ") +
                   capability.legacy_type_name);
+        Check(support.fail_mode == cyxwiz::PipelineRuntimeFailMode::Real,
+              std::string("legacy-dispatched runtime should advertise real fail mode: ") +
+                  capability.legacy_type_name);
         Check(!support.materializer_arrow_table_supported,
               std::string("legacy-dispatched runtime should not claim Arrow materializer support: ") +
                   capability.legacy_type_name);
@@ -330,6 +339,19 @@ int main() {
               std::string("legacy-dispatched runtime should not advertise materializer scope: ") +
                   capability.legacy_type_name);
     }
+
+    Check(std::string(cyxwiz::PipelineRuntimeFailModeName(
+              cyxwiz::PipelineRuntimeFailMode::Real)) == "real",
+          "runtime fail-mode name for real is stable");
+    Check(std::string(cyxwiz::PipelineRuntimeFailModeName(
+              cyxwiz::PipelineRuntimeFailMode::HardFail)) == "hard_fail",
+          "runtime fail-mode name for hard_fail is stable");
+    Check(std::string(cyxwiz::PipelineRuntimeFailModeName(
+              cyxwiz::PipelineRuntimeFailMode::Simulated)) == "simulated",
+          "runtime fail-mode name for simulated is stable");
+    Check(std::string(cyxwiz::PipelineRuntimeFailModeName(
+              cyxwiz::PipelineRuntimeFailMode::Passthrough)) == "passthrough",
+          "runtime fail-mode name for passthrough is stable");
 
     for (const auto& capability : cyxwiz::GetPipelineSourceRuntimeCapabilities()) {
         Check(cyxwiz::IsPipelineSourceRuntimeNode(capability.legacy_type_name),

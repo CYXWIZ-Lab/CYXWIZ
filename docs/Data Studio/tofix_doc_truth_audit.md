@@ -259,3 +259,7 @@ scanning so stale or duplicate work is not reintroduced.
   concatenation for the supported simple aggregate subset with
   schema-checked aggregate parsing, identifier quoting, alias validation,
   and numeric-type checks for numeric-only aggregate functions.
+- 2026-06-07 follow-up: added the first explicit runtime `fail_mode`
+  axis to central runtime support (`real` for operator-backed and active
+  legacy-dispatched paths, `hard_fail` for known unsupported paths) with
+  drift coverage for stable fail-mode names.
