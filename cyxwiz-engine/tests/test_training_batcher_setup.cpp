@@ -1,10 +1,12 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/training_batcher_setup.h"
 #include "../src/core/worker_defaults.h"
 
 #include <arrow/api.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -43,6 +45,18 @@ std::shared_ptr<arrow::Array> FinishIntArray(const std::vector<int32_t>& values)
     return array;
 }
 
+std::shared_ptr<arrow::Array> FinishInt8Array(const std::vector<int8_t>& values) {
+    arrow::Int8Builder builder;
+    for (int8_t value : values) {
+        auto st = builder.Append(value);
+        Check(st.ok(), st.ToString());
+    }
+    std::shared_ptr<arrow::Array> array;
+    auto st = builder.Finish(&array);
+    Check(st.ok(), st.ToString());
+    return array;
+}
+
 std::shared_ptr<cyxwiz::ArrowDataset> MakeDataset() {
     auto schema = arrow::schema({
         arrow::field("x0", arrow::float32()),
@@ -57,6 +71,22 @@ std::shared_ptr<cyxwiz::ArrowDataset> MakeDataset() {
     return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup");
 }
 
+std::shared_ptr<cyxwiz::ArrowDataset> MakeTimeSeriesDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("y", arrow::float32()),
+        arrow::field("__partition__", arrow::int8()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f}),
+        FinishFloatArray({1.5f, 2.5f, 3.5f, 4.5f}),
+        FinishInt8Array({0, 0, 0, 1}),
+    }, 4);
+    return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup_ts");
+}
+
 cyxwiz::TrainingConfiguration MakeConfig() {
     cyxwiz::TrainingConfiguration config;
     config.output_size = 2;
@@ -66,9 +96,33 @@ cyxwiz::TrainingConfiguration MakeConfig() {
     return config;
 }
 
+cyxwiz::TrainingConfiguration MakeTimeSeriesConfig() {
+    auto config = MakeConfig();
+    config.is_time_series = true;
+    config.input_size = 2;
+    config.output_size = 1;
+    return config;
+}
+
+void CheckFeatureAndLabelShapes(const cyxwiz::Batch& batch,
+                                size_t batch_rows,
+                                size_t feature_width,
+                                size_t label_width,
+                                const std::string& label) {
+    Check(batch.IsValid(), label + " batch should be valid");
+    Check(batch.data.Shape().size() == 2, label + " feature tensor should be 2D");
+    Check(batch.data.Shape()[0] == batch_rows, label + " batch dimension should match");
+    Check(batch.data.Shape()[1] == feature_width, label + " feature width should match");
+    Check(batch.labels.Shape().size() == 2, label + " label tensor should be 2D");
+    Check(batch.labels.Shape()[0] == batch_rows, label + " label rows should match");
+    Check(batch.labels.Shape()[1] == label_width, label + " label width should match");
+}
+
 } // namespace
 
 int main() {
+    namespace fs = std::filesystem;
+
     Check(cyxwiz::ClampNumWorkersToPlatform(-3) == 0,
           "negative workers should normalize to single-threaded");
     Check(cyxwiz::ClampNumWorkersToPlatform(0) == 0,
@@ -133,6 +187,73 @@ int main() {
     auto high_worker_batch = high_worker_batchers.train->GetNextBatch();
     Check(high_worker_batch.IsValid(),
           "oversized worker config should still produce a valid batch");
+
+    const fs::path parquet_path =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup.parquet";
+    const fs::path ts_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_training_batcher_setup_ts.parquet";
+    fs::remove(parquet_path);
+    fs::remove(ts_parquet_path);
+
+    auto parquet_source = MakeDataset();
+    Check(parquet_source->ExportParquet(parquet_path.string()),
+          "tabular Arrow table should export to Parquet");
+    auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        parquet_path.string(), "batcher_setup_parquet");
+    Check(parquet_dataset != nullptr, "tabular Parquet dataset should open");
+    auto parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeConfig(),
+        parquet_dataset,
+        "label",
+        /*batch_size=*/2);
+    Check(parquet_batchers.parquet_train != nullptr,
+          "train Parquet batcher should be owned");
+    Check(parquet_batchers.parquet_val != nullptr,
+          "val Parquet batcher should be owned");
+    Check(parquet_batchers.train == parquet_batchers.parquet_train.get(),
+          "train pointer should target Parquet train owner");
+    auto parquet_batch = parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(parquet_batch, 2, 2, 2, "tabular Parquet");
+
+    auto ts_arrow_dataset = MakeTimeSeriesDataset();
+    auto ts_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        MakeTimeSeriesConfig(),
+        ts_arrow_dataset,
+        "ignored_label",
+        /*batch_size=*/2);
+    Check(ts_arrow_batchers.num_train_samples == 3,
+          "time-series Arrow train split should use partition 0 rows");
+    Check(ts_arrow_batchers.val->GetNumSamples() == 1,
+          "time-series Arrow val split should use partition 1 rows");
+    auto ts_arrow_batch = ts_arrow_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(ts_arrow_batch, 2, 2, 1, "time-series Arrow");
+
+    Check(ts_arrow_dataset->ExportParquet(ts_parquet_path.string()),
+          "time-series Arrow table should export to Parquet");
+    auto ts_parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        ts_parquet_path.string(), "batcher_setup_ts_parquet");
+    Check(ts_parquet_dataset != nullptr, "time-series Parquet dataset should open");
+    auto ts_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeTimeSeriesConfig(),
+        ts_parquet_dataset,
+        "ignored_label",
+        /*batch_size=*/2);
+    Check(ts_parquet_batchers.num_train_samples == 3,
+          "time-series Parquet train split should use partition 0 rows");
+    Check(ts_parquet_batchers.val->GetNumSamples() == 1,
+          "time-series Parquet val split should use partition 1 rows");
+    auto ts_parquet_batch = ts_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(ts_parquet_batch, 2, 2, 1, "time-series Parquet");
+
+    parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    parquet_dataset.reset();
+    ts_parquet_dataset.reset();
+    parquet_source.reset();
+    ts_arrow_dataset.reset();
+
+    fs::remove(parquet_path);
+    fs::remove(ts_parquet_path);
 
     std::cout << "Training batcher setup passed\n";
     return 0;

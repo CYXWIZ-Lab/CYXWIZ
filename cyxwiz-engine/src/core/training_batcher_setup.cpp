@@ -100,15 +100,23 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     }
 
     spdlog::info("TrainingExecutor: Using Parquet-backed dataset for training "
-                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, num_workers={})",
-                 batch_size, config.shuffle, config.train_ratio, num_workers);
+                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={})",
+                 batch_size, config.shuffle, config.train_ratio,
+                 config.is_time_series, num_workers);
+
+    const std::string partition_col = config.is_time_series
+        ? "__partition__" : "";
+    const std::string effective_label =
+        config.is_time_series ? "y" : label_column;
 
     result.parquet_train = std::make_unique<ParquetArrowBatcher>(
-        dataset, label_column, batch_size,
-        config.shuffle, config.train_ratio, true, num_workers);
+        dataset, effective_label, batch_size,
+        config.shuffle, config.train_ratio, true,
+        partition_col, /*partition_value=*/0, num_workers);
     result.parquet_val = std::make_unique<ParquetArrowBatcher>(
-        dataset, label_column, batch_size,
-        false, config.train_ratio, false, num_workers);
+        dataset, effective_label, batch_size,
+        false, config.train_ratio, false,
+        partition_col, /*partition_value=*/1, num_workers);
 
     if (config.drop_last) {
         spdlog::warn("TrainingExecutor: drop_last=true requested but ParquetArrowBatcher "
@@ -128,7 +136,10 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
                                              config.preprocessing.norm_std);
     }
 
-    if (config.preprocessing.has_onehot) {
+    if (config.is_time_series) {
+        result.parquet_train->SetRegressionMode(true);
+        result.parquet_val->SetRegressionMode(true);
+    } else if (config.preprocessing.has_onehot) {
         result.parquet_train->SetOneHotEncoding(config.preprocessing.num_classes);
         result.parquet_val->SetOneHotEncoding(config.preprocessing.num_classes);
     } else {

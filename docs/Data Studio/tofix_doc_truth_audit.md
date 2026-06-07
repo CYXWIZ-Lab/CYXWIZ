@@ -221,3 +221,8 @@ scanning so stale or duplicate work is not reintroduced.
   sequential-model layer and unsupported training-control node truth into
   typed capability entries so compile-time training gaps are no longer
   duplicated between compiler code and tests.
+- 2026-06-07 follow-up: tightened Parquet-backed training batcher setup
+  to mirror Arrow time-series partition filtering, internal metadata
+  column skipping, and regression label shape; extended
+  `test_training_batcher_setup` with real Parquet-backed tabular and
+  time-series parity coverage.

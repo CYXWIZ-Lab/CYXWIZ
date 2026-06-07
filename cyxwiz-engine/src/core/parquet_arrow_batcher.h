@@ -54,6 +54,8 @@ public:
                         bool shuffle = true,
                         float train_split = 0.8f,
                         bool is_training = true,
+                        const std::string& partition_column = "",
+                        int partition_value = 0,
                         int num_workers = 0);
 
     // IBatcher interface
@@ -67,6 +69,7 @@ public:
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
     void SetFlatten(bool flatten) override { flatten_ = flatten; }
+    void SetRegressionMode(bool enable) { regression_mode_ = enable; }
 
 private:
     // Configuration
@@ -77,6 +80,8 @@ private:
     bool is_training_;
     int num_workers_ = 0;
     float train_split_;
+    std::string partition_column_;
+    int partition_value_ = 0;
 
     // Column layout (populated by InitializeColumns at construction)
     std::vector<int> feature_cols_;   // column indices that carry feature data
@@ -107,6 +112,7 @@ private:
     bool one_hot_ = false;
     size_t num_classes_ = 10;
     bool flatten_ = true;
+    bool regression_mode_ = false;
 
     std::mt19937 rng_;
 
@@ -115,6 +121,7 @@ private:
     void AssignRowGroups();
     void ShuffleEpochGroupOrder();
     bool LoadNextRowGroup();  // returns false if no more groups
+    size_t CountPartitionRowsInGroup(int row_group_idx) const;
 };
 
 } // namespace cyxwiz

@@ -67,7 +67,9 @@ Current truth after the 2026-06-07 cleanup:
    ownership model for all Data Studio graph execution.
 7. Done: `TrainingManager::StartTrainingArrow()` and
    `StartTrainingParquet()` now use the same shared input-size resolver,
-   including the GraphCompiler time-series override.
+   including the GraphCompiler time-series override. Parquet batcher
+   setup now also mirrors Arrow time-series partition filtering,
+   internal metadata-column skipping, and regression-label shape.
 
 ---
 
@@ -246,10 +248,15 @@ Recommendation:
 **Severity:** Medium-High
 
 **Status 2026-06-07:** Fixed for tabular/time-series input-size
-derivation. Arrow and Parquet training start paths now both call
-`ResolveTabularTrainingInputSize()`, which preserves the GraphCompiler
-time-series `input_size` override and otherwise reserves one label
-column for normal multi-column tabular data.
+derivation and first batcher-shape parity. Arrow and Parquet training
+start paths now both call `ResolveTabularTrainingInputSize()`, which
+preserves the GraphCompiler time-series `input_size` override and
+otherwise reserves one label column for normal multi-column tabular data.
+`BuildParquetTrainingBatchers()` now mirrors Arrow time-series setup by
+using `__partition__`, label `y`, and regression labels. A focused
+`test_training_batcher_setup` regression now covers tabular fallback,
+time-series override preservation, real Parquet-backed tabular batches,
+and Arrow/Parquet time-series feature/label shape parity.
 
 Relevant files:
 
@@ -274,7 +281,8 @@ Recommendation:
 
 - keep the shared resolver as the single schema-to-model input-size
   decision point for tabular Arrow/Parquet training paths
-- continue auditing the rest of Arrow/Parquet parity separately
+- continue auditing deeper Arrow/Parquet parity separately, especially
+  multi-row-group splitting and full training-loop behavior
 
 ---
 
@@ -668,9 +676,11 @@ Recommendation:
 
 ### Phase 4 - Normalize training/data semantics
 
-1. Unify Arrow/Parquet input-size derivation.
+1. Unify Arrow/Parquet input-size derivation. Done for tabular and
+   time-series paths.
 2. Move schema-to-model logic into shared helpers.
-3. Add execution-path tests for storage-mode parity.
+3. Add execution-path tests for storage-mode parity. Started with
+   tabular and time-series batcher-shape parity.
 
 ---
 
@@ -738,7 +748,11 @@ Deliverable:
 
 ### Ticket E: Arrow vs Parquet parity
 
-Status: pending.
+Status: in progress. The shared setup test now creates real
+Parquet-backed datasets and verifies tabular batch shape plus
+time-series Arrow/Parquet partition and regression-label shape parity.
+Remaining parity work is broader training-loop coverage and multi-row
+group behavior.
 
 Scope:
 
