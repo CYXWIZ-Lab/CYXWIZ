@@ -86,6 +86,16 @@ bool ValidateCommaSeparatedIntegersAtLeast(
     return true;
 }
 
+bool IsAllowedParameterValue(
+    const PipelineAllowedParameterValuesRuntimeCapability& capability,
+    const std::string& value) {
+    return std::find_if(capability.allowed_values.begin(),
+                        capability.allowed_values.end(),
+                        [&value](const char* allowed) {
+                            return allowed != nullptr && value == allowed;
+                        }) != capability.allowed_values.end();
+}
+
 const char* MissingRequiredParameter(
     const std::string& node_type,
     const std::map<std::string, std::string>& parameters) {
@@ -126,18 +136,40 @@ bool HasSupportedParameterValues(
     const std::string& node_type,
     const std::map<std::string, std::string>& parameters,
     std::string& error) {
+    for (const auto& capability :
+         ResolvePipelineAllowedParameterValues(node_type)) {
+        auto it = parameters.find(capability.parameter_name);
+        const std::string value =
+            (it != parameters.end() && !it->second.empty())
+                ? it->second
+                : capability.default_value;
+        if (!IsAllowedParameterValue(capability, value)) {
+            error = node_type + " " + capability.parameter_name + " '" +
+                    value + "' is not supported by PipelineExecutor";
+            return false;
+        }
+    }
+
+    for (const auto& capability : ResolvePipelineIntegerParameters(node_type)) {
+        if (capability.comma_separated) {
+            if (!ValidateCommaSeparatedIntegersAtLeast(
+                    parameters, node_type, capability.parameter_name,
+                    capability.minimum, error)) {
+                return false;
+            }
+        } else if (!ValidateIntegerParameterAtLeast(
+                       parameters, node_type, capability.parameter_name,
+                       capability.minimum, error)) {
+            return false;
+        }
+    }
+
     if (node_type == "DataInput") {
         const auto source_it = parameters.find("source_type");
         const std::string source_type =
             (source_it != parameters.end() && !source_it->second.empty())
                 ? source_it->second
                 : "file";
-        if (source_type != "file" && source_type != "folder" &&
-            source_type != "ml_dataset") {
-            error = "DataInput source_type '" + source_type +
-                    "' is not supported by PipelineExecutor";
-            return false;
-        }
 
         const auto type_it = parameters.find("type");
         const std::string file_type =
@@ -158,57 +190,6 @@ bool HasSupportedParameterValues(
             error = "DataInput sheet_idx must be a non-negative integer";
             return false;
         }
-    }
-
-    if (node_type == "DataOutput") {
-        const auto format_it = parameters.find("format");
-        const std::string format =
-            (format_it != parameters.end() && !format_it->second.empty())
-                ? format_it->second
-                : "csv";
-        if (format != "csv" && format != "parquet" && format != "json") {
-            error = "DataOutput format '" + format +
-                    "' is not supported by PipelineExecutor";
-            return false;
-        }
-    }
-
-    if (node_type == "TSWindow") {
-        return ValidateIntegerParameterAtLeast(parameters, node_type, "window_size", 1, error) &&
-               ValidateIntegerParameterAtLeast(parameters, node_type, "stride", 1, error);
-    }
-
-    if (node_type == "TSFeatures") {
-        return ValidateIntegerParameterAtLeast(parameters, node_type, "rolling_window", 1, error);
-    }
-
-    if (node_type == "TSLag") {
-        return ValidateCommaSeparatedIntegersAtLeast(parameters, node_type, "lag_periods", 1, error);
-    }
-
-    if (node_type == "TSDiff") {
-        return ValidateIntegerParameterAtLeast(parameters, node_type, "order", 1, error);
-    }
-
-    if (node_type == "PolynomialFeatures") {
-        return ValidateIntegerParameterAtLeast(parameters, node_type, "degree", 1, error);
-    }
-
-    if (node_type == "Binning") {
-        return ValidateIntegerParameterAtLeast(parameters, node_type, "n_bins", 1, error);
-    }
-
-    if (node_type == "CellExtractor") {
-        return ValidateIntegerParameterAtLeast(parameters, node_type, "row_index", 0, error);
-    }
-
-    if (node_type == "TableSplitter") {
-        return ValidateIntegerParameterAtLeast(parameters, node_type, "split_row", 0, error);
-    }
-
-    if (node_type == "TableCropper") {
-        return ValidateIntegerParameterAtLeast(parameters, node_type, "start_row", 0, error) &&
-               ValidateIntegerParameterAtLeast(parameters, node_type, "end_row", -1, error);
     }
 
     return true;

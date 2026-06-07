@@ -173,6 +173,33 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
+GetPipelineAllowedParameterValuesRuntimeCapabilities() {
+    static const std::vector<PipelineAllowedParameterValuesRuntimeCapability> capabilities = {
+        {"DataInput", "source_type", "file", {"file", "folder", "ml_dataset"}},
+        {"DataOutput", "format", "csv", {"csv", "parquet", "json"}},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineIntegerParameterRuntimeCapability>&
+GetPipelineIntegerParameterRuntimeCapabilities() {
+    static const std::vector<PipelineIntegerParameterRuntimeCapability> capabilities = {
+        {"TSWindow", "window_size", 1, false},
+        {"TSWindow", "stride", 1, false},
+        {"TSFeatures", "rolling_window", 1, false},
+        {"TSLag", "lag_periods", 1, true},
+        {"TSDiff", "order", 1, false},
+        {"PolynomialFeatures", "degree", 1, false},
+        {"Binning", "n_bins", 1, false},
+        {"CellExtractor", "row_index", 0, false},
+        {"TableSplitter", "split_row", 0, false},
+        {"TableCropper", "start_row", 0, false},
+        {"TableCropper", "end_row", -1, false},
+    };
+    return capabilities;
+}
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
@@ -265,6 +292,30 @@ ResolvePipelineRequiredParameters(const std::string& legacy_type_name) {
         return {};
     }
     return it->required_parameters;
+}
+
+std::vector<PipelineAllowedParameterValuesRuntimeCapability>
+ResolvePipelineAllowedParameterValues(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineAllowedParameterValuesRuntimeCapabilities();
+    std::vector<PipelineAllowedParameterValuesRuntimeCapability> result;
+    for (const auto& capability : capabilities) {
+        if (legacy_type_name == capability.legacy_type_name) {
+            result.push_back(capability);
+        }
+    }
+    return result;
+}
+
+std::vector<PipelineIntegerParameterRuntimeCapability>
+ResolvePipelineIntegerParameters(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineIntegerParameterRuntimeCapabilities();
+    std::vector<PipelineIntegerParameterRuntimeCapability> result;
+    for (const auto& capability : capabilities) {
+        if (legacy_type_name == capability.legacy_type_name) {
+            result.push_back(capability);
+        }
+    }
+    return result;
 }
 
 } // namespace cyxwiz

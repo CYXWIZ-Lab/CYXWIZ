@@ -222,6 +222,47 @@ int main() {
         }
     }
 
+    for (const auto& capability :
+         cyxwiz::GetPipelineAllowedParameterValuesRuntimeCapabilities()) {
+        const auto allowed_parameters =
+            cyxwiz::ResolvePipelineAllowedParameterValues(
+                capability.legacy_type_name);
+        Check(!allowed_parameters.empty(),
+              std::string("allowed-parameter runtime name does not resolve: ") +
+                  capability.legacy_type_name);
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
+                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+              std::string("allowed-parameter runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        Check(capability.parameter_name != nullptr &&
+                  std::string(capability.parameter_name).size() > 1,
+              std::string("allowed parameter name is too weak: ") +
+                  capability.legacy_type_name);
+        Check(capability.default_value != nullptr,
+              std::string("allowed parameter default is missing: ") +
+                  capability.legacy_type_name);
+        Check(!capability.allowed_values.empty(),
+              std::string("allowed parameter value list is empty: ") +
+                  capability.legacy_type_name);
+    }
+
+    for (const auto& capability :
+         cyxwiz::GetPipelineIntegerParameterRuntimeCapabilities()) {
+        const auto integer_parameters =
+            cyxwiz::ResolvePipelineIntegerParameters(capability.legacy_type_name);
+        Check(!integer_parameters.empty(),
+              std::string("integer-parameter runtime name does not resolve: ") +
+                  capability.legacy_type_name);
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
+                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+              std::string("integer-parameter runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        Check(capability.parameter_name != nullptr &&
+                  std::string(capability.parameter_name).size() > 1,
+              std::string("integer parameter name is too weak: ") +
+                  capability.legacy_type_name);
+    }
+
     const std::vector<gui::NodeType> supported_model_nodes = {
         gui::NodeType::LSTM,
         gui::NodeType::GRU,

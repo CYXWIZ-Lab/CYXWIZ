@@ -2,6 +2,7 @@
 
 #include "../gui/node_editor.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -36,6 +37,20 @@ struct PipelineRequiredParameterRuntimeCapability {
     std::vector<const char*> required_parameters;
 };
 
+struct PipelineAllowedParameterValuesRuntimeCapability {
+    const char* legacy_type_name;
+    const char* parameter_name;
+    const char* default_value;
+    std::vector<const char*> allowed_values;
+};
+
+struct PipelineIntegerParameterRuntimeCapability {
+    const char* legacy_type_name;
+    const char* parameter_name;
+    int64_t minimum;
+    bool comma_separated = false;
+};
+
 enum class PipelineRuntimeSupportMode {
     Unknown,
     LegacyExecutor,
@@ -68,6 +83,12 @@ GetPipelineInputArityRuntimeCapabilities();
 const std::vector<PipelineRequiredParameterRuntimeCapability>&
 GetPipelineRequiredParameterRuntimeCapabilities();
 
+const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
+GetPipelineAllowedParameterValuesRuntimeCapabilities();
+
+const std::vector<PipelineIntegerParameterRuntimeCapability>&
+GetPipelineIntegerParameterRuntimeCapabilities();
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name);
 
 std::optional<gui::NodeType>
@@ -87,5 +108,11 @@ std::optional<int> ResolvePipelineRequiredInputCount(const std::string& legacy_t
 
 std::vector<const char*>
 ResolvePipelineRequiredParameters(const std::string& legacy_type_name);
+
+std::vector<PipelineAllowedParameterValuesRuntimeCapability>
+ResolvePipelineAllowedParameterValues(const std::string& legacy_type_name);
+
+std::vector<PipelineIntegerParameterRuntimeCapability>
+ResolvePipelineIntegerParameters(const std::string& legacy_type_name);
 
 } // namespace cyxwiz

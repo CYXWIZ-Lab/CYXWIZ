@@ -290,6 +290,22 @@ int main() {
           "ParquetInput should use fail-closed runtime support: " +
               parquet_input_executor.GetLastError());
 
+    const std::string bad_output_format_json =
+        R"({"nodes":[)"
+        R"({"id":27,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":28,"type":"DataOutput","name":"BadOutput","parameters":{)"
+        R"("file_path":"ignored.xml","format":"xml"}})"
+        R"(],"links":[{"start_node":27,"end_node":28}]})";
+
+    cyxwiz::PipelineExecutor bad_output_format_executor;
+    Check(!bad_output_format_executor.ExecutePipeline(bad_output_format_json),
+          "DataOutput bad format should fail validation");
+    Check(bad_output_format_executor.GetLastError().find(
+              "DataOutput format 'xml' is not supported") != std::string::npos,
+          "bad DataOutput format validation should be specific: " +
+              bad_output_format_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");

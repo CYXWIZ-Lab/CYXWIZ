@@ -531,13 +531,15 @@ lives in the same module. Fixed multi-input arity overrides, currently
 first materializer dimension: exact operator-backed nodes are marked
 Arrow-table materializer capable, while fail-closed and legacy-dispatched
 nodes are not. Required legacy transform parameters for active runtime
-validation are now centralized there as well. The metadata drift test
-verifies every listed operator runtime capability has a real factory
-operator, that operator/fail-closed/legacy-dispatched names do not
-overlap, and that required-parameter capability entries resolve to known
-runtime-supported names. Remaining work is to expand this into a fuller
-multi-axis capability matrix for compile, training, materializer storage
-scope, and backend availability.
+validation are now centralized there as well, along with supported enum
+values such as `DataInput.source_type` and `DataOutput.format` and
+bounded integer parameter rules for active legacy transforms. The
+metadata drift test verifies every listed operator runtime capability
+has a real factory operator, that operator/fail-closed/legacy-dispatched
+names do not overlap, and that validation capability entries resolve to
+known runtime-supported names. Remaining work is to expand this into a
+fuller multi-axis capability matrix for compile, training, materializer
+storage scope, and backend availability.
 
 Problem:
 

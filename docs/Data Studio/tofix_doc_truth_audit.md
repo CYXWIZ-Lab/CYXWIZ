@@ -141,3 +141,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: moved active legacy transform required-parameter
   truth into `pipeline_runtime_capabilities` and added metadata drift
   coverage for those entries.
+- 2026-06-07 follow-up: moved supported enum values and active legacy
+  integer parameter validation rules into `pipeline_runtime_capabilities`,
+  with drift coverage and a `DataOutput.format` validation regression.
