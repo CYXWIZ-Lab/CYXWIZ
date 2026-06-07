@@ -372,6 +372,19 @@ These are the shared blockers behind most unsupported families:
 
 ### Phase 1 - Truth And Import Guardrails
 
+Status 2026-06-07: started.
+
+Completed so far:
+
+- `GraphCompiler` now rejects selected training paths where a node is
+  encoded as `Dense` but carries NER/sequence target-design parameters
+  such as `bio_scheme`, token/tag columns, vocabulary markers, sequence
+  padding markers, `ignore_index`, or decode metadata.
+- Focused compiler regression coverage verifies that connected
+  Dense-encoded NER target-design nodes fail closed, while structurally
+  valid side branches outside the selected training path do not block a
+  normal Dense graph.
+
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.
 2. Mark unsupported model families as blocked at compile time with precise

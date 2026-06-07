@@ -8,7 +8,7 @@ The goal is to identify nodes that are:
 - exposed in the frontend as usable
 - marked as implemented in metadata
 - but missing a real backend path
-- or only wired to placeholder / passthrough execution
+- historically wired to placeholder / passthrough execution
 - or silently ignored/dropped by compilation/model building
 
 This is the dangerous class of issue that makes a node look available
@@ -32,9 +32,10 @@ Some nodes are:
 
 - recognized by `GraphCompiler` but not buildable by `ModelBuilder`
 - exposed in the UI but not recognized as real model layers
-- marked `Implemented` in metadata but only run placeholder passthrough
-- backed by newer operators, while the active executor still calls the
-  old placeholder path
+- marked `Implemented` in metadata but not fully wired to a truthful
+  backend path
+- backed by newer operators, while legacy executor routing still needs
+  convergence with that operator path
 
 That means users can build graphs that look valid in the frontend but
 do not execute truthfully.
@@ -327,10 +328,12 @@ Effect:
 
 ---
 
-## Priority 2: Nodes Marked Implemented but Running Placeholder Logic
+## Priority 2: Nodes Marked Implemented but Historically Running Placeholder Logic
 
-These are especially risky because they do not fail fast. They often
-return success while passing input through unchanged.
+These were especially risky because they did not fail fast. The audited
+legacy `PipelineExecutor` dispatch now fails closed for the listed
+placeholder families, but the docs keep this section open until metadata
+truth and canonical operator routing are also fixed.
 
 ### 8. Analytics / ML nodes with placeholder `PipelineExecutor` behavior
 
@@ -365,16 +368,22 @@ Relevant files:
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:3150`
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:3176`
 
-Problem:
+Problem before the 2026-06-07 runtime-truth pass:
 
-- many of these functions log `Placeholder` or `Passing through data unchanged`
-- they still return success and register output datasets
+- many of these functions logged `Placeholder` or `Passing through data unchanged`
+- they returned success and registered output datasets
 
-Effect:
+Current remaining problem:
 
-- users may believe the algorithm executed
-- downstream nodes receive unchanged data or fake outputs
-- debugging is harder because the graph appears to work
+- old placeholder function bodies still exist in the file
+- real operator-backed implementations are not yet the single canonical
+  path for all affected node families
+
+Effect now:
+
+- fake-success user harm is fixed for the audited legacy dispatch path
+- support truth remains harder to reason about until duplicate/dead
+  executor branches are removed or routed through the operator framework
 
 **Recommendation:**
 
@@ -384,7 +393,7 @@ Effect:
 
 ---
 
-### 9. Evaluation nodes with placeholder success paths
+### 9. Evaluation nodes with historical placeholder success paths
 
 **Status:** Fixed in current branch for the legacy `PipelineExecutor` path. Evaluation nodes now fail closed instead of registering fake output datasets.
 
@@ -406,14 +415,21 @@ Relevant files:
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:3260`
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:3267`
 
-Problem:
+Problem before the runtime-truth pass:
 
-- these functions are explicit placeholder implementations
-- they still report outputs and success
+- these functions were explicit placeholder implementations
+- they reported outputs and success
 
-Effect:
+Current remaining problem:
 
-- frontend can display a completed evaluation workflow with no real evaluation
+- evaluation is still not a truthful graph-execution stage; the legacy
+  path now fails closed instead of pretending evaluation completed
+
+Effect now:
+
+- fake completed evaluation output is blocked in the audited legacy path
+- real graph-level evaluation still needs implementation or UI-only
+  labeling
 
 **Recommendation:**
 
@@ -444,12 +460,15 @@ Problem:
 
 - `node_executors/*` contains real operator implementations
 - `PipelineOperatorFactory` registers them
-- but `PipelineExecutor` still uses placeholder passthrough behavior
+- the legacy `PipelineExecutor` now fails closed for the audited branch
+  instead of using placeholder passthrough behavior, but it still does
+  not route these nodes through the operator-backed implementation
 
 Effect:
 
-- duplicate execution systems disagree
-- the newer real path is undermined by the older placeholder path
+- duplicate execution systems still disagree on ownership
+- the newer real path is no longer masked by fake success, but it is not
+  yet the canonical path
 
 **Recommendation:**
 
@@ -548,14 +567,20 @@ Relevant files:
 - `cyxwiz-engine/src/core/node_metadata_registry.cpp:903`
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:4291`
 
-Problem:
+Problem before the runtime-truth pass:
 
-- node is marked implemented
-- executor currently just logs input shape and passes data through
+- node was marked implemented
+- executor logged input shape and passed data through
 
-Effect:
+Current remaining problem:
 
-- this is not actual profiling behavior
+- the legacy path now fails closed, but the node still needs either a
+  real profiling output contract or UI-only/report labeling
+
+Effect now:
+
+- fake transform behavior is blocked
+- real profiling/report behavior is still separate work
 
 **Recommendation:**
 
@@ -564,7 +589,7 @@ Effect:
 
 ---
 
-### 13. Utility nodes returning placeholder success
+### 13. Utility nodes that historically returned placeholder success
 
 **Status:** Fixed in current branch for the legacy `PipelineExecutor` path. The affected utility nodes now return explicit unsupported execution errors instead of placeholder success.
 

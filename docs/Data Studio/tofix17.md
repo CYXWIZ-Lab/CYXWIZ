@@ -21,6 +21,22 @@ focused test or benchmark proving the selected path.
 
 ## Current Observation
 
+**Status 2026-06-07:** This file is still active, but it no longer means
+"CPU fallback has not been worked on." `done2.md`, `done10.md`, and
+`done15.md` closed substantial backend slices:
+
+- Tensor host storage/residency is safer and no longer forces immediate
+  CPU materialization for every ArrayFire result.
+- Optimizer GPU update paths were audited and have focused residency
+  regression coverage.
+- CPU fallback coverage was added across factory activations, core
+  losses, metric-learning losses, legacy Dense/Dropout/CNN/normalization
+  layers, attention dropout, and important linalg paths such as SVD and
+  eigendecomposition.
+- The remaining work here is policy, inventory, diagnostics, performance
+  proof, and GPU-first primitive coverage for graph/runtime paths that
+  are still CPU-backed or mixed.
+
 `TensorDot` is now graph-runtime computable, but its current primitive
 implementation in `Tensor::Dot` uses host loops over `Tensor::Data<T>()`.
 That makes the operation correct and trainable, but not GPU-first.
@@ -34,6 +50,11 @@ for clarity and contract safety.
 
 **Goal:** audit which tensor/model/data operations are truly GPU-backed,
 CPU-backed, or mixed.
+
+**Current truth:** operation-level CPU fallback is much broader than when
+this file was created. The inventory should now focus on classifying
+`GPU-backed`, `CPU-backed by design`, `mixed`, and `GPU-required`
+behavior instead of simply searching for missing CPU fallback.
 
 **Scope candidates from `done1.md`:**
 - tensor shape/index: reshape, view, squeeze, unsqueeze, permute,
@@ -57,6 +78,11 @@ CPU-backed, or mixed.
 
 **Goal:** make CPU fallback explicit and predictable.
 
+**Current truth:** many operations already have CPU fallback behavior,
+but the policy is still scattered. This priority is about making fallback
+selection and diagnostics consistent, not redoing the fallback work
+already closed in `done2.md`.
+
 **Policy to design:**
 - prefer ArrayFire implementation when the active backend and dtype are
   supported,
@@ -76,6 +102,10 @@ CPU-backed, or mixed.
 ## Priority 3 - Add ArrayFire Tensor Primitive Paths
 
 **Goal:** upgrade proven tensor primitives one group at a time.
+
+**Current truth:** several backend/layer paths already use ArrayFire or
+preserve device residency. This priority is for graph-executable tensor
+primitive hot paths that remain CPU-backed after correctness landed.
 
 **Start with low-risk groups:**
 - elementwise unary/scalar math,
@@ -160,6 +190,11 @@ code paths.
 ## Priority 7 - Frontend And Documentation Wording
 
 **Goal:** keep Studio wording honest.
+
+**Current truth:** docs should say "ArrayFire-backed where available" or
+"CPU fallback available" only for verified operation groups. Avoid
+reintroducing old blanket claims that the backend is uniformly GPU
+accelerated or uniformly CPU-primary.
 
 **Rules:**
 - implemented means executable, not necessarily GPU-accelerated,
