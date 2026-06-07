@@ -88,6 +88,11 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"JSONPathExtractor", "JSONPath graph execution is not implemented in PipelineExecutor"},
         {"DataProfiler", "DataProfiler is a panel/report workflow, not a real PipelineExecutor transform"},
         {"ParquetInput", "legacy ParquetInput execution is not implemented; use DataInput with type=parquet"},
+        {"CellExtractor", "legacy CellExtractor execution is still a passthrough placeholder"},
+        {"CellUpdater", "legacy CellUpdater execution is still a passthrough placeholder"},
+        {"ColumnAppender", "legacy ColumnAppender execution is still a passthrough placeholder"},
+        {"RowAppender", "legacy RowAppender execution is still a passthrough placeholder"},
+        {"Unpivot", "legacy Unpivot execution is still a passthrough placeholder"},
     };
     return capabilities;
 }
@@ -122,12 +127,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"ExportJSON"},
         {"RowToColumnNames"},
         {"TableSplitter"},
-        {"CellExtractor"},
-        {"CellUpdater"},
         {"TableCropper"},
-        {"ColumnAppender"},
-        {"RowAppender"},
-        {"Unpivot"},
         {"StringManipulation"},
         {"MathFormula"},
         {"RuleEngine"},

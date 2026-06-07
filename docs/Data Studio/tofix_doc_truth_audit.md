@@ -152,3 +152,7 @@ scanning so stale or duplicate work is not reintroduced.
   validation regression.
 - 2026-06-07 follow-up: blocked the legacy `PolynomialFeatures`
   pass-through path by requiring `columns` at validation time.
+- 2026-06-07 follow-up: moved pass-through table helper placeholders
+  (`CellExtractor`, `CellUpdater`, `ColumnAppender`, `RowAppender`,
+  `Unpivot`) from legacy-dispatched support to fail-closed capability
+  entries.

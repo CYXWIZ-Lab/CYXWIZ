@@ -338,6 +338,23 @@ int main() {
           "DataOutput missing file_path validation should be specific: " +
               missing_output_path_executor.GetLastError());
 
+    const std::string column_appender_json =
+        R"({"nodes":[)"
+        R"({"id":33,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":34,"type":"ColumnAppender","name":"AppendColumns","parameters":{}})"
+        R"(],"links":[{"start_node":33,"end_node":34}]})";
+
+    cyxwiz::PipelineExecutor column_appender_executor;
+    Check(!column_appender_executor.ExecutePipeline(column_appender_json),
+          "ColumnAppender placeholder should fail closed");
+    Check(column_appender_executor.GetLastError().find(
+              "legacy ColumnAppender execution is still a passthrough placeholder") !=
+              std::string::npos,
+          "ColumnAppender should use fail-closed runtime support: " +
+              column_appender_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");

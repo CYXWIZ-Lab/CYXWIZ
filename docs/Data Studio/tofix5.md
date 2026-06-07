@@ -409,6 +409,8 @@ Representative examples:
   `MNISTDataset`, `CIFAR10Dataset`, `HuggingFaceDataset`,
   `KaggleDataset`, `AugmentationPreset`, `GeometricTransform`,
   `ColorTransform`, `MorphologyTransform`, `AdvancedAugment`
+- legacy table helper placeholders such as `CellExtractor`,
+  `CellUpdater`, `ColumnAppender`, `RowAppender`, and `Unpivot`
 
 Problem now:
 
@@ -416,6 +418,8 @@ Problem now:
   `PipelineOperatorFactory`
 - known unsupported legacy node names fail closed through the central
   runtime capability registry
+- audited table-helper pass-through placeholders now fail closed instead
+  of forwarding their input dataset as if a transform occurred
 - broader support truth still needs the next multi-axis capability matrix
 
 Effect:
