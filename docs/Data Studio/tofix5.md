@@ -295,6 +295,12 @@ selector is supplied, the executor validates and quotes those columns,
 deduplicates by that key, and preserves the original table schema. Missing
 dedupe columns now fail before DuckDB query construction.
 
+**Status 2026-06-07 follow-up 9:** `FillMissing` constant mode now
+builds type-aware SQL constants instead of inserting the raw configured
+value into DuckDB SQL. String constants are quoted as literals, numeric
+columns reject nonnumeric constants before query construction, and
+unsupported column types fail closed with a specific validation error.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`

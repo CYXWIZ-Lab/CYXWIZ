@@ -133,6 +133,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_values.csv";
     const fs::path string_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_strings.csv";
+    const fs::path missing_string_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_strings.csv";
     const fs::path duplicates_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_duplicates.csv";
     fs::remove(export_csv_path);
@@ -140,6 +142,7 @@ int main() {
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
+    fs::remove(missing_string_csv_path);
     fs::remove(duplicates_csv_path);
     {
         std::ofstream csv(csv_path);
@@ -160,6 +163,13 @@ int main() {
         csv << "phrase\n";
         csv << "tea cup\n";
         csv << "blue mug\n";
+    }
+    {
+        std::ofstream csv(missing_string_csv_path);
+        csv << "phrase,marker\n";
+        csv << "tea cup,a\n";
+        csv << ",b\n";
+        csv << "blue mug,c\n";
     }
     {
         std::ofstream csv(duplicates_csv_path);
@@ -1062,6 +1072,50 @@ int main() {
     Check(std::fabs(ReadNumericValue(filled_table, "y", 2) - 15.0) < 0.001,
           "FillMissing mean should fill y with column mean");
 
+    const std::string fill_missing_string_constant_json =
+        R"({"nodes":[)"
+        R"({"id":184,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(missing_string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":185,"type":"FillMissing","name":"FillString","parameters":{)"
+        R"("strategy":"constant","value":"owner's choice"}})"
+        R"(],"links":[{"start_node":184,"end_node":185}]})";
+
+    cyxwiz::PipelineExecutor fill_missing_string_constant_executor;
+    Check(fill_missing_string_constant_executor.ExecutePipeline(
+              fill_missing_string_constant_json),
+          "FillMissing constant should quote string fill values: " +
+              fill_missing_string_constant_executor.GetLastError());
+    auto string_filled = registry.GetArrowDataset("ds_fillmissing_185");
+    Check(string_filled != nullptr,
+          "FillMissing string constant output dataset is registered");
+    auto string_filled_table = string_filled->GetArrowTable();
+    Check(string_filled_table != nullptr,
+          "FillMissing string constant output table exists");
+    Check(ReadStringValue(string_filled_table, "phrase", 0) == "tea cup",
+          "FillMissing string constant should preserve existing string values");
+
+    const std::string fill_missing_bad_numeric_constant_json =
+        R"({"nodes":[)"
+        R"({"id":186,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(missing_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":187,"type":"FillMissing","name":"BadFill","parameters":{)"
+        R"("strategy":"constant","value":"not-a-number"}})"
+        R"(],"links":[{"start_node":186,"end_node":187}]})";
+
+    cyxwiz::PipelineExecutor fill_missing_bad_numeric_constant_executor;
+    Check(!fill_missing_bad_numeric_constant_executor.ExecutePipeline(
+              fill_missing_bad_numeric_constant_json),
+          "FillMissing bad numeric constant should fail before SQL execution");
+    Check(fill_missing_bad_numeric_constant_executor.GetLastError().find(
+              "FillMissing: constant value 'not-a-number' is not numeric for column 'x'") !=
+              std::string::npos,
+          "FillMissing bad numeric constant error should be specific: " +
+              fill_missing_bad_numeric_constant_executor.GetLastError());
+
     const std::string string_replace_json =
         R"({"nodes":[)"
         R"({"id":65,"type":"DataInput","name":"Input","parameters":{)"
@@ -1866,6 +1920,9 @@ int main() {
     registry.UnloadDataset("ds_datainput_61");
     registry.UnloadDataset("ds_datainput_63");
     registry.UnloadDataset("ds_fillmissing_64");
+    registry.UnloadDataset("ds_datainput_184");
+    registry.UnloadDataset("ds_fillmissing_185");
+    registry.UnloadDataset("ds_datainput_186");
     registry.UnloadDataset("ds_datainput_65");
     registry.UnloadDataset("ds_string_66");
     registry.UnloadDataset("ds_datainput_67");
@@ -1918,6 +1975,7 @@ int main() {
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
+    fs::remove(missing_string_csv_path);
 
     return 0;
 }

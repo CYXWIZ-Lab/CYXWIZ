@@ -207,6 +207,49 @@ bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type) {
             type->id() == arrow::Type::LARGE_STRING);
 }
 
+bool IsValidNumericLiteral(const std::string& value) {
+    const std::string trimmed = TrimString(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+    double parsed = 0.0;
+    const char* begin = trimmed.data();
+    const char* end = trimmed.data() + trimmed.size();
+    const auto result = std::from_chars(begin, end, parsed);
+    return result.ec == std::errc{} && result.ptr == end;
+}
+
+bool BuildFillMissingConstantExpression(
+    const std::shared_ptr<arrow::Field>& field,
+    const std::string& raw_value,
+    std::string& expression,
+    std::string& error) {
+    if (!field || !field->type()) {
+        error = "FillMissing: input field type is unavailable";
+        return false;
+    }
+
+    const std::string trimmed_value = TrimString(raw_value);
+    if (IsNumericArrowType(field->type())) {
+        if (!IsValidNumericLiteral(trimmed_value)) {
+            error = "FillMissing: constant value '" + raw_value +
+                    "' is not numeric for column '" + field->name() + "'";
+            return false;
+        }
+        expression = trimmed_value;
+        return true;
+    }
+
+    if (IsStringArrowType(field->type())) {
+        expression = QuoteSqlStringLiteral(raw_value);
+        return true;
+    }
+
+    error = "FillMissing: constant fill is not supported for column '" +
+            field->name() + "' of type " + field->type()->ToString();
+    return false;
+}
+
 bool RequireColumnKind(const std::shared_ptr<arrow::Table>& table,
                        const std::string& node_type,
                        const std::string& column,
@@ -1774,7 +1817,16 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
             std::string expression = quoted_column;
 
             if (strategy == "constant") {
-                expression = "COALESCE(" + quoted_column + ", " + fill_value + ")";
+                std::string constant_expression;
+                std::string constant_error;
+                if (!BuildFillMissingConstantExpression(
+                        field, fill_value, constant_expression, constant_error)) {
+                    duckdb_->UnregisterTable(temp_table);
+                    ReportError(constant_error);
+                    return false;
+                }
+                expression = "COALESCE(" + quoted_column + ", " +
+                             constant_expression + ")";
             } else if (strategy == "mean") {
                 if (IsNumericArrowType(field->type())) {
                     expression = "COALESCE(" + quoted_column + ", (SELECT AVG(" +
