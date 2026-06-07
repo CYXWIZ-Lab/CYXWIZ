@@ -99,10 +99,6 @@ bool IsAllowedParameterValue(
 const char* MissingRequiredParameter(
     const std::string& node_type,
     const std::map<std::string, std::string>& parameters) {
-    if (node_type == "FileInput" || node_type == "ExcelInput") {
-        return HasNonEmptyParameter(parameters, "path") ? nullptr : "path";
-    }
-
     if (node_type == "DataInput") {
         const auto source_it = parameters.find("source_type");
         const std::string source_type =
@@ -116,11 +112,6 @@ const char* MissingRequiredParameter(
             return HasNonEmptyParameter(parameters, "folder_path") ? nullptr : "folder_path";
         }
         return nullptr;
-    }
-
-    if (node_type == "DataOutput" || node_type == "ExportExcel" ||
-        node_type == "ExportCSV" || node_type == "ExportJSON") {
-        return HasNonEmptyParameter(parameters, "file_path") ? nullptr : "file_path";
     }
 
     for (const char* parameter : ResolvePipelineRequiredParameters(node_type)) {

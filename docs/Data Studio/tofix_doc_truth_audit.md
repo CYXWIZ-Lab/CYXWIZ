@@ -146,3 +146,7 @@ scanning so stale or duplicate work is not reintroduced.
   with drift coverage and a `DataOutput.format` validation regression.
 - 2026-06-07 follow-up: strengthened the runtime capability metadata drift
   guard to reject duplicate entries within each capability list.
+- 2026-06-07 follow-up: moved static source/export required parameters
+  such as `FileInput.path` and `DataOutput.file_path` into
+  `pipeline_runtime_capabilities`, with a `DataOutput.file_path`
+  validation regression.

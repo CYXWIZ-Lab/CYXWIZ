@@ -163,6 +163,12 @@ GetPipelineInputArityRuntimeCapabilities() {
 const std::vector<PipelineRequiredParameterRuntimeCapability>&
 GetPipelineRequiredParameterRuntimeCapabilities() {
     static const std::vector<PipelineRequiredParameterRuntimeCapability> capabilities = {
+        {"FileInput", {"path"}},
+        {"ExcelInput", {"path"}},
+        {"DataOutput", {"file_path"}},
+        {"ExportExcel", {"file_path"}},
+        {"ExportCSV", {"file_path"}},
+        {"ExportJSON", {"file_path"}},
         {"FilterRows", {"condition"}},
         {"SelectColumns", {"columns"}},
         {"SortRows", {"columns"}},

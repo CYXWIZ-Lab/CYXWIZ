@@ -306,6 +306,22 @@ int main() {
           "bad DataOutput format validation should be specific: " +
               bad_output_format_executor.GetLastError());
 
+    const std::string missing_output_path_json =
+        R"({"nodes":[)"
+        R"({"id":29,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":30,"type":"DataOutput","name":"MissingOutputPath","parameters":{)"
+        R"("format":"csv"}})"
+        R"(],"links":[{"start_node":29,"end_node":30}]})";
+
+    cyxwiz::PipelineExecutor missing_output_path_executor;
+    Check(!missing_output_path_executor.ExecutePipeline(missing_output_path_json),
+          "DataOutput missing file_path should fail validation");
+    Check(missing_output_path_executor.GetLastError().find(
+              "missing required parameter 'file_path'") != std::string::npos,
+          "DataOutput missing file_path validation should be specific: " +
+              missing_output_path_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
