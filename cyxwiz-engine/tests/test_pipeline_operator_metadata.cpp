@@ -1,5 +1,6 @@
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_metadata_registry.h"
+#include "../src/core/pipeline_runtime_capabilities.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -101,6 +102,20 @@ int main() {
               "factory type " + TypeId(type) + " is not marked implemented");
         Check(meta->category != gui::NodeCategory::Unknown,
               "factory type " + TypeId(type) + " has unknown category");
+    }
+
+    for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {
+        Check(factory.HasOperator(capability.node_type),
+              std::string("runtime capability has no factory operator: ") +
+                  capability.legacy_type_name);
+        auto resolved = cyxwiz::ResolvePipelineOperatorRuntimeType(
+            capability.legacy_type_name);
+        Check(resolved.has_value(),
+              std::string("runtime capability does not resolve: ") +
+                  capability.legacy_type_name);
+        Check(*resolved == capability.node_type,
+              std::string("runtime capability resolves to wrong type: ") +
+                  capability.legacy_type_name);
     }
 
     const std::vector<gui::NodeType> supported_model_nodes = {

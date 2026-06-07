@@ -3,6 +3,7 @@
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include "node_executors/pipeline_operator_factory.h"
+#include "pipeline_runtime_capabilities.h"
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -13,54 +14,8 @@
 #include <chrono>
 #include <set>
 #include <mutex>
-#include <optional>
-#include <unordered_map>
 
 namespace cyxwiz {
-
-namespace {
-
-std::optional<gui::NodeType> OperatorNodeTypeFromLegacyString(const std::string& type) {
-    static const std::unordered_map<std::string, gui::NodeType> kOperatorNodeTypes = {
-        {"TimeSeriesWindow", gui::NodeType::TimeSeriesWindow},
-        {"TimeSeriesSplit", gui::NodeType::TimeSeriesSplit},
-        {"TimeSeriesFeatures", gui::NodeType::TimeSeriesFeatures},
-        {"LogTransform", gui::NodeType::LogTransform},
-        {"Differencing", gui::NodeType::Differencing},
-        {"TextTokenizer", gui::NodeType::TextTokenizer},
-        {"TFIDFVectorizer", gui::NodeType::TFIDFVectorizer},
-        {"CountVectorizer", gui::NodeType::CountVectorizer},
-        {"SentimentAnalyzer", gui::NodeType::SentimentAnalyzer},
-        {"PCANode", gui::NodeType::PCANode},
-        {"KMeansCluster", gui::NodeType::KMeansCluster},
-        {"DBSCANCluster", gui::NodeType::DBSCANCluster},
-        {"HierarchicalCluster", gui::NodeType::HierarchicalCluster},
-        {"GMMCluster", gui::NodeType::GMMCluster},
-        {"FFTNode", gui::NodeType::FFTNode},
-        {"Convolution1D", gui::NodeType::Convolution1D},
-        {"FilterDesigner", gui::NodeType::FilterDesigner},
-        {"LinearRegressionNode", gui::NodeType::LinearRegressionNode},
-        {"PolynomialRegressionNode", gui::NodeType::PolynomialRegressionNode},
-        {"StandardScaler", gui::NodeType::StandardScaler},
-        {"MinMaxScaler", gui::NodeType::MinMaxScaler},
-        {"RobustScaler", gui::NodeType::RobustScaler},
-        {"LabelEncoder", gui::NodeType::LabelEncoder},
-        {"OrdinalEncoder", gui::NodeType::OrdinalEncoder},
-        {"TargetEncoder", gui::NodeType::TargetEncoder},
-        {"OutlierDetector", gui::NodeType::OutlierDetector},
-        {"TimeSeriesDecomposition", gui::NodeType::TimeSeriesDecomposition},
-        {"ARIMAForecaster", gui::NodeType::ARIMAForecaster},
-        {"ExponentialSmoothing", gui::NodeType::ExponentialSmoothing},
-    };
-
-    auto it = kOperatorNodeTypes.find(type);
-    if (it == kOperatorNodeTypes.end()) {
-        return std::nullopt;
-    }
-    return it->second;
-}
-
-} // namespace
 
 PipelineExecutor::PipelineExecutor()
     : executing_(false)
@@ -354,7 +309,7 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteGroupBy(node, ctx);
     } else if (node.type == "DeployToNodeEditor") {
         return ExecuteDeployToNodeEditor(node, ctx);
-    } else if (auto operator_type = OperatorNodeTypeFromLegacyString(node.type); operator_type) {
+    } else if (auto operator_type = ResolvePipelineOperatorRuntimeType(node.type); operator_type) {
         return ExecutePipelineOperatorNode(node, ctx, *operator_type);
     }
     // Phase 6 Week 8-9 - Text Processing

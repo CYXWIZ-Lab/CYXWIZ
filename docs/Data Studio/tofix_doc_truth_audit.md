@@ -90,3 +90,7 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: removed dead placeholder executor declarations
   from `PipelineExecutor`'s header and quarantined their historical
   passthrough/fake-success helper bodies behind compile-time exclusion.
+- 2026-06-07 follow-up: started `tofix5` capability centralization by
+  moving exact operator-backed legacy runtime names into
+  `pipeline_runtime_capabilities.{h,cpp}` and testing them against
+  `PipelineOperatorFactory`.

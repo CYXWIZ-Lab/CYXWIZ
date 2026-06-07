@@ -493,6 +493,14 @@ Recommendation:
 
 **Severity:** Medium
 
+**Status 2026-06-07:** Started. Exact legacy runtime names that route
+through `PipelineOperatorFactory` now live in
+`pipeline_runtime_capabilities.{h,cpp}` instead of being embedded in
+`PipelineExecutor`. The metadata drift test verifies every listed
+runtime capability has a real factory operator. Remaining work is to
+expand this into a fuller multi-axis capability matrix for compile,
+training, materializer, and backend availability.
+
 Problem:
 
 - the system currently communicates support through a mix of:
@@ -509,7 +517,7 @@ Effect:
 
 Recommendation:
 
-- introduce a central runtime capability registry with dimensions such
+- continue growing the central runtime capability registry with dimensions such
   as:
   - `frontend_visible`
   - `compile_supported`

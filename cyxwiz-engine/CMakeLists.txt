@@ -109,6 +109,7 @@ set(ENGINE_SOURCES
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/pipeline_runtime_capabilities.cpp  # Data Studio runtime support truth
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/annotation_manager.cpp
@@ -1175,6 +1176,7 @@ add_executable(test_pipeline_operator_metadata
     src/data/data_table.cpp
     src/core/node_metadata_registry.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
+    src/core/pipeline_runtime_capabilities.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
@@ -1227,6 +1229,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/image_utils.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
+    src/core/pipeline_runtime_capabilities.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/streaming_dataset.cpp
