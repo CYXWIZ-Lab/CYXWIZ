@@ -301,6 +301,14 @@ value into DuckDB SQL. String constants are quoted as literals, numeric
 columns reject nonnumeric constants before query construction, and
 unsupported column types fail closed with a specific validation error.
 
+**Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
+small schema-checked condition language instead of appending raw text to
+DuckDB SQL. The executor accepts column comparisons against numeric or
+quoted string literals, with `AND`/`OR` and parentheses, quotes resolved
+column identifiers, and rejects unknown columns, type-incompatible
+literals, unsupported operators, and raw SQL tokens before query
+construction.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`

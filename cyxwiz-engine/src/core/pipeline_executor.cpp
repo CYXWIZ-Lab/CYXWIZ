@@ -250,6 +250,331 @@ bool BuildFillMissingConstantExpression(
     return false;
 }
 
+enum class FilterConditionTokenKind {
+    Identifier,
+    StringLiteral,
+    NumericLiteral,
+    ComparisonOperator,
+    And,
+    Or,
+    LeftParen,
+    RightParen,
+    End,
+};
+
+struct FilterConditionToken {
+    FilterConditionTokenKind kind = FilterConditionTokenKind::End;
+    std::string value;
+};
+
+bool TokenizeFilterRowsCondition(const std::string& condition,
+                                 std::vector<FilterConditionToken>& tokens,
+                                 std::string& error) {
+    size_t index = 0;
+    while (index < condition.size()) {
+        const unsigned char ch =
+            static_cast<unsigned char>(condition[index]);
+        if (std::isspace(ch)) {
+            ++index;
+            continue;
+        }
+
+        if (std::isalpha(ch) || condition[index] == '_') {
+            const size_t start = index;
+            while (index < condition.size()) {
+                const unsigned char current =
+                    static_cast<unsigned char>(condition[index]);
+                if (!std::isalnum(current) && condition[index] != '_') {
+                    break;
+                }
+                ++index;
+            }
+            const std::string value = condition.substr(start, index - start);
+            const std::string upper_value = ToUpperAscii(value);
+            if (upper_value == "AND") {
+                tokens.push_back({FilterConditionTokenKind::And, value});
+            } else if (upper_value == "OR") {
+                tokens.push_back({FilterConditionTokenKind::Or, value});
+            } else {
+                tokens.push_back({FilterConditionTokenKind::Identifier, value});
+            }
+            continue;
+        }
+
+        if (condition[index] == '"') {
+            ++index;
+            std::string value;
+            bool closed = false;
+            while (index < condition.size()) {
+                if (condition[index] == '"') {
+                    if (index + 1 < condition.size() &&
+                        condition[index + 1] == '"') {
+                        value += '"';
+                        index += 2;
+                        continue;
+                    }
+                    ++index;
+                    closed = true;
+                    break;
+                }
+                value += condition[index++];
+            }
+            if (!closed) {
+                error = "FilterRows: unterminated quoted column name";
+                return false;
+            }
+            tokens.push_back({FilterConditionTokenKind::Identifier, value});
+            continue;
+        }
+
+        if (condition[index] == '\'') {
+            ++index;
+            std::string value;
+            bool closed = false;
+            while (index < condition.size()) {
+                if (condition[index] == '\'') {
+                    if (index + 1 < condition.size() &&
+                        condition[index + 1] == '\'') {
+                        value += '\'';
+                        index += 2;
+                        continue;
+                    }
+                    ++index;
+                    closed = true;
+                    break;
+                }
+                value += condition[index++];
+            }
+            if (!closed) {
+                error = "FilterRows: unterminated string literal";
+                return false;
+            }
+            tokens.push_back(
+                {FilterConditionTokenKind::StringLiteral, value});
+            continue;
+        }
+
+        const bool starts_numeric =
+            std::isdigit(ch) || condition[index] == '.' ||
+            ((condition[index] == '-' || condition[index] == '+') &&
+             index + 1 < condition.size() &&
+             (std::isdigit(static_cast<unsigned char>(condition[index + 1])) ||
+              condition[index + 1] == '.'));
+        if (starts_numeric) {
+            const size_t start = index;
+            while (index < condition.size()) {
+                const char current = condition[index];
+                if (!std::isdigit(static_cast<unsigned char>(current)) &&
+                    current != '.' && current != '-' && current != '+' &&
+                    current != 'e' && current != 'E') {
+                    break;
+                }
+                ++index;
+            }
+            const std::string value = condition.substr(start, index - start);
+            if (!IsValidNumericLiteral(value)) {
+                error = "FilterRows: invalid numeric literal '" + value + "'";
+                return false;
+            }
+            tokens.push_back(
+                {FilterConditionTokenKind::NumericLiteral, value});
+            continue;
+        }
+
+        if (condition[index] == '(') {
+            tokens.push_back({FilterConditionTokenKind::LeftParen, "("});
+            ++index;
+            continue;
+        }
+        if (condition[index] == ')') {
+            tokens.push_back({FilterConditionTokenKind::RightParen, ")"});
+            ++index;
+            continue;
+        }
+
+        std::string op;
+        if (condition[index] == '=' || condition[index] == '!' ||
+            condition[index] == '<' || condition[index] == '>') {
+            op += condition[index++];
+            if (index < condition.size()) {
+                const char next = condition[index];
+                if ((op == "=" && next == '=') ||
+                    (op == "!" && next == '=') ||
+                    (op == "<" && (next == '=' || next == '>')) ||
+                    (op == ">" && next == '=')) {
+                    op += next;
+                    ++index;
+                }
+            }
+            if (op == "==") {
+                op = "=";
+            }
+            if (op == "!") {
+                error = "FilterRows: unsupported comparison operator '!'";
+                return false;
+            }
+            tokens.push_back(
+                {FilterConditionTokenKind::ComparisonOperator, op});
+            continue;
+        }
+
+        error = "FilterRows: unsupported token '" +
+                std::string(1, condition[index]) + "'";
+        return false;
+    }
+
+    tokens.push_back({FilterConditionTokenKind::End, {}});
+    return true;
+}
+
+class FilterRowsConditionParser {
+public:
+    FilterRowsConditionParser(const std::shared_ptr<arrow::Table>& table,
+                              const std::vector<FilterConditionToken>& tokens)
+        : table_(table), tokens_(tokens) {}
+
+    bool Parse(std::string& expression, std::string& error) {
+        if (!table_ || !table_->schema()) {
+            error = "FilterRows: input table schema is unavailable";
+            return false;
+        }
+        if (!ParseExpression(expression, error)) {
+            return false;
+        }
+        if (Peek().kind != FilterConditionTokenKind::End) {
+            error = "FilterRows: unexpected token '" + Peek().value + "'";
+            return false;
+        }
+        return true;
+    }
+
+private:
+    bool ParseExpression(std::string& expression, std::string& error) {
+        if (!ParseTerm(expression, error)) {
+            return false;
+        }
+        while (Peek().kind == FilterConditionTokenKind::Or) {
+            Consume();
+            std::string rhs;
+            if (!ParseTerm(rhs, error)) {
+                return false;
+            }
+            expression = "(" + expression + " OR " + rhs + ")";
+        }
+        return true;
+    }
+
+    bool ParseTerm(std::string& expression, std::string& error) {
+        if (!ParseFactor(expression, error)) {
+            return false;
+        }
+        while (Peek().kind == FilterConditionTokenKind::And) {
+            Consume();
+            std::string rhs;
+            if (!ParseFactor(rhs, error)) {
+                return false;
+            }
+            expression = "(" + expression + " AND " + rhs + ")";
+        }
+        return true;
+    }
+
+    bool ParseFactor(std::string& expression, std::string& error) {
+        if (Peek().kind == FilterConditionTokenKind::LeftParen) {
+            Consume();
+            if (!ParseExpression(expression, error)) {
+                return false;
+            }
+            if (Peek().kind != FilterConditionTokenKind::RightParen) {
+                error = "FilterRows: expected ')'";
+                return false;
+            }
+            Consume();
+            expression = "(" + expression + ")";
+            return true;
+        }
+        return ParseComparison(expression, error);
+    }
+
+    bool ParseComparison(std::string& expression, std::string& error) {
+        if (Peek().kind != FilterConditionTokenKind::Identifier) {
+            error = "FilterRows: expected a column name";
+            return false;
+        }
+        const std::string column = Consume().value;
+        const int column_index = table_->schema()->GetFieldIndex(column);
+        if (column_index < 0) {
+            error = "FilterRows: column '" + column + "' not found";
+            return false;
+        }
+
+        if (Peek().kind != FilterConditionTokenKind::ComparisonOperator) {
+            error = "FilterRows: expected a comparison operator after column '" +
+                    column + "'";
+            return false;
+        }
+        const std::string op = Consume().value;
+
+        const auto field = table_->schema()->field(column_index);
+        if (IsNumericArrowType(field->type())) {
+            if (Peek().kind != FilterConditionTokenKind::NumericLiteral) {
+                error = "FilterRows: column '" + column +
+                        "' requires a numeric literal";
+                return false;
+            }
+            const std::string literal = Consume().value;
+            expression = QuoteSqlIdentifier(column) + " " + op + " " + literal;
+            return true;
+        }
+
+        if (IsStringArrowType(field->type())) {
+            if (op != "=" && op != "!=" && op != "<>") {
+                error = "FilterRows: string column '" + column +
+                        "' only supports equality comparisons";
+                return false;
+            }
+            if (Peek().kind != FilterConditionTokenKind::StringLiteral) {
+                error = "FilterRows: column '" + column +
+                        "' requires a quoted string literal";
+                return false;
+            }
+            const std::string literal = Consume().value;
+            expression = QuoteSqlIdentifier(column) + " " + op + " " +
+                         QuoteSqlStringLiteral(literal);
+            return true;
+        }
+
+        error = "FilterRows: column '" + column +
+                "' has unsupported type " + field->type()->ToString();
+        return false;
+    }
+
+    const FilterConditionToken& Peek() const {
+        return tokens_[index_];
+    }
+
+    const FilterConditionToken& Consume() {
+        return tokens_[index_++];
+    }
+
+    std::shared_ptr<arrow::Table> table_;
+    const std::vector<FilterConditionToken>& tokens_;
+    size_t index_ = 0;
+};
+
+bool BuildFilterRowsConditionExpression(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& condition,
+    std::string& expression,
+    std::string& error) {
+    std::vector<FilterConditionToken> tokens;
+    if (!TokenizeFilterRowsCondition(condition, tokens, error)) {
+        return false;
+    }
+    FilterRowsConditionParser parser(table, tokens);
+    return parser.Parse(expression, error);
+}
+
 bool RequireColumnKind(const std::shared_ptr<arrow::Table>& table,
                        const std::string& node_type,
                        const std::string& column,
@@ -1499,6 +1824,14 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string filter_expression;
+        std::string filter_error;
+        if (!BuildFilterRowsConditionExpression(input_table, condition,
+                                                filter_expression,
+                                                filter_error)) {
+            ReportError(filter_error);
+            return false;
+        }
 
         // Register input table with DuckDB
         std::string temp_table = "temp_" + std::to_string(node.id);
@@ -1508,7 +1841,8 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
         }
 
         // Execute WHERE query
-        std::string sql = "SELECT * FROM " + temp_table + " WHERE " + condition;
+        std::string sql = "SELECT * FROM " + temp_table + " WHERE " +
+                          filter_expression;
         auto result_table = duckdb_->Query(sql);
 
         // Unregister temp table

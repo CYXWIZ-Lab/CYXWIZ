@@ -488,6 +488,88 @@ int main() {
           "FilterRows missing condition validation should be specific: " +
               missing_filter_executor.GetLastError());
 
+    const std::string filter_rows_json =
+        R"({"nodes":[)"
+        R"({"id":188,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":189,"type":"FilterRows","name":"Filter","parameters":{)"
+        R"("condition":"x >= 2 AND y < 30"}})"
+        R"(],"links":[{"start_node":188,"end_node":189}]})";
+
+    cyxwiz::PipelineExecutor filter_rows_executor;
+    Check(filter_rows_executor.ExecutePipeline(filter_rows_json),
+          "FilterRows should parse, validate, and quote numeric conditions: " +
+              filter_rows_executor.GetLastError());
+    auto filtered = registry.GetArrowDataset("ds_filter_189");
+    Check(filtered != nullptr, "FilterRows output dataset is registered");
+    auto filtered_table = filtered->GetArrowTable();
+    Check(filtered_table != nullptr, "FilterRows output table exists");
+    Check(filtered_table->num_rows() == 1,
+          "FilterRows numeric condition should keep one matching row");
+    Check(ReadNumericValue(filtered_table, "x", 0) == 2.0,
+          "FilterRows numeric condition should keep the expected row");
+
+    const std::string filter_string_json =
+        R"({"nodes":[)"
+        R"({"id":190,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":191,"type":"FilterRows","name":"FilterString","parameters":{)"
+        R"("condition":"phrase = 'tea cup'"}})"
+        R"(],"links":[{"start_node":190,"end_node":191}]})";
+
+    cyxwiz::PipelineExecutor filter_string_executor;
+    Check(filter_string_executor.ExecutePipeline(filter_string_json),
+          "FilterRows should parse and quote string conditions: " +
+              filter_string_executor.GetLastError());
+    auto string_filtered = registry.GetArrowDataset("ds_filter_191");
+    Check(string_filtered != nullptr,
+          "FilterRows string output dataset is registered");
+    auto string_filtered_table = string_filtered->GetArrowTable();
+    Check(string_filtered_table != nullptr,
+          "FilterRows string output table exists");
+    Check(string_filtered_table->num_rows() == 1,
+          "FilterRows string condition should keep one matching row");
+    Check(ReadStringValue(string_filtered_table, "phrase", 0) == "tea cup",
+          "FilterRows string condition should keep the expected row");
+
+    const std::string filter_missing_column_json =
+        R"({"nodes":[)"
+        R"({"id":192,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":193,"type":"FilterRows","name":"FilterMissing","parameters":{)"
+        R"("condition":"missing = 1"}})"
+        R"(],"links":[{"start_node":192,"end_node":193}]})";
+
+    cyxwiz::PipelineExecutor filter_missing_column_executor;
+    Check(!filter_missing_column_executor.ExecutePipeline(
+              filter_missing_column_json),
+          "FilterRows missing column should fail schema validation");
+    Check(filter_missing_column_executor.GetLastError().find(
+              "FilterRows: column 'missing' not found") != std::string::npos,
+          "FilterRows missing column error should be specific: " +
+              filter_missing_column_executor.GetLastError());
+
+    const std::string filter_raw_sql_json =
+        R"({"nodes":[)"
+        R"({"id":194,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":195,"type":"FilterRows","name":"FilterRaw","parameters":{)"
+        R"("condition":"x > 1; DROP TABLE temp"}})"
+        R"(],"links":[{"start_node":194,"end_node":195}]})";
+
+    cyxwiz::PipelineExecutor filter_raw_sql_executor;
+    Check(!filter_raw_sql_executor.ExecutePipeline(filter_raw_sql_json),
+          "FilterRows raw SQL tokens should fail before query construction");
+    Check(filter_raw_sql_executor.GetLastError().find(
+              "FilterRows: unsupported token ';'") != std::string::npos,
+          "FilterRows raw SQL token error should be specific: " +
+              filter_raw_sql_executor.GetLastError());
+
     const std::string missing_join_column_json =
         R"({"nodes":[)"
         R"({"id":21,"type":"DataInput","name":"Left","parameters":{)"
@@ -1894,6 +1976,12 @@ int main() {
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_input_133");
     registry.UnloadDataset("ds_select_134");
+    registry.UnloadDataset("ds_datainput_188");
+    registry.UnloadDataset("ds_filter_189");
+    registry.UnloadDataset("ds_datainput_190");
+    registry.UnloadDataset("ds_filter_191");
+    registry.UnloadDataset("ds_datainput_192");
+    registry.UnloadDataset("ds_datainput_194");
     registry.UnloadDataset("ds_datainput_3");
     registry.UnloadDataset("ds_datainput_35");
     registry.UnloadDataset("ds_datainput_139");
