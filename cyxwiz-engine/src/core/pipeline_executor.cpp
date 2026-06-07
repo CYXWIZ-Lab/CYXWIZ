@@ -3154,7 +3154,8 @@ bool PipelineExecutor::ExecuteMathFormula(const Node& node, ExecutionContext& ct
             return false;
         }
 
-        std::string sql = "SELECT *, (" + formula + ") AS \"" + output_column + "\" FROM " + temp_table;
+        std::string sql = "SELECT *, (" + formula + ") AS " +
+                          QuoteSqlIdentifier(output_column) + " FROM " + temp_table;
         auto result_table = duckdb_->Query(sql);
         duckdb_->UnregisterTable(temp_table);
 

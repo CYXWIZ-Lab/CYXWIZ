@@ -443,7 +443,9 @@ Problem now:
   the advertised `Top` and `Bottom` outputs truthfully
 - legacy `MathFormula` now requires an explicit `formula` and runs
   through the repaired DuckDB registration path instead of silently
-  creating a constant zero column when the expression is missing
+  creating a constant zero column when the expression is missing; its
+  output column name now uses the shared SQL identifier quoting helper
+  instead of raw double quotes
 - legacy `RuleEngine` now fails closed because its old executor path
   ignored the `rules` parameter and only wrote the default value
 - `DuckDBConnector` now registers Arrow input by copying supported scalar
@@ -670,6 +672,8 @@ Recommendation:
 
 ### Ticket A: Make `ExecuteParallel()` safe
 
+Status: completed in this branch.
+
 Scope:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`
@@ -682,6 +686,8 @@ Deliverable:
 
 ### Ticket B: Cache validity cleanup
 
+Status: completed in this branch.
+
 Scope:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`
@@ -692,6 +698,11 @@ Deliverable:
 - add explicit cache-invalid behavior
 
 ### Ticket C: Replace placeholder success with fail-closed behavior
+
+Status: partially completed in this branch. Known fake-success branches
+listed above have been converted or implemented, and metadata now marks
+the covered blocked helpers as `Template` / `Blocked`. Continue treating
+newly discovered placeholder branches as defects, not supported features.
 
 Scope:
 
@@ -705,6 +716,11 @@ Deliverable:
 
 ### Ticket D: Capability registry
 
+Status: in progress. Runtime support now has centralized operator,
+legacy, fail-closed, required-parameter, enum, integer-validation, and
+Arrow-table materializer-scope truth. The remaining work is the broader
+multi-axis matrix for compile/training/materializer storage parity.
+
 Scope:
 
 - engine node metadata / runtime support layer
@@ -714,6 +730,8 @@ Deliverable:
 - one authoritative support matrix used by frontend and runtime
 
 ### Ticket E: Arrow vs Parquet parity
+
+Status: pending.
 
 Scope:
 

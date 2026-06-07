@@ -669,6 +669,29 @@ int main() {
     Check(math_table->schema()->GetFieldIndex("sum_xy") >= 0,
           "MathFormula should expose the computed output column");
 
+    const std::string quoted_math_formula_json =
+        R"({"nodes":[)"
+        R"({"id":85,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":86,"type":"MathFormula","name":"Formula","parameters":{)"
+        R"("formula":"x + y","output_column":"sum\"xy"}})"
+        R"(],"links":[{"start_node":85,"end_node":86}]})";
+
+    cyxwiz::PipelineExecutor quoted_math_formula_executor;
+    Check(quoted_math_formula_executor.ExecutePipeline(quoted_math_formula_json),
+          "MathFormula should quote output column identifiers: " +
+              quoted_math_formula_executor.GetLastError());
+    auto quoted_math_result = registry.GetArrowDataset("ds_math_86");
+    Check(quoted_math_result != nullptr,
+          "MathFormula quoted output dataset is registered");
+    auto quoted_math_table = quoted_math_result->GetArrowTable();
+    Check(quoted_math_table != nullptr, "MathFormula quoted output table exists");
+    Check(quoted_math_table->schema()->GetFieldIndex("sum\"xy") >= 0,
+          "MathFormula should preserve quoted output column names");
+    Check(ReadNumericValue(quoted_math_table, "sum\"xy", 0) == 11.0,
+          "MathFormula quoted output column should contain computed values");
+
     const std::string rule_engine_json =
         R"({"nodes":[)"
         R"({"id":61,"type":"DataInput","name":"Input","parameters":{)"
@@ -912,6 +935,8 @@ int main() {
     registry.UnloadDataset("ds_datainput_55");
     registry.UnloadDataset("ds_datainput_59");
     registry.UnloadDataset("ds_math_60");
+    registry.UnloadDataset("ds_datainput_85");
+    registry.UnloadDataset("ds_math_86");
     registry.UnloadDataset("ds_datainput_61");
     registry.UnloadDataset("ds_datainput_63");
     registry.UnloadDataset("ds_fillmissing_64");

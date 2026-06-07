@@ -214,3 +214,6 @@ scanning so stale or duplicate work is not reintroduced.
   dimension explicit as `ArrowTableOnly` versus `None`, matching the
   current `PipelineMaterializer` storage scope instead of implying
   general graph materialization.
+- 2026-06-07 follow-up: tightened legacy `MathFormula` output-column SQL
+  generation to use the shared identifier quoting helper and added a
+  regression for output names containing double quotes.
