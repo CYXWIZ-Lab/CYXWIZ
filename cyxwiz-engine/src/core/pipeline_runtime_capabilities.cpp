@@ -174,6 +174,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"SortRows", {"columns"}},
         {"Join", {"on_column"}},
         {"GroupBy", {"group_columns", "aggregations"}},
+        {"PolynomialFeatures", {"columns"}},
         {"StringManipulation", {"column"}},
     };
     return capabilities;

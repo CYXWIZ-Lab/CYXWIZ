@@ -542,6 +542,11 @@ runtime-supported names. Remaining work is to expand this into a fuller
 multi-axis capability matrix for compile, training, materializer storage
 scope, and backend availability.
 
+**Status 2026-06-07 follow-up:** The legacy `PolynomialFeatures`
+branch no longer validates successfully without `columns`, because that
+path was a pass-through rather than an "all numeric columns"
+implementation.
+
 Problem:
 
 - the system currently communicates support through a mix of:

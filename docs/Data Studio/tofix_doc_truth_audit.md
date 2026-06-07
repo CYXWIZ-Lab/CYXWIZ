@@ -150,3 +150,5 @@ scanning so stale or duplicate work is not reintroduced.
   such as `FileInput.path` and `DataOutput.file_path` into
   `pipeline_runtime_capabilities`, with a `DataOutput.file_path`
   validation regression.
+- 2026-06-07 follow-up: blocked the legacy `PolynomialFeatures`
+  pass-through path by requiring `columns` at validation time.

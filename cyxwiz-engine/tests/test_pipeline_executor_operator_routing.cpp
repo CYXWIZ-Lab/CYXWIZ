@@ -259,12 +259,28 @@ int main() {
           "Join missing on_column validation should be specific: " +
               missing_join_executor.GetLastError());
 
-    const std::string unknown_node_json =
+    const std::string missing_poly_columns_json =
         R"({"nodes":[)"
         R"({"id":24,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
-        R"({"id":25,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
+        R"({"id":25,"type":"PolynomialFeatures","name":"MissingPolyColumns","parameters":{)"
+        R"("degree":"2"}})"
         R"(],"links":[{"start_node":24,"end_node":25}]})";
+
+    cyxwiz::PipelineExecutor missing_poly_columns_executor;
+    Check(!missing_poly_columns_executor.ExecutePipeline(missing_poly_columns_json),
+          "PolynomialFeatures missing columns should fail validation");
+    Check(missing_poly_columns_executor.GetLastError().find(
+              "missing required parameter 'columns'") != std::string::npos,
+          "PolynomialFeatures missing columns validation should be specific: " +
+              missing_poly_columns_executor.GetLastError());
+
+    const std::string unknown_node_json =
+        R"({"nodes":[)"
+        R"({"id":26,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":27,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
+        R"(],"links":[{"start_node":26,"end_node":27}]})";
 
     cyxwiz::PipelineExecutor unknown_node_executor;
     Check(!unknown_node_executor.ExecutePipeline(unknown_node_json),
@@ -277,7 +293,7 @@ int main() {
 
     const std::string parquet_input_json =
         R"({"nodes":[)"
-        R"({"id":26,"type":"ParquetInput","name":"Parquet","parameters":{)"
+        R"({"id":28,"type":"ParquetInput","name":"Parquet","parameters":{)"
         R"("file_path":"ignored.parquet"}})"
         R"(],"links":[]})";
 
@@ -292,11 +308,11 @@ int main() {
 
     const std::string bad_output_format_json =
         R"({"nodes":[)"
-        R"({"id":27,"type":"DataInput","name":"Input","parameters":{)"
+        R"({"id":29,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
-        R"({"id":28,"type":"DataOutput","name":"BadOutput","parameters":{)"
+        R"({"id":30,"type":"DataOutput","name":"BadOutput","parameters":{)"
         R"("file_path":"ignored.xml","format":"xml"}})"
-        R"(],"links":[{"start_node":27,"end_node":28}]})";
+        R"(],"links":[{"start_node":29,"end_node":30}]})";
 
     cyxwiz::PipelineExecutor bad_output_format_executor;
     Check(!bad_output_format_executor.ExecutePipeline(bad_output_format_json),
@@ -308,11 +324,11 @@ int main() {
 
     const std::string missing_output_path_json =
         R"({"nodes":[)"
-        R"({"id":29,"type":"DataInput","name":"Input","parameters":{)"
+        R"({"id":31,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
-        R"({"id":30,"type":"DataOutput","name":"MissingOutputPath","parameters":{)"
+        R"({"id":32,"type":"DataOutput","name":"MissingOutputPath","parameters":{)"
         R"("format":"csv"}})"
-        R"(],"links":[{"start_node":29,"end_node":30}]})";
+        R"(],"links":[{"start_node":31,"end_node":32}]})";
 
     cyxwiz::PipelineExecutor missing_output_path_executor;
     Check(!missing_output_path_executor.ExecutePipeline(missing_output_path_json),
