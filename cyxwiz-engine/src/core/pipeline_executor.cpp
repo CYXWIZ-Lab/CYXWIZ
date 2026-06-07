@@ -986,28 +986,18 @@ std::vector<int> PipelineExecutor::TopologicalSort(const std::vector<Node>& node
 bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
     spdlog::debug("[Data Studio] Executing node: {} (type: {})", node.name, node.type);
 
+    bool typed_legacy_handled = false;
+    if (ExecuteTypedLegacyNode(node, ctx, typed_legacy_handled)) {
+        return true;
+    }
+    if (typed_legacy_handled) {
+        return false;
+    }
+
     if (node.type == "FileInput") {
         return ExecuteFileInput(node, ctx);
-    } else if (node.type == "DataInput") {
-        return ExecuteDataInput(node, ctx);
-    } else if (node.type == "DataOutput") {
-        return ExecuteDataOutput(node, ctx);
-    } else if (node.type == "FilterRows") {
-        return ExecuteFilterRows(node, ctx);
-    } else if (node.type == "SelectColumns") {
-        return ExecuteSelectColumns(node, ctx);
-    } else if (node.type == "RemoveDuplicates") {
-        return ExecuteRemoveDuplicates(node, ctx);
     } else if (node.type == "SaveDataset") {
         return ExecuteSaveDataset(node, ctx);
-    } else if (node.type == "FillMissing") {
-        return ExecuteFillMissing(node, ctx);
-    } else if (node.type == "SortRows") {
-        return ExecuteSortRows(node, ctx);
-    } else if (node.type == "Join") {
-        return ExecuteJoin(node, ctx);
-    } else if (node.type == "GroupBy") {
-        return ExecuteGroupBy(node, ctx);
     } else if (node.type == "DeployToNodeEditor") {
         return ExecuteDeployToNodeEditor(node, ctx);
     } else if (auto support = ResolveNodeRuntimeSupport(node);
@@ -1045,21 +1035,55 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
     // KNIME-Style Table Manipulation Nodes
     else if (node.type == "ExcelInput") {
         return ExecuteExcelInput(node, ctx);
-    } else if (node.type == "ExportCSV") {
-        return ExecuteExportCSV(node, ctx);
-    } else if (node.type == "RowToColumnNames") {
-        return ExecuteRowToColumnNames(node, ctx);
-    } else if (node.type == "TableCropper") {
-        return ExecuteTableCropper(node, ctx);
-    } else if (node.type == "StringManipulation") {
-        return ExecuteStringManipulation(node, ctx);
-    } else if (node.type == "MathFormula") {
-        return ExecuteMathFormula(node, ctx);
-    } else if (node.type == "RenameColumns") {
-        return ExecuteRenameColumns(node, ctx);
     }
     else {
         ReportError("Unknown node type: " + node.type);
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
+                                              ExecutionContext& ctx,
+                                              bool& handled) {
+    handled = false;
+    if (!node.runtime_type.has_value()) {
+        return false;
+    }
+
+    handled = true;
+    switch (*node.runtime_type) {
+    case gui::NodeType::DataInput:
+        return ExecuteDataInput(node, ctx);
+    case gui::NodeType::DataOutput:
+        return ExecuteDataOutput(node, ctx);
+    case gui::NodeType::FilterRows:
+        return ExecuteFilterRows(node, ctx);
+    case gui::NodeType::SelectColumns:
+        return ExecuteSelectColumns(node, ctx);
+    case gui::NodeType::RemoveDuplicateRows:
+        return ExecuteRemoveDuplicates(node, ctx);
+    case gui::NodeType::FillMissingValues:
+        return ExecuteFillMissing(node, ctx);
+    case gui::NodeType::SortRows:
+        return ExecuteSortRows(node, ctx);
+    case gui::NodeType::JoinTables:
+        return ExecuteJoin(node, ctx);
+    case gui::NodeType::GroupByAggregate:
+        return ExecuteGroupBy(node, ctx);
+    case gui::NodeType::ExportCSV:
+        return ExecuteExportCSV(node, ctx);
+    case gui::NodeType::RowToColumnNames:
+        return ExecuteRowToColumnNames(node, ctx);
+    case gui::NodeType::TableCropper:
+        return ExecuteTableCropper(node, ctx);
+    case gui::NodeType::StringManipulation:
+        return ExecuteStringManipulation(node, ctx);
+    case gui::NodeType::MathFormula:
+        return ExecuteMathFormula(node, ctx);
+    case gui::NodeType::RenameColumns:
+        return ExecuteRenameColumns(node, ctx);
+    default:
+        handled = false;
         return false;
     }
 }

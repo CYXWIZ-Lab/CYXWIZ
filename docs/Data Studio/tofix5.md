@@ -438,6 +438,15 @@ now resolves each parsed node to the central optional runtime
 identity before falling back to the legacy string name. Ambiguous legacy
 aliases remain string-only until their dispatch branches are migrated.
 
+**Status 2026-06-07 follow-up 2:** The first exact legacy-dispatched
+nodes now execute through typed `gui::NodeType` cases in
+`PipelineExecutor`, including DataInput/DataOutput, core tabular
+transforms, Join/GroupBy, ExportCSV, RowToColumnNames, TableCropper,
+StringManipulation, MathFormula, and RenameColumns. Ambiguous or legacy
+alias names such as FileInput, SaveDataset, ExcelInput, text aliases,
+and old time-series aliases remain on string dispatch until their
+canonical typed ownership is clarified.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`
@@ -448,10 +457,10 @@ Problem:
 
 - `PipelineExecutor::Node` still stores node type as string, but now also
   carries optional typed runtime identity from the central registry
-- dispatch is still a long chain of string comparisons
+- dispatch is still partly a long chain of string comparisons
 - capability truth now bridges to `NodeType`, and validation/operator
-  routing can consume it, but legacy execution dispatch has not moved to
-  typed cases yet
+  routing can consume it, and the first exact legacy runtime names now
+  dispatch through typed cases
 
 Effect:
 
@@ -463,7 +472,8 @@ Effect:
 Recommendation:
 
 - continue using parsed `PipelineExecutor::Node` runtime identity
-- move the legacy dispatch chain to typed cases in small slices
+- continue moving the remaining unambiguous legacy dispatch chain to
+  typed cases in small slices
 - keep `pipeline_runtime_capabilities` as the central type-to-capability
   bridge; do not add another runtime registry
 

@@ -161,6 +161,9 @@ private:
     std::vector<int> TopologicalSort(const std::vector<Node>& nodes);
     bool ExecuteNode(const Node& node, ExecutionContext& ctx);
     PipelineRuntimeSupport ResolveNodeRuntimeSupport(const Node& node) const;
+    bool ExecuteTypedLegacyNode(const Node& node,
+                                ExecutionContext& ctx,
+                                bool& handled);
 
     // Node type executors
     bool ExecuteFileInput(const Node& node, ExecutionContext& ctx);
