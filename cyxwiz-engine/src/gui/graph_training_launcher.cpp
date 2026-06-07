@@ -209,6 +209,16 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     }
 
     result.operators_applied = materialize_result.operators_applied;
+    if (materialize_result.skipped_unsupported_source) {
+        spdlog::info("StartTrainingFromGraph: materializer skipped '{}' "
+                     "({}): {}",
+                     dataset_name,
+                     cyxwiz::PipelineMaterializerSourceKindName(
+                         materialize_result.source_kind),
+                     materialize_result.unsupported_source_reason.empty()
+                         ? "storage backend is unsupported"
+                         : materialize_result.unsupported_source_reason);
+    }
     if (materialize_result.operators_applied > 0) {
         spdlog::info("StartTrainingFromGraph: materialized '{}' -> '{}' "
                      "({} Cat-1 ops)",

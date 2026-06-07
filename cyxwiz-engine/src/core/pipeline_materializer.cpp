@@ -95,12 +95,14 @@ MaterializeResult PipelineMaterializer::Materialize(
 
     if (!backend_support.materializer_supported) {
         result.skipped_unsupported_source = true;
+        result.unsupported_source_reason =
+            backend_support.reason ? backend_support.reason
+                                   : "storage backend is unsupported";
         spdlog::debug("PipelineMaterializer: source '{}' has kind '{}', "
                       "skipping materialization: {}",
                       source_dataset_name,
                       PipelineMaterializerSourceKindName(result.source_kind),
-                      backend_support.reason ? backend_support.reason
-                                             : "storage backend is unsupported");
+                      result.unsupported_source_reason);
         return result;
     }
 

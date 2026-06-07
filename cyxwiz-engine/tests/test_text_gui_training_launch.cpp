@@ -5,6 +5,7 @@
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include "../src/core/pipeline_materializer.h"
+#include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/graph_training_launcher.h"
 
 #include <arrow/api.h>
@@ -239,6 +240,8 @@ int main() {
           "Arrow source should report ArrowTable source kind");
     Check(!arrow_scope.skipped_unsupported_source,
           "Arrow source should not report unsupported-source skip");
+    Check(arrow_scope.unsupported_source_reason.empty(),
+          "Arrow source should not report unsupported-source reason");
     Check(arrow_scope.operators_applied == 1,
           "Arrow source should apply tokenizer through registry materializer");
     registry.UnregisterTabularDataset(kScopeArrowDatasetName);
@@ -264,6 +267,13 @@ int main() {
           "legacy text source should report TextDataset source kind");
     Check(text_scope.skipped_unsupported_source,
           "legacy text source should report unsupported-source skip");
+    const auto text_backend_support =
+        cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(
+            cyxwiz::PipelineStorageBackend::TextDataset);
+    Check(text_backend_support.reason != nullptr,
+          "text materializer backend reason should be registered");
+    Check(text_scope.unsupported_source_reason == text_backend_support.reason,
+          "legacy text source should expose central materializer skip reason");
     registry.UnregisterTextDataset(kScopeTextDatasetName);
 
     bool dispatch_called = false;

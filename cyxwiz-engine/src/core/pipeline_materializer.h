@@ -39,8 +39,9 @@ PipelineMaterializerSourceKind ResolvePipelineMaterializerSourceKind(
  *   registered "<source>__materialized" Arrow dataset.
  * - operators_applied: how many Cat-1 IPipelineOperator instances ran.
  *   Zero means pass-through.
- * - source_kind / skipped_unsupported_source: records the storage scope that
- *   caused a pass-through when the source is not an in-memory Arrow table.
+ * - source_kind / skipped_unsupported_source / unsupported_source_reason:
+ *   records the storage scope that caused a pass-through when the source is
+ *   not an in-memory Arrow table.
  * - success: false only if a Configure(), Apply(), or registry operation
  *   reported a hard error.
  * - error_message: populated only when success=false.
@@ -51,6 +52,7 @@ struct MaterializeResult {
     PipelineMaterializerSourceKind source_kind =
         PipelineMaterializerSourceKind::Unknown;
     bool skipped_unsupported_source = false;
+    std::string unsupported_source_reason;
     bool success = true;
     std::string error_message;
 };

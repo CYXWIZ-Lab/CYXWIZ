@@ -368,6 +368,11 @@ non-Arrow source was skipped as unsupported for materialization. Tests
 cover Arrow-table materialization and legacy text pass-through. Parquet,
 image, audio, and legacy text sources remain non-materialized paths.
 
+**Status 2026-06-07 follow-up:** `MaterializeResult` now also carries
+the central unsupported-source reason from the materializer storage
+backend capability registry, and the graph training launcher logs that
+reason when materialization passes through a non-Arrow source.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_materializer.h:34`
@@ -659,8 +664,10 @@ change. Materializer storage-backend truth is now centralized too: Arrow
 tables are the only supported materializer backend, while
 Parquet-backed, image, audio, and text datasets carry explicit
 unsupported reasons and `PipelineMaterializer` consults that registry
-before pass-through. The first compile/training backend availability
-axis is now explicit through `PipelineTrainingBackendSupport`.
+before pass-through. `MaterializeResult` now returns that unsupported
+source reason to callers instead of leaving it only in debug logs. The
+first compile/training backend availability axis is now explicit through
+`PipelineTrainingBackendSupport`.
 Resolved runtime support now also carries an explicit
 `pipeline_executor_supported` axis. Operator-backed and active
 legacy-dispatched nodes are marked executable, fail-closed and unknown
