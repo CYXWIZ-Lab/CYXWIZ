@@ -2299,6 +2299,15 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TextClean", text_column,
+                               "string", IsStringArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_text_column = QuoteSqlIdentifier(text_column);
+        const std::string quoted_output_column =
+            QuoteSqlIdentifier(text_column + "_cleaned");
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -2308,7 +2317,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
 
         // Build SQL transformation chain
         std::string sql = "SELECT *, ";
-        std::string transform = text_column;
+        std::string transform = quoted_text_column;
 
         if (remove_html) {
             transform = "regexp_replace(" + transform + ", '<[^>]*>', '', 'g')";
@@ -2323,7 +2332,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
         transform = "regexp_replace(" + transform + ", '\\s+', ' ', 'g')";
         transform = "trim(" + transform + ")";
 
-        sql += transform + " AS " + text_column + "_cleaned FROM " + temp_table;
+        sql += transform + " AS " + quoted_output_column + " FROM " + temp_table;
 
         auto result_table = duckdb_->Query(sql);
         duckdb_->UnregisterTable(temp_table);
@@ -2372,6 +2381,15 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TextTokenize", text_column,
+                               "string", IsStringArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_text_column = QuoteSqlIdentifier(text_column);
+        const std::string quoted_tokens_column =
+            QuoteSqlIdentifier(text_column + "_tokens");
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -2382,19 +2400,19 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
         std::string sql;
         if (method == "word") {
             // Split on whitespace and punctuation
-            sql = "SELECT *, string_split_regex(" + text_column + ", '\\s+') AS " +
-                  text_column + "_tokens FROM " + temp_table;
+            sql = "SELECT *, string_split_regex(" + quoted_text_column +
+                  ", '\\s+') AS " + quoted_tokens_column + " FROM " + temp_table;
         } else if (method == "sentence") {
             // Split on sentence boundaries
-            sql = "SELECT *, string_split_regex(" + text_column + ", '[.!?]+') AS " +
-                  text_column + "_tokens FROM " + temp_table;
+            sql = "SELECT *, string_split_regex(" + quoted_text_column +
+                  ", '[.!?]+') AS " + quoted_tokens_column + " FROM " + temp_table;
         } else if (method == "character") {
             // Split into characters (list of individual chars)
-            sql = "SELECT *, string_split(" + text_column + ", '') AS " +
-                  text_column + "_tokens FROM " + temp_table;
+            sql = "SELECT *, string_split(" + quoted_text_column +
+                  ", '') AS " + quoted_tokens_column + " FROM " + temp_table;
         } else {
-            sql = "SELECT *, string_split(" + text_column + ", ' ') AS " +
-                  text_column + "_tokens FROM " + temp_table;
+            sql = "SELECT *, string_split(" + quoted_text_column +
+                  ", ' ') AS " + quoted_tokens_column + " FROM " + temp_table;
         }
 
         auto result_table = duckdb_->Query(sql);
@@ -2446,6 +2464,13 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
         // For MVP: Create simple word count features
         // Full implementation would use TF-IDF or embeddings from backend
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TextVectorize", text_column,
+                               "string", IsStringArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_text_column = QuoteSqlIdentifier(text_column);
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -2455,8 +2480,11 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
 
         // Create simple features: text length, word count
         std::string sql = "SELECT *, "
-                         "length(" + text_column + ") AS text_length, "
-                         "length(" + text_column + ") - length(replace(" + text_column + ", ' ', '')) + 1 AS word_count "
+                         "length(" + quoted_text_column + ") AS " +
+                         QuoteSqlIdentifier("text_length") + ", "
+                         "length(" + quoted_text_column + ") - length(replace(" +
+                         quoted_text_column + ", ' ', '')) + 1 AS " +
+                         QuoteSqlIdentifier("word_count") + " "
                          "FROM " + temp_table;
 
         auto result_table = duckdb_->Query(sql);

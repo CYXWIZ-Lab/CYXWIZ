@@ -1010,6 +1010,104 @@ int main() {
           "StringManipulation numeric column error should be specific: " +
               numeric_string_manipulation_executor.GetLastError());
 
+    const std::string text_clean_json =
+        R"({"nodes":[)"
+        R"({"id":152,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":153,"type":"TextClean","name":"Clean","parameters":{)"
+        R"("text_column":"phrase","lowercase":"true"}})"
+        R"(],"links":[{"start_node":152,"end_node":153}]})";
+
+    cyxwiz::PipelineExecutor text_clean_executor;
+    Check(text_clean_executor.ExecutePipeline(text_clean_json),
+          "TextClean should validate and quote text column: " +
+              text_clean_executor.GetLastError());
+    auto text_clean = registry.GetArrowDataset("ds_textclean_153");
+    Check(text_clean != nullptr, "TextClean output dataset is registered");
+    auto text_clean_table = text_clean->GetArrowTable();
+    Check(text_clean_table != nullptr, "TextClean output table exists");
+    Check(ReadStringValue(text_clean_table, "phrase_cleaned", 0) == "tea cup",
+          "TextClean should write cleaned output column");
+
+    const std::string text_tokenize_json =
+        R"({"nodes":[)"
+        R"({"id":154,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":155,"type":"TextTokenize","name":"Tokenize","parameters":{)"
+        R"("text_column":"phrase","method":"word"}})"
+        R"(],"links":[{"start_node":154,"end_node":155}]})";
+
+    cyxwiz::PipelineExecutor text_tokenize_executor;
+    Check(text_tokenize_executor.ExecutePipeline(text_tokenize_json),
+          "TextTokenize should validate and quote text column: " +
+              text_tokenize_executor.GetLastError());
+    auto text_tokenized = registry.GetArrowDataset("ds_texttokenize_155");
+    Check(text_tokenized != nullptr, "TextTokenize output dataset is registered");
+    auto text_tokenized_table = text_tokenized->GetArrowTable();
+    Check(text_tokenized_table != nullptr, "TextTokenize output table exists");
+    Check(text_tokenized_table->schema()->GetFieldIndex("phrase_tokens") >= 0,
+          "TextTokenize should write token output column");
+
+    const std::string text_vectorize_json =
+        R"({"nodes":[)"
+        R"({"id":156,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":157,"type":"TextVectorize","name":"Vectorize","parameters":{)"
+        R"("text_column":"phrase","method":"count"}})"
+        R"(],"links":[{"start_node":156,"end_node":157}]})";
+
+    cyxwiz::PipelineExecutor text_vectorize_executor;
+    Check(text_vectorize_executor.ExecutePipeline(text_vectorize_json),
+          "TextVectorize should validate and quote text column: " +
+              text_vectorize_executor.GetLastError());
+    auto text_vectorized = registry.GetArrowDataset("ds_textvectorize_157");
+    Check(text_vectorized != nullptr, "TextVectorize output dataset is registered");
+    auto text_vectorized_table = text_vectorized->GetArrowTable();
+    Check(text_vectorized_table != nullptr, "TextVectorize output table exists");
+    Check(ReadNumericValue(text_vectorized_table, "text_length", 0) == 7.0,
+          "TextVectorize should compute text length");
+    Check(ReadNumericValue(text_vectorized_table, "word_count", 0) == 2.0,
+          "TextVectorize should compute word count");
+
+    const std::string text_clean_numeric_column_json =
+        R"({"nodes":[)"
+        R"({"id":158,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":159,"type":"TextClean","name":"BadClean","parameters":{)"
+        R"("text_column":"x","lowercase":"true"}})"
+        R"(],"links":[{"start_node":158,"end_node":159}]})";
+
+    cyxwiz::PipelineExecutor text_clean_numeric_column_executor;
+    Check(!text_clean_numeric_column_executor.ExecutePipeline(
+              text_clean_numeric_column_json),
+          "TextClean on numeric column should fail schema validation");
+    Check(text_clean_numeric_column_executor.GetLastError().find(
+              "TextClean: column 'x' must be string") != std::string::npos,
+          "TextClean numeric column error should be specific: " +
+              text_clean_numeric_column_executor.GetLastError());
+
+    const std::string text_vectorize_missing_column_json =
+        R"({"nodes":[)"
+        R"({"id":160,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":161,"type":"TextVectorize","name":"MissingVectorize","parameters":{)"
+        R"("text_column":"missing","method":"count"}})"
+        R"(],"links":[{"start_node":160,"end_node":161}]})";
+
+    cyxwiz::PipelineExecutor text_vectorize_missing_column_executor;
+    Check(!text_vectorize_missing_column_executor.ExecutePipeline(
+              text_vectorize_missing_column_json),
+          "TextVectorize missing text column should fail schema validation");
+    Check(text_vectorize_missing_column_executor.GetLastError().find(
+              "TextVectorize: column 'missing' not found") != std::string::npos,
+          "TextVectorize missing column error should be specific: " +
+              text_vectorize_missing_column_executor.GetLastError());
+
     const std::string binning_json =
         R"({"nodes":[)"
         R"({"id":71,"type":"DataInput","name":"Input","parameters":{)"
@@ -1563,6 +1661,14 @@ int main() {
     registry.UnloadDataset("ds_datainput_67");
     registry.UnloadDataset("ds_string_68");
     registry.UnloadDataset("ds_datainput_87");
+    registry.UnloadDataset("ds_datainput_152");
+    registry.UnloadDataset("ds_textclean_153");
+    registry.UnloadDataset("ds_datainput_154");
+    registry.UnloadDataset("ds_texttokenize_155");
+    registry.UnloadDataset("ds_datainput_156");
+    registry.UnloadDataset("ds_textvectorize_157");
+    registry.UnloadDataset("ds_datainput_158");
+    registry.UnloadDataset("ds_datainput_160");
     registry.UnloadDataset("ds_datainput_71");
     registry.UnloadDataset("ds_binning_72");
     registry.UnloadDataset("ds_datainput_89");

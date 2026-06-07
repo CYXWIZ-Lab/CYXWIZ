@@ -269,6 +269,12 @@ that their source columns exist and are numeric before query
 construction, and quote source/output identifiers instead of inserting
 raw column names into DuckDB SQL.
 
+**Status 2026-06-07 follow-up 5:** Active legacy text SQL branches
+(`TextClean`, `TextTokenize`, and `TextVectorize`) now validate that
+their configured text columns exist and are string-typed before query
+construction, and quote source/output identifiers before building
+DuckDB SQL.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`
