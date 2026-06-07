@@ -222,7 +222,10 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     // Parse pipeline
     std::vector<Node> nodes;
     if (!ParsePipeline(pipeline_json, nodes)) {
-        ReportError("Failed to parse pipeline");
+        const std::string parse_error = last_error_.empty()
+            ? "Failed to parse pipeline"
+            : "Failed to parse pipeline: " + last_error_;
+        ReportError(parse_error);
         executing_ = false;
         NotifyCompletion(false);
         return false;
@@ -318,10 +321,19 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
             auto end_it = std::find_if(nodes.begin(), nodes.end(),
                                       [end_node](const Node& n) { return n.id == end_node; });
 
-            if (start_it != nodes.end() && end_it != nodes.end()) {
-                start_it->outputs.push_back(end_node);
-                end_it->inputs.push_back(start_node);
+            if (start_it == nodes.end()) {
+                last_error_ = "Link references missing start node id: " +
+                              std::to_string(start_node);
+                return false;
             }
+            if (end_it == nodes.end()) {
+                last_error_ = "Link references missing end node id: " +
+                              std::to_string(end_node);
+                return false;
+            }
+
+            start_it->outputs.push_back(end_node);
+            end_it->inputs.push_back(start_node);
         }
 
         return true;

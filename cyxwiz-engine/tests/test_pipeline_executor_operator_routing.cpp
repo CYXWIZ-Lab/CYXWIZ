@@ -391,6 +391,22 @@ int main() {
           "ExportJSON should use fail-closed runtime support: " +
               export_json_executor.GetLastError());
 
+    const std::string dangling_link_json =
+        R"({"nodes":[)"
+        R"({"id":39,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":40,"type":"StandardScaler","name":"Scale","parameters":{)"
+        R"("columns":"x"}})"
+        R"(],"links":[{"start_node":999,"end_node":40}]})";
+
+    cyxwiz::PipelineExecutor dangling_link_executor;
+    Check(!dangling_link_executor.ExecutePipeline(dangling_link_json),
+          "dangling link start endpoint should fail parsing");
+    Check(dangling_link_executor.GetLastError().find(
+              "Link references missing start node id: 999") != std::string::npos,
+          "dangling link parse error should keep the missing endpoint: " +
+              dangling_link_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");

@@ -159,3 +159,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: wired legacy `ExportCSV` to the real registry
   CSV export path and moved fake-success legacy `ExportExcel`/`ExportJSON`
   branches to fail-closed runtime capability entries.
+- 2026-06-07 follow-up: made pipeline parsing fail closed on dangling
+  link endpoints and preserved the specific parse failure in
+  `ExecutePipeline()` errors.

@@ -197,8 +197,10 @@ starts. Validation now rejects invalid `DataInput.skip_rows` and Excel
 `sheet_idx` integer parameters before execution reaches `std::stoi`,
 plus bounded integer parameters for active legacy transforms such as
 `TSWindow`, `TSLag.lag_periods`, `PolynomialFeatures`, `Binning`, and
-table row helpers. Validation errors now preserve the specific failed
-rule. Broader schema/type-aware validation remains future work.
+table row helpers. Dangling links whose start or end node id is missing
+now fail during parsing instead of being silently dropped. Validation
+and parse errors now preserve the specific failed rule. Broader
+schema/type-aware validation remains future work.
 
 Relevant files:
 
