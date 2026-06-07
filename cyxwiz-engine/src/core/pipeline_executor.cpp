@@ -1725,21 +1725,8 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
 }
 
 bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
-    // Join node requires two inputs
-    if (node.inputs.size() < 2) {
-        ReportError("Join node requires two input connections");
-        return false;
-    }
-
-    // Get left and right datasets
-    int left_node_id = node.inputs[0];
-    int right_node_id = node.inputs[1];
-
-    auto left_it = ctx.node_results.find(left_node_id);
-    auto right_it = ctx.node_results.find(right_node_id);
-
-    if (left_it == ctx.node_results.end() || right_it == ctx.node_results.end()) {
-        ReportError("Join: One or both input datasets not found");
+    const auto input_dataset_names = GetInputDatasetNames(node, ctx, 2);
+    if (input_dataset_names.empty()) {
         return false;
     }
 
@@ -1755,8 +1742,8 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
         return false;
     }
 
-    const std::string& left_dataset_name = left_it->second;
-    const std::string& right_dataset_name = right_it->second;
+    const std::string& left_dataset_name = input_dataset_names[0];
+    const std::string& right_dataset_name = input_dataset_names[1];
     const std::string on_column = TrimString(on_column_it->second);
     if (on_column.empty()) {
         ReportError("Join: Missing 'on_column' parameter");
@@ -2057,19 +2044,35 @@ bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionCont
 // ============================================================================
 
 std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionContext& ctx) {
-    if (node.inputs.empty()) {
+    const auto input_dataset_names = GetInputDatasetNames(node, ctx, 1);
+    if (input_dataset_names.empty()) {
         return "";
     }
-    if (node.inputs.size() > 1) {
-        ReportError(node.type + ": multiple inputs are not supported by this executor path");
-        return "";
+    return input_dataset_names.front();
+}
+
+std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
+    const Node& node,
+    ExecutionContext& ctx,
+    size_t expected_count) {
+    if (node.inputs.size() != expected_count) {
+        ReportError(node.type + ": expected " + std::to_string(expected_count) +
+                    " input dataset(s), got " + std::to_string(node.inputs.size()));
+        return {};
     }
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        return "";
+
+    std::vector<std::string> dataset_names;
+    dataset_names.reserve(expected_count);
+    for (int input_node_id : node.inputs) {
+        auto result_it = ctx.node_results.find(input_node_id);
+        if (result_it == ctx.node_results.end() || result_it->second.empty()) {
+            ReportError(node.type + ": input dataset from node " +
+                        std::to_string(input_node_id) + " not found");
+            return {};
+        }
+        dataset_names.push_back(result_it->second);
     }
-    return result_it->second;
+    return dataset_names;
 }
 
 bool PipelineExecutor::FailUnsupportedNode(const Node& node, const std::string& reason) {

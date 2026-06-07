@@ -7,6 +7,7 @@
 #include <functional>
 #include <atomic>
 #include <set>
+#include <cstddef>
 
 namespace gui {
 enum class NodeType;
@@ -203,6 +204,9 @@ private:
     void ReportError(const std::string& error);
     void NotifyCompletion(bool success);
     std::string GetInputDatasetName(const Node& node, ExecutionContext& ctx);
+    std::vector<std::string> GetInputDatasetNames(const Node& node,
+                                                  ExecutionContext& ctx,
+                                                  size_t expected_count);
     bool FailUnsupportedNode(const Node& node, const std::string& reason);
     bool ExecutePipelineOperatorNode(const Node& node, ExecutionContext& ctx, gui::NodeType type);
 

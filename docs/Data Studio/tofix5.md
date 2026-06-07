@@ -46,9 +46,10 @@ Current truth after the 2026-06-07 cleanup:
    mutable context across async tasks without a merge boundary.
 2. Done: cached nodes without a cached output dataset are no longer
    treated as completed successful nodes.
-3. Done for the legacy single-input path: `GetInputDatasetName()` now
-   fails closed on multiple inputs instead of silently selecting the
-   first input edge.
+3. Done for current executor input binding: single-input nodes and the
+   two-input `Join` path now resolve upstream datasets through one
+   shared binding helper instead of silently selecting the first input
+   edge.
 4. Done for baseline structure/runtime support: `ValidatePipeline()`
    now rejects duplicate ids, missing/self links, invalid source/input
    shapes, unsupported multi-input paths, cycles/topology failures,
@@ -156,31 +157,39 @@ Recommendation:
 **Severity:** High
 
 **Status 2026-06-07:** Fixed for the current legacy helper. Multiple
-inputs now fail closed instead of silently using the first edge. A real
-multi-input binding contract is still pending.
+inputs now fail closed instead of silently using the first edge.
+
+**Status 2026-06-07 follow-up:** The executor now has a shared input
+dataset binding helper. Single-input nodes require exactly one upstream
+dataset, while `Join` uses the same helper to bind exactly two ordered
+input datasets instead of manually indexing `node.inputs`. Named input
+pins remain future work for graph formats that need pin-level semantics.
 
 Relevant files:
 
-- `cyxwiz-engine/src/core/pipeline_executor.cpp:1377`
+- `cyxwiz-engine/src/core/pipeline_executor.cpp:1727`
+- `cyxwiz-engine/src/core/pipeline_executor.cpp:2046`
 
-Problem:
+Original problem:
 
-- `GetInputDatasetName()` returns `node.inputs[0]` only.
+- `GetInputDatasetName()` returned `node.inputs[0]` only.
 - Any node that logically depends on more than one upstream input is not
   modeled correctly by this helper.
 
-Effect:
+Original effect:
 
-- multi-input nodes cannot execute truthfully on this path
-- future node additions can silently inherit broken semantics
-- compile-time graph shape and runtime data flow can diverge
+- multi-input nodes could not execute truthfully on this path
+- future node additions could silently inherit broken semantics
+- compile-time graph shape and runtime data flow could diverge
 
 Recommendation:
 
-- replace first-input lookup with explicit per-node input binding
-- model named input pins or typed input collections
-- keep failing closed for node types that require multi-input semantics
-  until the executor can support them
+- keep shared input binding as the only executor path for upstream
+  dataset lookup
+- model named input pins or typed input collections when the graph JSON
+  preserves pin-level semantics
+- keep failing closed for node types that require unsupported
+  multi-input or multi-output semantics
 
 ---
 
