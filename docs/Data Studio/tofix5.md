@@ -743,6 +743,14 @@ and fail-closed nodes by no runtime owner. The drift suite verifies
 owner values and stable owner labels, and operator-backed metadata
 exposes the owner in its support summary.
 
+**Status 2026-06-07 follow-up 7:** Runtime support now also carries an
+optional `gui::NodeType`, and `pipeline_runtime_capabilities.{h,cpp}`
+can resolve exact legacy runtime names to typed nodes and typed nodes
+back to canonical runtime names. Operator-backed, fail-closed, and
+clear legacy-dispatched mappings are covered by the drift suite.
+Ambiguous legacy aliases remain string-only until they are migrated or
+renamed to first-class typed nodes.
+
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit
