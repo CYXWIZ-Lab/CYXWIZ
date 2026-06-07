@@ -1,4 +1,5 @@
 #include "../src/core/graph_compiler.h"
+#include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <cstdlib>
@@ -272,28 +273,11 @@ int main() {
               std::string("compiler should extract learning rate for ") + optimizer_case.name);
     }
 
-    struct UnsupportedLayerCase {
-        gui::NodeType node_type;
-        const char* name;
-    };
-
-    const std::vector<UnsupportedLayerCase> unsupported_layer_cases = {
-        {gui::NodeType::Conv2D, "Conv2D"},
-        {gui::NodeType::MaxPool2D, "MaxPool2D"},
-        {gui::NodeType::AvgPool2D, "AvgPool2D"},
-        {gui::NodeType::GlobalMaxPool, "GlobalMaxPool"},
-        {gui::NodeType::GlobalAvgPool, "GlobalAvgPool"},
-        {gui::NodeType::ConvTranspose2D, "ConvTranspose2D"},
-        {gui::NodeType::Upsample, "Upsample"},
-        {gui::NodeType::PixelShuffle, "PixelShuffle"},
-        {gui::NodeType::RNN, "RNN"},
-        {gui::NodeType::Bidirectional, "Bidirectional"},
-    };
-
-    for (const auto& unsupported_case : unsupported_layer_cases) {
+    for (const auto& unsupported_case :
+         cyxwiz::GetPipelineUnsupportedSequentialModelLayerCapabilities()) {
         auto unsupported = Node(17,
                                 unsupported_case.node_type,
-                                unsupported_case.name,
+                                "UnsupportedLayer",
                                 {Pin(1701, gui::PinType::Tensor, "Input", true)},
                                 {Pin(1702, gui::PinType::Tensor, "Output", false)});
 
@@ -307,9 +291,9 @@ int main() {
 
         config = compiler.Compile(nodes, links, true);
         Check(!config.is_valid,
-              std::string("unsupported layer should block compile: ") + unsupported_case.name);
-        Check(HasIssueText(config, "not supported by ModelBuilder/SequentialModel"),
-              std::string("unsupported layer should report backend gap: ") + unsupported_case.name);
+              "unsupported layer should block compile");
+        Check(HasIssueText(config, unsupported_case.reason),
+              "unsupported layer should report backend gap");
     }
 
     auto encoded_ner = Node(20,
@@ -360,18 +344,11 @@ int main() {
     Check(!HasIssueText(config, "Sentence Sequences"),
           "side Dense-encoded target-design node should not be reported");
 
-    const std::vector<UnsupportedLayerCase> unsupported_scheduler_cases = {
-        {gui::NodeType::StepLR, "StepLR"},
-        {gui::NodeType::CosineAnnealing, "CosineAnnealing"},
-        {gui::NodeType::ReduceOnPlateau, "ReduceOnPlateau"},
-        {gui::NodeType::ExponentialLR, "ExponentialLR"},
-        {gui::NodeType::WarmupScheduler, "WarmupScheduler"},
-    };
-
-    for (const auto& scheduler_case : unsupported_scheduler_cases) {
+    for (const auto& scheduler_case :
+         cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         auto scheduler = Node(18,
                               scheduler_case.node_type,
-                              scheduler_case.name,
+                              "UnsupportedTrainingControl",
                               {},
                               {});
 
@@ -385,37 +362,9 @@ int main() {
 
         config = compiler.Compile(nodes, links, true);
         Check(!config.is_valid,
-              std::string("unsupported scheduler should block compile: ") + scheduler_case.name);
-        Check(HasIssueText(config, "not connected to training execution yet"),
-              std::string("unsupported scheduler should report execution gap: ") + scheduler_case.name);
-    }
-
-    const std::vector<UnsupportedLayerCase> unsupported_regularization_cases = {
-        {gui::NodeType::L1Regularization, "L1Regularization"},
-        {gui::NodeType::L2Regularization, "L2Regularization"},
-        {gui::NodeType::ElasticNet, "ElasticNet"},
-    };
-
-    for (const auto& regularization_case : unsupported_regularization_cases) {
-        auto regularization = Node(19,
-                                   regularization_case.node_type,
-                                   regularization_case.name,
-                                   {},
-                                   {});
-
-        nodes = {data, dense, loss, optimizer, regularization};
-        links = {
-            Link(1, 1, 101, 2, 201),
-            Link(2, 2, 202, 4, 401),
-            Link(3, 1, 102, 4, 402),
-            Link(4, 4, 403, 5, 501),
-        };
-
-        config = compiler.Compile(nodes, links, true);
-        Check(!config.is_valid,
-              std::string("unsupported regularization should block compile: ") + regularization_case.name);
-        Check(HasIssueText(config, "not connected to training execution yet"),
-              std::string("unsupported regularization should report execution gap: ") + regularization_case.name);
+              "unsupported training control should block compile");
+        Check(HasIssueText(config, scheduler_case.reason),
+              "unsupported training control should report execution gap");
     }
 
     auto abs = Node(8,

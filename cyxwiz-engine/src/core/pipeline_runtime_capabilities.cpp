@@ -209,6 +209,56 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineUnsupportedTrainingNodeCapability>&
+GetPipelineUnsupportedSequentialModelLayerCapabilities() {
+    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
+        {gui::NodeType::Conv2D,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+        {gui::NodeType::MaxPool2D,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+        {gui::NodeType::AvgPool2D,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+        {gui::NodeType::GlobalMaxPool,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+        {gui::NodeType::GlobalAvgPool,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+        {gui::NodeType::ConvTranspose2D,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+        {gui::NodeType::Upsample,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+        {gui::NodeType::PixelShuffle,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+        {gui::NodeType::RNN,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+        {gui::NodeType::Bidirectional,
+         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineUnsupportedTrainingNodeCapability>&
+GetPipelineUnsupportedTrainingControlCapabilities() {
+    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
+        {gui::NodeType::StepLR,
+         "configurable in the editor but is not connected to training execution yet"},
+        {gui::NodeType::CosineAnnealing,
+         "configurable in the editor but is not connected to training execution yet"},
+        {gui::NodeType::ReduceOnPlateau,
+         "configurable in the editor but is not connected to training execution yet"},
+        {gui::NodeType::ExponentialLR,
+         "configurable in the editor but is not connected to training execution yet"},
+        {gui::NodeType::WarmupScheduler,
+         "configurable in the editor but is not connected to training execution yet"},
+        {gui::NodeType::L1Regularization,
+         "configurable in the editor but is not connected to training execution yet"},
+        {gui::NodeType::L2Regularization,
+         "configurable in the editor but is not connected to training execution yet"},
+        {gui::NodeType::ElasticNet,
+         "configurable in the editor but is not connected to training execution yet"},
+    };
+    return capabilities;
+}
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
@@ -337,6 +387,38 @@ ResolvePipelineIntegerParameters(const std::string& legacy_type_name) {
         }
     }
     return result;
+}
+
+const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType node_type) {
+    const auto& capabilities = GetPipelineUnsupportedSequentialModelLayerCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (it == capabilities.end()) {
+        return nullptr;
+    }
+    return it->reason;
+}
+
+const char* ResolvePipelineUnsupportedTrainingControlReason(gui::NodeType node_type) {
+    const auto& capabilities = GetPipelineUnsupportedTrainingControlCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (it == capabilities.end()) {
+        return nullptr;
+    }
+    return it->reason;
+}
+
+bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type) {
+    return ResolvePipelineUnsupportedSequentialModelLayerReason(node_type) != nullptr;
+}
+
+bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type) {
+    return ResolvePipelineUnsupportedTrainingControlReason(node_type) != nullptr;
 }
 
 } // namespace cyxwiz

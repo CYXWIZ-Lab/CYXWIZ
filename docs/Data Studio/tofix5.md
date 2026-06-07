@@ -601,6 +601,12 @@ runtime-supported names. Remaining work is to expand this into a fuller
 multi-axis capability matrix for compile, training, materializer storage
 scope, and backend availability.
 
+**Status 2026-06-07 follow-up 3:** The first training-support axis is now
+centralized too: compiler-blocked sequential-model layers and
+training-control nodes live in typed capability entries with explicit
+reasons, and the graph compiler/test suite consume those entries instead
+of carrying separate hardcoded unsupported lists.
+
 **Status 2026-06-07 follow-up:** The legacy `PolynomialFeatures`
 branch no longer validates successfully without `columns`, because that
 path was a pass-through rather than an "all numeric columns"
@@ -717,9 +723,10 @@ Deliverable:
 ### Ticket D: Capability registry
 
 Status: in progress. Runtime support now has centralized operator,
-legacy, fail-closed, required-parameter, enum, integer-validation, and
-Arrow-table materializer-scope truth. The remaining work is the broader
-multi-axis matrix for compile/training/materializer storage parity.
+legacy, fail-closed, required-parameter, enum, integer-validation,
+compiler-blocked training, and Arrow-table materializer-scope truth. The
+remaining work is the broader multi-axis matrix for compile success,
+training backend availability, and materializer storage parity.
 
 Scope:
 

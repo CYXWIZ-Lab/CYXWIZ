@@ -156,6 +156,40 @@ int main() {
             Check(integer_parameter_names.insert(key).second,
                   "duplicate integer-parameter runtime capability: " + key);
         }
+
+        std::set<int> unsupported_training_layer_types;
+        for (const auto& capability :
+             cyxwiz::GetPipelineUnsupportedSequentialModelLayerCapabilities()) {
+            const int key = static_cast<int>(capability.node_type);
+            Check(unsupported_training_layer_types.insert(key).second,
+                  "duplicate unsupported training layer capability: " +
+                      TypeId(capability.node_type));
+            Check(capability.reason != nullptr &&
+                      std::string(capability.reason).size() > 16,
+                  "unsupported training layer reason is too weak: " +
+                      TypeId(capability.node_type));
+            Check(cyxwiz::IsPipelineUnsupportedSequentialModelLayer(
+                      capability.node_type),
+                  "unsupported training layer capability does not resolve: " +
+                      TypeId(capability.node_type));
+        }
+
+        std::set<int> unsupported_training_control_types;
+        for (const auto& capability :
+             cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
+            const int key = static_cast<int>(capability.node_type);
+            Check(unsupported_training_control_types.insert(key).second,
+                  "duplicate unsupported training control capability: " +
+                      TypeId(capability.node_type));
+            Check(capability.reason != nullptr &&
+                      std::string(capability.reason).size() > 16,
+                  "unsupported training control reason is too weak: " +
+                      TypeId(capability.node_type));
+            Check(cyxwiz::IsPipelineUnsupportedTrainingControlNode(
+                      capability.node_type),
+                  "unsupported training control capability does not resolve: " +
+                      TypeId(capability.node_type));
+        }
     }
 
     for (auto type : supported) {

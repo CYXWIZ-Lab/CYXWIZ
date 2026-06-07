@@ -51,6 +51,11 @@ struct PipelineIntegerParameterRuntimeCapability {
     bool comma_separated = false;
 };
 
+struct PipelineUnsupportedTrainingNodeCapability {
+    gui::NodeType node_type;
+    const char* reason;
+};
+
 enum class PipelineRuntimeSupportMode {
     Unknown,
     LegacyExecutor,
@@ -96,6 +101,12 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities();
 const std::vector<PipelineIntegerParameterRuntimeCapability>&
 GetPipelineIntegerParameterRuntimeCapabilities();
 
+const std::vector<PipelineUnsupportedTrainingNodeCapability>&
+GetPipelineUnsupportedSequentialModelLayerCapabilities();
+
+const std::vector<PipelineUnsupportedTrainingNodeCapability>&
+GetPipelineUnsupportedTrainingControlCapabilities();
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name);
 
 std::optional<gui::NodeType>
@@ -121,5 +132,13 @@ ResolvePipelineAllowedParameterValues(const std::string& legacy_type_name);
 
 std::vector<PipelineIntegerParameterRuntimeCapability>
 ResolvePipelineIntegerParameters(const std::string& legacy_type_name);
+
+const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType node_type);
+
+const char* ResolvePipelineUnsupportedTrainingControlReason(gui::NodeType node_type);
+
+bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type);
+
+bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type);
 
 } // namespace cyxwiz

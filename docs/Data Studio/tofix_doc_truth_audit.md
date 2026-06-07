@@ -217,3 +217,7 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: tightened legacy `MathFormula` output-column SQL
   generation to use the shared identifier quoting helper and added a
   regression for output names containing double quotes.
+- 2026-06-07 follow-up: moved GraphCompiler's unsupported
+  sequential-model layer and unsupported training-control node truth into
+  typed capability entries so compile-time training gaps are no longer
+  duplicated between compiler code and tests.

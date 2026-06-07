@@ -1316,6 +1316,7 @@ add_executable(test_graph_compiler_deferred_nodes
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/arrow_dataset.cpp

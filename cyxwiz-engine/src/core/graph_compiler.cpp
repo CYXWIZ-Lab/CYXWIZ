@@ -5,6 +5,7 @@
 #include "graph_topology_utils.h"
 #include "worker_defaults.h"
 #include "node_metadata_registry.h"
+#include "pipeline_runtime_capabilities.h"
 #include "../gui/loaders/data_loader.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -117,30 +118,6 @@ bool IsGraphRuntimeFanInOp(gui::NodeType type) {
     return IsGraphRuntimeMergeOp(type) ||
            IsGraphRuntimeBinaryMaskOp(type) ||
            IsGraphRuntimeLinalgOp(type);
-}
-
-bool IsUnsupportedSequentialModelLayer(gui::NodeType type) {
-    return type == gui::NodeType::Conv2D ||
-           type == gui::NodeType::MaxPool2D ||
-           type == gui::NodeType::AvgPool2D ||
-           type == gui::NodeType::GlobalMaxPool ||
-           type == gui::NodeType::GlobalAvgPool ||
-           type == gui::NodeType::ConvTranspose2D ||
-           type == gui::NodeType::Upsample ||
-           type == gui::NodeType::PixelShuffle ||
-           type == gui::NodeType::RNN ||
-           type == gui::NodeType::Bidirectional;
-}
-
-bool IsUnsupportedTrainingControlNode(gui::NodeType type) {
-    return type == gui::NodeType::StepLR ||
-           type == gui::NodeType::CosineAnnealing ||
-           type == gui::NodeType::ReduceOnPlateau ||
-           type == gui::NodeType::ExponentialLR ||
-           type == gui::NodeType::WarmupScheduler ||
-           type == gui::NodeType::L1Regularization ||
-           type == gui::NodeType::L2Regularization ||
-           type == gui::NodeType::ElasticNet;
 }
 
 bool HasParam(const std::map<std::string, std::string>& params,
@@ -1017,10 +994,11 @@ void ValidateTrainingPathImplementationStatus(
             continue;
         }
 
-        if (IsUnsupportedSequentialModelLayer(node.type)) {
+        if (const char* reason =
+                ResolvePipelineUnsupportedSequentialModelLayerReason(node.type);
+            reason != nullptr) {
             std::ostringstream msg;
-            msg << "Node '" << node.name << "' is recognized by the graph compiler "
-                << "but is not supported by ModelBuilder/SequentialModel yet";
+            msg << "Node '" << node.name << "' is " << reason;
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
@@ -1052,13 +1030,14 @@ void ValidateUnsupportedTrainingControlNodes(
     TrainingConfiguration& config) {
 
     for (const auto& node : nodes) {
-        if (!IsUnsupportedTrainingControlNode(node.type)) {
+        const char* reason =
+            ResolvePipelineUnsupportedTrainingControlReason(node.type);
+        if (reason == nullptr) {
             continue;
         }
 
         std::ostringstream msg;
-        msg << "Node '" << node.name << "' is configurable in the editor "
-            << "but is not connected to training execution yet";
+        msg << "Node '" << node.name << "' is " << reason;
         AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
     }
 }
