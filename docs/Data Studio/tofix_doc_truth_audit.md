@@ -270,3 +270,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: moved source-node and required-input-count truth
   onto resolved `PipelineRuntimeSupport`, so `PipelineExecutor`
   validation consumes the same support object used for runtime routing.
+- 2026-06-07 follow-up: moved required-parameter, allowed-value, and
+  integer-parameter validation axes onto resolved `PipelineRuntimeSupport`
+  as well, while preserving the existing specialized validation behavior.

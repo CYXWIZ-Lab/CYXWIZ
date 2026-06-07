@@ -478,7 +478,8 @@ std::string NormalizeJoinTypeSql(const std::string& value) {
 
 const char* MissingRequiredParameter(
     const std::string& node_type,
-    const std::map<std::string, std::string>& parameters) {
+    const std::map<std::string, std::string>& parameters,
+    const std::vector<const char*>& required_parameters) {
     if (node_type == "DataInput") {
         const auto source_it = parameters.find("source_type");
         const std::string source_type =
@@ -501,7 +502,7 @@ const char* MissingRequiredParameter(
             : "mapping";
     }
 
-    for (const char* parameter : ResolvePipelineRequiredParameters(node_type)) {
+    for (const char* parameter : required_parameters) {
         if (!HasNonEmptyParameter(parameters, parameter)) {
             return parameter;
         }
@@ -513,9 +514,12 @@ const char* MissingRequiredParameter(
 bool HasSupportedParameterValues(
     const std::string& node_type,
     const std::map<std::string, std::string>& parameters,
+    const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
+        allowed_parameter_values,
+    const std::vector<PipelineIntegerParameterRuntimeCapability>&
+        integer_parameters,
     std::string& error) {
-    for (const auto& capability :
-         ResolvePipelineAllowedParameterValues(node_type)) {
+    for (const auto& capability : allowed_parameter_values) {
         auto it = parameters.find(capability.parameter_name);
         const std::string value =
             (it != parameters.end() && !it->second.empty())
@@ -528,7 +532,7 @@ bool HasSupportedParameterValues(
         }
     }
 
-    for (const auto& capability : ResolvePipelineIntegerParameters(node_type)) {
+    for (const auto& capability : integer_parameters) {
         if (capability.comma_separated) {
             if (!ValidateCommaSeparatedIntegersAtLeast(
                     parameters, node_type, capability.parameter_name,
@@ -846,7 +850,8 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         }
 
         if (const char* missing_parameter =
-                MissingRequiredParameter(node.type, node.parameters);
+                MissingRequiredParameter(node.type, node.parameters,
+                                         runtime_support.required_parameters);
             missing_parameter != nullptr) {
             last_error_ = "Node '" + node.name + "' of type '" + node.type +
                           "' is missing required parameter '" + missing_parameter + "'";
@@ -854,7 +859,12 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         }
 
         std::string parameter_error;
-        if (!HasSupportedParameterValues(node.type, node.parameters, parameter_error)) {
+        if (!HasSupportedParameterValues(
+                node.type,
+                node.parameters,
+                runtime_support.allowed_parameter_values,
+                runtime_support.integer_parameters,
+                parameter_error)) {
             last_error_ = "Node '" + node.name + "': " + parameter_error;
             return false;
         }

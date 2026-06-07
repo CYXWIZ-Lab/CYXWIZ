@@ -624,11 +624,14 @@ for runtime routing. Runtime support now carries the first materializer
 dimension: exact operator-backed nodes are marked
 `ArrowTableOnly` materializer capable, while fail-closed and
 legacy-dispatched nodes are marked `None`. Static source/export required
-parameters and required
-legacy transform parameters for active runtime validation are now
-centralized there as well, along with supported enum values such as
-`DataInput.source_type` and `DataOutput.format` and bounded integer
-parameter rules for active legacy transforms. The metadata drift test
+parameters and required legacy transform parameters for active runtime
+validation are now centralized there as well, along with supported enum
+values such as `DataInput.source_type` and `DataOutput.format` and
+bounded integer parameter rules for active legacy transforms. Resolved
+runtime support now carries those parameter-validation axes too, so
+`PipelineExecutor` validates required parameters, enum values, and
+integer bounds from the same support object used for routing. The
+metadata drift test
 verifies every listed operator runtime capability has a real factory
 operator, that operator/fail-closed/legacy-dispatched names do not
 overlap, and that validation capability entries resolve to known

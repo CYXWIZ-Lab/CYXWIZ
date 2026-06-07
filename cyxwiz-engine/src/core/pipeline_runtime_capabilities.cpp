@@ -295,6 +295,12 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             support.source_node = IsPipelineSourceRuntimeNode(legacy_type_name);
             support.required_input_count =
                 ResolvePipelineRequiredInputCount(legacy_type_name);
+            support.required_parameters =
+                ResolvePipelineRequiredParameters(legacy_type_name);
+            support.allowed_parameter_values =
+                ResolvePipelineAllowedParameterValues(legacy_type_name);
+            support.integer_parameters =
+                ResolvePipelineIntegerParameters(legacy_type_name);
             return support;
         };
 

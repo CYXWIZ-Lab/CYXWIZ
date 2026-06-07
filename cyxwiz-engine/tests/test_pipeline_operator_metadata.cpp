@@ -427,9 +427,14 @@ int main() {
         Check(required_parameters.size() == capability.required_parameters.size(),
               std::string("required-parameter count mismatch: ") +
                   capability.legacy_type_name);
-        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
-                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            capability.legacy_type_name);
+        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
               std::string("required-parameter runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        Check(support.required_parameters.size() ==
+                  capability.required_parameters.size(),
+              std::string("runtime support should carry required-parameter axis: ") +
                   capability.legacy_type_name);
         for (const char* parameter : capability.required_parameters) {
             Check(parameter != nullptr && std::string(parameter).size() > 1,
@@ -446,10 +451,23 @@ int main() {
         Check(!allowed_parameters.empty(),
               std::string("allowed-parameter runtime name does not resolve: ") +
                   capability.legacy_type_name);
-        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
-                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            capability.legacy_type_name);
+        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
               std::string("allowed-parameter runtime name has unknown support: ") +
                   capability.legacy_type_name);
+        auto supported_axis = std::find_if(
+            support.allowed_parameter_values.begin(),
+            support.allowed_parameter_values.end(),
+            [&capability](
+                const cyxwiz::PipelineAllowedParameterValuesRuntimeCapability&
+                    runtime_capability) {
+                return std::string(runtime_capability.parameter_name) ==
+                       capability.parameter_name;
+            });
+        Check(supported_axis != support.allowed_parameter_values.end(),
+              std::string("runtime support should carry allowed-parameter axis: ") +
+                  capability.legacy_type_name + "." + capability.parameter_name);
         Check(capability.parameter_name != nullptr &&
                   std::string(capability.parameter_name).size() > 1,
               std::string("allowed parameter name is too weak: ") +
@@ -469,10 +487,26 @@ int main() {
         Check(!integer_parameters.empty(),
               std::string("integer-parameter runtime name does not resolve: ") +
                   capability.legacy_type_name);
-        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
-                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            capability.legacy_type_name);
+        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
               std::string("integer-parameter runtime name has unknown support: ") +
                   capability.legacy_type_name);
+        auto supported_axis = std::find_if(
+            support.integer_parameters.begin(),
+            support.integer_parameters.end(),
+            [&capability](
+                const cyxwiz::PipelineIntegerParameterRuntimeCapability&
+                    runtime_capability) {
+                return std::string(runtime_capability.parameter_name) ==
+                           capability.parameter_name &&
+                       runtime_capability.minimum == capability.minimum &&
+                       runtime_capability.comma_separated ==
+                           capability.comma_separated;
+            });
+        Check(supported_axis != support.integer_parameters.end(),
+              std::string("runtime support should carry integer-parameter axis: ") +
+                  capability.legacy_type_name + "." + capability.parameter_name);
         Check(capability.parameter_name != nullptr &&
                   std::string(capability.parameter_name).size() > 1,
               std::string("integer parameter name is too weak: ") +
