@@ -557,6 +557,41 @@ int main() {
           "TableCropper invalid row range error should be specific: " +
               bad_crop_range_executor.GetLastError());
 
+    const std::string math_formula_json =
+        R"({"nodes":[)"
+        R"({"id":57,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":58,"type":"MathFormula","name":"Formula","parameters":{)"
+        R"("formula":"x + y","output_column":"sum_xy"}})"
+        R"(],"links":[{"start_node":57,"end_node":58}]})";
+
+    cyxwiz::PipelineExecutor math_formula_executor;
+    Check(!math_formula_executor.ExecutePipeline(math_formula_json),
+          "MathFormula placeholder should fail closed");
+    Check(math_formula_executor.GetLastError().find(
+              "legacy MathFormula execution depends on a broken DuckDB Arrow registration path") !=
+              std::string::npos,
+          "MathFormula should use fail-closed runtime support: " +
+              math_formula_executor.GetLastError());
+
+    const std::string rule_engine_json =
+        R"({"nodes":[)"
+        R"({"id":59,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":60,"type":"RuleEngine","name":"Rules","parameters":{)"
+        R"("rules":"x > 1 => 'high'","default_value":"'low'","output_column":"bucket"}})"
+        R"(],"links":[{"start_node":59,"end_node":60}]})";
+
+    cyxwiz::PipelineExecutor rule_engine_executor;
+    Check(!rule_engine_executor.ExecutePipeline(rule_engine_json),
+          "RuleEngine placeholder should fail closed");
+    Check(rule_engine_executor.GetLastError().find(
+              "legacy RuleEngine execution ignores rules") != std::string::npos,
+          "RuleEngine should use fail-closed runtime support: " +
+              rule_engine_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
@@ -570,6 +605,8 @@ int main() {
     registry.UnloadDataset("ds_datainput_53");
     registry.UnloadDataset("ds_cropped_54");
     registry.UnloadDataset("ds_datainput_55");
+    registry.UnloadDataset("ds_datainput_57");
+    registry.UnloadDataset("ds_datainput_59");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
 

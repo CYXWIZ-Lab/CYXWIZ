@@ -1788,7 +1788,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
         {{"Table", PinType::Dataset, true, "Table with new column"}},
         {{"output_column", "string", "result", "Output column name", {}, ""},
          {"formula", "string", "", "Formula (e.g., col1 + col2 * 2)", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::RuleEngine, NodeCategory::DataTransform, "Rule Engine", ICON_FA_SCALE_BALANCED,
         {"rule", "if", "condition", "case"}, 0, false,
@@ -1798,7 +1798,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
         {{"output_column", "string", "result", "Output column name", {}, ""},
          {"rules", "string", "", "Rules (one per line: condition => value)", {}, ""},
          {"default_value", "string", "NULL", "Default value if no rule matches", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 }
 
 // =============================================================================

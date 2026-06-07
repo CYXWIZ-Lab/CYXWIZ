@@ -178,3 +178,8 @@ scanning so stale or duplicate work is not reintroduced.
   branches, and fake-success bodies for fail-closed legacy helpers
   (`ExportExcel`, `ExportJSON`, `CellExtractor`, `CellUpdater`,
   `ColumnAppender`, `RowAppender`, `Unpivot`).
+- 2026-06-07 follow-up: moved legacy `MathFormula` and `RuleEngine`
+  paths to fail-closed runtime support and marked their metadata as
+  blocked after testing showed the math path cannot truthfully execute
+  on the current DuckDB Arrow registration path and the rules path
+  ignored the advertised `rules` contract.

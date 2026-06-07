@@ -435,6 +435,9 @@ Problem now:
   removes the promoted row instead of registering the input table unchanged
 - legacy `TableCropper` now validates crop bounds against the loaded
   Arrow table instead of relying on Arrow slice clamping behavior
+- legacy `MathFormula` and `RuleEngine` now fail closed because their
+  old executor paths could not truthfully perform the advertised
+  expression/rule contracts
 - fail-closed legacy helper bodies such as `ExportExcel`,
   `ExportJSON`, `CellExtractor`, `CellUpdater`, `ColumnAppender`,
   `RowAppender`, and `Unpivot` have been removed from the active

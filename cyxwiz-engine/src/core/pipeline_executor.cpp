@@ -643,10 +643,6 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteTableCropper(node, ctx);
     } else if (node.type == "StringManipulation") {
         return ExecuteStringManipulation(node, ctx);
-    } else if (node.type == "MathFormula") {
-        return ExecuteMathFormula(node, ctx);
-    } else if (node.type == "RuleEngine") {
-        return ExecuteRuleEngine(node, ctx);
     } else if (node.type == "RenameColumns") {
         return ExecuteRenameColumns(node, ctx);
     }
@@ -2989,106 +2985,6 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
         return true;
     } catch (const std::exception& e) {
         ReportError("StringManipulation error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteMathFormula(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("MathFormula: No input dataset");
-        return false;
-    }
-
-    auto output_col_it = node.parameters.find("output_column");
-    auto formula_it = node.parameters.find("formula");
-
-    std::string output_column = (output_col_it != node.parameters.end()) ? output_col_it->second : "result";
-    std::string formula = (formula_it != node.parameters.end()) ? formula_it->second : "0";
-
-    std::string output_dataset_name = "ds_math_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] MathFormula: {} = {}", output_column, formula);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("MathFormula: Input dataset not found");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
-        std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("MathFormula: Failed to register table");
-            return false;
-        }
-
-        std::string sql = "SELECT *, (" + formula + ") AS \"" + output_column + "\" FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("MathFormula: Query failed");
-            return false;
-        }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("MathFormula error: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool PipelineExecutor::ExecuteRuleEngine(const Node& node, ExecutionContext& ctx) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
-        ReportError("RuleEngine: No input dataset");
-        return false;
-    }
-
-    auto output_col_it = node.parameters.find("output_column");
-    auto default_it = node.parameters.find("default_value");
-
-    std::string output_column = (output_col_it != node.parameters.end()) ? output_col_it->second : "result";
-    std::string default_value = (default_it != node.parameters.end()) ? default_it->second : "NULL";
-
-    std::string output_dataset_name = "ds_rule_" + std::to_string(node.id);
-    spdlog::info("[Data Studio] RuleEngine: {}", output_column);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
-        if (!input_dataset) {
-            ReportError("RuleEngine: Input dataset not found");
-            return false;
-        }
-
-        auto input_table = input_dataset->GetArrowTable();
-        std::string temp_table = "temp_" + std::to_string(node.id);
-
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("RuleEngine: Failed to register table");
-            return false;
-        }
-
-        std::string sql = "SELECT *, " + default_value + " AS \"" + output_column + "\" FROM " + temp_table;
-        auto result_table = duckdb_->Query(sql);
-        duckdb_->UnregisterTable(temp_table);
-
-        if (!result_table) {
-            ReportError("RuleEngine: Query failed");
-            return false;
-        }
-
-        registry.RegisterArrowTable(result_table, output_dataset_name);
-        ctx.node_results[node.id] = output_dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("RuleEngine error: " + std::string(e.what()));
         return false;
     }
 }
