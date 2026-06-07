@@ -177,12 +177,45 @@ int main() {
           "bad sheet_idx validation should be specific: " +
               bad_sheet_idx_executor.GetLastError());
 
-    const std::string unknown_node_json =
+    const std::string bad_window_json =
         R"({"nodes":[)"
         R"({"id":13,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
-        R"({"id":14,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
+        R"({"id":14,"type":"TSWindow","name":"BadWindow","parameters":{)"
+        R"("window_size":"0","stride":"1"}})"
         R"(],"links":[{"start_node":13,"end_node":14}]})";
+
+    cyxwiz::PipelineExecutor bad_window_executor;
+    Check(!bad_window_executor.ExecutePipeline(bad_window_json),
+          "TSWindow bad window_size should fail validation");
+    Check(bad_window_executor.GetLastError().find(
+              "TSWindow window_size must be an integer >= 1") != std::string::npos,
+          "bad TSWindow validation should be specific: " +
+              bad_window_executor.GetLastError());
+
+    const std::string bad_crop_json =
+        R"({"nodes":[)"
+        R"({"id":15,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":16,"type":"TableCropper","name":"BadCrop","parameters":{)"
+        R"("start_row":"-2","end_row":"10"}})"
+        R"(],"links":[{"start_node":15,"end_node":16}]})";
+
+    cyxwiz::PipelineExecutor bad_crop_executor;
+    Check(!bad_crop_executor.ExecutePipeline(bad_crop_json),
+          "TableCropper bad start_row should fail validation");
+    Check(bad_crop_executor.GetLastError().find(
+              "TableCropper start_row must be an integer >= 0") !=
+              std::string::npos,
+          "bad TableCropper validation should be specific: " +
+              bad_crop_executor.GetLastError());
+
+    const std::string unknown_node_json =
+        R"({"nodes":[)"
+        R"({"id":17,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":18,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
+        R"(],"links":[{"start_node":17,"end_node":18}]})";
 
     cyxwiz::PipelineExecutor unknown_node_executor;
     Check(!unknown_node_executor.ExecutePipeline(unknown_node_json),
@@ -195,7 +228,7 @@ int main() {
 
     const std::string parquet_input_json =
         R"({"nodes":[)"
-        R"({"id":15,"type":"ParquetInput","name":"Parquet","parameters":{)"
+        R"({"id":19,"type":"ParquetInput","name":"Parquet","parameters":{)"
         R"("file_path":"ignored.parquet"}})"
         R"(],"links":[]})";
 

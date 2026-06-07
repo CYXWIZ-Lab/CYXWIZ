@@ -26,15 +26,33 @@ bool HasNonEmptyParameter(const std::map<std::string, std::string>& parameters,
     return it != parameters.end() && !it->second.empty();
 }
 
-bool IsNonNegativeInteger(const std::string& value) {
+bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
     if (value.empty()) {
         return false;
     }
-    int parsed = 0;
+    int64_t parsed = 0;
     const char* begin = value.data();
     const char* end = value.data() + value.size();
     auto [ptr, ec] = std::from_chars(begin, end, parsed);
-    return ec == std::errc() && ptr == end && parsed >= 0;
+    return ec == std::errc() && ptr == end && parsed >= minimum;
+}
+
+bool ValidateIntegerParameterAtLeast(
+    const std::map<std::string, std::string>& parameters,
+    const std::string& node_type,
+    const std::string& parameter_name,
+    int64_t minimum,
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    if (IsIntegerAtLeast(it->second, minimum)) {
+        return true;
+    }
+    error = node_type + " " + parameter_name + " must be an integer >= " +
+            std::to_string(minimum);
+    return false;
 }
 
 const char* MissingRequiredParameter(
@@ -92,14 +110,14 @@ bool HasSupportedParameterValues(
         const auto skip_rows_it = parameters.find("skip_rows");
         if (source_type == "file" && skip_rows_it != parameters.end() &&
             !skip_rows_it->second.empty() &&
-            !IsNonNegativeInteger(skip_rows_it->second)) {
+            !IsIntegerAtLeast(skip_rows_it->second, 0)) {
             error = "DataInput skip_rows must be a non-negative integer";
             return false;
         }
         const auto sheet_idx_it = parameters.find("sheet_idx");
         if (source_type == "file" && file_type == "excel" &&
             sheet_idx_it != parameters.end() && !sheet_idx_it->second.empty() &&
-            !IsNonNegativeInteger(sheet_idx_it->second)) {
+            !IsIntegerAtLeast(sheet_idx_it->second, 0)) {
             error = "DataInput sheet_idx must be a non-negative integer";
             return false;
         }
@@ -116,6 +134,40 @@ bool HasSupportedParameterValues(
                     "' is not supported by PipelineExecutor";
             return false;
         }
+    }
+
+    if (node_type == "TSWindow") {
+        return ValidateIntegerParameterAtLeast(parameters, node_type, "window_size", 1, error) &&
+               ValidateIntegerParameterAtLeast(parameters, node_type, "stride", 1, error);
+    }
+
+    if (node_type == "TSFeatures") {
+        return ValidateIntegerParameterAtLeast(parameters, node_type, "rolling_window", 1, error);
+    }
+
+    if (node_type == "TSDiff") {
+        return ValidateIntegerParameterAtLeast(parameters, node_type, "order", 1, error);
+    }
+
+    if (node_type == "PolynomialFeatures") {
+        return ValidateIntegerParameterAtLeast(parameters, node_type, "degree", 1, error);
+    }
+
+    if (node_type == "Binning") {
+        return ValidateIntegerParameterAtLeast(parameters, node_type, "n_bins", 1, error);
+    }
+
+    if (node_type == "CellExtractor") {
+        return ValidateIntegerParameterAtLeast(parameters, node_type, "row_index", 0, error);
+    }
+
+    if (node_type == "TableSplitter") {
+        return ValidateIntegerParameterAtLeast(parameters, node_type, "split_row", 0, error);
+    }
+
+    if (node_type == "TableCropper") {
+        return ValidateIntegerParameterAtLeast(parameters, node_type, "start_row", 0, error) &&
+               ValidateIntegerParameterAtLeast(parameters, node_type, "end_row", -1, error);
     }
 
     return true;

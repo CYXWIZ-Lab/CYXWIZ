@@ -128,3 +128,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: added source integer parameter validation for
   `DataInput.skip_rows` and Excel `sheet_idx`, preventing late
   execution-time `std::stoi` failures.
+- 2026-06-07 follow-up: added bounded integer validation for active
+  legacy transform parameters such as `TSWindow.window_size`,
+  `PolynomialFeatures.degree`, `Binning.n_bins`, and table row helpers.
