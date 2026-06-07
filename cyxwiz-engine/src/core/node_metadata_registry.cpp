@@ -1788,7 +1788,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
         {{"Table", PinType::Dataset, true, "Table with new column"}},
         {{"output_column", "string", "result", "Output column name", {}, ""},
          {"formula", "string", "", "Formula (e.g., col1 + col2 * 2)", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RuleEngine, NodeCategory::DataTransform, "Rule Engine", ICON_FA_SCALE_BALANCED,
         {"rule", "if", "condition", "case"}, 0, false,

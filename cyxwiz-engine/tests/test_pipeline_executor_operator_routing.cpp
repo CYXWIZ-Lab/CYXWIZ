@@ -557,32 +557,50 @@ int main() {
           "TableCropper invalid row range error should be specific: " +
               bad_crop_range_executor.GetLastError());
 
-    const std::string math_formula_json =
+    const std::string missing_math_formula_json =
         R"({"nodes":[)"
         R"({"id":57,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
-        R"(","type":"csv","has_header":"true"}},)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
         R"({"id":58,"type":"MathFormula","name":"Formula","parameters":{)"
-        R"("formula":"x + y","output_column":"sum_xy"}})"
+        R"("output_column":"sum_xy"}})"
         R"(],"links":[{"start_node":57,"end_node":58}]})";
 
-    cyxwiz::PipelineExecutor math_formula_executor;
-    Check(!math_formula_executor.ExecutePipeline(math_formula_json),
-          "MathFormula placeholder should fail closed");
-    Check(math_formula_executor.GetLastError().find(
-              "legacy MathFormula execution depends on a broken DuckDB Arrow registration path") !=
-              std::string::npos,
-          "MathFormula should use fail-closed runtime support: " +
-              math_formula_executor.GetLastError());
+    cyxwiz::PipelineExecutor missing_math_formula_executor;
+    Check(!missing_math_formula_executor.ExecutePipeline(missing_math_formula_json),
+          "MathFormula missing formula should fail validation");
+    Check(missing_math_formula_executor.GetLastError().find(
+              "missing required parameter 'formula'") != std::string::npos,
+          "MathFormula missing formula validation should be specific: " +
+              missing_math_formula_executor.GetLastError());
 
-    const std::string rule_engine_json =
+    const std::string math_formula_json =
         R"({"nodes":[)"
         R"({"id":59,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":60,"type":"RuleEngine","name":"Rules","parameters":{)"
-        R"("rules":"x > 1 => 'high'","default_value":"'low'","output_column":"bucket"}})"
+        R"({"id":60,"type":"MathFormula","name":"Formula","parameters":{)"
+        R"("formula":"x + y","output_column":"sum_xy"}})"
         R"(],"links":[{"start_node":59,"end_node":60}]})";
+
+    cyxwiz::PipelineExecutor math_formula_executor;
+    Check(math_formula_executor.ExecutePipeline(math_formula_json),
+          "MathFormula should execute when formula is supplied: " +
+              math_formula_executor.GetLastError());
+    auto math_result = registry.GetArrowDataset("ds_math_60");
+    Check(math_result != nullptr, "MathFormula output dataset is registered");
+    auto math_table = math_result->GetArrowTable();
+    Check(math_table != nullptr, "MathFormula output table exists");
+    Check(math_table->schema()->GetFieldIndex("sum_xy") >= 0,
+          "MathFormula should expose the computed output column");
+
+    const std::string rule_engine_json =
+        R"({"nodes":[)"
+        R"({"id":61,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":62,"type":"RuleEngine","name":"Rules","parameters":{)"
+        R"("rules":"x > 1 => 'high'","default_value":"'low'","output_column":"bucket"}})"
+        R"(],"links":[{"start_node":61,"end_node":62}]})";
 
     cyxwiz::PipelineExecutor rule_engine_executor;
     Check(!rule_engine_executor.ExecutePipeline(rule_engine_json),
@@ -605,8 +623,9 @@ int main() {
     registry.UnloadDataset("ds_datainput_53");
     registry.UnloadDataset("ds_cropped_54");
     registry.UnloadDataset("ds_datainput_55");
-    registry.UnloadDataset("ds_datainput_57");
     registry.UnloadDataset("ds_datainput_59");
+    registry.UnloadDataset("ds_math_60");
+    registry.UnloadDataset("ds_datainput_61");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
 

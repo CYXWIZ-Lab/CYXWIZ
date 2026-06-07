@@ -196,6 +196,7 @@ private:
     bool ExecuteTableSplitter(const Node& node, ExecutionContext& ctx);
     bool ExecuteTableCropper(const Node& node, ExecutionContext& ctx);
     bool ExecuteStringManipulation(const Node& node, ExecutionContext& ctx);
+    bool ExecuteMathFormula(const Node& node, ExecutionContext& ctx);
     bool ExecuteRenameColumns(const Node& node, ExecutionContext& ctx);
     bool ExecuteExportCSV(const Node& node, ExecutionContext& ctx);
     // Helper methods

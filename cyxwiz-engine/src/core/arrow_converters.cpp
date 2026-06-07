@@ -203,7 +203,7 @@ std::shared_ptr<af::array> ArrowToTensor(
         // ArrayFire uses column-major by default
         // Shape: [num_rows, num_cols]
         auto tensor = std::make_shared<::af::array>(
-            static_cast<::af::dim4>(num_rows, num_cols),
+            ::af::dim4(num_rows, num_cols),
             data.data()
         );
 

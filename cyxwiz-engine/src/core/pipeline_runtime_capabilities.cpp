@@ -95,7 +95,6 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"Unpivot", "legacy Unpivot execution is still a passthrough placeholder"},
         {"ExportExcel", "legacy ExportExcel execution is still a fake-success placeholder"},
         {"ExportJSON", "legacy ExportJSON execution is still a fake-success placeholder"},
-        {"MathFormula", "legacy MathFormula execution depends on a broken DuckDB Arrow registration path"},
         {"RuleEngine", "legacy RuleEngine execution ignores rules and is not implemented truthfully"},
     };
     return capabilities;
@@ -131,6 +130,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"TableSplitter"},
         {"TableCropper"},
         {"StringManipulation"},
+        {"MathFormula"},
         {"RenameColumns"},
     };
     return capabilities;
@@ -174,6 +174,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"GroupBy", {"group_columns", "aggregations"}},
         {"PolynomialFeatures", {"columns"}},
         {"StringManipulation", {"column"}},
+        {"MathFormula", {"formula"}},
     };
     return capabilities;
 }

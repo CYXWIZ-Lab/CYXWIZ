@@ -372,7 +372,6 @@ int main() {
         gui::NodeType::UnitConverter,
         gui::NodeType::RegexTester,
         gui::NodeType::JSONPathExtractor,
-        gui::NodeType::MathFormula,
         gui::NodeType::RuleEngine,
     };
     for (auto type : fail_closed_nodes) {

@@ -435,9 +435,18 @@ Problem now:
   removes the promoted row instead of registering the input table unchanged
 - legacy `TableCropper` now validates crop bounds against the loaded
   Arrow table instead of relying on Arrow slice clamping behavior
-- legacy `MathFormula` and `RuleEngine` now fail closed because their
-  old executor paths could not truthfully perform the advertised
-  expression/rule contracts
+- legacy `MathFormula` now requires an explicit `formula` and runs
+  through the repaired DuckDB registration path instead of silently
+  creating a constant zero column when the expression is missing
+- legacy `RuleEngine` now fails closed because its old executor path
+  ignored the `rules` parameter and only wrote the default value
+- `DuckDBConnector` now registers Arrow input by copying supported scalar
+  types into an in-memory DuckDB table and preserves basic numeric result
+  types when converting query output back to Arrow; this restores SQL-backed
+  transform behavior while true zero-copy Arrow scan support remains future
+- `ArrowToTensor` now constructs ArrayFire dimensions with the intended
+  `[rows, columns]` shape instead of collapsing to a one-dimensional comma
+  expression
 - fail-closed legacy helper bodies such as `ExportExcel`,
   `ExportJSON`, `CellExtractor`, `CellUpdater`, `ColumnAppender`,
   `RowAppender`, and `Unpivot` have been removed from the active

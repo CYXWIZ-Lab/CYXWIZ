@@ -12,11 +12,11 @@ namespace cyxwiz {
 /**
  * DuckDB Connector (Phase 0 Day 4)
  *
- * Provides zero-copy SQL queries on Arrow tables using DuckDB.
+ * Provides SQL queries on Arrow tables using DuckDB.
  * This is the Data Studio query engine foundation.
  *
  * Key Features:
- * - Zero-copy Arrow table registration
+ * - Arrow table registration into an in-memory DuckDB table
  * - SQL query execution with result as Arrow table
  * - Multiple table joins without data duplication
  * - Window functions, aggregations, CTEs
@@ -55,14 +55,15 @@ public:
     DuckDBConnector& operator=(const DuckDBConnector&) = delete;
 
     /**
-     * Register Arrow table for SQL queries (zero-copy)
+     * Register Arrow table for SQL queries.
      *
      * @param table_name SQL table identifier
      * @param arrow_table Arrow table to register
      * @return true on success
      *
-     * Note: The Arrow table MUST stay alive during queries!
-     * DuckDB does not copy data, it creates a view.
+     * Note: The current DuckDB 1.4.x adapter copies supported Arrow scalar
+     * values into an in-memory DuckDB table. This avoids the version-specific
+     * arrow_scan pointer ABI while preserving SQL transform behavior.
      */
     bool RegisterTable(const std::string& table_name,
                        std::shared_ptr<arrow::Table> arrow_table);

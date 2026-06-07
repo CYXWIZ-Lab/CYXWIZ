@@ -178,8 +178,12 @@ scanning so stale or duplicate work is not reintroduced.
   branches, and fake-success bodies for fail-closed legacy helpers
   (`ExportExcel`, `ExportJSON`, `CellExtractor`, `CellUpdater`,
   `ColumnAppender`, `RowAppender`, `Unpivot`).
-- 2026-06-07 follow-up: moved legacy `MathFormula` and `RuleEngine`
-  paths to fail-closed runtime support and marked their metadata as
-  blocked after testing showed the math path cannot truthfully execute
-  on the current DuckDB Arrow registration path and the rules path
-  ignored the advertised `rules` contract.
+- 2026-06-07 follow-up: repaired `DuckDBConnector` Arrow-table
+  registration via a copied table/appender path, preserved basic
+  numeric Arrow types in DuckDB query results, restored legacy
+  `MathFormula` with required `formula` validation, and kept
+  `RuleEngine` fail-closed because it ignored the advertised `rules`
+  contract.
+- 2026-06-07 follow-up: fixed `ArrowToTensor` ArrayFire dimension
+  construction so Arrow tables convert to the intended `[rows, columns]`
+  tensor shape; `test_arrow_integration` now passes end to end.

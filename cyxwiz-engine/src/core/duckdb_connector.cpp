@@ -4,6 +4,195 @@
 #include <sstream>
 
 namespace cyxwiz {
+namespace {
+
+std::string QuoteIdentifier(const std::string& identifier) {
+    std::string quoted = "\"";
+    for (char c : identifier) {
+        if (c == '"') {
+            quoted += "\"\"";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+std::string DuckDBTypeForArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    switch (type->id()) {
+        case arrow::Type::BOOL:
+            return "BOOLEAN";
+        case arrow::Type::INT8:
+        case arrow::Type::UINT8:
+        case arrow::Type::INT16:
+        case arrow::Type::UINT16:
+        case arrow::Type::INT32:
+            return "INTEGER";
+        case arrow::Type::UINT32:
+        case arrow::Type::INT64:
+            return "BIGINT";
+        case arrow::Type::UINT64:
+            return "HUGEINT";
+        case arrow::Type::FLOAT:
+            return "FLOAT";
+        case arrow::Type::DOUBLE:
+            return "DOUBLE";
+        case arrow::Type::STRING:
+        case arrow::Type::LARGE_STRING:
+            return "VARCHAR";
+        default:
+            return "VARCHAR";
+    }
+}
+
+duckdb::Value DuckDBValueFromArrowScalar(const std::shared_ptr<arrow::Scalar>& scalar) {
+    if (!scalar || !scalar->is_valid) {
+        return duckdb::Value();
+    }
+
+    switch (scalar->type->id()) {
+        case arrow::Type::BOOL:
+            return duckdb::Value(
+                std::static_pointer_cast<arrow::BooleanScalar>(scalar)->value);
+        case arrow::Type::INT8:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value);
+        case arrow::Type::UINT8:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value);
+        case arrow::Type::INT16:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value);
+        case arrow::Type::UINT16:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value);
+        case arrow::Type::INT32:
+            return duckdb::Value::INTEGER(
+                std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value);
+        case arrow::Type::UINT32:
+            return duckdb::Value::BIGINT(
+                std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value);
+        case arrow::Type::INT64:
+            return duckdb::Value::BIGINT(
+                std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+        case arrow::Type::UINT64:
+            return duckdb::Value::UHUGEINT(
+                std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+        case arrow::Type::FLOAT:
+            return duckdb::Value::FLOAT(
+                std::static_pointer_cast<arrow::FloatScalar>(scalar)->value);
+        case arrow::Type::DOUBLE:
+            return duckdb::Value::DOUBLE(
+                std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value);
+        case arrow::Type::STRING:
+        case arrow::Type::LARGE_STRING:
+            return duckdb::Value(scalar->ToString());
+        default:
+            return duckdb::Value(scalar->ToString());
+    }
+}
+
+std::shared_ptr<arrow::DataType> ArrowTypeForDuckDBType(const duckdb::LogicalType& type) {
+    switch (type.id()) {
+        case duckdb::LogicalTypeId::BOOLEAN:
+            return arrow::boolean();
+        case duckdb::LogicalTypeId::TINYINT:
+        case duckdb::LogicalTypeId::SMALLINT:
+        case duckdb::LogicalTypeId::INTEGER:
+            return arrow::int32();
+        case duckdb::LogicalTypeId::BIGINT:
+            return arrow::int64();
+        case duckdb::LogicalTypeId::UTINYINT:
+        case duckdb::LogicalTypeId::USMALLINT:
+        case duckdb::LogicalTypeId::UINTEGER:
+            return arrow::uint32();
+        case duckdb::LogicalTypeId::UBIGINT:
+            return arrow::uint64();
+        case duckdb::LogicalTypeId::FLOAT:
+            return arrow::float32();
+        case duckdb::LogicalTypeId::DOUBLE:
+            return arrow::float64();
+        default:
+            return arrow::utf8();
+    }
+}
+
+std::unique_ptr<arrow::ArrayBuilder>
+MakeArrowBuilderForDuckDBType(const duckdb::LogicalType& type) {
+    switch (type.id()) {
+        case duckdb::LogicalTypeId::BOOLEAN:
+            return std::make_unique<arrow::BooleanBuilder>();
+        case duckdb::LogicalTypeId::TINYINT:
+        case duckdb::LogicalTypeId::SMALLINT:
+        case duckdb::LogicalTypeId::INTEGER:
+            return std::make_unique<arrow::Int32Builder>();
+        case duckdb::LogicalTypeId::BIGINT:
+            return std::make_unique<arrow::Int64Builder>();
+        case duckdb::LogicalTypeId::UTINYINT:
+        case duckdb::LogicalTypeId::USMALLINT:
+        case duckdb::LogicalTypeId::UINTEGER:
+            return std::make_unique<arrow::UInt32Builder>();
+        case duckdb::LogicalTypeId::UBIGINT:
+            return std::make_unique<arrow::UInt64Builder>();
+        case duckdb::LogicalTypeId::FLOAT:
+            return std::make_unique<arrow::FloatBuilder>();
+        case duckdb::LogicalTypeId::DOUBLE:
+            return std::make_unique<arrow::DoubleBuilder>();
+        default:
+            return std::make_unique<arrow::StringBuilder>();
+    }
+}
+
+arrow::Status AppendDuckDBValueToArrowBuilder(
+    const duckdb::Value& value,
+    const duckdb::LogicalType& type,
+    arrow::ArrayBuilder* builder) {
+
+    if (value.IsNull()) {
+        return builder->AppendNull();
+    }
+
+    switch (type.id()) {
+        case duckdb::LogicalTypeId::BOOLEAN:
+            return static_cast<arrow::BooleanBuilder*>(builder)->Append(
+                value.GetValue<bool>());
+        case duckdb::LogicalTypeId::TINYINT:
+            return static_cast<arrow::Int32Builder*>(builder)->Append(
+                value.GetValue<int8_t>());
+        case duckdb::LogicalTypeId::SMALLINT:
+            return static_cast<arrow::Int32Builder*>(builder)->Append(
+                value.GetValue<int16_t>());
+        case duckdb::LogicalTypeId::INTEGER:
+            return static_cast<arrow::Int32Builder*>(builder)->Append(
+                value.GetValue<int32_t>());
+        case duckdb::LogicalTypeId::BIGINT:
+            return static_cast<arrow::Int64Builder*>(builder)->Append(
+                value.GetValue<int64_t>());
+        case duckdb::LogicalTypeId::UTINYINT:
+            return static_cast<arrow::UInt32Builder*>(builder)->Append(
+                value.GetValue<uint8_t>());
+        case duckdb::LogicalTypeId::USMALLINT:
+            return static_cast<arrow::UInt32Builder*>(builder)->Append(
+                value.GetValue<uint16_t>());
+        case duckdb::LogicalTypeId::UINTEGER:
+            return static_cast<arrow::UInt32Builder*>(builder)->Append(
+                value.GetValue<uint32_t>());
+        case duckdb::LogicalTypeId::UBIGINT:
+            return static_cast<arrow::UInt64Builder*>(builder)->Append(
+                value.GetValue<uint64_t>());
+        case duckdb::LogicalTypeId::FLOAT:
+            return static_cast<arrow::FloatBuilder*>(builder)->Append(
+                value.GetValue<float>());
+        case duckdb::LogicalTypeId::DOUBLE:
+            return static_cast<arrow::DoubleBuilder*>(builder)->Append(
+                value.GetValue<double>());
+        default:
+            return static_cast<arrow::StringBuilder*>(builder)->Append(value.ToString());
+    }
+}
+
+} // namespace
 
 // =============================================================================
 // Constructor / Destructor
@@ -45,15 +234,60 @@ bool DuckDBConnector::RegisterTable(
     }
 
     try {
-        // Register Arrow table as a DuckDB table (zero-copy view)
-        // DuckDB will query the Arrow table directly without copying
-        conn_->TableFunction("arrow_scan", {duckdb::Value::POINTER((uintptr_t)arrow_table.get())})
-             ->CreateView(table_name, true, true);
+        const std::string quoted_table_name = QuoteIdentifier(table_name);
+        auto drop_view = conn_->Query("DROP VIEW IF EXISTS " + quoted_table_name);
+        if (drop_view->HasError()) {
+            last_error_ = drop_view->GetError();
+            spdlog::error("Failed to drop existing view '{}': {}", table_name, last_error_);
+            return false;
+        }
+        auto drop_table = conn_->Query("DROP TABLE IF EXISTS " + quoted_table_name);
+        if (drop_table->HasError()) {
+            last_error_ = drop_table->GetError();
+            spdlog::error("Failed to drop existing table '{}': {}", table_name, last_error_);
+            return false;
+        }
+
+        std::ostringstream create_sql;
+        create_sql << "CREATE TABLE " << quoted_table_name << " (";
+        for (int i = 0; i < arrow_table->num_columns(); ++i) {
+            if (i > 0) {
+                create_sql << ", ";
+            }
+            const auto& field = arrow_table->schema()->field(i);
+            create_sql << QuoteIdentifier(field->name()) << " "
+                       << DuckDBTypeForArrowType(field->type());
+        }
+        create_sql << ")";
+
+        auto create_result = conn_->Query(create_sql.str());
+        if (create_result->HasError()) {
+            last_error_ = create_result->GetError();
+            spdlog::error("Failed to create table '{}': {}", table_name, last_error_);
+            return false;
+        }
+
+        duckdb::Appender appender(*conn_, table_name);
+        for (int64_t row = 0; row < arrow_table->num_rows(); ++row) {
+            appender.BeginRow();
+            for (int col = 0; col < arrow_table->num_columns(); ++col) {
+                auto scalar_result = arrow_table->column(col)->GetScalar(row);
+                if (!scalar_result.ok()) {
+                    last_error_ = scalar_result.status().ToString();
+                    spdlog::error("Failed to read Arrow scalar at row {}, column {}: {}",
+                                  row, col, last_error_);
+                    return false;
+                }
+                appender.Append(DuckDBValueFromArrowScalar(*scalar_result));
+            }
+            appender.EndRow();
+        }
+        appender.Close();
 
         // Store reference to keep Arrow table alive
         registered_tables_[table_name] = arrow_table;
 
-        spdlog::info("Registered Arrow table '{}': {} rows, {} columns",
+        spdlog::info("Registered Arrow table '{}' as DuckDB table: {} rows, {} columns",
                      table_name, arrow_table->num_rows(), arrow_table->num_columns());
 
         return true;
@@ -67,9 +301,9 @@ bool DuckDBConnector::RegisterTable(
 
 bool DuckDBConnector::UnregisterTable(const std::string& table_name) {
     try {
-        // Drop view
-        std::string sql = "DROP VIEW IF EXISTS " + table_name;
-        conn_->Query(sql);
+        const std::string quoted_table_name = QuoteIdentifier(table_name);
+        conn_->Query("DROP VIEW IF EXISTS " + quoted_table_name);
+        conn_->Query("DROP TABLE IF EXISTS " + quoted_table_name);
 
         // Remove from tracking
         registered_tables_.erase(table_name);
@@ -515,8 +749,6 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
     }
 
     try {
-        // DuckDB 1.4.3: Manually convert result to Arrow
-        // Build Arrow arrays from DuckDB chunks
         std::vector<std::shared_ptr<arrow::Field>> fields;
         std::vector<std::shared_ptr<arrow::Array>> columns;
 
@@ -527,12 +759,8 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
         // Initialize builders for each column
         std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
         for (size_t i = 0; i < types.size(); ++i) {
-            // Map DuckDB type to Arrow type and create builder
-            // For simplicity, we'll use string builders for all types
-            // In production, map each DuckDB type to proper Arrow type
-            fields.push_back(arrow::field(names[i], arrow::utf8()));
-            builders.push_back(std::unique_ptr<arrow::ArrayBuilder>(
-                new arrow::StringBuilder()));
+            fields.push_back(arrow::field(names[i], ArrowTypeForDuckDBType(types[i])));
+            builders.push_back(MakeArrowBuilderForDuckDBType(types[i]));
         }
 
         // Iterate through result chunks
@@ -543,8 +771,13 @@ std::shared_ptr<arrow::Table> DuckDBConnector::ResultToArrow(
             for (idx_t row = 0; row < chunk->size(); ++row) {
                 for (size_t col = 0; col < chunk->ColumnCount(); ++col) {
                     auto value = chunk->GetValue(col, row);
-                    auto* str_builder = static_cast<arrow::StringBuilder*>(builders[col].get());
-                    str_builder->Append(value.ToString());
+                    auto status = AppendDuckDBValueToArrowBuilder(
+                        value, types[col], builders[col].get());
+                    if (!status.ok()) {
+                        spdlog::error("Failed to append DuckDB result value: {}",
+                                      status.ToString());
+                        return nullptr;
+                    }
                 }
             }
         }
