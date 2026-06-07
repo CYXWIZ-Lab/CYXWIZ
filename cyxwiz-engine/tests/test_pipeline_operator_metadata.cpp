@@ -531,21 +531,21 @@ int main() {
                   TypeId(type));
     }
 
-    const std::vector<gui::NodeType> fail_closed_nodes = {
-        gui::NodeType::TSNENode,
-        gui::NodeType::DecisionTreeClassifier,
-        gui::NodeType::RandomForestClassifier,
-        gui::NodeType::GradientBoostingClassifier,
-        gui::NodeType::SVMClassifier,
-        gui::NodeType::KNNClassifier,
-        gui::NodeType::NaiveBayesClassifier,
-        gui::NodeType::LogisticRegressionNode,
-        gui::NodeType::ConfusionMatrixNode,
-        gui::NodeType::ROCCurveNode,
-        gui::NodeType::LearningCurvesNode,
-        gui::NodeType::CrossValidationNode,
-        gui::NodeType::FeatureImportanceNode,
-        gui::NodeType::DataProfiler,
+    for (const auto& capability :
+         cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
+        if (!capability.metadata_node_type.has_value()) {
+            continue;
+        }
+        const auto* meta = metadata.GetMetadata(*capability.metadata_node_type);
+        Check(meta != nullptr,
+              std::string("missing fail-closed metadata for runtime name ") +
+                  capability.legacy_type_name);
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
+              std::string("fail-closed runtime metadata should not be marked implemented: ") +
+                  capability.legacy_type_name);
+    }
+
+    const std::vector<gui::NodeType> unsupported_training_nodes = {
         gui::NodeType::Conv2D,
         gui::NodeType::MaxPool2D,
         gui::NodeType::AvgPool2D,
@@ -554,30 +554,14 @@ int main() {
         gui::NodeType::ConvTranspose2D,
         gui::NodeType::Upsample,
         gui::NodeType::PixelShuffle,
-        gui::NodeType::DNNModelLoad,
-        gui::NodeType::DNNDetect,
-        gui::NodeType::PretrainedYOLO,
-        gui::NodeType::IFFTNode,
-        gui::NodeType::WaveletTransform,
-        gui::NodeType::CalculatorNode,
-        gui::NodeType::UnitConverter,
-        gui::NodeType::RegexTester,
-        gui::NodeType::JSONPathExtractor,
-        gui::NodeType::RuleEngine,
-        gui::NodeType::TableSplitter,
-        gui::NodeType::CellExtractor,
-        gui::NodeType::CellUpdater,
-        gui::NodeType::ColumnAppender,
-        gui::NodeType::RowAppender,
-        gui::NodeType::Unpivot,
-        gui::NodeType::ExportExcel,
-        gui::NodeType::ExportJSON,
     };
-    for (auto type : fail_closed_nodes) {
+    for (auto type : unsupported_training_nodes) {
         const auto* meta = metadata.GetMetadata(type);
-        Check(meta != nullptr, "missing fail-closed metadata for type " + TypeId(type));
+        Check(meta != nullptr,
+              "missing unsupported training metadata for type " + TypeId(type));
         Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
-              "fail-closed type " + TypeId(type) + " should not be marked implemented");
+              "unsupported training type " + TypeId(type) +
+                  " should not be marked implemented");
     }
 
     const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);

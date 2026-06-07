@@ -17,6 +17,7 @@ struct PipelineOperatorRuntimeCapability {
 struct PipelineFailClosedRuntimeCapability {
     const char* legacy_type_name;
     const char* reason;
+    std::optional<gui::NodeType> metadata_node_type = std::nullopt;
 };
 
 struct PipelineLegacyRuntimeCapability {

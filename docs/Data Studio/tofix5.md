@@ -635,7 +635,10 @@ metadata drift test
 verifies every listed operator runtime capability has a real factory
 operator, that operator/fail-closed/legacy-dispatched names do not
 overlap, and that validation capability entries resolve to known
-runtime-supported names. The first explicit `fail_mode` axis now lives
+runtime-supported names. Fail-closed runtime entries that correspond to
+browser-visible blocked nodes now carry that metadata node identity in
+the same capability registry, and the drift suite verifies those nodes
+are not marked implemented. The first explicit `fail_mode` axis now lives
 on resolved runtime support too: operator-backed and active
 legacy-dispatched paths report `real`, while known unsupported paths
 report `hard_fail`; stable fail-mode names are covered by the drift
@@ -759,8 +762,11 @@ Deliverable:
 
 Status: partially completed in this branch. Known fake-success branches
 listed above have been converted or implemented, and metadata now marks
-the covered blocked helpers as `Template` / `Blocked`. Continue treating
-newly discovered placeholder branches as defects, not supported features.
+the covered blocked helpers as `Template` / `Blocked`. Fail-closed
+runtime entries now carry optional blocked metadata node identity, and
+the drift suite checks those browser-visible nodes are not marked
+implemented. Continue treating newly discovered placeholder branches as
+defects, not supported features.
 
 Scope:
 
@@ -775,8 +781,8 @@ Deliverable:
 ### Ticket D: Capability registry
 
 Status: in progress. Runtime support now has centralized operator,
-legacy, fail-closed, fail-mode, required-parameter, enum,
-integer-validation, source-node, required-input-count,
+legacy, fail-closed, fail-mode, fail-closed metadata status,
+required-parameter, enum, integer-validation, source-node, required-input-count,
 compiler-blocked training, first training backend support mode,
 Arrow-table materializer-scope truth, and materializer storage-backend
 availability. The remaining work is the broader multi-axis matrix for

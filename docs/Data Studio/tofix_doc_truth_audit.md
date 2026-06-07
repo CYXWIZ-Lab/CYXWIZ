@@ -273,3 +273,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: moved required-parameter, allowed-value, and
   integer-parameter validation axes onto resolved `PipelineRuntimeSupport`
   as well, while preserving the existing specialized validation behavior.
+- 2026-06-07 follow-up: added optional blocked metadata node identity to
+  fail-closed runtime capability entries and made the metadata drift guard
+  enforce that those browser-visible blocked nodes are not implemented.
