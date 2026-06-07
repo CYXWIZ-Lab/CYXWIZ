@@ -87,3 +87,6 @@ scanning so stale or duplicate work is not reintroduced.
   fail-closed dispatch branches for registered operator-backed nodes from
   `PipelineExecutor`; the remaining cleanup is dead placeholder helper
   bodies and a central capability owner.
+- 2026-06-07 follow-up: removed dead placeholder executor declarations
+  from `PipelineExecutor`'s header and quarantined their historical
+  passthrough/fake-success helper bodies behind compile-time exclusion.

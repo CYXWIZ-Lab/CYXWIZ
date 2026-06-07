@@ -2986,6 +2986,18 @@ bool PipelineExecutor::ExecuteRuleEngine(const Node& node, ExecutionContext& ctx
 
 
 // ============================================================
+// Quarantined placeholder helpers
+// ============================================================
+//
+// These old Phase 4/6/8 helper bodies returned fake success by passing input
+// tables through or creating placeholder metadata. Active dispatch now either
+// routes exact registered operator-backed names through PipelineOperatorFactory
+// or fails unsupported names through FailUnsupportedNode(). Keep this block
+// excluded until the remaining TODOs are replaced with real implementations or
+// deleted outright.
+#if 0
+
+// ============================================================
 // Phase 4: Machine Learning Algorithm Executors
 // ============================================================
 
@@ -4505,5 +4517,7 @@ bool PipelineExecutor::ExecuteDataProfiler(const Node& node, ExecutionContext& c
         return false;
     }
 }
+
+#endif
 
 } // namespace cyxwiz

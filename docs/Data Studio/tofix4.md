@@ -385,15 +385,16 @@ Problem before the 2026-06-07 runtime-truth pass:
 
 Current remaining problem:
 
-- old placeholder function bodies still exist in the file
+- old placeholder helper bodies remain only as quarantined historical
+  TODOs in the `.cpp`, not as active methods
 - real operator-backed implementations are now the active path for exact
   registered names, but broader runtime ownership is still split
 
 Effect now:
 
 - fake-success user harm is fixed for the audited legacy dispatch path
-- support truth remains harder to reason about until remaining dead
-  placeholder bodies and broader runtime ownership are cleaned up
+- support truth remains harder to reason about until the quarantined
+  helper block and broader runtime ownership are cleaned up
 
 **Recommendation:**
 

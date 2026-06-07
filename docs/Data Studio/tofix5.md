@@ -357,9 +357,10 @@ Recommendation:
 
 **Status 2026-06-07:** Fixed for the audited legacy dispatch branches.
 These nodes now return explicit unsupported execution errors through
-`FailUnsupportedNode()` instead of passthrough/fake success. The function
-bodies for old placeholders still exist, but the active dispatch no
-longer routes to them for the audited node types.
+`FailUnsupportedNode()` instead of passthrough/fake success. The old
+placeholder helper bodies have been removed from the header contract and
+quarantined behind compile-time exclusion so they cannot be called from
+active dispatch.
 
 Relevant files:
 
@@ -382,8 +383,8 @@ Representative examples:
 
 Problem now:
 
-- old placeholder function bodies remain in the file, which keeps the
-  codebase noisy
+- old placeholder helper bodies remain only as quarantined historical
+  TODOs in the `.cpp`, not as active methods
 - exact registered operator-backed node names now route through
   `PipelineOperatorFactory`, but the runtime still lacks one central
   capability owner
@@ -391,13 +392,14 @@ Problem now:
 Effect:
 
 - user-facing fake success is fixed for the audited branches
-- engineering truth is still harder than necessary because old
-  placeholder bodies and scattered capability decisions coexist
+- engineering truth is cleaner because fake-success helpers are no
+  longer part of the compiled API, but scattered capability decisions
+  still need central ownership
 
 Recommendation:
 
-- delete or quarantine dead placeholder bodies after canonical operator
-  routing is settled
+- delete the quarantined historical helper block after canonical runtime
+  capability ownership is settled
 - keep unsupported nodes failing closed by default
 
 ---
@@ -413,7 +415,7 @@ route through the operator framework from `PipelineExecutor`, and their
 old unreachable fail-closed dispatch branches have been removed.
 Remaining work is architectural: choose the canonical runtime, expand
 coverage where storage-mode support is still narrow, and remove or
-quarantine dead legacy placeholder bodies.
+delete the quarantined historical helper block.
 
 Relevant files:
 
@@ -441,8 +443,8 @@ Problem now:
 
 - the engine now exposes real operator implementations from the older
   `PipelineExecutor` for exact registered node names
-- the code still contains duplicate or dead placeholder-era helper
-  bodies for several of the same conceptual areas
+- the code still contains a quarantined historical helper block for
+  several placeholder-era TODOs
 
 Effect now:
 
@@ -456,8 +458,8 @@ Effect now:
 Recommendation:
 
 - add a capability matrix owned by runtime, not scattered comments
-- remove or quarantine dead placeholder helper bodies once an
-  operator-backed implementation is canonical
+- remove the quarantined historical helper block once runtime capability
+  ownership is centralized
 
 ---
 
