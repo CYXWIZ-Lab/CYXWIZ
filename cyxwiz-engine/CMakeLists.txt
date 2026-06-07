@@ -1590,6 +1590,54 @@ set_target_properties(test_training_batcher_setup PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: TrainingExecutor Arrow/Parquet Parity =====
+add_executable(test_training_executor_arrow_parquet
+    tests/test_training_executor_arrow_parquet.cpp
+    src/core/training_executor.cpp
+    src/core/training_batcher_setup.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
+    src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/parquet_arrow_batcher.cpp
+    src/core/dataset_base.cpp
+    src/core/checkpoint_manager.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/training_trace_collector.cpp
+    src/plugin/registries/plugin_training_hook_manager.cpp
+)
+
+target_include_directories(test_training_executor_arrow_parquet PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_training_executor_arrow_parquet PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_training_executor_arrow_parquet PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+    )
+else()
+    target_compile_definitions(test_training_executor_arrow_parquet PRIVATE
+        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+    )
+endif()
+
+set_target_properties(test_training_executor_arrow_parquet PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Graph Topology Utilities =====
 add_executable(test_graph_topology_utils
     tests/test_graph_topology_utils.cpp

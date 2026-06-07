@@ -82,6 +82,7 @@ wallet.json
 /datasets/
 /models/
 /checkpoints/
+/.cyxwiz/
 *.h5
 *.pt
 *.onnx

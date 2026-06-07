@@ -4,10 +4,12 @@
 #include <cyxwiz/debug_hooks.h>
 #include "training_trace_collector.h"
 #include "model_builder.h"
-#include "data_registry.h"
 #include "training_batcher_setup.h"
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+#include "data_registry.h"
 #include "../preprocessing/preprocessing_config.h"
 #include "../preprocessing/statistics_calculator.h"
+#endif
 #include "../plugin/registries/plugin_training_hook_manager.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
@@ -136,8 +138,10 @@ void TrainingExecutor::Train(
     // legacy. Modern paths flow through IBatcher pointers; legacy keeps the
     // existing DatasetBatcher loop for now.
     TrainingBatcherSet modern_batchers;
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
     std::unique_ptr<DatasetBatcher> legacy_train_batcher;
     std::unique_ptr<DatasetBatcher> legacy_val_batcher;
+#endif
 
     // Non-owning IBatcher pointers point at whichever concrete batcher the
     // selected mode owns. Arrow, Parquet, image, audio, and text all share the
@@ -177,6 +181,7 @@ void TrainingExecutor::Train(
         active_train_ibatcher = external_batcher_.get();
         active_val_ibatcher = external_batcher_.get();
     } else {
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
         // Legacy DatasetHandle batching
         spdlog::info("TrainingExecutor: Using legacy dataset for training "
                      "(batch_size={}, shuffle={}, drop_last={}, num_workers={})",
@@ -247,6 +252,12 @@ void TrainingExecutor::Train(
         legacy_val_batcher->SetFlatten(true);
 
         num_train_samples = legacy_train_batcher->GetNumSamples();
+#else
+        spdlog::error("TrainingExecutor: legacy DatasetHandle mode is disabled "
+                      "for this modern-only test build");
+        is_training_.store(false);
+        return;
+#endif
     }
 
     spdlog::info("TrainingExecutor: Starting training for {} epochs, batch_size={}, samples={}",
@@ -331,7 +342,11 @@ void TrainingExecutor::Train(
         // batchers both flow through RunTrainingEpochArrow via their shared
         // IBatcher base; legacy DatasetBatcher stays on its own path.
         if (mode_ == DatasetMode::Legacy) {
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
             RunTrainingEpoch(*legacy_train_batcher, epoch, batch_cb);
+#else
+            break;
+#endif
         } else if (active_train_ibatcher) {
             RunTrainingEpochArrow(*active_train_ibatcher, epoch, batch_cb);
         }
@@ -350,8 +365,10 @@ void TrainingExecutor::Train(
         // SetPhase is a no-op on the default IBatcher impl.
         model_->SetTraining(false);
         if (mode_ == DatasetMode::Legacy) {
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
             RunValidation(*legacy_val_batcher);
             validation_ran = true;
+#endif
         } else if (active_val_ibatcher) {
             active_val_ibatcher->SetPhase(BatcherPhase::Val);
             RunValidationArrow(*active_val_ibatcher);
@@ -436,8 +453,10 @@ void TrainingExecutor::Train(
 
         // Reset batchers for next epoch
         if (mode_ == DatasetMode::Legacy) {
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
             legacy_train_batcher->Reset();
             legacy_val_batcher->Reset();
+#endif
         } else {
             active_train_ibatcher->Reset();
             active_val_ibatcher->Reset();
@@ -539,6 +558,7 @@ void TrainingExecutor::Train(
     }
 }
 
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
 void TrainingExecutor::RunTrainingEpoch(
     DatasetBatcher& batcher,
     int epoch,
@@ -799,6 +819,7 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
         m.val_accuracy = final_acc;
     });
 }
+#endif
 
 Tensor TrainingExecutor::Forward(const Tensor& input) {
     if (!model_) {

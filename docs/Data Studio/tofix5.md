@@ -733,9 +733,10 @@ Recommendation:
 1. Unify Arrow/Parquet input-size derivation. Done for tabular and
    time-series paths.
 2. Move schema-to-model logic into shared helpers.
-3. Add execution-path tests for storage-mode parity. Started with
+3. Add execution-path tests for storage-mode parity. Covered with
    tabular/time-series batcher-shape parity and multi-row-group
-   Parquet batcher coverage.
+   Parquet batcher coverage, shared model-step coverage, and full
+   `TrainingExecutor::Train()` Arrow/Parquet parity coverage.
 
 ---
 
@@ -812,14 +813,17 @@ Deliverable:
 
 ### Ticket E: Arrow vs Parquet parity
 
-Status: in progress. The shared setup test now creates real
+Status: completed in this branch. The shared setup test now creates real
 Parquet-backed datasets and verifies tabular batch shape plus
 multi-row-group tabular split behavior, time-series Arrow/Parquet
 partition and regression-label shape parity, and multi-row-group
 time-series partition filtering. It also runs matching Arrow and
 multi-row-group Parquet model train/validation steps through the shared
-model builder. Remaining parity work is full `TrainingExecutor`
-end-to-end coverage.
+model builder. The dedicated `test_training_executor_arrow_parquet`
+target now runs the real `TrainingExecutor::Train()` loop for both an
+in-memory Arrow dataset and the same data written as multi-row-group
+Parquet, verifying epoch callbacks, completion callbacks, finite
+train/validation losses, batch counts, and metric history.
 
 Scope:
 
