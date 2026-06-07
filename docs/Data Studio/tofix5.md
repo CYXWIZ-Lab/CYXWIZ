@@ -637,8 +637,9 @@ operator, that operator/fail-closed/legacy-dispatched names do not
 overlap, and that validation capability entries resolve to known
 runtime-supported names. Fail-closed runtime entries that correspond to
 browser-visible blocked nodes now carry that metadata node identity in
-the same capability registry, and the drift suite verifies those nodes
-are not marked implemented. The first explicit `fail_mode` axis now lives
+the same capability registry and on resolved runtime support, and the
+drift suite verifies those nodes are not marked implemented. The first
+explicit `fail_mode` axis now lives
 on resolved runtime support too: operator-backed and active
 legacy-dispatched paths report `real`, while known unsupported paths
 report `hard_fail`; stable fail-mode names are covered by the drift
@@ -763,10 +764,10 @@ Deliverable:
 Status: partially completed in this branch. Known fake-success branches
 listed above have been converted or implemented, and metadata now marks
 the covered blocked helpers as `Template` / `Blocked`. Fail-closed
-runtime entries now carry optional blocked metadata node identity, and
-the drift suite checks those browser-visible nodes are not marked
-implemented. Continue treating newly discovered placeholder branches as
-defects, not supported features.
+runtime entries now carry optional blocked metadata node identity through
+resolved runtime support, and the drift suite checks those browser-visible
+nodes are not marked implemented. Continue treating newly discovered
+placeholder branches as defects, not supported features.
 
 Scope:
 

@@ -118,6 +118,7 @@ struct PipelineRuntimeSupport {
     bool materializer_arrow_table_supported = false;
     bool source_node = false;
     std::optional<int> required_input_count = std::nullopt;
+    std::optional<gui::NodeType> metadata_node_type = std::nullopt;
     std::vector<const char*> required_parameters;
     std::vector<PipelineAllowedParameterValuesRuntimeCapability>
         allowed_parameter_values;

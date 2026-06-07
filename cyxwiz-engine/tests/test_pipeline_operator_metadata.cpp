@@ -333,6 +333,9 @@ int main() {
         Check(support.fail_closed_reason != nullptr,
               std::string("runtime support fail-closed reason missing: ") +
                   capability.legacy_type_name);
+        Check(support.metadata_node_type == capability.metadata_node_type,
+              std::string("runtime support fail-closed metadata node mismatch: ") +
+                  capability.legacy_type_name);
         Check(!support.materializer_arrow_table_supported,
               std::string("fail-closed runtime should not be Arrow-materializer capable: ") +
                   capability.legacy_type_name);

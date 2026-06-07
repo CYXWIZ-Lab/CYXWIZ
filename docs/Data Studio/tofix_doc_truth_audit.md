@@ -276,3 +276,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: added optional blocked metadata node identity to
   fail-closed runtime capability entries and made the metadata drift guard
   enforce that those browser-visible blocked nodes are not implemented.
+- 2026-06-07 follow-up: carried the optional fail-closed metadata node
+  identity through resolved `PipelineRuntimeSupport` so routing support
+  truth and metadata status truth remain tied together.

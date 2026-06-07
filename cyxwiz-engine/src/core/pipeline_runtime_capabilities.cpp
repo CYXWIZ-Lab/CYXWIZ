@@ -347,15 +347,25 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             true});
     }
 
-    if (const char* reason = ResolvePipelineFailClosedReason(legacy_type_name);
-        reason != nullptr) {
-        return with_validation_axes({
+    const auto& fail_closed_capabilities =
+        GetPipelineFailClosedRuntimeCapabilities();
+    auto fail_closed_it = std::find_if(
+        fail_closed_capabilities.begin(),
+        fail_closed_capabilities.end(),
+        [&legacy_type_name](
+            const PipelineFailClosedRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (fail_closed_it != fail_closed_capabilities.end()) {
+        auto support = PipelineRuntimeSupport{
             PipelineRuntimeSupportMode::FailClosed,
             PipelineRuntimeFailMode::HardFail,
             std::nullopt,
-            reason,
+            fail_closed_it->reason,
             PipelineMaterializerStorageSupport::None,
-            false});
+            false};
+        support.metadata_node_type = fail_closed_it->metadata_node_type;
+        return with_validation_axes(std::move(support));
     }
 
     if (IsPipelineLegacyRuntimeNode(legacy_type_name)) {
