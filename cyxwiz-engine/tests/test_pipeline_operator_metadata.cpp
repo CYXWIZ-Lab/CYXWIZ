@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -91,6 +92,71 @@ int main() {
     auto& factory = cyxwiz::PipelineOperatorFactory::Instance();
     const auto supported = factory.GetSupportedTypes();
     Check(!supported.empty(), "PipelineOperatorFactory should register operators");
+
+    {
+        std::set<std::string> operator_names;
+        for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {
+            Check(operator_names.insert(capability.legacy_type_name).second,
+                  std::string("duplicate operator runtime capability: ") +
+                      capability.legacy_type_name);
+        }
+
+        std::set<std::string> fail_closed_names;
+        for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
+            Check(fail_closed_names.insert(capability.legacy_type_name).second,
+                  std::string("duplicate fail-closed runtime capability: ") +
+                      capability.legacy_type_name);
+        }
+
+        std::set<std::string> legacy_names;
+        for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {
+            Check(legacy_names.insert(capability.legacy_type_name).second,
+                  std::string("duplicate legacy runtime capability: ") +
+                      capability.legacy_type_name);
+        }
+
+        std::set<std::string> source_names;
+        for (const auto& capability : cyxwiz::GetPipelineSourceRuntimeCapabilities()) {
+            Check(source_names.insert(capability.legacy_type_name).second,
+                  std::string("duplicate source runtime capability: ") +
+                      capability.legacy_type_name);
+        }
+
+        std::set<std::string> input_arity_names;
+        for (const auto& capability : cyxwiz::GetPipelineInputArityRuntimeCapabilities()) {
+            Check(input_arity_names.insert(capability.legacy_type_name).second,
+                  std::string("duplicate input-arity runtime capability: ") +
+                      capability.legacy_type_name);
+        }
+
+        std::set<std::string> required_parameter_names;
+        for (const auto& capability :
+             cyxwiz::GetPipelineRequiredParameterRuntimeCapabilities()) {
+            Check(required_parameter_names.insert(capability.legacy_type_name).second,
+                  std::string("duplicate required-parameter runtime capability: ") +
+                      capability.legacy_type_name);
+        }
+
+        std::set<std::string> allowed_parameter_names;
+        for (const auto& capability :
+             cyxwiz::GetPipelineAllowedParameterValuesRuntimeCapabilities()) {
+            const std::string key =
+                std::string(capability.legacy_type_name) + "." +
+                capability.parameter_name;
+            Check(allowed_parameter_names.insert(key).second,
+                  "duplicate allowed-parameter runtime capability: " + key);
+        }
+
+        std::set<std::string> integer_parameter_names;
+        for (const auto& capability :
+             cyxwiz::GetPipelineIntegerParameterRuntimeCapabilities()) {
+            const std::string key =
+                std::string(capability.legacy_type_name) + "." +
+                capability.parameter_name;
+            Check(integer_parameter_names.insert(key).second,
+                  "duplicate integer-parameter runtime capability: " + key);
+        }
+    }
 
     for (auto type : supported) {
         auto op = factory.Create(type);

@@ -144,3 +144,5 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: moved supported enum values and active legacy
   integer parameter validation rules into `pipeline_runtime_capabilities`,
   with drift coverage and a `DataOutput.format` validation regression.
+- 2026-06-07 follow-up: strengthened the runtime capability metadata drift
+  guard to reject duplicate entries within each capability list.
