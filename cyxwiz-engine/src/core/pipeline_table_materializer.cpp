@@ -9,6 +9,7 @@
 #include <map>
 #include <queue>
 #include <unordered_set>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -64,6 +65,86 @@ const gui::MLNode* FindNodeById(int id, const std::vector<gui::MLNode>& nodes) {
 bool IsFoldedTextConfigNode(gui::NodeType type) {
     return type == gui::NodeType::TextVocabulary ||
            type == gui::NodeType::TextPadding;
+}
+
+bool HasReachableMaterializerOperator(
+    int node_id,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const PipelineOperatorFactory& factory,
+    std::unordered_set<int>& visiting) {
+
+    if (!visiting.insert(node_id).second) {
+        return false;
+    }
+
+    const gui::MLNode* node = FindNodeById(node_id, nodes);
+    if (!node) {
+        return false;
+    }
+
+    if (factory.HasOperator(node->type)) {
+        return true;
+    }
+
+    for (const auto& link : links) {
+        if (link.from_node != node_id) {
+            continue;
+        }
+        if (HasReachableMaterializerOperator(
+                link.to_node, nodes, links, factory, visiting)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool ValidateLinearMaterializerOperatorPath(
+    const gui::MLNode& data_input,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const PipelineOperatorFactory& factory,
+    std::string& error) {
+
+    std::queue<int> queue;
+    std::unordered_set<int> visited;
+    queue.push(data_input.id);
+    visited.insert(data_input.id);
+
+    while (!queue.empty()) {
+        const int node_id = queue.front();
+        queue.pop();
+
+        std::vector<int> operator_relevant_children;
+        for (const auto& link : links) {
+            if (link.from_node != node_id) {
+                continue;
+            }
+
+            std::unordered_set<int> visiting;
+            if (HasReachableMaterializerOperator(
+                    link.to_node, nodes, links, factory, visiting)) {
+                operator_relevant_children.push_back(link.to_node);
+            }
+
+            if (visited.insert(link.to_node).second) {
+                queue.push(link.to_node);
+            }
+        }
+
+        if (operator_relevant_children.size() > 1) {
+            const gui::MLNode* node = FindNodeById(node_id, nodes);
+            const std::string node_name =
+                node ? node->name : std::to_string(node_id);
+            error = "PipelineMaterializer: branched operator paths from node '" +
+                    node_name +
+                    "' are not supported by the Arrow-table materializer";
+            return false;
+        }
+    }
+
+    return true;
 }
 
 void FoldTextConfigNodeParams(
@@ -170,6 +251,14 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
         }
     }
     if (!any_registered) {
+        return result;
+    }
+
+    std::string graph_shape_error;
+    if (!ValidateLinearMaterializerOperatorPath(
+            *data_input, nodes, links, factory, graph_shape_error)) {
+        result.success = false;
+        result.error_message = graph_shape_error;
         return result;
     }
 

@@ -194,6 +194,30 @@ int main() {
           "raw text column should not remain after tokenization");
 
     {
+        auto sibling_tokenizer = MakeTokenizerNode();
+        sibling_tokenizer.id = 5;
+        sibling_tokenizer.name = "Sibling Text Tokenizer";
+        std::vector<gui::MLNode> branched_nodes = {
+            MakeDataInputNode(),
+            MakeTokenizerNode(),
+            sibling_tokenizer,
+        };
+        std::vector<gui::NodeLink> branched_links = {
+            {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
+            {2, 1, 0, 5, 0, gui::LinkType::TensorFlow},
+        };
+
+        auto branched = cyxwiz::PipelineMaterializer::MaterializeTable(
+            branched_nodes, branched_links, MakeTextTable());
+        Check(!branched.success,
+              "branched materializer operator paths should fail closed");
+        Check(branched.error_message.find(
+                  "branched operator paths") != std::string::npos,
+              "branched materializer failure should explain graph shape: " +
+                  branched.error_message);
+    }
+
+    {
         std::vector<gui::MLNode> folded_nodes = {
             MakeDataInputNode(),
             MakeTokenizerNode(),

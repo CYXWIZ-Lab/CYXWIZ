@@ -442,11 +442,18 @@ carries the materializer source kind, unsupported-source skip flag, and
 central skip reason, so callers can surface the same materializer truth
 without scraping logs.
 
+**Status 2026-06-07 follow-up 3:** Arrow-table materialization now
+fails closed for branched operator paths. The v1 materializer still only
+supports a linear operator path from the selected data input, but it no
+longer applies sibling operator branches sequentially to one table as if
+that represented the graph faithfully.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_materializer.h:34`
 - `cyxwiz-engine/src/core/pipeline_materializer.cpp:52`
 - `cyxwiz-engine/src/core/pipeline_materializer.cpp:100`
+- `cyxwiz-engine/src/core/pipeline_table_materializer.cpp`
 
 Problem:
 
