@@ -17,11 +17,13 @@ struct PipelineOperatorRuntimeCapability {
 struct PipelineFailClosedRuntimeCapability {
     const char* legacy_type_name;
     const char* reason;
+    std::optional<gui::NodeType> node_type = std::nullopt;
     std::optional<gui::NodeType> metadata_node_type = std::nullopt;
 };
 
 struct PipelineLegacyRuntimeCapability {
     const char* legacy_type_name;
+    std::optional<gui::NodeType> node_type = std::nullopt;
 };
 
 struct PipelineSourceRuntimeCapability {
@@ -118,6 +120,7 @@ struct PipelineMaterializerStorageBackendCapability {
 struct PipelineRuntimeSupport {
     PipelineRuntimeSupportMode mode = PipelineRuntimeSupportMode::Unknown;
     PipelineRuntimeFailMode fail_mode = PipelineRuntimeFailMode::Unknown;
+    std::optional<gui::NodeType> node_type = std::nullopt;
     std::optional<gui::NodeType> operator_type = std::nullopt;
     const char* fail_closed_reason = nullptr;
     PipelineMaterializerStorageSupport materializer_storage_support =
@@ -170,6 +173,8 @@ GetPipelineMaterializerStorageBackendCapabilities();
 
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name);
 
+PipelineRuntimeSupport ResolvePipelineRuntimeSupport(gui::NodeType node_type);
+
 const char* PipelineStorageBackendName(PipelineStorageBackend backend);
 
 const char* PipelineRuntimeSupportModeName(PipelineRuntimeSupportMode mode);
@@ -192,6 +197,11 @@ std::optional<gui::NodeType>
 ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name);
 
 bool IsPipelineOperatorRuntimeNode(const std::string& legacy_type_name);
+
+std::optional<gui::NodeType>
+ResolvePipelineRuntimeNodeType(const std::string& legacy_type_name);
+
+const char* ResolvePipelineRuntimeLegacyTypeName(gui::NodeType node_type);
 
 const char* ResolvePipelineFailClosedReason(const std::string& legacy_type_name);
 

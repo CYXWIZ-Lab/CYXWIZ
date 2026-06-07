@@ -300,6 +300,22 @@ int main() {
                   *support.operator_type == capability.node_type,
               std::string("runtime support operator type mismatch: ") +
                   capability.legacy_type_name);
+        Check(support.node_type.has_value() &&
+                  *support.node_type == capability.node_type,
+              std::string("runtime support node type mismatch: ") +
+                  capability.legacy_type_name);
+        const auto runtime_node_type =
+            cyxwiz::ResolvePipelineRuntimeNodeType(capability.legacy_type_name);
+        Check(runtime_node_type.has_value() &&
+                  *runtime_node_type == capability.node_type,
+              std::string("runtime name should resolve to operator node type: ") +
+                  capability.legacy_type_name);
+        const auto enum_support =
+            cyxwiz::ResolvePipelineRuntimeSupport(capability.node_type);
+        Check(enum_support.mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+              std::string("operator node type should resolve support by enum: ") +
+                  capability.legacy_type_name);
         Check(support.materializer_arrow_table_supported,
               std::string("operator-backed runtime should be Arrow-materializer capable: ") +
                   capability.legacy_type_name);
@@ -365,8 +381,20 @@ int main() {
         Check(support.fail_closed_reason != nullptr,
               std::string("runtime support fail-closed reason missing: ") +
                   capability.legacy_type_name);
-        Check(support.metadata_node_type == capability.metadata_node_type,
+        auto expected_metadata_type = capability.metadata_node_type;
+        if (!expected_metadata_type.has_value()) {
+            expected_metadata_type = capability.node_type;
+        }
+        Check(support.metadata_node_type == expected_metadata_type,
               std::string("runtime support fail-closed metadata node mismatch: ") +
+                  capability.legacy_type_name);
+        Check(support.node_type == capability.node_type,
+              std::string("runtime support fail-closed node type mismatch: ") +
+                  capability.legacy_type_name);
+        const auto runtime_node_type =
+            cyxwiz::ResolvePipelineRuntimeNodeType(capability.legacy_type_name);
+        Check(runtime_node_type == expected_metadata_type,
+              std::string("fail-closed runtime name should resolve typed metadata: ") +
                   capability.legacy_type_name);
         Check(!support.materializer_arrow_table_supported,
               std::string("fail-closed runtime should not be Arrow-materializer capable: ") +
@@ -398,6 +426,14 @@ int main() {
                   capability.legacy_type_name);
         Check(support.fail_mode == cyxwiz::PipelineRuntimeFailMode::Real,
               std::string("legacy-dispatched runtime should advertise real fail mode: ") +
+                  capability.legacy_type_name);
+        Check(support.node_type == capability.node_type,
+              std::string("legacy-dispatched runtime node type mismatch: ") +
+                  capability.legacy_type_name);
+        const auto runtime_node_type =
+            cyxwiz::ResolvePipelineRuntimeNodeType(capability.legacy_type_name);
+        Check(runtime_node_type == capability.node_type,
+              std::string("legacy runtime name should resolve typed metadata: ") +
                   capability.legacy_type_name);
         Check(!support.materializer_arrow_table_supported,
               std::string("legacy-dispatched runtime should not claim Arrow materializer support: ") +
@@ -460,6 +496,25 @@ int main() {
               cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly)) ==
               "arrow_table_only",
           "materializer storage support name for ArrowTableOnly is stable");
+
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::FilterRows)) == "FilterRows",
+          "legacy runtime enum lookup for FilterRows is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::FilterRows).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "FilterRows enum support should resolve to legacy executor");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::StandardScaler)) == "StandardScaler",
+          "operator runtime enum lookup for StandardScaler is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::StandardScaler).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+          "StandardScaler enum support should resolve to operator-backed");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::SVMClassifier)) == "SVMClassifier",
+          "fail-closed runtime enum lookup for SVMClassifier is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::SVMClassifier).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+          "SVMClassifier enum support should resolve to fail-closed");
 
     Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
               cyxwiz::PipelineTrainingBackendSupportMode::Allowed)) ==

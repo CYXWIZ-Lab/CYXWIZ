@@ -423,27 +423,41 @@ Recommendation:
 
 **Severity:** Medium
 
+**Status 2026-06-07:** Partially fixed for capability truth.
+`PipelineRuntimeSupport` now carries an optional `gui::NodeType`, and
+`pipeline_runtime_capabilities.{h,cpp}` exposes lookup in both directions:
+legacy runtime name to `NodeType`, and `NodeType` back to the canonical
+runtime name. Operator-backed, fail-closed, and legacy-dispatched
+capabilities are covered by drift tests. The remaining issue is the
+`PipelineExecutor::ExecuteNode()` dispatch chain itself, which still
+branches on `node.type` strings.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.h`
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
 
 Problem:
 
-- `PipelineExecutor::Node` stores node type as string
-- dispatch is a long chain of string comparisons
-- the engine already has `NodeType` enum-based systems elsewhere
+- `PipelineExecutor::Node` still stores node type as string
+- dispatch is still a long chain of string comparisons
+- capability truth now bridges to `NodeType`, but execution dispatch has
+  not moved to it yet
 
 Effect:
 
-- drift between frontend node metadata, compile-time enums, runtime
-  names, and operator registration
-- higher bug risk during node additions or renames
+- lower drift risk between runtime support truth, enum metadata, and
+  operator registration
+- remaining bug risk during node additions or renames inside the legacy
+  executor dispatch branch
 
 Recommendation:
 
-- move runtime dispatch to `NodeType`
-- centralize type-to-capability mapping
-- avoid multiple parallel registries of support truth
+- parse or resolve `PipelineExecutor::Node` to `NodeType` before dispatch
+- move the legacy dispatch chain to typed cases in small slices
+- keep `pipeline_runtime_capabilities` as the central type-to-capability
+  bridge; do not add another runtime registry
 
 ---
 

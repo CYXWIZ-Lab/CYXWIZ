@@ -137,16 +137,16 @@ const std::vector<PipelineLegacyRuntimeCapability>&
 GetPipelineLegacyRuntimeCapabilities() {
     static const std::vector<PipelineLegacyRuntimeCapability> capabilities = {
         {"FileInput"},
-        {"DataInput"},
-        {"DataOutput"},
-        {"FilterRows"},
-        {"SelectColumns"},
-        {"RemoveDuplicates"},
+        {"DataInput", gui::NodeType::DataInput},
+        {"DataOutput", gui::NodeType::DataOutput},
+        {"FilterRows", gui::NodeType::FilterRows},
+        {"SelectColumns", gui::NodeType::SelectColumns},
+        {"RemoveDuplicates", gui::NodeType::RemoveDuplicateRows},
         {"SaveDataset"},
-        {"FillMissing"},
-        {"SortRows"},
-        {"Join"},
-        {"GroupBy"},
+        {"FillMissing", gui::NodeType::FillMissingValues},
+        {"SortRows", gui::NodeType::SortRows},
+        {"Join", gui::NodeType::JoinTables},
+        {"GroupBy", gui::NodeType::GroupByAggregate},
         {"DeployToNodeEditor"},
         {"TextClean"},
         {"TextTokenize"},
@@ -157,13 +157,13 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"TSDiff"},
         {"PolynomialFeatures"},
         {"Binning"},
-        {"ExcelInput"},
-        {"ExportCSV"},
-        {"RowToColumnNames"},
-        {"TableCropper"},
-        {"StringManipulation"},
-        {"MathFormula"},
-        {"RenameColumns"},
+        {"ExcelInput", gui::NodeType::ExcelFile},
+        {"ExportCSV", gui::NodeType::ExportCSV},
+        {"RowToColumnNames", gui::NodeType::RowToColumnNames},
+        {"TableCropper", gui::NodeType::TableCropper},
+        {"StringManipulation", gui::NodeType::StringManipulation},
+        {"MathFormula", gui::NodeType::MathFormula},
+        {"RenameColumns", gui::NodeType::RenameColumns},
     };
     return capabilities;
 }
@@ -342,6 +342,7 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             PipelineRuntimeSupportMode::OperatorBacked,
             PipelineRuntimeFailMode::Real,
             operator_type,
+            operator_type,
             nullptr,
             PipelineMaterializerStorageSupport::ArrowTableOnly,
             true,
@@ -364,20 +365,32 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
         auto support = PipelineRuntimeSupport{
             PipelineRuntimeSupportMode::FailClosed,
             PipelineRuntimeFailMode::HardFail,
+            fail_closed_it->node_type,
             std::nullopt,
             fail_closed_it->reason,
             PipelineMaterializerStorageSupport::None,
             false,
             false};
         support.metadata_node_type = fail_closed_it->metadata_node_type;
+        if (!support.metadata_node_type.has_value()) {
+            support.metadata_node_type = fail_closed_it->node_type;
+        }
         support.implementation_owner = PipelineRuntimeImplementationOwner::None;
         return with_validation_axes(std::move(support));
     }
 
-    if (IsPipelineLegacyRuntimeNode(legacy_type_name)) {
+    const auto& legacy_capabilities = GetPipelineLegacyRuntimeCapabilities();
+    auto legacy_it = std::find_if(
+        legacy_capabilities.begin(),
+        legacy_capabilities.end(),
+        [&legacy_type_name](const PipelineLegacyRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (legacy_it != legacy_capabilities.end()) {
         auto support = with_validation_axes({
             PipelineRuntimeSupportMode::LegacyExecutor,
             PipelineRuntimeFailMode::Real,
+            legacy_it->node_type,
             std::nullopt,
             nullptr,
             PipelineMaterializerStorageSupport::None,
@@ -389,6 +402,14 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
     }
 
     return {};
+}
+
+PipelineRuntimeSupport ResolvePipelineRuntimeSupport(gui::NodeType node_type) {
+    const char* legacy_type_name = ResolvePipelineRuntimeLegacyTypeName(node_type);
+    if (legacy_type_name == nullptr) {
+        return {};
+    }
+    return ResolvePipelineRuntimeSupport(legacy_type_name);
 }
 
 const char* PipelineStorageBackendName(PipelineStorageBackend backend) {
@@ -509,6 +530,80 @@ ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name) {
 
 bool IsPipelineOperatorRuntimeNode(const std::string& legacy_type_name) {
     return ResolvePipelineOperatorRuntimeType(legacy_type_name).has_value();
+}
+
+std::optional<gui::NodeType>
+ResolvePipelineRuntimeNodeType(const std::string& legacy_type_name) {
+    if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
+        operator_type.has_value()) {
+        return operator_type;
+    }
+
+    const auto& fail_closed_capabilities =
+        GetPipelineFailClosedRuntimeCapabilities();
+    auto fail_closed_it = std::find_if(
+        fail_closed_capabilities.begin(),
+        fail_closed_capabilities.end(),
+        [&legacy_type_name](
+            const PipelineFailClosedRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (fail_closed_it != fail_closed_capabilities.end()) {
+        if (fail_closed_it->node_type.has_value()) {
+            return fail_closed_it->node_type;
+        }
+        return fail_closed_it->metadata_node_type;
+    }
+
+    const auto& legacy_capabilities = GetPipelineLegacyRuntimeCapabilities();
+    auto legacy_it = std::find_if(
+        legacy_capabilities.begin(),
+        legacy_capabilities.end(),
+        [&legacy_type_name](const PipelineLegacyRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (legacy_it == legacy_capabilities.end()) {
+        return std::nullopt;
+    }
+    return legacy_it->node_type;
+}
+
+const char* ResolvePipelineRuntimeLegacyTypeName(gui::NodeType node_type) {
+    const auto& operator_capabilities = GetPipelineOperatorRuntimeCapabilities();
+    auto operator_it = std::find_if(
+        operator_capabilities.begin(),
+        operator_capabilities.end(),
+        [node_type](const PipelineOperatorRuntimeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (operator_it != operator_capabilities.end()) {
+        return operator_it->legacy_type_name;
+    }
+
+    const auto& fail_closed_capabilities =
+        GetPipelineFailClosedRuntimeCapabilities();
+    auto fail_closed_it = std::find_if(
+        fail_closed_capabilities.begin(),
+        fail_closed_capabilities.end(),
+        [node_type](const PipelineFailClosedRuntimeCapability& capability) {
+            return capability.node_type == node_type ||
+                   capability.metadata_node_type == node_type;
+        });
+    if (fail_closed_it != fail_closed_capabilities.end()) {
+        return fail_closed_it->legacy_type_name;
+    }
+
+    const auto& legacy_capabilities = GetPipelineLegacyRuntimeCapabilities();
+    auto legacy_it = std::find_if(
+        legacy_capabilities.begin(),
+        legacy_capabilities.end(),
+        [node_type](const PipelineLegacyRuntimeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (legacy_it == legacy_capabilities.end()) {
+        return nullptr;
+    }
+    return legacy_it->legacy_type_name;
 }
 
 const char* ResolvePipelineFailClosedReason(const std::string& legacy_type_name) {
