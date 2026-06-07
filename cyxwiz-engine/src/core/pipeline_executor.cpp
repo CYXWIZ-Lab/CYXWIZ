@@ -61,6 +61,17 @@ std::map<std::string, std::string> ParseRenameMapping(const std::string& mapping
     return result;
 }
 
+std::string ScalarToColumnName(const std::shared_ptr<arrow::Scalar>& scalar) {
+    if (!scalar || !scalar->is_valid) {
+        return {};
+    }
+    std::string value = TrimString(scalar->ToString());
+    if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+        value = value.substr(1, value.size() - 2);
+    }
+    return TrimString(value);
+}
+
 bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
     if (value.empty()) {
         return false;
@@ -2801,7 +2812,56 @@ bool PipelineExecutor::ExecuteRowToColumnNames(const Node& node, ExecutionContex
             return false;
         }
         auto input_table = input_dataset->GetArrowTable();
-        registry.RegisterArrowTable(input_table, output_dataset_name);
+        if (!input_table) {
+            ReportError("RowToColumnNames: Input table is null");
+            return false;
+        }
+        if (row_index < 0 || row_index >= input_table->num_rows()) {
+            ReportError("RowToColumnNames: Row index out of bounds");
+            return false;
+        }
+
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        fields.reserve(input_table->num_columns());
+        std::set<std::string> output_names;
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            auto scalar_result = input_table->column(i)->GetScalar(row_index);
+            if (!scalar_result.ok()) {
+                ReportError("RowToColumnNames: Failed to read header cell");
+                return false;
+            }
+            const std::string column_name = ScalarToColumnName(scalar_result.ValueOrDie());
+            if (column_name.empty()) {
+                ReportError("RowToColumnNames: Header row contains an empty column name");
+                return false;
+            }
+            if (!output_names.insert(column_name).second) {
+                ReportError("RowToColumnNames: duplicate output column name '" +
+                            column_name + "'");
+                return false;
+            }
+            fields.push_back(input_table->schema()->field(i)->WithName(column_name));
+        }
+
+        std::shared_ptr<arrow::Table> data_table;
+        if (row_index == 0) {
+            data_table = input_table->Slice(1);
+        } else if (row_index == input_table->num_rows() - 1) {
+            data_table = input_table->Slice(0, row_index);
+        } else {
+            auto top = input_table->Slice(0, row_index);
+            auto bottom = input_table->Slice(row_index + 1);
+            auto concat_result = arrow::ConcatenateTables({top, bottom});
+            if (!concat_result.ok()) {
+                ReportError("RowToColumnNames: Failed to remove promoted row");
+                return false;
+            }
+            data_table = concat_result.ValueOrDie();
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema(fields), data_table->columns(), data_table->num_rows());
+        registry.RegisterArrowTable(output_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {

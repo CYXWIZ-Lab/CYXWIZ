@@ -198,7 +198,8 @@ starts. Validation now rejects invalid `DataInput.skip_rows` and Excel
 `sheet_idx` integer parameters before execution reaches `std::stoi`,
 plus bounded integer parameters for active legacy transforms such as
 `TSWindow`, `TSLag.lag_periods`, `PolynomialFeatures`, `Binning`, and
-table row helpers. Dangling links whose start or end node id is missing
+table row helpers, including `RowToColumnNames.row_index`. Dangling
+links whose start or end node id is missing
 now fail during parsing instead of being silently dropped. Disconnected
 graphs now fail validation instead of running as independent islands.
 Validation and parse errors now preserve the specific failed rule. Broader
@@ -430,6 +431,8 @@ Problem now:
   logging and returning success
 - legacy `RenameColumns` now rebuilds the Arrow schema with renamed
   fields instead of registering the input table unchanged
+- legacy `RowToColumnNames` now promotes a row to Arrow schema names and
+  removes the promoted row instead of registering the input table unchanged
 - broader support truth still needs the next multi-axis capability matrix
 
 Effect:

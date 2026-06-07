@@ -479,6 +479,47 @@ int main() {
           "RenameColumns unknown input column error should be specific: " +
               bad_rename_mapping_executor.GetLastError());
 
+    const std::string row_to_column_names_json =
+        R"({"nodes":[)"
+        R"({"id":49,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"false"}},)"
+        R"({"id":50,"type":"RowToColumnNames","name":"Promote","parameters":{)"
+        R"("row_index":"0"}})"
+        R"(],"links":[{"start_node":49,"end_node":50}]})";
+
+    cyxwiz::PipelineExecutor row_to_column_names_executor;
+    Check(row_to_column_names_executor.ExecutePipeline(row_to_column_names_json),
+          "RowToColumnNames should promote a data row to Arrow schema fields: " +
+              row_to_column_names_executor.GetLastError());
+    auto promoted = registry.GetArrowDataset("ds_newheaders_50");
+    Check(promoted != nullptr, "RowToColumnNames output dataset is registered");
+    auto promoted_table = promoted->GetArrowTable();
+    Check(promoted_table != nullptr, "RowToColumnNames output table exists");
+    Check(promoted_table->num_rows() == 3,
+          "RowToColumnNames should remove the promoted header row");
+    Check(promoted_table->schema()->GetFieldIndex("x") >= 0,
+          "RowToColumnNames should expose promoted x field");
+    Check(promoted_table->schema()->GetFieldIndex("y") >= 0,
+          "RowToColumnNames should expose promoted y field");
+
+    const std::string bad_row_index_json =
+        R"({"nodes":[)"
+        R"({"id":51,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":52,"type":"RowToColumnNames","name":"Promote","parameters":{)"
+        R"("row_index":"-1"}})"
+        R"(],"links":[{"start_node":51,"end_node":52}]})";
+
+    cyxwiz::PipelineExecutor bad_row_index_executor;
+    Check(!bad_row_index_executor.ExecutePipeline(bad_row_index_json),
+          "RowToColumnNames bad row_index should fail validation");
+    Check(bad_row_index_executor.GetLastError().find(
+              "RowToColumnNames row_index must be an integer >= 0") !=
+              std::string::npos,
+          "RowToColumnNames bad row_index validation should be specific: " +
+              bad_row_index_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
@@ -487,6 +528,8 @@ int main() {
     registry.UnloadDataset("ds_datainput_43");
     registry.UnloadDataset("ds_renamed_44");
     registry.UnloadDataset("ds_datainput_47");
+    registry.UnloadDataset("ds_datainput_49");
+    registry.UnloadDataset("ds_newheaders_50");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
 

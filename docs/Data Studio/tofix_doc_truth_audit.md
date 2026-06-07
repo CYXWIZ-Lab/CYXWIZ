@@ -168,3 +168,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: made legacy `RenameColumns` perform a real Arrow
   schema rename from `mapping`/`rename_map` pairs and fail validation
   when no rename mapping is provided.
+- 2026-06-07 follow-up: made legacy `RowToColumnNames` perform a real
+  Arrow schema promotion, remove the promoted row, and validate
+  `row_index` before execution.
