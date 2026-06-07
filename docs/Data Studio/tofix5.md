@@ -249,6 +249,12 @@ preserving the legacy in-memory `name` alias behavior. Unsupported
 formats such as `arrow` now fail validation through the central allowed
 parameter registry instead of being advertised and ignored.
 
+**Status 2026-06-07 follow-up 3:** `ExportCSV` now accepts both the
+legacy `file_path` parameter and the Data Studio registry's `path`
+parameter. Validation treats either spelling as satisfying the required
+output path, so UI-authored ExportCSV nodes no longer fail before
+execution.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`

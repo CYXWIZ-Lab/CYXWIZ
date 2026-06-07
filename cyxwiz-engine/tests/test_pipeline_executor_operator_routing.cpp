@@ -125,6 +125,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_routing.csv";
     const fs::path export_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.csv";
+    const fs::path export_csv_alias_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export_alias.csv";
     const fs::path save_dataset_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_save_dataset.csv";
     const fs::path missing_csv_path =
@@ -132,6 +134,7 @@ int main() {
     const fs::path string_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_strings.csv";
     fs::remove(export_csv_path);
+    fs::remove(export_csv_alias_path);
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
@@ -538,6 +541,23 @@ int main() {
           "ExportCSV should write through DataRegistry: " +
               export_csv_executor.GetLastError());
     Check(fs::exists(export_csv_path), "ExportCSV should create the output file");
+
+    const std::string export_csv_path_alias_json =
+        R"({"nodes":[)"
+        R"({"id":139,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":140,"type":"ExportCSV","name":"Export","parameters":{)"
+        R"("path":")" + JsonEscapePath(export_csv_alias_path.string()) + R"("}})"
+        R"(],"links":[{"start_node":139,"end_node":140}]})";
+
+    cyxwiz::PipelineExecutor export_csv_path_alias_executor;
+    Check(export_csv_path_alias_executor.ExecutePipeline(
+              export_csv_path_alias_json),
+          "ExportCSV should accept Data Studio path parameter: " +
+              export_csv_path_alias_executor.GetLastError());
+    Check(fs::exists(export_csv_alias_path),
+          "ExportCSV path alias should create the output file");
 
     const std::string save_dataset_json =
         R"({"nodes":[)"
@@ -1396,6 +1416,7 @@ int main() {
     registry.UnloadDataset("ds_select_134");
     registry.UnloadDataset("ds_datainput_3");
     registry.UnloadDataset("ds_datainput_35");
+    registry.UnloadDataset("ds_datainput_139");
     registry.UnloadDataset("ds_datainput_135");
     registry.UnloadDataset("saved_alias");
     registry.UnloadDataset("ds_datainput_37");
@@ -1449,6 +1470,7 @@ int main() {
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
+    fs::remove(export_csv_alias_path);
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);

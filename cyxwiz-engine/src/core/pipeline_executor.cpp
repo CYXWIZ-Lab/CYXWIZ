@@ -623,6 +623,13 @@ const char* MissingRequiredParameter(
             : "mapping";
     }
 
+    if (node_type == "ExportCSV") {
+        return (HasNonEmptyParameter(parameters, "file_path") ||
+                HasNonEmptyParameter(parameters, "path"))
+            ? nullptr
+            : "file_path";
+    }
+
     for (const char* parameter : required_parameters) {
         if (!HasNonEmptyParameter(parameters, parameter)) {
             return parameter;
@@ -3346,6 +3353,9 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
     }
 
     auto path_it = node.parameters.find("file_path");
+    if (path_it == node.parameters.end() || path_it->second.empty()) {
+        path_it = node.parameters.find("path");
+    }
     if (path_it == node.parameters.end() || path_it->second.empty()) {
         ReportError("ExportCSV: Missing output file path");
         return false;
