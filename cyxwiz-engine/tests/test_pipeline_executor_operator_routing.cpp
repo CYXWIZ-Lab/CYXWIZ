@@ -66,6 +66,9 @@ int main() {
 
     const fs::path csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_routing.csv";
+    const fs::path export_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.csv";
+    fs::remove(export_csv_path);
     {
         std::ofstream csv(csv_path);
         csv << "x,y\n";
@@ -355,10 +358,46 @@ int main() {
           "ColumnAppender should use fail-closed runtime support: " +
               column_appender_executor.GetLastError());
 
+    const std::string export_csv_json =
+        R"({"nodes":[)"
+        R"({"id":35,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":36,"type":"ExportCSV","name":"Export","parameters":{)"
+        R"("file_path":")" + JsonEscapePath(export_csv_path.string()) + R"("}})"
+        R"(],"links":[{"start_node":35,"end_node":36}]})";
+
+    cyxwiz::PipelineExecutor export_csv_executor;
+    Check(export_csv_executor.ExecutePipeline(export_csv_json),
+          "ExportCSV should write through DataRegistry: " +
+              export_csv_executor.GetLastError());
+    Check(fs::exists(export_csv_path), "ExportCSV should create the output file");
+
+    const std::string export_json_json =
+        R"({"nodes":[)"
+        R"({"id":37,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":38,"type":"ExportJSON","name":"Export","parameters":{)"
+        R"("file_path":"ignored.json"}})"
+        R"(],"links":[{"start_node":37,"end_node":38}]})";
+
+    cyxwiz::PipelineExecutor export_json_executor;
+    Check(!export_json_executor.ExecutePipeline(export_json_json),
+          "ExportJSON fake-success placeholder should fail closed");
+    Check(export_json_executor.GetLastError().find(
+              "legacy ExportJSON execution is still a fake-success placeholder") !=
+              std::string::npos,
+          "ExportJSON should use fail-closed runtime support: " +
+              export_json_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
+    registry.UnloadDataset("ds_datainput_35");
+    registry.UnloadDataset("ds_datainput_37");
     fs::remove(csv_path);
+    fs::remove(export_csv_path);
 
     return 0;
 }

@@ -93,6 +93,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"ColumnAppender", "legacy ColumnAppender execution is still a passthrough placeholder"},
         {"RowAppender", "legacy RowAppender execution is still a passthrough placeholder"},
         {"Unpivot", "legacy Unpivot execution is still a passthrough placeholder"},
+        {"ExportExcel", "legacy ExportExcel execution is still a fake-success placeholder"},
+        {"ExportJSON", "legacy ExportJSON execution is still a fake-success placeholder"},
     };
     return capabilities;
 }
@@ -122,9 +124,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"PolynomialFeatures"},
         {"Binning"},
         {"ExcelInput"},
-        {"ExportExcel"},
         {"ExportCSV"},
-        {"ExportJSON"},
         {"RowToColumnNames"},
         {"TableSplitter"},
         {"TableCropper"},
@@ -166,9 +166,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"FileInput", {"path"}},
         {"ExcelInput", {"path"}},
         {"DataOutput", {"file_path"}},
-        {"ExportExcel", {"file_path"}},
         {"ExportCSV", {"file_path"}},
-        {"ExportJSON", {"file_path"}},
         {"FilterRows", {"condition"}},
         {"SelectColumns", {"columns"}},
         {"SortRows", {"columns"}},

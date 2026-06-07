@@ -2588,7 +2588,18 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
     }
 
     spdlog::info("[Data Studio] Exporting to CSV: {}", path_it->second);
+    auto& registry = DataRegistry::Instance();
+    if (!registry.GetArrowDataset(input_dataset_name)) {
+        ReportError("ExportCSV: Input dataset not found in registry");
+        return false;
+    }
+    if (!registry.ExportArrowToCSV(input_dataset_name, path_it->second)) {
+        ReportError("ExportCSV: Export failed");
+        return false;
+    }
+
     ctx.node_results[node.id] = input_dataset_name;
+    ctx.output_dataset = path_it->second;
     return true;
 }
 

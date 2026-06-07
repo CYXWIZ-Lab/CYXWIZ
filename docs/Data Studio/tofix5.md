@@ -411,6 +411,7 @@ Representative examples:
   `ColorTransform`, `MorphologyTransform`, `AdvancedAugment`
 - legacy table helper placeholders such as `CellExtractor`,
   `CellUpdater`, `ColumnAppender`, `RowAppender`, and `Unpivot`
+- legacy writer nodes such as `ExportExcel` and `ExportJSON`
 
 Problem now:
 
@@ -420,6 +421,9 @@ Problem now:
   runtime capability registry
 - audited table-helper pass-through placeholders now fail closed instead
   of forwarding their input dataset as if a transform occurred
+- legacy `ExportCSV` now writes through `DataRegistry::ExportArrowToCSV`;
+  legacy `ExportExcel` and `ExportJSON` fail closed instead of only
+  logging and returning success
 - broader support truth still needs the next multi-axis capability matrix
 
 Effect:

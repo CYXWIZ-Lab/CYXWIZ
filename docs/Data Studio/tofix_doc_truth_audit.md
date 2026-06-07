@@ -156,3 +156,6 @@ scanning so stale or duplicate work is not reintroduced.
   (`CellExtractor`, `CellUpdater`, `ColumnAppender`, `RowAppender`,
   `Unpivot`) from legacy-dispatched support to fail-closed capability
   entries.
+- 2026-06-07 follow-up: wired legacy `ExportCSV` to the real registry
+  CSV export path and moved fake-success legacy `ExportExcel`/`ExportJSON`
+  branches to fail-closed runtime capability entries.
