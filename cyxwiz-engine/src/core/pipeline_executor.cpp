@@ -375,6 +375,127 @@ bool BuildGroupByAggregationExpressions(
     return true;
 }
 
+bool BuildMathFormulaExpression(const std::shared_ptr<arrow::Table>& table,
+                                const std::string& formula,
+                                std::string& expression,
+                                std::string& error) {
+    if (!table || !table->schema()) {
+        error = "MathFormula: input table schema is unavailable";
+        return false;
+    }
+
+    expression.clear();
+    bool saw_token = false;
+    size_t index = 0;
+    while (index < formula.size()) {
+        const unsigned char c = static_cast<unsigned char>(formula[index]);
+        if (std::isspace(c)) {
+            expression.push_back(' ');
+            ++index;
+            continue;
+        }
+
+        if (std::isalpha(c) || c == '_') {
+            const size_t start = index;
+            ++index;
+            while (index < formula.size()) {
+                const unsigned char id_char =
+                    static_cast<unsigned char>(formula[index]);
+                if (!std::isalnum(id_char) && id_char != '_') {
+                    break;
+                }
+                ++index;
+            }
+
+            const std::string column = formula.substr(start, index - start);
+            const int column_index = table->schema()->GetFieldIndex(column);
+            if (column_index < 0) {
+                error = "MathFormula: formula references unknown column '" +
+                        column + "'";
+                return false;
+            }
+            const auto field = table->schema()->field(column_index);
+            if (!field || !IsNumericArrowType(field->type())) {
+                const std::string found =
+                    field && field->type() ? field->type()->ToString()
+                                           : "unknown";
+                error = "MathFormula: formula column '" + column +
+                        "' must be numeric (found " + found + ")";
+                return false;
+            }
+            expression += QuoteSqlIdentifier(column);
+            saw_token = true;
+            continue;
+        }
+
+        if (std::isdigit(c) ||
+            (formula[index] == '.' && index + 1 < formula.size() &&
+             std::isdigit(static_cast<unsigned char>(formula[index + 1])))) {
+            const size_t start = index;
+            bool saw_digit = false;
+            bool saw_dot = false;
+            while (index < formula.size()) {
+                const unsigned char number_char =
+                    static_cast<unsigned char>(formula[index]);
+                if (std::isdigit(number_char)) {
+                    saw_digit = true;
+                    ++index;
+                    continue;
+                }
+                if (formula[index] == '.' && !saw_dot) {
+                    saw_dot = true;
+                    ++index;
+                    continue;
+                }
+                break;
+            }
+            if (index < formula.size() &&
+                (formula[index] == 'e' || formula[index] == 'E')) {
+                const size_t exponent = index;
+                ++index;
+                if (index < formula.size() &&
+                    (formula[index] == '+' || formula[index] == '-')) {
+                    ++index;
+                }
+                const size_t exponent_digits = index;
+                while (index < formula.size() &&
+                       std::isdigit(static_cast<unsigned char>(formula[index]))) {
+                    ++index;
+                }
+                if (exponent_digits == index) {
+                    index = exponent;
+                }
+            }
+            if (!saw_digit) {
+                error = "MathFormula: invalid numeric literal";
+                return false;
+            }
+            expression += formula.substr(start, index - start);
+            saw_token = true;
+            continue;
+        }
+
+        if (formula[index] == '+' || formula[index] == '-' ||
+            formula[index] == '*' || formula[index] == '/' ||
+            formula[index] == '(' || formula[index] == ')') {
+            expression.push_back(formula[index]);
+            ++index;
+            saw_token = true;
+            continue;
+        }
+
+        error = "MathFormula: formula contains unsupported token '" +
+                std::string(1, formula[index]) + "'";
+        return false;
+    }
+
+    if (!saw_token) {
+        error = "MathFormula: Formula required";
+        return false;
+    }
+    return true;
+}
+
 bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
     if (value.empty()) {
         return false;
@@ -3562,6 +3683,14 @@ bool PipelineExecutor::ExecuteMathFormula(const Node& node, ExecutionContext& ct
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string formula_expression;
+        std::string formula_error;
+        if (!BuildMathFormulaExpression(input_table, formula, formula_expression,
+                                        formula_error)) {
+            ReportError(formula_error);
+            return false;
+        }
+
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -3569,7 +3698,7 @@ bool PipelineExecutor::ExecuteMathFormula(const Node& node, ExecutionContext& ct
             return false;
         }
 
-        std::string sql = "SELECT *, (" + formula + ") AS " +
+        std::string sql = "SELECT *, (" + formula_expression + ") AS " +
                           QuoteSqlIdentifier(output_column) + " FROM " + temp_table;
         auto result_table = duckdb_->Query(sql);
         duckdb_->UnregisterTable(temp_table);

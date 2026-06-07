@@ -757,6 +757,61 @@ int main() {
     Check(ReadNumericValue(quoted_math_table, "sum\"xy", 0) == 11.0,
           "MathFormula quoted output column should contain computed values");
 
+    const std::string unknown_formula_column_json =
+        R"({"nodes":[)"
+        R"({"id":127,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":128,"type":"MathFormula","name":"Formula","parameters":{)"
+        R"("formula":"x + missing","output_column":"bad"}})"
+        R"(],"links":[{"start_node":127,"end_node":128}]})";
+
+    cyxwiz::PipelineExecutor unknown_formula_column_executor;
+    Check(!unknown_formula_column_executor.ExecutePipeline(
+              unknown_formula_column_json),
+          "MathFormula should reject formulas with unknown columns");
+    Check(unknown_formula_column_executor.GetLastError().find(
+              "MathFormula: formula references unknown column 'missing'") !=
+              std::string::npos,
+          "MathFormula unknown column error should be specific: " +
+              unknown_formula_column_executor.GetLastError());
+
+    const std::string text_formula_column_json =
+        R"({"nodes":[)"
+        R"({"id":129,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":130,"type":"MathFormula","name":"Formula","parameters":{)"
+        R"("formula":"phrase + 1","output_column":"bad"}})"
+        R"(],"links":[{"start_node":129,"end_node":130}]})";
+
+    cyxwiz::PipelineExecutor text_formula_column_executor;
+    Check(!text_formula_column_executor.ExecutePipeline(text_formula_column_json),
+          "MathFormula should reject formulas over text columns");
+    Check(text_formula_column_executor.GetLastError().find(
+              "MathFormula: formula column 'phrase' must be numeric") !=
+              std::string::npos,
+          "MathFormula text column error should be specific: " +
+              text_formula_column_executor.GetLastError());
+
+    const std::string raw_sql_formula_json =
+        R"({"nodes":[)"
+        R"({"id":131,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":132,"type":"MathFormula","name":"Formula","parameters":{)"
+        R"("formula":"x + y; DROP TABLE temp","output_column":"bad"}})"
+        R"(],"links":[{"start_node":131,"end_node":132}]})";
+
+    cyxwiz::PipelineExecutor raw_sql_formula_executor;
+    Check(!raw_sql_formula_executor.ExecutePipeline(raw_sql_formula_json),
+          "MathFormula should reject raw SQL formula tokens");
+    Check(raw_sql_formula_executor.GetLastError().find(
+              "MathFormula: formula contains unsupported token ';'") !=
+              std::string::npos,
+          "MathFormula raw SQL token error should be specific: " +
+              raw_sql_formula_executor.GetLastError());
+
     const std::string rule_engine_json =
         R"({"nodes":[)"
         R"({"id":61,"type":"DataInput","name":"Input","parameters":{)"

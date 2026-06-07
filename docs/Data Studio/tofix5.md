@@ -235,6 +235,13 @@ registry, including `SortRows.order`, legacy `SortRows.ascending`, and
 `Join.join_type`; the executor normalizes those values before building
 DuckDB SQL.
 
+**Status 2026-06-07 follow-up:** `MathFormula` no longer passes raw
+formula text straight into DuckDB SQL. The executor now rewrites a small
+allowed expression language consisting of arithmetic operators, numeric
+literals, parentheses, and existing numeric column names. Unknown
+columns, text columns, function calls, quoted strings, semicolons, and
+other raw SQL tokens fail before query construction.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`
