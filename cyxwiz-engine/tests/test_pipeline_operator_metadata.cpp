@@ -172,6 +172,19 @@ int main() {
                       capability.node_type),
                   "unsupported training layer capability does not resolve: " +
                       TypeId(capability.node_type));
+            const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(
+                capability.node_type);
+            Check(support.mode ==
+                      cyxwiz::PipelineTrainingBackendSupportMode::
+                          UnsupportedSequentialModelLayer,
+                  "unsupported training layer should resolve through unified support: " +
+                      TypeId(capability.node_type));
+            Check(!support.compile_supported && !support.training_supported,
+                  "unsupported training layer should block compile/training: " +
+                      TypeId(capability.node_type));
+            Check(support.reason == capability.reason,
+                  "unsupported training layer reason should be shared: " +
+                      TypeId(capability.node_type));
         }
 
         std::set<int> unsupported_training_control_types;
@@ -188,6 +201,19 @@ int main() {
             Check(cyxwiz::IsPipelineUnsupportedTrainingControlNode(
                       capability.node_type),
                   "unsupported training control capability does not resolve: " +
+                      TypeId(capability.node_type));
+            const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(
+                capability.node_type);
+            Check(support.mode ==
+                      cyxwiz::PipelineTrainingBackendSupportMode::
+                          UnsupportedTrainingControl,
+                  "unsupported training control should resolve through unified support: " +
+                      TypeId(capability.node_type));
+            Check(!support.compile_supported && !support.training_supported,
+                  "unsupported training control should block compile/training: " +
+                      TypeId(capability.node_type));
+            Check(support.reason == capability.reason,
+                  "unsupported training control reason should be shared: " +
                       TypeId(capability.node_type));
         }
 
@@ -452,6 +478,13 @@ int main() {
         Check(meta != nullptr, "missing supported model metadata for type " + TypeId(type));
         Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
               "supported model type " + TypeId(type) + " should be marked implemented");
+        const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(type);
+        Check(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::Allowed,
+              "supported model type should be allowed by training backend support: " +
+                  TypeId(type));
+        Check(support.compile_supported && support.training_supported,
+              "supported model type should not be blocked by training backend support: " +
+                  TypeId(type));
     }
 
     const std::vector<gui::NodeType> fail_closed_nodes = {

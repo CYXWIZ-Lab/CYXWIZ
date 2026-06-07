@@ -473,27 +473,19 @@ ResolvePipelineIntegerParameters(const std::string& legacy_type_name) {
 }
 
 const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType node_type) {
-    const auto& capabilities = GetPipelineUnsupportedSequentialModelLayerCapabilities();
-    auto it = std::find_if(capabilities.begin(), capabilities.end(),
-        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
-            return capability.node_type == node_type;
-        });
-    if (it == capabilities.end()) {
-        return nullptr;
-    }
-    return it->reason;
+    const auto support = ResolvePipelineTrainingBackendSupport(node_type);
+    return support.mode ==
+               PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer
+        ? support.reason
+        : nullptr;
 }
 
 const char* ResolvePipelineUnsupportedTrainingControlReason(gui::NodeType node_type) {
-    const auto& capabilities = GetPipelineUnsupportedTrainingControlCapabilities();
-    auto it = std::find_if(capabilities.begin(), capabilities.end(),
-        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
-            return capability.node_type == node_type;
-        });
-    if (it == capabilities.end()) {
-        return nullptr;
-    }
-    return it->reason;
+    const auto support = ResolvePipelineTrainingBackendSupport(node_type);
+    return support.mode ==
+               PipelineTrainingBackendSupportMode::UnsupportedTrainingControl
+        ? support.reason
+        : nullptr;
 }
 
 bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type) {
@@ -502,6 +494,41 @@ bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type) {
 
 bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type) {
     return ResolvePipelineUnsupportedTrainingControlReason(node_type) != nullptr;
+}
+
+PipelineTrainingBackendSupport
+ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
+    const auto& layer_capabilities =
+        GetPipelineUnsupportedSequentialModelLayerCapabilities();
+    auto layer_it = std::find_if(
+        layer_capabilities.begin(),
+        layer_capabilities.end(),
+        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (layer_it != layer_capabilities.end()) {
+        return {PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer,
+                false,
+                false,
+                layer_it->reason};
+    }
+
+    const auto& control_capabilities =
+        GetPipelineUnsupportedTrainingControlCapabilities();
+    auto control_it = std::find_if(
+        control_capabilities.begin(),
+        control_capabilities.end(),
+        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (control_it != control_capabilities.end()) {
+        return {PipelineTrainingBackendSupportMode::UnsupportedTrainingControl,
+                false,
+                false,
+                control_it->reason};
+    }
+
+    return {};
 }
 
 } // namespace cyxwiz

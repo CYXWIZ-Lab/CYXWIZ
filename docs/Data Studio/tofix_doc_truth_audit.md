@@ -263,3 +263,7 @@ scanning so stale or duplicate work is not reintroduced.
   axis to central runtime support (`real` for operator-backed and active
   legacy-dispatched paths, `hard_fail` for known unsupported paths) with
   drift coverage for stable fail-mode names.
+- 2026-06-07 follow-up: centralized the first training backend support
+  resolver through `PipelineTrainingBackendSupport`; graph compiler
+  unsupported sequential-layer and training-control checks now share that
+  typed truth, with drift coverage for allowed and unsupported modes.

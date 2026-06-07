@@ -56,6 +56,20 @@ struct PipelineUnsupportedTrainingNodeCapability {
     const char* reason;
 };
 
+enum class PipelineTrainingBackendSupportMode {
+    Allowed,
+    UnsupportedSequentialModelLayer,
+    UnsupportedTrainingControl,
+};
+
+struct PipelineTrainingBackendSupport {
+    PipelineTrainingBackendSupportMode mode =
+        PipelineTrainingBackendSupportMode::Allowed;
+    bool compile_supported = true;
+    bool training_supported = true;
+    const char* reason = nullptr;
+};
+
 enum class PipelineStorageBackend {
     Unknown,
     ArrowTable,
@@ -176,5 +190,8 @@ const char* ResolvePipelineUnsupportedTrainingControlReason(gui::NodeType node_t
 bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type);
 
 bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type);
+
+PipelineTrainingBackendSupport
+ResolvePipelineTrainingBackendSupport(gui::NodeType node_type);
 
 } // namespace cyxwiz

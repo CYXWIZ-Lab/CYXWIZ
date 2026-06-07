@@ -994,11 +994,14 @@ void ValidateTrainingPathImplementationStatus(
             continue;
         }
 
-        if (const char* reason =
-                ResolvePipelineUnsupportedSequentialModelLayerReason(node.type);
-            reason != nullptr) {
+        const auto training_support =
+            ResolvePipelineTrainingBackendSupport(node.type);
+        if (!training_support.compile_supported &&
+            training_support.mode ==
+                PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer) {
             std::ostringstream msg;
-            msg << "Node '" << node.name << "' is " << reason;
+            msg << "Node '" << node.name << "' is "
+                << training_support.reason;
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
@@ -1030,14 +1033,16 @@ void ValidateUnsupportedTrainingControlNodes(
     TrainingConfiguration& config) {
 
     for (const auto& node : nodes) {
-        const char* reason =
-            ResolvePipelineUnsupportedTrainingControlReason(node.type);
-        if (reason == nullptr) {
+        const auto training_support =
+            ResolvePipelineTrainingBackendSupport(node.type);
+        if (training_support.compile_supported ||
+            training_support.mode !=
+                PipelineTrainingBackendSupportMode::UnsupportedTrainingControl) {
             continue;
         }
 
         std::ostringstream msg;
-        msg << "Node '" << node.name << "' is " << reason;
+        msg << "Node '" << node.name << "' is " << training_support.reason;
         AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
     }
 }

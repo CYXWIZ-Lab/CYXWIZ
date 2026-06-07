@@ -637,15 +637,18 @@ test. Materializer storage-backend truth is now centralized too: Arrow
 tables are the only supported materializer backend, while
 Parquet-backed, image, audio, and text datasets carry explicit
 unsupported reasons and `PipelineMaterializer` consults that registry
-before pass-through. Remaining work is to expand this into a fuller
-multi-axis capability matrix for compile and training backend
-availability.
+before pass-through. The first compile/training backend availability
+axis is now explicit through `PipelineTrainingBackendSupport`.
+Remaining work is to expand this into a fuller multi-axis capability
+matrix for the rest of compile/runtime support.
 
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit
-reasons, and the graph compiler/test suite consume those entries instead
-of carrying separate hardcoded unsupported lists.
+reasons. The graph compiler now consumes unified
+`PipelineTrainingBackendSupport` results for these failures, and the
+drift suite verifies supported and unsupported training backend modes
+instead of carrying separate hardcoded unsupported lists.
 
 **Status 2026-06-07 follow-up:** The legacy `PolynomialFeatures`
 branch no longer validates successfully without `columns`, because that
@@ -767,10 +770,11 @@ Deliverable:
 
 Status: in progress. Runtime support now has centralized operator,
 legacy, fail-closed, fail-mode, required-parameter, enum,
-integer-validation, compiler-blocked training, Arrow-table
-materializer-scope truth, and materializer storage-backend availability.
-The remaining work is the broader multi-axis matrix for compile success
-and training backend availability.
+integer-validation, compiler-blocked training, first training backend
+support mode, Arrow-table materializer-scope truth, and materializer
+storage-backend availability. The remaining work is the broader
+multi-axis matrix for compile/runtime support beyond the first training
+backend availability axis.
 
 Scope:
 
