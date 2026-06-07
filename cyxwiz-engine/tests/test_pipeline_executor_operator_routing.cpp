@@ -97,8 +97,25 @@ int main() {
     Check(std::fabs(ReadFirstFloatValue(table, "x") - 1.0) > 0.1,
           "operator output changed the scaled column");
 
+    const std::string unsupported_json =
+        R"({"nodes":[)"
+        R"({"id":3,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":4,"type":"TSNENode","name":"TSNE","parameters":{}})"
+        R"(],"links":[{"start_node":3,"end_node":4}]})";
+
+    cyxwiz::PipelineExecutor unsupported_executor;
+    Check(!unsupported_executor.ExecutePipeline(unsupported_json),
+          "TSNENode should fail closed in PipelineExecutor");
+    Check(unsupported_executor.GetLastError().find("legacy t-SNE execution") !=
+              std::string::npos,
+          "TSNENode fail-closed error should come from runtime capabilities: " +
+              unsupported_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
+    registry.UnloadDataset("ds_datainput_3");
     fs::remove(csv_path);
 
     return 0;

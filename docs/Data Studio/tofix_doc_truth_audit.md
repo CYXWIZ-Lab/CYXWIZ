@@ -94,3 +94,6 @@ scanning so stale or duplicate work is not reintroduced.
   moving exact operator-backed legacy runtime names into
   `pipeline_runtime_capabilities.{h,cpp}` and testing them against
   `PipelineOperatorFactory`.
+- 2026-06-07 follow-up: extended `pipeline_runtime_capabilities` with
+  known fail-closed legacy runtime names/reasons and routed
+  `PipelineExecutor` hard-fail decisions through that table.

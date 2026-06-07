@@ -13,12 +13,24 @@ struct PipelineOperatorRuntimeCapability {
     gui::NodeType node_type;
 };
 
+struct PipelineFailClosedRuntimeCapability {
+    const char* legacy_type_name;
+    const char* reason;
+};
+
 const std::vector<PipelineOperatorRuntimeCapability>&
 GetPipelineOperatorRuntimeCapabilities();
+
+const std::vector<PipelineFailClosedRuntimeCapability>&
+GetPipelineFailClosedRuntimeCapabilities();
 
 std::optional<gui::NodeType>
 ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name);
 
 bool IsPipelineOperatorRuntimeNode(const std::string& legacy_type_name);
+
+const char* ResolvePipelineFailClosedReason(const std::string& legacy_type_name);
+
+bool IsPipelineFailClosedRuntimeNode(const std::string& legacy_type_name);
 
 } // namespace cyxwiz

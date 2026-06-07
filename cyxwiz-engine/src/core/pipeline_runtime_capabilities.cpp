@@ -40,6 +40,57 @@ GetPipelineOperatorRuntimeCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineFailClosedRuntimeCapability>&
+GetPipelineFailClosedRuntimeCapabilities() {
+    static const std::vector<PipelineFailClosedRuntimeCapability> capabilities = {
+        {"PCA", "legacy PCA execution is still a passthrough placeholder"},
+        {"TSNENode", "legacy t-SNE execution is still a passthrough placeholder"},
+        {"UMAPNode", "legacy UMAP execution is still a passthrough placeholder"},
+        {"DecisionTreeClassifier", "legacy decision-tree execution is still a passthrough placeholder"},
+        {"RandomForestClassifier", "legacy random-forest execution is still a passthrough placeholder"},
+        {"GradientBoostingClassifier", "legacy gradient-boosting execution is still a passthrough placeholder"},
+        {"SVMClassifier", "legacy SVM execution is still a passthrough placeholder"},
+        {"KNNClassifier", "legacy KNN execution is still a passthrough placeholder"},
+        {"NaiveBayesClassifier", "legacy Naive Bayes execution is still a passthrough placeholder"},
+        {"LogisticRegressionNode", "legacy logistic-regression execution is still a passthrough placeholder"},
+        {"SVMRegressor", "legacy SVM regressor execution is still a passthrough placeholder"},
+        {"ConfusionMatrixNode", "confusion-matrix graph execution is not implemented in PipelineExecutor"},
+        {"ROCCurveNode", "ROC-curve graph execution is not implemented in PipelineExecutor"},
+        {"PRCurveNode", "precision-recall curve graph execution is not implemented in PipelineExecutor"},
+        {"LearningCurvesNode", "learning-curve graph execution is not implemented in PipelineExecutor"},
+        {"FeatureImportanceNode", "feature-importance graph execution is not implemented in PipelineExecutor"},
+        {"CrossValidationNode", "cross-validation graph execution is not implemented in PipelineExecutor"},
+        {"RegressionMetricsNode", "regression-metrics graph execution is not implemented in PipelineExecutor"},
+        {"TrainTestSplit", "legacy TrainTestSplit execution is still a passthrough placeholder"},
+        {"ImagePreprocessor", "legacy ImagePreprocessor execution is still a passthrough placeholder"},
+        {"QualityAnalyzer", "legacy QualityAnalyzer execution is still a passthrough placeholder"},
+        {"DataValidator", "legacy DataValidator execution is still a passthrough placeholder"},
+        {"ImageFolderDataset", "legacy ImageFolderDataset execution creates placeholder metadata only"},
+        {"MNISTDataset", "legacy MNISTDataset execution creates placeholder metadata only"},
+        {"CIFAR10Dataset", "legacy CIFAR10Dataset execution creates placeholder metadata only"},
+        {"HuggingFaceDataset", "legacy HuggingFaceDataset execution creates placeholder metadata only"},
+        {"KaggleDataset", "legacy KaggleDataset execution creates placeholder metadata only"},
+        {"AugmentationPreset", "legacy AugmentationPreset execution is still a placeholder"},
+        {"GeometricTransform", "legacy GeometricTransform execution is still a placeholder"},
+        {"ColorTransform", "legacy ColorTransform execution is still a placeholder"},
+        {"MorphologyTransform", "legacy MorphologyTransform execution is still a placeholder"},
+        {"AdvancedAugment", "legacy AdvancedAugment execution is still a placeholder"},
+        {"IFFTNode", "legacy IFFT execution is still a placeholder"},
+        {"WaveletTransform", "legacy WaveletTransform execution is still a placeholder"},
+        {"WordEmbeddings", "word-embedding graph execution is not implemented in PipelineExecutor"},
+        {"NamedEntityRecognizer", "NER graph execution is not implemented in PipelineExecutor"},
+        {"DNNModelLoad", "DNN model loading is not implemented in PipelineExecutor"},
+        {"DNNDetect", "DNN object detection is not implemented in PipelineExecutor"},
+        {"PretrainedYOLO", "pretrained YOLO execution is not implemented in PipelineExecutor"},
+        {"CalculatorNode", "calculator graph execution is not implemented in PipelineExecutor"},
+        {"UnitConverter", "unit-converter graph execution is not implemented in PipelineExecutor"},
+        {"RegexTester", "regex graph execution is not implemented in PipelineExecutor"},
+        {"JSONPathExtractor", "JSONPath graph execution is not implemented in PipelineExecutor"},
+        {"DataProfiler", "DataProfiler is a panel/report workflow, not a real PipelineExecutor transform"},
+    };
+    return capabilities;
+}
+
 std::optional<gui::NodeType>
 ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name) {
     const auto& capabilities = GetPipelineOperatorRuntimeCapabilities();
@@ -55,6 +106,22 @@ ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name) {
 
 bool IsPipelineOperatorRuntimeNode(const std::string& legacy_type_name) {
     return ResolvePipelineOperatorRuntimeType(legacy_type_name).has_value();
+}
+
+const char* ResolvePipelineFailClosedReason(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineFailClosedRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineFailClosedRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (it == capabilities.end()) {
+        return nullptr;
+    }
+    return it->reason;
+}
+
+bool IsPipelineFailClosedRuntimeNode(const std::string& legacy_type_name) {
+    return ResolvePipelineFailClosedReason(legacy_type_name) != nullptr;
 }
 
 } // namespace cyxwiz

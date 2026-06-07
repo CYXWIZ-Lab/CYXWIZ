@@ -494,12 +494,13 @@ Recommendation:
 **Severity:** Medium
 
 **Status 2026-06-07:** Started. Exact legacy runtime names that route
-through `PipelineOperatorFactory` now live in
-`pipeline_runtime_capabilities.{h,cpp}` instead of being embedded in
-`PipelineExecutor`. The metadata drift test verifies every listed
-runtime capability has a real factory operator. Remaining work is to
-expand this into a fuller multi-axis capability matrix for compile,
-training, materializer, and backend availability.
+through `PipelineOperatorFactory`, plus known fail-closed legacy runtime
+names and reasons, now live in `pipeline_runtime_capabilities.{h,cpp}`
+instead of being embedded in `PipelineExecutor`. The metadata drift test
+verifies every listed operator runtime capability has a real factory
+operator and that fail-closed names do not overlap operator-backed names.
+Remaining work is to expand this into a fuller multi-axis capability
+matrix for compile, training, materializer, and backend availability.
 
 Problem:
 

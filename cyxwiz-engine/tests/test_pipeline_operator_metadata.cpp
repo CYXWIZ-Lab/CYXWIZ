@@ -118,6 +118,18 @@ int main() {
                   capability.legacy_type_name);
     }
 
+    for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
+        Check(!cyxwiz::IsPipelineOperatorRuntimeNode(capability.legacy_type_name),
+              std::string("fail-closed runtime name is also operator-backed: ") +
+                  capability.legacy_type_name);
+        Check(cyxwiz::ResolvePipelineFailClosedReason(capability.legacy_type_name) != nullptr,
+              std::string("fail-closed runtime name does not resolve: ") +
+                  capability.legacy_type_name);
+        Check(capability.reason != nullptr && std::string(capability.reason).size() > 8,
+              std::string("fail-closed runtime reason is too weak: ") +
+                  capability.legacy_type_name);
+    }
+
     const std::vector<gui::NodeType> supported_model_nodes = {
         gui::NodeType::LSTM,
         gui::NodeType::GRU,

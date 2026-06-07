@@ -311,6 +311,8 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteDeployToNodeEditor(node, ctx);
     } else if (auto operator_type = ResolvePipelineOperatorRuntimeType(node.type); operator_type) {
         return ExecutePipelineOperatorNode(node, ctx, *operator_type);
+    } else if (const char* reason = ResolvePipelineFailClosedReason(node.type); reason != nullptr) {
+        return FailUnsupportedNode(node, reason);
     }
     // Phase 6 Week 8-9 - Text Processing
     else if (node.type == "TextClean") {
@@ -331,9 +333,7 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteTSDiff(node, ctx);
     }
     // Phase 6 Week 8-9 - Feature Engineering
-    else if (node.type == "PCA") {
-        return FailUnsupportedNode(node, "legacy PCA execution is still a passthrough placeholder");
-    } else if (node.type == "PolynomialFeatures") {
+    else if (node.type == "PolynomialFeatures") {
         return ExecutePolynomialFeatures(node, ctx);
     } else if (node.type == "Binning") {
         return ExecuteBinning(node, ctx);
@@ -372,115 +372,7 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
     } else if (node.type == "RenameColumns") {
         return ExecuteRenameColumns(node, ctx);
     }
-    // ===== Phase 4: Machine Learning Algorithm Nodes =====
-    // Dimensionality Reduction
-    else if (node.type == "TSNENode") {
-        return FailUnsupportedNode(node, "legacy t-SNE execution is still a passthrough placeholder");
-    } else if (node.type == "UMAPNode") {
-        return FailUnsupportedNode(node, "legacy UMAP execution is still a passthrough placeholder");
-    }
-    // Classification
-    else if (node.type == "DecisionTreeClassifier") {
-        return FailUnsupportedNode(node, "legacy decision-tree execution is still a passthrough placeholder");
-    } else if (node.type == "RandomForestClassifier") {
-        return FailUnsupportedNode(node, "legacy random-forest execution is still a passthrough placeholder");
-    } else if (node.type == "GradientBoostingClassifier") {
-        return FailUnsupportedNode(node, "legacy gradient-boosting execution is still a passthrough placeholder");
-    } else if (node.type == "SVMClassifier") {
-        return FailUnsupportedNode(node, "legacy SVM execution is still a passthrough placeholder");
-    } else if (node.type == "KNNClassifier") {
-        return FailUnsupportedNode(node, "legacy KNN execution is still a passthrough placeholder");
-    } else if (node.type == "NaiveBayesClassifier") {
-        return FailUnsupportedNode(node, "legacy Naive Bayes execution is still a passthrough placeholder");
-    } else if (node.type == "LogisticRegressionNode") {
-        return FailUnsupportedNode(node, "legacy logistic-regression execution is still a passthrough placeholder");
-    }
-    // Regression
-    else if (node.type == "SVMRegressor") {
-        return FailUnsupportedNode(node, "legacy SVM regressor execution is still a passthrough placeholder");
-    }
-    // ===== Phase 4: Model Evaluation Nodes =====
-    else if (node.type == "ConfusionMatrixNode") {
-        return FailUnsupportedNode(node, "confusion-matrix graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "ROCCurveNode") {
-        return FailUnsupportedNode(node, "ROC-curve graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "PRCurveNode") {
-        return FailUnsupportedNode(node, "precision-recall curve graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "LearningCurvesNode") {
-        return FailUnsupportedNode(node, "learning-curve graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "FeatureImportanceNode") {
-        return FailUnsupportedNode(node, "feature-importance graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "CrossValidationNode") {
-        return FailUnsupportedNode(node, "cross-validation graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "RegressionMetricsNode") {
-        return FailUnsupportedNode(node, "regression-metrics graph execution is not implemented in PipelineExecutor");
-    }
-    // ===== Phase 4: Data Preprocessing Nodes =====
-    else if (node.type == "TrainTestSplit") {
-        return FailUnsupportedNode(node, "legacy TrainTestSplit execution is still a passthrough placeholder");
-    }
-    // ===== Phase 8: Advanced Preprocessing Nodes (UI Consolidation) =====
-    else if (node.type == "ImagePreprocessor") {
-        return FailUnsupportedNode(node, "legacy ImagePreprocessor execution is still a passthrough placeholder");
-    } else if (node.type == "QualityAnalyzer") {
-        return FailUnsupportedNode(node, "legacy QualityAnalyzer execution is still a passthrough placeholder");
-    } else if (node.type == "DataValidator") {
-        return FailUnsupportedNode(node, "legacy DataValidator execution is still a passthrough placeholder");
-    }
-    // ===== Phase 8: Dataset Source Nodes (UI Consolidation) =====
-    else if (node.type == "ImageFolderDataset") {
-        return FailUnsupportedNode(node, "legacy ImageFolderDataset execution creates placeholder metadata only");
-    } else if (node.type == "MNISTDataset") {
-        return FailUnsupportedNode(node, "legacy MNISTDataset execution creates placeholder metadata only");
-    } else if (node.type == "CIFAR10Dataset") {
-        return FailUnsupportedNode(node, "legacy CIFAR10Dataset execution creates placeholder metadata only");
-    } else if (node.type == "HuggingFaceDataset") {
-        return FailUnsupportedNode(node, "legacy HuggingFaceDataset execution creates placeholder metadata only");
-    } else if (node.type == "KaggleDataset") {
-        return FailUnsupportedNode(node, "legacy KaggleDataset execution creates placeholder metadata only");
-    }
-    // ===== Phase 6: Advanced Augmentation Nodes (UI Consolidation) =====
-    else if (node.type == "AugmentationPreset") {
-        return FailUnsupportedNode(node, "legacy AugmentationPreset execution is still a placeholder");
-    } else if (node.type == "GeometricTransform") {
-        return FailUnsupportedNode(node, "legacy GeometricTransform execution is still a placeholder");
-    } else if (node.type == "ColorTransform") {
-        return FailUnsupportedNode(node, "legacy ColorTransform execution is still a placeholder");
-    } else if (node.type == "MorphologyTransform") {
-        return FailUnsupportedNode(node, "legacy MorphologyTransform execution is still a placeholder");
-    } else if (node.type == "AdvancedAugment") {
-        return FailUnsupportedNode(node, "legacy AdvancedAugment execution is still a placeholder");
-    }
-    // ===== Phase 4: Signal Processing Nodes =====
-    else if (node.type == "IFFTNode") {
-        return FailUnsupportedNode(node, "legacy IFFT execution is still a placeholder");
-    } else if (node.type == "WaveletTransform") {
-        return FailUnsupportedNode(node, "legacy WaveletTransform execution is still a placeholder");
-    }
-    // ===== Phase 4: Text Analytics Nodes =====
-    else if (node.type == "WordEmbeddings") {
-        return FailUnsupportedNode(node, "word-embedding graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "NamedEntityRecognizer") {
-        return FailUnsupportedNode(node, "NER graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "DNNModelLoad") {
-        return FailUnsupportedNode(node, "DNN model loading is not implemented in PipelineExecutor");
-    } else if (node.type == "DNNDetect") {
-        return FailUnsupportedNode(node, "DNN object detection is not implemented in PipelineExecutor");
-    } else if (node.type == "PretrainedYOLO") {
-        return FailUnsupportedNode(node, "pretrained YOLO execution is not implemented in PipelineExecutor");
-    }
-    // ===== Phase 4: Utility Nodes =====
-    else if (node.type == "CalculatorNode") {
-        return FailUnsupportedNode(node, "calculator graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "UnitConverter") {
-        return FailUnsupportedNode(node, "unit-converter graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "RegexTester") {
-        return FailUnsupportedNode(node, "regex graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "JSONPathExtractor") {
-        return FailUnsupportedNode(node, "JSONPath graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "DataProfiler") {
-        return FailUnsupportedNode(node, "DataProfiler is a panel/report workflow, not a real PipelineExecutor transform");
-    } else {
+    else {
         ReportError("Unknown node type: " + node.type);
         return false;
     }
