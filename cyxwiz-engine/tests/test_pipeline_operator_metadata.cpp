@@ -116,6 +116,15 @@ int main() {
         Check(*resolved == capability.node_type,
               std::string("runtime capability resolves to wrong type: ") +
                   capability.legacy_type_name);
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            capability.legacy_type_name);
+        Check(support.mode == cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+              std::string("runtime support mode is not operator-backed: ") +
+                  capability.legacy_type_name);
+        Check(support.operator_type.has_value() &&
+                  *support.operator_type == capability.node_type,
+              std::string("runtime support operator type mismatch: ") +
+                  capability.legacy_type_name);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
@@ -127,6 +136,14 @@ int main() {
                   capability.legacy_type_name);
         Check(capability.reason != nullptr && std::string(capability.reason).size() > 8,
               std::string("fail-closed runtime reason is too weak: ") +
+                  capability.legacy_type_name);
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            capability.legacy_type_name);
+        Check(support.mode == cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+              std::string("runtime support mode is not fail-closed: ") +
+                  capability.legacy_type_name);
+        Check(support.fail_closed_reason != nullptr,
+              std::string("runtime support fail-closed reason missing: ") +
                   capability.legacy_type_name);
     }
 

@@ -309,10 +309,13 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteGroupBy(node, ctx);
     } else if (node.type == "DeployToNodeEditor") {
         return ExecuteDeployToNodeEditor(node, ctx);
-    } else if (auto operator_type = ResolvePipelineOperatorRuntimeType(node.type); operator_type) {
-        return ExecutePipelineOperatorNode(node, ctx, *operator_type);
-    } else if (const char* reason = ResolvePipelineFailClosedReason(node.type); reason != nullptr) {
-        return FailUnsupportedNode(node, reason);
+    } else if (auto support = ResolvePipelineRuntimeSupport(node.type);
+               support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
+                   support.operator_type.has_value()) {
+        return ExecutePipelineOperatorNode(node, ctx, *support.operator_type);
+    } else if (support.mode == PipelineRuntimeSupportMode::FailClosed &&
+               support.fail_closed_reason != nullptr) {
+        return FailUnsupportedNode(node, support.fail_closed_reason);
     }
     // Phase 6 Week 8-9 - Text Processing
     else if (node.type == "TextClean") {
@@ -1890,6 +1893,8 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
 // Feature Engineering Nodes
 // ============================================================================
 
+// Historical passthrough helper kept excluded until the legacy TODO block is deleted.
+#if 0
 bool PipelineExecutor::ExecutePCA(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
@@ -1933,6 +1938,7 @@ bool PipelineExecutor::ExecutePCA(const Node& node, ExecutionContext& ctx) {
         return false;
     }
 }
+#endif
 
 bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);

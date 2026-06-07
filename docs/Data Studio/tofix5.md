@@ -359,8 +359,8 @@ Recommendation:
 These nodes now return explicit unsupported execution errors through
 `FailUnsupportedNode()` instead of passthrough/fake success. The old
 placeholder helper bodies have been removed from the header contract and
-quarantined behind compile-time exclusion so they cannot be called from
-active dispatch.
+quarantined behind compile-time exclusion, including the legacy PCA helper,
+so they cannot be called from active dispatch.
 
 Relevant files:
 
@@ -496,11 +496,14 @@ Recommendation:
 **Status 2026-06-07:** Started. Exact legacy runtime names that route
 through `PipelineOperatorFactory`, plus known fail-closed legacy runtime
 names and reasons, now live in `pipeline_runtime_capabilities.{h,cpp}`
-instead of being embedded in `PipelineExecutor`. The metadata drift test
-verifies every listed operator runtime capability has a real factory
-operator and that fail-closed names do not overlap operator-backed names.
-Remaining work is to expand this into a fuller multi-axis capability
-matrix for compile, training, materializer, and backend availability.
+instead of being embedded in `PipelineExecutor`. `PipelineExecutor` now
+asks that registry for one explicit runtime-support mode before routing
+operator-backed nodes or hard-failing known unsupported nodes. The
+metadata drift test verifies every listed operator runtime capability has
+a real factory operator and that fail-closed names do not overlap
+operator-backed names. Remaining work is to expand this into a fuller
+multi-axis capability matrix for compile, training, materializer, and
+backend availability.
 
 Problem:
 

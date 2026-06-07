@@ -187,7 +187,6 @@ private:
     bool ExecuteTSDiff(const Node& node, ExecutionContext& ctx);
 
     // Phase 6 Week 8-9 - Feature Engineering Nodes
-    bool ExecutePCA(const Node& node, ExecutionContext& ctx);
     bool ExecutePolynomialFeatures(const Node& node, ExecutionContext& ctx);
     bool ExecuteBinning(const Node& node, ExecutionContext& ctx);
 

@@ -97,3 +97,9 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: extended `pipeline_runtime_capabilities` with
   known fail-closed legacy runtime names/reasons and routed
   `PipelineExecutor` hard-fail decisions through that table.
+- 2026-06-07 follow-up: removed the remaining legacy `ExecutePCA`
+  declaration from `PipelineExecutor` and quarantined its passthrough body
+  behind compile-time exclusion.
+- 2026-06-07 follow-up: added `ResolvePipelineRuntimeSupport()` so the
+  executor branches on one explicit runtime-support mode instead of
+  separate capability lookups.

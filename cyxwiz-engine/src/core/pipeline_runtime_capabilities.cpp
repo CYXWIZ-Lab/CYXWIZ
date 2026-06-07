@@ -91,6 +91,20 @@ GetPipelineFailClosedRuntimeCapabilities() {
     return capabilities;
 }
 
+PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
+    if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
+        operator_type.has_value()) {
+        return {PipelineRuntimeSupportMode::OperatorBacked, operator_type, nullptr};
+    }
+
+    if (const char* reason = ResolvePipelineFailClosedReason(legacy_type_name);
+        reason != nullptr) {
+        return {PipelineRuntimeSupportMode::FailClosed, std::nullopt, reason};
+    }
+
+    return {};
+}
+
 std::optional<gui::NodeType>
 ResolvePipelineOperatorRuntimeType(const std::string& legacy_type_name) {
     const auto& capabilities = GetPipelineOperatorRuntimeCapabilities();
