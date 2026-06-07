@@ -242,11 +242,6 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         return false;
     }
 
-    const std::set<std::string> source_nodes = {
-        "FileInput", "DataInput", "ExcelInput", "ImageFolderDataset",
-        "MNISTDataset", "CIFAR10Dataset", "HuggingFaceDataset",
-        "KaggleDataset", "ParquetInput"
-    };
     const std::set<std::string> two_input_nodes = {
         "Join"
     };
@@ -284,7 +279,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             }
         }
 
-        const bool is_source = source_nodes.find(node.type) != source_nodes.end();
+        const bool is_source = IsPipelineSourceRuntimeNode(node.type);
         const bool is_two_input = two_input_nodes.find(node.type) != two_input_nodes.end();
 
         if (is_source && !node.inputs.empty()) {

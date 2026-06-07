@@ -161,6 +161,21 @@ int main() {
           "unknown node validation should be specific: " +
               unknown_node_executor.GetLastError());
 
+    const std::string parquet_input_json =
+        R"({"nodes":[)"
+        R"({"id":11,"type":"ParquetInput","name":"Parquet","parameters":{)"
+        R"("file_path":"ignored.parquet"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor parquet_input_executor;
+    Check(!parquet_input_executor.ExecutePipeline(parquet_input_json),
+          "legacy ParquetInput source should fail closed");
+    Check(parquet_input_executor.GetLastError().find(
+              "legacy ParquetInput execution is not implemented") !=
+              std::string::npos,
+          "ParquetInput should use fail-closed runtime support: " +
+              parquet_input_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");

@@ -87,6 +87,7 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"RegexTester", "regex graph execution is not implemented in PipelineExecutor"},
         {"JSONPathExtractor", "JSONPath graph execution is not implemented in PipelineExecutor"},
         {"DataProfiler", "DataProfiler is a panel/report workflow, not a real PipelineExecutor transform"},
+        {"ParquetInput", "legacy ParquetInput execution is not implemented; use DataInput with type=parquet"},
     };
     return capabilities;
 }
@@ -131,6 +132,22 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"MathFormula"},
         {"RuleEngine"},
         {"RenameColumns"},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineSourceRuntimeCapability>&
+GetPipelineSourceRuntimeCapabilities() {
+    static const std::vector<PipelineSourceRuntimeCapability> capabilities = {
+        {"FileInput"},
+        {"DataInput"},
+        {"ExcelInput"},
+        {"ImageFolderDataset"},
+        {"MNISTDataset"},
+        {"CIFAR10Dataset"},
+        {"HuggingFaceDataset"},
+        {"KaggleDataset"},
+        {"ParquetInput"},
     };
     return capabilities;
 }
@@ -190,6 +207,15 @@ bool IsPipelineLegacyRuntimeNode(const std::string& legacy_type_name) {
     const auto& capabilities = GetPipelineLegacyRuntimeCapabilities();
     auto it = std::find_if(capabilities.begin(), capabilities.end(),
         [&legacy_type_name](const PipelineLegacyRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    return it != capabilities.end();
+}
+
+bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineSourceRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineSourceRuntimeCapability& capability) {
             return legacy_type_name == capability.legacy_type_name;
         });
     return it != capabilities.end();

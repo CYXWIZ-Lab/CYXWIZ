@@ -115,3 +115,7 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: refreshed the `tofix5` executive summary so
   routing, validation, and remaining canonical-runtime work match the
   current implementation.
+- 2026-06-07 follow-up: moved legacy pipeline source-node role truth into
+  `pipeline_runtime_capabilities` and marked standalone `ParquetInput` as
+  known fail-closed; executable parquet loading remains `DataInput`
+  with `type=parquet`.

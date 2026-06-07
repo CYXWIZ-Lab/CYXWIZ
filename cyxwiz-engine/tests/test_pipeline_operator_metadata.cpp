@@ -164,6 +164,16 @@ int main() {
                   capability.legacy_type_name);
     }
 
+    for (const auto& capability : cyxwiz::GetPipelineSourceRuntimeCapabilities()) {
+        Check(cyxwiz::IsPipelineSourceRuntimeNode(capability.legacy_type_name),
+              std::string("source runtime name does not resolve: ") +
+                  capability.legacy_type_name);
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
+                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+              std::string("source runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+    }
+
     const std::vector<gui::NodeType> supported_model_nodes = {
         gui::NodeType::LSTM,
         gui::NodeType::GRU,
