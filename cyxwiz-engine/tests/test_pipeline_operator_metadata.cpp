@@ -374,6 +374,13 @@ int main() {
         gui::NodeType::JSONPathExtractor,
         gui::NodeType::RuleEngine,
         gui::NodeType::TableSplitter,
+        gui::NodeType::CellExtractor,
+        gui::NodeType::CellUpdater,
+        gui::NodeType::ColumnAppender,
+        gui::NodeType::RowAppender,
+        gui::NodeType::Unpivot,
+        gui::NodeType::ExportExcel,
+        gui::NodeType::ExportJSON,
     };
     for (auto type : fail_closed_nodes) {
         const auto* meta = metadata.GetMetadata(type);

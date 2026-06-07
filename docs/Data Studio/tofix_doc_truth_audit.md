@@ -206,3 +206,7 @@ scanning so stale or duplicate work is not reintroduced.
   support because Data Studio pipeline links do not preserve output-pin
   identity, so the executor cannot route its advertised `Top` and
   `Bottom` outputs truthfully.
+- 2026-06-07 follow-up: aligned metadata status for fail-closed
+  table/export helpers (`CellExtractor`, `CellUpdater`, `ColumnAppender`,
+  `RowAppender`, `Unpivot`, `ExportExcel`, `ExportJSON`) so the node
+  registry no longer marks runtime-blocked nodes as implemented.

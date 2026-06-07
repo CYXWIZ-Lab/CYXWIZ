@@ -1674,7 +1674,7 @@ void NodeMetadataRegistry::InitializeExportNodes() {
         {"export", "json"}, 0, false, "Export to JSON", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.json"}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::ExportSQL, NodeCategory::DataSources, "Export SQL", ICON_FA_DATABASE,
         {"export", "sql", "database"}, 0, false, "Export to SQL DB", "", "",
@@ -1687,7 +1687,7 @@ void NodeMetadataRegistry::InitializeExportNodes() {
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.xlsx"},
          {"sheet_name", "string", "Sheet1", "Sheet name", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 }
 
 // =============================================================================
@@ -1719,7 +1719,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
          {"Table", PinType::Dataset, true, "Table passthrough"}},
         {{"row", "int", "0", "Row index", {}, ""},
          {"column", "string", "", "Column name", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::CellUpdater, NodeCategory::DataTransform, "Cell Updater", ICON_FA_PEN,
         {"cell", "update", "modify"}, 0, false,
@@ -1730,7 +1730,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
         {{"row", "int", "0", "Row index", {}, ""},
          {"column", "string", "", "Column name", {}, ""},
          {"value", "string", "", "New value (if not using input)", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::TableCropper, NodeCategory::DataTransform, "Table Cropper", ICON_FA_COMPRESS,
         {"crop", "slice", "subset"}, 0, false,
@@ -1749,7 +1749,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
          {"Right", PinType::Dataset, true, "Right table"}},
         {{"Table", PinType::Dataset, true, "Combined table"}},
         {{"suffix", "string", "_right", "Suffix for duplicate columns", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::RowAppender, NodeCategory::DataTransform, "Row Appender", ICON_FA_LAYER_GROUP,
         {"append", "rows", "vertical", "union"}, 0, false,
@@ -1758,7 +1758,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
          {"Bottom", PinType::Dataset, true, "Bottom table"}},
         {{"Table", PinType::Dataset, true, "Combined table"}},
         {{"match_columns", "bool", "true", "Match columns by name", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::Unpivot, NodeCategory::DataTransform, "Unpivot", ICON_FA_ROTATE,
         {"unpivot", "melt", "wide to long"}, 0, false,
@@ -1768,7 +1768,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
         {{"id_columns", "string", "", "ID columns (comma-separated)", {}, ""},
          {"value_name", "string", "value", "Name for value column", {}, ""},
          {"variable_name", "string", "variable", "Name for variable column", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::StringManipulation, NodeCategory::DataTransform, "String Manipulation", ICON_FA_FONT,
         {"string", "text", "replace", "trim"}, 0, false,

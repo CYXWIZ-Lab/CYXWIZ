@@ -203,7 +203,6 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"PolynomialFeatures", "degree", 2, false},
         {"Binning", "n_bins", 1, false},
         {"RowToColumnNames", "row_index", 0, false},
-        {"CellExtractor", "row_index", 0, false},
         {"TableCropper", "start_row", 0, false},
         {"TableCropper", "end_row", -1, false},
     };
