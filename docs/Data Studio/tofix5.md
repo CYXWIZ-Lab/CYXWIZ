@@ -57,9 +57,9 @@ Current truth after the 2026-06-07 cleanup:
 6. Partially fixed: audited placeholder branches in `PipelineExecutor`
    now fail closed instead of returning fake success. Remaining work is
    to route operator-backed nodes through one canonical executor.
-7. Still pending: `TrainingManager::StartTrainingArrow()` and
-   `StartTrainingParquet()` do not apply the same input-size logic for
-   time-series flows.
+7. Done: `TrainingManager::StartTrainingArrow()` and
+   `StartTrainingParquet()` now use the same shared input-size resolver,
+   including the GraphCompiler time-series override.
 
 ---
 
@@ -216,19 +216,25 @@ Recommendation:
 
 **Severity:** Medium-High
 
+**Status 2026-06-07:** Fixed for tabular/time-series input-size
+derivation. Arrow and Parquet training start paths now both call
+`ResolveTabularTrainingInputSize()`, which preserves the GraphCompiler
+time-series `input_size` override and otherwise reserves one label
+column for normal multi-column tabular data.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/training_manager.cpp:127`
 - `cyxwiz-engine/src/core/training_manager.cpp:189`
 
-Problem:
+Problem before this pass:
 
 - `StartTrainingArrow()` contains special handling for time-series
   graphs, trusting the `GraphCompiler` input-size override.
 - `StartTrainingParquet()` does not mirror that logic.
 - It always falls back to `num_cols - 1`.
 
-Effect:
+Effect before this pass:
 
 - time-series or materialized schema flows can behave differently based
   on storage mode
@@ -237,9 +243,9 @@ Effect:
 
 Recommendation:
 
-- unify Arrow and Parquet input-size derivation logic
-- move schema-to-model input derivation into one shared helper
-- treat time-series overrides as execution-mode independent
+- keep the shared resolver as the single schema-to-model input-size
+  decision point for tabular Arrow/Parquet training paths
+- continue auditing the rest of Arrow/Parquet parity separately
 
 ---
 

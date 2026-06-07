@@ -3,6 +3,7 @@
 #include "image_dataset_batcher.h"
 #include "audio_dataset_batcher.h"
 #include "text_dataset_batcher.h"
+#include "training_batcher_setup.h"
 #include "worker_defaults.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
@@ -187,16 +188,18 @@ bool TrainingManager::StartTrainingArrow(
     // double-count it as a feature and build a Linear layer of the wrong
     // size (crash at first forward pass due to dimension mismatch with the
     // batch tensor, which correctly excludes both label AND __partition__).
-    if (config.is_time_series) {
+    const auto input_resolution =
+        ResolveTabularTrainingInputSize(config, num_cols);
+    config.input_size = input_resolution.input_size;
+
+    if (input_resolution.used_compiled_override) {
         spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, "
                      "input_size={} (from GraphCompiler's TimeSeriesWindow override)",
                      num_rows, num_cols, config.input_size);
-    } else if (num_cols > 1) {
-        config.input_size = num_cols - 1;
+    } else if (input_resolution.has_separate_label_column) {
         spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, input_size={} (assuming 1 label column)",
                      num_rows, num_cols, config.input_size);
     } else {
-        config.input_size = num_cols;
         spdlog::warn("TrainingManager: Arrow dataset has only {} column - no separate label column", num_cols);
     }
 
@@ -242,12 +245,18 @@ bool TrainingManager::StartTrainingParquet(
     // is a metadata lookup, not a disk read.
     size_t num_cols = parquet_dataset->GetNumColumns();
     size_t num_rows = parquet_dataset->GetNumRows();
-    if (num_cols > 1) {
-        config.input_size = num_cols - 1;
+    const auto input_resolution =
+        ResolveTabularTrainingInputSize(config, num_cols);
+    config.input_size = input_resolution.input_size;
+
+    if (input_resolution.used_compiled_override) {
+        spdlog::info("TrainingManager: Parquet dataset has {} rows, {} cols, "
+                     "input_size={} (from GraphCompiler's TimeSeriesWindow override)",
+                     num_rows, num_cols, config.input_size);
+    } else if (input_resolution.has_separate_label_column) {
         spdlog::info("TrainingManager: Parquet dataset has {} rows, {} cols, input_size={} (assuming 1 label column)",
                      num_rows, num_cols, config.input_size);
     } else {
-        config.input_size = num_cols;
         spdlog::warn("TrainingManager: Parquet dataset has only {} column - no separate label column", num_cols);
     }
 

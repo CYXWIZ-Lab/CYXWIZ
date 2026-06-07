@@ -23,6 +23,16 @@ struct TrainingBatcherSet {
     size_t num_train_samples = 0;
 };
 
+struct TrainingInputSizeResolution {
+    size_t input_size = 0;
+    bool used_compiled_override = false;
+    bool has_separate_label_column = false;
+};
+
+TrainingInputSizeResolution ResolveTabularTrainingInputSize(
+    const TrainingConfiguration& config,
+    size_t num_columns);
+
 TrainingBatcherSet BuildArrowTrainingBatchers(
     const TrainingConfiguration& config,
     std::shared_ptr<ArrowDataset> dataset,

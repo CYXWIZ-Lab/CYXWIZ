@@ -5,6 +5,19 @@
 
 namespace cyxwiz {
 
+TrainingInputSizeResolution ResolveTabularTrainingInputSize(
+    const TrainingConfiguration& config,
+    size_t num_columns) {
+
+    if (config.is_time_series) {
+        return {config.input_size, true, true};
+    }
+    if (num_columns > 1) {
+        return {num_columns - 1, false, true};
+    }
+    return {num_columns, false, false};
+}
+
 TrainingBatcherSet BuildArrowTrainingBatchers(
     const TrainingConfiguration& config,
     std::shared_ptr<ArrowDataset> dataset,

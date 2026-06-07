@@ -77,6 +77,32 @@ int main() {
               cyxwiz::GetDefaultNumWorkers(),
           "oversized workers should clamp to platform default");
 
+    auto tabular_resolution =
+        cyxwiz::ResolveTabularTrainingInputSize(MakeConfig(), 5);
+    Check(tabular_resolution.input_size == 4,
+          "tabular input size should reserve one label column");
+    Check(!tabular_resolution.used_compiled_override,
+          "tabular input size should not use compiled override");
+    Check(tabular_resolution.has_separate_label_column,
+          "tabular multi-column data should report a separate label column");
+
+    auto single_col_resolution =
+        cyxwiz::ResolveTabularTrainingInputSize(MakeConfig(), 1);
+    Check(single_col_resolution.input_size == 1,
+          "single-column input size should use the only column");
+    Check(!single_col_resolution.has_separate_label_column,
+          "single-column data should not report a separate label column");
+
+    auto ts_config = MakeConfig();
+    ts_config.is_time_series = true;
+    ts_config.input_size = 12;
+    auto ts_resolution =
+        cyxwiz::ResolveTabularTrainingInputSize(ts_config, 99);
+    Check(ts_resolution.input_size == 12,
+          "time-series input size should preserve GraphCompiler override");
+    Check(ts_resolution.used_compiled_override,
+          "time-series input size should mark compiled override");
+
     auto batchers = cyxwiz::BuildArrowTrainingBatchers(
         MakeConfig(),
         MakeDataset(),

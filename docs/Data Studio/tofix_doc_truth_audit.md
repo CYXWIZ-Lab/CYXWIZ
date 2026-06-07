@@ -72,3 +72,6 @@ scanning so stale or duplicate work is not reintroduced.
   CNN/pooling/upsampling and classic classifier nodes as template/blocked
   metadata entries, so the compiler and node browser now agree that they are
   visible but unsupported.
+- 2026-06-07 follow-up: fixed `tofix5.md` Priority 0 item 5 by sharing
+  Arrow/Parquet tabular input-size derivation, including the time-series
+  GraphCompiler override.
