@@ -176,6 +176,28 @@ int main() {
     Check(std::fabs(ReadFirstFloatValue(table, "x") - 1.0) > 0.1,
           "operator output changed the scaled column");
 
+    const std::string typed_file_input_json =
+        R"({"nodes":[)"
+        R"({"id":133,"type":"FileInput","name":"LegacyFile","parameters":{)"
+        R"("path":")" + JsonEscapePath(csv_path.string()) +
+        R"("}},)"
+        R"({"id":134,"type":"SelectColumns","name":"Select","parameters":{)"
+        R"("columns":"x"}})"
+        R"(],"links":[{"start_node":133,"end_node":134}]})";
+
+    cyxwiz::PipelineExecutor typed_file_input_executor;
+    Check(typed_file_input_executor.ExecutePipeline(typed_file_input_json),
+          "FileInput should execute through typed CSVFile dispatch: " +
+              typed_file_input_executor.GetLastError());
+    auto typed_file_input_result = registry.GetArrowDataset("ds_select_134");
+    Check(typed_file_input_result != nullptr,
+          "typed FileInput downstream output dataset is registered");
+    auto typed_file_input_table = typed_file_input_result->GetArrowTable();
+    Check(typed_file_input_table != nullptr,
+          "typed FileInput downstream output table exists");
+    Check(typed_file_input_table->schema()->GetFieldIndex("x") >= 0,
+          "typed FileInput should feed SelectColumns");
+
     const std::string unsupported_json =
         R"({"nodes":[)"
         R"({"id":3,"type":"DataInput","name":"Input","parameters":{)"

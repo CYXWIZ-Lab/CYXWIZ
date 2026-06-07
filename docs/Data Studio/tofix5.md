@@ -454,6 +454,13 @@ alias names such as FileInput, SaveDataset, ExcelInput, text aliases,
 and old time-series aliases remain on string dispatch until their
 canonical typed ownership is clarified.
 
+**Status 2026-06-07 follow-up 3:** `FileInput` and `ExcelInput` now
+resolve to `CSVFile` and `ExcelFile` runtime types respectively, and the
+executor routes them through typed legacy dispatch instead of direct
+string branches. The remaining direct string branches are now
+`SaveDataset`, `DeployToNodeEditor`, text aliases, old time-series
+aliases, `PolynomialFeatures`, and `Binning`.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`

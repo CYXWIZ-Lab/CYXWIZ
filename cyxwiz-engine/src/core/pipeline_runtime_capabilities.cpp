@@ -136,7 +136,7 @@ GetPipelineFailClosedRuntimeCapabilities() {
 const std::vector<PipelineLegacyRuntimeCapability>&
 GetPipelineLegacyRuntimeCapabilities() {
     static const std::vector<PipelineLegacyRuntimeCapability> capabilities = {
-        {"FileInput"},
+        {"FileInput", gui::NodeType::CSVFile},
         {"DataInput", gui::NodeType::DataInput},
         {"DataOutput", gui::NodeType::DataOutput},
         {"FilterRows", gui::NodeType::FilterRows},

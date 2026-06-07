@@ -504,6 +504,18 @@ int main() {
               cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
           "FilterRows enum support should resolve to legacy executor");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::CSVFile)) == "FileInput",
+          "legacy runtime enum lookup for CSVFile is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::CSVFile).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "CSVFile enum support should resolve to legacy executor");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::ExcelFile)) == "ExcelInput",
+          "legacy runtime enum lookup for ExcelFile is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ExcelFile).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "ExcelFile enum support should resolve to legacy executor");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::StandardScaler)) == "StandardScaler",
           "operator runtime enum lookup for StandardScaler is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::StandardScaler).mode ==

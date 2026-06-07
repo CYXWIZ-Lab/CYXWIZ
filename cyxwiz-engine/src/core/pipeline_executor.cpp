@@ -1115,9 +1115,7 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return false;
     }
 
-    if (node.type == "FileInput") {
-        return ExecuteFileInput(node, ctx);
-    } else if (node.type == "SaveDataset") {
+    if (node.type == "SaveDataset") {
         return ExecuteSaveDataset(node, ctx);
     } else if (node.type == "DeployToNodeEditor") {
         return ExecuteDeployToNodeEditor(node, ctx);
@@ -1153,10 +1151,6 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
     } else if (node.type == "Binning") {
         return ExecuteBinning(node, ctx);
     }
-    // KNIME-Style Table Manipulation Nodes
-    else if (node.type == "ExcelInput") {
-        return ExecuteExcelInput(node, ctx);
-    }
     else {
         ReportError("Unknown node type: " + node.type);
         return false;
@@ -1173,6 +1167,10 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
 
     handled = true;
     switch (*node.runtime_type) {
+    case gui::NodeType::CSVFile:
+        return ExecuteFileInput(node, ctx);
+    case gui::NodeType::ExcelFile:
+        return ExecuteExcelInput(node, ctx);
     case gui::NodeType::DataInput:
         return ExecuteDataInput(node, ctx);
     case gui::NodeType::DataOutput:
