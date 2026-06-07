@@ -309,6 +309,14 @@ column identifiers, and rejects unknown columns, type-incompatible
 literals, unsupported operators, and raw SQL tokens before query
 construction.
 
+**Status 2026-06-07 follow-up 11:** File-source `DataInput.type` is now
+validated through the central allowed-parameter registry instead of
+falling through to late loader failures for unsupported declared formats.
+Supported declared types are `auto`, `csv`, `tsv`, `parquet`, `json`,
+`excel`, `feather`, `arrow`, and `ipc`. The legacy `Binning.method`
+contract also accepts the documented `equal_frequency` alias and
+normalizes it to the implemented `equal_freq` execution path.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`

@@ -782,7 +782,7 @@ std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
                "Output: Dataset with polynomial features";
     } else if (node_type == "Binning") {
         return "Discretize continuous values into bins\n"
-               "Methods: equal_width, equal_frequency\n"
+               "Methods: equal_width, equal_freq (alias: equal_frequency)\n"
                "Input: Numeric dataset\n"
                "Output: Binned dataset";
     } else {

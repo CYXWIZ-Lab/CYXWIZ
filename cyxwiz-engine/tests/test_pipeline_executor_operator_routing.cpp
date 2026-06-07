@@ -272,6 +272,22 @@ int main() {
           "unsupported source_type validation should be specific: " +
               unsupported_source_executor.GetLastError());
 
+    const std::string bad_data_input_type_json =
+        R"({"nodes":[)"
+        R"({"id":196,"type":"DataInput","name":"BadType","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.h5","type":"hdf5"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor bad_data_input_type_executor;
+    Check(!bad_data_input_type_executor.ExecutePipeline(
+              bad_data_input_type_json),
+          "DataInput unsupported file type should fail validation");
+    Check(bad_data_input_type_executor.GetLastError().find(
+              "DataInput type 'hdf5' is not supported") !=
+              std::string::npos,
+          "DataInput unsupported file type error should be specific: " +
+              bad_data_input_type_executor.GetLastError());
+
     const std::string bad_skip_rows_json =
         R"({"nodes":[)"
         R"({"id":9,"type":"DataInput","name":"BadSkipRows","parameters":{)"
@@ -1433,6 +1449,31 @@ int main() {
     Check(ReadNumericValue(binned_table, "x_bin", 2) == 2.0,
           "Binning equal_width should place maximum in last bin");
 
+    const std::string binning_equal_frequency_alias_json =
+        R"({"nodes":[)"
+        R"({"id":197,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":198,"type":"Binning","name":"BinAlias","parameters":{)"
+        R"("columns":"x","method":"equal_frequency","n_bins":"2"}})"
+        R"(],"links":[{"start_node":197,"end_node":198}]})";
+
+    cyxwiz::PipelineExecutor binning_equal_frequency_alias_executor;
+    Check(binning_equal_frequency_alias_executor.ExecutePipeline(
+              binning_equal_frequency_alias_json),
+          "Binning equal_frequency alias should execute equal-frequency bins: " +
+              binning_equal_frequency_alias_executor.GetLastError());
+    auto alias_binned = registry.GetArrowDataset("ds_binning_198");
+    Check(alias_binned != nullptr,
+          "Binning equal_frequency alias output dataset is registered");
+    auto alias_binned_table = alias_binned->GetArrowTable();
+    Check(alias_binned_table != nullptr,
+          "Binning equal_frequency alias output table exists");
+    Check(alias_binned_table->num_columns() == 3,
+          "Binning equal_frequency alias should add one bin column");
+    Check(ReadNumericValue(alias_binned_table, "x_bin", 0) == 1.0,
+          "Binning equal_frequency alias should route to equal_freq bins");
+
     const std::string missing_binning_column_json =
         R"({"nodes":[)"
         R"({"id":73,"type":"DataInput","name":"Input","parameters":{)"
@@ -2026,6 +2067,8 @@ int main() {
     registry.UnloadDataset("ds_datainput_160");
     registry.UnloadDataset("ds_datainput_71");
     registry.UnloadDataset("ds_binning_72");
+    registry.UnloadDataset("ds_datainput_197");
+    registry.UnloadDataset("ds_binning_198");
     registry.UnloadDataset("ds_datainput_89");
     registry.UnloadDataset("ds_datainput_77");
     registry.UnloadDataset("ds_poly_78");

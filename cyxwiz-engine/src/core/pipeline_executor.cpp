@@ -965,6 +965,19 @@ std::string NormalizeJoinTypeSql(const std::string& value) {
     return "INNER";
 }
 
+std::string NormalizeDataInputFileType(const std::string& value) {
+    const std::string file_type = ToLowerAscii(TrimString(value));
+    return file_type.empty() ? "auto" : file_type;
+}
+
+std::string NormalizeBinningMethod(const std::string& value) {
+    const std::string method = ToLowerAscii(TrimString(value));
+    if (method == "equal_frequency") {
+        return "equal_freq";
+    }
+    return method.empty() ? "equal_width" : method;
+}
+
 const char* MissingRequiredParameter(
     const std::string& node_type,
     const std::map<std::string, std::string>& parameters,
@@ -1096,9 +1109,9 @@ bool HasSupportedParameterValues(
 
         const auto type_it = parameters.find("type");
         const std::string file_type =
-            (type_it != parameters.end() && !type_it->second.empty())
-                ? type_it->second
-                : "csv";
+            (type_it != parameters.end())
+                ? NormalizeDataInputFileType(type_it->second)
+                : "auto";
         const auto skip_rows_it = parameters.find("skip_rows");
         if (source_type == "file" && skip_rows_it != parameters.end() &&
             !skip_rows_it->second.empty() &&
@@ -1657,7 +1670,10 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
 
             // Get file type and options from parameters
             auto type_it = node.parameters.find("type");
-            std::string file_type = (type_it != node.parameters.end()) ? type_it->second : "csv";
+            std::string file_type =
+                (type_it != node.parameters.end())
+                    ? NormalizeDataInputFileType(type_it->second)
+                    : "auto";
 
             // Load based on file type
             if (file_type == "csv" || file_type == "tsv") {
@@ -1686,9 +1702,14 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     sheet_idx = std::stoi(sheet_it->second);
                 }
                 arrow_dataset = registry.LoadExcelToArrow(file_path, dataset_name, sheet_idx);
-            } else {
+            } else if (file_type == "auto" || file_type == "feather" ||
+                       file_type == "arrow" || file_type == "ipc") {
                 // Default: try auto-detect via LoadArrowTable
                 arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
+            } else {
+                ReportError("DataInput: file type '" + file_type +
+                            "' is not supported by PipelineExecutor");
+                return false;
             }
 
         } else if (source_type == "folder") {
@@ -3362,7 +3383,10 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
     int n_bins = (n_bins_it != node.parameters.end()) ? std::stoi(n_bins_it->second) : 10;
 
     auto method_it = node.parameters.find("method");
-    std::string method = (method_it != node.parameters.end()) ? method_it->second : "equal_width";
+    std::string method =
+        (method_it != node.parameters.end())
+            ? NormalizeBinningMethod(method_it->second)
+            : "equal_width";
 
     std::string output_dataset_name = "ds_binning_" + std::to_string(node.id);
 

@@ -228,13 +228,14 @@ const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
 GetPipelineAllowedParameterValuesRuntimeCapabilities() {
     static const std::vector<PipelineAllowedParameterValuesRuntimeCapability> capabilities = {
         {"DataInput", "source_type", "file", {"file", "folder", "ml_dataset"}},
+        {"DataInput", "type", "auto", {"auto", "csv", "tsv", "parquet", "json", "excel", "feather", "arrow", "ipc"}},
         {"DataOutput", "format", "csv", {"csv", "parquet", "json"}},
         {"SaveDataset", "format", "csv", {"csv", "parquet", "json"}},
         {"FillMissing", "strategy", "mean", {"mean", "median", "mode", "constant"}},
         {"SortRows", "order", "asc", {"asc", "desc"}},
         {"SortRows", "ascending", "true", {"true", "false"}},
         {"Join", "join_type", "inner", {"inner", "left", "right", "outer"}},
-        {"Binning", "method", "equal_width", {"equal_width", "equal_freq"}},
+        {"Binning", "method", "equal_width", {"equal_width", "equal_freq", "equal_frequency"}},
         {"TextTokenize", "method", "word", {"word", "sentence", "character"}},
         {"TextVectorize", "method", "count", {"count"}},
         {"StringManipulation", "operation", "trim", {"trim", "upper", "lower", "replace", "substring"}},
