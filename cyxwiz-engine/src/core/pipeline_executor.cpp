@@ -287,6 +287,15 @@ bool HasSupportedParameterValues(
         }
     }
 
+    if (node_type == "PolynomialFeatures") {
+        const auto columns_it = parameters.find("columns");
+        if (columns_it != parameters.end() &&
+            columns_it->second.find(',') != std::string::npos) {
+            error = "PolynomialFeatures columns supports exactly one column";
+            return false;
+        }
+    }
+
     if (node_type == "DataInput") {
         const auto source_it = parameters.find("source_type");
         const std::string source_type =
@@ -2287,12 +2296,16 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
     int degree = (degree_it != node.parameters.end()) ? std::stoi(degree_it->second) : 2;
 
     auto columns_it = node.parameters.find("columns");
-    std::string columns = (columns_it != node.parameters.end()) ? columns_it->second : "";
+    std::string column = (columns_it != node.parameters.end()) ? columns_it->second : "";
+    if (column.empty()) {
+        ReportError("PolynomialFeatures: Column name required");
+        return false;
+    }
 
     std::string output_dataset_name = "ds_poly_" + std::to_string(node.id);
 
     spdlog::info("[Data Studio] PolynomialFeatures (degree={}) on '{}' from '{}'",
-                degree, columns.empty() ? "all numeric" : columns, input_dataset_name);
+                degree, column, input_dataset_name);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -2310,22 +2323,28 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
             return false;
         }
 
-        // For MVP: Create simple polynomial features for specified columns
-        // If no columns specified, this is a placeholder
-        std::string sql;
-        if (!columns.empty()) {
-            sql = "SELECT *, ";
-            if (degree >= 2) {
-                sql += columns + " * " + columns + " AS " + columns + "_squared";
+        const std::string quoted_column = QuoteSqlIdentifier(column);
+        std::string sql = "SELECT *";
+        for (int power = 2; power <= degree; ++power) {
+            std::string expr;
+            for (int factor = 0; factor < power; ++factor) {
+                if (!expr.empty()) {
+                    expr += " * ";
+                }
+                expr += quoted_column;
             }
-            if (degree >= 3) {
-                sql += ", " + columns + " * " + columns + " * " + columns + " AS " + columns + "_cubed";
+
+            std::string suffix;
+            if (power == 2) {
+                suffix = "_squared";
+            } else if (power == 3) {
+                suffix = "_cubed";
+            } else {
+                suffix = "_pow" + std::to_string(power);
             }
-            sql += " FROM " + temp_table;
-        } else {
-            // Passthrough if no columns specified
-            sql = "SELECT * FROM " + temp_table;
+            sql += ", " + expr + " AS " + QuoteSqlIdentifier(column + suffix);
         }
+        sql += " FROM " + temp_table;
 
         auto result_table = duckdb_->Query(sql);
         duckdb_->UnregisterTable(temp_table);

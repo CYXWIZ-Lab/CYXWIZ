@@ -822,6 +822,64 @@ int main() {
           "Binning unknown method validation should be specific: " +
               bad_binning_method_executor.GetLastError());
 
+    const std::string polynomial_json =
+        R"({"nodes":[)"
+        R"({"id":77,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":78,"type":"PolynomialFeatures","name":"Poly","parameters":{)"
+        R"("columns":"x","degree":"3"}})"
+        R"(],"links":[{"start_node":77,"end_node":78}]})";
+
+    cyxwiz::PipelineExecutor polynomial_executor;
+    Check(polynomial_executor.ExecutePipeline(polynomial_json),
+          "PolynomialFeatures should generate requested powers: " +
+              polynomial_executor.GetLastError());
+    auto polynomial = registry.GetArrowDataset("ds_poly_78");
+    Check(polynomial != nullptr, "PolynomialFeatures output dataset is registered");
+    auto polynomial_table = polynomial->GetArrowTable();
+    Check(polynomial_table != nullptr, "PolynomialFeatures output table exists");
+    Check(polynomial_table->num_columns() == 4,
+          "PolynomialFeatures degree 3 should add squared and cubed columns");
+    Check(ReadNumericValue(polynomial_table, "x_squared", 2) == 9.0,
+          "PolynomialFeatures should compute squared values");
+    Check(ReadNumericValue(polynomial_table, "x_cubed", 2) == 27.0,
+          "PolynomialFeatures should compute cubed values");
+
+    const std::string bad_polynomial_degree_json =
+        R"({"nodes":[)"
+        R"({"id":79,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":80,"type":"PolynomialFeatures","name":"BadPolyDegree","parameters":{)"
+        R"("columns":"x","degree":"1"}})"
+        R"(],"links":[{"start_node":79,"end_node":80}]})";
+
+    cyxwiz::PipelineExecutor bad_polynomial_degree_executor;
+    Check(!bad_polynomial_degree_executor.ExecutePipeline(bad_polynomial_degree_json),
+          "PolynomialFeatures degree 1 should fail validation");
+    Check(bad_polynomial_degree_executor.GetLastError().find(
+              "PolynomialFeatures degree must be an integer >= 2") !=
+              std::string::npos,
+          "PolynomialFeatures degree validation should be specific: " +
+              bad_polynomial_degree_executor.GetLastError());
+
+    const std::string multi_column_polynomial_json =
+        R"({"nodes":[)"
+        R"({"id":81,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":82,"type":"PolynomialFeatures","name":"MultiPoly","parameters":{)"
+        R"("columns":"x,y","degree":"2"}})"
+        R"(],"links":[{"start_node":81,"end_node":82}]})";
+
+    cyxwiz::PipelineExecutor multi_column_polynomial_executor;
+    Check(!multi_column_polynomial_executor.ExecutePipeline(multi_column_polynomial_json),
+          "PolynomialFeatures comma-separated columns should fail validation");
+    Check(multi_column_polynomial_executor.GetLastError().find(
+              "PolynomialFeatures columns supports exactly one column") !=
+              std::string::npos,
+          "PolynomialFeatures multi-column validation should be specific: " +
+              multi_column_polynomial_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
@@ -846,6 +904,8 @@ int main() {
     registry.UnloadDataset("ds_string_68");
     registry.UnloadDataset("ds_datainput_71");
     registry.UnloadDataset("ds_binning_72");
+    registry.UnloadDataset("ds_datainput_77");
+    registry.UnloadDataset("ds_poly_78");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
     fs::remove(missing_csv_path);

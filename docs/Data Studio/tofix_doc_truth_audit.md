@@ -198,3 +198,7 @@ scanning so stale or duplicate work is not reintroduced.
   explicit column, validate supported methods centrally, quote SQL
   identifiers, and compute equal-width bins through a tested DuckDB
   expression.
+- 2026-06-07 follow-up: tightened legacy `PolynomialFeatures` to one
+  explicit column, degree `>= 2`, quoted SQL identifiers, and generated
+  powers through the requested degree instead of retaining no-column or
+  partial-degree behavior.

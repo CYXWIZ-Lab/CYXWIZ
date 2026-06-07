@@ -200,7 +200,7 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"TSFeatures", "rolling_window", 1, false},
         {"TSLag", "lag_periods", 1, true},
         {"TSDiff", "order", 1, false},
-        {"PolynomialFeatures", "degree", 1, false},
+        {"PolynomialFeatures", "degree", 2, false},
         {"Binning", "n_bins", 1, false},
         {"RowToColumnNames", "row_index", 0, false},
         {"CellExtractor", "row_index", 0, false},

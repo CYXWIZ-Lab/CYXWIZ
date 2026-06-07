@@ -454,6 +454,10 @@ Problem now:
   `equal_width` / `equal_freq` methods centrally, quotes SQL identifiers,
   and computes equal-width bins without relying on an unverified placeholder
   column default
+- legacy `PolynomialFeatures` now requires one explicit column and
+  degree `>= 2`, quotes SQL identifiers, and generates all requested
+  powers instead of retaining a no-column passthrough or partial
+  degree coverage
 - legacy `StringManipulation` now executes its advertised `replace` and
   `substring` operations, validates the operation enum centrally, and
   rejects unknown operations instead of returning a successful no-op
@@ -592,6 +596,11 @@ scope, and backend availability.
 branch no longer validates successfully without `columns`, because that
 path was a pass-through rather than an "all numeric columns"
 implementation.
+
+**Status 2026-06-07 follow-up 2:** The legacy `PolynomialFeatures`
+branch now executes only one explicit column, validates degree `>= 2`,
+quotes SQL identifiers, and generates all requested powers through the
+selected degree.
 
 Problem:
 
