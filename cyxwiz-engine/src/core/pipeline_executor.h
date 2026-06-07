@@ -8,6 +8,7 @@
 #include <atomic>
 #include <set>
 #include <cstddef>
+#include <optional>
 
 namespace gui {
 enum class NodeType;
@@ -17,6 +18,7 @@ namespace cyxwiz {
 
 // Forward declaration
 class DuckDBConnector;
+struct PipelineRuntimeSupport;
 
 /**
  * PipelineExecutor - Executes data transformation pipelines
@@ -114,6 +116,7 @@ private:
     struct Node {
         int id;
         std::string type;
+        std::optional<gui::NodeType> runtime_type;
         std::string name;
         std::map<std::string, std::string> parameters;
         std::vector<int> inputs;   // Input node IDs
@@ -157,6 +160,7 @@ private:
     bool ValidatePipeline(const std::vector<Node>& nodes);
     std::vector<int> TopologicalSort(const std::vector<Node>& nodes);
     bool ExecuteNode(const Node& node, ExecutionContext& ctx);
+    PipelineRuntimeSupport ResolveNodeRuntimeSupport(const Node& node) const;
 
     // Node type executors
     bool ExecuteFileInput(const Node& node, ExecutionContext& ctx);

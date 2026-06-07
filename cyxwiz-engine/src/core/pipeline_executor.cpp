@@ -742,6 +742,7 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
             Node node;
             node.id = node_json["id"];
             node.type = node_json["type"];
+            node.runtime_type = ResolvePipelineRuntimeNodeType(node.type);
             node.name = node_json["name"];
             node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
             nodes.push_back(node);
@@ -778,6 +779,17 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
         last_error_ = std::string("JSON parse error: ") + e.what();
         return false;
     }
+}
+
+PipelineRuntimeSupport
+PipelineExecutor::ResolveNodeRuntimeSupport(const Node& node) const {
+    if (node.runtime_type.has_value()) {
+        auto support = ResolvePipelineRuntimeSupport(*node.runtime_type);
+        if (support.mode != PipelineRuntimeSupportMode::Unknown) {
+            return support;
+        }
+    }
+    return ResolvePipelineRuntimeSupport(node.type);
 }
 
 bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
@@ -820,7 +832,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             }
         }
 
-        const auto runtime_support = ResolvePipelineRuntimeSupport(node.type);
+        const auto runtime_support = ResolveNodeRuntimeSupport(node);
         const bool is_source = runtime_support.source_node;
         const auto required_input_count =
             runtime_support.required_input_count;
@@ -998,7 +1010,7 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteGroupBy(node, ctx);
     } else if (node.type == "DeployToNodeEditor") {
         return ExecuteDeployToNodeEditor(node, ctx);
-    } else if (auto support = ResolvePipelineRuntimeSupport(node.type);
+    } else if (auto support = ResolveNodeRuntimeSupport(node);
                support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
                    support.operator_type.has_value()) {
         return ExecutePipelineOperatorNode(node, ctx, *support.operator_type);

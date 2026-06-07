@@ -432,6 +432,12 @@ capabilities are covered by drift tests. The remaining issue is the
 `PipelineExecutor::ExecuteNode()` dispatch chain itself, which still
 branches on `node.type` strings.
 
+**Status 2026-06-07 follow-up:** `PipelineExecutor::ParsePipeline()`
+now resolves each parsed node to the central optional runtime
+`gui::NodeType`, and validation/operator routing consume that typed
+identity before falling back to the legacy string name. Ambiguous legacy
+aliases remain string-only until their dispatch branches are migrated.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`
@@ -440,10 +446,12 @@ Relevant files:
 
 Problem:
 
-- `PipelineExecutor::Node` still stores node type as string
+- `PipelineExecutor::Node` still stores node type as string, but now also
+  carries optional typed runtime identity from the central registry
 - dispatch is still a long chain of string comparisons
-- capability truth now bridges to `NodeType`, but execution dispatch has
-  not moved to it yet
+- capability truth now bridges to `NodeType`, and validation/operator
+  routing can consume it, but legacy execution dispatch has not moved to
+  typed cases yet
 
 Effect:
 
@@ -454,7 +462,7 @@ Effect:
 
 Recommendation:
 
-- parse or resolve `PipelineExecutor::Node` to `NodeType` before dispatch
+- continue using parsed `PipelineExecutor::Node` runtime identity
 - move the legacy dispatch chain to typed cases in small slices
 - keep `pipeline_runtime_capabilities` as the central type-to-capability
   bridge; do not add another runtime registry
