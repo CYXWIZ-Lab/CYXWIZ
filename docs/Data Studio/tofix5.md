@@ -384,13 +384,15 @@ Problem now:
 
 - old placeholder function bodies remain in the file, which keeps the
   codebase noisy
-- operator-backed node families still need one canonical routing path
+- exact registered operator-backed node names now route through
+  `PipelineOperatorFactory`, but the runtime still lacks one central
+  capability owner
 
 Effect:
 
 - user-facing fake success is fixed for the audited branches
 - engineering truth is still harder than necessary because old
-  placeholder bodies and operator-backed implementations coexist
+  placeholder bodies and scattered capability decisions coexist
 
 Recommendation:
 
@@ -407,7 +409,8 @@ Recommendation:
 **Status 2026-06-07:** Partially fixed. The legacy runtime no longer
 masks these paths with fake success for the audited branches. Exact
 node names with registered `PipelineOperatorFactory` implementations now
-route through the operator framework from `PipelineExecutor`.
+route through the operator framework from `PipelineExecutor`, and their
+old unreachable fail-closed dispatch branches have been removed.
 Remaining work is architectural: choose the canonical runtime, expand
 coverage where storage-mode support is still narrow, and remove or
 quarantine dead legacy placeholder bodies.
@@ -438,8 +441,8 @@ Problem now:
 
 - the engine now exposes real operator implementations from the older
   `PipelineExecutor` for exact registered node names
-- the code still contains duplicate or dead placeholder-era branches for
-  several of the same conceptual areas
+- the code still contains duplicate or dead placeholder-era helper
+  bodies for several of the same conceptual areas
 
 Effect now:
 
@@ -453,8 +456,8 @@ Effect now:
 Recommendation:
 
 - add a capability matrix owned by runtime, not scattered comments
-- remove or hard-fail placeholder branches once an operator-backed
-  implementation is canonical
+- remove or quarantine dead placeholder helper bodies once an
+  operator-backed implementation is canonical
 
 ---
 

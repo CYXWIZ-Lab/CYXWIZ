@@ -83,3 +83,7 @@ scanning so stale or duplicate work is not reintroduced.
   `StandardScaler` executor regression test, and updated `tofix4.md` /
   `tofix5.md` to keep the remaining work scoped to canonical runtime
   convergence and dead branch cleanup.
+- 2026-06-07 follow-up: removed the now-unreachable exact-name
+  fail-closed dispatch branches for registered operator-backed nodes from
+  `PipelineExecutor`; the remaining cleanup is dead placeholder helper
+  bodies and a central capability owner.

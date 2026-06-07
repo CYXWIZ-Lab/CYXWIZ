@@ -338,15 +338,24 @@ canonical operator-routing work.
 
 ### 8. Analytics / ML nodes with placeholder `PipelineExecutor` behavior
 
-**Status:** Fixed in current branch for the legacy `PipelineExecutor` path. The affected legacy branches now fail closed with explicit runtime errors instead of returning passthrough/fake success. Operator-backed implementations remain the canonical path to wire later.
+**Status:** Fixed in current branch for the legacy `PipelineExecutor`
+path. Unsupported nodes still fail closed with explicit runtime errors
+instead of returning passthrough/fake success. Exact registered
+operator-backed names now route through `PipelineOperatorFactory`, and
+their stale fail-closed dispatch branches have been removed.
 
-Affected nodes include:
+Routed operator-backed nodes include:
 
 - `KMeansCluster`
 - `DBSCANCluster`
 - `HierarchicalCluster`
 - `GMMCluster`
 - `PCANode`
+- `LinearRegressionNode`
+- `PolynomialRegressionNode`
+
+Still fail-closed unsupported nodes include:
+
 - `TSNENode`
 - `DecisionTreeClassifier`
 - `RandomForestClassifier`
@@ -355,8 +364,6 @@ Affected nodes include:
 - `KNNClassifier`
 - `NaiveBayesClassifier`
 - `LogisticRegressionNode`
-- `LinearRegressionNode`
-- `PolynomialRegressionNode`
 
 **Severity:** High
 
@@ -379,14 +386,14 @@ Problem before the 2026-06-07 runtime-truth pass:
 Current remaining problem:
 
 - old placeholder function bodies still exist in the file
-- real operator-backed implementations are not yet the single canonical
-  path for all affected node families
+- real operator-backed implementations are now the active path for exact
+  registered names, but broader runtime ownership is still split
 
 Effect now:
 
 - fake-success user harm is fixed for the audited legacy dispatch path
-- support truth remains harder to reason about until duplicate/dead
-  executor branches are removed or routed through the operator framework
+- support truth remains harder to reason about until remaining dead
+  placeholder bodies and broader runtime ownership are cleaned up
 
 **Recommendation:**
 

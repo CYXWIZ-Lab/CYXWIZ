@@ -378,8 +378,6 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
     // Phase 6 Week 8-9 - Feature Engineering
     else if (node.type == "PCA") {
         return FailUnsupportedNode(node, "legacy PCA execution is still a passthrough placeholder");
-    } else if (node.type == "PCANode") {
-        return FailUnsupportedNode(node, "legacy PCA execution is still a passthrough placeholder");
     } else if (node.type == "PolynomialFeatures") {
         return ExecutePolynomialFeatures(node, ctx);
     } else if (node.type == "Binning") {
@@ -420,16 +418,6 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return ExecuteRenameColumns(node, ctx);
     }
     // ===== Phase 4: Machine Learning Algorithm Nodes =====
-    // Clustering
-    else if (node.type == "KMeansCluster") {
-        return FailUnsupportedNode(node, "legacy K-Means execution is still a passthrough placeholder");
-    } else if (node.type == "DBSCANCluster") {
-        return FailUnsupportedNode(node, "legacy DBSCAN execution is still a passthrough placeholder");
-    } else if (node.type == "HierarchicalCluster") {
-        return FailUnsupportedNode(node, "legacy hierarchical clustering execution is still a passthrough placeholder");
-    } else if (node.type == "GMMCluster") {
-        return FailUnsupportedNode(node, "legacy GMM execution is still a passthrough placeholder");
-    }
     // Dimensionality Reduction
     else if (node.type == "TSNENode") {
         return FailUnsupportedNode(node, "legacy t-SNE execution is still a passthrough placeholder");
@@ -453,11 +441,7 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return FailUnsupportedNode(node, "legacy logistic-regression execution is still a passthrough placeholder");
     }
     // Regression
-    else if (node.type == "LinearRegressionNode") {
-        return FailUnsupportedNode(node, "legacy linear-regression execution is still a passthrough placeholder");
-    } else if (node.type == "PolynomialRegressionNode") {
-        return FailUnsupportedNode(node, "legacy polynomial-regression execution is still a passthrough placeholder");
-    } else if (node.type == "SVMRegressor") {
+    else if (node.type == "SVMRegressor") {
         return FailUnsupportedNode(node, "legacy SVM regressor execution is still a passthrough placeholder");
     }
     // ===== Phase 4: Model Evaluation Nodes =====
@@ -477,25 +461,11 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return FailUnsupportedNode(node, "regression-metrics graph execution is not implemented in PipelineExecutor");
     }
     // ===== Phase 4: Data Preprocessing Nodes =====
-    else if (node.type == "StandardScaler") {
-        return FailUnsupportedNode(node, "legacy StandardScaler execution is still a passthrough placeholder");
-    } else if (node.type == "MinMaxScaler") {
-        return FailUnsupportedNode(node, "legacy MinMaxScaler execution is still a passthrough placeholder");
-    } else if (node.type == "RobustScaler") {
-        return FailUnsupportedNode(node, "legacy RobustScaler execution is still a passthrough placeholder");
-    } else if (node.type == "LabelEncoder") {
-        return FailUnsupportedNode(node, "legacy LabelEncoder execution is still a passthrough placeholder");
-    } else if (node.type == "OrdinalEncoder") {
-        return FailUnsupportedNode(node, "legacy OrdinalEncoder execution is still a passthrough placeholder");
-    } else if (node.type == "TargetEncoder") {
-        return FailUnsupportedNode(node, "legacy TargetEncoder execution is still a passthrough placeholder");
-    } else if (node.type == "TrainTestSplit") {
+    else if (node.type == "TrainTestSplit") {
         return FailUnsupportedNode(node, "legacy TrainTestSplit execution is still a passthrough placeholder");
     }
     // ===== Phase 8: Advanced Preprocessing Nodes (UI Consolidation) =====
-    else if (node.type == "OutlierDetector") {
-        return FailUnsupportedNode(node, "legacy OutlierDetector execution is still a passthrough placeholder");
-    } else if (node.type == "ImagePreprocessor") {
+    else if (node.type == "ImagePreprocessor") {
         return FailUnsupportedNode(node, "legacy ImagePreprocessor execution is still a passthrough placeholder");
     } else if (node.type == "QualityAnalyzer") {
         return FailUnsupportedNode(node, "legacy QualityAnalyzer execution is still a passthrough placeholder");
@@ -527,34 +497,16 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return FailUnsupportedNode(node, "legacy AdvancedAugment execution is still a placeholder");
     }
     // ===== Phase 4: Signal Processing Nodes =====
-    else if (node.type == "FFTNode") {
-        return FailUnsupportedNode(node, "FFT has an operator-backed path but is not wired into PipelineExecutor");
-    } else if (node.type == "IFFTNode") {
+    else if (node.type == "IFFTNode") {
         return FailUnsupportedNode(node, "legacy IFFT execution is still a placeholder");
-    } else if (node.type == "FilterDesigner") {
-        return FailUnsupportedNode(node, "FilterDesigner has an operator-backed path but is not wired into PipelineExecutor");
-    } else if (node.type == "Convolution1D") {
-        return FailUnsupportedNode(node, "Convolution1D has an operator-backed path but is not wired into PipelineExecutor");
     } else if (node.type == "WaveletTransform") {
         return FailUnsupportedNode(node, "legacy WaveletTransform execution is still a placeholder");
     }
     // ===== Phase 4: Text Analytics Nodes =====
-    else if (node.type == "TFIDFVectorizer") {
-        return FailUnsupportedNode(node, "TFIDF has an operator-backed path but is not wired into PipelineExecutor");
-    } else if (node.type == "CountVectorizer") {
-        return FailUnsupportedNode(node, "CountVectorizer has an operator-backed path but is not wired into PipelineExecutor");
-    } else if (node.type == "WordEmbeddings") {
+    else if (node.type == "WordEmbeddings") {
         return FailUnsupportedNode(node, "word-embedding graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "SentimentAnalyzer") {
-        return FailUnsupportedNode(node, "SentimentAnalyzer has an operator-backed path but is not wired into PipelineExecutor");
     } else if (node.type == "NamedEntityRecognizer") {
         return FailUnsupportedNode(node, "NER graph execution is not implemented in PipelineExecutor");
-    } else if (node.type == "TimeSeriesDecomposition") {
-        return FailUnsupportedNode(node, "TimeSeriesDecomposition has an operator-backed path but is not wired into PipelineExecutor");
-    } else if (node.type == "ARIMAForecaster") {
-        return FailUnsupportedNode(node, "ARIMAForecaster has an operator-backed path but is not wired into PipelineExecutor");
-    } else if (node.type == "ExponentialSmoothing") {
-        return FailUnsupportedNode(node, "ExponentialSmoothing has an operator-backed path but is not wired into PipelineExecutor");
     } else if (node.type == "DNNModelLoad") {
         return FailUnsupportedNode(node, "DNN model loading is not implemented in PipelineExecutor");
     } else if (node.type == "DNNDetect") {
