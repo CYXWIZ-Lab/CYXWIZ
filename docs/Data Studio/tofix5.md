@@ -263,6 +263,12 @@ parameter. Validation treats either spelling as satisfying the required
 output path, so UI-authored ExportCSV nodes no longer fail before
 execution.
 
+**Status 2026-06-07 follow-up 4:** Active legacy time-series SQL
+branches (`TSWindow`, `TSFeatures`, `TSLag`, and `TSDiff`) now validate
+that their source columns exist and are numeric before query
+construction, and quote source/output identifiers instead of inserting
+raw column names into DuckDB SQL.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`

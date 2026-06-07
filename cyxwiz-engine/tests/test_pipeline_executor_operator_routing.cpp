@@ -1393,6 +1393,124 @@ int main() {
           "GroupBy raw SQL aggregation error should be specific: " +
               raw_group_aggregation_executor.GetLastError());
 
+    const std::string ts_window_json =
+        R"({"nodes":[)"
+        R"({"id":140,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":141,"type":"TSWindow","name":"Window","parameters":{)"
+        R"("target_column":"x","window_size":"2","stride":"1"}})"
+        R"(],"links":[{"start_node":140,"end_node":141}]})";
+
+    cyxwiz::PipelineExecutor ts_window_executor;
+    Check(ts_window_executor.ExecutePipeline(ts_window_json),
+          "TSWindow should validate and quote numeric target column: " +
+              ts_window_executor.GetLastError());
+    auto ts_window = registry.GetArrowDataset("ds_tswindow_141");
+    Check(ts_window != nullptr, "TSWindow output dataset is registered");
+    auto ts_window_table = ts_window->GetArrowTable();
+    Check(ts_window_table != nullptr, "TSWindow output table exists");
+    Check(ReadNumericValue(ts_window_table, "window_t0", 2) == 3.0,
+          "TSWindow LAG offset 0 should preserve target values");
+
+    const std::string ts_features_json =
+        R"({"nodes":[)"
+        R"({"id":142,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":143,"type":"TSFeatures","name":"Features","parameters":{)"
+        R"("columns":"y","rolling_window":"2"}})"
+        R"(],"links":[{"start_node":142,"end_node":143}]})";
+
+    cyxwiz::PipelineExecutor ts_features_executor;
+    Check(ts_features_executor.ExecutePipeline(ts_features_json),
+          "TSFeatures should validate and quote numeric source column: " +
+              ts_features_executor.GetLastError());
+    auto ts_features = registry.GetArrowDataset("ds_tsfeatures_143");
+    Check(ts_features != nullptr, "TSFeatures output dataset is registered");
+    auto ts_features_table = ts_features->GetArrowTable();
+    Check(ts_features_table != nullptr, "TSFeatures output table exists");
+    Check(std::fabs(ReadNumericValue(ts_features_table, "y_rolling_mean", 1) - 15.0) <
+              0.001,
+          "TSFeatures rolling mean should use requested column");
+
+    const std::string ts_lag_json =
+        R"({"nodes":[)"
+        R"({"id":144,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":145,"type":"TSLag","name":"Lag","parameters":{)"
+        R"("columns":"y","lag_periods":"1"}})"
+        R"(],"links":[{"start_node":144,"end_node":145}]})";
+
+    cyxwiz::PipelineExecutor ts_lag_executor;
+    Check(ts_lag_executor.ExecutePipeline(ts_lag_json),
+          "TSLag should validate and quote numeric source column: " +
+              ts_lag_executor.GetLastError());
+    auto ts_lag = registry.GetArrowDataset("ds_tslag_145");
+    Check(ts_lag != nullptr, "TSLag output dataset is registered");
+    auto ts_lag_table = ts_lag->GetArrowTable();
+    Check(ts_lag_table != nullptr, "TSLag output table exists");
+    Check(ReadNumericValue(ts_lag_table, "y_lag1", 1) == 10.0,
+          "TSLag should create requested lag column");
+
+    const std::string ts_diff_json =
+        R"({"nodes":[)"
+        R"({"id":146,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":147,"type":"TSDiff","name":"Diff","parameters":{)"
+        R"("columns":"y","order":"1"}})"
+        R"(],"links":[{"start_node":146,"end_node":147}]})";
+
+    cyxwiz::PipelineExecutor ts_diff_executor;
+    Check(ts_diff_executor.ExecutePipeline(ts_diff_json),
+          "TSDiff should validate and quote numeric source column: " +
+              ts_diff_executor.GetLastError());
+    auto ts_diff = registry.GetArrowDataset("ds_tsdiff_147");
+    Check(ts_diff != nullptr, "TSDiff output dataset is registered");
+    auto ts_diff_table = ts_diff->GetArrowTable();
+    Check(ts_diff_table != nullptr, "TSDiff output table exists");
+    Check(ReadNumericValue(ts_diff_table, "y_diff1", 1) == 10.0,
+          "TSDiff should create requested difference column");
+
+    const std::string ts_features_text_column_json =
+        R"({"nodes":[)"
+        R"({"id":148,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":149,"type":"TSFeatures","name":"BadFeatures","parameters":{)"
+        R"("columns":"phrase","rolling_window":"2"}})"
+        R"(],"links":[{"start_node":148,"end_node":149}]})";
+
+    cyxwiz::PipelineExecutor ts_features_text_column_executor;
+    Check(!ts_features_text_column_executor.ExecutePipeline(
+              ts_features_text_column_json),
+          "TSFeatures on text column should fail schema validation");
+    Check(ts_features_text_column_executor.GetLastError().find(
+              "TSFeatures: column 'phrase' must be numeric") !=
+              std::string::npos,
+          "TSFeatures text column error should be specific: " +
+              ts_features_text_column_executor.GetLastError());
+
+    const std::string ts_diff_missing_column_json =
+        R"({"nodes":[)"
+        R"({"id":150,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":151,"type":"TSDiff","name":"MissingDiff","parameters":{)"
+        R"("columns":"missing","order":"1"}})"
+        R"(],"links":[{"start_node":150,"end_node":151}]})";
+
+    cyxwiz::PipelineExecutor ts_diff_missing_column_executor;
+    Check(!ts_diff_missing_column_executor.ExecutePipeline(
+              ts_diff_missing_column_json),
+          "TSDiff missing input column should fail schema validation");
+    Check(ts_diff_missing_column_executor.GetLastError().find(
+              "TSDiff: column 'missing' not found") != std::string::npos,
+          "TSDiff missing column error should be specific: " +
+              ts_diff_missing_column_executor.GetLastError());
+
     const std::string table_splitter_json =
         R"({"nodes":[)"
         R"({"id":83,"type":"DataInput","name":"Input","parameters":{)"
@@ -1467,6 +1585,16 @@ int main() {
     registry.UnloadDataset("ds_datainput_120");
     registry.UnloadDataset("ds_datainput_122");
     registry.UnloadDataset("ds_datainput_124");
+    registry.UnloadDataset("ds_datainput_140");
+    registry.UnloadDataset("ds_tswindow_141");
+    registry.UnloadDataset("ds_datainput_142");
+    registry.UnloadDataset("ds_tsfeatures_143");
+    registry.UnloadDataset("ds_datainput_144");
+    registry.UnloadDataset("ds_tslag_145");
+    registry.UnloadDataset("ds_datainput_146");
+    registry.UnloadDataset("ds_tsdiff_147");
+    registry.UnloadDataset("ds_datainput_148");
+    registry.UnloadDataset("ds_datainput_150");
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
     fs::remove(export_csv_path);

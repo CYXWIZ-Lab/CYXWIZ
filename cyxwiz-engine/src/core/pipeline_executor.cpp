@@ -2514,6 +2514,14 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TSWindow", target_column,
+                               "numeric", IsNumericArrowType,
+                               schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_target_column = QuoteSqlIdentifier(target_column);
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -2525,7 +2533,9 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
         std::string sql = "SELECT *, ";
         for (int i = 0; i < window_size; i++) {
             if (i > 0) sql += ", ";
-            sql += "LAG(" + target_column + ", " + std::to_string(i) + ") OVER (ORDER BY rowid) AS window_t" + std::to_string(i);
+            sql += "LAG(" + quoted_target_column + ", " +
+                   std::to_string(i) + ") OVER (ORDER BY rowid) AS " +
+                   QuoteSqlIdentifier("window_t" + std::to_string(i));
         }
         sql += " FROM " + temp_table;
 
@@ -2577,6 +2587,14 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TSFeatures", columns,
+                               "numeric", IsNumericArrowType,
+                               schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_column = QuoteSqlIdentifier(columns);
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -2586,18 +2604,18 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
 
         // Create rolling statistics
         std::string sql = "SELECT *, "
-                         "AVG(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         "AVG(" + quoted_column + ") OVER (ORDER BY rowid ROWS BETWEEN " +
                          std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
-                         columns + "_rolling_mean, "
-                         "STDDEV(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         QuoteSqlIdentifier(columns + "_rolling_mean") + ", "
+                         "STDDEV(" + quoted_column + ") OVER (ORDER BY rowid ROWS BETWEEN " +
                          std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
-                         columns + "_rolling_std, "
-                         "MIN(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         QuoteSqlIdentifier(columns + "_rolling_std") + ", "
+                         "MIN(" + quoted_column + ") OVER (ORDER BY rowid ROWS BETWEEN " +
                          std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
-                         columns + "_rolling_min, "
-                         "MAX(" + columns + ") OVER (ORDER BY rowid ROWS BETWEEN " +
+                         QuoteSqlIdentifier(columns + "_rolling_min") + ", "
+                         "MAX(" + quoted_column + ") OVER (ORDER BY rowid ROWS BETWEEN " +
                          std::to_string(rolling_window - 1) + " PRECEDING AND CURRENT ROW) AS " +
-                         columns + "_rolling_max "
+                         QuoteSqlIdentifier(columns + "_rolling_max") + " "
                          "FROM " + temp_table;
 
         auto result_table = duckdb_->Query(sql);
@@ -2648,6 +2666,14 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TSLag", columns,
+                               "numeric", IsNumericArrowType,
+                               schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_column = QuoteSqlIdentifier(columns);
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -2664,8 +2690,9 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
         while (std::getline(ss, lag_str, ',')) {
             int lag = std::stoi(lag_str);
             if (!first) sql += ", ";
-            sql += "LAG(" + columns + ", " + std::to_string(lag) + ") OVER (ORDER BY rowid) AS " +
-                   columns + "_lag" + std::to_string(lag);
+            sql += "LAG(" + quoted_column + ", " + std::to_string(lag) +
+                   ") OVER (ORDER BY rowid) AS " +
+                   QuoteSqlIdentifier(columns + "_lag" + std::to_string(lag));
             first = false;
         }
 
@@ -2719,6 +2746,14 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "TSDiff", columns,
+                               "numeric", IsNumericArrowType,
+                               schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_column = QuoteSqlIdentifier(columns);
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -2730,8 +2765,9 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
         std::string sql = "SELECT *, ";
         for (int i = 1; i <= order; i++) {
             if (i > 1) sql += ", ";
-            sql += columns + " - LAG(" + columns + ", " + std::to_string(i) + ") OVER (ORDER BY rowid) AS " +
-                   columns + "_diff" + std::to_string(i);
+            sql += quoted_column + " - LAG(" + quoted_column + ", " +
+                   std::to_string(i) + ") OVER (ORDER BY rowid) AS " +
+                   QuoteSqlIdentifier(columns + "_diff" + std::to_string(i));
         }
         sql += " FROM " + temp_table;
 
