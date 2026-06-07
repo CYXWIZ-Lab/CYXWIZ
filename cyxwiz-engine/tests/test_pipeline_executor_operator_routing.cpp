@@ -1108,6 +1108,42 @@ int main() {
           "TextVectorize missing column error should be specific: " +
               text_vectorize_missing_column_executor.GetLastError());
 
+    const std::string bad_text_tokenize_method_json =
+        R"({"nodes":[)"
+        R"({"id":162,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":163,"type":"TextTokenize","name":"BadTokenizeMethod","parameters":{)"
+        R"("text_column":"phrase","method":"ngram"}})"
+        R"(],"links":[{"start_node":162,"end_node":163}]})";
+
+    cyxwiz::PipelineExecutor bad_text_tokenize_method_executor;
+    Check(!bad_text_tokenize_method_executor.ExecutePipeline(
+              bad_text_tokenize_method_json),
+          "TextTokenize unsupported method should fail validation");
+    Check(bad_text_tokenize_method_executor.GetLastError().find(
+              "TextTokenize method 'ngram' is not supported") !=
+              std::string::npos,
+          "TextTokenize unsupported method error should be specific: " +
+              bad_text_tokenize_method_executor.GetLastError());
+
+    const std::string bad_text_vectorize_method_json =
+        R"({"nodes":[)"
+        R"({"id":164,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":165,"type":"TextVectorize","name":"BadVectorizeMethod","parameters":{)"
+        R"("text_column":"phrase","method":"tfidf"}})"
+        R"(],"links":[{"start_node":164,"end_node":165}]})";
+
+    cyxwiz::PipelineExecutor bad_text_vectorize_method_executor;
+    Check(!bad_text_vectorize_method_executor.ExecutePipeline(
+              bad_text_vectorize_method_json),
+          "TextVectorize unsupported method should fail validation");
+    Check(bad_text_vectorize_method_executor.GetLastError().find(
+              "TextVectorize method 'tfidf' is not supported") !=
+              std::string::npos,
+          "TextVectorize unsupported method error should be specific: " +
+              bad_text_vectorize_method_executor.GetLastError());
+
     const std::string binning_json =
         R"({"nodes":[)"
         R"({"id":71,"type":"DataInput","name":"Input","parameters":{)"

@@ -275,6 +275,12 @@ their configured text columns exist and are string-typed before query
 construction, and quote source/output identifiers before building
 DuckDB SQL.
 
+**Status 2026-06-07 follow-up 6:** `TextTokenize.method` and
+`TextVectorize.method` now validate through the central allowed-parameter
+registry. Unsupported values such as `ngram` for the legacy tokenizer or
+`tfidf` for the legacy count-style vectorizer fail validation instead of
+falling back to a weaker execution path.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`

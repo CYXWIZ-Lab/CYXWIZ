@@ -223,6 +223,8 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"SortRows", "ascending", "true", {"true", "false"}},
         {"Join", "join_type", "inner", {"inner", "left", "right", "outer"}},
         {"Binning", "method", "equal_width", {"equal_width", "equal_freq"}},
+        {"TextTokenize", "method", "word", {"word", "sentence", "character"}},
+        {"TextVectorize", "method", "count", {"count"}},
         {"StringManipulation", "operation", "trim", {"trim", "upper", "lower", "replace", "substring"}},
     };
     return capabilities;
