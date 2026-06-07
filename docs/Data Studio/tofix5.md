@@ -193,9 +193,9 @@ central runtime capability registry before execution starts. Validation
 now rejects invalid `DataInput.skip_rows` and Excel `sheet_idx` integer
 parameters before execution reaches `std::stoi`, plus bounded integer
 parameters for active legacy transforms such as `TSWindow`,
-`PolynomialFeatures`, `Binning`, and table row helpers. Validation errors
-now preserve the specific failed rule. Broader schema/type-aware
-validation remains future work.
+`TSLag.lag_periods`, `PolynomialFeatures`, `Binning`, and table row
+helpers. Validation errors now preserve the specific failed rule. Broader
+schema/type-aware validation remains future work.
 
 Relevant files:
 

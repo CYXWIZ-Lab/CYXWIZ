@@ -193,13 +193,30 @@ int main() {
           "bad TSWindow validation should be specific: " +
               bad_window_executor.GetLastError());
 
-    const std::string bad_crop_json =
+    const std::string bad_lags_json =
         R"({"nodes":[)"
         R"({"id":15,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
-        R"({"id":16,"type":"TableCropper","name":"BadCrop","parameters":{)"
-        R"("start_row":"-2","end_row":"10"}})"
+        R"({"id":16,"type":"TSLag","name":"BadLag","parameters":{)"
+        R"("lag_periods":"1,nope,3"}})"
         R"(],"links":[{"start_node":15,"end_node":16}]})";
+
+    cyxwiz::PipelineExecutor bad_lags_executor;
+    Check(!bad_lags_executor.ExecutePipeline(bad_lags_json),
+          "TSLag bad lag_periods should fail validation");
+    Check(bad_lags_executor.GetLastError().find(
+              "TSLag lag_periods must be a comma-separated list of integers >= 1") !=
+              std::string::npos,
+          "bad TSLag validation should be specific: " +
+              bad_lags_executor.GetLastError());
+
+    const std::string bad_crop_json =
+        R"({"nodes":[)"
+        R"({"id":17,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":18,"type":"TableCropper","name":"BadCrop","parameters":{)"
+        R"("start_row":"-2","end_row":"10"}})"
+        R"(],"links":[{"start_node":17,"end_node":18}]})";
 
     cyxwiz::PipelineExecutor bad_crop_executor;
     Check(!bad_crop_executor.ExecutePipeline(bad_crop_json),
@@ -212,10 +229,10 @@ int main() {
 
     const std::string unknown_node_json =
         R"({"nodes":[)"
-        R"({"id":17,"type":"DataInput","name":"Input","parameters":{)"
+        R"({"id":19,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
-        R"({"id":18,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
-        R"(],"links":[{"start_node":17,"end_node":18}]})";
+        R"({"id":20,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
+        R"(],"links":[{"start_node":19,"end_node":20}]})";
 
     cyxwiz::PipelineExecutor unknown_node_executor;
     Check(!unknown_node_executor.ExecutePipeline(unknown_node_json),
@@ -228,7 +245,7 @@ int main() {
 
     const std::string parquet_input_json =
         R"({"nodes":[)"
-        R"({"id":19,"type":"ParquetInput","name":"Parquet","parameters":{)"
+        R"({"id":21,"type":"ParquetInput","name":"Parquet","parameters":{)"
         R"("file_path":"ignored.parquet"}})"
         R"(],"links":[]})";
 

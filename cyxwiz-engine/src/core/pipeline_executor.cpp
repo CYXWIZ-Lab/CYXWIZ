@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <charconv>
 #include <queue>
+#include <sstream>
 #include <future>
 #include <thread>
 #include <chrono>
@@ -53,6 +54,36 @@ bool ValidateIntegerParameterAtLeast(
     error = node_type + " " + parameter_name + " must be an integer >= " +
             std::to_string(minimum);
     return false;
+}
+
+bool ValidateCommaSeparatedIntegersAtLeast(
+    const std::map<std::string, std::string>& parameters,
+    const std::string& node_type,
+    const std::string& parameter_name,
+    int64_t minimum,
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end()) {
+        return true;
+    }
+    if (it->second.empty()) {
+        error = node_type + " " + parameter_name +
+                " must be a comma-separated list of integers >= " +
+                std::to_string(minimum);
+        return false;
+    }
+
+    std::stringstream values(it->second);
+    std::string value;
+    while (std::getline(values, value, ',')) {
+        if (!IsIntegerAtLeast(value, minimum)) {
+            error = node_type + " " + parameter_name +
+                    " must be a comma-separated list of integers >= " +
+                    std::to_string(minimum);
+            return false;
+        }
+    }
+    return true;
 }
 
 const char* MissingRequiredParameter(
@@ -143,6 +174,10 @@ bool HasSupportedParameterValues(
 
     if (node_type == "TSFeatures") {
         return ValidateIntegerParameterAtLeast(parameters, node_type, "rolling_window", 1, error);
+    }
+
+    if (node_type == "TSLag") {
+        return ValidateCommaSeparatedIntegersAtLeast(parameters, node_type, "lag_periods", 1, error);
     }
 
     if (node_type == "TSDiff") {
