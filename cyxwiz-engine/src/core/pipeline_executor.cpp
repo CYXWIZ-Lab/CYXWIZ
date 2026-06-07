@@ -1122,46 +1122,23 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return false;
     }
 
-    if (node.type == "SaveDataset") {
-        return ExecuteSaveDataset(node, ctx);
-    } else if (node.type == "DeployToNodeEditor") {
-        return ExecuteDeployToNodeEditor(node, ctx);
-    } else if (auto support = ResolveNodeRuntimeSupport(node);
-               support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
-                   support.operator_type.has_value()) {
+    const auto support = ResolveNodeRuntimeSupport(node);
+    if (support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
+        support.operator_type.has_value()) {
         return ExecutePipelineOperatorNode(node, ctx, *support.operator_type);
     } else if (support.mode == PipelineRuntimeSupportMode::FailClosed &&
                support.fail_closed_reason != nullptr) {
         return FailUnsupportedNode(node, support.fail_closed_reason);
     }
-    // Phase 6 Week 8-9 - Text Processing
-    else if (node.type == "TextClean") {
-        return ExecuteTextClean(node, ctx);
-    } else if (node.type == "TextTokenize") {
-        return ExecuteTextTokenize(node, ctx);
-    } else if (node.type == "TextVectorize") {
-        return ExecuteTextVectorize(node, ctx);
+
+    if (support.mode == PipelineRuntimeSupportMode::LegacyExecutor &&
+        support.legacy_dispatch_kind != PipelineLegacyDispatchKind::Unknown) {
+        return ExecuteLegacyDispatchKind(node, ctx,
+                                         support.legacy_dispatch_kind);
     }
-    // Phase 6 Week 8-9 - Time-Series
-    else if (node.type == "TSWindow") {
-        return ExecuteTSWindow(node, ctx);
-    } else if (node.type == "TSFeatures") {
-        return ExecuteTSFeatures(node, ctx);
-    } else if (node.type == "TSLag") {
-        return ExecuteTSLag(node, ctx);
-    } else if (node.type == "TSDiff") {
-        return ExecuteTSDiff(node, ctx);
-    }
-    // Phase 6 Week 8-9 - Feature Engineering
-    else if (node.type == "PolynomialFeatures") {
-        return ExecutePolynomialFeatures(node, ctx);
-    } else if (node.type == "Binning") {
-        return ExecuteBinning(node, ctx);
-    }
-    else {
-        ReportError("Unknown node type: " + node.type);
-        return false;
-    }
+
+    ReportError("Unknown node type: " + node.type);
+    return false;
 }
 
 bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
@@ -1212,6 +1189,41 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         handled = false;
         return false;
     }
+}
+
+bool PipelineExecutor::ExecuteLegacyDispatchKind(
+    const Node& node,
+    ExecutionContext& ctx,
+    PipelineLegacyDispatchKind dispatch_kind) {
+    switch (dispatch_kind) {
+    case PipelineLegacyDispatchKind::SaveDataset:
+        return ExecuteSaveDataset(node, ctx);
+    case PipelineLegacyDispatchKind::DeployToNodeEditor:
+        return ExecuteDeployToNodeEditor(node, ctx);
+    case PipelineLegacyDispatchKind::TextClean:
+        return ExecuteTextClean(node, ctx);
+    case PipelineLegacyDispatchKind::TextTokenize:
+        return ExecuteTextTokenize(node, ctx);
+    case PipelineLegacyDispatchKind::TextVectorize:
+        return ExecuteTextVectorize(node, ctx);
+    case PipelineLegacyDispatchKind::TSWindow:
+        return ExecuteTSWindow(node, ctx);
+    case PipelineLegacyDispatchKind::TSFeatures:
+        return ExecuteTSFeatures(node, ctx);
+    case PipelineLegacyDispatchKind::TSLag:
+        return ExecuteTSLag(node, ctx);
+    case PipelineLegacyDispatchKind::TSDiff:
+        return ExecuteTSDiff(node, ctx);
+    case PipelineLegacyDispatchKind::PolynomialFeatures:
+        return ExecutePolynomialFeatures(node, ctx);
+    case PipelineLegacyDispatchKind::Binning:
+        return ExecuteBinning(node, ctx);
+    case PipelineLegacyDispatchKind::Unknown:
+        break;
+    }
+
+    ReportError("Unknown legacy dispatch kind for node type: " + node.type);
+    return false;
 }
 
 bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx) {

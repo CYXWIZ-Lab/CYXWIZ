@@ -18,6 +18,7 @@ namespace cyxwiz {
 
 // Forward declaration
 class DuckDBConnector;
+enum class PipelineLegacyDispatchKind;
 struct PipelineRuntimeSupport;
 
 /**
@@ -164,6 +165,9 @@ private:
     bool ExecuteTypedLegacyNode(const Node& node,
                                 ExecutionContext& ctx,
                                 bool& handled);
+    bool ExecuteLegacyDispatchKind(const Node& node,
+                                   ExecutionContext& ctx,
+                                   PipelineLegacyDispatchKind dispatch_kind);
 
     // Node type executors
     bool ExecuteFileInput(const Node& node, ExecutionContext& ctx);

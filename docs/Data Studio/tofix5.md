@@ -508,6 +508,14 @@ string branches. The remaining direct string branches are now
 `SaveDataset`, `DeployToNodeEditor`, text aliases, old time-series
 aliases, `PolynomialFeatures`, and `Binning`.
 
+**Status 2026-06-07 follow-up 4:** The remaining string-only legacy
+aliases now carry an explicit `PipelineLegacyDispatchKind` in the
+central runtime capability registry. `PipelineExecutor::ExecuteNode()`
+routes those aliases through the resolved runtime support object instead
+of comparing raw `node.type` strings, and the metadata drift guard now
+requires every string-only legacy runtime entry to declare its dispatch
+kind.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`

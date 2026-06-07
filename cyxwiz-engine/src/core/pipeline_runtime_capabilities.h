@@ -21,9 +21,26 @@ struct PipelineFailClosedRuntimeCapability {
     std::optional<gui::NodeType> metadata_node_type = std::nullopt;
 };
 
+enum class PipelineLegacyDispatchKind {
+    Unknown,
+    SaveDataset,
+    DeployToNodeEditor,
+    TextClean,
+    TextTokenize,
+    TextVectorize,
+    TSWindow,
+    TSFeatures,
+    TSLag,
+    TSDiff,
+    PolynomialFeatures,
+    Binning,
+};
+
 struct PipelineLegacyRuntimeCapability {
     const char* legacy_type_name;
     std::optional<gui::NodeType> node_type = std::nullopt;
+    PipelineLegacyDispatchKind dispatch_kind =
+        PipelineLegacyDispatchKind::Unknown;
 };
 
 struct PipelineSourceRuntimeCapability {
@@ -134,6 +151,8 @@ struct PipelineRuntimeSupport {
     std::vector<PipelineAllowedParameterValuesRuntimeCapability>
         allowed_parameter_values;
     std::vector<PipelineIntegerParameterRuntimeCapability> integer_parameters;
+    PipelineLegacyDispatchKind legacy_dispatch_kind =
+        PipelineLegacyDispatchKind::Unknown;
     PipelineRuntimeImplementationOwner implementation_owner =
         PipelineRuntimeImplementationOwner::Unknown;
 };

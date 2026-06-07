@@ -142,21 +142,26 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"FilterRows", gui::NodeType::FilterRows},
         {"SelectColumns", gui::NodeType::SelectColumns},
         {"RemoveDuplicates", gui::NodeType::RemoveDuplicateRows},
-        {"SaveDataset"},
+        {"SaveDataset", std::nullopt,
+         PipelineLegacyDispatchKind::SaveDataset},
         {"FillMissing", gui::NodeType::FillMissingValues},
         {"SortRows", gui::NodeType::SortRows},
         {"Join", gui::NodeType::JoinTables},
         {"GroupBy", gui::NodeType::GroupByAggregate},
-        {"DeployToNodeEditor"},
-        {"TextClean"},
-        {"TextTokenize"},
-        {"TextVectorize"},
-        {"TSWindow"},
-        {"TSFeatures"},
-        {"TSLag"},
-        {"TSDiff"},
-        {"PolynomialFeatures"},
-        {"Binning"},
+        {"DeployToNodeEditor", std::nullopt,
+         PipelineLegacyDispatchKind::DeployToNodeEditor},
+        {"TextClean", std::nullopt, PipelineLegacyDispatchKind::TextClean},
+        {"TextTokenize", std::nullopt,
+         PipelineLegacyDispatchKind::TextTokenize},
+        {"TextVectorize", std::nullopt,
+         PipelineLegacyDispatchKind::TextVectorize},
+        {"TSWindow", std::nullopt, PipelineLegacyDispatchKind::TSWindow},
+        {"TSFeatures", std::nullopt, PipelineLegacyDispatchKind::TSFeatures},
+        {"TSLag", std::nullopt, PipelineLegacyDispatchKind::TSLag},
+        {"TSDiff", std::nullopt, PipelineLegacyDispatchKind::TSDiff},
+        {"PolynomialFeatures", std::nullopt,
+         PipelineLegacyDispatchKind::PolynomialFeatures},
+        {"Binning", std::nullopt, PipelineLegacyDispatchKind::Binning},
         {"ExcelInput", gui::NodeType::ExcelFile},
         {"ExportCSV", gui::NodeType::ExportCSV},
         {"RowToColumnNames", gui::NodeType::RowToColumnNames},
@@ -408,6 +413,7 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             true});
         support.implementation_owner =
             PipelineRuntimeImplementationOwner::PipelineExecutor;
+        support.legacy_dispatch_kind = legacy_it->dispatch_kind;
         return support;
     }
 

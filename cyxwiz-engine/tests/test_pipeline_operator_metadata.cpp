@@ -430,6 +430,21 @@ int main() {
         Check(support.node_type == capability.node_type,
               std::string("legacy-dispatched runtime node type mismatch: ") +
                   capability.legacy_type_name);
+        Check(support.legacy_dispatch_kind == capability.dispatch_kind,
+              std::string("legacy-dispatched runtime dispatch kind mismatch: ") +
+                  capability.legacy_type_name);
+        if (capability.node_type.has_value()) {
+            Check(capability.dispatch_kind ==
+                      cyxwiz::PipelineLegacyDispatchKind::Unknown,
+                  std::string("typed legacy runtime should not also carry "
+                              "string-only dispatch kind: ") +
+                      capability.legacy_type_name);
+        } else {
+            Check(capability.dispatch_kind !=
+                      cyxwiz::PipelineLegacyDispatchKind::Unknown,
+                  std::string("string-only legacy runtime missing dispatch kind: ") +
+                      capability.legacy_type_name);
+        }
         const auto runtime_node_type =
             cyxwiz::ResolvePipelineRuntimeNodeType(capability.legacy_type_name);
         Check(runtime_node_type == capability.node_type,
