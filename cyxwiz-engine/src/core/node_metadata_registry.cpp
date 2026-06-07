@@ -1568,12 +1568,64 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"lr", "float", "0.01", "Learning rate", {}, ""}, {"momentum", "float", "0.9", "Momentum", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::StepLR, NodeCategory::Training, "Step LR", ICON_FA_GRADUATION_CAP,
+        {"step", "scheduler"}, 0, false, "Step learning-rate scheduler", "", "",
+        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
+        {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
+        {{"step_size", "int", "10", "Step size", {}, ""},
+         {"gamma", "float", "0.1", "Decay factor", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
     RegisterNode({NodeType::CosineAnnealing, NodeCategory::Training, "Cosine LR", ICON_FA_WAVE_SINE,
         {"cosine", "scheduler"}, 0, false, "Cosine LR scheduler", "", "",
         {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
         {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
         {{"T_max", "int", "100", "Max iterations", {}, ""}},
         NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::ReduceOnPlateau, NodeCategory::Training, "Reduce LR", ICON_FA_GRADUATION_CAP,
+        {"plateau", "scheduler"}, 0, false, "Reduce learning rate on plateau", "", "",
+        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
+        {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
+        {{"patience", "int", "10", "Patience", {}, ""},
+         {"factor", "float", "0.1", "Reduction factor", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::ExponentialLR, NodeCategory::Training, "Exponential LR", ICON_FA_GRADUATION_CAP,
+        {"exponential", "scheduler"}, 0, false, "Exponential learning-rate scheduler", "", "",
+        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
+        {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
+        {{"gamma", "float", "0.95", "Decay factor", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::WarmupScheduler, NodeCategory::Training, "Warmup LR", ICON_FA_GRADUATION_CAP,
+        {"warmup", "scheduler"}, 0, false, "Warmup learning-rate scheduler", "", "",
+        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
+        {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
+        {{"warmup_steps", "int", "1000", "Warmup steps", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::L1Regularization, NodeCategory::Regularization, "L1 Regularization", ICON_FA_GRADUATION_CAP,
+        {"l1", "regularization"}, 0, false, "L1 regularization", "", "",
+        {{"Loss", PinType::Loss, true, "Loss"}},
+        {{"Loss", PinType::Loss, true, "Regularized loss"}},
+        {{"lambda", "float", "0.0001", "Penalty strength", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::L2Regularization, NodeCategory::Regularization, "L2 Regularization", ICON_FA_GRADUATION_CAP,
+        {"l2", "regularization"}, 0, false, "L2 regularization", "", "",
+        {{"Loss", PinType::Loss, true, "Loss"}},
+        {{"Loss", PinType::Loss, true, "Regularized loss"}},
+        {{"lambda", "float", "0.0001", "Penalty strength", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::ElasticNet, NodeCategory::Regularization, "Elastic Net", ICON_FA_GRADUATION_CAP,
+        {"elasticnet", "regularization"}, 0, false, "Elastic-net regularization", "", "",
+        {{"Loss", PinType::Loss, true, "Loss"}},
+        {{"Loss", PinType::Loss, true, "Regularized loss"}},
+        {{"l1_lambda", "float", "0.0001", "L1 penalty", {}, ""},
+         {"l2_lambda", "float", "0.0001", "L2 penalty", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::Output, NodeCategory::Training, "Output", ICON_FA_ARROW_RIGHT,
         {"output", "final"}, 0, false, "Model output", "", "",

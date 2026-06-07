@@ -776,6 +776,13 @@ entries are forced to template/blocked state and expose the stable
 training backend support mode plus the central reason in help text. The
 drift suite verifies those labels and reasons.
 
+**Status 2026-06-07 follow-up 9:** Training-control capability entries
+now have matching metadata coverage for scheduler and regularization
+nodes such as StepLR, ReduceOnPlateau, ExponentialLR, WarmupScheduler,
+L1/L2 regularization, and ElasticNet. They register as blocked templates
+and inherit the central training-backend support reason; the drift suite
+now requires metadata for every unsupported training-control capability.
+
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit
@@ -924,8 +931,8 @@ storage scope, and implementation owner from the same registry.
 Registered unsupported training-backend nodes now expose the central
 training support mode and reason through the same metadata path.
 Remaining work is broader frontend presentation for capability axes that
-still have no registered metadata entry or visible UI affordance, not
-another parallel UI support list.
+still have no visible UI affordance, not another parallel UI support
+list.
 
 Scope:
 

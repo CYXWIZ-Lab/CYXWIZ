@@ -730,9 +730,9 @@ int main() {
     for (const auto& capability :
          cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         const auto* meta = metadata.GetMetadata(capability.node_type);
-        if (meta == nullptr) {
-            continue;
-        }
+        Check(meta != nullptr,
+              "missing unsupported training control metadata for type " +
+                  TypeId(capability.node_type));
         Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
               "unsupported training control " + TypeId(capability.node_type) +
                   " should not be marked implemented");
