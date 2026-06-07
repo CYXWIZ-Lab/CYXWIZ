@@ -31,6 +31,11 @@ struct PipelineInputArityRuntimeCapability {
     int required_input_count;
 };
 
+struct PipelineRequiredParameterRuntimeCapability {
+    const char* legacy_type_name;
+    std::vector<const char*> required_parameters;
+};
+
 enum class PipelineRuntimeSupportMode {
     Unknown,
     LegacyExecutor,
@@ -60,6 +65,9 @@ GetPipelineSourceRuntimeCapabilities();
 const std::vector<PipelineInputArityRuntimeCapability>&
 GetPipelineInputArityRuntimeCapabilities();
 
+const std::vector<PipelineRequiredParameterRuntimeCapability>&
+GetPipelineRequiredParameterRuntimeCapabilities();
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name);
 
 std::optional<gui::NodeType>
@@ -76,5 +84,8 @@ bool IsPipelineLegacyRuntimeNode(const std::string& legacy_type_name);
 bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name);
 
 std::optional<int> ResolvePipelineRequiredInputCount(const std::string& legacy_type_name);
+
+std::vector<const char*>
+ResolvePipelineRequiredParameters(const std::string& legacy_type_name);
 
 } // namespace cyxwiz

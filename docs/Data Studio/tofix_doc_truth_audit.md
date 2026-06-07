@@ -138,3 +138,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: made PipelineMaterializer source-scope truth
   explicit in `MaterializeResult`, including Arrow-table support and
   non-Arrow source skips for legacy text/parquet/image/audio-style paths.
+- 2026-06-07 follow-up: moved active legacy transform required-parameter
+  truth into `pipeline_runtime_capabilities` and added metadata drift
+  coverage for those entries.

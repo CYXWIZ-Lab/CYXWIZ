@@ -113,27 +113,10 @@ const char* MissingRequiredParameter(
         return HasNonEmptyParameter(parameters, "file_path") ? nullptr : "file_path";
     }
 
-    if (node_type == "FilterRows") {
-        return HasNonEmptyParameter(parameters, "condition") ? nullptr : "condition";
-    }
-
-    if (node_type == "SelectColumns" || node_type == "SortRows") {
-        return HasNonEmptyParameter(parameters, "columns") ? nullptr : "columns";
-    }
-
-    if (node_type == "Join") {
-        return HasNonEmptyParameter(parameters, "on_column") ? nullptr : "on_column";
-    }
-
-    if (node_type == "GroupBy") {
-        if (!HasNonEmptyParameter(parameters, "group_columns")) {
-            return "group_columns";
+    for (const char* parameter : ResolvePipelineRequiredParameters(node_type)) {
+        if (!HasNonEmptyParameter(parameters, parameter)) {
+            return parameter;
         }
-        return HasNonEmptyParameter(parameters, "aggregations") ? nullptr : "aggregations";
-    }
-
-    if (node_type == "StringManipulation") {
-        return HasNonEmptyParameter(parameters, "column") ? nullptr : "column";
     }
 
     return nullptr;

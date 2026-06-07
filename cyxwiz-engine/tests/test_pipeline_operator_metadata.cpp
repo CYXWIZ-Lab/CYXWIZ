@@ -201,6 +201,27 @@ int main() {
                   capability.legacy_type_name);
     }
 
+    for (const auto& capability :
+         cyxwiz::GetPipelineRequiredParameterRuntimeCapabilities()) {
+        const auto required_parameters = cyxwiz::ResolvePipelineRequiredParameters(
+            capability.legacy_type_name);
+        Check(!required_parameters.empty(),
+              std::string("required-parameter runtime name does not resolve: ") +
+                  capability.legacy_type_name);
+        Check(required_parameters.size() == capability.required_parameters.size(),
+              std::string("required-parameter count mismatch: ") +
+                  capability.legacy_type_name);
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
+                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+              std::string("required-parameter runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        for (const char* parameter : capability.required_parameters) {
+            Check(parameter != nullptr && std::string(parameter).size() > 1,
+                  std::string("required parameter name is too weak: ") +
+                      capability.legacy_type_name);
+        }
+    }
+
     const std::vector<gui::NodeType> supported_model_nodes = {
         gui::NodeType::LSTM,
         gui::NodeType::GRU,

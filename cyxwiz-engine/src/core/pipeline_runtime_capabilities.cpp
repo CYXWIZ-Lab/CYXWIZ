@@ -160,6 +160,19 @@ GetPipelineInputArityRuntimeCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineRequiredParameterRuntimeCapability>&
+GetPipelineRequiredParameterRuntimeCapabilities() {
+    static const std::vector<PipelineRequiredParameterRuntimeCapability> capabilities = {
+        {"FilterRows", {"condition"}},
+        {"SelectColumns", {"columns"}},
+        {"SortRows", {"columns"}},
+        {"Join", {"on_column"}},
+        {"GroupBy", {"group_columns", "aggregations"}},
+        {"StringManipulation", {"column"}},
+    };
+    return capabilities;
+}
+
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
@@ -239,6 +252,19 @@ std::optional<int> ResolvePipelineRequiredInputCount(const std::string& legacy_t
         return std::nullopt;
     }
     return it->required_input_count;
+}
+
+std::vector<const char*>
+ResolvePipelineRequiredParameters(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineRequiredParameterRuntimeCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&legacy_type_name](const PipelineRequiredParameterRuntimeCapability& capability) {
+            return legacy_type_name == capability.legacy_type_name;
+        });
+    if (it == capabilities.end()) {
+        return {};
+    }
+    return it->required_parameters;
 }
 
 } // namespace cyxwiz
