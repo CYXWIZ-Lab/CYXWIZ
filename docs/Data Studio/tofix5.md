@@ -55,8 +55,11 @@ Current truth after the 2026-06-07 cleanup:
    missing source/export parameters, unsupported source/export parameter
    values, and node types unknown to the central runtime capability
    registry.
-5. Still pending: `PipelineMaterializer` only materializes in-memory Arrow graphs and
-   explicitly skips Parquet-backed, image, audio, and text sources.
+5. Partially fixed for truth: `PipelineMaterializer` only materializes
+   in-memory Arrow graphs and explicitly skips Parquet-backed, image,
+   audio, and text sources. Runtime capabilities now expose that
+   operator-backed materializer support is `ArrowTableOnly`, not general
+   storage-mode support.
 6. Partially fixed: audited placeholder branches in `PipelineExecutor`
    now fail closed instead of returning fake success, and exact
    operator-backed names route through `PipelineOperatorFactory`.
@@ -582,8 +585,9 @@ runtime-support modes before execution, and source-node role truth now
 lives in the same module. Fixed multi-input arity overrides, currently
 `Join`, are also centralized there. Runtime support now carries the
 first materializer dimension: exact operator-backed nodes are marked
-Arrow-table materializer capable, while fail-closed and legacy-dispatched
-nodes are not. Static source/export required parameters and required
+`ArrowTableOnly` materializer capable, while fail-closed and
+legacy-dispatched nodes are marked `None`. Static source/export required
+parameters and required
 legacy transform parameters for active runtime validation are now
 centralized there as well, along with supported enum values such as
 `DataInput.source_type` and `DataOutput.format` and bounded integer

@@ -212,16 +212,28 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
-        return {PipelineRuntimeSupportMode::OperatorBacked, operator_type, nullptr, true};
+        return {PipelineRuntimeSupportMode::OperatorBacked,
+                operator_type,
+                nullptr,
+                PipelineMaterializerStorageSupport::ArrowTableOnly,
+                true};
     }
 
     if (const char* reason = ResolvePipelineFailClosedReason(legacy_type_name);
         reason != nullptr) {
-        return {PipelineRuntimeSupportMode::FailClosed, std::nullopt, reason, false};
+        return {PipelineRuntimeSupportMode::FailClosed,
+                std::nullopt,
+                reason,
+                PipelineMaterializerStorageSupport::None,
+                false};
     }
 
     if (IsPipelineLegacyRuntimeNode(legacy_type_name)) {
-        return {PipelineRuntimeSupportMode::LegacyExecutor, std::nullopt, nullptr, false};
+        return {PipelineRuntimeSupportMode::LegacyExecutor,
+                std::nullopt,
+                nullptr,
+                PipelineMaterializerStorageSupport::None,
+                false};
     }
 
     return {};

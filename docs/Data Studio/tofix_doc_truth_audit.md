@@ -210,3 +210,7 @@ scanning so stale or duplicate work is not reintroduced.
   table/export helpers (`CellExtractor`, `CellUpdater`, `ColumnAppender`,
   `RowAppender`, `Unpivot`, `ExportExcel`, `ExportJSON`) so the node
   registry no longer marks runtime-blocked nodes as implemented.
+- 2026-06-07 follow-up: made the runtime capability materializer
+  dimension explicit as `ArrowTableOnly` versus `None`, matching the
+  current `PipelineMaterializer` storage scope instead of implying
+  general graph materialization.

@@ -194,6 +194,10 @@ int main() {
         Check(support.materializer_arrow_table_supported,
               std::string("operator-backed runtime should be Arrow-materializer capable: ") +
                   capability.legacy_type_name);
+        Check(support.materializer_storage_support ==
+                  cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly,
+              std::string("operator-backed runtime should advertise Arrow-only materializer scope: ") +
+                  capability.legacy_type_name);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
@@ -220,6 +224,10 @@ int main() {
         Check(!support.materializer_arrow_table_supported,
               std::string("fail-closed runtime should not be Arrow-materializer capable: ") +
                   capability.legacy_type_name);
+        Check(support.materializer_storage_support ==
+                  cyxwiz::PipelineMaterializerStorageSupport::None,
+              std::string("fail-closed runtime should not advertise materializer scope: ") +
+                  capability.legacy_type_name);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {
@@ -236,6 +244,10 @@ int main() {
                   capability.legacy_type_name);
         Check(!support.materializer_arrow_table_supported,
               std::string("legacy-dispatched runtime should not claim Arrow materializer support: ") +
+                  capability.legacy_type_name);
+        Check(support.materializer_storage_support ==
+                  cyxwiz::PipelineMaterializerStorageSupport::None,
+              std::string("legacy-dispatched runtime should not advertise materializer scope: ") +
                   capability.legacy_type_name);
     }
 
