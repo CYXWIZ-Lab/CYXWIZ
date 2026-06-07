@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <charconv>
 #include <queue>
 #include <future>
 #include <thread>
@@ -23,6 +24,17 @@ bool HasNonEmptyParameter(const std::map<std::string, std::string>& parameters,
                           const std::string& name) {
     auto it = parameters.find(name);
     return it != parameters.end() && !it->second.empty();
+}
+
+bool IsNonNegativeInteger(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+    int parsed = 0;
+    const char* begin = value.data();
+    const char* end = value.data() + value.size();
+    auto [ptr, ec] = std::from_chars(begin, end, parsed);
+    return ec == std::errc() && ptr == end && parsed >= 0;
 }
 
 const char* MissingRequiredParameter(
@@ -69,6 +81,26 @@ bool HasSupportedParameterValues(
             source_type != "ml_dataset") {
             error = "DataInput source_type '" + source_type +
                     "' is not supported by PipelineExecutor";
+            return false;
+        }
+
+        const auto type_it = parameters.find("type");
+        const std::string file_type =
+            (type_it != parameters.end() && !type_it->second.empty())
+                ? type_it->second
+                : "csv";
+        const auto skip_rows_it = parameters.find("skip_rows");
+        if (source_type == "file" && skip_rows_it != parameters.end() &&
+            !skip_rows_it->second.empty() &&
+            !IsNonNegativeInteger(skip_rows_it->second)) {
+            error = "DataInput skip_rows must be a non-negative integer";
+            return false;
+        }
+        const auto sheet_idx_it = parameters.find("sheet_idx");
+        if (source_type == "file" && file_type == "excel" &&
+            sheet_idx_it != parameters.end() && !sheet_idx_it->second.empty() &&
+            !IsNonNegativeInteger(sheet_idx_it->second)) {
+            error = "DataInput sheet_idx must be a non-negative integer";
             return false;
         }
     }
@@ -340,7 +372,7 @@ std::vector<int> PipelineExecutor::TopologicalSort(const std::vector<Node>& node
 
     // Build adjacency list and in-degree map
     for (const auto& node : nodes) {
-        in_degree[node.id] = node.inputs.size();
+        in_degree[node.id] = static_cast<int>(node.inputs.size());
         adj_list[node.id] = node.outputs;
     }
 
@@ -2653,8 +2685,8 @@ bool PipelineExecutor::ExecuteTableCropper(const Node& node, ExecutionContext& c
     auto start_row_it = node.parameters.find("start_row");
     auto end_row_it = node.parameters.find("end_row");
 
-    int start_row = (start_row_it != node.parameters.end()) ? std::stoi(start_row_it->second) : 0;
-    int end_row = (end_row_it != node.parameters.end()) ? std::stoi(end_row_it->second) : -1;
+    int64_t start_row = (start_row_it != node.parameters.end()) ? std::stoll(start_row_it->second) : 0;
+    int64_t end_row = (end_row_it != node.parameters.end()) ? std::stoll(end_row_it->second) : -1;
 
     std::string output_dataset_name = "ds_cropped_" + std::to_string(node.id);
     spdlog::info("[Data Studio] Cropping table rows {}:{}", start_row, end_row);

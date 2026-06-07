@@ -190,8 +190,10 @@ source/export parameters such as `DataInput.file_path`,
 `DataInput.folder_path`, `FileInput.path`, and output `file_path`
 settings. Validation also rejects node types that are unknown to the
 central runtime capability registry before execution starts. Validation
-errors now preserve the specific failed rule. Full schema/type-aware
-validation remains future work.
+now rejects invalid `DataInput.skip_rows` and Excel `sheet_idx` integer
+parameters before execution reaches `std::stoi`. Validation errors now
+preserve the specific failed rule. Broader schema/type-aware validation
+remains future work.
 
 Relevant files:
 
@@ -207,7 +209,8 @@ Problem:
 Effect:
 
 - schema/type-invalid graphs can still reach runtime for node families
-  without dedicated validation
+  without dedicated validation beyond the current source parameter
+  baseline
 - some runtime correctness still depends on late execution-time failures
 
 Recommendation:
@@ -219,7 +222,8 @@ Recommendation:
   - missing required inputs
   - unsupported node types for execution paths beyond the current legacy
     executor/runtime registry baseline
-  - obvious type/schema mismatches
+  - obvious type/schema mismatches beyond the current source integer
+    parameter baseline
 
 ---
 

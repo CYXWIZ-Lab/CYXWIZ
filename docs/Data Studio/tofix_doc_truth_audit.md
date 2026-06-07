@@ -125,3 +125,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: added the first materializer capability dimension
   to `PipelineRuntimeSupport`: operator-backed nodes are marked
   Arrow-table materializer capable; legacy and fail-closed nodes are not.
+- 2026-06-07 follow-up: added source integer parameter validation for
+  `DataInput.skip_rows` and Excel `sheet_idx`, preventing late
+  execution-time `std::stoi` failures.
