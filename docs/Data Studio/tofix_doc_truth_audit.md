@@ -279,3 +279,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: carried the optional fail-closed metadata node
   identity through resolved `PipelineRuntimeSupport` so routing support
   truth and metadata status truth remain tied together.
+- 2026-06-07 follow-up: added stable names and drift coverage for
+  runtime support mode, materializer storage support scope, and training
+  backend support mode.

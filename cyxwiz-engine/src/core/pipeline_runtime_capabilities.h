@@ -162,7 +162,15 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
 
 const char* PipelineStorageBackendName(PipelineStorageBackend backend);
 
+const char* PipelineRuntimeSupportModeName(PipelineRuntimeSupportMode mode);
+
 const char* PipelineRuntimeFailModeName(PipelineRuntimeFailMode fail_mode);
+
+const char* PipelineMaterializerStorageSupportName(
+    PipelineMaterializerStorageSupport support);
+
+const char* PipelineTrainingBackendSupportModeName(
+    PipelineTrainingBackendSupportMode mode);
 
 PipelineMaterializerStorageBackendCapability
 ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend);

@@ -399,6 +399,20 @@ const char* PipelineStorageBackendName(PipelineStorageBackend backend) {
     return "Unknown";
 }
 
+const char* PipelineRuntimeSupportModeName(PipelineRuntimeSupportMode mode) {
+    switch (mode) {
+    case PipelineRuntimeSupportMode::LegacyExecutor:
+        return "legacy_executor";
+    case PipelineRuntimeSupportMode::OperatorBacked:
+        return "operator_backed";
+    case PipelineRuntimeSupportMode::FailClosed:
+        return "fail_closed";
+    case PipelineRuntimeSupportMode::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
 const char* PipelineRuntimeFailModeName(PipelineRuntimeFailMode fail_mode) {
     switch (fail_mode) {
     case PipelineRuntimeFailMode::Real:
@@ -411,6 +425,30 @@ const char* PipelineRuntimeFailModeName(PipelineRuntimeFailMode fail_mode) {
         return "passthrough";
     case PipelineRuntimeFailMode::Unknown:
         return "unknown";
+    }
+    return "unknown";
+}
+
+const char* PipelineMaterializerStorageSupportName(
+    PipelineMaterializerStorageSupport support) {
+    switch (support) {
+    case PipelineMaterializerStorageSupport::None:
+        return "none";
+    case PipelineMaterializerStorageSupport::ArrowTableOnly:
+        return "arrow_table_only";
+    }
+    return "unknown";
+}
+
+const char* PipelineTrainingBackendSupportModeName(
+    PipelineTrainingBackendSupportMode mode) {
+    switch (mode) {
+    case PipelineTrainingBackendSupportMode::Allowed:
+        return "allowed";
+    case PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer:
+        return "unsupported_sequential_model_layer";
+    case PipelineTrainingBackendSupportMode::UnsupportedTrainingControl:
+        return "unsupported_training_control";
     }
     return "unknown";
 }

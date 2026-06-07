@@ -643,7 +643,10 @@ explicit `fail_mode` axis now lives
 on resolved runtime support too: operator-backed and active
 legacy-dispatched paths report `real`, while known unsupported paths
 report `hard_fail`; stable fail-mode names are covered by the drift
-test. Materializer storage-backend truth is now centralized too: Arrow
+test. Stable names now also exist for runtime support mode,
+materializer storage support scope, and training backend support mode,
+with drift coverage so frontend-facing support labels do not silently
+change. Materializer storage-backend truth is now centralized too: Arrow
 tables are the only supported materializer backend, while
 Parquet-backed, image, audio, and text datasets carry explicit
 unsupported reasons and `PipelineMaterializer` consults that registry
@@ -785,10 +788,10 @@ Status: in progress. Runtime support now has centralized operator,
 legacy, fail-closed, fail-mode, fail-closed metadata status,
 required-parameter, enum, integer-validation, source-node, required-input-count,
 compiler-blocked training, first training backend support mode,
-Arrow-table materializer-scope truth, and materializer storage-backend
-availability. The remaining work is the broader multi-axis matrix for
-compile/runtime support beyond the first training backend availability
-axis.
+Arrow-table materializer-scope truth, materializer storage-backend
+availability, and stable names for the exposed support axes. The
+remaining work is the broader multi-axis matrix for compile/runtime
+support beyond the first training backend availability axis.
 
 Scope:
 

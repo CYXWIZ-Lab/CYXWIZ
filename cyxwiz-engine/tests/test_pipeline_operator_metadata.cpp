@@ -369,6 +369,19 @@ int main() {
                   capability.legacy_type_name);
     }
 
+    Check(std::string(cyxwiz::PipelineRuntimeSupportModeName(
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor)) ==
+              "legacy_executor",
+          "runtime support mode name for legacy executor is stable");
+    Check(std::string(cyxwiz::PipelineRuntimeSupportModeName(
+              cyxwiz::PipelineRuntimeSupportMode::OperatorBacked)) ==
+              "operator_backed",
+          "runtime support mode name for operator-backed is stable");
+    Check(std::string(cyxwiz::PipelineRuntimeSupportModeName(
+              cyxwiz::PipelineRuntimeSupportMode::FailClosed)) ==
+              "fail_closed",
+          "runtime support mode name for fail-closed is stable");
+
     Check(std::string(cyxwiz::PipelineRuntimeFailModeName(
               cyxwiz::PipelineRuntimeFailMode::Real)) == "real",
           "runtime fail-mode name for real is stable");
@@ -381,6 +394,29 @@ int main() {
     Check(std::string(cyxwiz::PipelineRuntimeFailModeName(
               cyxwiz::PipelineRuntimeFailMode::Passthrough)) == "passthrough",
           "runtime fail-mode name for passthrough is stable");
+
+    Check(std::string(cyxwiz::PipelineMaterializerStorageSupportName(
+              cyxwiz::PipelineMaterializerStorageSupport::None)) == "none",
+          "materializer storage support name for none is stable");
+    Check(std::string(cyxwiz::PipelineMaterializerStorageSupportName(
+              cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly)) ==
+              "arrow_table_only",
+          "materializer storage support name for ArrowTableOnly is stable");
+
+    Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
+              cyxwiz::PipelineTrainingBackendSupportMode::Allowed)) ==
+              "allowed",
+          "training backend support mode name for allowed is stable");
+    Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
+              cyxwiz::PipelineTrainingBackendSupportMode::
+                  UnsupportedSequentialModelLayer)) ==
+              "unsupported_sequential_model_layer",
+          "training backend support mode name for unsupported layer is stable");
+    Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
+              cyxwiz::PipelineTrainingBackendSupportMode::
+                  UnsupportedTrainingControl)) ==
+              "unsupported_training_control",
+          "training backend support mode name for unsupported control is stable");
 
     for (const auto& capability : cyxwiz::GetPipelineSourceRuntimeCapabilities()) {
         Check(cyxwiz::IsPipelineSourceRuntimeNode(capability.legacy_type_name),
