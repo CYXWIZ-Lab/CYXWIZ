@@ -591,6 +591,13 @@ int main() {
         Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
               std::string("fail-closed runtime metadata should not be marked implemented: ") +
                   capability.legacy_type_name);
+        Check(meta->badge == "Blocked",
+              std::string("fail-closed runtime metadata should carry blocked badge: ") +
+                  capability.legacy_type_name);
+        Check(capability.reason != nullptr &&
+                  meta->help_text.find(capability.reason) != std::string::npos,
+              std::string("fail-closed runtime metadata should expose central reason: ") +
+                  capability.legacy_type_name);
     }
 
     const std::vector<gui::NodeType> unsupported_training_nodes = {

@@ -1,4 +1,5 @@
 #include "node_metadata_registry.h"
+#include "pipeline_runtime_capabilities.h"
 #include "../gui/icons.h"
 #include <algorithm>
 #include <cctype>
@@ -213,6 +214,35 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
 
     InitializeKNIMENodes();
     InitializeUtilityNodes();
+    ApplyRuntimeCapabilityStatus();
+}
+
+void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
+    for (const auto& capability : GetPipelineFailClosedRuntimeCapabilities()) {
+        if (!capability.metadata_node_type.has_value()) {
+            continue;
+        }
+
+        auto it = metadata_.find(*capability.metadata_node_type);
+        if (it == metadata_.end()) {
+            continue;
+        }
+
+        auto& metadata = it->second;
+        metadata.status = NodeImplementationStatus::Template;
+        metadata.badge = "Blocked";
+
+        if (capability.reason != nullptr) {
+            const std::string reason = capability.reason;
+            if (metadata.help_text.find(reason) == std::string::npos) {
+                if (!metadata.help_text.empty()) {
+                    metadata.help_text += "\n\n";
+                }
+                metadata.help_text += "Runtime support: ";
+                metadata.help_text += reason;
+            }
+        }
+    }
 }
 
 void NodeMetadataRegistry::RegisterNode(NodeMetadata metadata) {

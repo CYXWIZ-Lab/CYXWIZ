@@ -1285,6 +1285,7 @@ add_executable(test_pattern_template_guard
     tests/test_pattern_template_guard.cpp
     src/gui/patterns/pattern_library.cpp
     src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
 )
 
 target_include_directories(test_pattern_template_guard PRIVATE

@@ -134,6 +134,9 @@ private:
     // Initialize all built-in node definitions
     void InitializeBuiltinNodes();
 
+    // Apply runtime capability truth to browser-visible metadata.
+    void ApplyRuntimeCapabilityStatus();
+
     // Initialize data source nodes (I/O)
     void InitializeDataSourceNodes();
 

@@ -657,9 +657,19 @@ Resolved runtime support now also carries an explicit
 legacy-dispatched nodes are marked executable, fail-closed and unknown
 nodes are not, and `PipelineExecutor` validation now rejects unsupported
 nodes from that central axis with the registry fail-closed reason before
-any fake execution branch can run. Remaining work is frontend
-consumption of the same support truth, not another separate runtime
-list.
+any fake execution branch can run. Browser-visible node metadata now
+also consumes the fail-closed portion of that central truth: matching
+nodes are forced to template status, carry a `Blocked` badge, and expose
+the registry reason in help text. Remaining work is broader frontend
+presentation of all support axes, not another separate runtime list.
+
+**Status 2026-06-07 follow-up 4:** `NodeMetadataRegistry` now applies
+fail-closed runtime capability status after built-in metadata
+initialization. The add-node search and node browser already consume
+that metadata, so unsupported runtime-backed nodes now inherit the
+central blocked status and reason instead of relying on parallel
+frontend assumptions. The drift suite verifies the badge and reason
+alongside template status.
 
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
@@ -799,9 +809,11 @@ Arrow-table materializer-scope truth, materializer storage-backend
 availability, pipeline-executor availability, and stable names for the
 exposed support axes. The graph compiler, PipelineExecutor validation,
 PipelineExecutor routing, and PipelineMaterializer now consume the
-central capability truth for their covered axes. Remaining work is to
-expose/consume this same truth in the frontend instead of maintaining
-parallel UI support assumptions.
+central capability truth for their covered axes. Browser-visible node
+metadata now consumes fail-closed runtime truth for matching nodes and
+pushes the blocked badge/reason into the existing add-node search and
+node browser metadata path. Remaining work is broader frontend
+presentation of all support axes, not another parallel UI support list.
 
 Scope:
 
