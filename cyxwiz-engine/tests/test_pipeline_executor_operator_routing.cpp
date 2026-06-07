@@ -789,6 +789,25 @@ int main() {
           "StringManipulation unknown operation error should be specific: " +
               bad_string_operation_executor.GetLastError());
 
+    const std::string numeric_string_manipulation_json =
+        R"({"nodes":[)"
+        R"({"id":87,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":88,"type":"StringManipulation","name":"BadStringColumn","parameters":{)"
+        R"("column":"x","operation":"lower"}})"
+        R"(],"links":[{"start_node":87,"end_node":88}]})";
+
+    cyxwiz::PipelineExecutor numeric_string_manipulation_executor;
+    Check(!numeric_string_manipulation_executor.ExecutePipeline(
+              numeric_string_manipulation_json),
+          "StringManipulation on numeric column should fail schema validation");
+    Check(numeric_string_manipulation_executor.GetLastError().find(
+              "StringManipulation: column 'x' must be string") !=
+              std::string::npos,
+          "StringManipulation numeric column error should be specific: " +
+              numeric_string_manipulation_executor.GetLastError());
+
     const std::string binning_json =
         R"({"nodes":[)"
         R"({"id":71,"type":"DataInput","name":"Input","parameters":{)"
@@ -844,6 +863,23 @@ int main() {
               "Binning method 'quantile' is not supported") != std::string::npos,
           "Binning unknown method validation should be specific: " +
               bad_binning_method_executor.GetLastError());
+
+    const std::string text_binning_json =
+        R"({"nodes":[)"
+        R"({"id":89,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":90,"type":"Binning","name":"TextBin","parameters":{)"
+        R"("columns":"phrase","method":"equal_width","n_bins":"2"}})"
+        R"(],"links":[{"start_node":89,"end_node":90}]})";
+
+    cyxwiz::PipelineExecutor text_binning_executor;
+    Check(!text_binning_executor.ExecutePipeline(text_binning_json),
+          "Binning on text column should fail schema validation");
+    Check(text_binning_executor.GetLastError().find(
+              "Binning: column 'phrase' must be numeric") != std::string::npos,
+          "Binning text column error should be specific: " +
+              text_binning_executor.GetLastError());
 
     const std::string polynomial_json =
         R"({"nodes":[)"
@@ -903,6 +939,25 @@ int main() {
           "PolynomialFeatures multi-column validation should be specific: " +
               multi_column_polynomial_executor.GetLastError());
 
+    const std::string missing_polynomial_column_json =
+        R"({"nodes":[)"
+        R"({"id":91,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":92,"type":"PolynomialFeatures","name":"MissingPolyColumn","parameters":{)"
+        R"("columns":"missing","degree":"2"}})"
+        R"(],"links":[{"start_node":91,"end_node":92}]})";
+
+    cyxwiz::PipelineExecutor missing_polynomial_column_executor;
+    Check(!missing_polynomial_column_executor.ExecutePipeline(
+              missing_polynomial_column_json),
+          "PolynomialFeatures missing input column should fail schema validation");
+    Check(missing_polynomial_column_executor.GetLastError().find(
+              "PolynomialFeatures: column 'missing' not found") !=
+              std::string::npos,
+          "PolynomialFeatures missing column error should be specific: " +
+              missing_polynomial_column_executor.GetLastError());
+
     const std::string table_splitter_json =
         R"({"nodes":[)"
         R"({"id":83,"type":"DataInput","name":"Input","parameters":{)"
@@ -944,10 +999,13 @@ int main() {
     registry.UnloadDataset("ds_string_66");
     registry.UnloadDataset("ds_datainput_67");
     registry.UnloadDataset("ds_string_68");
+    registry.UnloadDataset("ds_datainput_87");
     registry.UnloadDataset("ds_datainput_71");
     registry.UnloadDataset("ds_binning_72");
+    registry.UnloadDataset("ds_datainput_89");
     registry.UnloadDataset("ds_datainput_77");
     registry.UnloadDataset("ds_poly_78");
+    registry.UnloadDataset("ds_datainput_91");
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
     fs::remove(export_csv_path);

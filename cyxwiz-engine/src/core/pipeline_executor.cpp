@@ -99,6 +99,9 @@ std::string QuoteSqlStringLiteral(const std::string& value) {
 }
 
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    if (!type) {
+        return false;
+    }
     switch (type->id()) {
         case arrow::Type::INT8:
         case arrow::Type::INT16:
@@ -114,6 +117,40 @@ bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
         default:
             return false;
     }
+}
+
+bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    return type &&
+           (type->id() == arrow::Type::STRING ||
+            type->id() == arrow::Type::LARGE_STRING);
+}
+
+bool RequireColumnKind(const std::shared_ptr<arrow::Table>& table,
+                       const std::string& node_type,
+                       const std::string& column,
+                       const std::string& kind,
+                       bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+                       std::string& error) {
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+
+    const int column_index = table->schema()->GetFieldIndex(column);
+    if (column_index < 0) {
+        error = node_type + ": column '" + column + "' not found";
+        return false;
+    }
+
+    const auto field = table->schema()->field(column_index);
+    if (!field || !predicate(field->type())) {
+        const std::string found =
+            field && field->type() ? field->type()->ToString() : "unknown";
+        error = node_type + ": column '" + column + "' must be " + kind +
+                " (found " + found + ")";
+        return false;
+    }
+    return true;
 }
 
 bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
@@ -2314,6 +2351,12 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "PolynomialFeatures", column,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -2399,6 +2442,12 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "Binning", column,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -3053,6 +3102,12 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "StringManipulation", column,
+                               "string", IsStringArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {

@@ -208,7 +208,10 @@ links whose start or end node id is missing
 now fail during parsing instead of being silently dropped. Disconnected
 graphs now fail validation instead of running as independent islands.
 Validation and parse errors now preserve the specific failed rule. Broader
-schema/type-aware validation remains future work.
+schema/type-aware validation remains future work, but the active
+column-transform path now rejects obvious loaded-table mismatches for
+`StringManipulation`, `Binning`, and `PolynomialFeatures` before DuckDB
+query construction.
 
 Relevant files:
 
@@ -224,8 +227,9 @@ Problem:
 Effect:
 
 - schema/type-invalid graphs can still reach runtime for node families
-  without dedicated validation beyond the current source parameter
-  and legacy scalar-integer baseline
+  without dedicated validation beyond the current source parameter,
+  legacy scalar-integer baseline, and the first loaded-table column
+  checks for string/numeric transform nodes
 - some runtime correctness still depends on late execution-time failures
 
 Recommendation:
@@ -238,8 +242,9 @@ Recommendation:
   - missing required inputs
   - unsupported node types for execution paths beyond the current legacy
     executor/runtime registry baseline
-  - obvious type/schema mismatches beyond the current source and legacy
-    scalar-integer parameter baseline
+  - obvious type/schema mismatches beyond the current source, legacy
+    scalar-integer parameter baseline, and first active column-transform
+    schema checks
 
 ---
 
