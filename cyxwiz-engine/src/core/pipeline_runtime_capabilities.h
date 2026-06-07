@@ -115,6 +115,8 @@ struct PipelineRuntimeSupport {
     PipelineMaterializerStorageSupport materializer_storage_support =
         PipelineMaterializerStorageSupport::None;
     bool materializer_arrow_table_supported = false;
+    bool source_node = false;
+    std::optional<int> required_input_count = std::nullopt;
 };
 
 const std::vector<PipelineOperatorRuntimeCapability>&

@@ -290,33 +290,44 @@ GetPipelineMaterializerStorageBackendCapabilities() {
 }
 
 PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_type_name) {
+    const auto with_validation_axes =
+        [&legacy_type_name](PipelineRuntimeSupport support) {
+            support.source_node = IsPipelineSourceRuntimeNode(legacy_type_name);
+            support.required_input_count =
+                ResolvePipelineRequiredInputCount(legacy_type_name);
+            return support;
+        };
+
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
-        return {PipelineRuntimeSupportMode::OperatorBacked,
-                PipelineRuntimeFailMode::Real,
-                operator_type,
-                nullptr,
-                PipelineMaterializerStorageSupport::ArrowTableOnly,
-                true};
+        return with_validation_axes({
+            PipelineRuntimeSupportMode::OperatorBacked,
+            PipelineRuntimeFailMode::Real,
+            operator_type,
+            nullptr,
+            PipelineMaterializerStorageSupport::ArrowTableOnly,
+            true});
     }
 
     if (const char* reason = ResolvePipelineFailClosedReason(legacy_type_name);
         reason != nullptr) {
-        return {PipelineRuntimeSupportMode::FailClosed,
-                PipelineRuntimeFailMode::HardFail,
-                std::nullopt,
-                reason,
-                PipelineMaterializerStorageSupport::None,
-                false};
+        return with_validation_axes({
+            PipelineRuntimeSupportMode::FailClosed,
+            PipelineRuntimeFailMode::HardFail,
+            std::nullopt,
+            reason,
+            PipelineMaterializerStorageSupport::None,
+            false});
     }
 
     if (IsPipelineLegacyRuntimeNode(legacy_type_name)) {
-        return {PipelineRuntimeSupportMode::LegacyExecutor,
-                PipelineRuntimeFailMode::Real,
-                std::nullopt,
-                nullptr,
-                PipelineMaterializerStorageSupport::None,
-                false};
+        return with_validation_axes({
+            PipelineRuntimeSupportMode::LegacyExecutor,
+            PipelineRuntimeFailMode::Real,
+            std::nullopt,
+            nullptr,
+            PipelineMaterializerStorageSupport::None,
+            false});
     }
 
     return {};

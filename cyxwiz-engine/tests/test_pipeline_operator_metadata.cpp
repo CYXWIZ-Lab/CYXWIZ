@@ -383,9 +383,13 @@ int main() {
         Check(cyxwiz::IsPipelineSourceRuntimeNode(capability.legacy_type_name),
               std::string("source runtime name does not resolve: ") +
                   capability.legacy_type_name);
-        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
-                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            capability.legacy_type_name);
+        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
               std::string("source runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        Check(support.source_node,
+              std::string("source runtime support should carry source-node axis: ") +
                   capability.legacy_type_name);
     }
 
@@ -398,9 +402,15 @@ int main() {
         Check(*required_count == capability.required_input_count,
               std::string("input arity runtime count mismatch: ") +
                   capability.legacy_type_name);
-        Check(cyxwiz::ResolvePipelineRuntimeSupport(capability.legacy_type_name).mode !=
-                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            capability.legacy_type_name);
+        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
               std::string("input arity runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        Check(support.required_input_count.has_value() &&
+                  *support.required_input_count ==
+                      capability.required_input_count,
+              std::string("runtime support should carry input-arity axis: ") +
                   capability.legacy_type_name);
         Check(capability.required_input_count > 1,
               std::string("input arity override should only list multi-input nodes: ") +

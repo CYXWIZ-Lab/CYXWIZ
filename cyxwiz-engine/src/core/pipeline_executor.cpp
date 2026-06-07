@@ -816,9 +816,10 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             }
         }
 
-        const bool is_source = IsPipelineSourceRuntimeNode(node.type);
+        const auto runtime_support = ResolvePipelineRuntimeSupport(node.type);
+        const bool is_source = runtime_support.source_node;
         const auto required_input_count =
-            ResolvePipelineRequiredInputCount(node.type);
+            runtime_support.required_input_count;
 
         if (is_source && !node.inputs.empty()) {
             last_error_ = "Source node '" + node.name + "' must not have input connections";
@@ -858,8 +859,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             return false;
         }
 
-        if (ResolvePipelineRuntimeSupport(node.type).mode ==
-            PipelineRuntimeSupportMode::Unknown) {
+        if (runtime_support.mode == PipelineRuntimeSupportMode::Unknown) {
             last_error_ = "Node '" + node.name + "' has unsupported node type '" +
                           node.type + "' for PipelineExecutor";
             return false;

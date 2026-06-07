@@ -617,8 +617,11 @@ explicit runtime-support mode before routing operator-backed nodes or
 hard-failing known unsupported nodes. Validation also rejects unknown
 runtime-support modes before execution, and source-node role truth now
 lives in the same module. Fixed multi-input arity overrides, currently
-`Join`, are also centralized there. Runtime support now carries the
-first materializer dimension: exact operator-backed nodes are marked
+`Join`, are also centralized there. Resolved runtime support now carries
+those validation axes too: `source_node` and `required_input_count`
+drive `PipelineExecutor` validation from the same support object used
+for runtime routing. Runtime support now carries the first materializer
+dimension: exact operator-backed nodes are marked
 `ArrowTableOnly` materializer capable, while fail-closed and
 legacy-dispatched nodes are marked `None`. Static source/export required
 parameters and required
@@ -770,11 +773,12 @@ Deliverable:
 
 Status: in progress. Runtime support now has centralized operator,
 legacy, fail-closed, fail-mode, required-parameter, enum,
-integer-validation, compiler-blocked training, first training backend
-support mode, Arrow-table materializer-scope truth, and materializer
-storage-backend availability. The remaining work is the broader
-multi-axis matrix for compile/runtime support beyond the first training
-backend availability axis.
+integer-validation, source-node, required-input-count,
+compiler-blocked training, first training backend support mode,
+Arrow-table materializer-scope truth, and materializer storage-backend
+availability. The remaining work is the broader multi-axis matrix for
+compile/runtime support beyond the first training backend availability
+axis.
 
 Scope:
 
