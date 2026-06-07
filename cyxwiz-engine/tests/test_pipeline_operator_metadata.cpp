@@ -1,6 +1,7 @@
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_metadata_registry.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
+#include "../src/gui/data_studio/node_registry.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -302,6 +303,23 @@ int main() {
               "factory type " + TypeId(type) + " is not marked implemented");
         Check(meta->category != gui::NodeCategory::Unknown,
               "factory type " + TypeId(type) + " has unknown category");
+    }
+
+    for (const auto& data_studio_node :
+         cyxwiz::NodeRegistry::Instance().GetAllNodeTypes()) {
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            data_studio_node.type_id);
+        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
+              "Data Studio node registry advertises unknown runtime type: " +
+                  data_studio_node.type_id);
+        Check(support.pipeline_executor_supported,
+              "Data Studio node registry advertises unsupported runtime type: " +
+                  data_studio_node.type_id);
+        Check(data_studio_node.type_id != "ArrowDataset" &&
+                  data_studio_node.type_id != "Aggregate" &&
+                  data_studio_node.type_id != "DetectOutliers",
+              "Data Studio node registry should not advertise stale unsupported type: " +
+                  data_studio_node.type_id);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {

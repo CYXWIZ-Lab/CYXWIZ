@@ -869,6 +869,15 @@ operator-backed, fail-closed, and training-blocked nodes, so the frontend
 no longer has to parse prose or maintain a parallel support list for this
 view.
 
+**Status 2026-06-07 follow-up 11:** The active Data Studio node catalog now
+fails closed against the same runtime capability registry before registering
+built-in pipeline node IDs. Stale catalog entries such as `ArrowDataset`,
+`Aggregate`, and `DetectOutliers` are no longer advertised as executable
+pipeline nodes, and the catalog's `Join` parameter schema now uses the
+runtime-supported `on_column` field instead of unsupported left/right key
+names. The drift suite now checks every Data Studio catalog node resolves to
+a PipelineExecutor-supported capability.
+
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit

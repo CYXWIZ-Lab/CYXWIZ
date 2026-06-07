@@ -1,4 +1,5 @@
 #include "node_registry.h"
+#include "../../core/pipeline_runtime_capabilities.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 
@@ -16,6 +17,15 @@ NodeRegistry::NodeRegistry() {
 }
 
 void NodeRegistry::RegisterNodeType(const NodeType& node_type) {
+    const auto support = ResolvePipelineRuntimeSupport(node_type.type_id);
+    if (!support.pipeline_executor_supported) {
+        const char* reason = support.fail_closed_reason;
+        spdlog::warn("[Data Studio] Skipping unsupported node type '{}': {}",
+                     node_type.type_id,
+                     reason != nullptr ? reason : "not supported by PipelineExecutor");
+        return;
+    }
+
     // Check for duplicates
     if (HasNodeType(node_type.type_id)) {
         spdlog::warn("[Data Studio] Node type already registered: {}", node_type.type_id);
@@ -79,17 +89,6 @@ void NodeRegistry::RegisterBuiltInNodes() {
     };
     RegisterNodeType(file_input);
 
-    NodeType arrow_dataset;
-    arrow_dataset.type_id = "ArrowDataset";
-    arrow_dataset.display_name = "Arrow Dataset";
-    arrow_dataset.category = "Data Sources";
-    arrow_dataset.description = "Load existing Arrow dataset from DataRegistry";
-    arrow_dataset.output_ports = {"data"};
-    arrow_dataset.parameters = {
-        {"dataset_name", "string"}
-    };
-    RegisterNodeType(arrow_dataset);
-
     // ===== Transformations =====
 
     NodeType filter_rows;
@@ -125,23 +124,9 @@ void NodeRegistry::RegisterBuiltInNodes() {
     join.output_ports = {"data"};
     join.parameters = {
         {"join_type", "enum:inner,left,right,outer"},
-        {"left_key", "string"},
-        {"right_key", "string"}
+        {"on_column", "string"}
     };
     RegisterNodeType(join);
-
-    NodeType aggregate;
-    aggregate.type_id = "Aggregate";
-    aggregate.display_name = "Aggregate";
-    aggregate.category = "Transformations";
-    aggregate.description = "Group by and aggregate (SQL GROUP BY)";
-    aggregate.input_ports = {"data"};
-    aggregate.output_ports = {"data"};
-    aggregate.parameters = {
-        {"group_by", "string"},
-        {"aggregations", "string"}  // e.g., "COUNT(*), SUM(value)"
-    };
-    RegisterNodeType(aggregate);
 
     // ===== Data Quality =====
 
@@ -169,19 +154,6 @@ void NodeRegistry::RegisterBuiltInNodes() {
         {"value", "string"}
     };
     RegisterNodeType(fill_missing);
-
-    NodeType detect_outliers;
-    detect_outliers.type_id = "DetectOutliers";
-    detect_outliers.display_name = "Detect Outliers";
-    detect_outliers.category = "Data Quality";
-    detect_outliers.description = "Mark or remove outliers using IQR or Z-score";
-    detect_outliers.input_ports = {"data"};
-    detect_outliers.output_ports = {"data", "outliers"};
-    detect_outliers.parameters = {
-        {"method", "enum:iqr,zscore"},
-        {"action", "enum:mark,remove"}
-    };
-    RegisterNodeType(detect_outliers);
 
     // ===== Output =====
 

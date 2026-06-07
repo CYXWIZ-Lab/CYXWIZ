@@ -1177,6 +1177,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_metadata_registry.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/pipeline_runtime_capabilities.cpp
+    src/gui/data_studio/node_registry.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
