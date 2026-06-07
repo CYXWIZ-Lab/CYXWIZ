@@ -235,6 +235,146 @@ bool RequireColumnKind(const std::shared_ptr<arrow::Table>& table,
     return true;
 }
 
+bool IsSimpleSqlIdentifier(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+    const auto is_identifier_char = [](unsigned char c) {
+        return std::isalnum(c) || c == '_';
+    };
+    if (!(std::isalpha(static_cast<unsigned char>(value.front())) ||
+          value.front() == '_')) {
+        return false;
+    }
+    return std::all_of(value.begin(), value.end(),
+                       [is_identifier_char](unsigned char c) {
+                           return is_identifier_char(c);
+                       });
+}
+
+bool IsNumericAggregateFunction(const std::string& function_name) {
+    return function_name == "SUM" || function_name == "AVG" ||
+           function_name == "MEDIAN";
+}
+
+bool IsAllowedAggregateFunction(const std::string& function_name) {
+    return function_name == "COUNT" || function_name == "SUM" ||
+           function_name == "AVG" || function_name == "MIN" ||
+           function_name == "MAX" || function_name == "MEDIAN" ||
+           function_name == "MODE";
+}
+
+bool BuildGroupByAggregationExpression(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& aggregation,
+    std::string& expression,
+    std::string& error) {
+    const std::string spec = TrimString(aggregation);
+    const auto open = spec.find('(');
+    const auto close = spec.find(')', open == std::string::npos ? 0 : open + 1);
+    if (open == std::string::npos || close == std::string::npos ||
+        spec.find('(', open + 1) != std::string::npos ||
+        spec.find(')', close + 1) != std::string::npos) {
+        error = "GroupBy: unsupported aggregation '" + spec +
+                "'; expected FUNC(column) or COUNT(*)";
+        return false;
+    }
+
+    const std::string function_name =
+        ToUpperAscii(TrimString(spec.substr(0, open)));
+    if (!IsAllowedAggregateFunction(function_name)) {
+        error = "GroupBy: aggregation function '" + function_name +
+                "' is not supported";
+        return false;
+    }
+
+    const std::string argument =
+        TrimString(spec.substr(open + 1, close - open - 1));
+    if (argument.empty()) {
+        error = "GroupBy: aggregation '" + spec + "' has no column argument";
+        return false;
+    }
+
+    std::string quoted_argument;
+    if (argument == "*") {
+        if (function_name != "COUNT") {
+            error = "GroupBy: only COUNT(*) can use '*'";
+            return false;
+        }
+        quoted_argument = "*";
+    } else {
+        if (!table || !table->schema()) {
+            error = "GroupBy: input table schema is unavailable";
+            return false;
+        }
+        const int column_index = table->schema()->GetFieldIndex(argument);
+        if (column_index < 0) {
+            error = "GroupBy: aggregation column '" + argument + "' not found";
+            return false;
+        }
+        const auto field = table->schema()->field(column_index);
+        if (IsNumericAggregateFunction(function_name) &&
+            (!field || !IsNumericArrowType(field->type()))) {
+            const std::string found =
+                field && field->type() ? field->type()->ToString() : "unknown";
+            error = "GroupBy: aggregation column '" + argument +
+                    "' must be numeric for " + function_name +
+                    " (found " + found + ")";
+            return false;
+        }
+        quoted_argument = QuoteSqlIdentifier(argument);
+    }
+
+    expression = function_name + "(" + quoted_argument + ")";
+
+    const std::string suffix = TrimString(spec.substr(close + 1));
+    if (!suffix.empty()) {
+        const std::string lowered_suffix = ToLowerAscii(suffix);
+        if (lowered_suffix.rfind("as ", 0) != 0) {
+            error = "GroupBy: aggregation alias must use AS";
+            return false;
+        }
+        const std::string alias = TrimString(suffix.substr(3));
+        if (!IsSimpleSqlIdentifier(alias)) {
+            error = "GroupBy: aggregation alias '" + alias +
+                    "' is not a valid identifier";
+            return false;
+        }
+        expression += " AS " + QuoteSqlIdentifier(alias);
+    }
+    return true;
+}
+
+bool BuildGroupByAggregationExpressions(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& aggregations,
+    std::string& expressions,
+    std::string& error) {
+    const std::vector<std::string> specs = ParseCommaSeparatedNames(aggregations);
+    if (specs.empty()) {
+        error = "GroupBy: no aggregations were provided";
+        return false;
+    }
+
+    std::vector<std::string> built;
+    built.reserve(specs.size());
+    for (const auto& spec : specs) {
+        std::string expression;
+        if (!BuildGroupByAggregationExpression(table, spec, expression, error)) {
+            return false;
+        }
+        built.push_back(expression);
+    }
+
+    for (size_t i = 0; i < built.size(); ++i) {
+        if (i > 0) {
+            expressions += ", ";
+        }
+        expressions += built[i];
+    }
+    return true;
+}
+
 bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
     if (value.empty()) {
         return false;
@@ -1723,6 +1863,13 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
             return false;
         }
         const std::string quoted_group_columns = JoinQuotedColumns(selected_columns);
+        std::string aggregation_expressions;
+        if (!BuildGroupByAggregationExpressions(input_table, aggregations,
+                                                aggregation_expressions,
+                                                schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
 
         // Register input table with DuckDB
         std::string temp_table = "temp_" + std::to_string(node.id);
@@ -1733,7 +1880,8 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
 
         // Execute GROUP BY query
         // Aggregations format: "COUNT(*) as count, SUM(amount) as total"
-        std::string sql = "SELECT " + quoted_group_columns + ", " + aggregations +
+        std::string sql = "SELECT " + quoted_group_columns + ", " +
+                         aggregation_expressions +
                          " FROM " + temp_table + " GROUP BY " + quoted_group_columns;
 
         auto result_table = duckdb_->Query(sql);

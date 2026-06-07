@@ -1163,6 +1163,26 @@ int main() {
     Check(grouped_table->schema()->GetFieldIndex("count_rows") >= 0,
           "GroupBy should preserve aggregation alias");
 
+    const std::string group_by_multi_agg_json =
+        R"({"nodes":[)"
+        R"({"id":118,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":119,"type":"GroupBy","name":"GroupMulti","parameters":{)"
+        R"("group_columns":"x","aggregations":"COUNT(*) AS count_rows, SUM(y) AS total_y"}})"
+        R"(],"links":[{"start_node":118,"end_node":119}]})";
+
+    cyxwiz::PipelineExecutor group_by_multi_agg_executor;
+    Check(group_by_multi_agg_executor.ExecutePipeline(group_by_multi_agg_json),
+          "GroupBy should accept schema-checked aggregate functions: " +
+              group_by_multi_agg_executor.GetLastError());
+    auto grouped_multi = registry.GetArrowDataset("ds_groupby_119");
+    Check(grouped_multi != nullptr, "GroupBy multi-agg output dataset is registered");
+    auto grouped_multi_table = grouped_multi->GetArrowTable();
+    Check(grouped_multi_table != nullptr, "GroupBy multi-agg output table exists");
+    Check(grouped_multi_table->schema()->GetFieldIndex("total_y") >= 0,
+          "GroupBy should preserve SUM aggregation alias");
+
     const std::string missing_group_column_json =
         R"({"nodes":[)"
         R"({"id":109,"type":"DataInput","name":"Input","parameters":{)"
@@ -1180,6 +1200,61 @@ int main() {
               "GroupBy: column 'missing' not found") != std::string::npos,
           "GroupBy missing column error should be specific: " +
               missing_group_column_executor.GetLastError());
+
+    const std::string missing_group_aggregation_column_json =
+        R"({"nodes":[)"
+        R"({"id":120,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":121,"type":"GroupBy","name":"GroupMissingAgg","parameters":{)"
+        R"("group_columns":"x","aggregations":"SUM(missing) AS total_missing"}})"
+        R"(],"links":[{"start_node":120,"end_node":121}]})";
+
+    cyxwiz::PipelineExecutor missing_group_aggregation_column_executor;
+    Check(!missing_group_aggregation_column_executor.ExecutePipeline(
+              missing_group_aggregation_column_json),
+          "GroupBy missing aggregation column should fail schema validation");
+    Check(missing_group_aggregation_column_executor.GetLastError().find(
+              "GroupBy: aggregation column 'missing' not found") !=
+              std::string::npos,
+          "GroupBy missing aggregation column error should be specific: " +
+              missing_group_aggregation_column_executor.GetLastError());
+
+    const std::string text_sum_group_json =
+        R"({"nodes":[)"
+        R"({"id":122,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":123,"type":"GroupBy","name":"GroupTextSum","parameters":{)"
+        R"("group_columns":"phrase","aggregations":"SUM(phrase) AS total_phrase"}})"
+        R"(],"links":[{"start_node":122,"end_node":123}]})";
+
+    cyxwiz::PipelineExecutor text_sum_group_executor;
+    Check(!text_sum_group_executor.ExecutePipeline(text_sum_group_json),
+          "GroupBy numeric aggregation on text should fail type validation");
+    Check(text_sum_group_executor.GetLastError().find(
+              "GroupBy: aggregation column 'phrase' must be numeric for SUM") !=
+              std::string::npos,
+          "GroupBy text SUM error should be specific: " +
+              text_sum_group_executor.GetLastError());
+
+    const std::string raw_group_aggregation_json =
+        R"({"nodes":[)"
+        R"({"id":124,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":125,"type":"GroupBy","name":"GroupRawAgg","parameters":{)"
+        R"("group_columns":"x","aggregations":"COUNT(*) FILTER (WHERE y > 10) AS filtered_count"}})"
+        R"(],"links":[{"start_node":124,"end_node":125}]})";
+
+    cyxwiz::PipelineExecutor raw_group_aggregation_executor;
+    Check(!raw_group_aggregation_executor.ExecutePipeline(
+              raw_group_aggregation_json),
+          "GroupBy raw SQL aggregation fragments should fail validation");
+    Check(raw_group_aggregation_executor.GetLastError().find(
+              "GroupBy: unsupported aggregation") != std::string::npos,
+          "GroupBy raw SQL aggregation error should be specific: " +
+              raw_group_aggregation_executor.GetLastError());
 
     const std::string table_splitter_json =
         R"({"nodes":[)"
@@ -1244,7 +1319,12 @@ int main() {
     registry.UnloadDataset("ds_sort_115");
     registry.UnloadDataset("ds_datainput_107");
     registry.UnloadDataset("ds_groupby_108");
+    registry.UnloadDataset("ds_datainput_118");
+    registry.UnloadDataset("ds_groupby_119");
     registry.UnloadDataset("ds_datainput_109");
+    registry.UnloadDataset("ds_datainput_120");
+    registry.UnloadDataset("ds_datainput_122");
+    registry.UnloadDataset("ds_datainput_124");
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
     fs::remove(export_csv_path);

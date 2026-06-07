@@ -215,12 +215,15 @@ query construction. `SelectColumns`, `SortRows`, `Join.on_column`, and
 `GroupBy.group_columns` now also validate loaded-table columns before
 query construction and quote the resolved column identifiers instead of
 passing raw structural column strings to SQL. `GroupBy.aggregations`
-still remains a free-form SQL fragment and needs a separate expression
-policy before it can be treated as schema-safe. Active legacy enum
-parameters now also reject unsupported values through the central
-capability registry, including `SortRows.order`, legacy
-`SortRows.ascending`, and `Join.join_type`; the executor normalizes those
-values before building DuckDB SQL.
+now accepts only a small schema-checked aggregate-expression policy
+(`COUNT(*)`, `COUNT(column)`, `SUM`, `AVG`, `MIN`, `MAX`, `MEDIAN`, and
+`MODE` over existing columns, with optional `AS` aliases) and rejects raw
+SQL fragments before query construction. Numeric-only aggregates reject
+text columns before DuckDB SQL is built. Active legacy enum parameters
+now also reject unsupported values through the central capability
+registry, including `SortRows.order`, legacy `SortRows.ascending`, and
+`Join.join_type`; the executor normalizes those values before building
+DuckDB SQL.
 
 Relevant files:
 
@@ -253,7 +256,7 @@ Recommendation:
     executor/runtime registry baseline
   - obvious type/schema mismatches beyond the current source, legacy
     scalar-integer/enum parameter baseline, and active loaded-table
-    column/list transform checks
+    column/list/aggregation transform checks
 
 ---
 

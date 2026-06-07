@@ -255,3 +255,7 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: added central enum validation and runtime SQL
   normalization for `SortRows.order`, legacy `SortRows.ascending`, and
   `Join.join_type`, including frontend-style `outer` to `FULL OUTER`.
+- 2026-06-07 follow-up: replaced `GroupBy.aggregations` raw SQL
+  concatenation for the supported simple aggregate subset with
+  schema-checked aggregate parsing, identifier quoting, alias validation,
+  and numeric-type checks for numeric-only aggregate functions.
