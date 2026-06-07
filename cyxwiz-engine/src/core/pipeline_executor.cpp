@@ -1417,16 +1417,8 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
 }
 
 bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError(GetImprovedErrorMessage("FilterRows", "no_input"));
-        return false;
-    }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("FilterRows: Input dataset not found");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
@@ -1437,7 +1429,6 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
         return false;
     }
 
-    const std::string& input_dataset_name = result_it->second;
     const std::string& condition = condition_it->second;
     std::string output_dataset_name = "ds_filter_" + std::to_string(node.id);
 
@@ -1490,16 +1481,8 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
 }
 
 bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("SelectColumns node has no input connection");
-        return false;
-    }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("SelectColumns: Input dataset not found");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
@@ -1510,7 +1493,6 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
         return false;
     }
 
-    const std::string& input_dataset_name = result_it->second;
     const std::string& columns = columns_it->second;
     std::string output_dataset_name = "ds_select_" + std::to_string(node.id);
 
@@ -1571,20 +1553,11 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
 }
 
 bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("RemoveDuplicates node has no input connection");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("RemoveDuplicates: Input dataset not found");
-        return false;
-    }
-
-    const std::string& input_dataset_name = result_it->second;
     std::string output_dataset_name = "ds_dedup_" + std::to_string(node.id);
 
     spdlog::info("[Data Studio] Removing duplicates from '{}'", input_dataset_name);
@@ -1635,20 +1608,10 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
 }
 
 bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ctx) {
-    // Get the input dataset from the upstream node
-    if (node.inputs.empty()) {
-        ReportError("SaveDataset node has no input connection");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("SaveDataset: Input dataset not found");
-        return false;
-    }
-
-    const std::string& input_dataset_name = result_it->second;
 
     // Get the desired output name from parameters
     auto name_it = node.parameters.find("name");
@@ -1719,16 +1682,8 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
 // ============================================================================
 
 bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("FillMissing node has no input connection");
-        return false;
-    }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("FillMissing: Input dataset not found");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
@@ -1739,7 +1694,6 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
     auto value_it = node.parameters.find("value");
     std::string fill_value = (value_it != node.parameters.end()) ? value_it->second : "0";
 
-    const std::string& input_dataset_name = result_it->second;
     std::string output_dataset_name = "ds_fillmissing_" + std::to_string(node.id);
 
     spdlog::info("[Data Studio] Filling missing values in '{}' with strategy: {}",
@@ -1832,16 +1786,8 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
 }
 
 bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("SortRows node has no input connection");
-        return false;
-    }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("SortRows: Input dataset not found");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
@@ -1854,7 +1800,6 @@ bool PipelineExecutor::ExecuteSortRows(const Node& node, ExecutionContext& ctx) 
 
     const std::string order = NormalizeSortOrder(node.parameters);
 
-    const std::string& input_dataset_name = result_it->second;
     const std::string& sort_columns = columns_it->second;
     std::string output_dataset_name = "ds_sort_" + std::to_string(node.id);
 
@@ -2009,16 +1954,8 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
 }
 
 bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
-    // Get input dataset from upstream node
-    if (node.inputs.empty()) {
-        ReportError("GroupBy node has no input connection");
-        return false;
-    }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("GroupBy: Input dataset not found");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
 
@@ -2035,7 +1972,6 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
         return false;
     }
 
-    const std::string& input_dataset_name = result_it->second;
     const std::string& group_columns = group_columns_it->second;
     const std::string& aggregations = agg_it->second;
     std::string output_dataset_name = "ds_groupby_" + std::to_string(node.id);
@@ -2173,20 +2109,10 @@ void PipelineExecutor::NotifyCompletion(bool success) {
 // ============================================================================
 
 bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionContext& ctx) {
-    // Get the input dataset from the upstream node
-    if (node.inputs.empty()) {
-        ReportError("DeployToNodeEditor node has no input connection");
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
         return false;
     }
-
-    int input_node_id = node.inputs[0];
-    auto result_it = ctx.node_results.find(input_node_id);
-    if (result_it == ctx.node_results.end()) {
-        ReportError("DeployToNodeEditor: Input dataset not found");
-        return false;
-    }
-
-    const std::string& input_dataset_name = result_it->second;
 
     // Get the desired output name from parameters (optional)
     auto name_it = node.parameters.find("name");

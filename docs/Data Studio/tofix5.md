@@ -166,6 +166,14 @@ dataset, while `Join` uses the same helper to bind exactly two ordered
 input datasets instead of manually indexing `node.inputs`. Named input
 pins remain future work for graph formats that need pin-level semantics.
 
+**Status 2026-06-07 follow-up 2:** The remaining active legacy
+single-input branches (`FilterRows`, `SelectColumns`,
+`RemoveDuplicates`, `SaveDataset`, `FillMissing`, `SortRows`, `GroupBy`,
+and `DeployToNodeEditor`) now use the shared binding helper instead of
+duplicating first-edge `node.inputs[0]` lookups. The only direct
+`ctx.node_results` lookup for input binding is now centralized in
+`GetInputDatasetNames()`.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:1727`
