@@ -133,11 +133,14 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_values.csv";
     const fs::path string_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_strings.csv";
+    const fs::path duplicates_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_duplicates.csv";
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
+    fs::remove(duplicates_csv_path);
     {
         std::ofstream csv(csv_path);
         csv << "x,y\n";
@@ -157,6 +160,13 @@ int main() {
         csv << "phrase\n";
         csv << "tea cup\n";
         csv << "blue mug\n";
+    }
+    {
+        std::ofstream csv(duplicates_csv_path);
+        csv << "x,y\n";
+        csv << "1,10\n";
+        csv << "1,11\n";
+        csv << "2,20\n";
     }
 
     const std::string pipeline_json =
@@ -1412,6 +1422,51 @@ int main() {
               std::string::npos,
           "PolynomialFeatures missing column error should be specific: " +
               missing_polynomial_column_executor.GetLastError());
+
+    const std::string remove_duplicates_columns_json =
+        R"({"nodes":[)"
+        R"({"id":180,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(duplicates_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":181,"type":"RemoveDuplicates","name":"Dedup","parameters":{)"
+        R"("columns":" x "}})"
+        R"(],"links":[{"start_node":180,"end_node":181}]})";
+
+    cyxwiz::PipelineExecutor remove_duplicates_columns_executor;
+    Check(remove_duplicates_columns_executor.ExecutePipeline(
+              remove_duplicates_columns_json),
+          "RemoveDuplicates should validate and quote selected dedupe columns: " +
+              remove_duplicates_columns_executor.GetLastError());
+    auto deduped = registry.GetArrowDataset("ds_dedup_181");
+    Check(deduped != nullptr, "RemoveDuplicates column output dataset is registered");
+    auto deduped_table = deduped->GetArrowTable();
+    Check(deduped_table != nullptr, "RemoveDuplicates column output table exists");
+    Check(deduped_table->num_rows() == 2,
+          "RemoveDuplicates columns should keep one row per x value");
+    Check(deduped_table->schema()->GetFieldIndex("x") >= 0 &&
+              deduped_table->schema()->GetFieldIndex("y") >= 0,
+          "RemoveDuplicates columns should preserve the original schema");
+
+    const std::string missing_remove_duplicates_column_json =
+        R"({"nodes":[)"
+        R"({"id":182,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(duplicates_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":183,"type":"RemoveDuplicates","name":"DedupMissing","parameters":{)"
+        R"("columns":"missing"}})"
+        R"(],"links":[{"start_node":182,"end_node":183}]})";
+
+    cyxwiz::PipelineExecutor missing_remove_duplicates_column_executor;
+    Check(!missing_remove_duplicates_column_executor.ExecutePipeline(
+              missing_remove_duplicates_column_json),
+          "RemoveDuplicates missing input column should fail schema validation");
+    Check(missing_remove_duplicates_column_executor.GetLastError().find(
+              "RemoveDuplicates: column 'missing' not found") !=
+              std::string::npos,
+          "RemoveDuplicates missing column error should be specific: " +
+              missing_remove_duplicates_column_executor.GetLastError());
 
     const std::string select_columns_json =
         R"({"nodes":[)"

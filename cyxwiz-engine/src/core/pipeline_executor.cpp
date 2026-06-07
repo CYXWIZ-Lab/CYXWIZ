@@ -1583,6 +1583,10 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("RemoveDuplicates: Input table schema is unavailable");
+            return false;
+        }
 
         // Register input table with DuckDB
         std::string temp_table = "temp_" + std::to_string(node.id);
@@ -1593,6 +1597,36 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
 
         // Execute DISTINCT query
         std::string sql = "SELECT DISTINCT * FROM " + temp_table;
+        auto columns_it = node.parameters.find("columns");
+        if (columns_it != node.parameters.end() &&
+            !TrimString(columns_it->second).empty()) {
+            std::vector<std::string> dedupe_columns;
+            std::string column_error;
+            if (!ResolveExistingColumns(input_table, "RemoveDuplicates",
+                                        columns_it->second, dedupe_columns,
+                                        column_error)) {
+                duckdb_->UnregisterTable(temp_table);
+                ReportError(column_error);
+                return false;
+            }
+
+            std::vector<std::string> output_columns;
+            output_columns.reserve(input_table->schema()->num_fields());
+            for (const auto& field : input_table->schema()->fields()) {
+                output_columns.push_back(field->name());
+            }
+
+            std::string rank_column = "__cyxwiz_dedup_rank";
+            while (input_table->schema()->GetFieldIndex(rank_column) >= 0) {
+                rank_column += "_";
+            }
+
+            sql = "SELECT " + JoinQuotedColumns(output_columns) +
+                  " FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY " +
+                  JoinQuotedColumns(dedupe_columns) + ") AS " +
+                  QuoteSqlIdentifier(rank_column) + " FROM " + temp_table +
+                  ") WHERE " + QuoteSqlIdentifier(rank_column) + " = 1";
+        }
         auto result_table = duckdb_->Query(sql);
 
         // Unregister temp table

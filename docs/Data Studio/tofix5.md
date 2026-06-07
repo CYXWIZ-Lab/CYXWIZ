@@ -289,6 +289,12 @@ central required-parameter registry. `TextClean`, `TextTokenize`, and
 `columns`, so validation no longer falls through to implicit `text` or
 `value` defaults.
 
+**Status 2026-06-07 follow-up 8:** `RemoveDuplicates.columns` is now a
+real, schema-checked selector instead of ignored metadata. When the
+selector is supplied, the executor validates and quotes those columns,
+deduplicates by that key, and preserves the original table schema. Missing
+dedupe columns now fail before DuckDB query construction.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`
