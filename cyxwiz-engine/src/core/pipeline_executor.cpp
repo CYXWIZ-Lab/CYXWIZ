@@ -1648,6 +1648,14 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
     std::string output_name = (name_it != node.parameters.end() && !name_it->second.empty())
                               ? name_it->second
                               : "ds_output_" + std::to_string(node.id);
+    auto path_it = node.parameters.find("path");
+    const std::string output_path =
+        (path_it != node.parameters.end()) ? path_it->second : "";
+    auto format_it = node.parameters.find("format");
+    const std::string format =
+        (format_it != node.parameters.end() && !format_it->second.empty())
+            ? ToLowerAscii(TrimString(format_it->second))
+            : "csv";
 
     spdlog::info("[Data Studio] Saving dataset '{}' as '{}'", input_dataset_name, output_name);
 
@@ -1667,10 +1675,30 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
             registry.RegisterArrowTable(arrow_table, output_name);
         }
 
-        // Store the output dataset name in context
-        ctx.output_dataset = output_name;
+        if (!output_path.empty()) {
+            bool success = false;
+            if (format == "csv") {
+                success = registry.ExportArrowToCSV(input_dataset_name, output_path);
+            } else if (format == "parquet") {
+                success = registry.ExportArrowToParquet(input_dataset_name, output_path);
+            } else if (format == "json") {
+                success = registry.ExportArrowToJSON(input_dataset_name, output_path);
+            } else {
+                ReportError("SaveDataset: Unsupported export format: " + format);
+                return false;
+            }
 
-        spdlog::info("[Data Studio] Dataset saved successfully as '{}'", output_name);
+            if (!success) {
+                ReportError("SaveDataset: Export failed");
+                return false;
+            }
+        }
+
+        // Store the output dataset name in context
+        ctx.output_dataset = output_path.empty() ? output_name : output_path;
+
+        spdlog::info("[Data Studio] Dataset saved successfully as '{}'",
+                     ctx.output_dataset);
         return true;
 
     } catch (const std::exception& e) {

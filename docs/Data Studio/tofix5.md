@@ -242,6 +242,13 @@ literals, parentheses, and existing numeric column names. Unknown
 columns, text columns, function calls, quoted strings, semicolons, and
 other raw SQL tokens fail before query construction.
 
+**Status 2026-06-07 follow-up 2:** `SaveDataset` now matches its Data
+Studio node contract when a `path` is supplied: it exports through
+DataRegistry using supported `csv`, `parquet`, and `json` formats while
+preserving the legacy in-memory `name` alias behavior. Unsupported
+formats such as `arrow` now fail validation through the central allowed
+parameter registry instead of being advertised and ignored.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`

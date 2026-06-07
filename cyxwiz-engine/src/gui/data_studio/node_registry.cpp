@@ -193,7 +193,7 @@ void NodeRegistry::RegisterBuiltInNodes() {
     save_dataset.input_ports = {"data"};
     save_dataset.parameters = {
         {"path", "string"},
-        {"format", "enum:csv,parquet,json,arrow"}
+        {"format", "enum:csv,parquet,json"}
     };
     RegisterNodeType(save_dataset);
 

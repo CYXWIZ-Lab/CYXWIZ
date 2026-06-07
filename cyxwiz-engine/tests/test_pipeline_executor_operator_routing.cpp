@@ -125,11 +125,14 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_routing.csv";
     const fs::path export_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.csv";
+    const fs::path save_dataset_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_save_dataset.csv";
     const fs::path missing_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_values.csv";
     const fs::path string_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_strings.csv";
     fs::remove(export_csv_path);
+    fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
     {
@@ -535,6 +538,43 @@ int main() {
           "ExportCSV should write through DataRegistry: " +
               export_csv_executor.GetLastError());
     Check(fs::exists(export_csv_path), "ExportCSV should create the output file");
+
+    const std::string save_dataset_json =
+        R"({"nodes":[)"
+        R"({"id":135,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":136,"type":"SaveDataset","name":"Save","parameters":{)"
+        R"("path":")" + JsonEscapePath(save_dataset_csv_path.string()) +
+        R"(","format":"csv","name":"saved_alias"}})"
+        R"(],"links":[{"start_node":135,"end_node":136}]})";
+
+    cyxwiz::PipelineExecutor save_dataset_executor;
+    Check(save_dataset_executor.ExecutePipeline(save_dataset_json),
+          "SaveDataset should export when path is supplied: " +
+              save_dataset_executor.GetLastError());
+    Check(fs::exists(save_dataset_csv_path),
+          "SaveDataset should create the requested output file");
+    Check(registry.GetArrowDataset("saved_alias") != nullptr,
+          "SaveDataset should preserve legacy in-memory alias behavior");
+
+    const std::string bad_save_dataset_format_json =
+        R"({"nodes":[)"
+        R"({"id":137,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":138,"type":"SaveDataset","name":"BadSave","parameters":{)"
+        R"("path":"ignored.arrow","format":"arrow"}})"
+        R"(],"links":[{"start_node":137,"end_node":138}]})";
+
+    cyxwiz::PipelineExecutor bad_save_dataset_format_executor;
+    Check(!bad_save_dataset_format_executor.ExecutePipeline(
+              bad_save_dataset_format_json),
+          "SaveDataset unsupported format should fail validation");
+    Check(bad_save_dataset_format_executor.GetLastError().find(
+              "SaveDataset format 'arrow' is not supported") !=
+              std::string::npos,
+          "SaveDataset bad format validation should be specific: " +
+              bad_save_dataset_format_executor.GetLastError());
 
     const std::string export_json_json =
         R"({"nodes":[)"
@@ -1352,8 +1392,12 @@ int main() {
 
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
+    registry.UnloadDataset("ds_input_133");
+    registry.UnloadDataset("ds_select_134");
     registry.UnloadDataset("ds_datainput_3");
     registry.UnloadDataset("ds_datainput_35");
+    registry.UnloadDataset("ds_datainput_135");
+    registry.UnloadDataset("saved_alias");
     registry.UnloadDataset("ds_datainput_37");
     registry.UnloadDataset("ds_datainput_43");
     registry.UnloadDataset("ds_renamed_44");
@@ -1405,6 +1449,7 @@ int main() {
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
+    fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
 
