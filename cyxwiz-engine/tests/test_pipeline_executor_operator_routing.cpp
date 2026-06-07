@@ -338,6 +338,51 @@ int main() {
           "Join missing on_column validation should be specific: " +
               missing_join_executor.GetLastError());
 
+    const std::string join_json =
+        R"({"nodes":[)"
+        R"({"id":101,"type":"DataInput","name":"Left","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":102,"type":"DataInput","name":"Right","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":103,"type":"Join","name":"Join","parameters":{)"
+        R"("on_column":" x ","join_type":"INNER"}})"
+        R"(],"links":[{"start_node":101,"end_node":103},{"start_node":102,"end_node":103}]})";
+
+    cyxwiz::PipelineExecutor join_executor;
+    Check(join_executor.ExecutePipeline(join_json),
+          "Join should validate and quote the join column on both inputs: " +
+              join_executor.GetLastError());
+    auto joined = registry.GetArrowDataset("ds_join_103");
+    Check(joined != nullptr, "Join output dataset is registered");
+    auto joined_table = joined->GetArrowTable();
+    Check(joined_table != nullptr, "Join output table exists");
+    Check(joined_table->num_rows() == 3,
+          "Join on x should match all rows in the self-join fixture");
+
+    const std::string missing_join_input_column_json =
+        R"({"nodes":[)"
+        R"({"id":104,"type":"DataInput","name":"Left","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":105,"type":"DataInput","name":"Right","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":106,"type":"Join","name":"JoinMissing","parameters":{)"
+        R"("on_column":"missing","join_type":"INNER"}})"
+        R"(],"links":[{"start_node":104,"end_node":106},{"start_node":105,"end_node":106}]})";
+
+    cyxwiz::PipelineExecutor missing_join_input_column_executor;
+    Check(!missing_join_input_column_executor.ExecutePipeline(
+              missing_join_input_column_json),
+          "Join missing input column should fail schema validation");
+    Check(missing_join_input_column_executor.GetLastError().find(
+              "Join: column 'missing' not found in left input") !=
+              std::string::npos,
+          "Join missing column error should be specific: " +
+              missing_join_input_column_executor.GetLastError());
+
     const std::string missing_poly_columns_json =
         R"({"nodes":[)"
         R"({"id":24,"type":"DataInput","name":"Input","parameters":{)"
@@ -1039,6 +1084,46 @@ int main() {
           "SortRows missing column error should be specific: " +
               missing_sort_column_executor.GetLastError());
 
+    const std::string group_by_json =
+        R"({"nodes":[)"
+        R"({"id":107,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":108,"type":"GroupBy","name":"Group","parameters":{)"
+        R"("group_columns":" x ","aggregations":"COUNT(*) AS count_rows"}})"
+        R"(],"links":[{"start_node":107,"end_node":108}]})";
+
+    cyxwiz::PipelineExecutor group_by_executor;
+    Check(group_by_executor.ExecutePipeline(group_by_json),
+          "GroupBy should validate and quote group columns: " +
+              group_by_executor.GetLastError());
+    auto grouped = registry.GetArrowDataset("ds_groupby_108");
+    Check(grouped != nullptr, "GroupBy output dataset is registered");
+    auto grouped_table = grouped->GetArrowTable();
+    Check(grouped_table != nullptr, "GroupBy output table exists");
+    Check(grouped_table->num_rows() == 3,
+          "GroupBy x should produce one group per x fixture value");
+    Check(grouped_table->schema()->GetFieldIndex("count_rows") >= 0,
+          "GroupBy should preserve aggregation alias");
+
+    const std::string missing_group_column_json =
+        R"({"nodes":[)"
+        R"({"id":109,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":110,"type":"GroupBy","name":"GroupMissing","parameters":{)"
+        R"("group_columns":"missing","aggregations":"COUNT(*) AS count_rows"}})"
+        R"(],"links":[{"start_node":109,"end_node":110}]})";
+
+    cyxwiz::PipelineExecutor missing_group_column_executor;
+    Check(!missing_group_column_executor.ExecutePipeline(
+              missing_group_column_json),
+          "GroupBy missing group column should fail schema validation");
+    Check(missing_group_column_executor.GetLastError().find(
+              "GroupBy: column 'missing' not found") != std::string::npos,
+          "GroupBy missing column error should be specific: " +
+              missing_group_column_executor.GetLastError());
+
     const std::string table_splitter_json =
         R"({"nodes":[)"
         R"({"id":83,"type":"DataInput","name":"Input","parameters":{)"
@@ -1064,6 +1149,11 @@ int main() {
     registry.UnloadDataset("ds_datainput_43");
     registry.UnloadDataset("ds_renamed_44");
     registry.UnloadDataset("ds_datainput_47");
+    registry.UnloadDataset("ds_datainput_101");
+    registry.UnloadDataset("ds_datainput_102");
+    registry.UnloadDataset("ds_join_103");
+    registry.UnloadDataset("ds_datainput_104");
+    registry.UnloadDataset("ds_datainput_105");
     registry.UnloadDataset("ds_datainput_49");
     registry.UnloadDataset("ds_newheaders_50");
     registry.UnloadDataset("ds_datainput_53");
@@ -1093,6 +1183,9 @@ int main() {
     registry.UnloadDataset("ds_datainput_97");
     registry.UnloadDataset("ds_sort_98");
     registry.UnloadDataset("ds_datainput_99");
+    registry.UnloadDataset("ds_datainput_107");
+    registry.UnloadDataset("ds_groupby_108");
+    registry.UnloadDataset("ds_datainput_109");
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
     fs::remove(export_csv_path);

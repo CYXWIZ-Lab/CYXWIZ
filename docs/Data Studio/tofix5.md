@@ -211,10 +211,12 @@ Validation and parse errors now preserve the specific failed rule. Broader
 schema/type-aware validation remains future work, but the active
 column-transform path now rejects obvious loaded-table mismatches for
 `StringManipulation`, `Binning`, and `PolynomialFeatures` before DuckDB
-query construction. `SelectColumns` and `SortRows` now also validate
-loaded-table column lists before query construction and quote the
-resolved column identifiers instead of passing raw column-list strings
-to SQL.
+query construction. `SelectColumns`, `SortRows`, `Join.on_column`, and
+`GroupBy.group_columns` now also validate loaded-table columns before
+query construction and quote the resolved column identifiers instead of
+passing raw structural column strings to SQL. `GroupBy.aggregations`
+still remains a free-form SQL fragment and needs a separate expression
+policy before it can be treated as schema-safe.
 
 Relevant files:
 
@@ -246,8 +248,8 @@ Recommendation:
   - unsupported node types for execution paths beyond the current legacy
     executor/runtime registry baseline
   - obvious type/schema mismatches beyond the current source, legacy
-    scalar-integer parameter baseline, and first active column/list
-    transform schema checks
+    scalar-integer parameter baseline, and active loaded-table
+    column/list transform checks
 
 ---
 

@@ -147,6 +147,23 @@ std::string JoinQuotedColumns(const std::vector<std::string>& column_names) {
     return result;
 }
 
+bool RequireColumnExists(const std::shared_ptr<arrow::Table>& table,
+                         const std::string& node_type,
+                         const std::string& column,
+                         const std::string& table_role,
+                         std::string& error) {
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+    if (table->schema()->GetFieldIndex(column) < 0) {
+        error = node_type + ": column '" + column + "' not found in " +
+                table_role;
+        return false;
+    }
+    return true;
+}
+
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
     if (!type) {
         return false;
@@ -1531,7 +1548,11 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
 
     const std::string& left_dataset_name = left_it->second;
     const std::string& right_dataset_name = right_it->second;
-    const std::string& on_column = on_column_it->second;
+    const std::string on_column = TrimString(on_column_it->second);
+    if (on_column.empty()) {
+        ReportError("Join: Missing 'on_column' parameter");
+        return false;
+    }
     std::string output_dataset_name = "ds_join_" + std::to_string(node.id);
 
     spdlog::info("[Data Studio] Joining '{}' and '{}' on column: {} ({})",
@@ -1549,6 +1570,15 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
 
         auto left_table = left_dataset->GetArrowTable();
         auto right_table = right_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnExists(left_table, "Join", on_column,
+                                 "left input", schema_error) ||
+            !RequireColumnExists(right_table, "Join", on_column,
+                                 "right input", schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_on_column = QuoteSqlIdentifier(on_column);
 
         // Register both tables with DuckDB
         std::string left_temp = "temp_left_" + std::to_string(node.id);
@@ -1562,8 +1592,8 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
 
         // Execute JOIN query
         std::string sql = "SELECT * FROM " + left_temp + " " + join_type + " JOIN " +
-                         right_temp + " ON " + left_temp + "." + on_column +
-                         " = " + right_temp + "." + on_column;
+                         right_temp + " ON " + left_temp + "." + quoted_on_column +
+                         " = " + right_temp + "." + quoted_on_column;
 
         auto result_table = duckdb_->Query(sql);
 
@@ -1636,6 +1666,14 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        std::vector<std::string> selected_columns;
+        std::string schema_error;
+        if (!ResolveExistingColumns(input_table, "GroupBy", group_columns,
+                                    selected_columns, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+        const std::string quoted_group_columns = JoinQuotedColumns(selected_columns);
 
         // Register input table with DuckDB
         std::string temp_table = "temp_" + std::to_string(node.id);
@@ -1646,8 +1684,8 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
 
         // Execute GROUP BY query
         // Aggregations format: "COUNT(*) as count, SUM(amount) as total"
-        std::string sql = "SELECT " + group_columns + ", " + aggregations +
-                         " FROM " + temp_table + " GROUP BY " + group_columns;
+        std::string sql = "SELECT " + quoted_group_columns + ", " + aggregations +
+                         " FROM " + temp_table + " GROUP BY " + quoted_group_columns;
 
         auto result_table = duckdb_->Query(sql);
 

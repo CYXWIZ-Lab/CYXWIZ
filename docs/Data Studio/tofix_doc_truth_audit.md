@@ -248,3 +248,7 @@ scanning so stale or duplicate work is not reintroduced.
   to `SelectColumns` and `SortRows`; both now validate requested loaded
   table columns and quote resolved column identifiers before building
   DuckDB SQL.
+- 2026-06-07 follow-up: extended the same loaded-table structural-column
+  checks to `Join.on_column` and `GroupBy.group_columns`; `GroupBy`
+  aggregation expressions remain free-form SQL pending a separate
+  expression policy.
