@@ -95,6 +95,13 @@ enum class PipelineRuntimeFailMode {
     Passthrough,
 };
 
+enum class PipelineRuntimeImplementationOwner {
+    Unknown,
+    None,
+    PipelineExecutor,
+    PipelineOperatorFactory,
+};
+
 enum class PipelineMaterializerStorageSupport {
     None,
     ArrowTableOnly,
@@ -124,6 +131,8 @@ struct PipelineRuntimeSupport {
     std::vector<PipelineAllowedParameterValuesRuntimeCapability>
         allowed_parameter_values;
     std::vector<PipelineIntegerParameterRuntimeCapability> integer_parameters;
+    PipelineRuntimeImplementationOwner implementation_owner =
+        PipelineRuntimeImplementationOwner::Unknown;
 };
 
 const std::vector<PipelineOperatorRuntimeCapability>&
@@ -166,6 +175,9 @@ const char* PipelineStorageBackendName(PipelineStorageBackend backend);
 const char* PipelineRuntimeSupportModeName(PipelineRuntimeSupportMode mode);
 
 const char* PipelineRuntimeFailModeName(PipelineRuntimeFailMode fail_mode);
+
+const char* PipelineRuntimeImplementationOwnerName(
+    PipelineRuntimeImplementationOwner owner);
 
 const char* PipelineMaterializerStorageSupportName(
     PipelineMaterializerStorageSupport support);

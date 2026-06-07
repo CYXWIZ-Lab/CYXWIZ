@@ -338,7 +338,7 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
 
     if (auto operator_type = ResolvePipelineOperatorRuntimeType(legacy_type_name);
         operator_type.has_value()) {
-        return with_validation_axes({
+        auto support = with_validation_axes({
             PipelineRuntimeSupportMode::OperatorBacked,
             PipelineRuntimeFailMode::Real,
             operator_type,
@@ -346,6 +346,9 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             PipelineMaterializerStorageSupport::ArrowTableOnly,
             true,
             true});
+        support.implementation_owner =
+            PipelineRuntimeImplementationOwner::PipelineOperatorFactory;
+        return support;
     }
 
     const auto& fail_closed_capabilities =
@@ -367,11 +370,12 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             false,
             false};
         support.metadata_node_type = fail_closed_it->metadata_node_type;
+        support.implementation_owner = PipelineRuntimeImplementationOwner::None;
         return with_validation_axes(std::move(support));
     }
 
     if (IsPipelineLegacyRuntimeNode(legacy_type_name)) {
-        return with_validation_axes({
+        auto support = with_validation_axes({
             PipelineRuntimeSupportMode::LegacyExecutor,
             PipelineRuntimeFailMode::Real,
             std::nullopt,
@@ -379,6 +383,9 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             PipelineMaterializerStorageSupport::None,
             false,
             true});
+        support.implementation_owner =
+            PipelineRuntimeImplementationOwner::PipelineExecutor;
+        return support;
     }
 
     return {};
@@ -427,6 +434,21 @@ const char* PipelineRuntimeFailModeName(PipelineRuntimeFailMode fail_mode) {
     case PipelineRuntimeFailMode::Passthrough:
         return "passthrough";
     case PipelineRuntimeFailMode::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
+const char* PipelineRuntimeImplementationOwnerName(
+    PipelineRuntimeImplementationOwner owner) {
+    switch (owner) {
+    case PipelineRuntimeImplementationOwner::None:
+        return "none";
+    case PipelineRuntimeImplementationOwner::PipelineExecutor:
+        return "pipeline_executor";
+    case PipelineRuntimeImplementationOwner::PipelineOperatorFactory:
+        return "pipeline_operator_factory";
+    case PipelineRuntimeImplementationOwner::Unknown:
         return "unknown";
     }
     return "unknown";

@@ -245,6 +245,9 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         summary += "; materializer=";
         summary += PipelineMaterializerStorageSupportName(
             support.materializer_storage_support);
+        summary += "; owner=";
+        summary += PipelineRuntimeImplementationOwnerName(
+            support.implementation_owner);
         AppendHelpTextSection(it->second, summary);
     }
 

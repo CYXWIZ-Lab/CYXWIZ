@@ -306,6 +306,11 @@ int main() {
         Check(support.pipeline_executor_supported,
               std::string("operator-backed runtime should be pipeline-executor supported: ") +
                   capability.legacy_type_name);
+        Check(support.implementation_owner ==
+                  cyxwiz::PipelineRuntimeImplementationOwner::
+                      PipelineOperatorFactory,
+              std::string("operator-backed runtime should be owned by PipelineOperatorFactory: ") +
+                  capability.legacy_type_name);
         Check(support.materializer_storage_support ==
                   cyxwiz::PipelineMaterializerStorageSupport::ArrowTableOnly,
               std::string("operator-backed runtime should advertise Arrow-only materializer scope: ") +
@@ -329,6 +334,10 @@ int main() {
         Check(meta->help_text.find(cyxwiz::PipelineMaterializerStorageSupportName(
                   support.materializer_storage_support)) != std::string::npos,
               std::string("operator-backed metadata should expose materializer support scope: ") +
+                  capability.legacy_type_name);
+        Check(meta->help_text.find(cyxwiz::PipelineRuntimeImplementationOwnerName(
+                  support.implementation_owner)) != std::string::npos,
+              std::string("operator-backed metadata should expose implementation owner: ") +
                   capability.legacy_type_name);
     }
 
@@ -365,6 +374,10 @@ int main() {
         Check(!support.pipeline_executor_supported,
               std::string("fail-closed runtime should not be pipeline-executor supported: ") +
                   capability.legacy_type_name);
+        Check(support.implementation_owner ==
+                  cyxwiz::PipelineRuntimeImplementationOwner::None,
+              std::string("fail-closed runtime should advertise no implementation owner: ") +
+                  capability.legacy_type_name);
         Check(support.materializer_storage_support ==
                   cyxwiz::PipelineMaterializerStorageSupport::None,
               std::string("fail-closed runtime should not advertise materializer scope: ") +
@@ -391,6 +404,10 @@ int main() {
                   capability.legacy_type_name);
         Check(support.pipeline_executor_supported,
               std::string("legacy-dispatched runtime should be pipeline-executor supported: ") +
+                  capability.legacy_type_name);
+        Check(support.implementation_owner ==
+                  cyxwiz::PipelineRuntimeImplementationOwner::PipelineExecutor,
+              std::string("legacy-dispatched runtime should be owned by PipelineExecutor: ") +
                   capability.legacy_type_name);
         Check(support.materializer_storage_support ==
                   cyxwiz::PipelineMaterializerStorageSupport::None,
@@ -423,6 +440,18 @@ int main() {
     Check(std::string(cyxwiz::PipelineRuntimeFailModeName(
               cyxwiz::PipelineRuntimeFailMode::Passthrough)) == "passthrough",
           "runtime fail-mode name for passthrough is stable");
+
+    Check(std::string(cyxwiz::PipelineRuntimeImplementationOwnerName(
+              cyxwiz::PipelineRuntimeImplementationOwner::None)) == "none",
+          "runtime implementation owner name for none is stable");
+    Check(std::string(cyxwiz::PipelineRuntimeImplementationOwnerName(
+              cyxwiz::PipelineRuntimeImplementationOwner::PipelineExecutor)) ==
+              "pipeline_executor",
+          "runtime implementation owner name for pipeline executor is stable");
+    Check(std::string(cyxwiz::PipelineRuntimeImplementationOwnerName(
+              cyxwiz::PipelineRuntimeImplementationOwner::
+                  PipelineOperatorFactory)) == "pipeline_operator_factory",
+          "runtime implementation owner name for operator factory is stable");
 
     Check(std::string(cyxwiz::PipelineMaterializerStorageSupportName(
               cyxwiz::PipelineMaterializerStorageSupport::None)) == "none",

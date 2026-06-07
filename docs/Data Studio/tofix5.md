@@ -64,8 +64,9 @@ Current truth after the 2026-06-07 cleanup:
 6. Partially fixed: audited placeholder branches in `PipelineExecutor`
    now fail closed instead of returning fake success, and exact
    operator-backed names route through `PipelineOperatorFactory`.
-   Remaining work is to choose the canonical executor/materializer
-   ownership model for all Data Studio graph execution.
+   Runtime implementation ownership is now explicit in the capability
+   registry, but the broader executor/materializer migration plan is
+   still open.
 7. Done: `TrainingManager::StartTrainingArrow()` and
    `StartTrainingParquet()` now use the same shared input-size resolver,
    including the GraphCompiler time-series override. Parquet batcher
@@ -674,15 +675,16 @@ source reason to callers instead of leaving it only in debug logs, and
 `GraphTrainingLaunchResult` carries the same source kind / skip reason
 for frontend launch callers. The first compile/training backend
 availability axis is now explicit through `PipelineTrainingBackendSupport`.
-Resolved runtime support now also carries an explicit
-`pipeline_executor_supported` axis. Operator-backed and active
-legacy-dispatched nodes are marked executable, fail-closed and unknown
-nodes are not, and `PipelineExecutor` validation now rejects unsupported
-nodes from that central axis with the registry fail-closed reason before
-any fake execution branch can run. Browser-visible node metadata now
-also consumes the fail-closed portion of that central truth: matching
-nodes are forced to template status, carry a `Blocked` badge, and expose
-the registry reason in help text. Remaining work is broader frontend
+Resolved runtime support now also carries explicit
+`pipeline_executor_supported` and implementation-owner axes.
+Operator-backed and active legacy-dispatched nodes are marked
+executable, fail-closed and unknown nodes are not, and
+`PipelineExecutor` validation now rejects unsupported nodes from that
+central axis with the registry fail-closed reason before any fake
+execution branch can run. Browser-visible node metadata now also
+consumes the fail-closed portion of that central truth: matching nodes
+are forced to template status, carry a `Blocked` badge, and expose the
+registry reason in help text. Remaining work is broader frontend
 presentation of all support axes, not another separate runtime list.
 
 **Status 2026-06-07 follow-up 4:** `NodeMetadataRegistry` now applies
@@ -698,6 +700,13 @@ also exposes the central runtime axes in help text: runtime mode,
 fail mode, PipelineExecutor support, and materializer storage scope.
 The drift suite verifies those labels use the same stable names as the
 capability registry.
+
+**Status 2026-06-07 follow-up 6:** Runtime support now carries an
+explicit implementation-owner axis. Operator-backed nodes are owned by
+`PipelineOperatorFactory`, legacy-dispatched nodes by `PipelineExecutor`,
+and fail-closed nodes by no runtime owner. The drift suite verifies
+owner values and stable owner labels, and operator-backed metadata
+exposes the owner in its support summary.
 
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
@@ -834,7 +843,8 @@ legacy, fail-closed, fail-mode, fail-closed metadata status,
 required-parameter, enum, integer-validation, source-node, required-input-count,
 compiler-blocked training, first training backend support mode,
 Arrow-table materializer-scope truth, materializer storage-backend
-availability, pipeline-executor availability, and stable names for the
+availability, pipeline-executor availability, implementation ownership,
+and stable names for the
 exposed support axes. The graph compiler, PipelineExecutor validation,
 PipelineExecutor routing, and PipelineMaterializer now consume the
 central capability truth for their covered axes. Browser-visible node
@@ -842,9 +852,9 @@ metadata now consumes fail-closed runtime truth for matching nodes and
 pushes the blocked badge/reason into the existing add-node search and
 node browser metadata path. Operator-backed metadata now also exposes
 runtime mode, fail mode, PipelineExecutor support, and materializer
-storage scope from the same registry. Remaining work is broader
-frontend presentation of non-runtime support axes, not another parallel
-UI support list.
+storage scope, and implementation owner from the same registry.
+Remaining work is broader frontend presentation of non-runtime support
+axes, not another parallel UI support list.
 
 Scope:
 
