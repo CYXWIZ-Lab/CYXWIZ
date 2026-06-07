@@ -162,3 +162,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: made pipeline parsing fail closed on dangling
   link endpoints and preserved the specific parse failure in
   `ExecutePipeline()` errors.
+- 2026-06-07 follow-up: added validation-time rejection for disconnected
+  pipeline graphs, with a regression that fails before either source is
+  loaded.

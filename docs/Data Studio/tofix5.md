@@ -185,7 +185,7 @@ Recommendation:
 
 **Status 2026-06-07:** Partially fixed. Baseline structural validation
 now covers duplicate ids, missing/self links, invalid source/input
-shapes, unsupported multi-input paths, cycles, and required
+shapes, disconnected graphs, unsupported multi-input paths, cycles, and required
 source/export parameters such as `DataInput.file_path`,
 `DataInput.folder_path`, `FileInput.path`, and output `file_path`
 settings. It also rejects missing required legacy transform parameters
@@ -198,8 +198,9 @@ starts. Validation now rejects invalid `DataInput.skip_rows` and Excel
 plus bounded integer parameters for active legacy transforms such as
 `TSWindow`, `TSLag.lag_periods`, `PolynomialFeatures`, `Binning`, and
 table row helpers. Dangling links whose start or end node id is missing
-now fail during parsing instead of being silently dropped. Validation
-and parse errors now preserve the specific failed rule. Broader
+now fail during parsing instead of being silently dropped. Disconnected
+graphs now fail validation instead of running as independent islands.
+Validation and parse errors now preserve the specific failed rule. Broader
 schema/type-aware validation remains future work.
 
 Relevant files:
@@ -223,7 +224,7 @@ Effect:
 Recommendation:
 
 - validation must at minimum reject:
-  - disconnected graphs
+  - broader disconnected-graph policy for intentionally separate jobs
   - cycles for DAG-only paths
   - missing required params beyond the current source/export and active
     legacy transform baseline

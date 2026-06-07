@@ -407,6 +407,22 @@ int main() {
           "dangling link parse error should keep the missing endpoint: " +
               dangling_link_executor.GetLastError());
 
+    const std::string disconnected_json =
+        R"({"nodes":[)"
+        R"({"id":41,"type":"DataInput","name":"Left","parameters":{)"
+        R"("source_type":"file","file_path":"left.csv","type":"csv"}},)"
+        R"({"id":42,"type":"DataInput","name":"Right","parameters":{)"
+        R"("source_type":"file","file_path":"right.csv","type":"csv"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor disconnected_executor;
+    Check(!disconnected_executor.ExecutePipeline(disconnected_json),
+          "disconnected graph should fail validation");
+    Check(disconnected_executor.GetLastError().find(
+              "Pipeline contains disconnected nodes") != std::string::npos,
+          "disconnected graph validation should be specific: " +
+              disconnected_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");

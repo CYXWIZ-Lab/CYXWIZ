@@ -434,6 +434,41 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         }
     }
 
+    if (nodes.size() > 1) {
+        std::set<int> visited;
+        std::queue<int> pending;
+        pending.push(nodes.front().id);
+        visited.insert(nodes.front().id);
+
+        while (!pending.empty()) {
+            const int current = pending.front();
+            pending.pop();
+
+            auto current_it = std::find_if(
+                nodes.begin(), nodes.end(),
+                [current](const Node& node) { return node.id == current; });
+            if (current_it == nodes.end()) {
+                continue;
+            }
+
+            for (int input_id : current_it->inputs) {
+                if (visited.insert(input_id).second) {
+                    pending.push(input_id);
+                }
+            }
+            for (int output_id : current_it->outputs) {
+                if (visited.insert(output_id).second) {
+                    pending.push(output_id);
+                }
+            }
+        }
+
+        if (visited.size() != nodes.size()) {
+            last_error_ = "Pipeline contains disconnected nodes";
+            return false;
+        }
+    }
+
     if (TopologicalSort(nodes).empty() && !nodes.empty()) {
         last_error_ = "Pipeline contains a cycle";
         return false;
