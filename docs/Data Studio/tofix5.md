@@ -188,14 +188,17 @@ now covers duplicate ids, missing/self links, invalid source/input
 shapes, unsupported multi-input paths, cycles, and required
 source/export parameters such as `DataInput.file_path`,
 `DataInput.folder_path`, `FileInput.path`, and output `file_path`
-settings. Validation also rejects node types that are unknown to the
-central runtime capability registry before execution starts. Validation
-now rejects invalid `DataInput.skip_rows` and Excel `sheet_idx` integer
-parameters before execution reaches `std::stoi`, plus bounded integer
-parameters for active legacy transforms such as `TSWindow`,
-`TSLag.lag_periods`, `PolynomialFeatures`, `Binning`, and table row
-helpers. Validation errors now preserve the specific failed rule. Broader
-schema/type-aware validation remains future work.
+settings. It also rejects missing required legacy transform parameters
+such as `FilterRows.condition`, `SelectColumns.columns`,
+`SortRows.columns`, `Join.on_column`, `GroupBy` fields, and
+`StringManipulation.column`. Validation rejects node types that are
+unknown to the central runtime capability registry before execution
+starts. Validation now rejects invalid `DataInput.skip_rows` and Excel
+`sheet_idx` integer parameters before execution reaches `std::stoi`,
+plus bounded integer parameters for active legacy transforms such as
+`TSWindow`, `TSLag.lag_periods`, `PolynomialFeatures`, `Binning`, and
+table row helpers. Validation errors now preserve the specific failed
+rule. Broader schema/type-aware validation remains future work.
 
 Relevant files:
 
@@ -220,7 +223,8 @@ Recommendation:
 - validation must at minimum reject:
   - disconnected graphs
   - cycles for DAG-only paths
-  - missing required params beyond the current source/export baseline
+  - missing required params beyond the current source/export and active
+    legacy transform baseline
   - missing required inputs
   - unsupported node types for execution paths beyond the current legacy
     executor/runtime registry baseline

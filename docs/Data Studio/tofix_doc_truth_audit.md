@@ -132,3 +132,6 @@ scanning so stale or duplicate work is not reintroduced.
   legacy transform parameters such as `TSWindow.window_size`,
   `TSLag.lag_periods`, `PolynomialFeatures.degree`, `Binning.n_bins`,
   and table row helpers.
+- 2026-06-07 follow-up: added validation-time checks for required active
+  legacy transform parameters such as `FilterRows.condition`,
+  `Join.on_column`, `GroupBy` fields, and `StringManipulation.column`.

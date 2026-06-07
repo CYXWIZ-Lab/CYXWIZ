@@ -227,12 +227,44 @@ int main() {
           "bad TableCropper validation should be specific: " +
               bad_crop_executor.GetLastError());
 
-    const std::string unknown_node_json =
+    const std::string missing_filter_condition_json =
         R"({"nodes":[)"
         R"({"id":19,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
-        R"({"id":20,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
+        R"({"id":20,"type":"FilterRows","name":"MissingCondition","parameters":{}})"
         R"(],"links":[{"start_node":19,"end_node":20}]})";
+
+    cyxwiz::PipelineExecutor missing_filter_executor;
+    Check(!missing_filter_executor.ExecutePipeline(missing_filter_condition_json),
+          "FilterRows missing condition should fail validation");
+    Check(missing_filter_executor.GetLastError().find(
+              "missing required parameter 'condition'") != std::string::npos,
+          "FilterRows missing condition validation should be specific: " +
+              missing_filter_executor.GetLastError());
+
+    const std::string missing_join_column_json =
+        R"({"nodes":[)"
+        R"({"id":21,"type":"DataInput","name":"Left","parameters":{)"
+        R"("source_type":"file","file_path":"left.csv","type":"csv"}},)"
+        R"({"id":22,"type":"DataInput","name":"Right","parameters":{)"
+        R"("source_type":"file","file_path":"right.csv","type":"csv"}},)"
+        R"({"id":23,"type":"Join","name":"Join","parameters":{}})"
+        R"(],"links":[{"start_node":21,"end_node":23},{"start_node":22,"end_node":23}]})";
+
+    cyxwiz::PipelineExecutor missing_join_executor;
+    Check(!missing_join_executor.ExecutePipeline(missing_join_column_json),
+          "Join missing on_column should fail validation");
+    Check(missing_join_executor.GetLastError().find(
+              "missing required parameter 'on_column'") != std::string::npos,
+          "Join missing on_column validation should be specific: " +
+              missing_join_executor.GetLastError());
+
+    const std::string unknown_node_json =
+        R"({"nodes":[)"
+        R"({"id":24,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":25,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
+        R"(],"links":[{"start_node":24,"end_node":25}]})";
 
     cyxwiz::PipelineExecutor unknown_node_executor;
     Check(!unknown_node_executor.ExecutePipeline(unknown_node_json),
@@ -245,7 +277,7 @@ int main() {
 
     const std::string parquet_input_json =
         R"({"nodes":[)"
-        R"({"id":21,"type":"ParquetInput","name":"Parquet","parameters":{)"
+        R"({"id":26,"type":"ParquetInput","name":"Parquet","parameters":{)"
         R"("file_path":"ignored.parquet"}})"
         R"(],"links":[]})";
 
