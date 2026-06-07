@@ -185,6 +185,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"DataInput", "source_type", "file", {"file", "folder", "ml_dataset"}},
         {"DataOutput", "format", "csv", {"csv", "parquet", "json"}},
         {"FillMissing", "strategy", "mean", {"mean", "median", "mode", "constant"}},
+        {"StringManipulation", "operation", "trim", {"trim", "upper", "lower", "replace", "substring"}},
     };
     return capabilities;
 }

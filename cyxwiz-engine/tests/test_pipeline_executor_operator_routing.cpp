@@ -71,6 +71,34 @@ double ReadNumericValue(const std::shared_ptr<arrow::Table>& table,
     }
 }
 
+std::string ReadStringValue(const std::shared_ptr<arrow::Table>& table,
+                            const std::string& column_name,
+                            int64_t row_index) {
+    const int column_index = table->schema()->GetFieldIndex(column_name);
+    Check(column_index >= 0, "string output keeps requested column");
+
+    auto column = table->column(column_index);
+    Check(column && column->num_chunks() > 0, "string column has chunks");
+    int64_t remaining = row_index;
+    for (const auto& chunk : column->chunks()) {
+        if (remaining >= chunk->length()) {
+            remaining -= chunk->length();
+            continue;
+        }
+        Check(!chunk->IsNull(remaining), "string scalar is not null");
+        if (chunk->type_id() == arrow::Type::STRING) {
+            return std::static_pointer_cast<arrow::StringArray>(chunk)->GetString(remaining);
+        }
+        if (chunk->type_id() == arrow::Type::LARGE_STRING) {
+            return std::static_pointer_cast<arrow::LargeStringArray>(chunk)->GetString(remaining);
+        }
+        break;
+    }
+
+    Check(false, "string value has supported type");
+    return {};
+}
+
 std::string JsonEscapePath(std::string path) {
     std::string escaped;
     escaped.reserve(path.size());
@@ -99,8 +127,11 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.csv";
     const fs::path missing_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_values.csv";
+    const fs::path string_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_strings.csv";
     fs::remove(export_csv_path);
     fs::remove(missing_csv_path);
+    fs::remove(string_csv_path);
     {
         std::ofstream csv(csv_path);
         csv << "x,y\n";
@@ -114,6 +145,12 @@ int main() {
         csv << "1,10\n";
         csv << ",20\n";
         csv << "3,\n";
+    }
+    {
+        std::ofstream csv(string_csv_path);
+        csv << "phrase\n";
+        csv << "tea cup\n";
+        csv << "blue mug\n";
     }
 
     const std::string pipeline_json =
@@ -671,6 +708,64 @@ int main() {
     Check(std::fabs(ReadNumericValue(filled_table, "y", 2) - 15.0) < 0.001,
           "FillMissing mean should fill y with column mean");
 
+    const std::string string_replace_json =
+        R"({"nodes":[)"
+        R"({"id":65,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":66,"type":"StringManipulation","name":"Replace","parameters":{)"
+        R"("column":"phrase","operation":"replace","param1":"tea","param2":"coffee"}})"
+        R"(],"links":[{"start_node":65,"end_node":66}]})";
+
+    cyxwiz::PipelineExecutor string_replace_executor;
+    Check(string_replace_executor.ExecutePipeline(string_replace_json),
+          "StringManipulation replace should execute real replacement: " +
+              string_replace_executor.GetLastError());
+    auto replaced = registry.GetArrowDataset("ds_string_66");
+    Check(replaced != nullptr, "StringManipulation replace output dataset is registered");
+    auto replaced_table = replaced->GetArrowTable();
+    Check(replaced_table != nullptr, "StringManipulation replace output table exists");
+    Check(ReadStringValue(replaced_table, "phrase_modified", 0) == "coffee cup",
+          "StringManipulation replace should change matching text");
+
+    const std::string string_substring_json =
+        R"({"nodes":[)"
+        R"({"id":67,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":68,"type":"StringManipulation","name":"Substring","parameters":{)"
+        R"("column":"phrase","operation":"substring","param1":"1","param2":"3"}})"
+        R"(],"links":[{"start_node":67,"end_node":68}]})";
+
+    cyxwiz::PipelineExecutor string_substring_executor;
+    Check(string_substring_executor.ExecutePipeline(string_substring_json),
+          "StringManipulation substring should execute real substring: " +
+              string_substring_executor.GetLastError());
+    auto substring = registry.GetArrowDataset("ds_string_68");
+    Check(substring != nullptr, "StringManipulation substring output dataset is registered");
+    auto substring_table = substring->GetArrowTable();
+    Check(substring_table != nullptr, "StringManipulation substring output table exists");
+    Check(ReadStringValue(substring_table, "phrase_modified", 0) == "tea",
+          "StringManipulation substring should use param1 start and param2 length");
+
+    const std::string bad_string_operation_json =
+        R"({"nodes":[)"
+        R"({"id":69,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":70,"type":"StringManipulation","name":"BadStringOp","parameters":{)"
+        R"("column":"phrase","operation":"reverse"}})"
+        R"(],"links":[{"start_node":69,"end_node":70}]})";
+
+    cyxwiz::PipelineExecutor bad_string_operation_executor;
+    Check(!bad_string_operation_executor.ExecutePipeline(bad_string_operation_json),
+          "StringManipulation unknown operation should fail validation");
+    Check(bad_string_operation_executor.GetLastError().find(
+              "StringManipulation operation 'reverse' is not supported") !=
+              std::string::npos,
+          "StringManipulation unknown operation error should be specific: " +
+              bad_string_operation_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
@@ -689,9 +784,14 @@ int main() {
     registry.UnloadDataset("ds_datainput_61");
     registry.UnloadDataset("ds_datainput_63");
     registry.UnloadDataset("ds_fillmissing_64");
+    registry.UnloadDataset("ds_datainput_65");
+    registry.UnloadDataset("ds_string_66");
+    registry.UnloadDataset("ds_datainput_67");
+    registry.UnloadDataset("ds_string_68");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
     fs::remove(missing_csv_path);
+    fs::remove(string_csv_path);
 
     return 0;
 }

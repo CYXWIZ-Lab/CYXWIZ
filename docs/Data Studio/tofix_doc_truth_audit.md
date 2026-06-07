@@ -190,3 +190,7 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: replaced legacy `FillMissing` statistic
   placeholder zero-fill with per-column DuckDB `mean`/`median`/`mode`
   expressions and centralized `strategy` validation.
+- 2026-06-07 follow-up: made legacy `StringManipulation` execute its
+  advertised `replace` and `substring` operations and centralized
+  operation enum validation so unsupported operations fail before
+  execution.

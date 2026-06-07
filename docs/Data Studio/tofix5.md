@@ -450,6 +450,9 @@ Problem now:
 - legacy `FillMissing` now builds per-column fill expressions for
   `mean`, `median`, `mode`, and `constant` strategies instead of using
   a placeholder zero fill for statistic-based strategies
+- legacy `StringManipulation` now executes its advertised `replace` and
+  `substring` operations, validates the operation enum centrally, and
+  rejects unknown operations instead of returning a successful no-op
 - fail-closed legacy helper bodies such as `ExportExcel`,
   `ExportJSON`, `CellExtractor`, `CellUpdater`, `ColumnAppender`,
   `RowAppender`, and `Unpivot` have been removed from the active

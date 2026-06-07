@@ -85,6 +85,19 @@ std::string QuoteSqlIdentifier(const std::string& identifier) {
     return quoted;
 }
 
+std::string QuoteSqlStringLiteral(const std::string& value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "''";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
     switch (type->id()) {
         case arrow::Type::INT8:
@@ -235,6 +248,33 @@ bool HasSupportedParameterValues(
                        parameters, node_type, capability.parameter_name,
                        capability.minimum, error)) {
             return false;
+        }
+    }
+
+    if (node_type == "StringManipulation") {
+        const auto operation_it = parameters.find("operation");
+        const std::string operation =
+            (operation_it != parameters.end() && !operation_it->second.empty())
+                ? operation_it->second
+                : "trim";
+        if (operation == "replace" &&
+            !HasNonEmptyParameter(parameters, "param1")) {
+            error = "StringManipulation replace requires param1";
+            return false;
+        }
+        if (operation == "substring") {
+            const auto start_it = parameters.find("param1");
+            const auto length_it = parameters.find("param2");
+            if (start_it == parameters.end() || start_it->second.empty() ||
+                !IsIntegerAtLeast(start_it->second, 1)) {
+                error = "StringManipulation substring param1 must be an integer >= 1";
+                return false;
+            }
+            if (length_it == parameters.end() || length_it->second.empty() ||
+                !IsIntegerAtLeast(length_it->second, 0)) {
+                error = "StringManipulation substring param2 must be an integer >= 0";
+                return false;
+            }
         }
     }
 
@@ -3023,18 +3063,47 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
             return false;
         }
 
+        const std::string quoted_column = QuoteSqlIdentifier(column);
+        const std::string quoted_output = QuoteSqlIdentifier(column + "_modified");
+
         std::string expr;
         if (operation == "trim") {
-            expr = "TRIM(\"" + column + "\")";
+            expr = "TRIM(" + quoted_column + ")";
         } else if (operation == "upper") {
-            expr = "UPPER(\"" + column + "\")";
+            expr = "UPPER(" + quoted_column + ")";
         } else if (operation == "lower") {
-            expr = "LOWER(\"" + column + "\")";
+            expr = "LOWER(" + quoted_column + ")";
+        } else if (operation == "replace") {
+            const auto find_it = node.parameters.find("param1");
+            const auto replacement_it = node.parameters.find("param2");
+            const std::string find_value =
+                (find_it != node.parameters.end()) ? find_it->second : "";
+            const std::string replacement =
+                (replacement_it != node.parameters.end()) ? replacement_it->second : "";
+            if (find_value.empty()) {
+                ReportError("StringManipulation: replace requires param1");
+                return false;
+            }
+            expr = "REPLACE(" + quoted_column + ", " +
+                   QuoteSqlStringLiteral(find_value) + ", " +
+                   QuoteSqlStringLiteral(replacement) + ")";
+        } else if (operation == "substring") {
+            const auto start_it = node.parameters.find("param1");
+            const auto length_it = node.parameters.find("param2");
+            if (start_it == node.parameters.end() || length_it == node.parameters.end() ||
+                start_it->second.empty() || length_it->second.empty()) {
+                ReportError("StringManipulation: substring requires param1 and param2");
+                return false;
+            }
+            expr = "SUBSTRING(" + quoted_column + ", " + start_it->second +
+                   ", " + length_it->second + ")";
         } else {
-            expr = "\"" + column + "\"";
+            ReportError("StringManipulation: Unsupported operation '" + operation + "'");
+            return false;
         }
 
-        std::string sql = "SELECT *, " + expr + " AS " + column + "_modified FROM " + temp_table;
+        std::string sql =
+            "SELECT *, " + expr + " AS " + quoted_output + " FROM " + temp_table;
         auto result_table = duckdb_->Query(sql);
         duckdb_->UnregisterTable(temp_table);
 
