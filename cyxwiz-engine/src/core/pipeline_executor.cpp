@@ -874,6 +874,16 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                           node.type + "' for PipelineExecutor";
             return false;
         }
+
+        if (!runtime_support.pipeline_executor_supported) {
+            last_error_ = "Node '" + node.name + "' of type '" + node.type +
+                          "' is not supported by PipelineExecutor";
+            if (runtime_support.fail_closed_reason != nullptr) {
+                last_error_ += ": ";
+                last_error_ += runtime_support.fail_closed_reason;
+            }
+            return false;
+        }
     }
 
     if (nodes.size() > 1) {

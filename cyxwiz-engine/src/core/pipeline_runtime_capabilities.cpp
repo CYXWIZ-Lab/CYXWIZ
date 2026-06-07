@@ -344,6 +344,7 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             operator_type,
             nullptr,
             PipelineMaterializerStorageSupport::ArrowTableOnly,
+            true,
             true});
     }
 
@@ -363,6 +364,7 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             std::nullopt,
             fail_closed_it->reason,
             PipelineMaterializerStorageSupport::None,
+            false,
             false};
         support.metadata_node_type = fail_closed_it->metadata_node_type;
         return with_validation_axes(std::move(support));
@@ -375,7 +377,8 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             std::nullopt,
             nullptr,
             PipelineMaterializerStorageSupport::None,
-            false});
+            false,
+            true});
     }
 
     return {};

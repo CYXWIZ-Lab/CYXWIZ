@@ -652,8 +652,14 @@ Parquet-backed, image, audio, and text datasets carry explicit
 unsupported reasons and `PipelineMaterializer` consults that registry
 before pass-through. The first compile/training backend availability
 axis is now explicit through `PipelineTrainingBackendSupport`.
-Remaining work is to expand this into a fuller multi-axis capability
-matrix for the rest of compile/runtime support.
+Resolved runtime support now also carries an explicit
+`pipeline_executor_supported` axis. Operator-backed and active
+legacy-dispatched nodes are marked executable, fail-closed and unknown
+nodes are not, and `PipelineExecutor` validation now rejects unsupported
+nodes from that central axis with the registry fail-closed reason before
+any fake execution branch can run. Remaining work is frontend
+consumption of the same support truth, not another separate runtime
+list.
 
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
@@ -694,7 +700,7 @@ Recommendation:
   - `frontend_visible`
   - `compile_supported`
   - `training_supported`
-  - `pipeline_supported`
+  - `pipeline_supported` - now explicit as `pipeline_executor_supported`
   - `materializer_supported`
   - `backend_available`
   - `fail_mode` (`hard_fail`, `simulated`, `passthrough`, `real`)
@@ -784,14 +790,17 @@ Deliverable:
 
 ### Ticket D: Capability registry
 
-Status: in progress. Runtime support now has centralized operator,
+Status: mostly completed in this branch. Runtime support now has centralized operator,
 legacy, fail-closed, fail-mode, fail-closed metadata status,
 required-parameter, enum, integer-validation, source-node, required-input-count,
 compiler-blocked training, first training backend support mode,
 Arrow-table materializer-scope truth, materializer storage-backend
-availability, and stable names for the exposed support axes. The
-remaining work is the broader multi-axis matrix for compile/runtime
-support beyond the first training backend availability axis.
+availability, pipeline-executor availability, and stable names for the
+exposed support axes. The graph compiler, PipelineExecutor validation,
+PipelineExecutor routing, and PipelineMaterializer now consume the
+central capability truth for their covered axes. Remaining work is to
+expose/consume this same truth in the frontend instead of maintaining
+parallel UI support assumptions.
 
 Scope:
 
