@@ -423,11 +423,70 @@ int main() {
           "disconnected graph validation should be specific: " +
               disconnected_executor.GetLastError());
 
+    const std::string rename_columns_json =
+        R"({"nodes":[)"
+        R"({"id":43,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":44,"type":"RenameColumns","name":"Rename","parameters":{)"
+        R"("mapping":"x:feature_x, y:target_y"}})"
+        R"(],"links":[{"start_node":43,"end_node":44}]})";
+
+    cyxwiz::PipelineExecutor rename_columns_executor;
+    Check(rename_columns_executor.ExecutePipeline(rename_columns_json),
+          "RenameColumns should rename Arrow schema fields: " +
+              rename_columns_executor.GetLastError());
+    auto renamed = registry.GetArrowDataset("ds_renamed_44");
+    Check(renamed != nullptr, "RenameColumns output dataset is registered");
+    auto renamed_table = renamed->GetArrowTable();
+    Check(renamed_table != nullptr, "RenameColumns output table exists");
+    Check(renamed_table->schema()->GetFieldIndex("feature_x") >= 0,
+          "RenameColumns should expose renamed feature_x field");
+    Check(renamed_table->schema()->GetFieldIndex("target_y") >= 0,
+          "RenameColumns should expose renamed target_y field");
+    Check(renamed_table->schema()->GetFieldIndex("x") < 0,
+          "RenameColumns should remove old x field name");
+
+    const std::string missing_rename_mapping_json =
+        R"({"nodes":[)"
+        R"({"id":45,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":46,"type":"RenameColumns","name":"Rename","parameters":{}})"
+        R"(],"links":[{"start_node":45,"end_node":46}]})";
+
+    cyxwiz::PipelineExecutor missing_rename_mapping_executor;
+    Check(!missing_rename_mapping_executor.ExecutePipeline(missing_rename_mapping_json),
+          "RenameColumns missing mapping should fail validation");
+    Check(missing_rename_mapping_executor.GetLastError().find(
+              "missing required parameter 'mapping'") != std::string::npos,
+          "RenameColumns missing mapping validation should be specific: " +
+              missing_rename_mapping_executor.GetLastError());
+
+    const std::string bad_rename_mapping_json =
+        R"({"nodes":[)"
+        R"({"id":47,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":48,"type":"RenameColumns","name":"Rename","parameters":{)"
+        R"("mapping":"missing:renamed"}})"
+        R"(],"links":[{"start_node":47,"end_node":48}]})";
+
+    cyxwiz::PipelineExecutor bad_rename_mapping_executor;
+    Check(!bad_rename_mapping_executor.ExecutePipeline(bad_rename_mapping_json),
+          "RenameColumns unknown input column should fail execution");
+    Check(bad_rename_mapping_executor.GetLastError().find(
+              "input column 'missing' does not exist") != std::string::npos,
+          "RenameColumns unknown input column error should be specific: " +
+              bad_rename_mapping_executor.GetLastError());
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
     registry.UnloadDataset("ds_datainput_35");
     registry.UnloadDataset("ds_datainput_37");
+    registry.UnloadDataset("ds_datainput_43");
+    registry.UnloadDataset("ds_renamed_44");
+    registry.UnloadDataset("ds_datainput_47");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
 

@@ -191,7 +191,8 @@ source/export parameters such as `DataInput.file_path`,
 settings. It also rejects missing required legacy transform parameters
 such as `FilterRows.condition`, `SelectColumns.columns`,
 `SortRows.columns`, `Join.on_column`, `GroupBy` fields, and
-`StringManipulation.column`. Validation rejects node types that are
+`StringManipulation.column`; `RenameColumns` now requires a `mapping`
+or legacy `rename_map` value. Validation rejects node types that are
 unknown to the central runtime capability registry before execution
 starts. Validation now rejects invalid `DataInput.skip_rows` and Excel
 `sheet_idx` integer parameters before execution reaches `std::stoi`,
@@ -427,6 +428,8 @@ Problem now:
 - legacy `ExportCSV` now writes through `DataRegistry::ExportArrowToCSV`;
   legacy `ExportExcel` and `ExportJSON` fail closed instead of only
   logging and returning success
+- legacy `RenameColumns` now rebuilds the Arrow schema with renamed
+  fields instead of registering the input table unchanged
 - broader support truth still needs the next multi-axis capability matrix
 
 Effect:

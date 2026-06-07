@@ -165,3 +165,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: added validation-time rejection for disconnected
   pipeline graphs, with a regression that fails before either source is
   loaded.
+- 2026-06-07 follow-up: made legacy `RenameColumns` perform a real Arrow
+  schema rename from `mapping`/`rename_map` pairs and fail validation
+  when no rename mapping is provided.

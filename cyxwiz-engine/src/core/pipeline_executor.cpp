@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <queue>
 #include <sstream>
 #include <future>
@@ -25,6 +26,39 @@ bool HasNonEmptyParameter(const std::map<std::string, std::string>& parameters,
                           const std::string& name) {
     auto it = parameters.find(name);
     return it != parameters.end() && !it->second.empty();
+}
+
+std::string TrimString(const std::string& value) {
+    auto begin = std::find_if_not(value.begin(), value.end(),
+                                  [](unsigned char c) { return std::isspace(c); });
+    auto end = std::find_if_not(value.rbegin(), value.rend(),
+                                [](unsigned char c) { return std::isspace(c); }).base();
+    if (begin >= end) {
+        return {};
+    }
+    return std::string(begin, end);
+}
+
+std::map<std::string, std::string> ParseRenameMapping(const std::string& mapping) {
+    std::map<std::string, std::string> result;
+    std::stringstream pairs(mapping);
+    std::string pair;
+    while (std::getline(pairs, pair, ',')) {
+        std::stringstream semicolon_pairs(pair);
+        std::string semicolon_pair;
+        while (std::getline(semicolon_pairs, semicolon_pair, ';')) {
+            const auto delimiter = semicolon_pair.find(':');
+            if (delimiter == std::string::npos) {
+                continue;
+            }
+            const std::string old_name = TrimString(semicolon_pair.substr(0, delimiter));
+            const std::string new_name = TrimString(semicolon_pair.substr(delimiter + 1));
+            if (!old_name.empty() && !new_name.empty()) {
+                result[old_name] = new_name;
+            }
+        }
+    }
+    return result;
 }
 
 bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
@@ -112,6 +146,13 @@ const char* MissingRequiredParameter(
             return HasNonEmptyParameter(parameters, "folder_path") ? nullptr : "folder_path";
         }
         return nullptr;
+    }
+
+    if (node_type == "RenameColumns") {
+        return (HasNonEmptyParameter(parameters, "mapping") ||
+                HasNonEmptyParameter(parameters, "rename_map"))
+            ? nullptr
+            : "mapping";
     }
 
     for (const char* parameter : ResolvePipelineRequiredParameters(node_type)) {
@@ -2676,9 +2717,15 @@ bool PipelineExecutor::ExecuteRenameColumns(const Node& node, ExecutionContext& 
     }
 
     auto rename_map_it = node.parameters.find("rename_map");
-    if (rename_map_it == node.parameters.end() || rename_map_it->second.empty()) {
-        ctx.node_results[node.id] = input_dataset_name;
-        return true;
+    auto mapping_it = node.parameters.find("mapping");
+    const std::string mapping =
+        (mapping_it != node.parameters.end() && !mapping_it->second.empty())
+            ? mapping_it->second
+            : ((rename_map_it != node.parameters.end()) ? rename_map_it->second : "");
+    const auto rename_map = ParseRenameMapping(mapping);
+    if (rename_map.empty()) {
+        ReportError("RenameColumns: mapping must contain old_name:new_name pairs");
+        return false;
     }
 
     std::string output_dataset_name = "ds_renamed_" + std::to_string(node.id);
@@ -2692,7 +2739,39 @@ bool PipelineExecutor::ExecuteRenameColumns(const Node& node, ExecutionContext& 
             return false;
         }
         auto input_table = input_dataset->GetArrowTable();
-        registry.RegisterArrowTable(input_table, output_dataset_name);
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        fields.reserve(input_table->num_columns());
+        std::set<std::string> output_names;
+        std::set<std::string> matched_input_names;
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto field = input_table->schema()->field(i);
+            auto rename_it = rename_map.find(field->name());
+            const std::string output_name =
+                rename_it == rename_map.end() ? field->name() : rename_it->second;
+            if (!output_names.insert(output_name).second) {
+                ReportError("RenameColumns: duplicate output column name '" +
+                            output_name + "'");
+                return false;
+            }
+            if (rename_it != rename_map.end()) {
+                matched_input_names.insert(field->name());
+            }
+            fields.push_back(rename_it == rename_map.end()
+                                 ? field
+                                 : field->WithName(output_name));
+        }
+        if (matched_input_names.size() != rename_map.size()) {
+            for (const auto& [old_name, _] : rename_map) {
+                if (matched_input_names.find(old_name) == matched_input_names.end()) {
+                    ReportError("RenameColumns: input column '" + old_name +
+                                "' does not exist");
+                    return false;
+                }
+            }
+        }
+        auto renamed_table = arrow::Table::Make(
+            arrow::schema(fields), input_table->columns(), input_table->num_rows());
+        registry.RegisterArrowTable(renamed_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
         return true;
     } catch (const std::exception& e) {
