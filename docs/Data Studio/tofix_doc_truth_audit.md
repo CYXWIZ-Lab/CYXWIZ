@@ -187,3 +187,6 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-07 follow-up: fixed `ArrowToTensor` ArrayFire dimension
   construction so Arrow tables convert to the intended `[rows, columns]`
   tensor shape; `test_arrow_integration` now passes end to end.
+- 2026-06-07 follow-up: replaced legacy `FillMissing` statistic
+  placeholder zero-fill with per-column DuckDB `mean`/`median`/`mode`
+  expressions and centralized `strategy` validation.

@@ -72,6 +72,37 @@ std::string ScalarToColumnName(const std::shared_ptr<arrow::Scalar>& scalar) {
     return TrimString(value);
 }
 
+std::string QuoteSqlIdentifier(const std::string& identifier) {
+    std::string quoted = "\"";
+    for (char c : identifier) {
+        if (c == '"') {
+            quoted += "\"\"";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    switch (type->id()) {
+        case arrow::Type::INT8:
+        case arrow::Type::INT16:
+        case arrow::Type::INT32:
+        case arrow::Type::INT64:
+        case arrow::Type::UINT8:
+        case arrow::Type::UINT16:
+        case arrow::Type::UINT32:
+        case arrow::Type::UINT64:
+        case arrow::Type::FLOAT:
+        case arrow::Type::DOUBLE:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
     if (value.empty()) {
         return false;
@@ -1158,6 +1189,10 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
         }
 
         auto input_table = input_dataset->GetArrowTable();
+        if (!input_table) {
+            ReportError("FillMissing: Input table is null");
+            return false;
+        }
 
         // Register input table with DuckDB
         std::string temp_table = "temp_" + std::to_string(node.id);
@@ -1166,19 +1201,45 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
             return false;
         }
 
-        // Build COALESCE query based on strategy
-        std::string sql;
-        if (strategy == "constant") {
-            // Replace NULL with constant value
-            sql = "SELECT * REPLACE (COALESCE(*, " + fill_value + ") AS *) FROM " + temp_table;
-        } else if (strategy == "mean" || strategy == "median" || strategy == "mode") {
-            // For MVP, use 0 as fallback (full implementation would compute statistics)
-            // TODO: Implement proper mean/median/mode calculation
-            sql = "SELECT * REPLACE (COALESCE(*, 0) AS *) FROM " + temp_table;
-        } else {
-            // Default to 0
-            sql = "SELECT * REPLACE (COALESCE(*, 0) AS *) FROM " + temp_table;
+        std::vector<std::string> select_exprs;
+        select_exprs.reserve(input_table->num_columns());
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto& field = input_table->schema()->field(i);
+            const std::string quoted_column = QuoteSqlIdentifier(field->name());
+            std::string expression = quoted_column;
+
+            if (strategy == "constant") {
+                expression = "COALESCE(" + quoted_column + ", " + fill_value + ")";
+            } else if (strategy == "mean") {
+                if (IsNumericArrowType(field->type())) {
+                    expression = "COALESCE(" + quoted_column + ", (SELECT AVG(" +
+                                 quoted_column + ") FROM " + temp_table + "))";
+                }
+            } else if (strategy == "median") {
+                if (IsNumericArrowType(field->type())) {
+                    expression = "COALESCE(" + quoted_column + ", (SELECT MEDIAN(" +
+                                 quoted_column + ") FROM " + temp_table + "))";
+                }
+            } else if (strategy == "mode") {
+                expression = "COALESCE(" + quoted_column + ", (SELECT MODE(" +
+                             quoted_column + ") FROM " + temp_table + "))";
+            } else {
+                duckdb_->UnregisterTable(temp_table);
+                ReportError("FillMissing: Unsupported strategy '" + strategy + "'");
+                return false;
+            }
+
+            select_exprs.push_back(expression + " AS " + quoted_column);
         }
+
+        std::string sql = "SELECT ";
+        for (size_t i = 0; i < select_exprs.size(); ++i) {
+            if (i > 0) {
+                sql += ", ";
+            }
+            sql += select_exprs[i];
+        }
+        sql += " FROM " + temp_table;
 
         auto result_table = duckdb_->Query(sql);
 

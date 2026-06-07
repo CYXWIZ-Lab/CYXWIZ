@@ -447,6 +447,9 @@ Problem now:
 - `ArrowToTensor` now constructs ArrayFire dimensions with the intended
   `[rows, columns]` shape instead of collapsing to a one-dimensional comma
   expression
+- legacy `FillMissing` now builds per-column fill expressions for
+  `mean`, `median`, `mode`, and `constant` strategies instead of using
+  a placeholder zero fill for statistic-based strategies
 - fail-closed legacy helper bodies such as `ExportExcel`,
   `ExportJSON`, `CellExtractor`, `CellUpdater`, `ColumnAppender`,
   `RowAppender`, and `Unpivot` have been removed from the active

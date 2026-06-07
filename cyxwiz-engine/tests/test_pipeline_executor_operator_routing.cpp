@@ -42,6 +42,35 @@ double ReadFirstFloatValue(const std::shared_ptr<arrow::Table>& table,
     return 0.0;
 }
 
+double ReadNumericValue(const std::shared_ptr<arrow::Table>& table,
+                        const std::string& column_name,
+                        int64_t row_index) {
+    const int column_index = table->schema()->GetFieldIndex(column_name);
+    Check(column_index >= 0, "numeric output keeps requested column");
+
+    auto column = table->column(column_index);
+    Check(column && column->num_chunks() > 0, "numeric column has chunks");
+    auto scalar_result = column->GetScalar(row_index);
+    Check(scalar_result.ok(), "numeric scalar can be read");
+    auto scalar = *scalar_result;
+    Check(scalar && scalar->is_valid, "numeric scalar is not null");
+
+    switch (scalar->type->id()) {
+        case arrow::Type::INT32:
+            return std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+        case arrow::Type::INT64:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+        case arrow::Type::FLOAT:
+            return std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+        case arrow::Type::DOUBLE:
+            return std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+        default:
+            Check(false, "numeric scalar has supported type");
+            return 0.0;
+    }
+}
+
 std::string JsonEscapePath(std::string path) {
     std::string escaped;
     escaped.reserve(path.size());
@@ -68,13 +97,23 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_routing.csv";
     const fs::path export_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.csv";
+    const fs::path missing_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_values.csv";
     fs::remove(export_csv_path);
+    fs::remove(missing_csv_path);
     {
         std::ofstream csv(csv_path);
         csv << "x,y\n";
         csv << "1,10\n";
         csv << "2,20\n";
         csv << "3,30\n";
+    }
+    {
+        std::ofstream csv(missing_csv_path);
+        csv << "x,y\n";
+        csv << "1,10\n";
+        csv << ",20\n";
+        csv << "3,\n";
     }
 
     const std::string pipeline_json =
@@ -610,6 +649,28 @@ int main() {
           "RuleEngine should use fail-closed runtime support: " +
               rule_engine_executor.GetLastError());
 
+    const std::string fill_missing_mean_json =
+        R"({"nodes":[)"
+        R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(missing_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":64,"type":"FillMissing","name":"Fill","parameters":{)"
+        R"("strategy":"mean"}})"
+        R"(],"links":[{"start_node":63,"end_node":64}]})";
+
+    cyxwiz::PipelineExecutor fill_missing_mean_executor;
+    Check(fill_missing_mean_executor.ExecutePipeline(fill_missing_mean_json),
+          "FillMissing mean should use column statistics: " +
+              fill_missing_mean_executor.GetLastError());
+    auto filled = registry.GetArrowDataset("ds_fillmissing_64");
+    Check(filled != nullptr, "FillMissing output dataset is registered");
+    auto filled_table = filled->GetArrowTable();
+    Check(filled_table != nullptr, "FillMissing output table exists");
+    Check(std::fabs(ReadNumericValue(filled_table, "x", 1) - 2.0) < 0.001,
+          "FillMissing mean should fill x with column mean");
+    Check(std::fabs(ReadNumericValue(filled_table, "y", 2) - 15.0) < 0.001,
+          "FillMissing mean should fill y with column mean");
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_datainput_3");
@@ -626,8 +687,11 @@ int main() {
     registry.UnloadDataset("ds_datainput_59");
     registry.UnloadDataset("ds_math_60");
     registry.UnloadDataset("ds_datainput_61");
+    registry.UnloadDataset("ds_datainput_63");
+    registry.UnloadDataset("ds_fillmissing_64");
     fs::remove(csv_path);
     fs::remove(export_csv_path);
+    fs::remove(missing_csv_path);
 
     return 0;
 }
