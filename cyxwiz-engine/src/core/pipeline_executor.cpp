@@ -641,8 +641,11 @@ bool RequireRoleColumnKind(
     }
 
     const int column_index = table->schema()->GetFieldIndex(column);
+    const std::string column_role =
+        (role == "column") ? "column" : role + " column";
     if (column_index < 0) {
-        error = node_type + ": " + role + " column '" + column + "' not found";
+        error = node_type + ": " + column_role + " '" + column +
+                "' not found";
         return false;
     }
 
@@ -650,7 +653,7 @@ bool RequireRoleColumnKind(
     if (!field || !predicate(field->type())) {
         const std::string found =
             field && field->type() ? field->type()->ToString() : "unknown";
-        error = node_type + ": " + role + " column '" + column +
+        error = node_type + ": " + column_role + " '" + column +
                 "' must be " + kind + " (found " + found + ")";
         return false;
     }
@@ -1464,6 +1467,36 @@ bool ValidateRequiredRoleColumnKind(
                                  predicate, error);
 }
 
+bool ValidateOptionalRoleColumnListKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+
+    const std::vector<std::string> columns = ParseCommaSeparatedNames(it->second);
+    if (columns.empty()) {
+        const std::string column_role =
+            (role == "column") ? "columns" : role + " columns";
+        error = node_type + ": no " + column_role + " were provided";
+        return false;
+    }
+    for (const auto& column : columns) {
+        if (!RequireRoleColumnKind(table, node_type, column, role, kind,
+                                   predicate, error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ValidateSignalColumnInputSchema(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& node_type,
@@ -1481,6 +1514,93 @@ bool ValidateValueColumnInputSchema(
     std::string& error) {
     return ValidateRequiredRoleColumnKind(
         table, node_type, parameters, "value_col", "value", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateFeatureColumnsInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateOptionalRoleColumnListKind(
+        table, node_type, parameters, "feature_cols", "feature", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateNumericColumnsInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateOptionalRoleColumnListKind(
+        table, node_type, parameters, "columns", "column", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateCategoricalColumnsInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateOptionalRoleColumnListKind(
+        table, node_type, parameters, "columns", "categorical",
+        "string/large_string", IsStringArrowType, error);
+}
+
+bool ValidatePCAInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateFeatureColumnsInputSchema(table, node_type, parameters,
+                                           error)) {
+        return false;
+    }
+    return ValidateOptionalRoleColumnKind(
+        table, node_type, parameters, "label_col", "label",
+        "string or numeric label", IsTextLabelArrowType, error);
+}
+
+bool ValidateLinearRegressionInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateFeatureColumnsInputSchema(table, node_type, parameters,
+                                           error)) {
+        return false;
+    }
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "target_col", "target", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidatePolynomialRegressionInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateRequiredRoleColumnKind(
+            table, node_type, parameters, "feature_col", "feature",
+            "numeric", IsNumericArrowType, error)) {
+        return false;
+    }
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "target_col", "target", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateTargetEncoderInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateCategoricalColumnsInputSchema(table, node_type, parameters,
+                                               error)) {
+        return false;
+    }
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "target_col", "target", "numeric",
         IsNumericArrowType, error);
 }
 
@@ -1515,6 +1635,37 @@ bool ValidatePipelineOperatorInputSchema(
         case gui::NodeType::Differencing:
             return ValidateValueColumnInputSchema(table, node_type,
                                                   parameters, error);
+        case gui::NodeType::StandardScaler:
+        case gui::NodeType::MinMaxScaler:
+        case gui::NodeType::RobustScaler:
+        case gui::NodeType::OutlierDetector:
+            return ValidateNumericColumnsInputSchema(table, node_type,
+                                                     parameters, error);
+        case gui::NodeType::PCANode:
+            return ValidatePCAInputSchema(table, node_type, parameters,
+                                          error);
+        case gui::NodeType::KMeansCluster:
+        case gui::NodeType::DBSCANCluster:
+        case gui::NodeType::HierarchicalCluster:
+        case gui::NodeType::GMMCluster:
+            return ValidateFeatureColumnsInputSchema(table, node_type,
+                                                     parameters, error);
+        case gui::NodeType::LinearRegressionNode:
+            return ValidateLinearRegressionInputSchema(table, node_type,
+                                                       parameters, error);
+        case gui::NodeType::PolynomialRegressionNode:
+            return ValidatePolynomialRegressionInputSchema(
+                table, node_type, parameters, error);
+        case gui::NodeType::LabelEncoder:
+            return ValidateRequiredRoleColumnKind(
+                table, node_type, parameters, "column", "column",
+                "string/large_string", IsStringArrowType, error);
+        case gui::NodeType::OrdinalEncoder:
+            return ValidateCategoricalColumnsInputSchema(table, node_type,
+                                                         parameters, error);
+        case gui::NodeType::TargetEncoder:
+            return ValidateTargetEncoderInputSchema(table, node_type,
+                                                    parameters, error);
         default:
             return true;
     }

@@ -519,6 +519,21 @@ validate `signal_col` as numeric before `Apply()`. `TimeSeriesWindow`,
 `value_col`. Multi-feature `feature_cols`/`columns` auto-detect behavior
 remains a separate schema-validation slice.
 
+**Status 2026-06-08 follow-up 46:** Explicit multi-column selector schema
+checks now cover the operator-backed analytics/preprocessing families.
+`StandardScaler`, `MinMaxScaler`, `RobustScaler`, and `OutlierDetector`
+validate explicit `columns` as numeric before `Apply()`. `PCANode` and
+the clustering operators validate explicit `feature_cols` as numeric
+while preserving their numeric auto-detect behavior when the selector is
+empty. `LinearRegressionNode` validates numeric `feature_cols` plus
+numeric `target_col`; `PolynomialRegressionNode` validates numeric
+`feature_col` and `target_col`. `LabelEncoder`, `OrdinalEncoder`, and
+`TargetEncoder` now reject non-string categorical selectors early, and
+`TargetEncoder.target_col` must be numeric. The remaining schema/type
+work is now narrower: node families with custom expression semantics,
+optional exclusion-only labels, or storage-mode-specific checks still
+need separate audits.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or

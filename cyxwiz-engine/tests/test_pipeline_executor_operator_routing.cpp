@@ -138,6 +138,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_values.csv";
     const fs::path string_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_strings.csv";
+    const fs::path mixed_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_mixed.csv";
     const fs::path missing_string_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_strings.csv";
     const fs::path duplicates_csv_path =
@@ -149,6 +151,7 @@ int main() {
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
+    fs::remove(mixed_csv_path);
     fs::remove(missing_string_csv_path);
     fs::remove(duplicates_csv_path);
     {
@@ -170,6 +173,13 @@ int main() {
         csv << "phrase\n";
         csv << "tea cup\n";
         csv << "blue mug\n";
+    }
+    {
+        std::ofstream csv(mixed_csv_path);
+        csv << "x,y,phrase\n";
+        csv << "1,10,tea cup\n";
+        csv << "2,20,blue mug\n";
+        csv << "3,30,green pot\n";
     }
     {
         std::ofstream csv(missing_string_csv_path);
@@ -549,6 +559,25 @@ int main() {
           "LinearRegression fit_intercept validation should be specific: " +
               bad_linear_regression_intercept_executor.GetLastError());
 
+    const std::string bad_linear_regression_feature_type_json =
+        R"({"nodes":[)"
+        R"({"id":405,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":406,"type":"LinearRegressionNode","name":"BadLinearFeature","parameters":{)"
+        R"("feature_cols":"phrase","target_col":"y"}})"
+        R"(],"links":[{"start_node":405,"end_node":406}]})";
+
+    cyxwiz::PipelineExecutor bad_linear_regression_feature_type_executor;
+    Check(!bad_linear_regression_feature_type_executor.ExecutePipeline(
+              bad_linear_regression_feature_type_json),
+          "LinearRegression string feature_cols should fail schema validation");
+    Check(bad_linear_regression_feature_type_executor.GetLastError().find(
+              "LinearRegressionNode: feature column 'phrase' must be numeric") !=
+              std::string::npos,
+          "LinearRegression feature_cols validation should be specific: " +
+              bad_linear_regression_feature_type_executor.GetLastError());
+
     const std::string bad_exp_smoothing_damped_json =
         R"({"nodes":[)"
         R"({"id":304,"type":"DataInput","name":"Input","parameters":{)"
@@ -587,6 +616,25 @@ int main() {
               std::string::npos,
           "StandardScaler with_mean validation should be specific: " +
               bad_standard_scaler_mean_executor.GetLastError());
+
+    const std::string bad_standard_scaler_column_type_json =
+        R"({"nodes":[)"
+        R"({"id":407,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":408,"type":"StandardScaler","name":"BadScalerColumn","parameters":{)"
+        R"("columns":"phrase","with_mean":"true"}})"
+        R"(],"links":[{"start_node":407,"end_node":408}]})";
+
+    cyxwiz::PipelineExecutor bad_standard_scaler_column_type_executor;
+    Check(!bad_standard_scaler_column_type_executor.ExecutePipeline(
+              bad_standard_scaler_column_type_json),
+          "StandardScaler string columns should fail schema validation");
+    Check(bad_standard_scaler_column_type_executor.GetLastError().find(
+              "StandardScaler: column 'phrase' must be numeric") !=
+              std::string::npos,
+          "StandardScaler columns validation should be specific: " +
+              bad_standard_scaler_column_type_executor.GetLastError());
 
     const std::string bad_robust_scaler_centering_json =
         R"({"nodes":[)"
@@ -642,6 +690,25 @@ int main() {
               std::string::npos,
           "TargetEncoder smoothing validation should be specific: " +
               bad_target_encoder_smoothing_executor.GetLastError());
+
+    const std::string bad_target_encoder_column_type_json =
+        R"({"nodes":[)"
+        R"({"id":409,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":410,"type":"TargetEncoder","name":"BadTargetColumn","parameters":{)"
+        R"("columns":"x","target_col":"y"}})"
+        R"(],"links":[{"start_node":409,"end_node":410}]})";
+
+    cyxwiz::PipelineExecutor bad_target_encoder_column_type_executor;
+    Check(!bad_target_encoder_column_type_executor.ExecutePipeline(
+              bad_target_encoder_column_type_json),
+          "TargetEncoder numeric categorical columns should fail schema validation");
+    Check(bad_target_encoder_column_type_executor.GetLastError().find(
+              "TargetEncoder: categorical column 'x' must be string/large_string") !=
+              std::string::npos,
+          "TargetEncoder columns validation should be specific: " +
+              bad_target_encoder_column_type_executor.GetLastError());
 
     const std::string bad_outlier_threshold_json =
         R"({"nodes":[)"
