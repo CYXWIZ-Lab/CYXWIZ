@@ -361,6 +361,22 @@ int main() {
           "bad skip_rows validation should be specific: " +
               bad_skip_rows_executor.GetLastError());
 
+    const std::string uppercase_file_bad_skip_rows_json =
+        R"({"nodes":[)"
+        R"({"id":333,"type":"DataInput","name":"BadUpperFileSkipRows","parameters":{)"
+        R"("source_type":"FILE","file_path":"ignored.csv","type":"csv","skip_rows":"nope"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor uppercase_file_bad_skip_rows_executor;
+    Check(!uppercase_file_bad_skip_rows_executor.ExecutePipeline(
+              uppercase_file_bad_skip_rows_json),
+          "DataInput uppercase FILE bad skip_rows should fail validation");
+    Check(uppercase_file_bad_skip_rows_executor.GetLastError().find(
+              "skip_rows must be a non-negative integer") != std::string::npos,
+          "DataInput uppercase FILE bad skip_rows validation should be "
+          "specific: " +
+              uppercase_file_bad_skip_rows_executor.GetLastError());
+
     const std::string bad_sheet_idx_json =
         R"({"nodes":[)"
         R"({"id":11,"type":"DataInput","name":"BadSheet","parameters":{)"

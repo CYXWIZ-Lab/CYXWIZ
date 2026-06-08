@@ -391,6 +391,12 @@ execution. Case variants such as `REPLACE` and `SUBSTRING` no longer skip
 the local `param1` / `param2` requirements and then fail only after an
 upstream source executes.
 
+**Status 2026-06-08 follow-up 31:** `DataInput.source_type` is now
+normalized before branch-specific validation checks as well as during
+execution. Case variants such as `FILE` now still enforce file-only
+integer rules like `skip_rows` / Excel `sheet_idx` before loader
+execution can reach `std::stoi`.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

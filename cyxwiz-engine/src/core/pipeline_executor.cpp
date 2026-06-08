@@ -1189,7 +1189,7 @@ bool HasSupportedParameterValues(
         const auto source_it = parameters.find("source_type");
         const std::string source_type =
             (source_it != parameters.end() && !source_it->second.empty())
-                ? source_it->second
+                ? ToLowerAscii(TrimString(source_it->second))
                 : "file";
 
         const auto type_it = parameters.find("type");
