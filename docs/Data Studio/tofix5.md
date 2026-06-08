@@ -431,6 +431,13 @@ configuration. Case variants and padded values for
 no longer pass central validation and then fail or take the wrong local
 branch after the source node executes.
 
+**Status 2026-06-08 follow-up 37:** `DataInput.source_type=ml_dataset`
+now fails closed during executor validation instead of being advertised
+as supported and then reaching the placeholder `LoadMLDatasetToArrow()`
+path, which always returned no dataset. The executable DataInput source
+types are `file` and `folder` until ML dataset Arrow loading has a real
+backend bridge.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

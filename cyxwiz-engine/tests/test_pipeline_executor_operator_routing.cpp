@@ -363,6 +363,22 @@ int main() {
           "DataInput unsupported file type error should be specific: " +
               bad_data_input_type_executor.GetLastError());
 
+    const std::string unsupported_ml_dataset_source_json =
+        R"({"nodes":[)"
+        R"({"id":360,"type":"DataInput","name":"PlannedMLDataset","parameters":{)"
+        R"("source_type":"ml_dataset","ml_dataset_type":"mnist"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor unsupported_ml_dataset_source_executor;
+    Check(!unsupported_ml_dataset_source_executor.ExecutePipeline(
+              unsupported_ml_dataset_source_json),
+          "DataInput ml_dataset source should fail validation");
+    Check(unsupported_ml_dataset_source_executor.GetLastError().find(
+              "DataInput source_type 'ml_dataset' is not supported") !=
+              std::string::npos,
+          "DataInput ml_dataset source error should be specific: " +
+              unsupported_ml_dataset_source_executor.GetLastError());
+
     const std::string bad_skip_rows_json =
         R"({"nodes":[)"
         R"({"id":9,"type":"DataInput","name":"BadSkipRows","parameters":{)"
