@@ -531,8 +531,8 @@ numeric `target_col`; `PolynomialRegressionNode` validates numeric
 `TargetEncoder` now reject non-string categorical selectors early, and
 `TargetEncoder.target_col` must be numeric. The remaining schema/type
 work is now narrower: node families with custom expression semantics,
-optional exclusion-only labels, or storage-mode-specific checks still
-need separate audits.
+storage-mode-specific checks, or less common selector roles still need
+separate audits.
 
 **Status 2026-06-08 follow-up 47:** Optional exclusion-only `label_col`
 selectors are now schema-checked for the numeric auto-detect families
