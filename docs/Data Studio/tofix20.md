@@ -192,3 +192,6 @@ Status 2026-06-08:
 - Started. `TextTokenizer.tokenizer_type` is now covered by central allowed
   parameter values (`0`, `1`, `2`) before operator execution, while the
   operator-local range check remains as a backstop.
+- Started. `HierarchicalCluster` now validates the `linkage=ward` and
+  `metric=euclidean` cross-field rule centrally before operator execution,
+  matching the operator's existing runtime constraint.

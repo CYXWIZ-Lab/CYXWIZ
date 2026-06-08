@@ -59,6 +59,9 @@ scanning so stale or duplicate work is not reintroduced.
 ## Patch Log
 
 - 2026-06-08 follow-up: accepted a `tofix20` Priority 5 parity slice that
+  centralizes the `HierarchicalCluster linkage=ward` requires
+  `metric=euclidean` cross-field validation before operator execution.
+- 2026-06-08 follow-up: accepted a `tofix20` Priority 5 parity slice that
   centralizes `TextTokenizer.tokenizer_type` allowed values before operator
   execution.
 - 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects

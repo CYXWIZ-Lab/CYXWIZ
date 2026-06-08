@@ -1477,6 +1477,24 @@ int main() {
     check_cluster_output("ds_operator_HierarchicalCluster_345",
                          "HierarchicalCluster uppercase choices");
 
+    const std::string bad_hierarchical_ward_metric_json =
+        R"({"nodes":[)"
+        R"({"id":362,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":363,"type":"HierarchicalCluster","name":"BadHierarchicalWardMetric","parameters":{)"
+        R"("feature_cols":"x,y","n_clusters":"2","linkage":" WARD ","metric":"COSINE"}})"
+        R"(],"links":[{"start_node":362,"end_node":363}]})";
+
+    cyxwiz::PipelineExecutor bad_hierarchical_ward_metric_executor;
+    Check(!bad_hierarchical_ward_metric_executor.ExecutePipeline(
+              bad_hierarchical_ward_metric_json),
+          "HierarchicalCluster ward with non-euclidean metric should fail validation");
+    Check(bad_hierarchical_ward_metric_executor.GetLastError().find(
+              "HierarchicalCluster linkage='ward' requires metric='euclidean'") !=
+              std::string::npos,
+          "HierarchicalCluster ward metric validation should be central and specific: " +
+              bad_hierarchical_ward_metric_executor.GetLastError());
+
     const std::string uppercase_gmm_covariance_json =
         R"({"nodes":[)"
         R"({"id":346,"type":"DataInput","name":"Input","parameters":{)"

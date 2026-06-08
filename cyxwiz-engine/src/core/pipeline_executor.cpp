@@ -1401,6 +1401,23 @@ bool HasSupportedParameterValues(
         }
     }
 
+    if (node_type == "HierarchicalCluster") {
+        const auto linkage_it = parameters.find("linkage");
+        const std::string linkage =
+            (linkage_it != parameters.end() && !linkage_it->second.empty())
+                ? ToLowerAscii(TrimString(linkage_it->second))
+                : "ward";
+        const auto metric_it = parameters.find("metric");
+        const std::string metric =
+            (metric_it != parameters.end() && !metric_it->second.empty())
+                ? ToLowerAscii(TrimString(metric_it->second))
+                : "euclidean";
+        if (linkage == "ward" && metric != "euclidean") {
+            error = "HierarchicalCluster linkage='ward' requires metric='euclidean'";
+            return false;
+        }
+    }
+
     if (node_type == "Convolution1D") {
         auto kernel_it = parameters.find("kernel");
         if (kernel_it != parameters.end()) {
