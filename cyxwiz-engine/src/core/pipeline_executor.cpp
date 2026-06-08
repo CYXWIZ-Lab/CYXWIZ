@@ -2739,6 +2739,7 @@ bool PipelineExecutor::ExecuteDeployToNodeEditor(const Node& node, ExecutionCont
         ctx.deployment_ready = true;
 
         // Also store in output_dataset for consistency
+        ctx.node_results[node.id] = deployment_name;
         ctx.output_dataset = deployment_name;
 
         spdlog::info("[Data Studio] Dataset ready for deployment: '{}'", deployment_name);

@@ -268,6 +268,11 @@ as supported while reaching the `DataRegistry::ExportArrowToJSON()` stub.
 Executable export formats are `csv` and `parquet` until native Arrow-table
 JSON export is implemented.
 
+**Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
+publishes its deployed dataset name into the shared executor node-result
+binding. It still marks the graph deployment-ready, but can now be used
+as an intermediate node without losing the downstream dataset binding.
+
 **Status 2026-06-07 follow-up 3:** `ExportCSV` now accepts both the
 legacy `file_path` parameter and the Data Studio registry's `path`
 parameter. Validation treats either spelling as satisfying the required

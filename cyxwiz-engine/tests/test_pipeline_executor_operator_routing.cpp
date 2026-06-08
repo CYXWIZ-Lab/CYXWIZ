@@ -1616,6 +1616,34 @@ int main() {
           "SaveDataset json format validation should be specific: " +
               json_save_dataset_format_executor.GetLastError());
 
+    const std::string deploy_downstream_json =
+        R"({"nodes":[)"
+        R"({"id":368,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":369,"type":"DeployToNodeEditor","name":"Deploy","parameters":{)"
+        R"("name":"deployed_downstream"}},)"
+        R"({"id":370,"type":"SelectColumns","name":"Select","parameters":{)"
+        R"("columns":"y"}})"
+        R"(],"links":[{"start_node":368,"end_node":369},{"start_node":369,"end_node":370}]})";
+
+    cyxwiz::PipelineExecutor deploy_downstream_executor;
+    Check(deploy_downstream_executor.ExecutePipeline(deploy_downstream_json),
+          "DeployToNodeEditor should publish a dataset binding for downstream nodes: " +
+              deploy_downstream_executor.GetLastError());
+    Check(deploy_downstream_executor.IsDeploymentReady(),
+          "DeployToNodeEditor should still mark deployment ready");
+    Check(deploy_downstream_executor.GetDeploymentDataset() == "deployed_downstream",
+          "DeployToNodeEditor should preserve deployment dataset name");
+    auto deployed_downstream = registry.GetArrowDataset("ds_select_370");
+    Check(deployed_downstream != nullptr,
+          "SelectColumns should consume the DeployToNodeEditor output binding");
+    auto deployed_downstream_table = deployed_downstream->GetArrowTable();
+    Check(deployed_downstream_table != nullptr,
+          "downstream DeployToNodeEditor output table should exist");
+    Check(deployed_downstream_table->schema()->GetFieldIndex("y") >= 0,
+          "downstream SelectColumns should preserve selected deploy schema");
+
     const std::string export_json_json =
         R"({"nodes":[)"
         R"({"id":37,"type":"DataInput","name":"Input","parameters":{)"
