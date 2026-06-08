@@ -368,6 +368,14 @@ operator reuse. It verifies `CountVectorizer` clears stale label and
 `TimeSeriesWindow` clears stale feature/time columns when the same
 operator instance is configured again.
 
+**Status 2026-06-08 follow-up 28:** Central enum validation and legacy
+runtime execution now agree on case-insensitive values for active
+branches that already advertise allowed values. `DataInput.source_type`,
+`DataOutput.format`, `FillMissing.strategy`, `TextTokenize.method`,
+`TextVectorize.method`, and `StringManipulation.operation` are normalized
+before execution, so values accepted by `ValidatePipeline()` no longer
+fail or take fallback behavior later because of casing.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

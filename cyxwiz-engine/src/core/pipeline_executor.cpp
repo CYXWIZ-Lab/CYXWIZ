@@ -986,7 +986,7 @@ const char* MissingRequiredParameter(
         const auto source_it = parameters.find("source_type");
         const std::string source_type =
             (source_it != parameters.end() && !source_it->second.empty())
-                ? source_it->second
+                ? ToLowerAscii(TrimString(source_it->second))
                 : "file";
         if (source_type == "file") {
             return HasNonEmptyParameter(parameters, "file_path") ? nullptr : "file_path";
@@ -1674,7 +1674,10 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
     // Parameters: source_type, file_path, folder_path, file_category, type, etc.
 
     auto source_type_it = node.parameters.find("source_type");
-    std::string source_type = (source_type_it != node.parameters.end()) ? source_type_it->second : "file";
+    std::string source_type =
+        (source_type_it != node.parameters.end() && !source_type_it->second.empty())
+            ? ToLowerAscii(TrimString(source_type_it->second))
+            : "file";
 
     std::string dataset_name = "ds_datainput_" + std::to_string(node.id);
 
@@ -1799,7 +1802,10 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
     const std::string& output_path = path_it->second;
 
     auto format_it = node.parameters.find("format");
-    std::string format = (format_it != node.parameters.end()) ? format_it->second : "csv";
+    std::string format =
+        (format_it != node.parameters.end() && !format_it->second.empty())
+            ? ToLowerAscii(TrimString(format_it->second))
+            : "csv";
 
     spdlog::info("[Pipeline] DataOutput exporting to {} (format: {})", output_path, format);
 
@@ -2157,7 +2163,10 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
 
     // Get parameters
     auto strategy_it = node.parameters.find("strategy");
-    std::string strategy = (strategy_it != node.parameters.end()) ? strategy_it->second : "mean";
+    std::string strategy =
+        (strategy_it != node.parameters.end() && !strategy_it->second.empty())
+            ? ToLowerAscii(TrimString(strategy_it->second))
+            : "mean";
 
     auto value_it = node.parameters.find("value");
     std::string fill_value = (value_it != node.parameters.end()) ? value_it->second : "0";
@@ -2842,7 +2851,10 @@ bool PipelineExecutor::ExecuteTextTokenize(const Node& node, ExecutionContext& c
     std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
 
     auto method_it = node.parameters.find("method");
-    std::string method = (method_it != node.parameters.end()) ? method_it->second : "word";
+    std::string method =
+        (method_it != node.parameters.end() && !method_it->second.empty())
+            ? ToLowerAscii(TrimString(method_it->second))
+            : "word";
 
     std::string output_dataset_name = "ds_texttokenize_" + std::to_string(node.id);
 
@@ -2923,7 +2935,10 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
     std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
 
     auto method_it = node.parameters.find("method");
-    std::string method = (method_it != node.parameters.end()) ? method_it->second : "count";
+    std::string method =
+        (method_it != node.parameters.end() && !method_it->second.empty())
+            ? ToLowerAscii(TrimString(method_it->second))
+            : "count";
 
     std::string output_dataset_name = "ds_textvectorize_" + std::to_string(node.id);
 
@@ -4070,7 +4085,10 @@ bool PipelineExecutor::ExecuteStringManipulation(const Node& node, ExecutionCont
     auto operation_it = node.parameters.find("operation");
 
     std::string column = (column_it != node.parameters.end()) ? column_it->second : "";
-    std::string operation = (operation_it != node.parameters.end()) ? operation_it->second : "trim";
+    std::string operation =
+        (operation_it != node.parameters.end() && !operation_it->second.empty())
+            ? ToLowerAscii(TrimString(operation_it->second))
+            : "trim";
 
     if (column.empty()) {
         ReportError("StringManipulation: Column name required");

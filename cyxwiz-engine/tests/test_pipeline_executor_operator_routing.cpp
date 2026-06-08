@@ -130,6 +130,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.csv";
     const fs::path export_csv_alias_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export_alias.csv";
+    const fs::path data_output_mixed_case_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_mixed_case.csv";
     const fs::path save_dataset_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_save_dataset.csv";
     const fs::path missing_csv_path =
@@ -143,6 +145,7 @@ int main() {
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
+    fs::remove(data_output_mixed_case_csv_path);
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
@@ -297,7 +300,7 @@ int main() {
     const std::string missing_parameter_json =
         R"({"nodes":[)"
         R"({"id":5,"type":"DataInput","name":"MissingPath","parameters":{)"
-        R"("source_type":"file","type":"csv"}},)"
+        R"("source_type":"FILE","type":"CSV"}},)"
         R"({"id":6,"type":"StandardScaler","name":"Scale","parameters":{)"
         R"("columns":"x"}})"
         R"(],"links":[{"start_node":5,"end_node":6}]})";
@@ -1157,6 +1160,25 @@ int main() {
           "DataOutput missing file_path validation should be specific: " +
               missing_output_path_executor.GetLastError());
 
+    const std::string data_output_mixed_case_json =
+        R"({"nodes":[)"
+        R"({"id":325,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"FILE","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"CSV","has_header":"true"}},)"
+        R"({"id":326,"type":"DataOutput","name":"Output","parameters":{)"
+        R"("file_path":")" +
+        JsonEscapePath(data_output_mixed_case_csv_path.string()) +
+        R"(","format":"CSV"}})"
+        R"(],"links":[{"start_node":325,"end_node":326}]})";
+
+    cyxwiz::PipelineExecutor data_output_mixed_case_executor;
+    Check(data_output_mixed_case_executor.ExecutePipeline(
+              data_output_mixed_case_json),
+          "DataInput/DataOutput should normalize accepted enum values before execution: " +
+              data_output_mixed_case_executor.GetLastError());
+    Check(fs::exists(data_output_mixed_case_csv_path),
+          "DataOutput mixed-case CSV format should create the output file");
+
     const std::string column_appender_json =
         R"({"nodes":[)"
         R"({"id":33,"type":"DataInput","name":"Input","parameters":{)"
@@ -1583,7 +1605,7 @@ int main() {
         R"("source_type":"file","file_path":")" + JsonEscapePath(missing_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":64,"type":"FillMissing","name":"Fill","parameters":{)"
-        R"("strategy":"mean"}})"
+        R"("strategy":"MEAN"}})"
         R"(],"links":[{"start_node":63,"end_node":64}]})";
 
     cyxwiz::PipelineExecutor fill_missing_mean_executor;
@@ -1649,7 +1671,7 @@ int main() {
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":66,"type":"StringManipulation","name":"Replace","parameters":{)"
-        R"("column":"phrase","operation":"replace","param1":"tea","param2":"coffee"}})"
+        R"("column":"phrase","operation":"REPLACE","param1":"tea","param2":"coffee"}})"
         R"(],"links":[{"start_node":65,"end_node":66}]})";
 
     cyxwiz::PipelineExecutor string_replace_executor;
@@ -1765,7 +1787,7 @@ int main() {
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":155,"type":"TextTokenize","name":"Tokenize","parameters":{)"
-        R"("text_column":"phrase","method":"word"}})"
+        R"("text_column":"phrase","method":"WORD"}})"
         R"(],"links":[{"start_node":154,"end_node":155}]})";
 
     cyxwiz::PipelineExecutor text_tokenize_executor;
@@ -1785,7 +1807,7 @@ int main() {
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":157,"type":"TextVectorize","name":"Vectorize","parameters":{)"
-        R"("text_column":"phrase","method":"count"}})"
+        R"("text_column":"phrase","method":"COUNT"}})"
         R"(],"links":[{"start_node":156,"end_node":157}]})";
 
     cyxwiz::PipelineExecutor text_vectorize_executor;
