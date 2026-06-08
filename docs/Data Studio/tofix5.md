@@ -330,6 +330,13 @@ registered as a source-shaped fail-closed node with the central Excel
 unsupported reason, so the executor no longer carries an unreachable branch
 that implied Excel Arrow loading could still run.
 
+**Status 2026-06-08 follow-up 68:** `SaveDataset` now shares the same
+`format` / `file_type` alias handling as `DataOutput`. Runtime validation
+checks `SaveDataset.file_type` against the supported CSV/Parquet export
+set, rejects conflicting `format` and `file_type` values, and execution
+normalizes the same alias before choosing the writer. This prevents a graph
+authored with `file_type=parquet` from silently falling back to CSV.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used

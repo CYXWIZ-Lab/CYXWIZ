@@ -139,6 +139,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_file_type.parquet";
     const fs::path save_dataset_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_save_dataset.csv";
+    const fs::path save_dataset_file_type_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_save_dataset_file_type.parquet";
     const fs::path missing_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_values.csv";
     const fs::path string_csv_path =
@@ -156,6 +158,7 @@ int main() {
     fs::remove(data_output_path_alias_csv_path);
     fs::remove(data_output_file_type_parquet_path);
     fs::remove(save_dataset_csv_path);
+    fs::remove(save_dataset_file_type_parquet_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
     fs::remove(mixed_csv_path);
@@ -2356,6 +2359,24 @@ int main() {
     Check(registry.GetArrowDataset("saved_alias") != nullptr,
           "SaveDataset should preserve legacy in-memory alias behavior");
 
+    const std::string save_dataset_file_type_parquet_json =
+        R"({"nodes":[)"
+        R"({"id":600,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":601,"type":"SaveDataset","name":"SaveParquet","parameters":{)"
+        R"("path":")" + JsonEscapePath(save_dataset_file_type_parquet_path.string()) +
+        R"(","file_type":"PARQUET","name":"saved_file_type_alias"}})"
+        R"(],"links":[{"start_node":600,"end_node":601}]})";
+
+    cyxwiz::PipelineExecutor save_dataset_file_type_parquet_executor;
+    Check(save_dataset_file_type_parquet_executor.ExecutePipeline(
+              save_dataset_file_type_parquet_json),
+          "SaveDataset file_type alias should export Parquet: " +
+              save_dataset_file_type_parquet_executor.GetLastError());
+    Check(fs::exists(save_dataset_file_type_parquet_path),
+          "SaveDataset file_type=parquet should create the requested file");
+
     const std::string save_dataset_downstream_json =
         R"({"nodes":[)"
         R"({"id":361,"type":"DataInput","name":"Input","parameters":{)"
@@ -2416,6 +2437,24 @@ int main() {
               std::string::npos,
           "SaveDataset json format validation should be specific: " +
               json_save_dataset_format_executor.GetLastError());
+
+    const std::string json_save_dataset_file_type_json =
+        R"({"nodes":[)"
+        R"({"id":602,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":603,"type":"SaveDataset","name":"JsonFileTypeSave","parameters":{)"
+        R"("path":"ignored.json","file_type":"json"}})"
+        R"(],"links":[{"start_node":602,"end_node":603}]})";
+
+    cyxwiz::PipelineExecutor json_save_dataset_file_type_executor;
+    Check(!json_save_dataset_file_type_executor.ExecutePipeline(
+              json_save_dataset_file_type_json),
+          "SaveDataset json file_type should fail validation until JSON export is real");
+    Check(json_save_dataset_file_type_executor.GetLastError().find(
+              "SaveDataset file_type 'json' is not supported") !=
+              std::string::npos,
+          "SaveDataset json file_type validation should be specific: " +
+              json_save_dataset_file_type_executor.GetLastError());
 
     const std::string deploy_downstream_json =
         R"({"nodes":[)"
@@ -3913,6 +3952,7 @@ int main() {
     fs::remove(export_csv_alias_path);
     fs::remove(data_output_path_alias_csv_path);
     fs::remove(save_dataset_csv_path);
+    fs::remove(save_dataset_file_type_parquet_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
     fs::remove(missing_string_csv_path);

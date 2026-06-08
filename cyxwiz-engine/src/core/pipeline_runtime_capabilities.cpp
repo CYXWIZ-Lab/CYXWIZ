@@ -264,6 +264,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"DataOutput", "format", "csv", {"csv", "parquet"}},
         {"DataOutput", "file_type", "csv", {"csv", "parquet"}},
         {"SaveDataset", "format", "csv", {"csv", "parquet"}},
+        {"SaveDataset", "file_type", "csv", {"csv", "parquet"}},
         {"FillMissing", "strategy", "mean", {"mean", "median", "mode", "constant"}},
         {"SortRows", "order", "asc", {"asc", "desc"}},
         {"SortRows", "ascending", "true", {"true", "false"}},

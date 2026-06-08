@@ -1238,7 +1238,7 @@ std::string NormalizeDataInputFileType(
     return "auto";
 }
 
-std::string NormalizeDataOutputFormat(
+std::string NormalizeDatasetOutputFormat(
     const std::map<std::string, std::string>& parameters) {
     auto format_it = parameters.find("format");
     if (format_it != parameters.end() && !format_it->second.empty()) {
@@ -1601,7 +1601,7 @@ bool HasSupportedParameterValues(
         }
     }
 
-    if (node_type == "DataOutput") {
+    if (node_type == "DataOutput" || node_type == "SaveDataset") {
         auto format_it = parameters.find("format");
         auto file_type_it = parameters.find("file_type");
         if (format_it != parameters.end() && !format_it->second.empty() &&
@@ -1611,7 +1611,7 @@ bool HasSupportedParameterValues(
             const std::string file_type =
                 ToLowerAscii(TrimString(file_type_it->second));
             if (format != file_type) {
-                error = "DataOutput format and file_type disagree";
+                error = node_type + " format and file_type disagree";
                 return false;
             }
         }
@@ -2612,7 +2612,7 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
         return false;
     }
 
-    std::string format = NormalizeDataOutputFormat(node.parameters);
+    std::string format = NormalizeDatasetOutputFormat(node.parameters);
 
     spdlog::info("[Pipeline] DataOutput exporting to {} (format: {})", output_path, format);
 
@@ -2900,11 +2900,7 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
     auto path_it = node.parameters.find("path");
     const std::string output_path =
         (path_it != node.parameters.end()) ? path_it->second : "";
-    auto format_it = node.parameters.find("format");
-    const std::string format =
-        (format_it != node.parameters.end() && !format_it->second.empty())
-            ? ToLowerAscii(TrimString(format_it->second))
-            : "csv";
+    const std::string format = NormalizeDatasetOutputFormat(node.parameters);
 
     spdlog::info("[Data Studio] Saving dataset '{}' as '{}'", input_dataset_name, output_name);
 
