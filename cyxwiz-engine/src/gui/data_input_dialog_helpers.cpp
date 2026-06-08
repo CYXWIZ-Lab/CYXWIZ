@@ -94,9 +94,9 @@ void DataInputDialog::BrowseFile() {
 
     switch (file_category_) {
         case FileCategory::Tabular:
-            filter = "All Data Files\0*.csv;*.tsv;*.xlsx;*.xls;*.json;*.parquet;*.h5;*.hdf5;*.feather;*.arrow;*.txt;*.arff\0"
-                     "CSV\0*.csv\0TSV\0*.tsv\0Excel\0*.xlsx;*.xls\0JSON\0*.json\0Parquet\0*.parquet\0"
-                     "HDF5\0*.h5;*.hdf5\0Feather\0*.feather\0Arrow\0*.arrow;*.ipc\0Text\0*.txt\0ARFF\0*.arff\0All Files\0*.*\0";
+            filter = "Supported Tabular Data\0*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc\0"
+                     "CSV\0*.csv\0TSV\0*.tsv\0Parquet\0*.parquet\0"
+                     "Feather\0*.feather;*.fea\0Arrow / IPC\0*.arrow;*.ipc\0All Files\0*.*\0";
             break;
         case FileCategory::Image:
             filter = "Image Files\0*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tiff;*.webp\0All Files\0*.*\0";
@@ -114,9 +114,9 @@ void DataInputDialog::BrowseFile() {
                      "All Files\0*.*\0";
             break;
         case FileCategory::TimeSeries:
-            filter = "Time Series Data\0*.csv;*.tsv;*.parquet;*.feather;*.arrow\0"
+            filter = "Time Series Data\0*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc\0"
                      "CSV\0*.csv\0TSV\0*.tsv\0Parquet\0*.parquet\0"
-                     "Feather\0*.feather\0Arrow\0*.arrow;*.ipc\0"
+                     "Feather\0*.feather;*.fea\0Arrow / IPC\0*.arrow;*.ipc\0"
                      "All Files\0*.*\0";
             break;
     }

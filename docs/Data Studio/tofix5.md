@@ -344,6 +344,13 @@ preview columns from that restored format instead of only auto-detecting
 from the path extension. This keeps manual CSV/TSV/Parquet/Arrow choices
 from being lost on the next Apply.
 
+**Status 2026-06-08 follow-up 70:** The DataInput file picker now matches
+the same supported tabular formats shown in metadata and enforced by Apply.
+The Tabular and Time Series filters advertise CSV, TSV, Parquet, Feather,
+Arrow, and IPC instead of offering JSON, Excel, HDF5, TXT, or ARFF on the
+tabular path. Text-specific JSON/TXT selection remains in the Text source
+flow.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used
