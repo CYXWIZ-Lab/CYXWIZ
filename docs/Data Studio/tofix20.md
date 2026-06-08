@@ -165,3 +165,9 @@ Definition of done:
 - Unsupported graph shapes and unsupported column types fail before query or
   operator execution for every active Data Studio runtime node.
 - Regression tests cover at least one bad-schema case per executable family.
+
+Status 2026-06-08:
+
+- Started. `DataInput.source_type` remains centrally limited to `file` and
+  `folder`; the stale `ml_dataset` executor branch was removed so rejected
+  sources no longer have a competing late runtime path.

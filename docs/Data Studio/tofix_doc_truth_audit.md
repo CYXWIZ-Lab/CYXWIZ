@@ -40,7 +40,7 @@ scanning so stale or duplicate work is not reintroduced.
 | `tofix17.md` | active/tracked | Updated. CPU fallback work from `done2.md`/`done10.md`/`done15.md` is no longer implied as undone. |
 | `tofix18.md` | active/tracked | Keep active. Pipeline canvas placeholder naming cleanup remains a separate deferred UI task. |
 | `tofix19.md` | active/tracked | Updated. Phase 1 truth guardrails now record Dense-encoded NER and multi-loss/multi-head compiler guards as started/completed slices. |
-| `tofix20.md` | active/tracked | New source of truth for broad runtime architecture follow-ups carried out of `done5.md`; Priority 3 string-only alias guard started. |
+| `tofix20.md` | active/tracked | New source of truth for broad runtime architecture follow-ups carried out of `done5.md`; Priority 3 string-only alias guard and Priority 5 `DataInput.source_type` cleanup started. |
 
 ## Findings
 
@@ -58,6 +58,9 @@ scanning so stale or duplicate work is not reintroduced.
 
 ## Patch Log
 
+- 2026-06-08 follow-up: started `tofix20` Priority 5 by removing the stale
+  late `DataInput.source_type=ml_dataset` executor branch after central
+  validation already limited DataInput sources to `file` and `folder`.
 - 2026-06-08 follow-up: started the parallel workflow and accepted a
   `tofix19` guardrail slice that rejects dataset-reachable multi-loss graphs
   until CyxWiz has a first-class loss aggregation or alternating-step

@@ -211,6 +211,26 @@ int main() {
                   !ContainsString(type->enum_values, "excel") &&
                   !ContainsString(type->enum_values, "hdf5"),
               "DataInput type enum should not advertise unsupported runtime formats");
+
+        const auto source_type_axes =
+            cyxwiz::ResolvePipelineAllowedParameterValues("DataInput");
+        auto source_type_axis = std::find_if(
+            source_type_axes.begin(),
+            source_type_axes.end(),
+            [](const cyxwiz::PipelineAllowedParameterValuesRuntimeCapability&
+                   capability) {
+                return std::string(capability.parameter_name) == "source_type";
+            });
+        Check(source_type_axis != source_type_axes.end(),
+              "DataInput runtime support should expose source_type limits");
+        const std::vector<std::string> source_type_values(
+            source_type_axis->allowed_values.begin(),
+            source_type_axis->allowed_values.end());
+        Check(ContainsString(source_type_values, "file") &&
+                  ContainsString(source_type_values, "folder"),
+              "DataInput source_type should allow file and folder");
+        Check(!ContainsString(source_type_values, "ml_dataset"),
+              "DataInput source_type should not advertise ml_dataset without a runtime owner");
     }
 
     {

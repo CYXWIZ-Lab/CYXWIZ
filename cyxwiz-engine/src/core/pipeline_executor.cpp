@@ -2564,13 +2564,6 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             // For image folders, create a table with file paths and labels
             arrow_dataset = registry.LoadImageFolderToArrow(folder_path, dataset_name);
 
-        } else if (source_type == "ml_dataset") {
-            // ML dataset (MNIST, CIFAR, etc.)
-            auto ml_type_it = node.parameters.find("ml_dataset_type");
-            std::string ml_type = (ml_type_it != node.parameters.end()) ? ml_type_it->second : "mnist";
-            spdlog::info("[Pipeline] DataInput loading ML dataset: {}", ml_type);
-
-            arrow_dataset = registry.LoadMLDatasetToArrow(ml_type, dataset_name);
         } else {
             ReportError("DataInput: Unknown source type: " + source_type);
             return false;
