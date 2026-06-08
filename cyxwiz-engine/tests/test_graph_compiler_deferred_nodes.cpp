@@ -415,6 +415,71 @@ int main() {
     Check(HasIssueText(config, "causal language-model objective"),
           "causal sketch should report missing causal LM objective");
 
+    auto pretrained = Node(28,
+                           gui::NodeType::PretrainedMobileNet,
+                           "Imported MobileNet",
+                           {Pin(2801, gui::PinType::Tensor, "Image", true)},
+                           {Pin(2802, gui::PinType::Tensor, "Features", false)});
+
+    nodes = {data, pretrained, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 28, 2801),
+        Link(2, 28, 2802, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected pretrained model training path should be invalid");
+    Check(HasIssueText(config, "imported/pretrained fine-tuning"),
+          "pretrained path should report missing import-to-training contract");
+    Check(HasIssueText(config, "parameter mapping"),
+          "pretrained path should report missing parameter mapping contract");
+
+    auto pretrained_side_output = Node(29,
+                                       gui::NodeType::Output,
+                                       "Imported Side Output",
+                                       {Pin(2901, gui::PinType::Tensor, "Input", true)},
+                                       {});
+
+    nodes = {data, dense, loss, optimizer, pretrained, pretrained_side_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 1, 101, 28, 2801),
+        Link(6, 28, 2802, 29, 2901),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side pretrained model outside selected training path should not block compile");
+    Check(!HasIssueText(config, "Imported MobileNet"),
+          "side pretrained model should not be reported");
+
+    auto fine_tune_dense = dense;
+    fine_tune_dense.name = "Fine Tune Dense Sketch";
+    fine_tune_dense.parameters["fine_tune"] = "true";
+    fine_tune_dense.parameters["pretrained_model_path"] = "bert-base-uncased";
+
+    nodes = {data, fine_tune_dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected imported/fine-tune sketch should be invalid");
+    Check(HasIssueText(config, "fine_tune"),
+          "fine-tune sketch should report the matched parameter");
+    Check(HasIssueText(config, "freeze/unfreeze ownership"),
+          "fine-tune sketch should report missing freeze contract");
+
     for (const auto& scheduler_case :
          cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         auto scheduler = Node(18,

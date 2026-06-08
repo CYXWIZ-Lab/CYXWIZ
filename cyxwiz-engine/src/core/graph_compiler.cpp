@@ -237,6 +237,68 @@ bool LooksLikeGenerativeTrainingSketch(const gui::MLNode& node,
     return false;
 }
 
+bool LooksLikeImportedFineTuningSketch(const gui::MLNode& node,
+                                       std::string& matched_key) {
+    if (node.type == gui::NodeType::DNNModelLoad ||
+        node.type == gui::NodeType::PretrainedYOLO ||
+        node.type == gui::NodeType::PretrainedMobileNet ||
+        node.type == gui::NodeType::PretrainedOpenPose ||
+        node.type == gui::NodeType::PretrainedFaceNet) {
+        matched_key = "pretrained model node";
+        return true;
+    }
+
+    const auto& params = node.parameters;
+    const char* enabled_keys[] = {
+        "pretrained",
+        "fine_tune",
+        "fine_tuning",
+        "transfer_learning",
+        "enable_transfer_learning",
+        "load_optimizer_state",
+        "allow_shape_mismatch",
+        "freeze",
+        "freeze_layers",
+        "unfreeze_layers",
+        "lora"
+    };
+
+    for (const char* key : enabled_keys) {
+        if (ParamIsEnabled(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    const char* design_keys[] = {
+        "pretrained_model",
+        "pretrained_model_path",
+        "pretrained_checkpoint",
+        "checkpoint_path",
+        "weights_path",
+        "model_path",
+        "base_model",
+        "adapter_path",
+        "import_format",
+        "onnx_path",
+        "safetensors_path",
+        "gguf_path",
+        "freeze_mode",
+        "unfreeze_last_n",
+        "frozen_layers",
+        "trainable_layers"
+    };
+
+    for (const char* key : design_keys) {
+        if (HasParam(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -1152,6 +1214,21 @@ void ValidateTrainingPathImplementationStatus(
                    "This path needs shifted-token targets, causal masks, "
                    "token-level loss, and generation packaging before it can "
                    "compile truthfully.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        std::string fine_tuning_key;
+        if (LooksLikeImportedFineTuningSketch(node, fine_tuning_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' sketches imported/pretrained fine-tuning via '"
+                << fine_tuning_key
+                << "', but Studio training does not have a model-import to "
+                   "training-graph contract. This path needs parameter "
+                   "mapping, shape validation, freeze/unfreeze ownership, "
+                   "optimizer-state compatibility, and tokenizer/preprocessor "
+                   "packaging before it can compile truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }

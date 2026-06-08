@@ -59,6 +59,12 @@ scanning so stale or duplicate work is not reintroduced.
 ## Patch Log
 
 - 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
+  selected imported/pretrained fine-tuning sketches (pretrained shortcut nodes,
+  DNN model-load nodes, fine-tune/transfer-learning flags, model/checkpoint
+  paths, freeze controls, optimizer-state resume markers, shape mismatch
+  markers, and adapter/LoRA paths) until CyxWiz has a real import-to-training
+  contract.
+- 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
   selected decoder/generative training sketches (`TransformerDecoder`, causal
   LM flags, shifted-target markers, prompt/completion columns, and
   teacher-forcing markers) until CyxWiz has a real causal/seq2seq training

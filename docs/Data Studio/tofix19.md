@@ -401,6 +401,14 @@ Completed so far:
   causal mask contract, shifted-token target materializer, token-level
   sequence loss, or generation packaging, so these graphs fail closed instead
   of implying GPT/seq2seq training works.
+- `GraphCompiler` now rejects selected training paths that sketch
+  imported/pretrained fine-tuning with pretrained shortcut nodes, DNN model-load
+  nodes, explicit fine-tune/transfer-learning flags, model/checkpoint/weights
+  paths, freeze/unfreeze controls, optimizer-state resume markers, shape
+  mismatch markers, or adapter/LoRA paths. The current trainer has no
+  import-to-training-graph contract for parameter mapping, shape validation,
+  freeze ownership, optimizer-state compatibility, or tokenizer/preprocessor
+  packaging.
 
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.
