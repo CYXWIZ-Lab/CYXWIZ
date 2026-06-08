@@ -69,6 +69,38 @@ bool TFIDFVectorizerOperator::Configure(
         norm_ = "l2";
     }
 
+    auto ngram_range = params.find("ngram_range");
+    if (ngram_range != params.end() && !ngram_range->second.empty() &&
+        ngram_range->second != "1,1") {
+        error = "TFIDFVectorizer: ngram_range values other than '1,1' "
+                "are not supported by this operator";
+        return false;
+    }
+
+    auto ngram_min = params.find("ngram_min");
+    if (ngram_min != params.end() && !ngram_min->second.empty() &&
+        ngram_min->second != "1") {
+        error = "TFIDFVectorizer: ngram_min values other than 1 "
+                "are not supported by this operator";
+        return false;
+    }
+
+    auto ngram_max = params.find("ngram_max");
+    if (ngram_max != params.end() && !ngram_max->second.empty() &&
+        ngram_max->second != "1") {
+        error = "TFIDFVectorizer: ngram_max values other than 1 "
+                "are not supported by this operator";
+        return false;
+    }
+
+    auto min_df = params.find("min_df");
+    if (min_df != params.end() && !min_df->second.empty() &&
+        min_df->second != "1") {
+        error = "TFIDFVectorizer: min_df values other than 1 "
+                "are not supported by this operator";
+        return false;
+    }
+
     return true;
 }
 

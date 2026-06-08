@@ -297,6 +297,12 @@ now fails closed instead of being accepted by the simple `text_length` /
 `word_count` branch and ignored. Vocabulary-size capping belongs to the
 operator-backed `CountVectorizer` and `TFIDFVectorizer` nodes.
 
+**Status 2026-06-08 follow-up 19:** Operator-backed text vectorizers now
+also fail closed for unsupported non-default knobs instead of ignoring
+them: `CountVectorizer.binary=true`, non-default `CountVectorizer.ngram_range`,
+and non-default TF-IDF n-gram / `min_df` settings now report explicit
+configuration errors until those semantics are implemented.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

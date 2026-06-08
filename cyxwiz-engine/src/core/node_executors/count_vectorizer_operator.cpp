@@ -55,6 +55,20 @@ bool CountVectorizerOperator::Configure(
         norm_ = "l2";
     }
 
+    auto binary = params.find("binary");
+    if (binary != params.end() && binary->second == "true") {
+        error = "CountVectorizer: binary counts are not supported by this operator";
+        return false;
+    }
+
+    auto ngram_range = params.find("ngram_range");
+    if (ngram_range != params.end() && !ngram_range->second.empty() &&
+        ngram_range->second != "1,1") {
+        error = "CountVectorizer: ngram_range values other than '1,1' "
+                "are not supported by this operator";
+        return false;
+    }
+
     return true;
 }
 

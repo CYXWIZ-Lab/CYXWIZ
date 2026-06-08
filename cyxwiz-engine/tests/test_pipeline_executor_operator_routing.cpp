@@ -1552,6 +1552,44 @@ int main() {
           "TextVectorize max_features error should be specific: " +
               bad_text_vectorize_max_features_executor.GetLastError());
 
+    const std::string count_vectorizer_binary_json =
+        R"({"nodes":[)"
+        R"({"id":215,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":216,"type":"CountVectorizer","name":"BadCountVectorizer","parameters":{)"
+        R"("text_col":"phrase","binary":"true"}})"
+        R"(],"links":[{"start_node":215,"end_node":216}]})";
+
+    cyxwiz::PipelineExecutor count_vectorizer_binary_executor;
+    Check(!count_vectorizer_binary_executor.ExecutePipeline(
+              count_vectorizer_binary_json),
+          "CountVectorizer binary=true should fail closed");
+    Check(count_vectorizer_binary_executor.GetLastError().find(
+              "CountVectorizer: binary counts are not supported") !=
+              std::string::npos,
+          "CountVectorizer binary error should be specific: " +
+              count_vectorizer_binary_executor.GetLastError());
+
+    const std::string tfidf_vectorizer_min_df_json =
+        R"({"nodes":[)"
+        R"({"id":217,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":218,"type":"TFIDFVectorizer","name":"BadTfidfVectorizer","parameters":{)"
+        R"("text_col":"phrase","min_df":"2"}})"
+        R"(],"links":[{"start_node":217,"end_node":218}]})";
+
+    cyxwiz::PipelineExecutor tfidf_vectorizer_min_df_executor;
+    Check(!tfidf_vectorizer_min_df_executor.ExecutePipeline(
+              tfidf_vectorizer_min_df_json),
+          "TFIDFVectorizer min_df should fail closed when unsupported");
+    Check(tfidf_vectorizer_min_df_executor.GetLastError().find(
+              "TFIDFVectorizer: min_df values other than 1 are not supported") !=
+              std::string::npos,
+          "TFIDFVectorizer min_df error should be specific: " +
+              tfidf_vectorizer_min_df_executor.GetLastError());
+
     const std::string binning_json =
         R"({"nodes":[)"
         R"({"id":71,"type":"DataInput","name":"Input","parameters":{)"
