@@ -915,6 +915,82 @@ int main() {
     check_operator_field("ds_operator_SentimentAnalyzer_353", "sentiment_label",
                          "SentimentAnalyzer uppercase method");
 
+    const std::string bad_tokenizer_text_type_json =
+        R"({"nodes":[)"
+        R"({"id":391,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":392,"type":"TextTokenizer","name":"BadTokenizerText","parameters":{)"
+        R"("text_col":"x","max_length":"4"}})"
+        R"(],"links":[{"start_node":391,"end_node":392}]})";
+
+    cyxwiz::PipelineExecutor bad_tokenizer_text_type_executor;
+    Check(!bad_tokenizer_text_type_executor.ExecutePipeline(
+              bad_tokenizer_text_type_json),
+          "TextTokenizer numeric text_col should fail schema validation");
+    Check(bad_tokenizer_text_type_executor.GetLastError().find(
+              "TextTokenizer: text column 'x' must be string/large_string") !=
+              std::string::npos,
+          "TextTokenizer text_col type validation should be specific: " +
+              bad_tokenizer_text_type_executor.GetLastError());
+
+    const std::string bad_count_vectorizer_text_type_json =
+        R"({"nodes":[)"
+        R"({"id":393,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":394,"type":"CountVectorizer","name":"BadCountText","parameters":{)"
+        R"("text_col":"x","max_features":"2"}})"
+        R"(],"links":[{"start_node":393,"end_node":394}]})";
+
+    cyxwiz::PipelineExecutor bad_count_vectorizer_text_type_executor;
+    Check(!bad_count_vectorizer_text_type_executor.ExecutePipeline(
+              bad_count_vectorizer_text_type_json),
+          "CountVectorizer numeric text_col should fail schema validation");
+    Check(bad_count_vectorizer_text_type_executor.GetLastError().find(
+              "CountVectorizer: text column 'x' must be string/large_string") !=
+              std::string::npos,
+          "CountVectorizer text_col type validation should be specific: " +
+              bad_count_vectorizer_text_type_executor.GetLastError());
+
+    const std::string bad_tfidf_label_column_json =
+        R"({"nodes":[)"
+        R"({"id":395,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":396,"type":"TFIDFVectorizer","name":"BadTfidfLabel","parameters":{)"
+        R"("text_col":"phrase","max_features":"2","label_col":"missing"}})"
+        R"(],"links":[{"start_node":395,"end_node":396}]})";
+
+    cyxwiz::PipelineExecutor bad_tfidf_label_column_executor;
+    Check(!bad_tfidf_label_column_executor.ExecutePipeline(
+              bad_tfidf_label_column_json),
+          "TFIDFVectorizer missing label_col should fail schema validation");
+    Check(bad_tfidf_label_column_executor.GetLastError().find(
+              "TFIDFVectorizer: label column 'missing' not found") !=
+              std::string::npos,
+          "TFIDFVectorizer label_col validation should be specific: " +
+              bad_tfidf_label_column_executor.GetLastError());
+
+    const std::string bad_sentiment_text_type_json =
+        R"({"nodes":[)"
+        R"({"id":397,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":398,"type":"SentimentAnalyzer","name":"BadSentimentText","parameters":{)"
+        R"("text_col":"x","method":"simple"}})"
+        R"(],"links":[{"start_node":397,"end_node":398}]})";
+
+    cyxwiz::PipelineExecutor bad_sentiment_text_type_executor;
+    Check(!bad_sentiment_text_type_executor.ExecutePipeline(
+              bad_sentiment_text_type_json),
+          "SentimentAnalyzer numeric text_col should fail schema validation");
+    Check(bad_sentiment_text_type_executor.GetLastError().find(
+              "SentimentAnalyzer: text column 'x' must be string/large_string") !=
+              std::string::npos,
+          "SentimentAnalyzer text_col type validation should be specific: " +
+              bad_sentiment_text_type_executor.GetLastError());
+
     const std::string bad_kmeans_init_json =
         R"({"nodes":[)"
         R"({"id":322,"type":"DataInput","name":"Input","parameters":{)"

@@ -500,6 +500,15 @@ The same grouped pass moved `StationarityTest.max_lags`,
 `SeasonalityDetector.min_period`, and `FFTNode.sample_rate` scalar bounds
 into central executor validation.
 
+**Status 2026-06-08 follow-up 44:** Operator-backed text analytics now
+share an executor-bound input schema check before `Apply()`. `TextTokenizer`,
+`CountVectorizer`, `TFIDFVectorizer`, and `SentimentAnalyzer` validate
+that `text_col` exists and is `string`/`large_string`; optional
+`label_col` now fails early if missing or if its type is not one of the
+label types supported by the text operators. This keeps the real operator
+checks as a backstop while moving common text schema rejection out of the
+hot operator execution path.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or

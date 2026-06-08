@@ -209,6 +209,28 @@ bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type) {
             type->id() == arrow::Type::LARGE_STRING);
 }
 
+bool IsTextLabelArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    if (!type) {
+        return false;
+    }
+    switch (type->id()) {
+        case arrow::Type::STRING:
+        case arrow::Type::LARGE_STRING:
+        case arrow::Type::INT8:
+        case arrow::Type::INT16:
+        case arrow::Type::INT32:
+        case arrow::Type::INT64:
+        case arrow::Type::UINT8:
+        case arrow::Type::UINT16:
+        case arrow::Type::UINT32:
+        case arrow::Type::FLOAT:
+        case arrow::Type::DOUBLE:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool IsValidNumericLiteral(const std::string& value) {
     const std::string trimmed = TrimString(value);
     if (trimmed.empty()) {
@@ -600,6 +622,36 @@ bool RequireColumnKind(const std::shared_ptr<arrow::Table>& table,
             field && field->type() ? field->type()->ToString() : "unknown";
         error = node_type + ": column '" + column + "' must be " + kind +
                 " (found " + found + ")";
+        return false;
+    }
+    return true;
+}
+
+bool RequireRoleColumnKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::string& column,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error) {
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+
+    const int column_index = table->schema()->GetFieldIndex(column);
+    if (column_index < 0) {
+        error = node_type + ": " + role + " column '" + column + "' not found";
+        return false;
+    }
+
+    const auto field = table->schema()->field(column_index);
+    if (!field || !predicate(field->type())) {
+        const std::string found =
+            field && field->type() ? field->type()->ToString() : "unknown";
+        error = node_type + ": " + role + " column '" + column +
+                "' must be " + kind + " (found " + found + ")";
         return false;
     }
     return true;
@@ -1357,6 +1409,60 @@ bool HasSupportedParameterValues(
     }
 
     return true;
+}
+
+bool ValidateOptionalRoleColumnKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    return RequireRoleColumnKind(table, node_type, it->second, role, kind,
+                                 predicate, error);
+}
+
+bool ValidateTextOperatorInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    const auto text_it = parameters.find("text_col");
+    if (text_it == parameters.end() || text_it->second.empty()) {
+        return true;
+    }
+    if (!RequireRoleColumnKind(table, node_type, text_it->second, "text",
+                               "string/large_string", IsStringArrowType,
+                               error)) {
+        return false;
+    }
+    return ValidateOptionalRoleColumnKind(
+        table, node_type, parameters, "label_col", "label",
+        "string or numeric label", IsTextLabelArrowType, error);
+}
+
+bool ValidatePipelineOperatorInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    gui::NodeType type,
+    std::string& error) {
+    switch (type) {
+        case gui::NodeType::TextTokenizer:
+        case gui::NodeType::CountVectorizer:
+        case gui::NodeType::TFIDFVectorizer:
+        case gui::NodeType::SentimentAnalyzer:
+            return ValidateTextOperatorInputSchema(table, node_type,
+                                                   parameters, error);
+        default:
+            return true;
+    }
 }
 
 } // namespace
@@ -2941,6 +3047,14 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         ReportError(configure_error.empty()
                         ? node.type + ": operator configuration failed"
                         : configure_error);
+        return false;
+    }
+
+    std::string schema_error;
+    if (!ValidatePipelineOperatorInputSchema(input_table, node.type,
+                                             node.parameters, type,
+                                             schema_error)) {
+        ReportError(schema_error);
         return false;
     }
 
