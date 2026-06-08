@@ -18,6 +18,7 @@
 #include <chrono>
 #include <set>
 #include <mutex>
+#include <optional>
 
 namespace cyxwiz {
 
@@ -925,8 +926,10 @@ bool ValidateCommaSeparatedIntegersAtLeast(
 }
 
 bool IsFloatInRange(const std::string& value,
-                    double minimum,
-                    double maximum) {
+                    const std::optional<double>& minimum,
+                    const std::optional<double>& maximum,
+                    bool minimum_inclusive,
+                    bool maximum_inclusive) {
     const std::string trimmed = TrimString(value);
     if (trimmed.empty()) {
         return false;
@@ -936,26 +939,75 @@ bool IsFloatInRange(const std::string& value,
     const char* begin = trimmed.data();
     const char* end = trimmed.data() + trimmed.size();
     auto [ptr, ec] = std::from_chars(begin, end, parsed);
-    return ec == std::errc() && ptr == end && std::isfinite(parsed) &&
-           parsed >= minimum && parsed <= maximum;
+    if (ec != std::errc() || ptr != end || !std::isfinite(parsed)) {
+        return false;
+    }
+
+    if (minimum.has_value()) {
+        if (minimum_inclusive) {
+            if (parsed < *minimum) {
+                return false;
+            }
+        } else if (parsed <= *minimum) {
+            return false;
+        }
+    }
+
+    if (maximum.has_value()) {
+        if (maximum_inclusive) {
+            if (parsed > *maximum) {
+                return false;
+            }
+        } else if (parsed >= *maximum) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
-bool ValidateFloatParameterInRange(
+std::string DescribeFloatParameterBounds(
+    const std::optional<double>& minimum,
+    const std::optional<double>& maximum,
+    bool minimum_inclusive,
+    bool maximum_inclusive) {
+    if (minimum.has_value() && maximum.has_value()) {
+        return "between " + std::to_string(*minimum) + " and " +
+               std::to_string(*maximum);
+    }
+    if (minimum.has_value()) {
+        return std::string(minimum_inclusive ? "greater than or equal to "
+                                             : "greater than ") +
+               std::to_string(*minimum);
+    }
+    if (maximum.has_value()) {
+        return std::string(maximum_inclusive ? "less than or equal to "
+                                             : "less than ") +
+               std::to_string(*maximum);
+    }
+    return "finite";
+}
+
+bool ValidateFloatParameterBounds(
     const std::map<std::string, std::string>& parameters,
     const std::string& node_type,
     const std::string& parameter_name,
-    double minimum,
-    double maximum,
+    const std::optional<double>& minimum,
+    const std::optional<double>& maximum,
+    bool minimum_inclusive,
+    bool maximum_inclusive,
     std::string& error) {
     auto it = parameters.find(parameter_name);
     if (it == parameters.end() || it->second.empty()) {
         return true;
     }
-    if (IsFloatInRange(it->second, minimum, maximum)) {
+    if (IsFloatInRange(it->second, minimum, maximum, minimum_inclusive,
+                       maximum_inclusive)) {
         return true;
     }
-    error = node_type + " " + parameter_name + " must be a number between " +
-            std::to_string(minimum) + " and " + std::to_string(maximum);
+    error = node_type + " " + parameter_name + " must be a number " +
+            DescribeFloatParameterBounds(minimum, maximum, minimum_inclusive,
+                                         maximum_inclusive);
     return false;
 }
 
@@ -1138,9 +1190,11 @@ bool HasSupportedParameterValues(
     }
 
     for (const auto& capability : float_parameters) {
-        if (!ValidateFloatParameterInRange(
+        if (!ValidateFloatParameterBounds(
                 parameters, node_type, capability.parameter_name,
-                capability.minimum, capability.maximum, error)) {
+                capability.minimum, capability.maximum,
+                capability.minimum_inclusive, capability.maximum_inclusive,
+                error)) {
             return false;
         }
     }

@@ -591,6 +591,42 @@ int main() {
           "RobustScaler malformed quantile_min error should be specific: " +
               bad_robust_scaler_quantile_executor.GetLastError());
 
+    const std::string bad_target_encoder_smoothing_json =
+        R"({"nodes":[)"
+        R"({"id":373,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":374,"type":"TargetEncoder","name":"BadTargetSmoothing","parameters":{)"
+        R"("columns":"category","target_col":"y","smoothing":"-1"}})"
+        R"(],"links":[{"start_node":373,"end_node":374}]})";
+
+    cyxwiz::PipelineExecutor bad_target_encoder_smoothing_executor;
+    Check(!bad_target_encoder_smoothing_executor.ExecutePipeline(
+              bad_target_encoder_smoothing_json),
+          "TargetEncoder negative smoothing should fail validation");
+    Check(bad_target_encoder_smoothing_executor.GetLastError().find(
+              "TargetEncoder smoothing must be a number greater than or equal to") !=
+              std::string::npos,
+          "TargetEncoder smoothing validation should be specific: " +
+              bad_target_encoder_smoothing_executor.GetLastError());
+
+    const std::string bad_outlier_threshold_json =
+        R"({"nodes":[)"
+        R"({"id":375,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":376,"type":"OutlierDetector","name":"BadOutlierThreshold","parameters":{)"
+        R"("columns":"x","threshold":"0"}})"
+        R"(],"links":[{"start_node":375,"end_node":376}]})";
+
+    cyxwiz::PipelineExecutor bad_outlier_threshold_executor;
+    Check(!bad_outlier_threshold_executor.ExecutePipeline(
+              bad_outlier_threshold_json),
+          "OutlierDetector zero threshold should fail validation");
+    Check(bad_outlier_threshold_executor.GetLastError().find(
+              "OutlierDetector threshold must be a number greater than") !=
+              std::string::npos,
+          "OutlierDetector threshold validation should be specific: " +
+              bad_outlier_threshold_executor.GetLastError());
+
     const std::string uppercase_outlier_method_json =
         R"({"nodes":[)"
         R"({"id":338,"type":"DataInput","name":"Input","parameters":{)"
@@ -887,6 +923,23 @@ int main() {
               uppercase_kmeans_init_executor.GetLastError());
     check_cluster_output("ds_operator_KMeansCluster_341", "KMeansCluster uppercase init");
 
+    const std::string bad_dbscan_eps_json =
+        R"({"nodes":[)"
+        R"({"id":377,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":378,"type":"DBSCANCluster","name":"BadDBSCANEps","parameters":{)"
+        R"("feature_cols":"x,y","eps":"0","min_samples":"1"}})"
+        R"(],"links":[{"start_node":377,"end_node":378}]})";
+
+    cyxwiz::PipelineExecutor bad_dbscan_eps_executor;
+    Check(!bad_dbscan_eps_executor.ExecutePipeline(bad_dbscan_eps_json),
+          "DBSCANCluster zero eps should fail validation");
+    Check(bad_dbscan_eps_executor.GetLastError().find(
+              "DBSCANCluster eps must be a number greater than") !=
+              std::string::npos,
+          "DBSCANCluster eps validation should be specific: " +
+              bad_dbscan_eps_executor.GetLastError());
+
     const std::string uppercase_dbscan_metric_json =
         R"({"nodes":[)"
         R"({"id":342,"type":"DataInput","name":"Input","parameters":{)"
@@ -953,6 +1006,24 @@ int main() {
               std::string::npos,
           "ExponentialSmoothing bad method validation should be specific: " +
               bad_exp_smoothing_method_executor.GetLastError());
+
+    const std::string bad_filter_sample_rate_json =
+        R"({"nodes":[)"
+        R"({"id":379,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":380,"type":"FilterDesigner","name":"BadFilterSampleRate","parameters":{)"
+        R"("signal_col":"signal","cutoff":"0.1","sample_rate":"0","order":"2"}})"
+        R"(],"links":[{"start_node":379,"end_node":380}]})";
+
+    cyxwiz::PipelineExecutor bad_filter_sample_rate_executor;
+    Check(!bad_filter_sample_rate_executor.ExecutePipeline(
+              bad_filter_sample_rate_json),
+          "FilterDesigner zero sample_rate should fail validation");
+    Check(bad_filter_sample_rate_executor.GetLastError().find(
+              "FilterDesigner sample_rate must be a number greater than") !=
+              std::string::npos,
+          "FilterDesigner sample_rate validation should be specific: " +
+              bad_filter_sample_rate_executor.GetLastError());
 
     const std::string uppercase_filter_type_json =
         R"({"nodes":[)"

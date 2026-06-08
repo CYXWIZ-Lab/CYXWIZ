@@ -74,8 +74,10 @@ struct PipelineIntegerParameterRuntimeCapability {
 struct PipelineFloatParameterRuntimeCapability {
     const char* legacy_type_name;
     const char* parameter_name;
-    double minimum;
-    double maximum;
+    std::optional<double> minimum;
+    std::optional<double> maximum;
+    bool minimum_inclusive = true;
+    bool maximum_inclusive = true;
 };
 
 struct PipelineUnsupportedTrainingNodeCapability {

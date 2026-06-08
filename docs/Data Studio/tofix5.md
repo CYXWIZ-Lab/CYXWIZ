@@ -480,6 +480,16 @@ silently passing those columns through. `mean` and `median` require
 numeric columns because the node has no per-column selector; `constant`
 and `mode` remain the table-wide strategies for nonnumeric data.
 
+**Status 2026-06-08 follow-up 42:** The central float-parameter
+validation axis now supports optional/exclusive bounds and covers more
+operator-backed scalar checks that previously failed only after source
+execution reached operator configuration. `TargetEncoder.smoothing`
+requires a nonnegative number, while `OutlierDetector.threshold`,
+`DBSCANCluster.eps`, `FilterDesigner.cutoff`, and
+`FilterDesigner.sample_rate` require positive finite numbers. Cross-field
+checks such as band-filter `cutoff_high > cutoff` remain local operator
+validation.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or
