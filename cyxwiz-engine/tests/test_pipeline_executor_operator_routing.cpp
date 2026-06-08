@@ -416,6 +416,20 @@ int main() {
           "FileInput json format validation should be specific: " +
               bad_file_input_format_executor.GetLastError());
 
+    const std::string excel_input_json =
+        R"({"nodes":[)"
+        R"({"id":427,"type":"ExcelInput","name":"Excel","parameters":{)"
+        R"("path":"ignored.xlsx"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor excel_input_executor;
+    Check(!excel_input_executor.ExecutePipeline(excel_input_json),
+          "ExcelInput should fail closed until Excel loading is real");
+    Check(excel_input_executor.GetLastError().find(
+              "Excel input loading is not implemented") != std::string::npos,
+          "ExcelInput fail-closed error should be specific: " +
+              excel_input_executor.GetLastError());
+
     const std::string unsupported_json =
         R"({"nodes":[)"
         R"({"id":3,"type":"DataInput","name":"Input","parameters":{)"

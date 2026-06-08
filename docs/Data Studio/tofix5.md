@@ -609,6 +609,13 @@ with a worker-path backstop for callers that bypass precheck validation.
 This keeps the GUI apply path aligned with the PipelineExecutor support
 truth while preserving CSV, TSV, Parquet, Feather, Arrow, and IPC paths.
 
+**Status 2026-06-08 follow-up 55:** The legacy `ExcelInput` source node
+now shares the same support truth as `DataInput.type=excel`: it is
+recognized as a source-shaped node but marked fail-closed in the central
+runtime registry until a real Excel Arrow loader exists. Fail-closed
+runtime support now takes priority over typed legacy dispatch, preventing
+`ExcelFile` metadata from reaching the stale `ExecuteExcelInput()` path.
+
 **Status 2026-06-08 follow-up 12:** Cycle validation is covered by
 `ValidatePipeline()` through `TopologicalSort()`, and the executor routing
 test now locks that behavior with a cyclic two-node graph. Disconnected

@@ -766,10 +766,10 @@ int main() {
           "CSVFile enum support should resolve to legacy executor");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::ExcelFile)) == "ExcelInput",
-          "legacy runtime enum lookup for ExcelFile is stable");
+          "fail-closed runtime enum lookup for ExcelFile is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ExcelFile).mode ==
-              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
-          "ExcelFile enum support should resolve to legacy executor");
+              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+          "ExcelFile enum support should resolve to fail-closed");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::StandardScaler)) == "StandardScaler",
           "operator runtime enum lookup for StandardScaler is stable");

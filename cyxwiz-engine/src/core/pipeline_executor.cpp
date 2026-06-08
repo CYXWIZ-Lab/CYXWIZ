@@ -2222,6 +2222,12 @@ std::vector<int> PipelineExecutor::TopologicalSort(const std::vector<Node>& node
 bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
     spdlog::debug("[Data Studio] Executing node: {} (type: {})", node.name, node.type);
 
+    const auto support = ResolveNodeRuntimeSupport(node);
+    if (support.mode == PipelineRuntimeSupportMode::FailClosed &&
+        support.fail_closed_reason != nullptr) {
+        return FailUnsupportedNode(node, support.fail_closed_reason);
+    }
+
     bool typed_legacy_handled = false;
     if (ExecuteTypedLegacyNode(node, ctx, typed_legacy_handled)) {
         return true;
@@ -2230,13 +2236,9 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return false;
     }
 
-    const auto support = ResolveNodeRuntimeSupport(node);
     if (support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
         support.operator_type.has_value()) {
         return ExecutePipelineOperatorNode(node, ctx, *support.operator_type);
-    } else if (support.mode == PipelineRuntimeSupportMode::FailClosed &&
-               support.fail_closed_reason != nullptr) {
-        return FailUnsupportedNode(node, support.fail_closed_reason);
     }
 
     if (support.mode == PipelineRuntimeSupportMode::LegacyExecutor &&

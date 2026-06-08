@@ -134,6 +134,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::ExportJSON},
         {"RuleEngine", "legacy RuleEngine execution ignores rules and is not implemented truthfully",
          gui::NodeType::RuleEngine},
+        {"ExcelInput", "Excel input loading is not implemented; use DataInput with csv, parquet, feather, arrow, or ipc until a real Excel Arrow loader exists",
+         gui::NodeType::ExcelFile},
     };
     return capabilities;
 }
@@ -167,7 +169,6 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"PolynomialFeatures", std::nullopt,
          PipelineLegacyDispatchKind::PolynomialFeatures},
         {"Binning", std::nullopt, PipelineLegacyDispatchKind::Binning},
-        {"ExcelInput", gui::NodeType::ExcelFile},
         {"ExportCSV", gui::NodeType::ExportCSV},
         {"RowToColumnNames", gui::NodeType::RowToColumnNames},
         {"TableCropper", gui::NodeType::TableCropper},
