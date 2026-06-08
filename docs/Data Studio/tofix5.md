@@ -393,11 +393,12 @@ Effect:
 
 Recommendation:
 
-- validation must at minimum reject:
-  - broader disconnected-graph policy for intentionally separate jobs
-  - obvious type/schema mismatches beyond the current source, legacy
-    scalar-integer/enum parameter baseline, and active loaded-table
-    column/list/aggregation transform checks
+- keep the current structural validation guarantees in place for
+  disconnected graphs, dangling links, cycles, missing required inputs,
+  unsupported node types, and required/allowed parameter baselines
+- continue expanding loaded-table schema/type checks for node families
+  that still depend on execution-time failures rather than pre-query or
+  configure-time rejection
 
 ---
 
