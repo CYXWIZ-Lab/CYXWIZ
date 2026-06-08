@@ -29,12 +29,37 @@ void ParseColumnsAndLabel(
     std::vector<std::string>& out_cols,
     std::string& out_label,
     const std::string& cols_key = "columns") {
+    out_label.clear();
     auto c = params.find(cols_key);
     const std::string cols_str = (c != params.end()) ? c->second : "";
     ParseCommaList(cols_str, out_cols);
 
     auto lc = params.find("label_col");
     if (lc != params.end()) out_label = lc->second;
+}
+
+bool ReadBoolParam(const std::map<std::string, std::string>& params,
+                   const std::string& key,
+                   bool default_value,
+                   const std::string& op_name,
+                   bool& out,
+                   std::string& error) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        out = default_value;
+        return true;
+    }
+    if (it->second == "true") {
+        out = true;
+        return true;
+    }
+    if (it->second == "false") {
+        out = false;
+        return true;
+    }
+    error = op_name + ": '" + key + "' must be 'true' or 'false' (got '" +
+            it->second + "')";
+    return false;
 }
 
 // Read a numeric column as vector<double> (via float intermediate).
@@ -68,7 +93,11 @@ arrow::Result<std::shared_ptr<arrow::Table>> ReplaceWithDoubles(
     const std::shared_ptr<arrow::Table>& table,
     int col_idx,
     const std::vector<double>& values) {
-    std::vector<float> floats(values.begin(), values.end());
+    std::vector<float> floats;
+    floats.reserve(values.size());
+    for (double value : values) {
+        floats.push_back(static_cast<float>(value));
+    }
     return ReplaceColumnWithFloat(table, col_idx, floats,
                                    static_cast<int64_t>(floats.size()));
 }
@@ -184,11 +213,10 @@ bool StandardScalerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
     ParseColumnsAndLabel(params, columns_, label_col_);
-    auto wm = params.find("with_mean");
-    if (wm != params.end()) with_mean_ = (wm->second == "true");
-    auto ws = params.find("with_std");
-    if (ws != params.end()) with_std_ = (ws->second == "true");
-    (void)error;
+    if (!ReadBoolParam(params, "with_mean", true, GetName(),
+                       with_mean_, error)) return false;
+    if (!ReadBoolParam(params, "with_std", true, GetName(),
+                       with_std_, error)) return false;
     return true;
 }
 
@@ -296,10 +324,10 @@ bool RobustScalerOperator::Configure(
     std::string& error) {
     ParseColumnsAndLabel(params, columns_, label_col_);
 
-    auto wc = params.find("with_centering");
-    if (wc != params.end()) with_centering_ = (wc->second == "true");
-    auto ws = params.find("with_scaling");
-    if (ws != params.end()) with_scaling_ = (ws->second == "true");
+    if (!ReadBoolParam(params, "with_centering", true, GetName(),
+                       with_centering_, error)) return false;
+    if (!ReadBoolParam(params, "with_scaling", true, GetName(),
+                       with_scaling_, error)) return false;
 
     auto qmin = params.find("quantile_min");
     if (qmin != params.end() && !qmin->second.empty()) {

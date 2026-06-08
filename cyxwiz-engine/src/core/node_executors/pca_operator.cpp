@@ -50,11 +50,40 @@ bool IsNumericArrowType(const std::shared_ptr<arrow::ChunkedArray>& col) {
     }
 }
 
+bool ReadBoolParam(const std::map<std::string, std::string>& params,
+                   const char* key,
+                   bool default_value,
+                   bool& out,
+                   std::string& error) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        out = default_value;
+        return true;
+    }
+    if (it->second == "true") {
+        out = true;
+        return true;
+    }
+    if (it->second == "false") {
+        out = false;
+        return true;
+    }
+    error = std::string("PCA: '") + key +
+            "' must be 'true' or 'false' (got '" + it->second + "')";
+    return false;
+}
+
 } // namespace
 
 bool PCAOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+
+    feature_cols_.clear();
+    label_col_.clear();
+    n_components_ = 2;
+    center_ = true;
+    scale_ = false;
 
     auto fc = params.find("feature_cols");
     const std::string fc_str = (fc != params.end()) ? fc->second : "";
@@ -77,11 +106,8 @@ bool PCAOperator::Configure(
         return false;
     }
 
-    auto c = params.find("center");
-    center_ = (c == params.end()) ? true : (c->second == "true");
-
-    auto s = params.find("scale");
-    scale_ = (s == params.end()) ? false : (s->second == "true");
+    if (!ReadBoolParam(params, "center", true, center_, error)) return false;
+    if (!ReadBoolParam(params, "scale", false, scale_, error)) return false;
 
     return true;
 }

@@ -465,6 +465,62 @@ int main() {
           "ExponentialSmoothing damped validation should be specific: " +
               bad_exp_smoothing_damped_executor.GetLastError());
 
+    const std::string bad_standard_scaler_mean_json =
+        R"({"nodes":[)"
+        R"({"id":306,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":307,"type":"StandardScaler","name":"BadScaler","parameters":{)"
+        R"("columns":"x","with_mean":"maybe"}})"
+        R"(],"links":[{"start_node":306,"end_node":307}]})";
+
+    cyxwiz::PipelineExecutor bad_standard_scaler_mean_executor;
+    Check(!bad_standard_scaler_mean_executor.ExecutePipeline(
+              bad_standard_scaler_mean_json),
+          "StandardScaler malformed with_mean should fail validation");
+    Check(bad_standard_scaler_mean_executor.GetLastError().find(
+              "StandardScaler: 'with_mean' must be 'true' or 'false'") !=
+              std::string::npos,
+          "StandardScaler with_mean validation should be specific: " +
+              bad_standard_scaler_mean_executor.GetLastError());
+
+    const std::string bad_robust_scaler_centering_json =
+        R"({"nodes":[)"
+        R"({"id":308,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":309,"type":"RobustScaler","name":"BadRobust","parameters":{)"
+        R"("columns":"x","with_centering":"maybe"}})"
+        R"(],"links":[{"start_node":308,"end_node":309}]})";
+
+    cyxwiz::PipelineExecutor bad_robust_scaler_centering_executor;
+    Check(!bad_robust_scaler_centering_executor.ExecutePipeline(
+              bad_robust_scaler_centering_json),
+          "RobustScaler malformed with_centering should fail validation");
+    Check(bad_robust_scaler_centering_executor.GetLastError().find(
+              "RobustScaler: 'with_centering' must be 'true' or 'false'") !=
+              std::string::npos,
+          "RobustScaler with_centering validation should be specific: " +
+              bad_robust_scaler_centering_executor.GetLastError());
+
+    const std::string bad_pca_center_json =
+        R"({"nodes":[)"
+        R"({"id":310,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":311,"type":"PCANode","name":"BadPCA","parameters":{)"
+        R"("feature_cols":"x,y","center":"maybe"}})"
+        R"(],"links":[{"start_node":310,"end_node":311}]})";
+
+    cyxwiz::PipelineExecutor bad_pca_center_executor;
+    Check(!bad_pca_center_executor.ExecutePipeline(bad_pca_center_json),
+          "PCANode malformed center should fail validation");
+    Check(bad_pca_center_executor.GetLastError().find(
+              "PCA: 'center' must be 'true' or 'false'") !=
+              std::string::npos,
+          "PCANode center validation should be specific: " +
+              bad_pca_center_executor.GetLastError());
+
     const std::string bad_lags_json =
         R"({"nodes":[)"
         R"({"id":15,"type":"DataInput","name":"Input","parameters":{)"
@@ -2282,6 +2338,9 @@ int main() {
     registry.UnloadDataset("ds_datainput_300");
     registry.UnloadDataset("ds_datainput_302");
     registry.UnloadDataset("ds_datainput_304");
+    registry.UnloadDataset("ds_datainput_306");
+    registry.UnloadDataset("ds_datainput_308");
+    registry.UnloadDataset("ds_datainput_310");
     registry.UnloadDataset("ds_datainput_188");
     registry.UnloadDataset("ds_filter_189");
     registry.UnloadDataset("ds_datainput_190");

@@ -314,6 +314,13 @@ parameters now validate strictly at configure time. Malformed
 `ExponentialSmoothing.damped` values now fail with explicit errors
 instead of being interpreted as `false`.
 
+**Status 2026-06-08 follow-up 22:** Operator-backed PCA and scaler
+boolean parameters now validate strictly as well. Malformed
+`PCANode.center` / `scale`, `StandardScaler.with_mean` / `with_std`, and
+`RobustScaler.with_centering` / `with_scaling` values now fail with
+explicit errors, and reconfiguring scaler operators no longer leaves a
+stale optional `label_col` behind.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and
