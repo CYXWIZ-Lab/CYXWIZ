@@ -50,7 +50,7 @@ bool CountVectorizerOperator::Configure(
 
     auto nrm = params.find("norm");
     if (nrm != params.end() && !nrm->second.empty()) {
-        norm_ = nrm->second;
+        norm_ = NormalizeTextParameterChoice(nrm->second);
         if (norm_ != "l1" && norm_ != "l2" && norm_ != "none") {
             error = "CountVectorizer: 'norm' must be 'l1' / 'l2' / 'none' (got '" +
                     norm_ + "')";

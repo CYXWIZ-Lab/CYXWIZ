@@ -767,6 +767,68 @@ int main() {
           "CountVectorizer bad norm validation should be specific: " +
               bad_count_vectorizer_norm_executor.GetLastError());
 
+    auto check_operator_field = [&registry](const std::string& dataset_id,
+                                            const std::string& field_name,
+                                            const std::string& message) {
+        auto output = registry.GetArrowDataset(dataset_id);
+        Check(output != nullptr, message + " output dataset is registered");
+        auto table = output->GetArrowTable();
+        Check(table != nullptr, message + " output table exists");
+        Check(table->schema()->GetFieldIndex(field_name) >= 0,
+              message + " output has " + field_name + " column");
+    };
+
+    const std::string uppercase_count_vectorizer_norm_json =
+        R"({"nodes":[)"
+        R"({"id":348,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":349,"type":"CountVectorizer","name":"CountVectorizer","parameters":{)"
+        R"("text_col":"phrase","max_features":"2","norm":" NONE "}})"
+        R"(],"links":[{"start_node":348,"end_node":349}]})";
+
+    cyxwiz::PipelineExecutor uppercase_count_vectorizer_norm_executor;
+    Check(uppercase_count_vectorizer_norm_executor.ExecutePipeline(
+              uppercase_count_vectorizer_norm_json),
+          "CountVectorizer uppercase norm should execute after normalization: " +
+              uppercase_count_vectorizer_norm_executor.GetLastError());
+    check_operator_field("ds_operator_CountVectorizer_349", "count_0",
+                         "CountVectorizer uppercase norm");
+
+    const std::string uppercase_tfidf_vectorizer_norm_json =
+        R"({"nodes":[)"
+        R"({"id":350,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":351,"type":"TFIDFVectorizer","name":"TFIDFVectorizer","parameters":{)"
+        R"("text_col":"phrase","max_features":"2","norm":"L1"}})"
+        R"(],"links":[{"start_node":350,"end_node":351}]})";
+
+    cyxwiz::PipelineExecutor uppercase_tfidf_vectorizer_norm_executor;
+    Check(uppercase_tfidf_vectorizer_norm_executor.ExecutePipeline(
+              uppercase_tfidf_vectorizer_norm_json),
+          "TFIDFVectorizer uppercase norm should execute after normalization: " +
+              uppercase_tfidf_vectorizer_norm_executor.GetLastError());
+    check_operator_field("ds_operator_TFIDFVectorizer_351", "tfidf_0",
+                         "TFIDFVectorizer uppercase norm");
+
+    const std::string uppercase_sentiment_method_json =
+        R"({"nodes":[)"
+        R"({"id":352,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":353,"type":"SentimentAnalyzer","name":"Sentiment","parameters":{)"
+        R"("text_col":"phrase","method":" SIMPLE "}})"
+        R"(],"links":[{"start_node":352,"end_node":353}]})";
+
+    cyxwiz::PipelineExecutor uppercase_sentiment_method_executor;
+    Check(uppercase_sentiment_method_executor.ExecutePipeline(
+              uppercase_sentiment_method_json),
+          "SentimentAnalyzer uppercase method should execute after normalization: " +
+              uppercase_sentiment_method_executor.GetLastError());
+    check_operator_field("ds_operator_SentimentAnalyzer_353", "sentiment_label",
+                         "SentimentAnalyzer uppercase method");
+
     const std::string bad_kmeans_init_json =
         R"({"nodes":[)"
         R"({"id":322,"type":"DataInput","name":"Input","parameters":{)"

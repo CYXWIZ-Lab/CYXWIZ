@@ -46,7 +46,7 @@ bool SentimentAnalyzerOperator::Configure(
 
     auto m = params.find("method");
     if (m != params.end() && !m->second.empty()) {
-        method_ = m->second;
+        method_ = NormalizeTextParameterChoice(m->second);
         if (method_ != "simple" && method_ != "vader" && method_ != "afinn") {
             error = "SentimentAnalyzer: 'method' must be 'simple' / 'vader' / "
                     "'afinn' (got '" + method_ + "')";

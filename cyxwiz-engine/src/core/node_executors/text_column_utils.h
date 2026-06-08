@@ -1,12 +1,31 @@
 #pragma once
 
 #include <arrow/api.h>
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace cyxwiz {
+
+inline std::string NormalizeTextParameterChoice(const std::string& value) {
+    const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    });
+    const auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    }).base();
+    if (first >= last) return {};
+
+    std::string normalized(first, last);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return normalized;
+}
 
 /// Read all string values from an Arrow column into std::vector<std::string>.
 /// Null values become empty strings. Returns false (with the offending Arrow
