@@ -58,6 +58,10 @@ scanning so stale or duplicate work is not reintroduced.
 
 ## Patch Log
 
+- 2026-06-08 follow-up: refined `tofix20` Priority 4 by splitting the Node
+  Browser availability filter into `Pipeline`, `Training`, `UI-only`, and
+  `Blocked` modes backed by support axes, and pinned positive training backend
+  axes for Dense, Dropout, BatchNorm, LSTM, and GRU.
 - 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
   selected training paths with multiple dataset sources until CyxWiz has a
   typed named-batch contract for Siamese, pair/triplet, and other multi-input

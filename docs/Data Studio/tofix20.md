@@ -147,11 +147,16 @@ Definition of done:
 Status 2026-06-08:
 
 - Started. Node Browser search, category views, and root category sections now
-  include a support-axis-backed availability filter with `All`, `Runnable`,
-  and `Blocked` modes. The blocked classifier uses structured support axes
-  (`Runtime`, `Pipeline Executor`, and training backend axes) plus the existing
-  `Blocked` badge fallback, and intentionally does not treat
-  `Materializer=none` as a blocked runtime state.
+  include a support-axis-backed availability filter with explicit `All`,
+  `Pipeline`, `Training`, `UI-only`, and `Blocked` modes. `Pipeline` uses
+  supported `Runtime` and `Pipeline Executor` axes, `Training` uses supported
+  training backend axes, `UI-only` is limited to implemented non-training
+  nodes with no pipeline/training execution axes, and `Blocked` uses
+  unsupported runtime or training axes plus the existing `Blocked` badge
+  fallback. The filter intentionally does not treat `Materializer=none` as a
+  blocked runtime state. Current positive training support axes are pinned for
+  Dense, Dropout, BatchNorm, LSTM, and GRU; broader tensor/training-node axis
+  coverage remains a follow-up.
 
 ## Priority 5 - Complete Schema/Type Validation Parity
 

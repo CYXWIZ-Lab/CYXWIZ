@@ -426,6 +426,23 @@ GetPipelineUnsupportedTrainingControlCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineSupportedTrainingNodeCapability>&
+GetPipelineSupportedTrainingBackendCapabilities() {
+    static const std::vector<PipelineSupportedTrainingNodeCapability> capabilities = {
+        {gui::NodeType::Dense,
+         "compiled by GraphCompiler and executed by TrainingExecutor"},
+        {gui::NodeType::Dropout,
+         "compiled by GraphCompiler and executed by TrainingExecutor"},
+        {gui::NodeType::BatchNorm,
+         "compiled by GraphCompiler and executed by TrainingExecutor"},
+        {gui::NodeType::LSTM,
+         "compiled by GraphCompiler and executed by TrainingExecutor"},
+        {gui::NodeType::GRU,
+         "compiled by GraphCompiler and executed by TrainingExecutor"},
+    };
+    return capabilities;
+}
+
 const std::vector<PipelineMaterializerStorageBackendCapability>&
 GetPipelineMaterializerStorageBackendCapabilities() {
     static const std::vector<PipelineMaterializerStorageBackendCapability> capabilities = {
@@ -860,6 +877,17 @@ bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type) {
     return ResolvePipelineUnsupportedTrainingControlReason(node_type) != nullptr;
 }
 
+bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type) {
+    const auto& capabilities = GetPipelineSupportedTrainingBackendCapabilities();
+    auto it = std::find_if(
+        capabilities.begin(),
+        capabilities.end(),
+        [node_type](const PipelineSupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    return it != capabilities.end();
+}
+
 PipelineTrainingBackendSupport
 ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
     const auto& layer_capabilities =
@@ -890,6 +918,21 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
                 false,
                 false,
                 control_it->reason};
+    }
+
+    const auto& supported_capabilities =
+        GetPipelineSupportedTrainingBackendCapabilities();
+    auto supported_it = std::find_if(
+        supported_capabilities.begin(),
+        supported_capabilities.end(),
+        [node_type](const PipelineSupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (supported_it != supported_capabilities.end()) {
+        return {PipelineTrainingBackendSupportMode::Allowed,
+                true,
+                true,
+                supported_it->reason};
     }
 
     return {};

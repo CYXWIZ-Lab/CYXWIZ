@@ -23,6 +23,45 @@ bool HasUnsupportedAxis(const cyxwiz::NodeMetadata* metadata,
         });
 }
 
+bool HasSupportedAxis(const cyxwiz::NodeMetadata* metadata,
+                      const char* axis_name) {
+    if (!metadata) return false;
+    return std::any_of(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [axis_name](const cyxwiz::SupportAxisDefinition& axis) {
+            return axis.name == axis_name && axis.supported;
+        });
+}
+
+bool HasAxis(const cyxwiz::NodeMetadata* metadata, const char* axis_name) {
+    if (!metadata) return false;
+    return std::any_of(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [axis_name](const cyxwiz::SupportAxisDefinition& axis) {
+            return axis.name == axis_name;
+        });
+}
+
+bool IsTrainingCategory(cyxwiz::NodeCategory category) {
+    switch (category) {
+    case cyxwiz::NodeCategory::Layers:
+    case cyxwiz::NodeCategory::Activation:
+    case cyxwiz::NodeCategory::Pooling:
+    case cyxwiz::NodeCategory::Normalization:
+    case cyxwiz::NodeCategory::Attention:
+    case cyxwiz::NodeCategory::Recurrent:
+    case cyxwiz::NodeCategory::ShapeOps:
+    case cyxwiz::NodeCategory::MergeOps:
+    case cyxwiz::NodeCategory::Training:
+    case cyxwiz::NodeCategory::Regularization:
+        return true;
+    default:
+        return false;
+    }
+}
+
 } // namespace
 
 NodeBrowserPanel::NodeBrowserPanel() {
@@ -539,7 +578,9 @@ void NodeBrowserPanel::RenderFilterTags() {
                           ImGuiComboFlags_NoArrowButton)) {
         const SupportFilterMode modes[] = {
             SupportFilterMode::All,
-            SupportFilterMode::Runnable,
+            SupportFilterMode::Pipeline,
+            SupportFilterMode::Training,
+            SupportFilterMode::UiOnly,
             SupportFilterMode::Blocked,
         };
         for (SupportFilterMode mode : modes) {
@@ -1060,8 +1101,12 @@ bool NodeBrowserPanel::NodeMatchesSupportFilter(
 
     const bool blocked = IsSupportBlocked(metadata);
     switch (support_filter_mode_) {
-    case SupportFilterMode::Runnable:
-        return !blocked && metadata->IsImplemented();
+    case SupportFilterMode::Pipeline:
+        return HasPipelineSupport(metadata);
+    case SupportFilterMode::Training:
+        return HasTrainingSupport(metadata);
+    case SupportFilterMode::UiOnly:
+        return IsUiOnly(metadata);
     case SupportFilterMode::Blocked:
         return blocked;
     case SupportFilterMode::All:
@@ -1085,11 +1130,47 @@ bool NodeBrowserPanel::IsSupportBlocked(
     return metadata->badge == "Blocked";
 }
 
+bool NodeBrowserPanel::HasPipelineSupport(
+    const cyxwiz::NodeMetadata* metadata) const {
+    return metadata != nullptr &&
+           metadata->IsImplemented() &&
+           !IsSupportBlocked(metadata) &&
+           HasSupportedAxis(metadata, "Runtime") &&
+           HasSupportedAxis(metadata, "Pipeline Executor");
+}
+
+bool NodeBrowserPanel::HasTrainingSupport(
+    const cyxwiz::NodeMetadata* metadata) const {
+    return metadata != nullptr &&
+           metadata->IsImplemented() &&
+           !IsSupportBlocked(metadata) &&
+           HasSupportedAxis(metadata, "Training Backend") &&
+           HasSupportedAxis(metadata, "Compile") &&
+           HasSupportedAxis(metadata, "Training");
+}
+
+bool NodeBrowserPanel::IsUiOnly(
+    const cyxwiz::NodeMetadata* metadata) const {
+    return metadata != nullptr &&
+           metadata->IsImplemented() &&
+           !IsSupportBlocked(metadata) &&
+           !IsTrainingCategory(metadata->category) &&
+           !HasAxis(metadata, "Runtime") &&
+           !HasAxis(metadata, "Pipeline Executor") &&
+           !HasAxis(metadata, "Training Backend") &&
+           !HasAxis(metadata, "Compile") &&
+           !HasAxis(metadata, "Training");
+}
+
 const char* NodeBrowserPanel::GetSupportFilterLabel(
     SupportFilterMode mode) const {
     switch (mode) {
-    case SupportFilterMode::Runnable:
-        return "Runnable";
+    case SupportFilterMode::Pipeline:
+        return "Pipeline";
+    case SupportFilterMode::Training:
+        return "Training";
+    case SupportFilterMode::UiOnly:
+        return "UI-only";
     case SupportFilterMode::Blocked:
         return "Blocked";
     case SupportFilterMode::All:

@@ -387,6 +387,41 @@ int main() {
                       TypeId(capability.node_type));
         }
 
+        std::set<int> supported_training_types;
+        for (const auto& capability :
+             cyxwiz::GetPipelineSupportedTrainingBackendCapabilities()) {
+            const int key = static_cast<int>(capability.node_type);
+            Check(supported_training_types.insert(key).second,
+                  "duplicate supported training backend capability: " +
+                      TypeId(capability.node_type));
+            Check(capability.reason != nullptr &&
+                      std::string(capability.reason).size() > 16,
+                  "supported training backend reason is too weak: " +
+                      TypeId(capability.node_type));
+            Check(cyxwiz::IsPipelineSupportedTrainingBackendNode(
+                      capability.node_type),
+                  "supported training backend capability does not resolve: " +
+                      TypeId(capability.node_type));
+            Check(!cyxwiz::IsPipelineUnsupportedSequentialModelLayer(
+                      capability.node_type) &&
+                      !cyxwiz::IsPipelineUnsupportedTrainingControlNode(
+                          capability.node_type),
+                  "supported training backend should not overlap unsupported lists: " +
+                      TypeId(capability.node_type));
+            const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(
+                capability.node_type);
+            Check(support.mode ==
+                      cyxwiz::PipelineTrainingBackendSupportMode::Allowed,
+                  "supported training backend should resolve as allowed: " +
+                      TypeId(capability.node_type));
+            Check(support.compile_supported && support.training_supported,
+                  "supported training backend should allow compile/training: " +
+                      TypeId(capability.node_type));
+            Check(support.reason == capability.reason,
+                  "supported training backend reason should be shared: " +
+                      TypeId(capability.node_type));
+        }
+
         std::set<int> materializer_storage_backends;
         int materializer_supported_backends = 0;
         for (const auto& capability :
@@ -1118,6 +1153,9 @@ int main() {
     }
 
     const std::vector<gui::NodeType> supported_model_nodes = {
+        gui::NodeType::Dense,
+        gui::NodeType::Dropout,
+        gui::NodeType::BatchNorm,
         gui::NodeType::LSTM,
         gui::NodeType::GRU,
     };
@@ -1133,6 +1171,18 @@ int main() {
         Check(support.compile_supported && support.training_supported,
               "supported model type should not be blocked by training backend support: " +
                   TypeId(type));
+        Check(cyxwiz::IsPipelineSupportedTrainingBackendNode(type),
+              "supported model type should be named in central training support: " +
+                  TypeId(type));
+        CheckSupportAxis(
+            meta,
+            "Training Backend",
+            cyxwiz::PipelineTrainingBackendSupportModeName(
+                cyxwiz::PipelineTrainingBackendSupportMode::Allowed),
+            true,
+            TypeId(type));
+        CheckSupportAxis(meta, "Compile", "supported", true, TypeId(type));
+        CheckSupportAxis(meta, "Training", "supported", true, TypeId(type));
     }
 
     for (const auto& capability :

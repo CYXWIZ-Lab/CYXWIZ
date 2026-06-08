@@ -419,6 +419,54 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
          GetPipelineUnsupportedTrainingControlCapabilities()) {
         apply_training_backend_status(capability.node_type);
     }
+
+    for (const auto& capability :
+         GetPipelineSupportedTrainingBackendCapabilities()) {
+        auto it = metadata_.find(capability.node_type);
+        if (it == metadata_.end()) {
+            continue;
+        }
+
+        const auto support =
+            ResolvePipelineTrainingBackendSupport(capability.node_type);
+        if (support.mode != PipelineTrainingBackendSupportMode::Allowed) {
+            continue;
+        }
+
+        auto& metadata = it->second;
+        const std::string reason =
+            support.reason != nullptr ? support.reason : "";
+        UpsertSupportAxis(
+            metadata,
+            "Training Backend",
+            PipelineTrainingBackendSupportModeName(support.mode),
+            true,
+            reason);
+        UpsertSupportAxis(
+            metadata,
+            "Compile",
+            support.compile_supported ? "supported" : "unsupported",
+            support.compile_supported,
+            reason);
+        UpsertSupportAxis(
+            metadata,
+            "Training",
+            support.training_supported ? "supported" : "unsupported",
+            support.training_supported,
+            reason);
+
+        std::string summary = "Training backend support: mode=";
+        summary += PipelineTrainingBackendSupportModeName(support.mode);
+        summary += "; compile=";
+        summary += support.compile_supported ? "supported" : "unsupported";
+        summary += "; training=";
+        summary += support.training_supported ? "supported" : "unsupported";
+        if (support.reason != nullptr) {
+            summary += "; reason=";
+            summary += support.reason;
+        }
+        AppendHelpTextSection(metadata, summary);
+    }
 }
 
 void NodeMetadataRegistry::RegisterNode(NodeMetadata metadata) {

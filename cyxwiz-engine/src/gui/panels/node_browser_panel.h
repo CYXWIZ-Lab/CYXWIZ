@@ -91,10 +91,15 @@ private:
         const std::vector<const cyxwiz::NodeMetadata*>& nodes) const;
     bool NodeMatchesSupportFilter(const cyxwiz::NodeMetadata* metadata) const;
     bool IsSupportBlocked(const cyxwiz::NodeMetadata* metadata) const;
+    bool HasPipelineSupport(const cyxwiz::NodeMetadata* metadata) const;
+    bool HasTrainingSupport(const cyxwiz::NodeMetadata* metadata) const;
+    bool IsUiOnly(const cyxwiz::NodeMetadata* metadata) const;
 
     enum class SupportFilterMode {
         All,
-        Runnable,
+        Pipeline,
+        Training,
+        UiOnly,
         Blocked,
     };
     const char* GetSupportFilterLabel(SupportFilterMode mode) const;
