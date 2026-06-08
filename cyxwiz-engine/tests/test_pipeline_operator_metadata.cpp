@@ -542,6 +542,43 @@ int main() {
                   cyxwiz::PipelineMaterializerStorageSupport::None,
               std::string("legacy-dispatched runtime should not advertise materializer scope: ") +
                   capability.legacy_type_name);
+        if (capability.node_type.has_value()) {
+            const auto* meta = metadata.GetMetadata(*capability.node_type);
+            if (meta != nullptr) {
+                CheckSupportAxis(
+                    meta,
+                    "Runtime",
+                    cyxwiz::PipelineRuntimeSupportModeName(support.mode),
+                    true,
+                    capability.legacy_type_name);
+                CheckSupportAxis(
+                    meta,
+                    "Fail Mode",
+                    cyxwiz::PipelineRuntimeFailModeName(support.fail_mode),
+                    true,
+                    capability.legacy_type_name);
+                CheckSupportAxis(
+                    meta,
+                    "Pipeline Executor",
+                    "supported",
+                    true,
+                    capability.legacy_type_name);
+                CheckSupportAxis(
+                    meta,
+                    "Materializer",
+                    cyxwiz::PipelineMaterializerStorageSupportName(
+                        support.materializer_storage_support),
+                    false,
+                    capability.legacy_type_name);
+                CheckSupportAxis(
+                    meta,
+                    "Implementation Owner",
+                    cyxwiz::PipelineRuntimeImplementationOwnerName(
+                        support.implementation_owner),
+                    true,
+                    capability.legacy_type_name);
+            }
+        }
     }
 
     Check(std::string(cyxwiz::PipelineRuntimeSupportModeName(

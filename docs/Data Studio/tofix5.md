@@ -935,6 +935,16 @@ legacy `rename_map` spelling remains in the executor validator, but the
 canonical Data Studio parameter is no longer absent from runtime support
 truth.
 
+**Status 2026-06-08 follow-up 14:** Browser-visible metadata now applies
+central runtime support axes to typed legacy-executor nodes as well as
+operator-backed nodes. Active metadata entries such as DataInput,
+DataOutput, FilterRows, SelectColumns, table helpers, and RenameColumns
+now expose runtime mode, fail mode, PipelineExecutor support,
+materializer scope, and implementation owner through the same Node Info
+support-axis path. String-only legacy aliases without `gui::NodeType`
+metadata remain runtime-only entries until they become first-class typed
+nodes.
+
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit

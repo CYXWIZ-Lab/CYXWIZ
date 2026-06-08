@@ -93,6 +93,51 @@ void UpsertSupportAxis(NodeMetadata& metadata,
     });
 }
 
+void ApplyRuntimeSupportAxes(NodeMetadata& metadata,
+                             const PipelineRuntimeSupport& support) {
+    UpsertSupportAxis(
+        metadata,
+        "Runtime",
+        PipelineRuntimeSupportModeName(support.mode),
+        support.mode != PipelineRuntimeSupportMode::FailClosed);
+    UpsertSupportAxis(
+        metadata,
+        "Fail Mode",
+        PipelineRuntimeFailModeName(support.fail_mode),
+        support.fail_mode == PipelineRuntimeFailMode::Real);
+    UpsertSupportAxis(
+        metadata,
+        "Pipeline Executor",
+        support.pipeline_executor_supported ? "supported" : "unsupported",
+        support.pipeline_executor_supported);
+    UpsertSupportAxis(
+        metadata,
+        "Materializer",
+        PipelineMaterializerStorageSupportName(
+            support.materializer_storage_support),
+        support.materializer_arrow_table_supported);
+    UpsertSupportAxis(
+        metadata,
+        "Implementation Owner",
+        PipelineRuntimeImplementationOwnerName(
+            support.implementation_owner),
+        support.implementation_owner != PipelineRuntimeImplementationOwner::None);
+
+    std::string summary = "Runtime support: mode=";
+    summary += PipelineRuntimeSupportModeName(support.mode);
+    summary += "; fail_mode=";
+    summary += PipelineRuntimeFailModeName(support.fail_mode);
+    summary += "; pipeline_executor=";
+    summary += support.pipeline_executor_supported ? "supported" : "unsupported";
+    summary += "; materializer=";
+    summary += PipelineMaterializerStorageSupportName(
+        support.materializer_storage_support);
+    summary += "; owner=";
+    summary += PipelineRuntimeImplementationOwnerName(
+        support.implementation_owner);
+    AppendHelpTextSection(metadata, summary);
+}
+
 } // namespace
 
 // Category display order
@@ -262,48 +307,22 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
 
         const auto support =
             ResolvePipelineRuntimeSupport(capability.legacy_type_name);
-        auto& metadata = it->second;
-        UpsertSupportAxis(
-            metadata,
-            "Runtime",
-            PipelineRuntimeSupportModeName(support.mode),
-            true);
-        UpsertSupportAxis(
-            metadata,
-            "Fail Mode",
-            PipelineRuntimeFailModeName(support.fail_mode),
-            support.fail_mode == PipelineRuntimeFailMode::Real);
-        UpsertSupportAxis(
-            metadata,
-            "Pipeline Executor",
-            support.pipeline_executor_supported ? "supported" : "unsupported",
-            support.pipeline_executor_supported);
-        UpsertSupportAxis(
-            metadata,
-            "Materializer",
-            PipelineMaterializerStorageSupportName(
-                support.materializer_storage_support),
-            support.materializer_arrow_table_supported);
-        UpsertSupportAxis(
-            metadata,
-            "Implementation Owner",
-            PipelineRuntimeImplementationOwnerName(
-                support.implementation_owner),
-            true);
+        ApplyRuntimeSupportAxes(it->second, support);
+    }
 
-        std::string summary = "Runtime support: mode=";
-        summary += PipelineRuntimeSupportModeName(support.mode);
-        summary += "; fail_mode=";
-        summary += PipelineRuntimeFailModeName(support.fail_mode);
-        summary += "; pipeline_executor=";
-        summary += support.pipeline_executor_supported ? "supported" : "unsupported";
-        summary += "; materializer=";
-        summary += PipelineMaterializerStorageSupportName(
-            support.materializer_storage_support);
-        summary += "; owner=";
-        summary += PipelineRuntimeImplementationOwnerName(
-            support.implementation_owner);
-        AppendHelpTextSection(metadata, summary);
+    for (const auto& capability : GetPipelineLegacyRuntimeCapabilities()) {
+        if (!capability.node_type.has_value()) {
+            continue;
+        }
+
+        auto it = metadata_.find(*capability.node_type);
+        if (it == metadata_.end()) {
+            continue;
+        }
+
+        const auto support =
+            ResolvePipelineRuntimeSupport(capability.legacy_type_name);
+        ApplyRuntimeSupportAxes(it->second, support);
     }
 
     for (const auto& capability : GetPipelineFailClosedRuntimeCapabilities()) {
