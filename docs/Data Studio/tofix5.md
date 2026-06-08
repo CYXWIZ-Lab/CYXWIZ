@@ -544,6 +544,13 @@ The same pass preserved `OutlierDetector.columns=all` as the documented
 auto-detect spelling, including case variants accepted by central
 validation, instead of treating `all` as a literal column name.
 
+**Status 2026-06-08 follow-up 48:** `TimeSeriesWindow` now schema-checks
+its optional multivariate and plotting selectors before `Apply()`.
+`feature_cols` entries and `time_col` must exist and be numeric, matching
+the operator's v1 contract for extra feature blocks and
+`__window_start_time` metadata. This closes another less-common selector
+role that previously depended on late operator failures.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or

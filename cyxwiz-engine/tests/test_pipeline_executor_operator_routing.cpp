@@ -1458,6 +1458,69 @@ int main() {
           "TimeSeriesWindow input_width validation should be specific: " +
               bad_ts_window_input_width_executor.GetLastError());
 
+    const std::string bad_ts_window_feature_type_json =
+        R"({"nodes":[)"
+        R"({"id":417,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":418,"type":"TimeSeriesWindow","name":"BadWindowFeature","parameters":{)"
+        R"("value_col":"x","feature_cols":"phrase","input_width":"1","shift":"1"}})"
+        R"(],"links":[{"start_node":417,"end_node":418}]})";
+
+    cyxwiz::PipelineExecutor bad_ts_window_feature_type_executor;
+    Check(!bad_ts_window_feature_type_executor.ExecutePipeline(
+              bad_ts_window_feature_type_json),
+          "TimeSeriesWindow string feature_cols should fail schema validation");
+    Check(bad_ts_window_feature_type_executor.GetLastError().find(
+              "TimeSeriesWindow: feature column 'phrase' must be numeric") !=
+              std::string::npos,
+          "TimeSeriesWindow feature_cols validation should be specific: " +
+              bad_ts_window_feature_type_executor.GetLastError());
+
+    const std::string bad_ts_window_time_type_json =
+        R"({"nodes":[)"
+        R"({"id":419,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":420,"type":"TimeSeriesWindow","name":"BadWindowTime","parameters":{)"
+        R"("value_col":"x","time_col":"phrase","input_width":"1","shift":"1"}})"
+        R"(],"links":[{"start_node":419,"end_node":420}]})";
+
+    cyxwiz::PipelineExecutor bad_ts_window_time_type_executor;
+    Check(!bad_ts_window_time_type_executor.ExecutePipeline(
+              bad_ts_window_time_type_json),
+          "TimeSeriesWindow string time_col should fail schema validation");
+    Check(bad_ts_window_time_type_executor.GetLastError().find(
+              "TimeSeriesWindow: time column 'phrase' must be numeric") !=
+              std::string::npos,
+          "TimeSeriesWindow time_col validation should be specific: " +
+              bad_ts_window_time_type_executor.GetLastError());
+
+    const std::string ts_window_multivariate_time_json =
+        R"({"nodes":[)"
+        R"({"id":421,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":422,"type":"TimeSeriesWindow","name":"WindowMultiTime","parameters":{)"
+        R"("value_col":"x","feature_cols":"y","time_col":"x","input_width":"1","shift":"1"}})"
+        R"(],"links":[{"start_node":421,"end_node":422}]})";
+
+    cyxwiz::PipelineExecutor ts_window_multivariate_time_executor;
+    Check(ts_window_multivariate_time_executor.ExecutePipeline(
+              ts_window_multivariate_time_json),
+          "TimeSeriesWindow numeric feature_cols/time_col should execute: " +
+              ts_window_multivariate_time_executor.GetLastError());
+    auto ts_window_multi = registry.GetArrowDataset("ds_operator_TimeSeriesWindow_422");
+    Check(ts_window_multi != nullptr,
+          "TimeSeriesWindow multivariate/time output dataset is registered");
+    auto ts_window_multi_table = ts_window_multi->GetArrowTable();
+    Check(ts_window_multi_table != nullptr,
+          "TimeSeriesWindow multivariate/time output table exists");
+    Check(ts_window_multi_table->schema()->GetFieldIndex("y_x_0") >= 0,
+          "TimeSeriesWindow multivariate output has feature block");
+    Check(ts_window_multi_table->schema()->GetFieldIndex("__window_start_time") >= 0,
+          "TimeSeriesWindow multivariate output has time metadata");
+
     const std::string bad_ts_features_lags_json =
         R"({"nodes":[)"
         R"({"id":330,"type":"DataInput","name":"Input","parameters":{)"

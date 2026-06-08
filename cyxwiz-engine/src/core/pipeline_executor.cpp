@@ -1540,6 +1540,25 @@ bool ValidateValueColumnInputSchema(
         IsNumericArrowType, error);
 }
 
+bool ValidateTimeSeriesWindowInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateValueColumnInputSchema(table, node_type, parameters,
+                                        error)) {
+        return false;
+    }
+    if (!ValidateOptionalRoleColumnListKind(
+            table, node_type, parameters, "feature_cols", "feature",
+            "numeric", IsNumericArrowType, error)) {
+        return false;
+    }
+    return ValidateOptionalRoleColumnKind(
+        table, node_type, parameters, "time_col", "time", "numeric",
+        IsNumericArrowType, error);
+}
+
 bool ValidateFeatureColumnsInputSchema(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& node_type,
@@ -1694,6 +1713,8 @@ bool ValidatePipelineOperatorInputSchema(
             return ValidateSignalColumnInputSchema(table, node_type,
                                                    parameters, error);
         case gui::NodeType::TimeSeriesWindow:
+            return ValidateTimeSeriesWindowInputSchema(table, node_type,
+                                                       parameters, error);
         case gui::NodeType::TimeSeriesFeatures:
         case gui::NodeType::LogTransform:
         case gui::NodeType::Differencing:
