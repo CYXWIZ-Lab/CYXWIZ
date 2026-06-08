@@ -390,6 +390,23 @@ int main() {
           "bad TSWindow validation should be specific: " +
               bad_window_executor.GetLastError());
 
+    const std::string unsupported_stride_json =
+        R"({"nodes":[)"
+        R"({"id":211,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":212,"type":"TSWindow","name":"UnsupportedStride","parameters":{)"
+        R"("target_column":"x","window_size":"2","stride":"2"}})"
+        R"(],"links":[{"start_node":211,"end_node":212}]})";
+
+    cyxwiz::PipelineExecutor unsupported_stride_executor;
+    Check(!unsupported_stride_executor.ExecutePipeline(unsupported_stride_json),
+          "TSWindow unsupported stride should fail validation");
+    Check(unsupported_stride_executor.GetLastError().find(
+              "TSWindow stride values other than 1 are not supported") !=
+              std::string::npos,
+          "unsupported TSWindow stride validation should be specific: " +
+              unsupported_stride_executor.GetLastError());
+
     const std::string bad_lags_json =
         R"({"nodes":[)"
         R"({"id":15,"type":"DataInput","name":"Input","parameters":{)"

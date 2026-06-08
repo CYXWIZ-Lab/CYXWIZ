@@ -1091,6 +1091,15 @@ bool HasSupportedParameterValues(
         }
     }
 
+    if (node_type == "TSWindow") {
+        const auto stride_it = parameters.find("stride");
+        if (stride_it != parameters.end() && !stride_it->second.empty() &&
+            std::stoi(stride_it->second) != 1) {
+            error = "TSWindow stride values other than 1 are not supported by PipelineExecutor";
+            return false;
+        }
+    }
+
     if (node_type == "Binning") {
         const auto columns_it = parameters.find("columns");
         if (columns_it != parameters.end() &&
