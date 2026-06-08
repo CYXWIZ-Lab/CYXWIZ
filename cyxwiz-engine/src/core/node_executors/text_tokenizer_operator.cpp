@@ -60,7 +60,17 @@ bool TextTokenizerOperator::Configure(
     if (!read_int("max_vocab_size", 10000, max_vocab_size_)) return false;
 
     auto lcase = params.find("lowercase");
-    lowercase_ = (lcase == params.end()) ? true : (lcase->second == "true");
+    if (lcase == params.end() || lcase->second.empty()) {
+        lowercase_ = true;
+    } else if (lcase->second == "true") {
+        lowercase_ = true;
+    } else if (lcase->second == "false") {
+        lowercase_ = false;
+    } else {
+        error = "TextTokenizer: 'lowercase' must be 'true' or 'false' (got '" +
+                lcase->second + "')";
+        return false;
+    }
 
     if (max_length_ < 1) {
         error = "TextTokenizer: max_length must be >= 1 (got " +

@@ -308,6 +308,12 @@ validate strictly. Malformed `CountVectorizer.binary`, `TFIDFVectorizer.use_idf`
 and `TFIDFVectorizer.smooth_idf` values now fail with explicit errors
 instead of being interpreted as `false`.
 
+**Status 2026-06-08 follow-up 21:** Additional operator-backed boolean
+parameters now validate strictly at configure time. Malformed
+`TextTokenizer.lowercase`, `LinearRegressionNode.fit_intercept`, and
+`ExponentialSmoothing.damped` values now fail with explicit errors
+instead of being interpreted as `false`.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

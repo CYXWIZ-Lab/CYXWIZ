@@ -296,6 +296,8 @@ ARIMAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool ExponentialSmoothingOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    damped_ = false;
+
     auto s = params.find("signal_col");
     if (s == params.end() || s->second.empty()) {
         error = GetName() + ": 'signal_col' parameter is required";
@@ -319,7 +321,17 @@ bool ExponentialSmoothingOperator::Configure(
     if (!ParseIntOptional(params, "period", period_, GetName(), error)) return false;
 
     auto d = params.find("damped");
-    if (d != params.end()) damped_ = (d->second == "true");
+    if (d != params.end() && !d->second.empty()) {
+        if (d->second == "true") {
+            damped_ = true;
+        } else if (d->second == "false") {
+            damped_ = false;
+        } else {
+            error = GetName() + ": 'damped' must be 'true' or 'false' (got '" +
+                    d->second + "')";
+            return false;
+        }
+    }
 
     if (method_ == "holt_winters" && period_ < 2 && period_ != -1) {
         error = GetName() + ": holt_winters requires 'period' >= 2 (or -1 for auto-detect)";

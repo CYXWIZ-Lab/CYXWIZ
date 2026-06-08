@@ -89,6 +89,8 @@ bool LinearRegressionOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    fit_intercept_ = true;
+
     auto fc = params.find("feature_cols");
     if (fc == params.end() || fc->second.empty()) {
         error = "LinearRegression: 'feature_cols' parameter is required "
@@ -110,7 +112,15 @@ bool LinearRegressionOperator::Configure(
 
     auto fi = params.find("fit_intercept");
     if (fi != params.end() && !fi->second.empty()) {
-        fit_intercept_ = (fi->second == "true");
+        if (fi->second == "true") {
+            fit_intercept_ = true;
+        } else if (fi->second == "false") {
+            fit_intercept_ = false;
+        } else {
+            error = "LinearRegression: 'fit_intercept' must be 'true' or "
+                    "'false' (got '" + fi->second + "')";
+            return false;
+        }
     }
     return true;
 }

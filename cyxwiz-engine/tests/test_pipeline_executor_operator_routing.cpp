@@ -407,6 +407,64 @@ int main() {
           "unsupported TSWindow stride validation should be specific: " +
               unsupported_stride_executor.GetLastError());
 
+    const std::string bad_text_tokenizer_lowercase_json =
+        R"({"nodes":[)"
+        R"({"id":300,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":301,"type":"TextTokenizer","name":"BadTokenizer","parameters":{)"
+        R"("text_col":"phrase","lowercase":"maybe"}})"
+        R"(],"links":[{"start_node":300,"end_node":301}]})";
+
+    cyxwiz::PipelineExecutor bad_text_tokenizer_lowercase_executor;
+    Check(!bad_text_tokenizer_lowercase_executor.ExecutePipeline(
+              bad_text_tokenizer_lowercase_json),
+          "TextTokenizer malformed lowercase should fail validation");
+    Check(bad_text_tokenizer_lowercase_executor.GetLastError().find(
+              "TextTokenizer: 'lowercase' must be 'true' or 'false'") !=
+              std::string::npos,
+          "TextTokenizer lowercase validation should be specific: " +
+              bad_text_tokenizer_lowercase_executor.GetLastError());
+
+    const std::string bad_linear_regression_intercept_json =
+        R"({"nodes":[)"
+        R"({"id":302,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":303,"type":"LinearRegressionNode","name":"BadLinearRegression","parameters":{)"
+        R"("feature_cols":"x","target_col":"y","fit_intercept":"maybe"}})"
+        R"(],"links":[{"start_node":302,"end_node":303}]})";
+
+    cyxwiz::PipelineExecutor bad_linear_regression_intercept_executor;
+    Check(!bad_linear_regression_intercept_executor.ExecutePipeline(
+              bad_linear_regression_intercept_json),
+          "LinearRegression malformed fit_intercept should fail validation");
+    Check(bad_linear_regression_intercept_executor.GetLastError().find(
+              "LinearRegression: 'fit_intercept' must be 'true' or 'false'") !=
+              std::string::npos,
+          "LinearRegression fit_intercept validation should be specific: " +
+              bad_linear_regression_intercept_executor.GetLastError());
+
+    const std::string bad_exp_smoothing_damped_json =
+        R"({"nodes":[)"
+        R"({"id":304,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(ts_analysis_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":305,"type":"ExponentialSmoothing","name":"BadSmoothing","parameters":{)"
+        R"("signal_col":"signal","method":"holt","damped":"maybe"}})"
+        R"(],"links":[{"start_node":304,"end_node":305}]})";
+
+    cyxwiz::PipelineExecutor bad_exp_smoothing_damped_executor;
+    Check(!bad_exp_smoothing_damped_executor.ExecutePipeline(
+              bad_exp_smoothing_damped_json),
+          "ExponentialSmoothing malformed damped should fail validation");
+    Check(bad_exp_smoothing_damped_executor.GetLastError().find(
+              "ExponentialSmoothing: 'damped' must be 'true' or 'false'") !=
+              std::string::npos,
+          "ExponentialSmoothing damped validation should be specific: " +
+              bad_exp_smoothing_damped_executor.GetLastError());
+
     const std::string bad_lags_json =
         R"({"nodes":[)"
         R"({"id":15,"type":"DataInput","name":"Input","parameters":{)"
@@ -2221,6 +2279,9 @@ int main() {
     registry.UnloadDataset("ds_operator_ACFNode_202");
     registry.UnloadDataset("ds_input_133");
     registry.UnloadDataset("ds_select_134");
+    registry.UnloadDataset("ds_datainput_300");
+    registry.UnloadDataset("ds_datainput_302");
+    registry.UnloadDataset("ds_datainput_304");
     registry.UnloadDataset("ds_datainput_188");
     registry.UnloadDataset("ds_filter_189");
     registry.UnloadDataset("ds_datainput_190");
