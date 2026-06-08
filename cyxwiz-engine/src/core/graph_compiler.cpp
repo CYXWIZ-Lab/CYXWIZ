@@ -508,6 +508,63 @@ bool LooksLikeReconstructionGenerativeTrainingSketch(
     return false;
 }
 
+bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
+                                           std::string& matched_key) {
+    const char* sketch_names[] = {
+        "PairDatasetBuilder",
+        "TripletDatasetBuilder",
+        "SharedEncoder",
+        "SiameseBranch",
+        "ContrastiveLoss",
+        "CosineEmbeddingLoss",
+        "TripletLoss",
+        "PairMetrics",
+        "RetrievalMetrics",
+        "EmbeddingOutput"
+    };
+
+    for (const char* name : sketch_names) {
+        if (node.name == name) {
+            matched_key = name;
+            return true;
+        }
+    }
+
+    const auto& params = node.parameters;
+    const char* enabled_keys[] = {
+        "metric_learning",
+        "shared_encoder",
+        "tied_weights"
+    };
+
+    for (const char* key : enabled_keys) {
+        if (ParamIsEnabled(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    const char* design_keys[] = {
+        "anchor_column",
+        "positive_column",
+        "negative_column",
+        "sample_a_column",
+        "sample_b_column",
+        "pair_label_column",
+        "triplet_id_column",
+        "pair_id_column"
+    };
+
+    for (const char* key : design_keys) {
+        if (HasParam(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -1502,6 +1559,23 @@ void ValidateTrainingPathImplementationStatus(
                    "routing, latent KL-loss contracts, alternating optimizer "
                    "or adversarial-step orchestration, diffusion noise "
                    "schedules, and generation output packaging before it can "
+                   "compile truthfully.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        std::string metric_learning_key;
+        if (LooksLikeMetricLearningTrainingSketch(node,
+                                                  metric_learning_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' sketches metric-learning/Siamese training via '"
+                << metric_learning_key
+                << "', but Studio training currently has one selected input "
+                   "tensor and no shared-weight graph contract. This path "
+                   "needs typed pair/triplet batch payloads, shared encoder "
+                   "ownership, pair/triplet loss wiring, mining/sampling "
+                   "rules, and embedding output packaging before it can "
                    "compile truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;

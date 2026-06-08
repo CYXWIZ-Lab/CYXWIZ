@@ -58,6 +58,14 @@ scanning so stale or duplicate work is not reintroduced.
 
 ## Patch Log
 
+- 2026-06-08 follow-up: accepted a `tofix20` Priority 5 parity slice that
+  normalizes `OrdinalEncoder.categories` at operator configuration time and
+  pins both the mixed-case `auto` success path and numeric-column schema
+  failure.
+- 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
+  selected metric-learning/Siamese sketches until CyxWiz has typed
+  pair/triplet batch payloads, shared encoder ownership, pair/triplet loss
+  wiring, mining/sampling rules, and embedding output packaging.
 - 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
   selected autoencoder/VAE/GAN/diffusion sketches until CyxWiz has
   reconstruction-target routing, latent KL-loss contracts,

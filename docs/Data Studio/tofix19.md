@@ -565,6 +565,13 @@ Completed so far:
   trainer has one supervised optimizer step and lacks reconstruction target
   routing, latent KL-loss contracts, alternating/adversarial-step orchestration,
   diffusion noise schedules, and generation output packaging.
+- `GraphCompiler` now rejects selected training paths that sketch
+  metric-learning/Siamese training with exact pair/triplet/shared-encoder/loss
+  node names or explicit anchor/positive/negative, pair/triplet id, pair label,
+  shared encoder, or tied-weight markers. The current trainer has one selected
+  input tensor and lacks typed pair/triplet batch payloads, shared encoder
+  ownership, pair/triplet loss wiring, mining/sampling rules, and embedding
+  output packaging.
 
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.

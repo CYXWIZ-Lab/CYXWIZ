@@ -475,7 +475,8 @@ bool OrdinalEncoderOperator::Configure(
         return false;
     }
     auto cats = params.find("categories");
-    if (cats != params.end() && !cats->second.empty() && cats->second != "auto") {
+    if (cats != params.end() && !cats->second.empty() &&
+        ToLowerAscii(TrimString(cats->second)) != "auto") {
         error = GetName() + ": only 'categories=auto' is supported in v1 "
                 "(custom ordering deferred to tofix); got '" + cats->second + "'";
         return false;

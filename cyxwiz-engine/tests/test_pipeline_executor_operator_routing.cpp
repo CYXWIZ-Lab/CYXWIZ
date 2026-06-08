@@ -1219,6 +1219,42 @@ int main() {
     check_operator_field("ds_operator_TFIDFVectorizer_351", "tfidf_0",
                          "TFIDFVectorizer uppercase norm");
 
+    const std::string uppercase_ordinal_categories_json =
+        R"({"nodes":[)"
+        R"({"id":356,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":357,"type":"OrdinalEncoder","name":"OrdinalEncoder","parameters":{)"
+        R"("columns":"phrase","categories":" AUTO "}})"
+        R"(],"links":[{"start_node":356,"end_node":357}]})";
+
+    cyxwiz::PipelineExecutor uppercase_ordinal_categories_executor;
+    Check(uppercase_ordinal_categories_executor.ExecutePipeline(
+              uppercase_ordinal_categories_json),
+          "OrdinalEncoder uppercase categories should execute after normalization: " +
+              uppercase_ordinal_categories_executor.GetLastError());
+    check_operator_field("ds_operator_OrdinalEncoder_357", "phrase",
+                         "OrdinalEncoder uppercase categories");
+
+    const std::string bad_ordinal_column_type_json =
+        R"({"nodes":[)"
+        R"({"id":358,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":359,"type":"OrdinalEncoder","name":"BadOrdinalColumn","parameters":{)"
+        R"("columns":"x","categories":"auto"}})"
+        R"(],"links":[{"start_node":358,"end_node":359}]})";
+
+    cyxwiz::PipelineExecutor bad_ordinal_column_type_executor;
+    Check(!bad_ordinal_column_type_executor.ExecutePipeline(
+              bad_ordinal_column_type_json),
+          "OrdinalEncoder numeric categorical columns should fail schema validation");
+    Check(bad_ordinal_column_type_executor.GetLastError().find(
+              "OrdinalEncoder: categorical column 'x' must be string/large_string") !=
+              std::string::npos,
+          "OrdinalEncoder columns validation should be specific: " +
+              bad_ordinal_column_type_executor.GetLastError());
+
     const std::string uppercase_sentiment_method_json =
         R"({"nodes":[)"
         R"({"id":352,"type":"DataInput","name":"Input","parameters":{)"

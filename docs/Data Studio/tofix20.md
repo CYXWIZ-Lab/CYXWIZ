@@ -185,3 +185,7 @@ Status 2026-06-08:
 - Started. `DataInput.source_type` remains centrally limited to `file` and
   `folder`; the stale `ml_dataset` executor branch was removed so rejected
   sources no longer have a competing late runtime path.
+- Started. `OrdinalEncoder.categories` runtime configuration now normalizes
+  whitespace and case before enforcing the only supported value, so it matches
+  the central enum support truth for `auto`. Focused routing tests also pin the
+  existing categorical-column schema failure before operator execution.

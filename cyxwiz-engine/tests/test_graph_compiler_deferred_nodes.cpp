@@ -743,6 +743,73 @@ int main() {
     Check(HasIssueText(config, "alternating optimizer"),
           "GAN/diffusion sketch should report missing training-step contract");
 
+    auto siamese_sketch = dense;
+    siamese_sketch.id = 38;
+    siamese_sketch.name = "SharedEncoder";
+    siamese_sketch.inputs = {Pin(3801, gui::PinType::Tensor, "Input", true)};
+    siamese_sketch.outputs = {Pin(3802, gui::PinType::Tensor, "Output", false)};
+
+    nodes = {data, siamese_sketch, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 38, 3801),
+        Link(2, 38, 3802, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected metric-learning sketch should be invalid");
+    Check(HasIssueText(config, "SharedEncoder"),
+          "metric-learning sketch should report the matched sketch name");
+    Check(HasIssueText(config, "shared-weight graph contract"),
+          "metric-learning sketch should report missing shared encoder contract");
+
+    auto siamese_side_output = Node(39,
+                                    gui::NodeType::Output,
+                                    "Siamese Side Output",
+                                    {Pin(3901, gui::PinType::Tensor, "Input", true)},
+                                    {});
+
+    nodes = {data, dense, loss, optimizer, siamese_sketch,
+             siamese_side_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 1, 101, 38, 3801),
+        Link(6, 38, 3802, 39, 3901),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side metric-learning sketch outside selected path should not block compile");
+    Check(!HasIssueText(config, "shared-weight graph contract"),
+          "side metric-learning sketch should not be reported");
+
+    auto triplet_dense = dense;
+    triplet_dense.name = "Triplet Dense Sketch";
+    triplet_dense.parameters["anchor_column"] = "anchor_text";
+    triplet_dense.parameters["positive_column"] = "positive_text";
+    triplet_dense.parameters["negative_column"] = "negative_text";
+
+    nodes = {data, triplet_dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected triplet marker sketch should be invalid");
+    Check(HasIssueText(config, "anchor_column"),
+          "triplet sketch should report the matched parameter");
+    Check(HasIssueText(config, "pair/triplet batch payloads"),
+          "triplet sketch should report missing batch contract");
+
     for (const auto& scheduler_case :
          cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         auto scheduler = Node(18,
