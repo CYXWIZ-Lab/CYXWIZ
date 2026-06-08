@@ -693,10 +693,10 @@ bool NodeMetadataRegistry::MatchesQuery(const NodeMetadata& metadata, const std:
 void NodeMetadataRegistry::InitializeDataSourceNodes() {
     // ===== Smart I/O Nodes (Universal - replaces individual format nodes) =====
     RegisterNode({NodeType::DataInput, NodeCategory::DataSources, "Data Input", ICON_FA_FILE_IMPORT,
-        {"csv", "excel", "json", "parquet", "hdf5", "input", "load", "read", "import", "file"}, 0, false,
-        "Universal data loader - auto-detects CSV, Excel, JSON, Parquet, HDF5", "", "",
+        {"csv", "tsv", "parquet", "feather", "arrow", "ipc", "input", "load", "read", "import", "file"}, 0, false,
+        "Universal data loader - supports CSV, TSV, Parquet, Feather, Arrow, and IPC", "", "",
         {}, {{"Data", PinType::Dataset, true, "Output dataset"}},
-        {{"file_path", "file", "", "Data file", {}, "*.csv;*.xlsx;*.json;*.parquet;*.hdf5"},
+        {{"file_path", "file", "", "Data file", {}, "*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc"},
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 

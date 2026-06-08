@@ -85,6 +85,23 @@ bool HasEnumValue(const cyxwiz::NodeMetadata* meta,
     return false;
 }
 
+bool ContainsString(const std::vector<std::string>& values,
+                    const std::string& expected) {
+    return std::find(values.begin(), values.end(), expected) != values.end();
+}
+
+const cyxwiz::ParameterDefinition* FindParameter(
+    const cyxwiz::NodeMetadata* meta,
+    const std::string& name) {
+    if (!meta) return nullptr;
+    for (const auto& param : meta->parameters) {
+        if (param.name == name) {
+            return &param;
+        }
+    }
+    return nullptr;
+}
+
 const cyxwiz::SupportAxisDefinition* FindSupportAxis(
     const cyxwiz::NodeMetadata* meta,
     const std::string& name) {
@@ -142,6 +159,42 @@ std::vector<std::string> ParseCatalogEnumValues(
 int main() {
     auto& metadata = cyxwiz::NodeMetadataRegistry::Instance();
     metadata.Initialize();
+
+    {
+        const auto* data_input = metadata.GetMetadata(gui::NodeType::DataInput);
+        Check(data_input != nullptr, "DataInput metadata should exist");
+        Check(ContainsString(data_input->keywords, "csv"),
+              "DataInput metadata should keep CSV keyword");
+        Check(ContainsString(data_input->keywords, "tsv"),
+              "DataInput metadata should keep TSV keyword");
+        Check(ContainsString(data_input->keywords, "parquet"),
+              "DataInput metadata should keep Parquet keyword");
+        Check(ContainsString(data_input->keywords, "feather"),
+              "DataInput metadata should keep Feather keyword");
+        Check(ContainsString(data_input->keywords, "arrow"),
+              "DataInput metadata should keep Arrow keyword");
+        Check(!ContainsString(data_input->keywords, "json"),
+              "DataInput metadata should not advertise JSON runtime input");
+        Check(!ContainsString(data_input->keywords, "excel"),
+              "DataInput metadata should not advertise Excel runtime input");
+        Check(!ContainsString(data_input->keywords, "hdf5"),
+              "DataInput metadata should not advertise HDF5 runtime input");
+
+        const auto* file_path = FindParameter(data_input, "file_path");
+        Check(file_path != nullptr,
+              "DataInput metadata should keep file_path parameter");
+        Check(file_path->validation.find("*.csv") != std::string::npos &&
+                  file_path->validation.find("*.tsv") != std::string::npos &&
+                  file_path->validation.find("*.parquet") != std::string::npos &&
+                  file_path->validation.find("*.feather") != std::string::npos &&
+                  file_path->validation.find("*.arrow") != std::string::npos &&
+                  file_path->validation.find("*.ipc") != std::string::npos,
+              "DataInput file filter should list runtime-supported tabular formats");
+        Check(file_path->validation.find("*.json") == std::string::npos &&
+                  file_path->validation.find("*.xlsx") == std::string::npos &&
+                  file_path->validation.find("*.hdf5") == std::string::npos,
+              "DataInput file filter should not advertise unsupported runtime formats");
+    }
 
     auto& factory = cyxwiz::PipelineOperatorFactory::Instance();
     const auto supported = factory.GetSupportedTypes();

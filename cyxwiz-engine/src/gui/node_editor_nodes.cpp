@@ -2936,7 +2936,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
         case NodeType::DataInput: {
             // Universal Data Input node - smart dialog auto-detects format
-            // Supports: CSV, TSV, JSON, Parquet, Excel, HDF5, and more
+            // Supports: CSV, TSV, Parquet, Feather, Arrow, and IPC
             // TWO outputs: Data (X) and Labels (y) — same naming the rest
             // of the chain (DataSplit / DataLoader) uses, so the canvas
             // reads as a single Data + Label flow end-to-end.
@@ -2969,7 +2969,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
             // Core parameters (set by DataInputDialog)
             node.parameters["file_path"] = "";
-            node.parameters["file_type"] = "auto";  // auto, csv, tsv, json, parquet, excel, hdf5
+            node.parameters["file_type"] = "auto";  // auto, csv, tsv, parquet, feather, arrow, ipc
             node.parameters["configured"] = "false";  // Triggers dialog on first use
 
             // Format options (dynamically shown based on file_type)

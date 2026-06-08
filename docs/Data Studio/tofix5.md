@@ -280,6 +280,12 @@ and browser metadata now advertise only the executable CSV and Parquet
 formats. The UI no longer presents TSV, JSON, Excel, or HDF5 as selectable
 DataOutput formats while the runtime lacks those exporters.
 
+**Status 2026-06-08 follow-up 60:** Browser-visible DataInput metadata now
+matches the PipelineExecutor-supported file formats. The DataInput node no
+longer advertises JSON, Excel, or HDF5 in keywords or file filters; it lists
+the supported CSV, TSV, Parquet, Feather, Arrow, and IPC formats instead,
+with metadata drift coverage.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used
