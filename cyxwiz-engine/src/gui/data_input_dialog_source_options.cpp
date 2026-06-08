@@ -18,6 +18,29 @@ namespace fs = std::filesystem;
 
 namespace gui {
 
+namespace {
+
+struct TabularFormatOption {
+    const char* label;
+    int detected_type;
+};
+
+bool IsRuntimeSupportedTabularFormat(int detected_type) {
+    switch (detected_type) {
+        case 0: // Auto
+        case 1: // CSV
+        case 2: // TSV
+        case 4: // Parquet
+        case 7: // Feather
+        case 8: // Arrow / IPC
+            return true;
+        default:
+            return false;
+    }
+}
+
+} // namespace
+
 void DataInputDialog::RenderSourceSelector() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
@@ -182,15 +205,39 @@ void DataInputDialog::RenderTabularOptions() {
         // Format auto-detect or manual selection
         ImGui::Text("Format:");
         ImGui::SameLine(100);
-        const char* formats[] = {"Auto", "CSV", "TSV", "JSON", "Parquet", "Excel", "HDF5", "Feather", "Arrow", "TXT", "ARFF"};
         ImGui::SetNextItemWidth(120);
-        if (ImGui::Combo("##format", &detected_type_, formats, 11)) {
-            has_changes_ = true;
-            preview_loaded_ = false;
+        if (ImGui::BeginCombo("##format", GetFileTypeName())) {
+            static constexpr TabularFormatOption kFormats[] = {
+                {"Auto", 0},
+                {"CSV", 1},
+                {"TSV", 2},
+                {"Parquet", 4},
+                {"Feather", 7},
+                {"Arrow / IPC", 8},
+            };
+            for (const auto& option : kFormats) {
+                const bool selected = detected_type_ == option.detected_type;
+                if (ImGui::Selectable(option.label, selected)) {
+                    detected_type_ = option.detected_type;
+                    has_changes_ = true;
+                    preview_loaded_ = false;
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
         }
 
-        // CSV/TSV/TXT/ARFF specific options (delimiter-based)
-        if (detected_type_ <= 2 || detected_type_ == 9 || detected_type_ == 10) {
+        if (!IsRuntimeSupportedTabularFormat(detected_type_)) {
+            ImGui::TextDisabled(
+                "%s is not supported by PipelineExecutor. Choose CSV, TSV, "
+                "Parquet, Feather, or Arrow/IPC for executable graphs.",
+                GetFileTypeName());
+        }
+
+        // CSV/TSV specific options (delimiter-based)
+        if (detected_type_ <= 2) {
             ImGui::Spacing();
 
             ImGui::Text("Delimiter:");
@@ -211,39 +258,6 @@ void DataInputDialog::RenderTabularOptions() {
             ImGui::SameLine(100);
             ImGui::SetNextItemWidth(30);
             ImGui::InputText("##quote", quote_char_, sizeof(quote_char_));
-        }
-        // Excel specific
-        else if (detected_type_ == 5) {
-            ImGui::Text("Sheet index:");
-            ImGui::SameLine(100);
-            ImGui::SetNextItemWidth(60);
-            ImGui::InputInt("##sheet", &sheet_idx_);
-
-            ImGui::Text("Cell range:");
-            ImGui::SameLine(100);
-            ImGui::SetNextItemWidth(100);
-            ImGui::InputText("##range", sheet_range_, sizeof(sheet_range_));
-            ImGui::SameLine();
-            ImGui::TextDisabled("(e.g., A1:D100)");
-        }
-        // HDF5 specific
-        else if (detected_type_ == 6) {
-            ImGui::Text("Dataset key:");
-            ImGui::SameLine(100);
-            ImGui::SetNextItemWidth(150);
-            ImGui::InputText("##hdf5key", hdf5_dataset_, sizeof(hdf5_dataset_));
-        }
-        // JSON specific
-        else if (detected_type_ == 3) {
-            if (ImGui::Checkbox("JSON Lines format", &json_lines_)) {
-                has_changes_ = true;
-            }
-            ImGui::Text("JSON Path:");
-            ImGui::SameLine(100);
-            ImGui::SetNextItemWidth(150);
-            ImGui::InputText("##jsonpath", json_path_, sizeof(json_path_));
-            ImGui::SameLine();
-            ImGui::TextDisabled("($.data.rows)");
         }
     }
 

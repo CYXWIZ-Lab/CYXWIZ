@@ -286,6 +286,12 @@ longer advertises JSON, Excel, or HDF5 in keywords or file filters; it lists
 the supported CSV, TSV, Parquet, Feather, Arrow, and IPC formats instead,
 with metadata drift coverage.
 
+**Status 2026-06-08 follow-up 61:** The DataInput dialog's tabular format
+picker now offers only executable Data Studio graph formats: Auto, CSV, TSV,
+Parquet, Feather, and Arrow/IPC. If an unsupported file extension is
+auto-detected, the dialog keeps the detected label but shows a warning
+instead of rendering JSON, Excel, or HDF5-specific controls.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used
