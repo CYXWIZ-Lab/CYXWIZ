@@ -337,6 +337,13 @@ set, rejects conflicting `format` and `file_type` values, and execution
 normalizes the same alias before choosing the writer. This prevents a graph
 authored with `file_type=parquet` from silently falling back to CSV.
 
+**Status 2026-06-08 follow-up 69:** The DataInput dialog restore path now
+preserves the persisted file-format override. Reopening a DataInput node
+restores canonical `type` first and older `file_type` second, then loads
+preview columns from that restored format instead of only auto-detecting
+from the path extension. This keeps manual CSV/TSV/Parquet/Arrow choices
+from being lost on the next Apply.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used

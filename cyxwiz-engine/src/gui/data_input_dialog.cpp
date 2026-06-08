@@ -58,6 +58,18 @@ DataInputDialog::DataInputDialog(MLNode* node)
             strncpy(file_path_, node_->parameters["file_path"].c_str(), sizeof(file_path_) - 1);
             DetectFileType();
             DetectFileCategory();
+        }
+        if (node_->parameters.count("type") && !node_->parameters["type"].empty()) {
+            detected_type_ = data_input::FileTypeFromParam(
+                node_->parameters["type"],
+                detected_type_);
+        } else if (node_->parameters.count("file_type") &&
+                   !node_->parameters["file_type"].empty()) {
+            detected_type_ = data_input::FileTypeFromParam(
+                node_->parameters["file_type"],
+                detected_type_);
+        }
+        if (strlen(file_path_) > 0) {
             LoadColumnList();  // Load columns to enable label selection
         }
         if (node_->parameters.count("folder_path")) {

@@ -11,6 +11,21 @@ namespace {
 namespace fs = std::filesystem;
 using FileCategory = cyxwiz::loaders::FileCategory;
 
+std::string ToLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+std::string Trim(std::string value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return {};
+    }
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
 std::string LowerExtension(const std::string& path) {
     const fs::path fs_path(path);
     std::string ext = fs_path.extension().string();
@@ -161,6 +176,24 @@ const char* FileTypeName(int detected_type) {
         return kNames[detected_type];
     }
     return "Unknown";
+}
+
+int FileTypeFromParam(const std::string& value, int fallback) {
+    const std::string normalized = ToLower(Trim(value));
+    static constexpr const char* kTypes[] = {
+        "auto", "csv", "tsv", "json", "parquet", "excel",
+        "hdf5", "feather", "arrow", "txt", "arff",
+    };
+    constexpr int kTypeCount = static_cast<int>(sizeof(kTypes) / sizeof(kTypes[0]));
+    for (int i = 0; i < kTypeCount; ++i) {
+        if (normalized == kTypes[i]) {
+            return i;
+        }
+    }
+    if (normalized == "ipc") {
+        return 8;
+    }
+    return fallback;
 }
 
 int DetectFileTypeForPath(const std::string& path, std::size_t* file_size) {

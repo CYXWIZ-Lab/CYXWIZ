@@ -61,6 +61,7 @@ const char* UnsupportedApplyMessage(SourceType source_type, cyxwiz::loaders::Fil
 const char* PreviewUnavailableMessage(SourceType source_type, cyxwiz::loaders::FileCategory file_category);
 const char* FileTypeParam(int detected_type);
 const char* FileTypeName(int detected_type);
+int FileTypeFromParam(const std::string& value, int fallback = 0);
 int DetectFileTypeForPath(const std::string& path, std::size_t* file_size);
 cyxwiz::loaders::FileCategory DetectFileCategoryForPath(
     const std::string& path,
