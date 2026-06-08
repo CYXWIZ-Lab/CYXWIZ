@@ -4,6 +4,7 @@
 #include "../core/worker_defaults.h"
 
 #include <cmath>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -12,17 +13,48 @@
 
 namespace gui {
 
+namespace {
+
+void CopyToBuffer(char* destination,
+                  std::size_t destination_size,
+                  const std::string& value) {
+    if (destination_size == 0) return;
+    std::strncpy(destination, value.c_str(), destination_size - 1);
+    destination[destination_size - 1] = '\0';
+}
+
+std::string LowerAscii(std::string value) {
+    for (char& c : value) {
+        c = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(c)));
+    }
+    return value;
+}
+
+} // namespace
+
 // ==================== DataOutputDialog ====================
 
 DataOutputDialog::DataOutputDialog(MLNode* node)
     : NodeConfigDialog("Data Output", node)
 {
     if (node_) {
-        if (node_->parameters.count("file_path")) {
-            strncpy(file_path_, node_->parameters["file_path"].c_str(), sizeof(file_path_) - 1);
+        auto file_path_it = node_->parameters.find("file_path");
+        if (file_path_it == node_->parameters.end() ||
+            file_path_it->second.empty()) {
+            file_path_it = node_->parameters.find("path");
         }
-        if (node_->parameters.count("file_type")) {
-            std::string type = node_->parameters["file_type"];
+        if (file_path_it != node_->parameters.end()) {
+            CopyToBuffer(file_path_, sizeof(file_path_), file_path_it->second);
+        }
+
+        auto file_type_it = node_->parameters.find("file_type");
+        if (file_type_it == node_->parameters.end() ||
+            file_type_it->second.empty()) {
+            file_type_it = node_->parameters.find("format");
+        }
+        if (file_type_it != node_->parameters.end()) {
+            std::string type = LowerAscii(file_type_it->second);
             if (type == "csv") output_type_ = 0;
             else if (type == "parquet") output_type_ = 1;
         }

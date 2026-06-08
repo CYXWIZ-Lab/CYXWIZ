@@ -318,6 +318,12 @@ the alias behavior already used by legacy `ExportCSV`. Validation and
 execution both resolve the same alias, so older or hand-authored graphs do
 not fail validation and then require a separate executor path fix.
 
+**Status 2026-06-08 follow-up 66:** The DataOutput dialog restore path now
+matches the executor aliases. Reopening a DataOutput node restores `path`
+when `file_path` is absent, and restores `format` when `file_type` is absent,
+including mixed-case CSV/Parquet values that execution already normalizes.
+Apply still writes the canonical `file_path` and `file_type` parameters.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used
