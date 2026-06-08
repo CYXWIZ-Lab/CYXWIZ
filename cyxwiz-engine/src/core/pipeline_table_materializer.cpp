@@ -122,11 +122,57 @@ bool HasReachableMaterializerOperator(
     return false;
 }
 
+bool HasReachableCycle(
+    int node_id,
+    const std::vector<gui::NodeLink>& links,
+    std::unordered_set<int>& visiting,
+    std::unordered_set<int>& visited,
+    int& cycle_node_id) {
+
+    if (visiting.find(node_id) != visiting.end()) {
+        cycle_node_id = node_id;
+        return true;
+    }
+    if (visited.find(node_id) != visited.end()) {
+        return false;
+    }
+
+    visiting.insert(node_id);
+    for (const auto& link : links) {
+        if (link.from_node != node_id) {
+            continue;
+        }
+        if (HasReachableCycle(
+                link.to_node, links, visiting, visited, cycle_node_id)) {
+            return true;
+        }
+    }
+
+    visiting.erase(node_id);
+    visited.insert(node_id);
+    return false;
+}
+
 bool ValidateLinearMaterializerOperatorPath(
     const gui::MLNode& data_input,
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
     std::string& error) {
+
+    std::unordered_set<int> cycle_visiting;
+    std::unordered_set<int> cycle_checked;
+    int cycle_node_id = -1;
+    if (HasReachableCycle(
+            data_input.id, links, cycle_visiting, cycle_checked,
+            cycle_node_id)) {
+        const gui::MLNode* node = FindNodeById(cycle_node_id, nodes);
+        const std::string node_name =
+            node ? node->name : std::to_string(cycle_node_id);
+        error = "PipelineMaterializer: cyclic graph path involving node '" +
+                node_name +
+                "' is not supported by the Arrow-table materializer";
+        return false;
+    }
 
     std::queue<int> queue;
     std::unordered_set<int> visited;

@@ -501,6 +501,12 @@ materializer coverage. A regression test advertises a factory-only
 `SVMClassifier` operator and verifies the materializer ignores it because
 runtime capability truth marks that node fail-closed.
 
+**Status 2026-06-08 follow-up 5:** The v1 Arrow-table materializer now
+fails closed on cycles reachable from the selected data input before its
+linear graph walk runs. Upstream graph compilation already rejects
+cycles for normal training launch, but `MaterializeTable()` no longer
+silently suppresses revisits if it is called directly.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_materializer.h:34`
@@ -515,8 +521,8 @@ Problem:
   skipped; this is now explicit in the materializer result instead of
   only implicit in a debug log
 - traversal is a BFS from `DataInput`
-- comments acknowledge that parallel preprocessing branches are a v1
-  limitation
+- cycles and parallel preprocessing branches are explicit v1 fail-closed
+  graph shapes
 
 Effect:
 

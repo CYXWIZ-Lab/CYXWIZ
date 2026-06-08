@@ -243,8 +243,28 @@ int main() {
               "branched materializer operator paths should fail closed");
         Check(branched.error_message.find(
                   "branched operator paths") != std::string::npos,
-              "branched materializer failure should explain graph shape: " +
+                  "branched materializer failure should explain graph shape: " +
                   branched.error_message);
+    }
+
+    {
+        std::vector<gui::MLNode> cyclic_nodes = {
+            MakeDataInputNode(),
+            MakeTokenizerNode(),
+        };
+        std::vector<gui::NodeLink> cyclic_links = {
+            {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
+            {2, 2, 0, 1, 0, gui::LinkType::TensorFlow},
+        };
+
+        auto cyclic = cyxwiz::PipelineMaterializer::MaterializeTable(
+            cyclic_nodes, cyclic_links, MakeTextTable());
+        Check(!cyclic.success,
+              "cyclic materializer operator paths should fail closed");
+        Check(cyclic.error_message.find("cyclic graph path") !=
+                  std::string::npos,
+              "cyclic materializer failure should explain graph shape: " +
+                  cyclic.error_message);
     }
 
     {
