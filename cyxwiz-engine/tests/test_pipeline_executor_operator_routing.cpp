@@ -133,6 +133,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export_alias.csv";
     const fs::path data_output_mixed_case_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_mixed_case.csv";
+    const fs::path data_output_path_alias_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_path_alias.csv";
     const fs::path data_output_file_type_parquet_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_file_type.parquet";
     const fs::path save_dataset_csv_path =
@@ -151,6 +153,7 @@ int main() {
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
     fs::remove(data_output_mixed_case_csv_path);
+    fs::remove(data_output_path_alias_csv_path);
     fs::remove(data_output_file_type_parquet_path);
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
@@ -2247,6 +2250,25 @@ int main() {
     Check(fs::exists(data_output_mixed_case_csv_path),
           "DataOutput mixed-case CSV format should create the output file");
 
+    const std::string data_output_path_alias_json =
+        R"({"nodes":[)"
+        R"({"id":432,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":433,"type":"DataOutput","name":"Output","parameters":{)"
+        R"("path":")" +
+        JsonEscapePath(data_output_path_alias_csv_path.string()) +
+        R"(","format":"csv"}})"
+        R"(],"links":[{"start_node":432,"end_node":433}]})";
+
+    cyxwiz::PipelineExecutor data_output_path_alias_executor;
+    Check(data_output_path_alias_executor.ExecutePipeline(
+              data_output_path_alias_json),
+          "DataOutput should accept path as file_path alias: " +
+              data_output_path_alias_executor.GetLastError());
+    Check(fs::exists(data_output_path_alias_csv_path),
+          "DataOutput path alias should create the output file");
+
     const std::string data_output_file_type_parquet_json =
         R"({"nodes":[)"
         R"({"id":372,"type":"DataInput","name":"Input","parameters":{)"
@@ -3889,6 +3911,7 @@ int main() {
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
+    fs::remove(data_output_path_alias_csv_path);
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);

@@ -312,6 +312,12 @@ already rejected those file types. Its Apply context comment and async branch
 logic now match the supported tabular list, reducing the chance that future
 work reuses stale loader code as if those formats were executable.
 
+**Status 2026-06-08 follow-up 65:** `DataOutput` now accepts `path` as a
+compatibility alias for the canonical `file_path` output parameter, matching
+the alias behavior already used by legacy `ExportCSV`. Validation and
+execution both resolve the same alias, so older or hand-authored graphs do
+not fail validation and then require a separate executor path fix.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used

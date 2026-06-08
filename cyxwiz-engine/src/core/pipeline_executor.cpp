@@ -1253,6 +1253,21 @@ std::string NormalizeDataOutputFormat(
     return "csv";
 }
 
+std::string NormalizeDataOutputPath(
+    const std::map<std::string, std::string>& parameters) {
+    auto file_path_it = parameters.find("file_path");
+    if (file_path_it != parameters.end() && !file_path_it->second.empty()) {
+        return file_path_it->second;
+    }
+
+    auto path_it = parameters.find("path");
+    if (path_it != parameters.end() && !path_it->second.empty()) {
+        return path_it->second;
+    }
+
+    return {};
+}
+
 std::string NormalizeBinningMethod(const std::string& value) {
     const std::string method = ToLowerAscii(TrimString(value));
     if (method == "equal_frequency") {
@@ -1292,6 +1307,12 @@ const char* MissingRequiredParameter(
                 HasNonEmptyParameter(parameters, "path"))
             ? nullptr
             : "file_path";
+    }
+
+    if (node_type == "DataOutput") {
+        return NormalizeDataOutputPath(parameters).empty()
+            ? "file_path"
+            : nullptr;
     }
 
     for (const char* parameter : required_parameters) {
@@ -2587,12 +2608,11 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
         return false;
     }
 
-    auto path_it = node.parameters.find("file_path");
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
+    const std::string output_path = NormalizeDataOutputPath(node.parameters);
+    if (output_path.empty()) {
         ReportError(GetImprovedErrorMessage("DataOutput", "missing_parameter", "file_path"));
         return false;
     }
-    const std::string& output_path = path_it->second;
 
     std::string format = NormalizeDataOutputFormat(node.parameters);
 
