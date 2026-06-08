@@ -2325,15 +2325,25 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                 expression = "COALESCE(" + quoted_column + ", " +
                              constant_expression + ")";
             } else if (strategy == "mean") {
-                if (IsNumericArrowType(field->type())) {
-                    expression = "COALESCE(" + quoted_column + ", (SELECT AVG(" +
-                                 quoted_column + ") FROM " + temp_table + "))";
+                if (!IsNumericArrowType(field->type())) {
+                    duckdb_->UnregisterTable(temp_table);
+                    ReportError("FillMissing: strategy 'mean' requires numeric column '" +
+                                field->name() + "' (found " +
+                                field->type()->ToString() + ")");
+                    return false;
                 }
+                expression = "COALESCE(" + quoted_column + ", (SELECT AVG(" +
+                             quoted_column + ") FROM " + temp_table + "))";
             } else if (strategy == "median") {
-                if (IsNumericArrowType(field->type())) {
-                    expression = "COALESCE(" + quoted_column + ", (SELECT MEDIAN(" +
-                                 quoted_column + ") FROM " + temp_table + "))";
+                if (!IsNumericArrowType(field->type())) {
+                    duckdb_->UnregisterTable(temp_table);
+                    ReportError("FillMissing: strategy 'median' requires numeric column '" +
+                                field->name() + "' (found " +
+                                field->type()->ToString() + ")");
+                    return false;
                 }
+                expression = "COALESCE(" + quoted_column + ", (SELECT MEDIAN(" +
+                             quoted_column + ") FROM " + temp_table + "))";
             } else if (strategy == "mode") {
                 expression = "COALESCE(" + quoted_column + ", (SELECT MODE(" +
                              quoted_column + ") FROM " + temp_table + "))";

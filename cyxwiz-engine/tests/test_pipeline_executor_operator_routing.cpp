@@ -2000,6 +2000,26 @@ int main() {
     Check(std::fabs(ReadNumericValue(filled_table, "y", 2) - 15.0) < 0.001,
           "FillMissing mean should fill y with column mean");
 
+    const std::string fill_missing_mean_string_json =
+        R"({"nodes":[)"
+        R"({"id":371,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(missing_string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":372,"type":"FillMissing","name":"BadMeanFill","parameters":{)"
+        R"("strategy":"mean"}})"
+        R"(],"links":[{"start_node":371,"end_node":372}]})";
+
+    cyxwiz::PipelineExecutor fill_missing_mean_string_executor;
+    Check(!fill_missing_mean_string_executor.ExecutePipeline(
+              fill_missing_mean_string_json),
+          "FillMissing mean on string columns should fail before partial no-op");
+    Check(fill_missing_mean_string_executor.GetLastError().find(
+              "FillMissing: strategy 'mean' requires numeric column 'phrase'") !=
+              std::string::npos,
+          "FillMissing mean string column error should be specific: " +
+              fill_missing_mean_string_executor.GetLastError());
+
     const std::string fill_missing_string_constant_json =
         R"({"nodes":[)"
         R"({"id":184,"type":"DataInput","name":"Input","parameters":{)"

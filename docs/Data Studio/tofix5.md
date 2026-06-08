@@ -474,6 +474,12 @@ value into DuckDB SQL. String constants are quoted as literals, numeric
 columns reject nonnumeric constants before query construction, and
 unsupported column types fail closed with a specific validation error.
 
+**Status 2026-06-08 follow-up 41:** `FillMissing` numeric statistic
+strategies now fail closed on nonnumeric table columns instead of
+silently passing those columns through. `mean` and `median` require
+numeric columns because the node has no per-column selector; `constant`
+and `mode` remain the table-wide strategies for nonnumeric data.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or
