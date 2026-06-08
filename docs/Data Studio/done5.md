@@ -23,6 +23,22 @@ That creates a dangerous class of bugs where:
 
 ---
 
+## Closeout Status
+
+**Status 2026-06-08:** Completed for the concrete correctness scope in this
+document. The actionable bug classes in this pass now fail closed or execute
+truthfully: executor validation, placeholder/fake-success cleanup,
+DataInput/DataOutput/SaveDataset format truth, metadata support axes, dialog
+restore paths, runtime capability centralization, and drift tests.
+
+The remaining broad architecture work is intentionally carried forward to
+`tofix20.md` instead of keeping this file open. That follow-up owns canonical
+executor/materializer ownership, materializer v2 scope, remaining string-only
+alias migration, broader frontend support-axis presentation, and complete
+schema/type validation parity.
+
+---
+
 ## Executive Summary
 
 The highest-risk runtime issue in the engine today is `execution drift`.

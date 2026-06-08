@@ -28,7 +28,7 @@ scanning so stale or duplicate work is not reintroduced.
 | `done13.md` | closed archive | Keep closed. Backend gap audit is complete; broader model gaps live in `tofix19.md`. |
 | `done15.md` | closed archive | Keep closed. Tensor ArrayFire layout/residency contract marked complete. |
 | `tofix4.md` | active/tracked | Updated. Historical fake-success wording now reflects current fail-closed legacy executor truth. |
-| `tofix5.md` | active/untracked | Updated. Concrete executor bugs marked fixed/partially fixed; remaining work is canonical routing and parity. |
+| `done5.md` | closed archive | Closed 2026-06-08. Concrete executor/materializer correctness pass is complete; remaining broad architecture work moved to `tofix20.md`. |
 | `tofix6.md` | active/untracked | Updated. Pipeline map now says audited placeholders fail closed and optimizer drift is no longer pending. |
 | `tofix7.md` | active/untracked | Updated. Support matrix now reflects wired optimizers, blocked unsupported training layers, and legacy fail-closed nodes. |
 | `tofix8.md` | active/untracked | Updated. LLM note now distinguishes TransformerEncoder classifiers from decoder/causal LLM gaps and points to `tofix19.md`. |
@@ -40,6 +40,7 @@ scanning so stale or duplicate work is not reintroduced.
 | `tofix17.md` | active/tracked | Updated. CPU fallback work from `done2.md`/`done10.md`/`done15.md` is no longer implied as undone. |
 | `tofix18.md` | active/tracked | Keep active. Pipeline canvas placeholder naming cleanup remains a separate deferred UI task. |
 | `tofix19.md` | active/tracked | Updated. Phase 1 truth guardrails now record the Dense-encoded NER compiler guard as started/completed slice. |
+| `tofix20.md` | active/tracked | New source of truth for broad runtime architecture follow-ups carried out of `done5.md`. |
 
 ## Findings
 
@@ -57,6 +58,9 @@ scanning so stale or duplicate work is not reintroduced.
 
 ## Patch Log
 
+- 2026-06-08 closeout: closed `tofix5.md` as `done5.md` for the concrete
+  executor/materializer correctness pass and created `tofix20.md` for the
+  remaining broad runtime architecture follow-ups.
 - Updated `tofix4.md`, `tofix5.md`, `tofix6.md`, and `tofix7.md` for
   fail-closed executor/compiler truth.
 - Updated `tofix17.md` for completed CPU fallback/residency evidence from
