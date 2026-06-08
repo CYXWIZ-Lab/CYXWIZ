@@ -9,6 +9,7 @@
 #include "../gui/loaders/data_loader.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
@@ -168,6 +169,69 @@ bool LooksLikeDenseEncodedTargetDesignNode(const gui::MLNode& node,
     if (HasParam(params, "axis") && params.size() > 1) {
         matched_key = "axis";
         return true;
+    }
+
+    return false;
+}
+
+bool ParamIsEnabled(const std::map<std::string, std::string>& params,
+                    const char* key) {
+    auto it = params.find(key);
+    if (it == params.end()) {
+        return false;
+    }
+
+    std::string value = it->second;
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value == "true" || value == "1" || value == "yes" ||
+           value == "on";
+}
+
+bool LooksLikeGenerativeTrainingSketch(const gui::MLNode& node,
+                                       std::string& matched_key) {
+    if (node.type == gui::NodeType::TransformerDecoder) {
+        matched_key = "TransformerDecoder";
+        return true;
+    }
+
+    const auto& params = node.parameters;
+    const char* enabled_keys[] = {
+        "causal",
+        "causal_mask",
+        "autoregressive",
+        "decoder_only",
+        "generation",
+        "generate",
+        "language_model",
+        "causal_lm",
+        "teacher_forcing"
+    };
+
+    for (const char* key : enabled_keys) {
+        if (ParamIsEnabled(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    const char* design_keys[] = {
+        "shifted_targets",
+        "shift_targets",
+        "target_shift",
+        "next_token_target",
+        "prompt_column",
+        "completion_column",
+        "decoder_target_column"
+    };
+
+    for (const char* key : design_keys) {
+        if (HasParam(params, key)) {
+            matched_key = key;
+            return true;
+        }
     }
 
     return false;
@@ -1073,6 +1137,21 @@ void ValidateTrainingPathImplementationStatus(
                 << target_design_key
                 << "'. This graph needs first-class sequence/NER nodes and "
                    "cannot be compiled as a Dense layer.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        std::string generative_key;
+        if (LooksLikeGenerativeTrainingSketch(node, generative_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' sketches decoder/generative training via '"
+                << generative_key
+                << "', but Studio training does not have a trainable "
+                   "TransformerDecoder or causal language-model objective. "
+                   "This path needs shifted-token targets, causal masks, "
+                   "token-level loss, and generation packaging before it can "
+                   "compile truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }

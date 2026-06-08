@@ -344,6 +344,77 @@ int main() {
     Check(!HasIssueText(config, "Sentence Sequences"),
           "side Dense-encoded target-design node should not be reported");
 
+    auto decoder = Node(26,
+                        gui::NodeType::TransformerDecoder,
+                        "Decoder LM",
+                        {Pin(2601, gui::PinType::Tensor, "Input", true),
+                         Pin(2602, gui::PinType::Tensor, "Memory", true)},
+                        {Pin(2603, gui::PinType::Tensor, "Output", false)});
+    decoder.parameters["d_model"] = "2";
+    decoder.parameters["nhead"] = "1";
+    decoder.parameters["num_layers"] = "1";
+
+    nodes = {data, dense, decoder, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 26, 2601),
+        Link(3, 2, 202, 26, 2602),
+        Link(4, 26, 2603, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected TransformerDecoder training path should be invalid");
+    Check(HasIssueText(config, "TransformerDecoder"),
+          "TransformerDecoder path should report missing decoder backend");
+    Check(HasIssueText(config, "shifted-token targets"),
+          "TransformerDecoder path should report missing causal LM contract");
+
+    auto decoder_side_output = Node(27,
+                                    gui::NodeType::Output,
+                                    "Decoder Side Output",
+                                    {Pin(2701, gui::PinType::Tensor, "Input", true)},
+                                    {});
+
+    nodes = {data, dense, loss, optimizer, decoder, decoder_side_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 2, 202, 26, 2601),
+        Link(6, 2, 202, 26, 2602),
+        Link(7, 26, 2603, 27, 2701),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side TransformerDecoder outside selected training path should not block compile");
+    Check(!HasIssueText(config, "Decoder LM"),
+          "side TransformerDecoder should not be reported");
+
+    auto causal_dense = dense;
+    causal_dense.name = "Causal Dense Sketch";
+    causal_dense.parameters["causal"] = "true";
+
+    nodes = {data, causal_dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected causal/generative objective sketch should be invalid");
+    Check(HasIssueText(config, "causal"),
+          "causal sketch should report the matched generative parameter");
+    Check(HasIssueText(config, "causal language-model objective"),
+          "causal sketch should report missing causal LM objective");
+
     for (const auto& scheduler_case :
          cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         auto scheduler = Node(18,

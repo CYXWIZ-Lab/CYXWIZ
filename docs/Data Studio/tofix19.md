@@ -394,6 +394,13 @@ Completed so far:
   compiled plan and batcher contract expose one `data_node_id`, one data pin,
   and one label pin, so Siamese/pair/triplet or other multi-input sketches need
   a typed named-batch contract before they can compile truthfully.
+- `GraphCompiler` now rejects selected training paths that sketch
+  decoder/generative training with `TransformerDecoder`, explicit causal LM
+  flags, shifted-token target parameters, prompt/completion columns, or
+  teacher-forcing markers. The current trainer has no trainable decoder path,
+  causal mask contract, shifted-token target materializer, token-level
+  sequence loss, or generation packaging, so these graphs fail closed instead
+  of implying GPT/seq2seq training works.
 
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.
