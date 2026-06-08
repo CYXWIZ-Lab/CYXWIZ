@@ -1740,6 +1740,24 @@ int main() {
           "StringManipulation unknown operation error should be specific: " +
               bad_string_operation_executor.GetLastError());
 
+    const std::string uppercase_replace_missing_param_json =
+        R"({"nodes":[)"
+        R"({"id":331,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":332,"type":"StringManipulation","name":"BadReplace","parameters":{)"
+        R"("column":"phrase","operation":"REPLACE"}})"
+        R"(],"links":[{"start_node":331,"end_node":332}]})";
+
+    cyxwiz::PipelineExecutor uppercase_replace_missing_param_executor;
+    Check(!uppercase_replace_missing_param_executor.ExecutePipeline(
+              uppercase_replace_missing_param_json),
+          "StringManipulation uppercase replace without param1 should fail validation");
+    Check(uppercase_replace_missing_param_executor.GetLastError().find(
+              "StringManipulation replace requires param1") != std::string::npos,
+          "StringManipulation uppercase replace missing param1 error should be "
+          "specific: " +
+              uppercase_replace_missing_param_executor.GetLastError());
+
     const std::string numeric_string_manipulation_json =
         R"({"nodes":[)"
         R"({"id":87,"type":"DataInput","name":"Input","parameters":{)"

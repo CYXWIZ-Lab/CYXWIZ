@@ -1103,7 +1103,7 @@ bool HasSupportedParameterValues(
         const auto operation_it = parameters.find("operation");
         const std::string operation =
             (operation_it != parameters.end() && !operation_it->second.empty())
-                ? operation_it->second
+                ? ToLowerAscii(TrimString(operation_it->second))
                 : "trim";
         if (operation == "replace" &&
             !HasNonEmptyParameter(parameters, "param1")) {
