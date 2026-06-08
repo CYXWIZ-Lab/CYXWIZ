@@ -16,9 +16,16 @@ inline std::string NormalizeTabularFileType(std::string file_type) {
     return file_type.empty() ? "auto" : file_type;
 }
 
-inline bool IsUnsupportedTabularFileType(const std::string& file_type) {
+inline bool IsSupportedTabularFileType(const std::string& file_type) {
     const std::string normalized = NormalizeTabularFileType(file_type);
-    return normalized == "json" || normalized == "excel";
+    return normalized == "auto" || normalized == "csv" ||
+           normalized == "tsv" || normalized == "parquet" ||
+           normalized == "feather" || normalized == "arrow" ||
+           normalized == "ipc";
+}
+
+inline bool IsUnsupportedTabularFileType(const std::string& file_type) {
+    return !IsSupportedTabularFileType(file_type);
 }
 
 inline std::string UnsupportedTabularFileTypeMessage(
@@ -29,6 +36,15 @@ inline std::string UnsupportedTabularFileTypeMessage(
     }
     if (normalized == "excel") {
         return "Tabular Excel loading is not supported yet";
+    }
+    if (normalized == "hdf5") {
+        return "Tabular HDF5 loading is not supported yet";
+    }
+    if (normalized == "txt") {
+        return "Tabular TXT loading is not supported on this path; use Text source for text files";
+    }
+    if (normalized == "arff") {
+        return "Tabular ARFF loading is not supported yet";
     }
     return "Tabular file type is not supported yet";
 }

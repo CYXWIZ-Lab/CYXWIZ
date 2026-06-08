@@ -292,6 +292,11 @@ Parquet, Feather, and Arrow/IPC. If an unsupported file extension is
 auto-detected, the dialog keeps the detected label but shows a warning
 instead of rendering JSON, Excel, or HDF5-specific controls.
 
+**Status 2026-06-08 follow-up 62:** The DataInput tabular loader validation
+now fails closed before launching async work for unsupported detected file
+types beyond JSON and Excel, including HDF5, TXT, and ARFF. TXT users are
+directed to the Text source path instead of being treated as tabular CSV.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used
