@@ -377,6 +377,23 @@ int main() {
           "bad sheet_idx validation should be specific: " +
               bad_sheet_idx_executor.GetLastError());
 
+    const std::string bad_has_header_json =
+        R"({"nodes":[)"
+        R"({"id":327,"type":"DataInput","name":"BadHeaderFlag","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv","has_header":"maybe"}},)"
+        R"({"id":328,"type":"SelectColumns","name":"Select","parameters":{)"
+        R"("columns":"x"}})"
+        R"(],"links":[{"start_node":327,"end_node":328}]})";
+
+    cyxwiz::PipelineExecutor bad_has_header_executor;
+    Check(!bad_has_header_executor.ExecutePipeline(bad_has_header_json),
+          "DataInput malformed has_header should fail validation");
+    Check(bad_has_header_executor.GetLastError().find(
+              "DataInput: 'has_header' must be 'true' or 'false'") !=
+              std::string::npos,
+          "DataInput has_header validation should be specific: " +
+              bad_has_header_executor.GetLastError());
+
     const std::string bad_window_json =
         R"({"nodes":[)"
         R"({"id":13,"type":"DataInput","name":"Input","parameters":{)"
@@ -1164,7 +1181,7 @@ int main() {
         R"({"nodes":[)"
         R"({"id":325,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"FILE","file_path":")" + JsonEscapePath(csv_path.string()) +
-        R"(","type":"CSV","has_header":"true"}},)"
+        R"(","type":"CSV","has_header":"TRUE"}},)"
         R"({"id":326,"type":"DataOutput","name":"Output","parameters":{)"
         R"("file_path":")" +
         JsonEscapePath(data_output_mixed_case_csv_path.string()) +
@@ -1748,7 +1765,7 @@ int main() {
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":153,"type":"TextClean","name":"Clean","parameters":{)"
-        R"("text_column":"phrase","lowercase":"true"}})"
+        R"("text_column":"phrase","lowercase":"TRUE"}})"
         R"(],"links":[{"start_node":152,"end_node":153}]})";
 
     cyxwiz::PipelineExecutor text_clean_executor;
@@ -1768,7 +1785,7 @@ int main() {
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":167,"type":"TextClean","name":"UnsupportedStopwords","parameters":{)"
-        R"("text_column":"phrase","remove_stopwords":"true"}})"
+        R"("text_column":"phrase","remove_stopwords":"TRUE"}})"
         R"(],"links":[{"start_node":166,"end_node":167}]})";
 
     cyxwiz::PipelineExecutor text_clean_stopwords_executor;
@@ -1780,6 +1797,24 @@ int main() {
               std::string::npos,
           "TextClean remove_stopwords error should be specific: " +
               text_clean_stopwords_executor.GetLastError());
+
+    const std::string text_clean_bad_boolean_json =
+        R"({"nodes":[)"
+        R"({"id":329,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":330,"type":"TextClean","name":"BadCleanFlag","parameters":{)"
+        R"("text_column":"phrase","lowercase":"maybe"}})"
+        R"(],"links":[{"start_node":329,"end_node":330}]})";
+
+    cyxwiz::PipelineExecutor text_clean_bad_boolean_executor;
+    Check(!text_clean_bad_boolean_executor.ExecutePipeline(
+              text_clean_bad_boolean_json),
+          "TextClean malformed lowercase should fail validation");
+    Check(text_clean_bad_boolean_executor.GetLastError().find(
+              "TextClean: 'lowercase' must be 'true' or 'false'") !=
+              std::string::npos,
+          "TextClean lowercase validation should be specific: " +
+              text_clean_bad_boolean_executor.GetLastError());
 
     const std::string text_tokenize_json =
         R"({"nodes":[)"

@@ -376,6 +376,15 @@ branches that already advertise allowed values. `DataInput.source_type`,
 before execution, so values accepted by `ValidatePipeline()` no longer
 fail or take fallback behavior later because of casing.
 
+**Status 2026-06-08 follow-up 29:** Active legacy boolean-like
+parameters now validate and execute consistently for `DataInput` and
+`TextClean`. Malformed `DataInput.has_header` / `json_lines` and
+`TextClean.lowercase` / `remove_html` / `remove_special_chars` /
+`remove_stopwords` values fail validation, while accepted casing such as
+`TRUE` is normalized before execution. `TextClean.remove_stopwords=TRUE`
+still fails closed because stopword removal is not implemented in the
+legacy SQL branch.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

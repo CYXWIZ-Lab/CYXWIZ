@@ -936,6 +936,50 @@ bool IsAllowedParameterValue(
                         }) != capability.allowed_values.end();
 }
 
+bool TryParseBooleanParameterValue(const std::string& value, bool& out) {
+    const std::string normalized_value = ToLowerAscii(TrimString(value));
+    if (normalized_value == "true") {
+        out = true;
+        return true;
+    }
+    if (normalized_value == "false") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+bool ValidateOptionalBooleanParameter(
+    const std::map<std::string, std::string>& parameters,
+    const std::string& node_type,
+    const char* parameter_name,
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+
+    bool parsed = false;
+    if (!TryParseBooleanParameterValue(it->second, parsed)) {
+        error = node_type + ": '" + parameter_name +
+                "' must be 'true' or 'false'";
+        return false;
+    }
+    return true;
+}
+
+bool OptionalBooleanParameterIsTrue(
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return false;
+    }
+
+    bool parsed = false;
+    return TryParseBooleanParameterValue(it->second, parsed) && parsed;
+}
+
 std::string NormalizeSortOrder(
     const std::map<std::string, std::string>& parameters) {
     auto order_it = parameters.find("order");
@@ -1083,9 +1127,19 @@ bool HasSupportedParameterValues(
     }
 
     if (node_type == "TextClean") {
+        if (!ValidateOptionalBooleanParameter(
+                parameters, node_type, "lowercase", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "remove_html", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "remove_special_chars", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "remove_stopwords", error)) {
+            return false;
+        }
         const auto remove_stopwords_it = parameters.find("remove_stopwords");
         if (remove_stopwords_it != parameters.end() &&
-            ToLowerAscii(TrimString(remove_stopwords_it->second)) == "true") {
+            OptionalBooleanParameterIsTrue(parameters, "remove_stopwords")) {
             error = "TextClean remove_stopwords is not supported by PipelineExecutor";
             return false;
         }
@@ -1125,6 +1179,13 @@ bool HasSupportedParameterValues(
     }
 
     if (node_type == "DataInput") {
+        if (!ValidateOptionalBooleanParameter(
+                parameters, node_type, "has_header", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "json_lines", error)) {
+            return false;
+        }
+
         const auto source_it = parameters.find("source_type");
         const std::string source_type =
             (source_it != parameters.end() && !source_it->second.empty())
@@ -1704,7 +1765,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
 
             // Load based on file type
             if (file_type == "csv" || file_type == "tsv") {
-                bool has_header = node.parameters.count("has_header") && node.parameters.at("has_header") == "true";
+                bool has_header =
+                    OptionalBooleanParameterIsTrue(node.parameters,
+                                                   "has_header");
                 std::string delimiter = (file_type == "tsv") ? "\t" : ",";
                 auto delim_it = node.parameters.find("delimiter");
                 if (delim_it != node.parameters.end() && !delim_it->second.empty()) {
@@ -1720,7 +1783,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             } else if (file_type == "parquet") {
                 arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
             } else if (file_type == "json") {
-                bool json_lines = node.parameters.count("json_lines") && node.parameters.at("json_lines") == "true";
+                bool json_lines =
+                    OptionalBooleanParameterIsTrue(node.parameters,
+                                                   "json_lines");
                 arrow_dataset = registry.LoadJSONToArrow(file_path, dataset_name, json_lines);
             } else if (file_type == "excel") {
                 int sheet_idx = 0;
@@ -2763,11 +2828,12 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
     }
 
     // Get parameters
-    bool lowercase = node.parameters.count("lowercase") && node.parameters.at("lowercase") == "true";
-    bool remove_html = node.parameters.count("remove_html") && node.parameters.at("remove_html") == "true";
-    bool remove_special_chars = node.parameters.count("remove_special_chars") && node.parameters.at("remove_special_chars") == "true";
+    bool lowercase = OptionalBooleanParameterIsTrue(node.parameters, "lowercase");
+    bool remove_html = OptionalBooleanParameterIsTrue(node.parameters, "remove_html");
+    bool remove_special_chars =
+        OptionalBooleanParameterIsTrue(node.parameters,
+                                       "remove_special_chars");
     // Note: remove_stopwords would require dictionary integration - not implemented in MVP
-    // bool remove_stopwords = node.parameters.count("remove_stopwords") && node.parameters.at("remove_stopwords") == "true";
 
     auto column_it = node.parameters.find("text_column");
     std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
