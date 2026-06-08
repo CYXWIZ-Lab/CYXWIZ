@@ -181,7 +181,7 @@ bool TimeSeriesDecompositionOperator::Configure(
 
     auto m = params.find("method");
     if (m != params.end() && !m->second.empty()) {
-        method_ = m->second;
+        method_ = NormalizeTimeSeriesParameterChoice(m->second);
         if (method_ != "additive" && method_ != "multiplicative") {
             error = GetName() + ": 'method' must be 'additive' / "
                     "'multiplicative' (got '" + method_ + "')";
@@ -191,7 +191,7 @@ bool TimeSeriesDecompositionOperator::Configure(
 
     auto a = params.find("algorithm");
     if (a != params.end() && !a->second.empty()) {
-        algorithm_ = a->second;
+        algorithm_ = NormalizeTimeSeriesParameterChoice(a->second);
         if (algorithm_ != "classical" && algorithm_ != "stl") {
             error = GetName() + ": 'algorithm' must be 'classical' / 'stl' "
                     "(got '" + algorithm_ + "')";
@@ -323,7 +323,7 @@ bool ExponentialSmoothingOperator::Configure(
 
     auto m = params.find("method");
     if (m != params.end() && !m->second.empty()) {
-        method_ = m->second;
+        method_ = NormalizeTimeSeriesParameterChoice(m->second);
         if (method_ != "simple" && method_ != "holt" && method_ != "holt_winters") {
             error = GetName() + ": 'method' must be 'simple' / 'holt' / "
                     "'holt_winters' (got '" + method_ + "')";

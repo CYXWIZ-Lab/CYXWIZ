@@ -938,6 +938,56 @@ int main() {
           "ExponentialSmoothing bad method validation should be specific: " +
               bad_exp_smoothing_method_executor.GetLastError());
 
+    const std::string uppercase_filter_type_json =
+        R"({"nodes":[)"
+        R"({"id":354,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(ts_analysis_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":355,"type":"FilterDesigner","name":"Filter","parameters":{)"
+        R"("signal_col":"signal","filter_type":" HIGHPASS ","cutoff":"0.1","sample_rate":"1.0","order":"2"}})"
+        R"(],"links":[{"start_node":354,"end_node":355}]})";
+
+    cyxwiz::PipelineExecutor uppercase_filter_type_executor;
+    Check(uppercase_filter_type_executor.ExecutePipeline(uppercase_filter_type_json),
+          "FilterDesigner uppercase filter_type should execute after normalization: " +
+              uppercase_filter_type_executor.GetLastError());
+    check_operator_field("ds_operator_FilterDesigner_355", "signal",
+                         "FilterDesigner uppercase filter_type");
+
+    const std::string uppercase_decomposition_choices_json =
+        R"({"nodes":[)"
+        R"({"id":356,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(ts_analysis_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":357,"type":"TimeSeriesDecomposition","name":"Decompose","parameters":{)"
+        R"("signal_col":"signal","period":"4","method":" MULTIPLICATIVE ","algorithm":"CLASSICAL"}})"
+        R"(],"links":[{"start_node":356,"end_node":357}]})";
+
+    cyxwiz::PipelineExecutor uppercase_decomposition_choices_executor;
+    Check(uppercase_decomposition_choices_executor.ExecutePipeline(
+              uppercase_decomposition_choices_json),
+          "TimeSeriesDecomposition uppercase choices should execute after normalization: " +
+              uppercase_decomposition_choices_executor.GetLastError());
+    check_operator_field("ds_operator_TimeSeriesDecomposition_357", "trend",
+                         "TimeSeriesDecomposition uppercase choices");
+
+    const std::string uppercase_exp_smoothing_method_json =
+        R"({"nodes":[)"
+        R"({"id":358,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(ts_analysis_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":359,"type":"ExponentialSmoothing","name":"Smoothing","parameters":{)"
+        R"("signal_col":"signal","method":" HOLT "}})"
+        R"(],"links":[{"start_node":358,"end_node":359}]})";
+
+    cyxwiz::PipelineExecutor uppercase_exp_smoothing_method_executor;
+    Check(uppercase_exp_smoothing_method_executor.ExecutePipeline(
+              uppercase_exp_smoothing_method_json),
+          "ExponentialSmoothing uppercase method should execute after normalization: " +
+              uppercase_exp_smoothing_method_executor.GetLastError());
+    check_operator_field("ds_operator_ExponentialSmoothing_359", "fitted",
+                         "ExponentialSmoothing uppercase method");
+
     const std::string missing_decomposition_period_json =
         R"({"nodes":[)"
         R"({"id":326,"type":"DataInput","name":"Input","parameters":{)"

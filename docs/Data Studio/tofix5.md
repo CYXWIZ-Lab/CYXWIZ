@@ -423,6 +423,14 @@ configuration. Case variants and padded values for `CountVectorizer.norm`,
 `TFIDFVectorizer.norm`, and `SentimentAnalyzer.method` no longer pass
 central validation and then fail when the text operator configures.
 
+**Status 2026-06-08 follow-up 36:** Signal and time-series analysis enum
+parameters now share a numeric-series normalization helper before local
+configuration. Case variants and padded values for
+`FilterDesigner.filter_type`, `TimeSeriesDecomposition.method`,
+`TimeSeriesDecomposition.algorithm`, and `ExponentialSmoothing.method`
+no longer pass central validation and then fail or take the wrong local
+branch after the source node executes.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

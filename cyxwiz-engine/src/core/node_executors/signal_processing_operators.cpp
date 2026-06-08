@@ -270,7 +270,7 @@ bool FilterDesignerOperator::Configure(
 
     auto ft = params.find("filter_type");
     if (ft != params.end() && !ft->second.empty()) {
-        filter_type_ = ft->second;
+        filter_type_ = NormalizeTimeSeriesParameterChoice(ft->second);
         if (filter_type_ != "lowpass" && filter_type_ != "highpass" &&
             filter_type_ != "bandpass" && filter_type_ != "bandstop") {
             error = "FilterDesigner: 'filter_type' must be lowpass/highpass/"

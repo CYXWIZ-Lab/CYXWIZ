@@ -1,6 +1,8 @@
 #pragma once
 
 #include <arrow/api.h>
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -8,6 +10,23 @@
 #include <vector>
 
 namespace cyxwiz {
+
+inline std::string NormalizeTimeSeriesParameterChoice(const std::string& value) {
+    const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    });
+    const auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    }).base();
+    if (first >= last) return {};
+
+    std::string normalized(first, last);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return normalized;
+}
 
 /// Read an entire ChunkedArray column into a std::vector<float>, casting
 /// supported numeric types to float32. Returns false on unsupported types
