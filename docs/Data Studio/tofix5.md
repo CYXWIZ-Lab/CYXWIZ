@@ -1076,6 +1076,12 @@ PipelineExecutor support, materializer scope, implementation owner, and
 the central fail-closed reason through Node Info instead of only carrying
 a smaller blocked-node subset.
 
+**Status 2026-06-08 follow-up 16:** The Node Browser hover tooltip now
+renders the same structured `support_axes` used by Node Info. Runtime
+mode, fail mode, PipelineExecutor support, materializer scope,
+implementation owner, and blocked reasons are visible from the add-node
+browser without another UI-specific support list.
+
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit
@@ -1224,7 +1230,7 @@ storage scope, and implementation owner from the same registry.
 Registered unsupported training-backend nodes now expose the central
 training support mode and reason through the same metadata path.
 Remaining work is broader frontend presentation for capability axes that
-still have no visible UI affordance, not another parallel UI support
+still need richer filtering or badges, not another parallel UI support
 list.
 
 Scope:

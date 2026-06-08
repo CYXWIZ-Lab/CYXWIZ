@@ -609,7 +609,6 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     ImGui::InvisibleButton("##card", card_size);
 
     bool hovered = ImGui::IsItemHovered();
-    bool clicked = ImGui::IsItemClicked();
 
     // Handle double-click to create node
     if (hovered && ImGui::IsMouseDoubleClicked(0)) {
@@ -841,6 +840,31 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
         ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "Outputs:");
         for (const auto& output : metadata->outputs) {
             ImGui::BulletText("%s", output.name.c_str());
+        }
+    }
+
+    if (!metadata->support_axes.empty()) {
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Support:");
+        for (const auto& axis : metadata->support_axes) {
+            const ImVec4 axis_color = axis.supported
+                ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
+                : ImVec4(1.0f, 0.55f, 0.35f, 1.0f);
+            const char* icon = axis.supported
+                ? ICON_FA_CIRCLE_CHECK
+                : ICON_FA_TRIANGLE_EXCLAMATION;
+
+            ImGui::TextColored(axis_color, "%s", icon);
+            ImGui::SameLine();
+            ImGui::Text("%s:", axis.name.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", axis.value.c_str());
+
+            if (!axis.supported && !axis.reason.empty()) {
+                ImGui::Indent(16.0f);
+                ImGui::TextWrapped("%s", axis.reason.c_str());
+                ImGui::Unindent(16.0f);
+            }
         }
     }
 
