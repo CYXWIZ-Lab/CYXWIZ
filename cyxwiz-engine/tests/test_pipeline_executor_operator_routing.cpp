@@ -321,6 +321,42 @@ int main() {
           "TimeSeriesSplit malformed train_ratio error should be specific: " +
               bad_time_series_split_ratio_executor.GetLastError());
 
+    const std::string bad_time_series_split_sum_json =
+        R"({"nodes":[)"
+        R"({"id":501,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":502,"type":"TimeSeriesSplit","name":"BadSplitSum","parameters":{)"
+        R"("train_ratio":"0.8","val_ratio":"0.3","test_ratio":"0.1"}})"
+        R"(],"links":[{"start_node":501,"end_node":502}]})";
+
+    cyxwiz::PipelineExecutor bad_time_series_split_sum_executor;
+    Check(!bad_time_series_split_sum_executor.ExecutePipeline(
+              bad_time_series_split_sum_json),
+          "TimeSeriesSplit invalid ratio sum should fail validation");
+    Check(bad_time_series_split_sum_executor.GetLastError().find(
+              "TimeSeriesSplit ratios must sum to 1.0") !=
+              std::string::npos,
+          "TimeSeriesSplit ratio-sum validation should be specific: " +
+              bad_time_series_split_sum_executor.GetLastError());
+
+    const std::string bad_time_series_split_train_zero_json =
+        R"({"nodes":[)"
+        R"({"id":503,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":504,"type":"TimeSeriesSplit","name":"BadSplitTrainZero","parameters":{)"
+        R"("train_ratio":"0","val_ratio":"0.5","test_ratio":"0.5"}})"
+        R"(],"links":[{"start_node":503,"end_node":504}]})";
+
+    cyxwiz::PipelineExecutor bad_time_series_split_train_zero_executor;
+    Check(!bad_time_series_split_train_zero_executor.ExecutePipeline(
+              bad_time_series_split_train_zero_json),
+          "TimeSeriesSplit zero train_ratio should fail validation");
+    Check(bad_time_series_split_train_zero_executor.GetLastError().find(
+              "TimeSeriesSplit train_ratio must be > 0") !=
+              std::string::npos,
+          "TimeSeriesSplit train_ratio cross-field validation should be specific: " +
+              bad_time_series_split_train_zero_executor.GetLastError());
+
     const std::string typed_file_input_json =
         R"({"nodes":[)"
         R"({"id":133,"type":"FileInput","name":"LegacyFile","parameters":{)"
@@ -692,6 +728,24 @@ int main() {
           "RobustScaler malformed quantile_min error should be specific: " +
               bad_robust_scaler_quantile_executor.GetLastError());
 
+    const std::string bad_robust_scaler_quantile_order_json =
+        R"({"nodes":[)"
+        R"({"id":505,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":506,"type":"RobustScaler","name":"BadRobustQuantileOrder","parameters":{)"
+        R"("quantile_min":"80","quantile_max":"20"}})"
+        R"(],"links":[{"start_node":505,"end_node":506}]})";
+
+    cyxwiz::PipelineExecutor bad_robust_scaler_quantile_order_executor;
+    Check(!bad_robust_scaler_quantile_order_executor.ExecutePipeline(
+              bad_robust_scaler_quantile_order_json),
+          "RobustScaler inverted quantiles should fail validation");
+    Check(bad_robust_scaler_quantile_order_executor.GetLastError().find(
+              "RobustScaler quantile_min must be less than quantile_max") !=
+              std::string::npos,
+          "RobustScaler quantile ordering validation should be specific: " +
+              bad_robust_scaler_quantile_order_executor.GetLastError());
+
     const std::string bad_target_encoder_smoothing_json =
         R"({"nodes":[)"
         R"({"id":373,"type":"DataInput","name":"Input","parameters":{)"
@@ -926,6 +980,24 @@ int main() {
               "missing required parameter 'kernel'") != std::string::npos,
           "Convolution1D missing kernel validation should be specific: " +
               missing_convolution_kernel_executor.GetLastError());
+
+    const std::string bad_convolution_kernel_json =
+        R"({"nodes":[)"
+        R"({"id":507,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":508,"type":"Convolution1D","name":"BadKernel","parameters":{)"
+        R"("signal_col":"x","kernel":"0.25,oops,0.25"}})"
+        R"(],"links":[{"start_node":507,"end_node":508}]})";
+
+    cyxwiz::PipelineExecutor bad_convolution_kernel_executor;
+    Check(!bad_convolution_kernel_executor.ExecutePipeline(
+              bad_convolution_kernel_json),
+          "Convolution1D malformed kernel should fail validation");
+    Check(bad_convolution_kernel_executor.GetLastError().find(
+              "Convolution1D kernel must be a comma-separated list of finite numbers") !=
+              std::string::npos,
+          "Convolution1D kernel validation should be specific: " +
+              bad_convolution_kernel_executor.GetLastError());
 
     const std::string missing_label_encoder_column_json =
         R"({"nodes":[)"
@@ -1261,6 +1333,42 @@ int main() {
               std::string::npos,
           "FilterDesigner sample_rate validation should be specific: " +
               bad_filter_sample_rate_executor.GetLastError());
+
+    const std::string bad_filter_cutoff_high_json =
+        R"({"nodes":[)"
+        R"({"id":509,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":510,"type":"FilterDesigner","name":"BadFilterCutoffHigh","parameters":{)"
+        R"("signal_col":"signal","filter_type":"bandpass","cutoff":"0.4","cutoff_high":"0.2","sample_rate":"1","order":"2"}})"
+        R"(],"links":[{"start_node":509,"end_node":510}]})";
+
+    cyxwiz::PipelineExecutor bad_filter_cutoff_high_executor;
+    Check(!bad_filter_cutoff_high_executor.ExecutePipeline(
+              bad_filter_cutoff_high_json),
+          "FilterDesigner inverted band cutoff should fail validation");
+    Check(bad_filter_cutoff_high_executor.GetLastError().find(
+              "FilterDesigner bandpass requires cutoff_high > cutoff") !=
+              std::string::npos,
+          "FilterDesigner band cutoff validation should be specific: " +
+              bad_filter_cutoff_high_executor.GetLastError());
+
+    const std::string missing_filter_cutoff_high_json =
+        R"({"nodes":[)"
+        R"({"id":511,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":512,"type":"FilterDesigner","name":"MissingFilterCutoffHigh","parameters":{)"
+        R"("signal_col":"signal","filter_type":"bandstop","cutoff":"0.4","sample_rate":"1","order":"2"}})"
+        R"(],"links":[{"start_node":511,"end_node":512}]})";
+
+    cyxwiz::PipelineExecutor missing_filter_cutoff_high_executor;
+    Check(!missing_filter_cutoff_high_executor.ExecutePipeline(
+              missing_filter_cutoff_high_json),
+          "FilterDesigner band filter without cutoff_high should fail validation");
+    Check(missing_filter_cutoff_high_executor.GetLastError().find(
+              "FilterDesigner bandstop requires cutoff_high") !=
+              std::string::npos,
+          "FilterDesigner missing cutoff_high validation should be specific: " +
+              missing_filter_cutoff_high_executor.GetLastError());
 
     const std::string bad_fft_sample_rate_json =
         R"({"nodes":[)"

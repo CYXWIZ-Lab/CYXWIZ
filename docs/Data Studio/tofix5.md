@@ -551,6 +551,14 @@ the operator's v1 contract for extra feature blocks and
 `__window_start_time` metadata. This closes another less-common selector
 role that previously depended on late operator failures.
 
+**Status 2026-06-08 follow-up 49:** Cross-field and custom-list
+validation now covers the remaining small operator-backed parameter
+rules that were still local to `Configure()`. `TimeSeriesSplit` rejects
+zero train splits and ratio totals that do not sum to 1.0,
+`RobustScaler` rejects inverted quantile bounds, `Convolution1D.kernel`
+must be a comma-separated finite-number list, and band filters require
+`FilterDesigner.cutoff_high > cutoff` before source execution.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or

@@ -343,6 +343,7 @@ GetPipelineFloatParameterRuntimeCapabilities() {
         {"DBSCANCluster", "eps", 0.0, std::nullopt, false},
         {"FFTNode", "sample_rate", 0.0, std::nullopt, false},
         {"FilterDesigner", "cutoff", 0.0, std::nullopt, false},
+        {"FilterDesigner", "cutoff_high", 0.0, std::nullopt, false},
         {"FilterDesigner", "sample_rate", 0.0, std::nullopt, false},
     };
     return capabilities;

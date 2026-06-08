@@ -1108,6 +1108,30 @@ bool ValidateFloatParameterBounds(
     return false;
 }
 
+bool TryParseFiniteDouble(const std::string& value, double& out) {
+    const std::string trimmed = TrimString(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    const char* begin = trimmed.data();
+    const char* end = trimmed.data() + trimmed.size();
+    auto [ptr, ec] = std::from_chars(begin, end, out);
+    return ec == std::errc() && ptr == end && std::isfinite(out);
+}
+
+double FloatParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    double default_value) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return default_value;
+    }
+    double value = default_value;
+    return TryParseFiniteDouble(it->second, value) ? value : default_value;
+}
+
 bool IsAllowedParameterValue(
     const PipelineAllowedParameterValuesRuntimeCapability& capability,
     const std::string& value) {
@@ -1294,6 +1318,81 @@ bool HasSupportedParameterValues(
                 capability.minimum_inclusive, capability.maximum_inclusive,
                 error)) {
             return false;
+        }
+    }
+
+    if (node_type == "TimeSeriesSplit") {
+        const double train_ratio =
+            FloatParameterOrDefault(parameters, "train_ratio", 0.8);
+        const double val_ratio =
+            FloatParameterOrDefault(parameters, "val_ratio", 0.1);
+        const double test_ratio =
+            FloatParameterOrDefault(parameters, "test_ratio", 0.1);
+        if (train_ratio <= 0.0) {
+            error = "TimeSeriesSplit train_ratio must be > 0";
+            return false;
+        }
+        const double sum = train_ratio + val_ratio + test_ratio;
+        if (std::fabs(sum - 1.0) > 0.01) {
+            error = "TimeSeriesSplit ratios must sum to 1.0";
+            return false;
+        }
+    }
+
+    if (node_type == "RobustScaler") {
+        const double quantile_min =
+            FloatParameterOrDefault(parameters, "quantile_min", 25.0);
+        const double quantile_max =
+            FloatParameterOrDefault(parameters, "quantile_max", 75.0);
+        if (quantile_max <= quantile_min) {
+            error = "RobustScaler quantile_min must be less than quantile_max";
+            return false;
+        }
+    }
+
+    if (node_type == "Convolution1D") {
+        auto kernel_it = parameters.find("kernel");
+        if (kernel_it != parameters.end()) {
+            bool saw_value = false;
+            std::stringstream tokens(kernel_it->second);
+            std::string token;
+            while (std::getline(tokens, token, ',')) {
+                double value = 0.0;
+                if (!TryParseFiniteDouble(token, value)) {
+                    error = "Convolution1D kernel must be a comma-separated list of finite numbers";
+                    return false;
+                }
+                saw_value = true;
+            }
+            if (!saw_value) {
+                error = "Convolution1D kernel must be a comma-separated list of finite numbers";
+                return false;
+            }
+        }
+    }
+
+    if (node_type == "FilterDesigner") {
+        const auto filter_type_it = parameters.find("filter_type");
+        const std::string filter_type =
+            (filter_type_it != parameters.end() &&
+             !filter_type_it->second.empty())
+                ? ToLowerAscii(TrimString(filter_type_it->second))
+                : "lowpass";
+        if (filter_type == "bandpass" || filter_type == "bandstop") {
+            if (!HasNonEmptyParameter(parameters, "cutoff_high")) {
+                error = "FilterDesigner " + filter_type +
+                        " requires cutoff_high";
+                return false;
+            }
+            const double cutoff =
+                FloatParameterOrDefault(parameters, "cutoff", 0.5);
+            const double cutoff_high =
+                FloatParameterOrDefault(parameters, "cutoff_high", 0.0);
+            if (cutoff_high <= cutoff) {
+                error = "FilterDesigner " + filter_type +
+                        " requires cutoff_high > cutoff";
+                return false;
+            }
         }
     }
 
