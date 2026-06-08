@@ -348,6 +348,45 @@ const gui::MLNode* FindFirstOptimizerNodeInSet(
     return nullptr;
 }
 
+void ValidateSingleDatasetReachableLossNode(
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& dataset_reachable,
+    TrainingConfiguration& config) {
+
+    if (dataset_reachable.empty()) {
+        return;
+    }
+
+    std::vector<const gui::MLNode*> reachable_losses;
+    for (const auto& node : nodes) {
+        if (IsLossNodeType(node.type) &&
+            dataset_reachable.count(node.id) > 0) {
+            reachable_losses.push_back(&node);
+        }
+    }
+
+    if (reachable_losses.size() <= 1) {
+        return;
+    }
+
+    std::ostringstream names;
+    for (size_t i = 0; i < reachable_losses.size(); ++i) {
+        if (i > 0) {
+            names << ", ";
+        }
+        names << "'" << reachable_losses[i]->name << "'";
+    }
+
+    AddIssue(
+        config,
+        IssueLevel::Error,
+        "Current Studio training supports exactly one dataset-reachable "
+        "loss node. Found " + std::to_string(reachable_losses.size()) +
+        " losses (" + names.str() + "). Multi-head/multi-task or "
+        "alternating-loss training needs a first-class loss aggregation "
+        "contract before it can compile truthfully.");
+}
+
 bool ContainsWhenFiltered(
     const std::unordered_set<int>& node_ids,
     int node_id) {
@@ -1185,6 +1224,7 @@ TrainingConfiguration GraphCompiler::Compile(
         ValidateLossTargetsReachLabels(nodes, links, config);
         ValidateLossPredictionsReachModel(nodes, links, config);
         ValidateOptimizerReachesLoss(nodes, links, config);
+        ValidateSingleDatasetReachableLossNode(nodes, dataset_reachable, config);
         ValidateUnsupportedTrainingControlNodes(nodes, config);
     }
 

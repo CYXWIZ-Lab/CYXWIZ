@@ -573,6 +573,40 @@ int main() {
     Check(!HasIssueText(config, "requires a single prediction output"),
           "BCE loss should not report output-size mismatch for one output");
 
+    auto second_head = Node(19,
+                            gui::NodeType::Dense,
+                            "Second Head",
+                            {Pin(1901, gui::PinType::Tensor, "Input", true)},
+                            {Pin(1902, gui::PinType::Tensor, "Output", false)});
+    second_head.parameters["units"] = "1";
+
+    auto second_loss = Node(22,
+                            gui::NodeType::MSELoss,
+                            "Auxiliary Loss",
+                            {Pin(2201, gui::PinType::Tensor, "Predictions", true),
+                             Pin(2202, gui::PinType::Labels, "Targets", true)},
+                            {Pin(2203, gui::PinType::Loss, "Loss", false)});
+
+    nodes = {data, dense, second_head, loss, second_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 1, 101, 19, 1901),
+        Link(3, 2, 202, 4, 401),
+        Link(4, 19, 1902, 22, 2201),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 1, 102, 22, 2202),
+        Link(7, 4, 403, 5, 501),
+        Link(8, 22, 2203, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "multi-head graph with two dataset-reachable losses should be invalid");
+    Check(HasIssueText(config, "exactly one dataset-reachable loss node"),
+          "multi-loss graph should report single-loss training contract");
+    Check(HasIssueText(config, "loss aggregation"),
+          "multi-loss graph should point to missing aggregation contract");
+
     auto class_loss = Node(15,
                            gui::NodeType::CrossEntropyLoss,
                            "Class Loss",

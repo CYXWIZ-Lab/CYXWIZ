@@ -384,6 +384,11 @@ Completed so far:
   Dense-encoded NER target-design nodes fail closed, while structurally
   valid side branches outside the selected training path do not block a
   normal Dense graph.
+- `GraphCompiler` now rejects graphs with more than one dataset-reachable
+  loss node. The current compiled plan and executor have a single
+  `loss_node_id` and no loss aggregation or alternating-step contract, so
+  multi-head/multi-task, detection-style, VAE/GAN, and similar sketches
+  fail closed instead of silently training only one selected loss.
 
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.
