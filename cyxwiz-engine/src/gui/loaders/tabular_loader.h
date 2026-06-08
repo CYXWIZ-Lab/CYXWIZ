@@ -2,7 +2,36 @@
 
 #include "data_loader.h"
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+
 namespace cyxwiz::loaders {
+
+inline std::string NormalizeTabularFileType(std::string file_type) {
+    std::transform(file_type.begin(), file_type.end(), file_type.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return file_type.empty() ? "auto" : file_type;
+}
+
+inline bool IsUnsupportedTabularFileType(const std::string& file_type) {
+    const std::string normalized = NormalizeTabularFileType(file_type);
+    return normalized == "json" || normalized == "excel";
+}
+
+inline std::string UnsupportedTabularFileTypeMessage(
+    const std::string& file_type) {
+    const std::string normalized = NormalizeTabularFileType(file_type);
+    if (normalized == "json") {
+        return "Tabular JSON loading is not supported yet";
+    }
+    if (normalized == "excel") {
+        return "Tabular Excel loading is not supported yet";
+    }
+    return "Tabular file type is not supported yet";
+}
 
 // Handles FileCategory::Tabular (and FileCategory::TimeSeries, which
 // shares the same load path). Storage backend (Arrow in-memory vs

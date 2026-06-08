@@ -603,6 +603,12 @@ and Excel loading still returns no dataset, so those formats stay outside
 the executable PipelineExecutor type list until real Arrow-table loaders
 exist.
 
+**Status 2026-06-08 follow-up 54:** The direct tabular DataInput loader
+now also fails closed for JSON and Excel before launching async load work,
+with a worker-path backstop for callers that bypass precheck validation.
+This keeps the GUI apply path aligned with the PipelineExecutor support
+truth while preserving CSV, TSV, Parquet, Feather, Arrow, and IPC paths.
+
 **Status 2026-06-08 follow-up 12:** Cycle validation is covered by
 `ValidatePipeline()` through `TopologicalSort()`, and the executor routing
 test now locks that behavior with a cyclic two-node graph. Disconnected

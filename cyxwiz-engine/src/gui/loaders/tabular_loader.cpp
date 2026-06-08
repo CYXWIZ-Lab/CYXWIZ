@@ -34,6 +34,7 @@ std::string FormatBytes(size_t bytes) {
     else               std::snprintf(buf, sizeof(buf), "%.1f %s", size, units[unit_idx]);
     return std::string(buf);
 }
+
 }  // namespace
 
 bool TabularLoader::ValidateApplyContext(const ApplyContext& ctx,
@@ -44,6 +45,12 @@ bool TabularLoader::ValidateApplyContext(const ApplyContext& ctx,
     }
     if (ctx.dataset_name.empty()) {
         err = "Dataset name is empty";
+        return false;
+    }
+    const std::string file_type =
+        NormalizeTabularFileType(ctx.detected_file_type);
+    if (IsUnsupportedTabularFileType(file_type)) {
+        err = UnsupportedTabularFileTypeMessage(file_type);
         return false;
     }
     return true;
@@ -68,7 +75,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     // Snapshot everything by value so the worker never races dialog state.
     const std::string path       = ctx.source_path;
     const std::string name       = ctx.dataset_name;
-    const std::string file_type  = ctx.detected_file_type;
+    const std::string file_type  = NormalizeTabularFileType(ctx.detected_file_type);
     const bool has_header        = ctx.has_header;
     const char delim             = (file_type == "tsv") ? '\t' : ctx.delimiter;
     const int skip_rows          = ctx.skip_rows;
@@ -150,9 +157,15 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     if (file_type == "parquet") {
                         dataset = reg.LoadParquetToArrow(path, name);
                     } else if (file_type == "json") {
-                        dataset = reg.LoadJSONToArrow(path, name, json_lines);
+                        state->success = false;
+                        state->message = UnsupportedTabularFileTypeMessage(file_type);
+                        state->done.store(true);
+                        return;
                     } else if (file_type == "excel") {
-                        dataset = reg.LoadExcelToArrow(path, name, excel_sheet);
+                        state->success = false;
+                        state->message = UnsupportedTabularFileTypeMessage(file_type);
+                        state->done.store(true);
+                        return;
                     } else {
                         // "auto" + anything else — LoadArrowTable auto-detects.
                         dataset = reg.LoadArrowTable(path, name);
