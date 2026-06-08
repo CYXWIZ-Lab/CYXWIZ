@@ -186,6 +186,16 @@ int main() {
                   "duplicate integer-parameter runtime capability: " + key);
         }
 
+        std::set<std::string> float_parameter_names;
+        for (const auto& capability :
+             cyxwiz::GetPipelineFloatParameterRuntimeCapabilities()) {
+            const std::string key =
+                std::string(capability.legacy_type_name) + "." +
+                capability.parameter_name;
+            Check(float_parameter_names.insert(key).second,
+                  "duplicate float-parameter runtime capability: " + key);
+        }
+
         std::set<int> unsupported_training_layer_types;
         for (const auto& capability :
              cyxwiz::GetPipelineUnsupportedSequentialModelLayerCapabilities()) {
@@ -863,6 +873,41 @@ int main() {
                   std::string(capability.parameter_name).size() > 1,
               std::string("integer parameter name is too weak: ") +
                   capability.legacy_type_name);
+    }
+
+    for (const auto& capability :
+         cyxwiz::GetPipelineFloatParameterRuntimeCapabilities()) {
+        const auto float_parameters =
+            cyxwiz::ResolvePipelineFloatParameters(capability.legacy_type_name);
+        Check(!float_parameters.empty(),
+              std::string("float-parameter runtime name does not resolve: ") +
+                  capability.legacy_type_name);
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
+            capability.legacy_type_name);
+        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
+              std::string("float-parameter runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        auto supported_axis = std::find_if(
+            support.float_parameters.begin(),
+            support.float_parameters.end(),
+            [&capability](
+                const cyxwiz::PipelineFloatParameterRuntimeCapability&
+                    runtime_capability) {
+                return std::string(runtime_capability.parameter_name) ==
+                           capability.parameter_name &&
+                       runtime_capability.minimum == capability.minimum &&
+                       runtime_capability.maximum == capability.maximum;
+            });
+        Check(supported_axis != support.float_parameters.end(),
+              std::string("runtime support should carry float-parameter axis: ") +
+                  capability.legacy_type_name + "." + capability.parameter_name);
+        Check(capability.parameter_name != nullptr &&
+                  std::string(capability.parameter_name).size() > 1,
+              std::string("float parameter name is too weak: ") +
+                  capability.legacy_type_name);
+        Check(capability.maximum >= capability.minimum,
+              std::string("float parameter range is invalid: ") +
+                  capability.legacy_type_name + "." + capability.parameter_name);
     }
 
     const std::vector<gui::NodeType> supported_model_nodes = {

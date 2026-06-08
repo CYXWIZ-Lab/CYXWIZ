@@ -259,6 +259,24 @@ int main() {
           "ACFNode missing signal_col validation should be specific: " +
               missing_acf_signal_executor.GetLastError());
 
+    const std::string bad_time_series_split_ratio_json =
+        R"({"nodes":[)"
+        R"({"id":334,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":335,"type":"TimeSeriesSplit","name":"BadSplit","parameters":{)"
+        R"("train_ratio":"wide"}})"
+        R"(],"links":[{"start_node":334,"end_node":335}]})";
+
+    cyxwiz::PipelineExecutor bad_time_series_split_ratio_executor;
+    Check(!bad_time_series_split_ratio_executor.ExecutePipeline(
+              bad_time_series_split_ratio_json),
+          "TimeSeriesSplit malformed train_ratio should fail validation");
+    Check(bad_time_series_split_ratio_executor.GetLastError().find(
+              "TimeSeriesSplit train_ratio must be a number between") !=
+              std::string::npos,
+          "TimeSeriesSplit malformed train_ratio error should be specific: " +
+              bad_time_series_split_ratio_executor.GetLastError());
+
     const std::string typed_file_input_json =
         R"({"nodes":[)"
         R"({"id":133,"type":"FileInput","name":"LegacyFile","parameters":{)"

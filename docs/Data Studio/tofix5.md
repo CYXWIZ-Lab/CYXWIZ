@@ -397,6 +397,12 @@ execution. Case variants such as `FILE` now still enforce file-only
 integer rules like `skip_rows` / Excel `sheet_idx` before loader
 execution can reach `std::stoi`.
 
+**Status 2026-06-08 follow-up 32:** Runtime support now has a central
+float-parameter validation axis. `TimeSeriesSplit.train_ratio`,
+`val_ratio`, and `test_ratio` are validated as numeric values in the
+supported `0..1` range before upstream source execution reaches operator
+configuration.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

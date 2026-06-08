@@ -324,6 +324,16 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineFloatParameterRuntimeCapability>&
+GetPipelineFloatParameterRuntimeCapabilities() {
+    static const std::vector<PipelineFloatParameterRuntimeCapability> capabilities = {
+        {"TimeSeriesSplit", "train_ratio", 0.0, 1.0},
+        {"TimeSeriesSplit", "val_ratio", 0.0, 1.0},
+        {"TimeSeriesSplit", "test_ratio", 0.0, 1.0},
+    };
+    return capabilities;
+}
+
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
@@ -413,6 +423,8 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
                 ResolvePipelineAllowedParameterValues(legacy_type_name);
             support.integer_parameters =
                 ResolvePipelineIntegerParameters(legacy_type_name);
+            support.float_parameters =
+                ResolvePipelineFloatParameters(legacy_type_name);
             return support;
         };
 
@@ -762,6 +774,18 @@ std::vector<PipelineIntegerParameterRuntimeCapability>
 ResolvePipelineIntegerParameters(const std::string& legacy_type_name) {
     const auto& capabilities = GetPipelineIntegerParameterRuntimeCapabilities();
     std::vector<PipelineIntegerParameterRuntimeCapability> result;
+    for (const auto& capability : capabilities) {
+        if (legacy_type_name == capability.legacy_type_name) {
+            result.push_back(capability);
+        }
+    }
+    return result;
+}
+
+std::vector<PipelineFloatParameterRuntimeCapability>
+ResolvePipelineFloatParameters(const std::string& legacy_type_name) {
+    const auto& capabilities = GetPipelineFloatParameterRuntimeCapabilities();
+    std::vector<PipelineFloatParameterRuntimeCapability> result;
     for (const auto& capability : capabilities) {
         if (legacy_type_name == capability.legacy_type_name) {
             result.push_back(capability);

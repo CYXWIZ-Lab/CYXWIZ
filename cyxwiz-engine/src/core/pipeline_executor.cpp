@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cctype>
+#include <cmath>
 #include <queue>
 #include <sstream>
 #include <future>
@@ -923,6 +924,41 @@ bool ValidateCommaSeparatedIntegersAtLeast(
     return true;
 }
 
+bool IsFloatInRange(const std::string& value,
+                    double minimum,
+                    double maximum) {
+    const std::string trimmed = TrimString(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    double parsed = 0.0;
+    const char* begin = trimmed.data();
+    const char* end = trimmed.data() + trimmed.size();
+    auto [ptr, ec] = std::from_chars(begin, end, parsed);
+    return ec == std::errc() && ptr == end && std::isfinite(parsed) &&
+           parsed >= minimum && parsed <= maximum;
+}
+
+bool ValidateFloatParameterInRange(
+    const std::map<std::string, std::string>& parameters,
+    const std::string& node_type,
+    const std::string& parameter_name,
+    double minimum,
+    double maximum,
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    if (IsFloatInRange(it->second, minimum, maximum)) {
+        return true;
+    }
+    error = node_type + " " + parameter_name + " must be a number between " +
+            std::to_string(minimum) + " and " + std::to_string(maximum);
+    return false;
+}
+
 bool IsAllowedParameterValue(
     const PipelineAllowedParameterValuesRuntimeCapability& capability,
     const std::string& value) {
@@ -1071,6 +1107,8 @@ bool HasSupportedParameterValues(
         allowed_parameter_values,
     const std::vector<PipelineIntegerParameterRuntimeCapability>&
         integer_parameters,
+    const std::vector<PipelineFloatParameterRuntimeCapability>&
+        float_parameters,
     std::string& error) {
     for (const auto& capability : allowed_parameter_values) {
         auto it = parameters.find(capability.parameter_name);
@@ -1095,6 +1133,14 @@ bool HasSupportedParameterValues(
         } else if (!ValidateIntegerParameterAtLeast(
                        parameters, node_type, capability.parameter_name,
                        capability.minimum, error)) {
+            return false;
+        }
+    }
+
+    for (const auto& capability : float_parameters) {
+        if (!ValidateFloatParameterInRange(
+                parameters, node_type, capability.parameter_name,
+                capability.minimum, capability.maximum, error)) {
             return false;
         }
     }
@@ -1470,6 +1516,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                 node.parameters,
                 runtime_support.allowed_parameter_values,
                 runtime_support.integer_parameters,
+                runtime_support.float_parameters,
                 parameter_error)) {
             last_error_ = "Node '" + node.name + "': " + parameter_error;
             return false;

@@ -71,6 +71,13 @@ struct PipelineIntegerParameterRuntimeCapability {
     bool comma_separated = false;
 };
 
+struct PipelineFloatParameterRuntimeCapability {
+    const char* legacy_type_name;
+    const char* parameter_name;
+    double minimum;
+    double maximum;
+};
+
 struct PipelineUnsupportedTrainingNodeCapability {
     gui::NodeType node_type;
     const char* reason;
@@ -151,6 +158,7 @@ struct PipelineRuntimeSupport {
     std::vector<PipelineAllowedParameterValuesRuntimeCapability>
         allowed_parameter_values;
     std::vector<PipelineIntegerParameterRuntimeCapability> integer_parameters;
+    std::vector<PipelineFloatParameterRuntimeCapability> float_parameters;
     PipelineLegacyDispatchKind legacy_dispatch_kind =
         PipelineLegacyDispatchKind::Unknown;
     PipelineRuntimeImplementationOwner implementation_owner =
@@ -180,6 +188,9 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities();
 
 const std::vector<PipelineIntegerParameterRuntimeCapability>&
 GetPipelineIntegerParameterRuntimeCapabilities();
+
+const std::vector<PipelineFloatParameterRuntimeCapability>&
+GetPipelineFloatParameterRuntimeCapabilities();
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities();
@@ -240,6 +251,9 @@ ResolvePipelineAllowedParameterValues(const std::string& legacy_type_name);
 
 std::vector<PipelineIntegerParameterRuntimeCapability>
 ResolvePipelineIntegerParameters(const std::string& legacy_type_name);
+
+std::vector<PipelineFloatParameterRuntimeCapability>
+ResolvePipelineFloatParameters(const std::string& legacy_type_name);
 
 const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType node_type);
 
