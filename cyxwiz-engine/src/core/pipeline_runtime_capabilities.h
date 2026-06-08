@@ -69,6 +69,7 @@ struct PipelineIntegerParameterRuntimeCapability {
     const char* parameter_name;
     int64_t minimum;
     bool comma_separated = false;
+    std::vector<int64_t> forbidden_values = {};
 };
 
 struct PipelineFloatParameterRuntimeCapability {

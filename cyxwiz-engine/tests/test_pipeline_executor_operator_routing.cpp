@@ -259,6 +259,40 @@ int main() {
           "ACFNode missing signal_col validation should be specific: " +
               missing_acf_signal_executor.GetLastError());
 
+    const std::string bad_acf_max_lag_json =
+        R"({"nodes":[)"
+        R"({"id":381,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":382,"type":"ACFNode","name":"BadACFLag","parameters":{)"
+        R"("signal_col":"signal","max_lag":"0"}})"
+        R"(],"links":[{"start_node":381,"end_node":382}]})";
+
+    cyxwiz::PipelineExecutor bad_acf_max_lag_executor;
+    Check(!bad_acf_max_lag_executor.ExecutePipeline(bad_acf_max_lag_json),
+          "ACFNode zero max_lag should fail validation");
+    Check(bad_acf_max_lag_executor.GetLastError().find(
+              "ACFNode max_lag must be an integer >= -1 except 0") !=
+              std::string::npos,
+          "ACFNode max_lag validation should be specific: " +
+              bad_acf_max_lag_executor.GetLastError());
+
+    const std::string bad_pacf_lags_json =
+        R"({"nodes":[)"
+        R"({"id":383,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":384,"type":"PACFNode","name":"BadPACFLags","parameters":{)"
+        R"("signal_col":"signal","lags":"0"}})"
+        R"(],"links":[{"start_node":383,"end_node":384}]})";
+
+    cyxwiz::PipelineExecutor bad_pacf_lags_executor;
+    Check(!bad_pacf_lags_executor.ExecutePipeline(bad_pacf_lags_json),
+          "PACFNode zero lags should fail validation");
+    Check(bad_pacf_lags_executor.GetLastError().find(
+              "PACFNode lags must be an integer >= -1 except 0") !=
+              std::string::npos,
+          "PACFNode lags validation should be specific: " +
+              bad_pacf_lags_executor.GetLastError());
+
     const std::string bad_time_series_split_ratio_json =
         R"({"nodes":[)"
         R"({"id":334,"type":"DataInput","name":"Input","parameters":{)"
@@ -1025,6 +1059,24 @@ int main() {
           "FilterDesigner sample_rate validation should be specific: " +
               bad_filter_sample_rate_executor.GetLastError());
 
+    const std::string bad_fft_sample_rate_json =
+        R"({"nodes":[)"
+        R"({"id":385,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":386,"type":"FFTNode","name":"BadFFTSampleRate","parameters":{)"
+        R"("signal_col":"signal","sample_rate":"0"}})"
+        R"(],"links":[{"start_node":385,"end_node":386}]})";
+
+    cyxwiz::PipelineExecutor bad_fft_sample_rate_executor;
+    Check(!bad_fft_sample_rate_executor.ExecutePipeline(
+              bad_fft_sample_rate_json),
+          "FFTNode zero sample_rate should fail validation");
+    Check(bad_fft_sample_rate_executor.GetLastError().find(
+              "FFTNode sample_rate must be a number greater than") !=
+              std::string::npos,
+          "FFTNode sample_rate validation should be specific: " +
+              bad_fft_sample_rate_executor.GetLastError());
+
     const std::string uppercase_filter_type_json =
         R"({"nodes":[)"
         R"({"id":354,"type":"DataInput","name":"Input","parameters":{)"
@@ -1057,6 +1109,42 @@ int main() {
               uppercase_decomposition_choices_executor.GetLastError());
     check_operator_field("ds_operator_TimeSeriesDecomposition_357", "trend",
                          "TimeSeriesDecomposition uppercase choices");
+
+    const std::string bad_stationarity_max_lags_json =
+        R"({"nodes":[)"
+        R"({"id":387,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":388,"type":"StationarityTest","name":"BadStationarityMaxLags","parameters":{)"
+        R"("signal_col":"signal","max_lags":"-2"}})"
+        R"(],"links":[{"start_node":387,"end_node":388}]})";
+
+    cyxwiz::PipelineExecutor bad_stationarity_max_lags_executor;
+    Check(!bad_stationarity_max_lags_executor.ExecutePipeline(
+              bad_stationarity_max_lags_json),
+          "StationarityTest max_lags below sentinel should fail validation");
+    Check(bad_stationarity_max_lags_executor.GetLastError().find(
+              "StationarityTest max_lags must be an integer >= -1") !=
+              std::string::npos,
+          "StationarityTest max_lags validation should be specific: " +
+              bad_stationarity_max_lags_executor.GetLastError());
+
+    const std::string bad_seasonality_min_period_json =
+        R"({"nodes":[)"
+        R"({"id":389,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":390,"type":"SeasonalityDetector","name":"BadSeasonalityMinPeriod","parameters":{)"
+        R"("signal_col":"signal","min_period":"1"}})"
+        R"(],"links":[{"start_node":389,"end_node":390}]})";
+
+    cyxwiz::PipelineExecutor bad_seasonality_min_period_executor;
+    Check(!bad_seasonality_min_period_executor.ExecutePipeline(
+              bad_seasonality_min_period_json),
+          "SeasonalityDetector min_period below 2 should fail validation");
+    Check(bad_seasonality_min_period_executor.GetLastError().find(
+              "SeasonalityDetector min_period must be an integer >= 2") !=
+              std::string::npos,
+          "SeasonalityDetector min_period validation should be specific: " +
+              bad_seasonality_min_period_executor.GetLastError());
 
     const std::string uppercase_exp_smoothing_method_json =
         R"({"nodes":[)"

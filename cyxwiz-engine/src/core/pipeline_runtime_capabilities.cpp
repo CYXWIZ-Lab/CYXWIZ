@@ -320,6 +320,12 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"FilterDesigner", "order", 1, false},
         {"PolynomialRegressionNode", "degree", 1, false},
         {"TimeSeriesDecomposition", "period", 2, false},
+        {"ACFNode", "max_lag", -1, false, {0}},
+        {"ACFNode", "lags", -1, false, {0}},
+        {"PACFNode", "max_lag", -1, false, {0}},
+        {"PACFNode", "lags", -1, false, {0}},
+        {"StationarityTest", "max_lags", -1, false},
+        {"SeasonalityDetector", "min_period", 2, false},
     };
     return capabilities;
 }
@@ -335,6 +341,7 @@ GetPipelineFloatParameterRuntimeCapabilities() {
         {"TargetEncoder", "smoothing", 0.0, std::nullopt},
         {"OutlierDetector", "threshold", 0.0, std::nullopt, false},
         {"DBSCANCluster", "eps", 0.0, std::nullopt, false},
+        {"FFTNode", "sample_rate", 0.0, std::nullopt, false},
         {"FilterDesigner", "cutoff", 0.0, std::nullopt, false},
         {"FilterDesigner", "sample_rate", 0.0, std::nullopt, false},
     };

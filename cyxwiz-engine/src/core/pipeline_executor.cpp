@@ -866,15 +866,47 @@ bool BuildMathFormulaExpression(const std::shared_ptr<arrow::Table>& table,
     return true;
 }
 
-bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
+bool TryParseInteger(const std::string& value, int64_t& parsed) {
     if (value.empty()) {
         return false;
     }
-    int64_t parsed = 0;
     const char* begin = value.data();
     const char* end = value.data() + value.size();
     auto [ptr, ec] = std::from_chars(begin, end, parsed);
-    return ec == std::errc() && ptr == end && parsed >= minimum;
+    return ec == std::errc() && ptr == end;
+}
+
+bool IsForbiddenIntegerValue(
+    int64_t value,
+    const std::vector<int64_t>& forbidden_values) {
+    return std::find(forbidden_values.begin(), forbidden_values.end(), value) !=
+           forbidden_values.end();
+}
+
+bool IsIntegerAtLeastExcept(const std::string& value,
+                            int64_t minimum,
+                            const std::vector<int64_t>& forbidden_values) {
+    int64_t parsed = 0;
+    return TryParseInteger(value, parsed) && parsed >= minimum &&
+           !IsForbiddenIntegerValue(parsed, forbidden_values);
+}
+
+bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
+    return IsIntegerAtLeastExcept(value, minimum, {});
+}
+
+std::string DescribeIntegerParameterBounds(
+    int64_t minimum,
+    const std::vector<int64_t>& forbidden_values) {
+    std::string description = "integer >= " + std::to_string(minimum);
+    if (!forbidden_values.empty()) {
+        description += " except";
+        for (size_t i = 0; i < forbidden_values.size(); ++i) {
+            description += (i == 0 ? " " : ", ") +
+                           std::to_string(forbidden_values[i]);
+        }
+    }
+    return description;
 }
 
 bool ValidateIntegerParameterAtLeast(
@@ -882,16 +914,17 @@ bool ValidateIntegerParameterAtLeast(
     const std::string& node_type,
     const std::string& parameter_name,
     int64_t minimum,
+    const std::vector<int64_t>& forbidden_values,
     std::string& error) {
     auto it = parameters.find(parameter_name);
     if (it == parameters.end() || it->second.empty()) {
         return true;
     }
-    if (IsIntegerAtLeast(it->second, minimum)) {
+    if (IsIntegerAtLeastExcept(it->second, minimum, forbidden_values)) {
         return true;
     }
-    error = node_type + " " + parameter_name + " must be an integer >= " +
-            std::to_string(minimum);
+    error = node_type + " " + parameter_name + " must be an " +
+            DescribeIntegerParameterBounds(minimum, forbidden_values);
     return false;
 }
 
@@ -900,6 +933,7 @@ bool ValidateCommaSeparatedIntegersAtLeast(
     const std::string& node_type,
     const std::string& parameter_name,
     int64_t minimum,
+    const std::vector<int64_t>& forbidden_values,
     std::string& error) {
     auto it = parameters.find(parameter_name);
     if (it == parameters.end()) {
@@ -907,18 +941,26 @@ bool ValidateCommaSeparatedIntegersAtLeast(
     }
     if (it->second.empty()) {
         error = node_type + " " + parameter_name +
-                " must be a comma-separated list of integers >= " +
-                std::to_string(minimum);
+                " must be a comma-separated list of ";
+        if (forbidden_values.empty()) {
+            error += "integers >= " + std::to_string(minimum);
+        } else {
+            error += DescribeIntegerParameterBounds(minimum, forbidden_values);
+        }
         return false;
     }
 
     std::stringstream values(it->second);
     std::string value;
     while (std::getline(values, value, ',')) {
-        if (!IsIntegerAtLeast(value, minimum)) {
+        if (!IsIntegerAtLeastExcept(value, minimum, forbidden_values)) {
             error = node_type + " " + parameter_name +
-                    " must be a comma-separated list of integers >= " +
-                    std::to_string(minimum);
+                    " must be a comma-separated list of ";
+            if (forbidden_values.empty()) {
+                error += "integers >= " + std::to_string(minimum);
+            } else {
+                error += DescribeIntegerParameterBounds(minimum, forbidden_values);
+            }
             return false;
         }
     }
@@ -1179,12 +1221,13 @@ bool HasSupportedParameterValues(
         if (capability.comma_separated) {
             if (!ValidateCommaSeparatedIntegersAtLeast(
                     parameters, node_type, capability.parameter_name,
-                    capability.minimum, error)) {
+                    capability.minimum, capability.forbidden_values, error)) {
                 return false;
             }
         } else if (!ValidateIntegerParameterAtLeast(
                        parameters, node_type, capability.parameter_name,
-                       capability.minimum, error)) {
+                       capability.minimum, capability.forbidden_values,
+                       error)) {
             return false;
         }
     }

@@ -490,6 +490,16 @@ requires a nonnegative number, while `OutlierDetector.threshold`,
 checks such as band-filter `cutoff_high > cutoff` remain local operator
 validation.
 
+**Status 2026-06-08 follow-up 43:** The central integer-parameter
+validation axis now supports explicit forbidden scalar values, covering
+time-series analysis controls whose valid domain is an auto sentinel plus
+a positive range. `ACFNode.max_lag`, `ACFNode.lags`,
+`PACFNode.max_lag`, and `PACFNode.lags` now reject `0` before source
+execution while still accepting `-1` auto mode and positive lag counts.
+The same grouped pass moved `StationarityTest.max_lags`,
+`SeasonalityDetector.min_period`, and `FFTNode.sample_rate` scalar bounds
+into central executor validation.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or
