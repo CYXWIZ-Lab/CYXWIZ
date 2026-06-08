@@ -636,6 +636,25 @@ int main() {
           "StandardScaler columns validation should be specific: " +
               bad_standard_scaler_column_type_executor.GetLastError());
 
+    const std::string bad_standard_scaler_label_col_json =
+        R"({"nodes":[)"
+        R"({"id":411,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":412,"type":"StandardScaler","name":"BadScalerLabel","parameters":{)"
+        R"("label_col":"missing","with_mean":"true"}})"
+        R"(],"links":[{"start_node":411,"end_node":412}]})";
+
+    cyxwiz::PipelineExecutor bad_standard_scaler_label_col_executor;
+    Check(!bad_standard_scaler_label_col_executor.ExecutePipeline(
+              bad_standard_scaler_label_col_json),
+          "StandardScaler missing label_col should fail schema validation");
+    Check(bad_standard_scaler_label_col_executor.GetLastError().find(
+              "StandardScaler: label column 'missing' not found") !=
+              std::string::npos,
+          "StandardScaler label_col validation should be specific: " +
+              bad_standard_scaler_label_col_executor.GetLastError());
+
     const std::string bad_robust_scaler_centering_json =
         R"({"nodes":[)"
         R"({"id":308,"type":"DataInput","name":"Input","parameters":{)"
@@ -748,6 +767,28 @@ int main() {
     Check(outliers_table != nullptr, "OutlierDetector output table exists");
     Check(outliers_table->schema()->GetFieldIndex("is_outlier") >= 0,
           "OutlierDetector output has is_outlier column");
+
+    const std::string outlier_all_columns_json =
+        R"({"nodes":[)"
+        R"({"id":413,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":414,"type":"OutlierDetector","name":"OutliersAll","parameters":{)"
+        R"("columns":"ALL","label_col":"y","method":"iqr","threshold":"1.5"}})"
+        R"(],"links":[{"start_node":413,"end_node":414}]})";
+
+    cyxwiz::PipelineExecutor outlier_all_columns_executor;
+    Check(outlier_all_columns_executor.ExecutePipeline(outlier_all_columns_json),
+          "OutlierDetector columns=ALL should preserve auto-detect semantics: " +
+              outlier_all_columns_executor.GetLastError());
+    auto outliers_all = registry.GetArrowDataset("ds_operator_OutlierDetector_414");
+    Check(outliers_all != nullptr,
+          "OutlierDetector columns=ALL output dataset is registered");
+    auto outliers_all_table = outliers_all->GetArrowTable();
+    Check(outliers_all_table != nullptr,
+          "OutlierDetector columns=ALL output table exists");
+    Check(outliers_all_table->schema()->GetFieldIndex("is_outlier") >= 0,
+          "OutlierDetector columns=ALL output has is_outlier column");
 
     const std::string bad_pca_center_json =
         R"({"nodes":[)"
@@ -1099,6 +1140,25 @@ int main() {
           "KMeansCluster uppercase init should execute after normalization: " +
               uppercase_kmeans_init_executor.GetLastError());
     check_cluster_output("ds_operator_KMeansCluster_341", "KMeansCluster uppercase init");
+
+    const std::string bad_kmeans_label_col_json =
+        R"({"nodes":[)"
+        R"({"id":415,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":416,"type":"KMeansCluster","name":"BadKMeansLabel","parameters":{)"
+        R"("label_col":"missing","n_clusters":"2","max_iter":"10","n_init":"1"}})"
+        R"(],"links":[{"start_node":415,"end_node":416}]})";
+
+    cyxwiz::PipelineExecutor bad_kmeans_label_col_executor;
+    Check(!bad_kmeans_label_col_executor.ExecutePipeline(
+              bad_kmeans_label_col_json),
+          "KMeansCluster missing label_col should fail schema validation");
+    Check(bad_kmeans_label_col_executor.GetLastError().find(
+              "KMeansCluster: label column 'missing' not found") !=
+              std::string::npos,
+          "KMeansCluster label_col validation should be specific: " +
+              bad_kmeans_label_col_executor.GetLastError());
 
     const std::string bad_dbscan_eps_json =
         R"({"nodes":[)"

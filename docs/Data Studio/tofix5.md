@@ -534,6 +534,16 @@ work is now narrower: node families with custom expression semantics,
 optional exclusion-only labels, or storage-mode-specific checks still
 need separate audits.
 
+**Status 2026-06-08 follow-up 47:** Optional exclusion-only `label_col`
+selectors are now schema-checked for the numeric auto-detect families
+that use them to keep labels out of feature selection. `StandardScaler`,
+`MinMaxScaler`, `RobustScaler`, `OutlierDetector`, and the clustering
+operators fail early when a supplied `label_col` is missing instead of
+silently including the intended label in auto-detected numeric features.
+The same pass preserved `OutlierDetector.columns=all` as the documented
+auto-detect spelling, including case variants accepted by central
+validation, instead of treating `all` as a literal column name.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or

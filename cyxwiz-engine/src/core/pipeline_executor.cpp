@@ -1431,6 +1431,29 @@ bool ValidateOptionalRoleColumnKind(
                                  predicate, error);
 }
 
+bool ValidateOptionalRoleColumnExists(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+    if (table->schema()->GetFieldIndex(it->second) < 0) {
+        error = node_type + ": " + role + " column '" + it->second +
+                "' not found";
+        return false;
+    }
+    return true;
+}
+
 bool ValidateTextOperatorInputSchema(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& node_type,
@@ -1527,6 +1550,19 @@ bool ValidateFeatureColumnsInputSchema(
         IsNumericArrowType, error);
 }
 
+bool ValidateFeatureColumnsWithLabelInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateFeatureColumnsInputSchema(table, node_type, parameters,
+                                           error)) {
+        return false;
+    }
+    return ValidateOptionalRoleColumnExists(
+        table, node_type, parameters, "label_col", "label", error);
+}
+
 bool ValidateNumericColumnsInputSchema(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& node_type,
@@ -1535,6 +1571,34 @@ bool ValidateNumericColumnsInputSchema(
     return ValidateOptionalRoleColumnListKind(
         table, node_type, parameters, "columns", "column", "numeric",
         IsNumericArrowType, error);
+}
+
+bool ValidateNumericColumnsWithLabelInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    if (!ValidateNumericColumnsInputSchema(table, node_type, parameters,
+                                           error)) {
+        return false;
+    }
+    return ValidateOptionalRoleColumnExists(
+        table, node_type, parameters, "label_col", "label", error);
+}
+
+bool ValidateOutlierDetectorInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    const auto columns_it = parameters.find("columns");
+    if (columns_it != parameters.end() &&
+        ToLowerAscii(TrimString(columns_it->second)) == "all") {
+        return ValidateOptionalRoleColumnExists(
+            table, node_type, parameters, "label_col", "label", error);
+    }
+    return ValidateNumericColumnsWithLabelInputSchema(table, node_type,
+                                                     parameters, error);
 }
 
 bool ValidateCategoricalColumnsInputSchema(
@@ -1638,9 +1702,11 @@ bool ValidatePipelineOperatorInputSchema(
         case gui::NodeType::StandardScaler:
         case gui::NodeType::MinMaxScaler:
         case gui::NodeType::RobustScaler:
+            return ValidateNumericColumnsWithLabelInputSchema(
+                table, node_type, parameters, error);
         case gui::NodeType::OutlierDetector:
-            return ValidateNumericColumnsInputSchema(table, node_type,
-                                                     parameters, error);
+            return ValidateOutlierDetectorInputSchema(table, node_type,
+                                                      parameters, error);
         case gui::NodeType::PCANode:
             return ValidatePCAInputSchema(table, node_type, parameters,
                                           error);
@@ -1648,8 +1714,8 @@ bool ValidatePipelineOperatorInputSchema(
         case gui::NodeType::DBSCANCluster:
         case gui::NodeType::HierarchicalCluster:
         case gui::NodeType::GMMCluster:
-            return ValidateFeatureColumnsInputSchema(table, node_type,
-                                                     parameters, error);
+            return ValidateFeatureColumnsWithLabelInputSchema(
+                table, node_type, parameters, error);
         case gui::NodeType::LinearRegressionNode:
             return ValidateLinearRegressionInputSchema(table, node_type,
                                                        parameters, error);

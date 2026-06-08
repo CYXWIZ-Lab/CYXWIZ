@@ -631,8 +631,11 @@ bool OutlierDetectorOperator::Configure(
     // "columns" can be "all" or a csv list. "all" maps to empty =
     // auto-detect numeric (matches ResolveFeatureColumns semantic).
     auto c = params.find("columns");
-    if (c != params.end() && !c->second.empty() && c->second != "all") {
-        ParseCommaList(c->second, columns_);
+    if (c != params.end() && !c->second.empty()) {
+        const std::string columns_value = ToLowerAscii(TrimString(c->second));
+        if (columns_value != "all") {
+            ParseCommaList(c->second, columns_);
+        }
     }
 
     auto lc = params.find("label_col");
