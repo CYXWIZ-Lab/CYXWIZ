@@ -2498,7 +2498,7 @@ int main() {
 
     cyxwiz::PipelineExecutor bad_crop_range_executor;
     Check(!bad_crop_range_executor.ExecutePipeline(bad_crop_range_json),
-          "TableCropper invalid row range should fail execution");
+          "TableCropper invalid row range should fail validation");
     Check(bad_crop_range_executor.GetLastError().find(
               "end_row must be >= start_row") != std::string::npos,
           "TableCropper invalid row range error should be specific: " +

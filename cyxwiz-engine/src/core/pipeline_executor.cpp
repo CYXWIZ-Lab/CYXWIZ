@@ -1423,6 +1423,23 @@ bool HasSupportedParameterValues(
         }
     }
 
+    if (node_type == "TableCropper") {
+        const auto start_row_it = parameters.find("start_row");
+        const auto end_row_it = parameters.find("end_row");
+        const int64_t start_row =
+            (start_row_it != parameters.end() && !start_row_it->second.empty())
+                ? std::stoll(start_row_it->second)
+                : 0;
+        const int64_t end_row =
+            (end_row_it != parameters.end() && !end_row_it->second.empty())
+                ? std::stoll(end_row_it->second)
+                : -1;
+        if (end_row >= 0 && end_row < start_row) {
+            error = "TableCropper end_row must be >= start_row";
+            return false;
+        }
+    }
+
     if (node_type == "TextClean") {
         if (!ValidateOptionalBooleanParameter(
                 parameters, node_type, "lowercase", error) ||

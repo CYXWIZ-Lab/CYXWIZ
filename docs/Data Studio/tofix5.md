@@ -616,6 +616,11 @@ runtime registry until a real Excel Arrow loader exists. Fail-closed
 runtime support now takes priority over typed legacy dispatch, preventing
 `ExcelFile` metadata from reaching the stale `ExecuteExcelInput()` path.
 
+**Status 2026-06-08 follow-up 56:** `TableCropper` now validates the
+`end_row >= start_row` cross-field rule centrally before execution when
+`end_row` is not the `-1` tail sentinel. Invalid crop ranges no longer
+load the upstream table before failing in the slice path.
+
 **Status 2026-06-08 follow-up 12:** Cycle validation is covered by
 `ValidatePipeline()` through `TopologicalSort()`, and the executor routing
 test now locks that behavior with a cyclic two-node graph. Disconnected
