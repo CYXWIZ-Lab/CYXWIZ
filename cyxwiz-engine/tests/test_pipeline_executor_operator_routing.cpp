@@ -542,6 +542,21 @@ int main() {
           "DataInput ml_dataset source error should be specific: " +
               unsupported_ml_dataset_source_executor.GetLastError());
 
+    const std::string unsupported_folder_category_json =
+        R"({"nodes":[)"
+        R"({"id":361,"type":"DataInput","name":"AudioFolder","parameters":{)"
+        R"("source_type":"folder","folder_path":"ignored","file_category":"audio"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor unsupported_folder_category_executor;
+    Check(!unsupported_folder_category_executor.ExecutePipeline(
+              unsupported_folder_category_json),
+          "DataInput audio folder should fail validation on PipelineExecutor");
+    Check(unsupported_folder_category_executor.GetLastError().find(
+              "folder source only supports image category") != std::string::npos,
+          "DataInput folder category validation should be specific: " +
+              unsupported_folder_category_executor.GetLastError());
+
     const std::string bad_skip_rows_json =
         R"({"nodes":[)"
         R"({"id":9,"type":"DataInput","name":"BadSkipRows","parameters":{)"

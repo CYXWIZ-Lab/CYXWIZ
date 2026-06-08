@@ -1525,6 +1525,17 @@ bool HasSupportedParameterValues(
             error = "DataInput sheet_idx must be a non-negative integer";
             return false;
         }
+        if (source_type == "folder") {
+            const auto category_it = parameters.find("file_category");
+            const std::string file_category =
+                (category_it != parameters.end() && !category_it->second.empty())
+                    ? ToLowerAscii(TrimString(category_it->second))
+                    : "image";
+            if (file_category != "image") {
+                error = "DataInput folder source only supports image category in PipelineExecutor";
+                return false;
+            }
+        }
     }
 
     return true;

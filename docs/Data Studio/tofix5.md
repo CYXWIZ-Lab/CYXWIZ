@@ -621,6 +621,12 @@ runtime support now takes priority over typed legacy dispatch, preventing
 `end_row` is not the `-1` tail sentinel. Invalid crop ranges no longer
 load the upstream table before failing in the slice path.
 
+**Status 2026-06-08 follow-up 57:** `DataInput.source_type=folder` now
+fails validation for non-image `file_category` values on the
+PipelineExecutor path. The executor's folder branch only implements
+`LoadImageFolderToArrow()`, so audio/text folders no longer pass runtime
+validation and then fall into the image-folder loader.
+
 **Status 2026-06-08 follow-up 12:** Cycle validation is covered by
 `ValidatePipeline()` through `TopologicalSort()`, and the executor routing
 test now locks that behavior with a cyclic two-node graph. Disconnected
