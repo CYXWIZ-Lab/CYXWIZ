@@ -480,6 +480,72 @@ int main() {
     Check(HasIssueText(config, "freeze/unfreeze ownership"),
           "fine-tune sketch should report missing freeze contract");
 
+    auto policy = Node(30,
+                       gui::NodeType::PolicyNetwork,
+                       "Policy Sketch",
+                       {Pin(3001, gui::PinType::Tensor, "Observation", true)},
+                       {Pin(3002, gui::PinType::Tensor, "Action", false)});
+    policy.parameters["hidden_sizes"] = "8";
+
+    nodes = {data, policy, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 30, 3001),
+        Link(2, 30, 3002, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected RL policy training path should be invalid");
+    Check(HasIssueText(config, "reinforcement-learning training"),
+          "RL policy path should report missing RL training contract");
+    Check(HasIssueText(config, "environment stepping loop"),
+          "RL policy path should report missing environment loop");
+
+    auto policy_side_output = Node(31,
+                                   gui::NodeType::Output,
+                                   "Policy Side Output",
+                                   {Pin(3101, gui::PinType::Tensor, "Input", true)},
+                                   {});
+
+    nodes = {data, dense, loss, optimizer, policy, policy_side_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 1, 101, 30, 3001),
+        Link(6, 30, 3002, 31, 3101),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side RL policy outside selected training path should not block compile");
+    Check(!HasIssueText(config, "Policy Sketch"),
+          "side RL policy should not be reported");
+
+    auto rl_dense = dense;
+    rl_dense.name = "RL Dense Sketch";
+    rl_dense.parameters["rl_training"] = "true";
+    rl_dense.parameters["reward_column"] = "reward";
+
+    nodes = {data, rl_dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected RL objective sketch should be invalid");
+    Check(HasIssueText(config, "rl_training"),
+          "RL sketch should report the matched parameter");
+    Check(HasIssueText(config, "policy/value loss contracts"),
+          "RL sketch should report missing policy/value loss contract");
+
     for (const auto& scheduler_case :
          cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         auto scheduler = Node(18,

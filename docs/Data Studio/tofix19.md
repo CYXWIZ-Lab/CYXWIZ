@@ -368,6 +368,137 @@ These are the shared blockers behind most unsupported families:
 
 ---
 
+## Missing Algorithm And Backend Implementation Backlog
+
+This section is the implementation map. It separates missing algorithms from
+the surrounding contracts needed to train them truthfully. A layer or loss
+implemented in isolation does not make the model family supported until the
+batch schema, compiler path, executor path, metrics, and packaging are tested
+end to end.
+
+### Sequence Tagging / NER
+
+Implement:
+
+- first-class `TokenVocabulary`, `POSVocabulary`, and `NERTagVocabulary`
+  metadata/runtime nodes,
+- `NERSequenceBuilder` that materializes `word_ids`, optional `pos_ids`,
+  `attention_mask`, and `tag_ids`,
+- label padding and `ignore_index` preservation from graph config into the
+  loss builder,
+- `TimeDistributedDense` or equivalent per-token projection over
+  `[batch, seq, hidden]`,
+- token cross-entropy over `[batch, seq, tags]`,
+- token accuracy plus BIO entity precision/recall/F1,
+- compiler and executor tests that train one tiny NER graph end to end.
+
+### Decoder / Generative Text
+
+Implement:
+
+- trainable `TransformerDecoder` module integration in `ModelBuilder`,
+- causal mask construction and propagation through the training batch,
+- shifted-token target materializer for decoder-only and seq2seq objectives,
+- token-level language-model loss with padding ignore support,
+- generation/sampling inference loop separate from supervised training,
+- tokenizer/vocabulary packaging in exported model artifacts,
+- smoke tests for a tiny causal LM and a tiny encoder-decoder graph.
+
+### CNN Vision
+
+Implement:
+
+- trainable `Conv1D`, `Conv2D`, and eventually `Conv3D` module wrappers,
+- pooling/global-pooling wrappers and verified flatten/global-pool handoff,
+- image tensor layout contract with explicit `[N,C,H,W]` or `[N,H,W,C]`
+  conversion rules,
+- shape inference for convolution, pooling, padding, stride, dilation, and
+  channel order,
+- CNN optimizer/loss smoke tests for MNIST/CIFAR-sized graphs.
+
+### Detection And Segmentation
+
+Implement:
+
+- target schemas for boxes, classes, masks, areas, image ids, and variable
+  object counts,
+- detection/segmentation heads with named outputs,
+- loss aggregation for classification, box regression, objectness, and mask
+  losses,
+- NMS and mAP/IoU metrics as task-specific evaluation paths,
+- dataset adapters for COCO/YOLO/VOC-style annotations,
+- tiny detection/segmentation compile and training smoke tests.
+
+### Multi-Input / Shared-Weight / Metric Learning
+
+Implement:
+
+- named multi-input batch payloads for pairs and triplets,
+- graph representation for shared modules and tied weights,
+- selected-path compiler support for one module reused across multiple inputs,
+- pair/triplet sampling or mining contracts,
+- contrastive/triplet loss shape validation connected to named inputs,
+- smoke tests for Siamese and triplet graphs.
+
+### Multi-Task / Multi-Head
+
+Implement:
+
+- structured model outputs with named tensors,
+- loss aggregation node with explicit weights and per-loss target schema,
+- per-head metric routing and logging,
+- graph-plan support for multiple prediction edges feeding multiple losses,
+- tests proving two-head graphs optimize both heads instead of silently using
+  one loss.
+
+### Autoencoders / VAEs / GANs / Diffusion
+
+Implement:
+
+- reconstruction-target routing for autoencoders,
+- latent mean/logvar outputs and KL-loss contract for VAEs,
+- alternating optimizer/training-step orchestration for GANs,
+- diffusion noise scheduler, timestep conditioning, and noise-prediction loss,
+- generation/decoder output packaging for image synthesis,
+- tests for one tiny autoencoder before attempting VAE/GAN/diffusion work.
+
+### Graph Neural Networks
+
+Implement:
+
+- graph dataset schema with node features, edge indices, edge features, and
+  graph batch ids,
+- sparse adjacency/edge-index tensor handling,
+- message-passing module family such as GCN/GAT/GraphSAGE,
+- node-level, edge-level, and graph-level loss/metric routing,
+- batching tests for multiple small graphs in one batch.
+
+### Reinforcement Learning
+
+Implement:
+
+- environment stepping loop as the primary training driver,
+- rollout/replay buffer schemas,
+- policy/value model output contracts,
+- RL losses such as policy gradient, value loss, entropy bonus, and target
+  network updates,
+- checkpoint/evaluation metrics for episodic returns,
+- tiny DQN/PPO-style tests once the driver contract exists.
+
+### Pretrained Import / Fine-Tuning
+
+Implement:
+
+- model-import to training-graph conversion for supported formats only,
+- parameter-name and shape mapping into trainable modules,
+- freeze/unfreeze ownership at module/parameter granularity,
+- optimizer-state compatibility checks for resumed training,
+- tokenizer/preprocessor compatibility and artifact packaging,
+- tests that import a tiny saved model, attach a head, freeze the base, and
+  fine-tune only the head.
+
+---
+
 ## Recommended Engineering Order
 
 ### Phase 1 - Truth And Import Guardrails
@@ -409,6 +540,13 @@ Completed so far:
   import-to-training-graph contract for parameter mapping, shape validation,
   freeze ownership, optimizer-state compatibility, or tokenizer/preprocessor
   packaging.
+- `GraphCompiler` now rejects selected training paths that sketch
+  reinforcement-learning training with RL nodes, policy/value nodes, or explicit
+  RL markers such as rollout/replay, reward/action/state columns, actor-critic,
+  policy-gradient, target-network, or episodic settings. The current trainer is
+  a supervised single-batch executor and lacks an environment stepping loop,
+  rollout/replay buffer schema, policy/value loss contracts, target-network
+  handling, and episodic metrics.
 
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.

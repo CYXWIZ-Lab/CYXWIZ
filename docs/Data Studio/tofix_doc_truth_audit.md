@@ -58,6 +58,11 @@ scanning so stale or duplicate work is not reintroduced.
 
 ## Patch Log
 
+- 2026-06-08 follow-up: expanded `tofix19` with a missing algorithm/backend
+  implementation backlog, and accepted a guardrail slice that rejects selected
+  reinforcement-learning training sketches until CyxWiz has an environment
+  stepping loop, rollout/replay schemas, policy/value losses, target-network
+  handling, and episodic metrics.
 - 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
   selected imported/pretrained fine-tuning sketches (pretrained shortcut nodes,
   DNN model-load nodes, fine-tune/transfer-learning flags, model/checkpoint

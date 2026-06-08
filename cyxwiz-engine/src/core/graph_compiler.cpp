@@ -299,6 +299,62 @@ bool LooksLikeImportedFineTuningSketch(const gui::MLNode& node,
     return false;
 }
 
+bool LooksLikeRLTrainingSketch(const gui::MLNode& node,
+                               std::string& matched_key) {
+    if (node.type == gui::NodeType::GymEnvironment ||
+        node.type == gui::NodeType::ReplayBufferNode ||
+        node.type == gui::NodeType::PolicyNetwork ||
+        node.type == gui::NodeType::ValueNetwork ||
+        node.type == gui::NodeType::RLTraining) {
+        matched_key = "RL node";
+        return true;
+    }
+
+    const auto& params = node.parameters;
+    const char* enabled_keys[] = {
+        "rl_training",
+        "reinforcement_learning",
+        "policy_gradient",
+        "actor_critic",
+        "replay_buffer",
+        "target_network",
+        "rollout_buffer"
+    };
+
+    for (const char* key : enabled_keys) {
+        if (ParamIsEnabled(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    const char* design_keys[] = {
+        "env_name",
+        "environment",
+        "reward_column",
+        "action_column",
+        "state_column",
+        "next_state_column",
+        "done_column",
+        "rollout_steps",
+        "episode_length",
+        "rl_gamma",
+        "gae_lambda",
+        "policy_loss",
+        "value_loss",
+        "entropy_bonus"
+    };
+
+    for (const char* key : design_keys) {
+        if (HasParam(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -1229,6 +1285,21 @@ void ValidateTrainingPathImplementationStatus(
                    "mapping, shape validation, freeze/unfreeze ownership, "
                    "optimizer-state compatibility, and tokenizer/preprocessor "
                    "packaging before it can compile truthfully.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        std::string rl_key;
+        if (LooksLikeRLTrainingSketch(node, rl_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' sketches reinforcement-learning training via '"
+                << rl_key
+                << "', but Studio training is currently a supervised "
+                   "single-batch executor. This path needs an environment "
+                   "stepping loop, rollout/replay buffer schema, policy/value "
+                   "loss contracts, target-network handling, and episodic "
+                   "metrics before it can compile truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
