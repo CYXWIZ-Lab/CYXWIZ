@@ -93,10 +93,9 @@ struct ApplyContext {
     std::string previous_dataset_name;   // prior Apply's name, if any (for cleanup)
 
     // Tabular-specific ------------------------------------------------
-    // detected_file_type is the stringified enum index — "auto", "csv",
-    // "tsv", "json", "parquet", "excel", "hdf5", "feather", "arrow",
-    // "txt", "arff". LoadTabularCSV handles csv/tsv/txt/arff; the
-    // others each have a dedicated LoadXToArrow call.
+    // detected_file_type is the stringified enum index. The tabular Apply
+    // path accepts auto/csv/tsv/parquet/feather/arrow/ipc; unsupported
+    // values fail validation before async loading starts.
     std::string detected_file_type;
     bool has_header = true;
     char delimiter = ',';

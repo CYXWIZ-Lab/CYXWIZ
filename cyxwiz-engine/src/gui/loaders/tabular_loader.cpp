@@ -81,8 +81,6 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const int skip_rows          = ctx.skip_rows;
     const int64_t max_rows       = ctx.max_rows;
     const bool force_disk        = ctx.force_disk_backed;
-    const bool json_lines        = ctx.json_lines;
-    const int excel_sheet        = ctx.excel_sheet_idx;
     const std::string label_col  = ctx.label_column;
 
     state->dataset_name = name;
@@ -92,14 +90,13 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     return mgr.RunAsync(
         "Loading " + name,
         [path, name, file_type, has_header, delim, skip_rows, max_rows,
-         force_disk, json_lines, excel_sheet, label_col, state]
+         force_disk, label_col, state]
         (cyxwiz::LambdaTask& task) {
             try {
                 task.ReportProgress(0.1f, "Reading " + file_type);
                 auto& reg = cyxwiz::DataRegistry::Instance();
 
-                if (file_type == "csv" || file_type == "tsv" ||
-                    file_type == "txt" || file_type == "arff") {
+                if (file_type == "csv" || file_type == "tsv") {
                     // CSV family — LoadTabularCSV auto-picks Arrow
                     // in-memory vs Parquet disk-backed.
                     auto backend = reg.LoadTabularCSV(
@@ -148,26 +145,13 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         state->message = "Failed to load CSV - check file format";
                     }
                 } else {
-                    // Non-CSV tabular formats go straight to Arrow in-memory.
-                    // Previously these ran synchronously on the UI thread; the
-                    // refactor puts them on the AsyncTaskManager worker along
-                    // with CSV so a large Parquet or Excel file no longer
-                    // freezes the dialog.
+                    // Non-CSV supported formats go straight to Arrow
+                    // in-memory on the AsyncTaskManager worker.
                     std::shared_ptr<cyxwiz::ArrowDataset> dataset;
                     if (file_type == "parquet") {
                         dataset = reg.LoadParquetToArrow(path, name);
-                    } else if (file_type == "json") {
-                        state->success = false;
-                        state->message = UnsupportedTabularFileTypeMessage(file_type);
-                        state->done.store(true);
-                        return;
-                    } else if (file_type == "excel") {
-                        state->success = false;
-                        state->message = UnsupportedTabularFileTypeMessage(file_type);
-                        state->done.store(true);
-                        return;
                     } else {
-                        // "auto" + anything else — LoadArrowTable auto-detects.
+                        // auto/feather/arrow/ipc use Arrow's table loader.
                         dataset = reg.LoadArrowTable(path, name);
                     }
                     task.ReportProgress(0.9f, "Finalizing");

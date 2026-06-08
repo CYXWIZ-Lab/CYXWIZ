@@ -306,6 +306,12 @@ graphs that specify contradictory `type` / `file_type` values fail closed.
 `ExecuteDataInput()` now resolves the same alias before loading, so
 `file_type=csv` does not silently fall back to auto-detect.
 
+**Status 2026-06-08 follow-up 64:** The tabular async loader no longer keeps
+dead support-era branches for JSON, Excel, TXT, or ARFF after validation has
+already rejected those file types. Its Apply context comment and async branch
+logic now match the supported tabular list, reducing the chance that future
+work reuses stale loader code as if those formats were executable.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used
