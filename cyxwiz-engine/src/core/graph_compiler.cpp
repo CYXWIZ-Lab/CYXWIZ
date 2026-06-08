@@ -387,6 +387,50 @@ void ValidateSingleDatasetReachableLossNode(
         "contract before it can compile truthfully.");
 }
 
+void ValidateSingleDatasetSourceForSelectedLoss(
+    const std::vector<gui::MLNode>& nodes,
+    const gui::MLNode* selected_loss,
+    const std::vector<gui::NodeLink>& links,
+    TrainingConfiguration& config) {
+
+    if (!selected_loss) {
+        return;
+    }
+
+    const auto loss_ancestors = CollectAncestorNodeIds(selected_loss->id, links);
+    std::vector<const gui::MLNode*> selected_sources;
+    for (const auto& node : nodes) {
+        if (IsDatasetSourceType(node.type) &&
+            loss_ancestors.count(node.id) > 0) {
+            selected_sources.push_back(&node);
+        }
+    }
+
+    if (selected_sources.size() <= 1) {
+        return;
+    }
+
+    std::ostringstream names;
+    for (size_t i = 0; i < selected_sources.size(); ++i) {
+        if (i > 0) {
+            names << ", ";
+        }
+        names << "'" << selected_sources[i]->name << "'";
+    }
+
+    AddIssue(
+        config,
+        IssueLevel::Error,
+        "Current Studio training supports exactly one dataset source on "
+        "the selected loss path. Found " +
+        std::to_string(selected_sources.size()) + " sources (" +
+        names.str() + ") feeding loss '" + selected_loss->name +
+        "'. Multi-input/shared-weight training needs a typed named-batch "
+        "contract before it can compile truthfully.",
+        selected_loss->id,
+        selected_loss->name);
+}
+
 bool ContainsWhenFiltered(
     const std::unordered_set<int>& node_ids,
     int node_id) {
@@ -1225,6 +1269,7 @@ TrainingConfiguration GraphCompiler::Compile(
         ValidateLossPredictionsReachModel(nodes, links, config);
         ValidateOptimizerReachesLoss(nodes, links, config);
         ValidateSingleDatasetReachableLossNode(nodes, dataset_reachable, config);
+        ValidateSingleDatasetSourceForSelectedLoss(nodes, loss_node, links, config);
         ValidateUnsupportedTrainingControlNodes(nodes, config);
     }
 

@@ -607,6 +607,62 @@ int main() {
     Check(HasIssueText(config, "loss aggregation"),
           "multi-loss graph should point to missing aggregation contract");
 
+    auto second_data = Node(23,
+                            gui::NodeType::DataInput,
+                            "Positive Data",
+                            {},
+                            {Pin(2301, gui::PinType::Tensor, "Data", false),
+                             Pin(2302, gui::PinType::Labels, "Labels", false)});
+    second_data.parameters["dataset_name"] = "positive_dataset";
+
+    nodes = {data, second_data, dense, second_head, add, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 23, 2301, 19, 1901),
+        Link(3, 2, 202, 9, 901),
+        Link(4, 19, 1902, 9, 902),
+        Link(5, 9, 903, 4, 401),
+        Link(6, 1, 102, 4, 402),
+        Link(7, 23, 2302, 4, 402),
+        Link(8, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "multi-input graph with two dataset sources feeding one loss should be invalid");
+    Check(HasIssueText(config, "exactly one dataset source"),
+          "multi-input graph should report single dataset-source training contract");
+    Check(HasIssueText(config, "typed named-batch contract"),
+          "multi-input graph should point to missing named-batch contract");
+
+    auto side_data = second_data;
+    side_data.id = 24;
+    side_data.name = "Side Data";
+    side_data.outputs = {Pin(2401, gui::PinType::Tensor, "Data", false),
+                         Pin(2402, gui::PinType::Labels, "Labels", false)};
+    side_data.outputs[1].is_required = false;
+
+    auto side_data_output = Node(25,
+                                 gui::NodeType::Output,
+                                 "Side Data Output",
+                                 {Pin(2501, gui::PinType::Tensor, "Input", true)},
+                                 {});
+
+    nodes = {data, dense, loss, optimizer, side_data, side_data_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 24, 2401, 25, 2501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side dataset source outside selected loss path should not block compile");
+    Check(!HasIssueText(config, "exactly one dataset source"),
+          "side dataset source should not report multi-input training contract");
+
     auto class_loss = Node(15,
                            gui::NodeType::CrossEntropyLoss,
                            "Class Loss",

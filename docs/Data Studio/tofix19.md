@@ -389,6 +389,11 @@ Completed so far:
   `loss_node_id` and no loss aggregation or alternating-step contract, so
   multi-head/multi-task, detection-style, VAE/GAN, and similar sketches
   fail closed instead of silently training only one selected loss.
+- `GraphCompiler` now rejects selected training paths where more than one
+  `DataInput`/`DatasetInput` source feeds the selected loss. The current
+  compiled plan and batcher contract expose one `data_node_id`, one data pin,
+  and one label pin, so Siamese/pair/triplet or other multi-input sketches need
+  a typed named-batch contract before they can compile truthfully.
 
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.

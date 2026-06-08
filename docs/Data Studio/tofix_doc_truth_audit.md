@@ -39,7 +39,7 @@ scanning so stale or duplicate work is not reintroduced.
 | `tofix16.md` | active/tracked | Keep active. Loader throughput/performance work remains deferred and distinct. |
 | `tofix17.md` | active/tracked | Updated. CPU fallback work from `done2.md`/`done10.md`/`done15.md` is no longer implied as undone. |
 | `tofix18.md` | active/tracked | Keep active. Pipeline canvas placeholder naming cleanup remains a separate deferred UI task. |
-| `tofix19.md` | active/tracked | Updated. Phase 1 truth guardrails now record Dense-encoded NER and multi-loss/multi-head compiler guards as started/completed slices. |
+| `tofix19.md` | active/tracked | Updated. Phase 1 truth guardrails now record Dense-encoded NER, multi-loss/multi-head, and multi-source compiler guards as started/completed slices. |
 | `tofix20.md` | active/tracked | New source of truth for broad runtime architecture follow-ups carried out of `done5.md`; Priority 3 string-only alias guard and Priority 5 `DataInput.source_type` cleanup started. |
 
 ## Findings
@@ -58,6 +58,10 @@ scanning so stale or duplicate work is not reintroduced.
 
 ## Patch Log
 
+- 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
+  selected training paths with multiple dataset sources until CyxWiz has a
+  typed named-batch contract for Siamese, pair/triplet, and other multi-input
+  training.
 - 2026-06-08 follow-up: started `tofix20` Priority 5 by removing the stale
   late `DataInput.source_type=ml_dataset` executor branch after central
   validation already limited DataInput sources to `file` and `folder`.
