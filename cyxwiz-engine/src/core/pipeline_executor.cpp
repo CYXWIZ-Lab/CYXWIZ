@@ -1934,8 +1934,6 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
             success = registry.ExportArrowToCSV(input_dataset_name, output_path);
         } else if (format == "parquet") {
             success = registry.ExportArrowToParquet(input_dataset_name, output_path);
-        } else if (format == "json") {
-            success = registry.ExportArrowToJSON(input_dataset_name, output_path);
         } else {
             ReportError("DataOutput: Unsupported export format: " + format);
             return false;
@@ -2237,8 +2235,6 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
                 success = registry.ExportArrowToCSV(input_dataset_name, output_path);
             } else if (format == "parquet") {
                 success = registry.ExportArrowToParquet(input_dataset_name, output_path);
-            } else if (format == "json") {
-                success = registry.ExportArrowToJSON(input_dataset_name, output_path);
             } else {
                 ReportError("SaveDataset: Unsupported export format: " + format);
                 return false;

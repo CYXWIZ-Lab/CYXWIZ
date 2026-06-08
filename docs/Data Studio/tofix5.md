@@ -252,15 +252,21 @@ other raw SQL tokens fail before query construction.
 
 **Status 2026-06-07 follow-up 2:** `SaveDataset` now matches its Data
 Studio node contract when a `path` is supplied: it exports through
-DataRegistry using supported `csv`, `parquet`, and `json` formats while
-preserving the legacy in-memory `name` alias behavior. Unsupported
-formats such as `arrow` now fail validation through the central allowed
-parameter registry instead of being advertised and ignored.
+DataRegistry using supported `csv` and `parquet` formats while preserving
+the legacy in-memory `name` alias behavior. Unsupported formats such as
+`arrow` now fail validation through the central allowed parameter registry
+instead of being advertised and ignored.
 
 **Status 2026-06-08 follow-up 38:** `SaveDataset` now also publishes its
 saved/aliased dataset name into the shared executor node-result binding.
 Graphs that use `SaveDataset` as an intermediate node can feed downstream
 transforms instead of losing the dataset after a successful save/export.
+
+**Status 2026-06-08 follow-up 39:** `DataOutput.format=json` and
+`SaveDataset.format=json` now fail validation instead of being advertised
+as supported while reaching the `DataRegistry::ExportArrowToJSON()` stub.
+Executable export formats are `csv` and `parquet` until native Arrow-table
+JSON export is implemented.
 
 **Status 2026-06-07 follow-up 3:** `ExportCSV` now accepts both the
 legacy `file_path` parameter and the Data Studio registry's `path`

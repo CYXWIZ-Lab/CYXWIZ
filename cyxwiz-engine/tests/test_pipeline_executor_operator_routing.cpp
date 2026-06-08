@@ -1436,6 +1436,22 @@ int main() {
           "bad DataOutput format validation should be specific: " +
               bad_output_format_executor.GetLastError());
 
+    const std::string json_output_format_json =
+        R"({"nodes":[)"
+        R"({"id":364,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":365,"type":"DataOutput","name":"JsonOutput","parameters":{)"
+        R"("file_path":"ignored.json","format":"json"}})"
+        R"(],"links":[{"start_node":364,"end_node":365}]})";
+
+    cyxwiz::PipelineExecutor json_output_format_executor;
+    Check(!json_output_format_executor.ExecutePipeline(json_output_format_json),
+          "DataOutput json format should fail validation until JSON export is real");
+    Check(json_output_format_executor.GetLastError().find(
+              "DataOutput format 'json' is not supported") != std::string::npos,
+          "DataOutput json format validation should be specific: " +
+              json_output_format_executor.GetLastError());
+
     const std::string missing_output_path_json =
         R"({"nodes":[)"
         R"({"id":31,"type":"DataInput","name":"Input","parameters":{)"
@@ -1581,6 +1597,24 @@ int main() {
               std::string::npos,
           "SaveDataset bad format validation should be specific: " +
               bad_save_dataset_format_executor.GetLastError());
+
+    const std::string json_save_dataset_format_json =
+        R"({"nodes":[)"
+        R"({"id":366,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":367,"type":"SaveDataset","name":"JsonSave","parameters":{)"
+        R"("path":"ignored.json","format":"json"}})"
+        R"(],"links":[{"start_node":366,"end_node":367}]})";
+
+    cyxwiz::PipelineExecutor json_save_dataset_format_executor;
+    Check(!json_save_dataset_format_executor.ExecutePipeline(
+              json_save_dataset_format_json),
+          "SaveDataset json format should fail validation until JSON export is real");
+    Check(json_save_dataset_format_executor.GetLastError().find(
+              "SaveDataset format 'json' is not supported") !=
+              std::string::npos,
+          "SaveDataset json format validation should be specific: " +
+              json_save_dataset_format_executor.GetLastError());
 
     const std::string export_json_json =
         R"({"nodes":[)"
