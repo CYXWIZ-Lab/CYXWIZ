@@ -565,6 +565,66 @@ bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
     return false;
 }
 
+bool LooksLikeGNNTrainingSketch(const gui::MLNode& node,
+                                std::string& matched_key) {
+    const char* sketch_names[] = {
+        "GraphConv",
+        "GraphConvolution",
+        "GCNConv",
+        "GATConv",
+        "GraphSAGEConv",
+        "SAGEConv",
+        "GINConv",
+        "MessagePassing",
+        "GNNLayer",
+        "GraphReadout",
+        "GraphPooling"
+    };
+
+    for (const char* name : sketch_names) {
+        if (node.name == name) {
+            matched_key = name;
+            return true;
+        }
+    }
+
+    const auto& params = node.parameters;
+    const char* enabled_keys[] = {
+        "gnn_training",
+        "graph_neural_network",
+        "message_passing",
+        "node_classification",
+        "link_prediction",
+        "graph_classification"
+    };
+
+    for (const char* key : enabled_keys) {
+        if (ParamIsEnabled(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    const char* design_keys[] = {
+        "edge_index",
+        "edge_index_column",
+        "edge_attr",
+        "edge_attr_column",
+        "node_feature_column",
+        "node_features_column",
+        "adjacency_matrix_column"
+    };
+
+    for (const char* key : design_keys) {
+        if (HasParam(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -1577,6 +1637,22 @@ void ValidateTrainingPathImplementationStatus(
                    "ownership, pair/triplet loss wiring, mining/sampling "
                    "rules, and embedding output packaging before it can "
                    "compile truthfully.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        std::string gnn_key;
+        if (LooksLikeGNNTrainingSketch(node, gnn_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' sketches graph-neural-network/GNN training via '"
+                << gnn_key
+                << "', but Studio training does not have a graph batch "
+                   "contract. This path needs graph batch schemas, "
+                   "edge-index/adjacency routing, message-passing kernels, "
+                   "node/edge/graph target contracts, neighborhood batching, "
+                   "and graph-level output packaging before it can compile "
+                   "truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }

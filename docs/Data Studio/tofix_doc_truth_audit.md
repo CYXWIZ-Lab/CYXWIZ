@@ -59,6 +59,18 @@ scanning so stale or duplicate work is not reintroduced.
 ## Patch Log
 
 - 2026-06-08 follow-up: accepted a `tofix20` Priority 5 parity slice that
+  centralizes `TextTokenizer.tokenizer_type` allowed values before operator
+  execution.
+- 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
+  selected graph-neural-network/GNN sketches until CyxWiz has graph batch
+  schemas, edge-index/adjacency routing, message-passing kernels,
+  node/edge/graph target contracts, neighborhood batching, and graph-level
+  output packaging.
+- 2026-06-08 follow-up: recorded that `tofix19` CNN/pooling/upsampling
+  training gaps are already enforced by the central unsupported
+  sequential-layer capability list and table-driven compiler tests, so no
+  duplicate CNN family guard was added.
+- 2026-06-08 follow-up: accepted a `tofix20` Priority 5 parity slice that
   normalizes `OrdinalEncoder.categories` at operator configuration time and
   pins both the mixed-case `auto` success path and numeric-column schema
   failure.

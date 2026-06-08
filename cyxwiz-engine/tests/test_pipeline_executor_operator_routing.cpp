@@ -717,6 +717,24 @@ int main() {
           "TextTokenizer lowercase validation should be specific: " +
               bad_text_tokenizer_lowercase_executor.GetLastError());
 
+    const std::string bad_text_tokenizer_type_json =
+        R"({"nodes":[)"
+        R"({"id":360,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":361,"type":"TextTokenizer","name":"BadTokenizerType","parameters":{)"
+        R"("text_col":"phrase","tokenizer_type":"3"}})"
+        R"(],"links":[{"start_node":360,"end_node":361}]})";
+
+    cyxwiz::PipelineExecutor bad_text_tokenizer_type_executor;
+    Check(!bad_text_tokenizer_type_executor.ExecutePipeline(
+              bad_text_tokenizer_type_json),
+          "TextTokenizer unsupported tokenizer_type should fail validation");
+    Check(bad_text_tokenizer_type_executor.GetLastError().find(
+              "TextTokenizer tokenizer_type '3' is not supported by PipelineExecutor") !=
+              std::string::npos,
+          "TextTokenizer tokenizer_type validation should be central and specific: " +
+              bad_text_tokenizer_type_executor.GetLastError());
+
     const std::string bad_linear_regression_intercept_json =
         R"({"nodes":[)"
         R"({"id":302,"type":"DataInput","name":"Input","parameters":{)"

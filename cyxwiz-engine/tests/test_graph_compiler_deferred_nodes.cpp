@@ -810,6 +810,71 @@ int main() {
     Check(HasIssueText(config, "pair/triplet batch payloads"),
           "triplet sketch should report missing batch contract");
 
+    auto gnn_sketch = dense;
+    gnn_sketch.id = 40;
+    gnn_sketch.name = "GATConv";
+    gnn_sketch.inputs = {Pin(4001, gui::PinType::Tensor, "Input", true)};
+    gnn_sketch.outputs = {Pin(4002, gui::PinType::Tensor, "Output", false)};
+
+    nodes = {data, gnn_sketch, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 40, 4001),
+        Link(2, 40, 4002, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected GNN sketch should be invalid");
+    Check(HasIssueText(config, "GATConv"),
+          "GNN sketch should report the matched sketch name");
+    Check(HasIssueText(config, "edge-index/adjacency routing"),
+          "GNN sketch should report missing edge-index contract");
+
+    auto gnn_side_output = Node(41,
+                                gui::NodeType::Output,
+                                "GNN Side Output",
+                                {Pin(4101, gui::PinType::Tensor, "Input", true)},
+                                {});
+
+    nodes = {data, dense, loss, optimizer, gnn_sketch, gnn_side_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 1, 101, 40, 4001),
+        Link(6, 40, 4002, 41, 4101),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side GNN sketch outside selected path should not block compile");
+    Check(!HasIssueText(config, "edge-index/adjacency routing"),
+          "side GNN sketch should not be reported");
+
+    auto edge_index_dense = dense;
+    edge_index_dense.name = "Edge Index Dense Sketch";
+    edge_index_dense.parameters["edge_index_column"] = "edge_index";
+    edge_index_dense.parameters["node_features_column"] = "node_features";
+
+    nodes = {data, edge_index_dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected GNN marker sketch should be invalid");
+    Check(HasIssueText(config, "edge_index_column"),
+          "GNN marker sketch should report the matched parameter");
+    Check(HasIssueText(config, "message-passing kernels"),
+          "GNN marker sketch should report missing message-passing contract");
+
     for (const auto& scheduler_case :
          cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         auto scheduler = Node(18,

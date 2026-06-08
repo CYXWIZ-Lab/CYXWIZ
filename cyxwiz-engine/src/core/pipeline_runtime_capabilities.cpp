@@ -293,6 +293,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"Join", "join_type", "inner", {"inner", "left", "right", "outer"}},
         {"Binning", "method", "equal_width", {"equal_width", "equal_freq", "equal_frequency"}},
         {"TextTokenize", "method", "word", {"word", "sentence", "character"}},
+        {"TextTokenizer", "tokenizer_type", "1", {"0", "1", "2"}},
         {"TextVectorize", "method", "count", {"count"}},
         {"StringManipulation", "operation", "trim", {"trim", "upper", "lower", "replace", "substring"}},
         {"CountVectorizer", "norm", "l2", {"l1", "l2", "none"}},

@@ -189,3 +189,6 @@ Status 2026-06-08:
   whitespace and case before enforcing the only supported value, so it matches
   the central enum support truth for `auto`. Focused routing tests also pin the
   existing categorical-column schema failure before operator execution.
+- Started. `TextTokenizer.tokenizer_type` is now covered by central allowed
+  parameter values (`0`, `1`, `2`) before operator execution, while the
+  operator-local range check remains as a backstop.

@@ -525,6 +525,13 @@ Completed so far:
   compiled plan and batcher contract expose one `data_node_id`, one data pin,
   and one label pin, so Siamese/pair/triplet or other multi-input sketches need
   a typed named-batch contract before they can compile truthfully.
+- CNN/pooling/upsampling training layers are already blocked through the
+  central unsupported sequential-layer capability list and table-driven
+  compiler tests. `Conv2D`, pooling/global-pooling, transposed convolution,
+  upsample, and pixel-shuffle nodes remain visible design/model-analysis
+  surfaces, but they cannot compile as trainable Studio layers until
+  `ModelBuilder`/`SequentialModel` support and image batch-shape contracts are
+  implemented.
 - `GraphCompiler` now rejects selected training paths that sketch
   decoder/generative training with `TransformerDecoder`, explicit causal LM
   flags, shifted-token target parameters, prompt/completion columns, or
@@ -572,6 +579,13 @@ Completed so far:
   input tensor and lacks typed pair/triplet batch payloads, shared encoder
   ownership, pair/triplet loss wiring, mining/sampling rules, and embedding
   output packaging.
+- `GraphCompiler` now rejects selected training paths that sketch
+  graph-neural-network/GNN training with exact graph-convolution/message-passing
+  node names or explicit edge-index, edge-attribute, node-feature, adjacency,
+  node-classification, link-prediction, or graph-classification markers. The
+  current trainer has no graph batch schema, edge-index/adjacency routing,
+  message-passing kernels, node/edge/graph target contracts, neighborhood
+  batching, or graph-level output packaging.
 
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.
