@@ -1082,6 +1082,15 @@ bool HasSupportedParameterValues(
         }
     }
 
+    if (node_type == "TextClean") {
+        const auto remove_stopwords_it = parameters.find("remove_stopwords");
+        if (remove_stopwords_it != parameters.end() &&
+            ToLowerAscii(TrimString(remove_stopwords_it->second)) == "true") {
+            error = "TextClean remove_stopwords is not supported by PipelineExecutor";
+            return false;
+        }
+    }
+
     if (node_type == "Binning") {
         const auto columns_it = parameters.find("columns");
         if (columns_it != parameters.end() &&

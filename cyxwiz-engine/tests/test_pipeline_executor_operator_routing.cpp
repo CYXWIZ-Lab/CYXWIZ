@@ -1384,6 +1384,25 @@ int main() {
     Check(ReadStringValue(text_clean_table, "phrase_cleaned", 0) == "tea cup",
           "TextClean should write cleaned output column");
 
+    const std::string text_clean_stopwords_json =
+        R"({"nodes":[)"
+        R"({"id":166,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":167,"type":"TextClean","name":"UnsupportedStopwords","parameters":{)"
+        R"("text_column":"phrase","remove_stopwords":"true"}})"
+        R"(],"links":[{"start_node":166,"end_node":167}]})";
+
+    cyxwiz::PipelineExecutor text_clean_stopwords_executor;
+    Check(!text_clean_stopwords_executor.ExecutePipeline(
+              text_clean_stopwords_json),
+          "TextClean remove_stopwords should fail closed");
+    Check(text_clean_stopwords_executor.GetLastError().find(
+              "TextClean remove_stopwords is not supported") !=
+              std::string::npos,
+          "TextClean remove_stopwords error should be specific: " +
+              text_clean_stopwords_executor.GetLastError());
+
     const std::string text_tokenize_json =
         R"({"nodes":[)"
         R"({"id":154,"type":"DataInput","name":"Input","parameters":{)"

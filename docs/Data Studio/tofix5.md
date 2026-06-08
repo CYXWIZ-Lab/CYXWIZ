@@ -281,6 +281,12 @@ registry. Unsupported values such as `ngram` for the legacy tokenizer or
 `tfidf` for the legacy count-style vectorizer fail validation instead of
 falling back to a weaker execution path.
 
+**Status 2026-06-08 follow-up 16:** `TextClean.remove_stopwords=true`
+now fails closed during executor validation instead of being accepted and
+silently ignored. The implemented legacy text-clean path remains limited
+to HTML removal, special-character removal, lowercasing, whitespace
+normalization, and trimming until stopword removal has a real backend.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and
