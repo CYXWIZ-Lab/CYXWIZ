@@ -297,6 +297,15 @@ now fails closed before launching async work for unsupported detected file
 types beyond JSON and Excel, including HDF5, TXT, and ARFF. TXT users are
 directed to the Text source path instead of being treated as tabular CSV.
 
+**Status 2026-06-08 follow-up 63:** `DataInput.file_type` is now a runtime
+alias for `DataInput.type`, matching the DataInput node defaults and older
+graphs that persisted `file_type`. Both aliases share the same executable
+format list (`auto`, `csv`, `tsv`, `parquet`, `feather`, `arrow`, and
+`ipc`), unsupported aliases such as `file_type=json` fail validation, and
+graphs that specify contradictory `type` / `file_type` values fail closed.
+`ExecuteDataInput()` now resolves the same alias before loading, so
+`file_type=csv` does not silently fall back to auto-detect.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used

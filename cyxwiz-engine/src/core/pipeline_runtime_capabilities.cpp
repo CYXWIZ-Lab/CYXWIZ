@@ -260,6 +260,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"FileInput", "format", "auto", {"auto", "csv", "parquet"}},
         {"DataInput", "source_type", "file", {"file", "folder"}},
         {"DataInput", "type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}},
+        {"DataInput", "file_type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}},
         {"DataOutput", "format", "csv", {"csv", "parquet"}},
         {"DataOutput", "file_type", "csv", {"csv", "parquet"}},
         {"SaveDataset", "format", "csv", {"csv", "parquet"}},

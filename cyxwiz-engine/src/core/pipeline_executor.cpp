@@ -1223,6 +1223,21 @@ std::string NormalizeDataInputFileType(const std::string& value) {
     return file_type.empty() ? "auto" : file_type;
 }
 
+std::string NormalizeDataInputFileType(
+    const std::map<std::string, std::string>& parameters) {
+    auto type_it = parameters.find("type");
+    if (type_it != parameters.end() && !type_it->second.empty()) {
+        return NormalizeDataInputFileType(type_it->second);
+    }
+
+    auto file_type_it = parameters.find("file_type");
+    if (file_type_it != parameters.end() && !file_type_it->second.empty()) {
+        return NormalizeDataInputFileType(file_type_it->second);
+    }
+
+    return "auto";
+}
+
 std::string NormalizeDataOutputFormat(
     const std::map<std::string, std::string>& parameters) {
     auto format_it = parameters.find("format");
@@ -1521,11 +1536,23 @@ bool HasSupportedParameterValues(
                 ? ToLowerAscii(TrimString(source_it->second))
                 : "file";
 
-        const auto type_it = parameters.find("type");
+        auto type_it = parameters.find("type");
+        auto file_type_it = parameters.find("file_type");
+        if (type_it != parameters.end() && !type_it->second.empty() &&
+            file_type_it != parameters.end() &&
+            !file_type_it->second.empty()) {
+            const std::string type =
+                NormalizeDataInputFileType(type_it->second);
+            const std::string file_type =
+                NormalizeDataInputFileType(file_type_it->second);
+            if (type != file_type) {
+                error = "DataInput type and file_type disagree";
+                return false;
+            }
+        }
+
         const std::string file_type =
-            (type_it != parameters.end())
-                ? NormalizeDataInputFileType(type_it->second)
-                : "auto";
+            NormalizeDataInputFileType(parameters);
         const auto skip_rows_it = parameters.find("skip_rows");
         if (source_type == "file" && skip_rows_it != parameters.end() &&
             !skip_rows_it->second.empty() &&
@@ -2473,11 +2500,8 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             spdlog::info("[Pipeline] DataInput loading file: {}", file_path);
 
             // Get file type and options from parameters
-            auto type_it = node.parameters.find("type");
             std::string file_type =
-                (type_it != node.parameters.end())
-                    ? NormalizeDataInputFileType(type_it->second)
-                    : "auto";
+                NormalizeDataInputFileType(node.parameters);
 
             // Load based on file type
             if (file_type == "csv" || file_type == "tsv") {
@@ -2498,18 +2522,6 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                 arrow_dataset = registry.LoadCSVToArrow(file_path, dataset_name, has_header, delimiter[0], skip_rows);
             } else if (file_type == "parquet") {
                 arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
-            } else if (file_type == "json") {
-                bool json_lines =
-                    OptionalBooleanParameterIsTrue(node.parameters,
-                                                   "json_lines");
-                arrow_dataset = registry.LoadJSONToArrow(file_path, dataset_name, json_lines);
-            } else if (file_type == "excel") {
-                int sheet_idx = 0;
-                auto sheet_it = node.parameters.find("sheet_idx");
-                if (sheet_it != node.parameters.end()) {
-                    sheet_idx = std::stoi(sheet_it->second);
-                }
-                arrow_dataset = registry.LoadExcelToArrow(file_path, dataset_name, sheet_idx);
             } else if (file_type == "auto" || file_type == "feather" ||
                        file_type == "arrow" || file_type == "ipc") {
                 // Default: try auto-detect via LoadArrowTable

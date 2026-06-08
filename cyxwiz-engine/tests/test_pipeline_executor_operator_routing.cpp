@@ -119,6 +119,7 @@ int main() {
 
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnloadDataset("ds_datainput_1");
+    registry.UnloadDataset("ds_datainput_429");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_operator_ACFNode_202");
 
@@ -528,6 +529,55 @@ int main() {
               std::string::npos,
           "DataInput excel type validation should be specific: " +
               bad_data_input_excel_type_executor.GetLastError());
+
+    const std::string data_input_file_type_alias_json =
+        R"({"nodes":[)"
+        R"({"id":429,"type":"DataInput","name":"FileTypeAlias","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","file_type":"CSV","has_header":"true"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor data_input_file_type_alias_executor;
+    Check(data_input_file_type_alias_executor.ExecutePipeline(
+              data_input_file_type_alias_json),
+          "DataInput file_type alias should load through the CSV path: " +
+              data_input_file_type_alias_executor.GetLastError());
+    auto alias_input = registry.GetArrowDataset("ds_datainput_429");
+    Check(alias_input != nullptr,
+          "DataInput file_type alias should register output dataset");
+    Check(alias_input->GetNumRows() == 3,
+          "DataInput file_type alias should preserve CSV row count");
+
+    const std::string bad_data_input_file_type_alias_json =
+        R"({"nodes":[)"
+        R"({"id":430,"type":"DataInput","name":"BadFileTypeAlias","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.json","file_type":"json"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor bad_data_input_file_type_alias_executor;
+    Check(!bad_data_input_file_type_alias_executor.ExecutePipeline(
+              bad_data_input_file_type_alias_json),
+          "DataInput unsupported file_type alias should fail validation");
+    Check(bad_data_input_file_type_alias_executor.GetLastError().find(
+              "DataInput file_type 'json' is not supported") !=
+              std::string::npos,
+          "DataInput unsupported file_type alias error should be specific: " +
+              bad_data_input_file_type_alias_executor.GetLastError());
+
+    const std::string conflicting_data_input_type_alias_json =
+        R"({"nodes":[)"
+        R"({"id":431,"type":"DataInput","name":"ConflictingFileType","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv","file_type":"parquet"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor conflicting_data_input_type_alias_executor;
+    Check(!conflicting_data_input_type_alias_executor.ExecutePipeline(
+              conflicting_data_input_type_alias_json),
+          "DataInput conflicting type aliases should fail validation");
+    Check(conflicting_data_input_type_alias_executor.GetLastError().find(
+              "DataInput type and file_type disagree") != std::string::npos,
+          "DataInput conflicting type alias error should be specific: " +
+              conflicting_data_input_type_alias_executor.GetLastError());
 
     const std::string unsupported_ml_dataset_source_json =
         R"({"nodes":[)"
