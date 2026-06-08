@@ -1571,6 +1571,25 @@ int main() {
           "CountVectorizer binary error should be specific: " +
               count_vectorizer_binary_executor.GetLastError());
 
+    const std::string count_vectorizer_bad_binary_json =
+        R"({"nodes":[)"
+        R"({"id":219,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":220,"type":"CountVectorizer","name":"MalformedBinary","parameters":{)"
+        R"("text_col":"phrase","binary":"maybe"}})"
+        R"(],"links":[{"start_node":219,"end_node":220}]})";
+
+    cyxwiz::PipelineExecutor count_vectorizer_bad_binary_executor;
+    Check(!count_vectorizer_bad_binary_executor.ExecutePipeline(
+              count_vectorizer_bad_binary_json),
+          "CountVectorizer malformed binary should fail validation");
+    Check(count_vectorizer_bad_binary_executor.GetLastError().find(
+              "CountVectorizer: 'binary' must be 'true' or 'false'") !=
+              std::string::npos,
+          "CountVectorizer malformed binary error should be specific: " +
+              count_vectorizer_bad_binary_executor.GetLastError());
+
     const std::string tfidf_vectorizer_min_df_json =
         R"({"nodes":[)"
         R"({"id":217,"type":"DataInput","name":"Input","parameters":{)"
@@ -1589,6 +1608,25 @@ int main() {
               std::string::npos,
           "TFIDFVectorizer min_df error should be specific: " +
               tfidf_vectorizer_min_df_executor.GetLastError());
+
+    const std::string tfidf_vectorizer_bad_bool_json =
+        R"({"nodes":[)"
+        R"({"id":221,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":222,"type":"TFIDFVectorizer","name":"BadTfidfBool","parameters":{)"
+        R"("text_col":"phrase","use_idf":"maybe"}})"
+        R"(],"links":[{"start_node":221,"end_node":222}]})";
+
+    cyxwiz::PipelineExecutor tfidf_vectorizer_bad_bool_executor;
+    Check(!tfidf_vectorizer_bad_bool_executor.ExecutePipeline(
+              tfidf_vectorizer_bad_bool_json),
+          "TFIDFVectorizer malformed boolean should fail validation");
+    Check(tfidf_vectorizer_bad_bool_executor.GetLastError().find(
+              "TFIDFVectorizer: 'use_idf' must be 'true' or 'false'") !=
+              std::string::npos,
+          "TFIDFVectorizer malformed boolean error should be specific: " +
+              tfidf_vectorizer_bad_bool_executor.GetLastError());
 
     const std::string binning_json =
         R"({"nodes":[)"

@@ -51,11 +51,27 @@ bool TFIDFVectorizerOperator::Configure(
         return false;
     }
 
-    auto idf = params.find("use_idf");
-    use_idf_ = (idf == params.end()) ? true : (idf->second == "true");
+    auto read_bool = [&](const char* key, bool default_value, bool& out) -> bool {
+        auto p = params.find(key);
+        if (p == params.end() || p->second.empty()) {
+            out = default_value;
+            return true;
+        }
+        if (p->second == "true") {
+            out = true;
+            return true;
+        }
+        if (p->second == "false") {
+            out = false;
+            return true;
+        }
+        error = std::string("TFIDFVectorizer: '") + key +
+                "' must be 'true' or 'false' (got '" + p->second + "')";
+        return false;
+    };
 
-    auto sidf = params.find("smooth_idf");
-    smooth_idf_ = (sidf == params.end()) ? true : (sidf->second == "true");
+    if (!read_bool("use_idf", true, use_idf_)) return false;
+    if (!read_bool("smooth_idf", true, smooth_idf_)) return false;
 
     auto nrm = params.find("norm");
     if (nrm != params.end() && !nrm->second.empty()) {

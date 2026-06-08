@@ -303,6 +303,11 @@ them: `CountVectorizer.binary=true`, non-default `CountVectorizer.ngram_range`,
 and non-default TF-IDF n-gram / `min_df` settings now report explicit
 configuration errors until those semantics are implemented.
 
+**Status 2026-06-08 follow-up 20:** Text vectorizer boolean parameters now
+validate strictly. Malformed `CountVectorizer.binary`, `TFIDFVectorizer.use_idf`,
+and `TFIDFVectorizer.smooth_idf` values now fail with explicit errors
+instead of being interpreted as `false`.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

@@ -56,9 +56,16 @@ bool CountVectorizerOperator::Configure(
     }
 
     auto binary = params.find("binary");
-    if (binary != params.end() && binary->second == "true") {
-        error = "CountVectorizer: binary counts are not supported by this operator";
-        return false;
+    if (binary != params.end() && !binary->second.empty()) {
+        if (binary->second == "true") {
+            error = "CountVectorizer: binary counts are not supported by this operator";
+            return false;
+        }
+        if (binary->second != "false") {
+            error = "CountVectorizer: 'binary' must be 'true' or 'false' (got '" +
+                    binary->second + "')";
+            return false;
+        }
     }
 
     auto ngram_range = params.find("ngram_range");
