@@ -7,6 +7,7 @@ namespace cyxwiz {
 const std::vector<PipelineOperatorRuntimeCapability>&
 GetPipelineOperatorRuntimeCapabilities() {
     static const std::vector<PipelineOperatorRuntimeCapability> capabilities = {
+        {"Identity", gui::NodeType::Identity},
         {"TimeSeriesWindow", gui::NodeType::TimeSeriesWindow},
         {"TimeSeriesSplit", gui::NodeType::TimeSeriesSplit},
         {"TimeSeriesFeatures", gui::NodeType::TimeSeriesFeatures},
@@ -34,6 +35,10 @@ GetPipelineOperatorRuntimeCapabilities() {
         {"TargetEncoder", gui::NodeType::TargetEncoder},
         {"OutlierDetector", gui::NodeType::OutlierDetector},
         {"TimeSeriesDecomposition", gui::NodeType::TimeSeriesDecomposition},
+        {"ACFNode", gui::NodeType::ACFNode},
+        {"PACFNode", gui::NodeType::PACFNode},
+        {"StationarityTest", gui::NodeType::StationarityTest},
+        {"SeasonalityDetector", gui::NodeType::SeasonalityDetector},
         {"ARIMAForecaster", gui::NodeType::ARIMAForecaster},
         {"ExponentialSmoothing", gui::NodeType::ExponentialSmoothing},
     };
@@ -221,6 +226,13 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"StringManipulation", {"column"}},
         {"MathFormula", {"formula"}},
         {"RenameColumns", {"mapping"}},
+        {"TimeSeriesDecomposition", {"signal_col"}},
+        {"ACFNode", {"signal_col"}},
+        {"PACFNode", {"signal_col"}},
+        {"StationarityTest", {"signal_col"}},
+        {"SeasonalityDetector", {"signal_col"}},
+        {"ARIMAForecaster", {"signal_col"}},
+        {"ExponentialSmoothing", {"signal_col"}},
     };
     return capabilities;
 }

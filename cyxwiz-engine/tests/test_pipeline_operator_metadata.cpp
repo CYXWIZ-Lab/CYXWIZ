@@ -303,6 +303,22 @@ int main() {
               "factory type " + TypeId(type) + " is not marked implemented");
         Check(meta->category != gui::NodeCategory::Unknown,
               "factory type " + TypeId(type) + " has unknown category");
+
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
+        Check(support.mode == cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+              "factory type missing central operator-backed runtime support: " +
+                  TypeId(type));
+        Check(support.operator_type.has_value() && *support.operator_type == type,
+              "factory type resolves to wrong operator runtime type: " +
+                  TypeId(type));
+        Check(support.implementation_owner ==
+                  cyxwiz::PipelineRuntimeImplementationOwner::
+                      PipelineOperatorFactory,
+              "factory type should be owned by PipelineOperatorFactory: " +
+                  TypeId(type));
+        Check(support.materializer_arrow_table_supported,
+              "factory type should advertise Arrow materializer support: " +
+                  TypeId(type));
     }
 
     for (const auto& data_studio_node :

@@ -420,8 +420,16 @@ Recommendation:
 **Status 2026-06-07:** Partially fixed for support truth. Runtime
 support, materializer scope, and implementation ownership now live in
 `pipeline_runtime_capabilities.{h,cpp}` and are covered by drift tests.
-The remaining issue is not a missing support list; it is execution-path
-ownership and migration.
+The remaining broad issue is execution-path ownership and migration, with
+drift guards now catching factory/runtime list gaps as they appear.
+
+**Status 2026-06-08 follow-up:** The factory/runtime migration guard now
+checks both directions: operator-backed runtime capabilities must have a
+factory operator, and factory-registered operators must resolve through
+central operator-backed runtime support. `Identity`, `ACFNode`,
+`PACFNode`, `StationarityTest`, and `SeasonalityDetector` have been moved
+out of the factory-only gap into central operator-backed capability
+truth.
 
 Relevant files:
 
@@ -732,6 +740,7 @@ Relevant files:
 
 Confirmed operator-backed families include:
 
+- utility: `Identity`
 - time-series: `TimeSeriesWindow`, `TimeSeriesSplit`,
   `TimeSeriesFeatures`, `LogTransform`, `Differencing`
 - text: `TextTokenizer`, `TFIDFVectorizer`, `CountVectorizer`,
@@ -744,7 +753,8 @@ Confirmed operator-backed families include:
 - preprocessing: `StandardScaler`, `MinMaxScaler`, `RobustScaler`,
   `LabelEncoder`, `OrdinalEncoder`, `TargetEncoder`,
   `OutlierDetector`
-- time-series analysis: `TimeSeriesDecomposition`,
+- time-series analysis: `TimeSeriesDecomposition`, `ACFNode`,
+  `PACFNode`, `StationarityTest`, `SeasonalityDetector`,
   `ARIMAForecaster`, `ExponentialSmoothing`
 
 Problem now:

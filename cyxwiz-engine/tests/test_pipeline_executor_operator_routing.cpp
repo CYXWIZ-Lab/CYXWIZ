@@ -120,9 +120,12 @@ int main() {
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
+    registry.UnloadDataset("ds_operator_ACFNode_202");
 
     const fs::path csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_routing.csv";
+    const fs::path ts_analysis_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_ts_analysis.csv";
     const fs::path export_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.csv";
     const fs::path export_csv_alias_path =
@@ -137,6 +140,7 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_strings.csv";
     const fs::path duplicates_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_duplicates.csv";
+    fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
     fs::remove(save_dataset_csv_path);
@@ -178,6 +182,13 @@ int main() {
         csv << "1,11\n";
         csv << "2,20\n";
     }
+    {
+        std::ofstream csv(ts_analysis_csv_path);
+        csv << "signal\n";
+        for (int i = 0; i < 32; ++i) {
+            csv << (10 + i + (i % 4)) << "\n";
+        }
+    }
 
     const std::string pipeline_json =
         R"({"nodes":[)"
@@ -201,6 +212,49 @@ int main() {
     Check(table->num_rows() == 3, "operator output preserves row count");
     Check(std::fabs(ReadFirstFloatValue(table, "x") - 1.0) > 0.1,
           "operator output changed the scaled column");
+
+    const std::string acf_json =
+        R"({"nodes":[)"
+        R"({"id":201,"type":"DataInput","name":"TSInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(ts_analysis_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":202,"type":"ACFNode","name":"ACF","parameters":{)"
+        R"("signal_col":"signal","max_lag":"3"}})"
+        R"(],"links":[{"start_node":201,"end_node":202}]})";
+
+    cyxwiz::PipelineExecutor acf_executor;
+    Check(acf_executor.ExecutePipeline(acf_json),
+          "PipelineExecutor routes ACFNode through PipelineOperatorFactory: " +
+              acf_executor.GetLastError());
+
+    auto acf_output = registry.GetArrowDataset("ds_operator_ACFNode_202");
+    Check(acf_output != nullptr, "ACF operator output dataset is registered");
+    auto acf_table = acf_output->GetArrowTable();
+    Check(acf_table != nullptr, "ACF operator output table exists");
+    Check(acf_table->num_rows() == 4,
+          "ACF operator emits max_lag + 1 rows");
+    Check(acf_table->schema()->GetFieldIndex("acf") >= 0,
+          "ACF operator output has acf column");
+
+    const std::string missing_acf_signal_json =
+        R"({"nodes":[)"
+        R"({"id":203,"type":"DataInput","name":"TSInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(ts_analysis_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":204,"type":"ACFNode","name":"ACF","parameters":{}})"
+        R"(],"links":[{"start_node":203,"end_node":204}]})";
+
+    cyxwiz::PipelineExecutor missing_acf_signal_executor;
+    Check(!missing_acf_signal_executor.ExecutePipeline(
+              missing_acf_signal_json),
+          "ACFNode missing signal_col should fail validation");
+    Check(missing_acf_signal_executor.GetLastError().find(
+              "missing required parameter 'signal_col'") !=
+              std::string::npos,
+          "ACFNode missing signal_col validation should be specific: " +
+              missing_acf_signal_executor.GetLastError());
 
     const std::string typed_file_input_json =
         R"({"nodes":[)"
@@ -2034,6 +2088,7 @@ int main() {
 
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
+    registry.UnloadDataset("ds_operator_ACFNode_202");
     registry.UnloadDataset("ds_input_133");
     registry.UnloadDataset("ds_select_134");
     registry.UnloadDataset("ds_datainput_188");
@@ -2120,6 +2175,7 @@ int main() {
     registry.UnloadDataset("ds_datainput_150");
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
+    fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
     fs::remove(save_dataset_csv_path);
