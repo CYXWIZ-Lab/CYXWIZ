@@ -572,6 +572,13 @@ allowed-parameter axis when one exists. `SaveDataset.format` no longer
 advertises `json`; the catalog exposes only the executable `csv` and
 `parquet` formats until JSON export has a real Arrow-table backend.
 
+**Status 2026-06-08 follow-up 52:** Legacy `FileInput.format` is now a
+real runtime parameter instead of ignored catalog metadata. The active
+catalog no longer advertises JSON for `FileInput`, central validation
+rejects unsupported format values, and explicit `csv` / `parquet`
+choices route through the matching DataRegistry Arrow loaders while the
+no-format path keeps existing auto-detect behavior.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or

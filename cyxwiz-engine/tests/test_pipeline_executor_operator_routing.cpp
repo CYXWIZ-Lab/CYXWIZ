@@ -379,6 +379,43 @@ int main() {
     Check(typed_file_input_table->schema()->GetFieldIndex("x") >= 0,
           "typed FileInput should feed SelectColumns");
 
+    const std::string explicit_file_input_format_json =
+        R"({"nodes":[)"
+        R"({"id":423,"type":"FileInput","name":"ExplicitFile","parameters":{)"
+        R"("path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","format":" CSV "}},)"
+        R"({"id":424,"type":"SelectColumns","name":"Select","parameters":{)"
+        R"("columns":"y"}})"
+        R"(],"links":[{"start_node":423,"end_node":424}]})";
+
+    cyxwiz::PipelineExecutor explicit_file_input_format_executor;
+    Check(explicit_file_input_format_executor.ExecutePipeline(
+              explicit_file_input_format_json),
+          "FileInput explicit CSV format should execute through CSV loader: " +
+              explicit_file_input_format_executor.GetLastError());
+    auto explicit_file_input_format_result =
+        registry.GetArrowDataset("ds_select_424");
+    Check(explicit_file_input_format_result != nullptr,
+          "FileInput explicit format downstream output dataset is registered");
+
+    const std::string bad_file_input_format_json =
+        R"({"nodes":[)"
+        R"({"id":425,"type":"FileInput","name":"BadFileFormat","parameters":{)"
+        R"("path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","format":"json"}},)"
+        R"({"id":426,"type":"SelectColumns","name":"Select","parameters":{)"
+        R"("columns":"x"}})"
+        R"(],"links":[{"start_node":425,"end_node":426}]})";
+
+    cyxwiz::PipelineExecutor bad_file_input_format_executor;
+    Check(!bad_file_input_format_executor.ExecutePipeline(
+              bad_file_input_format_json),
+          "FileInput json format should fail validation until JSON loading is real");
+    Check(bad_file_input_format_executor.GetLastError().find(
+              "FileInput format 'json' is not supported") != std::string::npos,
+          "FileInput json format validation should be specific: " +
+              bad_file_input_format_executor.GetLastError());
+
     const std::string unsupported_json =
         R"({"nodes":[)"
         R"({"id":3,"type":"DataInput","name":"Input","parameters":{)"

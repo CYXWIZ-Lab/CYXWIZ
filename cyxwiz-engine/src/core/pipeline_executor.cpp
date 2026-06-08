@@ -2342,14 +2342,27 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
     }
 
     const std::string& file_path = path_it->second;
+    auto format_it = node.parameters.find("format");
+    const std::string format =
+        (format_it != node.parameters.end() && !format_it->second.empty())
+            ? NormalizeDataInputFileType(format_it->second)
+            : "auto";
     std::string dataset_name = "ds_input_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Loading file: {} as dataset '{}'", file_path, dataset_name);
+    spdlog::info("[Data Studio] Loading file: {} as dataset '{}' (format: {})",
+                 file_path, dataset_name, format);
 
     try {
         // Use DataRegistry's Arrow support to load the file
         auto& registry = DataRegistry::Instance();
-        auto arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
+        std::shared_ptr<ArrowDataset> arrow_dataset;
+        if (format == "csv") {
+            arrow_dataset = registry.LoadCSVToArrow(file_path, dataset_name);
+        } else if (format == "parquet") {
+            arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
+        } else {
+            arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
+        }
 
         if (!arrow_dataset) {
             ReportError(GetImprovedErrorMessage("FileInput", "invalid_path", file_path));

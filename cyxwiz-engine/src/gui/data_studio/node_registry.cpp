@@ -81,11 +81,11 @@ void NodeRegistry::RegisterBuiltInNodes() {
     file_input.type_id = "FileInput";
     file_input.display_name = "File Input";
     file_input.category = "Data Sources";
-    file_input.description = "Load data from a file (CSV, Parquet, JSON)";
+    file_input.description = "Load data from a file (CSV or Parquet)";
     file_input.output_ports = {"data"};
     file_input.parameters = {
         {"path", "string"},
-        {"format", "enum:csv,parquet,json"}
+        {"format", "enum:csv,parquet"}
     };
     RegisterNodeType(file_input);
 
