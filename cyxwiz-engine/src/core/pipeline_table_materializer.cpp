@@ -2,11 +2,13 @@
 
 #include "node_executors/pipeline_operator.h"
 #include "node_executors/pipeline_operator_factory.h"
+#include "pipeline_runtime_capabilities.h"
 
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 
 #include <map>
+#include <optional>
 #include <queue>
 #include <unordered_set>
 #include <vector>
@@ -67,11 +69,31 @@ bool IsFoldedTextConfigNode(gui::NodeType type) {
            type == gui::NodeType::TextPadding;
 }
 
+std::optional<gui::NodeType> ResolveArrowTableMaterializerOperatorType(
+    gui::NodeType type) {
+
+    const auto support = ResolvePipelineRuntimeSupport(type);
+    if (support.mode != PipelineRuntimeSupportMode::OperatorBacked ||
+        support.implementation_owner !=
+            PipelineRuntimeImplementationOwner::PipelineOperatorFactory ||
+        !support.materializer_arrow_table_supported ||
+        support.materializer_storage_support !=
+            PipelineMaterializerStorageSupport::ArrowTableOnly ||
+        !support.operator_type.has_value()) {
+        return std::nullopt;
+    }
+
+    return support.operator_type;
+}
+
+bool IsArrowTableMaterializerOperator(gui::NodeType type) {
+    return ResolveArrowTableMaterializerOperatorType(type).has_value();
+}
+
 bool HasReachableMaterializerOperator(
     int node_id,
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
-    const PipelineOperatorFactory& factory,
     std::unordered_set<int>& visiting) {
 
     if (!visiting.insert(node_id).second) {
@@ -83,7 +105,7 @@ bool HasReachableMaterializerOperator(
         return false;
     }
 
-    if (factory.HasOperator(node->type)) {
+    if (IsArrowTableMaterializerOperator(node->type)) {
         return true;
     }
 
@@ -92,7 +114,7 @@ bool HasReachableMaterializerOperator(
             continue;
         }
         if (HasReachableMaterializerOperator(
-                link.to_node, nodes, links, factory, visiting)) {
+                link.to_node, nodes, links, visiting)) {
             return true;
         }
     }
@@ -104,7 +126,6 @@ bool ValidateLinearMaterializerOperatorPath(
     const gui::MLNode& data_input,
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
-    const PipelineOperatorFactory& factory,
     std::string& error) {
 
     std::queue<int> queue;
@@ -124,7 +145,7 @@ bool ValidateLinearMaterializerOperatorPath(
 
             std::unordered_set<int> visiting;
             if (HasReachableMaterializerOperator(
-                    link.to_node, nodes, links, factory, visiting)) {
+                    link.to_node, nodes, links, visiting)) {
                 operator_relevant_children.push_back(link.to_node);
             }
 
@@ -242,21 +263,21 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
 
     auto& factory = PipelineOperatorFactory::Instance();
 
-    bool any_registered = false;
+    bool any_materializable = false;
     for (const auto& n : nodes) {
         if (n.id == data_input->id) continue;
-        if (factory.HasOperator(n.type)) {
-            any_registered = true;
+        if (IsArrowTableMaterializerOperator(n.type)) {
+            any_materializable = true;
             break;
         }
     }
-    if (!any_registered) {
+    if (!any_materializable) {
         return result;
     }
 
     std::string graph_shape_error;
     if (!ValidateLinearMaterializerOperatorPath(
-            *data_input, nodes, links, factory, graph_shape_error)) {
+            *data_input, nodes, links, graph_shape_error)) {
         result.success = false;
         result.error_message = graph_shape_error;
         return result;
@@ -275,13 +296,16 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
         const gui::MLNode* node = FindNodeById(node_id, nodes);
         if (!node) continue;
 
-        if (node->id != data_input->id && factory.HasOperator(node->type)) {
-            auto op = factory.Create(node->type);
+        const auto operator_type =
+            ResolveArrowTableMaterializerOperatorType(node->type);
+        if (node->id != data_input->id && operator_type.has_value()) {
+            auto op = factory.Create(*operator_type);
             if (!op) {
                 result.success = false;
                 result.error_message =
                     "PipelineMaterializer: factory returned null for node '" +
-                    node->name + "' (type registered but Create failed)";
+                    node->name +
+                    "' (runtime support allows materialization but Create failed)";
                 return result;
             }
 

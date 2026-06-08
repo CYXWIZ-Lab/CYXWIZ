@@ -1442,6 +1442,7 @@ set_target_properties(test_graph_executable_model PROPERTIES
 add_executable(test_text_arrow_materializer
     tests/test_text_arrow_materializer.cpp
     src/core/pipeline_table_materializer.cpp
+    src/core/pipeline_runtime_capabilities.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp

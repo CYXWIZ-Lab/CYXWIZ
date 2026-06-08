@@ -476,6 +476,14 @@ supports a linear operator path from the selected data input, but it no
 longer applies sibling operator branches sequentially to one table as if
 that represented the graph faithfully.
 
+**Status 2026-06-08 follow-up 4:** Arrow-table materialization now uses
+central `PipelineRuntimeSupport` axes to decide whether a node is
+materializable. `PipelineOperatorFactory` is still used to construct an
+approved operator, but factory registration alone no longer expands
+materializer coverage. A regression test advertises a factory-only
+`SVMClassifier` operator and verifies the materializer ignores it because
+runtime capability truth marks that node fail-closed.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_materializer.h:34`
@@ -905,6 +913,12 @@ pipeline nodes, and the catalog's `Join` parameter schema now uses the
 runtime-supported `on_column` field instead of unsupported left/right key
 names. The drift suite now checks every Data Studio catalog node resolves to
 a PipelineExecutor-supported capability.
+
+**Status 2026-06-08 follow-up 12:** `PipelineMaterializer` now consumes the
+central runtime capability support axes for Arrow-table operator
+applicability. The factory remains the construction mechanism, but
+materializer support is no longer a second support list inferred from
+`PipelineOperatorFactory::HasOperator()`.
 
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and

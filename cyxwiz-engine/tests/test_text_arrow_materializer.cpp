@@ -126,6 +126,15 @@ gui::MLNode MakePaddingNode() {
     return node;
 }
 
+gui::MLNode MakeFactoryOnlyUnsupportedNode() {
+    gui::MLNode node;
+    node.id = 6;
+    node.type = gui::NodeType::SVMClassifier;
+    node.category = gui::NodeCategory::Analytics;
+    node.name = "Factory-only SVM";
+    return node;
+}
+
 float ReadFloatValue(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& column_name,
@@ -142,6 +151,23 @@ float ReadFloatValue(
 
 namespace cyxwiz {
 
+class FactoryOnlyOperator final : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "FactoryOnlyOperator"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+
+    bool Configure(
+        const std::map<std::string, std::string>&,
+        std::string&) override {
+        return true;
+    }
+
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
+        const std::shared_ptr<arrow::Table>& input) override {
+        return input;
+    }
+};
+
 PipelineOperatorFactory& PipelineOperatorFactory::Instance() {
     static PipelineOperatorFactory instance;
     return instance;
@@ -154,17 +180,21 @@ std::unique_ptr<IPipelineOperator> PipelineOperatorFactory::Create(
     if (type == gui::NodeType::TextTokenizer) {
         return std::make_unique<TextTokenizerOperator>();
     }
+    if (type == gui::NodeType::SVMClassifier) {
+        return std::make_unique<FactoryOnlyOperator>();
+    }
     return nullptr;
 }
 
 bool PipelineOperatorFactory::HasOperator(gui::NodeType type) const {
-    return type == gui::NodeType::TextTokenizer;
+    return type == gui::NodeType::TextTokenizer ||
+           type == gui::NodeType::SVMClassifier;
 }
 
 void PipelineOperatorFactory::RegisterCreator(gui::NodeType, Creator) {}
 
 std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
-    return {gui::NodeType::TextTokenizer};
+    return {gui::NodeType::TextTokenizer, gui::NodeType::SVMClassifier};
 }
 
 } // namespace cyxwiz
@@ -215,6 +245,24 @@ int main() {
                   "branched operator paths") != std::string::npos,
               "branched materializer failure should explain graph shape: " +
                   branched.error_message);
+    }
+
+    {
+        std::vector<gui::MLNode> unsupported_nodes = {
+            MakeDataInputNode(),
+            MakeFactoryOnlyUnsupportedNode(),
+        };
+        std::vector<gui::NodeLink> unsupported_links = {
+            {1, 1, 0, 6, 0, gui::LinkType::TensorFlow},
+        };
+
+        auto unsupported = cyxwiz::PipelineMaterializer::MaterializeTable(
+            unsupported_nodes, unsupported_links, MakeTextTable());
+        Check(unsupported.success, unsupported.error_message);
+        Check(unsupported.operators_applied == 0,
+              "factory-only operators should not bypass runtime support");
+        Check(unsupported.table->num_columns() == 2,
+              "factory-only unsupported node should leave the table unchanged");
     }
 
     {
