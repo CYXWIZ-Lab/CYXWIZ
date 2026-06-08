@@ -325,6 +325,12 @@ and required/allowed parameter baselines are already validated for the
 covered runtime paths. Remaining validation work is broader schema/type
 coverage for node families that still do not have loaded-table checks.
 
+**Status 2026-06-08 follow-up 13:** `RenameColumns.mapping` is now part
+of the central required-parameter capability registry instead of being
+only a local validator special case. The executor still accepts the
+legacy `rename_map` alias for compatibility, but runtime support truth
+now advertises the canonical required parameter.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`
@@ -922,6 +928,12 @@ central runtime capability support axes for Arrow-table operator
 applicability. The factory remains the construction mechanism, but
 materializer support is no longer a second support list inferred from
 `PipelineOperatorFactory::HasOperator()`.
+
+**Status 2026-06-08 follow-up 13:** The central required-parameter axis
+now includes `RenameColumns.mapping`. Compatibility handling for the
+legacy `rename_map` spelling remains in the executor validator, but the
+canonical Data Studio parameter is no longer absent from runtime support
+truth.
 
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and

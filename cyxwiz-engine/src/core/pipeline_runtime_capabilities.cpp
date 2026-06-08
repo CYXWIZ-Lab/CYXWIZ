@@ -220,6 +220,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"Binning", {"columns"}},
         {"StringManipulation", {"column"}},
         {"MathFormula", {"formula"}},
+        {"RenameColumns", {"mapping"}},
     };
     return capabilities;
 }
