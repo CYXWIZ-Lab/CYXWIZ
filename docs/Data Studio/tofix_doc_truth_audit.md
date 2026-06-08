@@ -65,6 +65,10 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-08 follow-up: started `tofix20` Priority 5 by removing the stale
   late `DataInput.source_type=ml_dataset` executor branch after central
   validation already limited DataInput sources to `file` and `folder`.
+- 2026-06-08 follow-up: started `tofix20` Priority 4 by adding a Node Browser
+  availability filter backed by structured support axes for search, category,
+  and root category views. `Materializer=none` is not treated as blocked when
+  Pipeline Executor support is still present.
 - 2026-06-08 follow-up: started the parallel workflow and accepted a
   `tofix19` guardrail slice that rejects dataset-reachable multi-loss graphs
   until CyxWiz has a first-class loss aggregation or alternating-step

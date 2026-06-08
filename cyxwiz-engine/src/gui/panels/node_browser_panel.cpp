@@ -10,6 +10,21 @@
 
 namespace gui {
 
+namespace {
+
+bool HasUnsupportedAxis(const cyxwiz::NodeMetadata* metadata,
+                        const char* axis_name) {
+    if (!metadata) return false;
+    return std::any_of(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [axis_name](const cyxwiz::SupportAxisDefinition& axis) {
+            return axis.name == axis_name && !axis.supported;
+        });
+}
+
+} // namespace
+
 NodeBrowserPanel::NodeBrowserPanel() {
     // Initialize category show_all state to false (collapsed)
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
@@ -35,10 +50,7 @@ void NodeBrowserPanel::Render() {
         RenderHeader();
         RenderSearchBar();
 
-        // Show filter tags when in a category view
-        if (showing_all_in_category_) {
-            RenderFilterTags();
-        }
+        RenderFilterTags();
 
         ImGui::Separator();
 
@@ -54,6 +66,7 @@ void NodeBrowserPanel::Render() {
         if (!search_query_.empty()) {
             // Search results mode - show as grid
             auto results = registry.Search(search_query_, true);
+            results = ApplySupportFilter(results);
             if (results.empty()) {
                 ImGui::TextDisabled("No nodes found matching '%s'", search_query_.c_str());
             } else {
@@ -62,6 +75,7 @@ void NodeBrowserPanel::Render() {
         } else if (showing_all_in_category_) {
             // Showing all nodes in a specific category
             auto nodes = registry.GetByCategory(current_category_, true);
+            nodes = ApplySupportFilter(nodes);
             RenderNodeGrid(nodes);
         } else {
             // Normal category view
@@ -496,27 +510,61 @@ void NodeBrowserPanel::RenderStudioSection() {
 void NodeBrowserPanel::RenderFilterTags() {
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
 
-    // Category dropdown
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 3));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
 
-    std::string cat_name = cyxwiz::GetCategoryDisplayName(current_category_);
-    if (ImGui::BeginCombo("##CatFilter", cat_name.c_str(), ImGuiComboFlags_NoArrowButton)) {
-        for (auto category : registry.GetCategories()) {
-            bool selected = (category == current_category_);
-            if (ImGui::Selectable(cyxwiz::GetCategoryDisplayName(category).c_str(), selected)) {
-                NavigateToCategory(category);
+    bool rendered_filter = false;
+    if (showing_all_in_category_) {
+        std::string cat_name = cyxwiz::GetCategoryDisplayName(current_category_);
+        if (ImGui::BeginCombo("##CatFilter", cat_name.c_str(), ImGuiComboFlags_NoArrowButton)) {
+            for (auto category : registry.GetCategories()) {
+                bool selected = (category == current_category_);
+                if (ImGui::Selectable(cyxwiz::GetCategoryDisplayName(category).c_str(), selected)) {
+                    NavigateToCategory(category);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Filter by node category");
+        }
+        rendered_filter = true;
+    }
+
+    if (rendered_filter) {
+        ImGui::SameLine();
+    }
+
+    if (ImGui::BeginCombo("##SupportFilter", GetSupportFilterLabel(support_filter_mode_),
+                          ImGuiComboFlags_NoArrowButton)) {
+        const SupportFilterMode modes[] = {
+            SupportFilterMode::All,
+            SupportFilterMode::Runnable,
+            SupportFilterMode::Blocked,
+        };
+        for (SupportFilterMode mode : modes) {
+            const bool selected = support_filter_mode_ == mode;
+            if (ImGui::Selectable(GetSupportFilterLabel(mode), selected)) {
+                support_filter_mode_ = mode;
             }
         }
         ImGui::EndCombo();
     }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Filter using structured support axes");
+    }
 
-    // Additional filter tags could be added here based on keywords
-    // For now, show count of remaining filters
-    auto nodes = registry.GetByCategory(current_category_, true);
-    if (nodes.size() > 9) {
+    std::vector<const cyxwiz::NodeMetadata*> nodes;
+    if (!search_query_.empty()) {
+        nodes = registry.Search(search_query_, true);
+    } else if (showing_all_in_category_) {
+        nodes = registry.GetByCategory(current_category_, true);
+    }
+
+    if (!nodes.empty() && support_filter_mode_ != SupportFilterMode::All) {
+        const auto filtered_nodes = ApplySupportFilter(nodes);
         ImGui::SameLine();
-        ImGui::TextDisabled("+%zu more", nodes.size() - 9);
+        ImGui::TextDisabled("%zu/%zu", filtered_nodes.size(), nodes.size());
     }
 
     ImGui::PopStyleVar(2);
@@ -525,6 +573,7 @@ void NodeBrowserPanel::RenderFilterTags() {
 void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
     auto nodes = registry.GetByCategory(category, true);
+    nodes = ApplySupportFilter(nodes);
 
     if (nodes.empty()) return;
 
@@ -987,6 +1036,66 @@ ImU32 NodeBrowserPanel::GetNodeColor(cyxwiz::NodeCategory category) const {
         return IM_COL32(68, 136, 170, 255);   // Steel Blue
     }
     return IM_COL32(127, 140, 141, 255);      // Gray
+}
+
+std::vector<const cyxwiz::NodeMetadata*> NodeBrowserPanel::ApplySupportFilter(
+    const std::vector<const cyxwiz::NodeMetadata*>& nodes) const {
+    if (support_filter_mode_ == SupportFilterMode::All) {
+        return nodes;
+    }
+
+    std::vector<const cyxwiz::NodeMetadata*> filtered;
+    filtered.reserve(nodes.size());
+    for (const auto* node : nodes) {
+        if (NodeMatchesSupportFilter(node)) {
+            filtered.push_back(node);
+        }
+    }
+    return filtered;
+}
+
+bool NodeBrowserPanel::NodeMatchesSupportFilter(
+    const cyxwiz::NodeMetadata* metadata) const {
+    if (!metadata) return false;
+
+    const bool blocked = IsSupportBlocked(metadata);
+    switch (support_filter_mode_) {
+    case SupportFilterMode::Runnable:
+        return !blocked && metadata->IsImplemented();
+    case SupportFilterMode::Blocked:
+        return blocked;
+    case SupportFilterMode::All:
+        return true;
+    }
+    return true;
+}
+
+bool NodeBrowserPanel::IsSupportBlocked(
+    const cyxwiz::NodeMetadata* metadata) const {
+    if (!metadata) return false;
+
+    if (HasUnsupportedAxis(metadata, "Runtime") ||
+        HasUnsupportedAxis(metadata, "Pipeline Executor") ||
+        HasUnsupportedAxis(metadata, "Training Backend") ||
+        HasUnsupportedAxis(metadata, "Compile") ||
+        HasUnsupportedAxis(metadata, "Training")) {
+        return true;
+    }
+
+    return metadata->badge == "Blocked";
+}
+
+const char* NodeBrowserPanel::GetSupportFilterLabel(
+    SupportFilterMode mode) const {
+    switch (mode) {
+    case SupportFilterMode::Runnable:
+        return "Runnable";
+    case SupportFilterMode::Blocked:
+        return "Blocked";
+    case SupportFilterMode::All:
+        return "All";
+    }
+    return "All";
 }
 
 ImU32 NodeBrowserPanel::GetNodeColorDark(cyxwiz::NodeCategory category) const {

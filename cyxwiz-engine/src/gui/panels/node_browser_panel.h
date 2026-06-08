@@ -4,7 +4,6 @@
 #include <vector>
 #include <functional>
 #include <unordered_map>
-#include <unordered_set>
 #include "../../core/node_metadata.h"
 
 namespace gui {
@@ -88,6 +87,17 @@ private:
     void RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size);
     void RenderPortIndicators(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 icon_size);
     void RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata);
+    std::vector<const cyxwiz::NodeMetadata*> ApplySupportFilter(
+        const std::vector<const cyxwiz::NodeMetadata*>& nodes) const;
+    bool NodeMatchesSupportFilter(const cyxwiz::NodeMetadata* metadata) const;
+    bool IsSupportBlocked(const cyxwiz::NodeMetadata* metadata) const;
+
+    enum class SupportFilterMode {
+        All,
+        Runnable,
+        Blocked,
+    };
+    const char* GetSupportFilterLabel(SupportFilterMode mode) const;
 
     // Node creation
     void CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata);
@@ -113,8 +123,7 @@ private:
     // Category expansion state (for collapsed view)
     std::unordered_map<cyxwiz::NodeCategory, bool> category_show_all_;
 
-    // Filter tags state
-    std::unordered_set<std::string> active_filters_;
+    SupportFilterMode support_filter_mode_ = SupportFilterMode::All;
 
     // Drag-drop state
     const cyxwiz::NodeMetadata* dragging_node_ = nullptr;

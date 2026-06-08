@@ -144,6 +144,15 @@ Definition of done:
 - Support badges come from central support axes.
 - There is no parallel frontend support matrix.
 
+Status 2026-06-08:
+
+- Started. Node Browser search, category views, and root category sections now
+  include a support-axis-backed availability filter with `All`, `Runnable`,
+  and `Blocked` modes. The blocked classifier uses structured support axes
+  (`Runtime`, `Pipeline Executor`, and training backend axes) plus the existing
+  `Blocked` badge fallback, and intentionally does not treat
+  `Materializer=none` as a blocked runtime state.
+
 ## Priority 5 - Complete Schema/Type Validation Parity
 
 Problem:
