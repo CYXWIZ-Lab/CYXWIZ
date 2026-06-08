@@ -321,6 +321,14 @@ boolean parameters now validate strictly as well. Malformed
 explicit errors, and reconfiguring scaler operators no longer leaves a
 stale optional `label_col` behind.
 
+**Status 2026-06-08 follow-up 23:** The central required-parameter axis
+now covers static requirements for operator-backed text, time-series,
+signal-processing, regression, and categorical-encoder nodes. Missing
+parameters such as `TextTokenizer.text_col`,
+`LinearRegressionNode.target_col`, `Convolution1D.kernel`, and
+`LabelEncoder.column` now fail during executor validation instead of
+after upstream source execution reaches operator configuration.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

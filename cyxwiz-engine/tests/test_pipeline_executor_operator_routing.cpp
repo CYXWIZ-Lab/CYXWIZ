@@ -589,6 +589,73 @@ int main() {
           "TextVectorize missing text_column validation should be specific: " +
               missing_text_vectorize_column_executor.GetLastError());
 
+    const std::string missing_text_tokenizer_text_col_json =
+        R"({"nodes":[)"
+        R"({"id":312,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":313,"type":"TextTokenizer","name":"MissingTokenizerText","parameters":{)"
+        R"("max_length":"8"}})"
+        R"(],"links":[{"start_node":312,"end_node":313}]})";
+
+    cyxwiz::PipelineExecutor missing_text_tokenizer_text_col_executor;
+    Check(!missing_text_tokenizer_text_col_executor.ExecutePipeline(
+              missing_text_tokenizer_text_col_json),
+          "TextTokenizer missing text_col should fail validation");
+    Check(missing_text_tokenizer_text_col_executor.GetLastError().find(
+              "missing required parameter 'text_col'") != std::string::npos,
+          "TextTokenizer missing text_col validation should be specific: " +
+              missing_text_tokenizer_text_col_executor.GetLastError());
+
+    const std::string missing_linear_regression_target_json =
+        R"({"nodes":[)"
+        R"({"id":314,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":315,"type":"LinearRegressionNode","name":"MissingTarget","parameters":{)"
+        R"("feature_cols":"x"}})"
+        R"(],"links":[{"start_node":314,"end_node":315}]})";
+
+    cyxwiz::PipelineExecutor missing_linear_regression_target_executor;
+    Check(!missing_linear_regression_target_executor.ExecutePipeline(
+              missing_linear_regression_target_json),
+          "LinearRegressionNode missing target_col should fail validation");
+    Check(missing_linear_regression_target_executor.GetLastError().find(
+              "missing required parameter 'target_col'") != std::string::npos,
+          "LinearRegressionNode missing target_col validation should be specific: " +
+              missing_linear_regression_target_executor.GetLastError());
+
+    const std::string missing_convolution_kernel_json =
+        R"({"nodes":[)"
+        R"({"id":316,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":317,"type":"Convolution1D","name":"MissingKernel","parameters":{)"
+        R"("signal_col":"x"}})"
+        R"(],"links":[{"start_node":316,"end_node":317}]})";
+
+    cyxwiz::PipelineExecutor missing_convolution_kernel_executor;
+    Check(!missing_convolution_kernel_executor.ExecutePipeline(
+              missing_convolution_kernel_json),
+          "Convolution1D missing kernel should fail validation");
+    Check(missing_convolution_kernel_executor.GetLastError().find(
+              "missing required parameter 'kernel'") != std::string::npos,
+          "Convolution1D missing kernel validation should be specific: " +
+              missing_convolution_kernel_executor.GetLastError());
+
+    const std::string missing_label_encoder_column_json =
+        R"({"nodes":[)"
+        R"({"id":318,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":319,"type":"LabelEncoder","name":"MissingLabelColumn","parameters":{}})"
+        R"(],"links":[{"start_node":318,"end_node":319}]})";
+
+    cyxwiz::PipelineExecutor missing_label_encoder_column_executor;
+    Check(!missing_label_encoder_column_executor.ExecutePipeline(
+              missing_label_encoder_column_json),
+          "LabelEncoder missing column should fail validation");
+    Check(missing_label_encoder_column_executor.GetLastError().find(
+              "missing required parameter 'column'") != std::string::npos,
+          "LabelEncoder missing column validation should be specific: " +
+              missing_label_encoder_column_executor.GetLastError());
+
     const std::string missing_ts_window_target_json =
         R"({"nodes":[)"
         R"({"id":172,"type":"DataInput","name":"Input","parameters":{)"
