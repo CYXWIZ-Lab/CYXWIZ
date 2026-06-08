@@ -1447,6 +1447,43 @@ bool ValidateTextOperatorInputSchema(
         "string or numeric label", IsTextLabelArrowType, error);
 }
 
+bool ValidateRequiredRoleColumnKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    return RequireRoleColumnKind(table, node_type, it->second, role, kind,
+                                 predicate, error);
+}
+
+bool ValidateSignalColumnInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "signal_col", "signal", "numeric",
+        IsNumericArrowType, error);
+}
+
+bool ValidateValueColumnInputSchema(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    std::string& error) {
+    return ValidateRequiredRoleColumnKind(
+        table, node_type, parameters, "value_col", "value", "numeric",
+        IsNumericArrowType, error);
+}
+
 bool ValidatePipelineOperatorInputSchema(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& node_type,
@@ -1460,6 +1497,24 @@ bool ValidatePipelineOperatorInputSchema(
         case gui::NodeType::SentimentAnalyzer:
             return ValidateTextOperatorInputSchema(table, node_type,
                                                    parameters, error);
+        case gui::NodeType::FFTNode:
+        case gui::NodeType::Convolution1D:
+        case gui::NodeType::FilterDesigner:
+        case gui::NodeType::TimeSeriesDecomposition:
+        case gui::NodeType::ACFNode:
+        case gui::NodeType::PACFNode:
+        case gui::NodeType::StationarityTest:
+        case gui::NodeType::SeasonalityDetector:
+        case gui::NodeType::ARIMAForecaster:
+        case gui::NodeType::ExponentialSmoothing:
+            return ValidateSignalColumnInputSchema(table, node_type,
+                                                   parameters, error);
+        case gui::NodeType::TimeSeriesWindow:
+        case gui::NodeType::TimeSeriesFeatures:
+        case gui::NodeType::LogTransform:
+        case gui::NodeType::Differencing:
+            return ValidateValueColumnInputSchema(table, node_type,
+                                                  parameters, error);
         default:
             return true;
     }

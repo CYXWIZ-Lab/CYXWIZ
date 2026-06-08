@@ -509,6 +509,16 @@ label types supported by the text operators. This keeps the real operator
 checks as a backstop while moving common text schema rejection out of the
 hot operator execution path.
 
+**Status 2026-06-08 follow-up 45:** Operator-backed signal and
+time-series source columns now share the same executor-bound schema
+check. `FFTNode`, `Convolution1D`, `FilterDesigner`,
+`TimeSeriesDecomposition`, `ACFNode`, `PACFNode`, `StationarityTest`,
+`SeasonalityDetector`, `ARIMAForecaster`, and `ExponentialSmoothing`
+validate `signal_col` as numeric before `Apply()`. `TimeSeriesWindow`,
+`TimeSeriesFeatures`, `LogTransform`, and `Differencing` do the same for
+`value_col`. Multi-feature `feature_cols`/`columns` auto-detect behavior
+remains a separate schema-validation slice.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or

@@ -1153,6 +1153,25 @@ int main() {
           "FFTNode sample_rate validation should be specific: " +
               bad_fft_sample_rate_executor.GetLastError());
 
+    const std::string bad_fft_signal_type_json =
+        R"({"nodes":[)"
+        R"({"id":399,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":400,"type":"FFTNode","name":"BadFFTSignal","parameters":{)"
+        R"("signal_col":"phrase","sample_rate":"1"}})"
+        R"(],"links":[{"start_node":399,"end_node":400}]})";
+
+    cyxwiz::PipelineExecutor bad_fft_signal_type_executor;
+    Check(!bad_fft_signal_type_executor.ExecutePipeline(
+              bad_fft_signal_type_json),
+          "FFTNode string signal_col should fail schema validation");
+    Check(bad_fft_signal_type_executor.GetLastError().find(
+              "FFTNode: signal column 'phrase' must be numeric") !=
+              std::string::npos,
+          "FFTNode signal_col validation should be specific: " +
+              bad_fft_signal_type_executor.GetLastError());
+
     const std::string uppercase_filter_type_json =
         R"({"nodes":[)"
         R"({"id":354,"type":"DataInput","name":"Input","parameters":{)"
@@ -1185,6 +1204,25 @@ int main() {
               uppercase_decomposition_choices_executor.GetLastError());
     check_operator_field("ds_operator_TimeSeriesDecomposition_357", "trend",
                          "TimeSeriesDecomposition uppercase choices");
+
+    const std::string bad_decomposition_signal_type_json =
+        R"({"nodes":[)"
+        R"({"id":401,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":402,"type":"TimeSeriesDecomposition","name":"BadDecomposeSignal","parameters":{)"
+        R"("signal_col":"phrase","period":"2"}})"
+        R"(],"links":[{"start_node":401,"end_node":402}]})";
+
+    cyxwiz::PipelineExecutor bad_decomposition_signal_type_executor;
+    Check(!bad_decomposition_signal_type_executor.ExecutePipeline(
+              bad_decomposition_signal_type_json),
+          "TimeSeriesDecomposition string signal_col should fail schema validation");
+    Check(bad_decomposition_signal_type_executor.GetLastError().find(
+              "TimeSeriesDecomposition: signal column 'phrase' must be numeric") !=
+              std::string::npos,
+          "TimeSeriesDecomposition signal_col validation should be specific: " +
+              bad_decomposition_signal_type_executor.GetLastError());
 
     const std::string bad_stationarity_max_lags_json =
         R"({"nodes":[)"
@@ -1238,6 +1276,25 @@ int main() {
               uppercase_exp_smoothing_method_executor.GetLastError());
     check_operator_field("ds_operator_ExponentialSmoothing_359", "fitted",
                          "ExponentialSmoothing uppercase method");
+
+    const std::string bad_time_series_features_value_type_json =
+        R"({"nodes":[)"
+        R"({"id":403,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":404,"type":"TimeSeriesFeatures","name":"BadTSFeaturesValue","parameters":{)"
+        R"("value_col":"phrase","lag_values":"1","rolling_windows":"2"}})"
+        R"(],"links":[{"start_node":403,"end_node":404}]})";
+
+    cyxwiz::PipelineExecutor bad_time_series_features_value_type_executor;
+    Check(!bad_time_series_features_value_type_executor.ExecutePipeline(
+              bad_time_series_features_value_type_json),
+          "TimeSeriesFeatures string value_col should fail schema validation");
+    Check(bad_time_series_features_value_type_executor.GetLastError().find(
+              "TimeSeriesFeatures: value column 'phrase' must be numeric") !=
+              std::string::npos,
+          "TimeSeriesFeatures value_col validation should be specific: " +
+              bad_time_series_features_value_type_executor.GetLastError());
 
     const std::string missing_decomposition_period_json =
         R"({"nodes":[)"
