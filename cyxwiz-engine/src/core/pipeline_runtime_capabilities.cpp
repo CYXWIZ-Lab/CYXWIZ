@@ -330,6 +330,8 @@ GetPipelineFloatParameterRuntimeCapabilities() {
         {"TimeSeriesSplit", "train_ratio", 0.0, 1.0},
         {"TimeSeriesSplit", "val_ratio", 0.0, 1.0},
         {"TimeSeriesSplit", "test_ratio", 0.0, 1.0},
+        {"RobustScaler", "quantile_min", 0.0, 100.0},
+        {"RobustScaler", "quantile_max", 0.0, 100.0},
     };
     return capabilities;
 }

@@ -557,6 +557,24 @@ int main() {
           "RobustScaler with_centering validation should be specific: " +
               bad_robust_scaler_centering_executor.GetLastError());
 
+    const std::string bad_robust_scaler_quantile_json =
+        R"({"nodes":[)"
+        R"({"id":336,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":337,"type":"RobustScaler","name":"BadRobustQuantile","parameters":{)"
+        R"("quantile_min":"wide"}})"
+        R"(],"links":[{"start_node":336,"end_node":337}]})";
+
+    cyxwiz::PipelineExecutor bad_robust_scaler_quantile_executor;
+    Check(!bad_robust_scaler_quantile_executor.ExecutePipeline(
+              bad_robust_scaler_quantile_json),
+          "RobustScaler malformed quantile_min should fail validation");
+    Check(bad_robust_scaler_quantile_executor.GetLastError().find(
+              "RobustScaler quantile_min must be a number between") !=
+              std::string::npos,
+          "RobustScaler malformed quantile_min error should be specific: " +
+              bad_robust_scaler_quantile_executor.GetLastError());
+
     const std::string bad_pca_center_json =
         R"({"nodes":[)"
         R"({"id":310,"type":"DataInput","name":"Input","parameters":{)"

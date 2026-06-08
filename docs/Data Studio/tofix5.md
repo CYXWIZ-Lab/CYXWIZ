@@ -401,7 +401,8 @@ execution can reach `std::stoi`.
 float-parameter validation axis. `TimeSeriesSplit.train_ratio`,
 `val_ratio`, and `test_ratio` are validated as numeric values in the
 supported `0..1` range before upstream source execution reaches operator
-configuration.
+configuration. The same axis now covers `RobustScaler.quantile_min` and
+`quantile_max` in the implemented `0..100` range.
 
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
