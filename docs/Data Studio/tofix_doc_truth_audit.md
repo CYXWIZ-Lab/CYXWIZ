@@ -59,6 +59,11 @@ scanning so stale or duplicate work is not reintroduced.
 ## Patch Log
 
 - 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
+  selected autoencoder/VAE/GAN/diffusion sketches until CyxWiz has
+  reconstruction-target routing, latent KL-loss contracts,
+  alternating/adversarial-step orchestration, diffusion noise schedules, and
+  generation output packaging.
+- 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
   selected `TimeDistributed` and per-token-head sketches until CyxWiz has a
   trainable wrapper, inner-layer binding, sequence-shape preservation,
   token-level loss validation, padding ignore support, and per-token metrics.

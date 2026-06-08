@@ -442,6 +442,72 @@ bool LooksLikeTimeDistributedTrainingSketch(const gui::MLNode& node,
     return false;
 }
 
+bool LooksLikeReconstructionGenerativeTrainingSketch(
+    const gui::MLNode& node,
+    std::string& matched_key) {
+    const char* sketch_names[] = {
+        "Autoencoder",
+        "Autoencoder_Conv",
+        "VAE",
+        "VAE_Conv",
+        "GAN",
+        "GAN_Basic",
+        "DCGAN",
+        "WGAN",
+        "CycleGAN",
+        "Diffusion",
+        "GANLoss"
+    };
+
+    for (const char* name : sketch_names) {
+        if (node.name == name) {
+            matched_key = name;
+            return true;
+        }
+    }
+
+    const auto& params = node.parameters;
+    const char* enabled_keys[] = {
+        "autoencoder_training",
+        "vae_training",
+        "gan_training",
+        "diffusion_training"
+    };
+
+    for (const char* key : enabled_keys) {
+        if (ParamIsEnabled(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    const char* design_keys[] = {
+        "reconstruction_target_column",
+        "latent_mean",
+        "latent_logvar",
+        "logvar",
+        "kl_loss_weight",
+        "beta_vae",
+        "generator_loss",
+        "discriminator_loss",
+        "gradient_penalty",
+        "noise_scheduler",
+        "diffusion_scheduler",
+        "diffusion_timestep",
+        "timestep_embedding",
+        "noise_prediction_target"
+    };
+
+    for (const char* key : design_keys) {
+        if (HasParam(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -1419,6 +1485,24 @@ void ValidateTrainingPathImplementationStatus(
                    "binding, sequence-shape preservation, token-level loss "
                    "shape validation, padding ignore support, and per-token "
                    "metrics before it can compile truthfully.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        std::string reconstruction_key;
+        if (LooksLikeReconstructionGenerativeTrainingSketch(
+                node,
+                reconstruction_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' sketches autoencoder/VAE/GAN/diffusion training via '"
+                << reconstruction_key
+                << "', but Studio training currently has a single supervised "
+                   "optimizer step. This path needs reconstruction-target "
+                   "routing, latent KL-loss contracts, alternating optimizer "
+                   "or adversarial-step orchestration, diffusion noise "
+                   "schedules, and generation output packaging before it can "
+                   "compile truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }

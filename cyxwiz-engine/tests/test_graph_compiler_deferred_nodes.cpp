@@ -678,6 +678,71 @@ int main() {
     Check(HasIssueText(config, "per-token metrics"),
           "per-token sketch should report missing metrics contract");
 
+    auto vae_sketch = dense;
+    vae_sketch.id = 36;
+    vae_sketch.name = "VAE";
+    vae_sketch.inputs = {Pin(3601, gui::PinType::Tensor, "Input", true)};
+    vae_sketch.outputs = {Pin(3602, gui::PinType::Tensor, "Output", false)};
+
+    nodes = {data, vae_sketch, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 36, 3601),
+        Link(2, 36, 3602, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected VAE-style training sketch should be invalid");
+    Check(HasIssueText(config, "VAE"),
+          "VAE sketch should report the matched sketch name");
+    Check(HasIssueText(config, "latent KL-loss contracts"),
+          "VAE sketch should report missing latent KL contract");
+
+    auto vae_side_output = Node(37,
+                                gui::NodeType::Output,
+                                "VAE Side Output",
+                                {Pin(3701, gui::PinType::Tensor, "Input", true)},
+                                {});
+
+    nodes = {data, dense, loss, optimizer, vae_sketch, vae_side_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 1, 101, 36, 3601),
+        Link(6, 36, 3602, 37, 3701),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side VAE sketch outside selected training path should not block compile");
+    Check(!HasIssueText(config, "latent KL-loss contracts"),
+          "side VAE sketch should not be reported");
+
+    auto gan_dense = dense;
+    gan_dense.name = "GAN Dense Sketch";
+    gan_dense.parameters["generator_loss"] = "non_saturating";
+    gan_dense.parameters["diffusion_timestep"] = "t";
+
+    nodes = {data, gan_dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected GAN/diffusion marker sketch should be invalid");
+    Check(HasIssueText(config, "generator_loss"),
+          "GAN/diffusion sketch should report the matched parameter");
+    Check(HasIssueText(config, "alternating optimizer"),
+          "GAN/diffusion sketch should report missing training-step contract");
+
     for (const auto& scheduler_case :
          cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         auto scheduler = Node(18,
