@@ -268,6 +268,13 @@ as supported while reaching the `DataRegistry::ExportArrowToJSON()` stub.
 Executable export formats are `csv` and `parquet` until native Arrow-table
 JSON export is implemented.
 
+**Status 2026-06-08 follow-up 58:** `DataOutput` now treats the UI-authored
+`file_type` parameter as the same export-format contract as `format`.
+`file_type=parquet` exports through `DataRegistry::ExportArrowToParquet`,
+unsupported dialog choices such as `json` fail validation, and conflicting
+`format` / `file_type` values fail closed instead of silently defaulting to
+CSV.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used

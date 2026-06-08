@@ -1223,6 +1223,21 @@ std::string NormalizeDataInputFileType(const std::string& value) {
     return file_type.empty() ? "auto" : file_type;
 }
 
+std::string NormalizeDataOutputFormat(
+    const std::map<std::string, std::string>& parameters) {
+    auto format_it = parameters.find("format");
+    if (format_it != parameters.end() && !format_it->second.empty()) {
+        return ToLowerAscii(TrimString(format_it->second));
+    }
+
+    auto file_type_it = parameters.find("file_type");
+    if (file_type_it != parameters.end() && !file_type_it->second.empty()) {
+        return ToLowerAscii(TrimString(file_type_it->second));
+    }
+
+    return "csv";
+}
+
 std::string NormalizeBinningMethod(const std::string& value) {
     const std::string method = ToLowerAscii(TrimString(value));
     if (method == "equal_frequency") {
@@ -1533,6 +1548,22 @@ bool HasSupportedParameterValues(
                     : "image";
             if (file_category != "image") {
                 error = "DataInput folder source only supports image category in PipelineExecutor";
+                return false;
+            }
+        }
+    }
+
+    if (node_type == "DataOutput") {
+        auto format_it = parameters.find("format");
+        auto file_type_it = parameters.find("file_type");
+        if (format_it != parameters.end() && !format_it->second.empty() &&
+            file_type_it != parameters.end() && !file_type_it->second.empty()) {
+            const std::string format =
+                ToLowerAscii(TrimString(format_it->second));
+            const std::string file_type =
+                ToLowerAscii(TrimString(file_type_it->second));
+            if (format != file_type) {
+                error = "DataOutput format and file_type disagree";
                 return false;
             }
         }
@@ -2551,11 +2582,7 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
     }
     const std::string& output_path = path_it->second;
 
-    auto format_it = node.parameters.find("format");
-    std::string format =
-        (format_it != node.parameters.end() && !format_it->second.empty())
-            ? ToLowerAscii(TrimString(format_it->second))
-            : "csv";
+    std::string format = NormalizeDataOutputFormat(node.parameters);
 
     spdlog::info("[Pipeline] DataOutput exporting to {} (format: {})", output_path, format);
 

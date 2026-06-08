@@ -132,6 +132,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export_alias.csv";
     const fs::path data_output_mixed_case_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_mixed_case.csv";
+    const fs::path data_output_file_type_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_file_type.parquet";
     const fs::path save_dataset_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_save_dataset.csv";
     const fs::path missing_csv_path =
@@ -148,6 +150,7 @@ int main() {
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
     fs::remove(data_output_mixed_case_csv_path);
+    fs::remove(data_output_file_type_parquet_path);
     fs::remove(save_dataset_csv_path);
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
@@ -2124,6 +2127,41 @@ int main() {
           "DataOutput json format validation should be specific: " +
               json_output_format_executor.GetLastError());
 
+    const std::string json_output_file_type_json =
+        R"({"nodes":[)"
+        R"({"id":368,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":369,"type":"DataOutput","name":"JsonOutput","parameters":{)"
+        R"("file_path":"ignored.json","file_type":"json"}})"
+        R"(],"links":[{"start_node":368,"end_node":369}]})";
+
+    cyxwiz::PipelineExecutor json_output_file_type_executor;
+    Check(!json_output_file_type_executor.ExecutePipeline(
+              json_output_file_type_json),
+          "DataOutput json file_type should fail validation until JSON export is real");
+    Check(json_output_file_type_executor.GetLastError().find(
+              "DataOutput file_type 'json' is not supported") !=
+              std::string::npos,
+          "DataOutput json file_type validation should be specific: " +
+              json_output_file_type_executor.GetLastError());
+
+    const std::string data_output_conflicting_format_json =
+        R"({"nodes":[)"
+        R"({"id":370,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":371,"type":"DataOutput","name":"Output","parameters":{)"
+        R"("file_path":"ignored.csv","format":"csv","file_type":"parquet"}})"
+        R"(],"links":[{"start_node":370,"end_node":371}]})";
+
+    cyxwiz::PipelineExecutor data_output_conflicting_format_executor;
+    Check(!data_output_conflicting_format_executor.ExecutePipeline(
+              data_output_conflicting_format_json),
+          "DataOutput conflicting format aliases should fail validation");
+    Check(data_output_conflicting_format_executor.GetLastError().find(
+              "DataOutput format and file_type disagree") != std::string::npos,
+          "DataOutput conflicting format validation should be specific: " +
+              data_output_conflicting_format_executor.GetLastError());
+
     const std::string missing_output_path_json =
         R"({"nodes":[)"
         R"({"id":31,"type":"DataInput","name":"Input","parameters":{)"
@@ -2158,6 +2196,25 @@ int main() {
               data_output_mixed_case_executor.GetLastError());
     Check(fs::exists(data_output_mixed_case_csv_path),
           "DataOutput mixed-case CSV format should create the output file");
+
+    const std::string data_output_file_type_parquet_json =
+        R"({"nodes":[)"
+        R"({"id":372,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":373,"type":"DataOutput","name":"Output","parameters":{)"
+        R"("file_path":")" +
+        JsonEscapePath(data_output_file_type_parquet_path.string()) +
+        R"(","file_type":"PARQUET"}})"
+        R"(],"links":[{"start_node":372,"end_node":373}]})";
+
+    cyxwiz::PipelineExecutor data_output_file_type_parquet_executor;
+    Check(data_output_file_type_parquet_executor.ExecutePipeline(
+              data_output_file_type_parquet_json),
+          "DataOutput should honor UI-authored file_type parquet: " +
+              data_output_file_type_parquet_executor.GetLastError());
+    Check(fs::exists(data_output_file_type_parquet_path),
+          "DataOutput file_type parquet should create the output file");
 
     const std::string column_appender_json =
         R"({"nodes":[)"
