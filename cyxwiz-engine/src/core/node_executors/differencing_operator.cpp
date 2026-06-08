@@ -9,6 +9,10 @@ bool DifferencingOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    value_col_.clear();
+    lag_ = 1;
+    order_ = 1;
+
     auto it = params.find("value_col");
     if (it == params.end() || it->second.empty()) {
         error = "Differencing: 'value_col' parameter is required";

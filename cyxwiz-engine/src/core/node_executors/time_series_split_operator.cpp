@@ -42,6 +42,10 @@ bool TimeSeriesSplitOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    train_ratio_ = 0.8f;
+    val_ratio_ = 0.1f;
+    test_ratio_ = 0.1f;
+
     if (!ReadFloatParam(params, "train_ratio", 0.8f, train_ratio_, error)) return false;
     if (!ReadFloatParam(params, "val_ratio",   0.1f, val_ratio_,   error)) return false;
     if (!ReadFloatParam(params, "test_ratio",  0.1f, test_ratio_,  error)) return false;

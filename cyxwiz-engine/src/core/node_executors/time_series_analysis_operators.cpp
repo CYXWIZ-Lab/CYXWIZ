@@ -160,6 +160,11 @@ std::vector<bool> MarkSignificant(int size, const std::vector<int>& lags) {
 bool TimeSeriesDecompositionOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    signal_col_.clear();
+    period_ = 0;
+    method_ = "additive";
+    algorithm_ = "classical";
+
     auto s = params.find("signal_col");
     if (s == params.end() || s->second.empty()) {
         error = GetName() + ": 'signal_col' parameter is required";
@@ -243,6 +248,11 @@ TimeSeriesDecompositionOperator::Apply(
 bool ARIMAOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    signal_col_.clear();
+    p_ = -1;
+    d_ = -1;
+    q_ = -1;
+
     auto s = params.find("signal_col");
     if (s == params.end() || s->second.empty()) {
         error = GetName() + ": 'signal_col' parameter is required";
@@ -296,6 +306,12 @@ ARIMAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool ExponentialSmoothingOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    signal_col_.clear();
+    method_ = "simple";
+    alpha_ = -1.0;
+    beta_ = -1.0;
+    gamma_ = -1.0;
+    period_ = -1;
     damped_ = false;
 
     auto s = params.find("signal_col");
@@ -388,6 +404,9 @@ ExponentialSmoothingOperator::Apply(
 bool ACFOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    signal_col_.clear();
+    max_lag_ = -1;
+
     if (!ParseSignalColumn(params, GetName(), signal_col_, error)) return false;
     if (!ParseIntOptional(params, "max_lag", max_lag_, GetName(), error)) return false;
     if (!ParseIntOptional(params, "lags", max_lag_, GetName(), error)) return false;
@@ -439,6 +458,9 @@ ACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool PACFOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    signal_col_.clear();
+    max_lag_ = -1;
+
     if (!ParseSignalColumn(params, GetName(), signal_col_, error)) return false;
     if (!ParseIntOptional(params, "max_lag", max_lag_, GetName(), error)) return false;
     if (!ParseIntOptional(params, "lags", max_lag_, GetName(), error)) return false;
@@ -490,6 +512,9 @@ PACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool StationarityTestOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    signal_col_.clear();
+    max_lags_ = -1;
+
     if (!ParseSignalColumn(params, GetName(), signal_col_, error)) return false;
     if (!ParseIntOptional(params, "max_lags", max_lags_, GetName(), error)) return false;
     if (max_lags_ < -1) {
@@ -548,6 +573,10 @@ StationarityTestOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool SeasonalityDetectorOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    signal_col_.clear();
+    min_period_ = 2;
+    max_period_ = -1;
+
     if (!ParseSignalColumn(params, GetName(), signal_col_, error)) return false;
     if (!ParseIntOptional(params, "min_period", min_period_, GetName(), error)) return false;
     if (!ParseIntOptional(params, "max_period", max_period_, GetName(), error)) return false;

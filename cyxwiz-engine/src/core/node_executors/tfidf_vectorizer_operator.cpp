@@ -19,6 +19,13 @@ bool TFIDFVectorizerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    text_col_.clear();
+    label_col_.clear();
+    max_features_ = 2000;
+    use_idf_ = true;
+    smooth_idf_ = true;
+    norm_ = "l2";
+
     auto it = params.find("text_col");
     if (it == params.end() || it->second.empty()) {
         error = "TFIDFVectorizer: 'text_col' parameter is required";

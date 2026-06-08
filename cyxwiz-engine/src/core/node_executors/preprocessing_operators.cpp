@@ -256,6 +256,9 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool MinMaxScalerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    range_min_ = 0.0;
+    range_max_ = 1.0;
+
     ParseColumnsAndLabel(params, columns_, label_col_);
 
     auto mn = params.find("min");
@@ -322,6 +325,9 @@ MinMaxScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool RobustScalerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    quantile_min_ = 25.0;
+    quantile_max_ = 75.0;
+
     ParseColumnsAndLabel(params, columns_, label_col_);
 
     if (!ReadBoolParam(params, "with_centering", true, GetName(),
@@ -396,6 +402,8 @@ RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool LabelEncoderOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    column_.clear();
+
     auto c = params.find("column");
     if (c == params.end() || c->second.empty()) {
         error = GetName() + ": 'column' parameter is required";
@@ -434,6 +442,8 @@ LabelEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool OrdinalEncoderOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    columns_.clear();
+
     auto c = params.find("columns");
     if (c == params.end() || c->second.empty()) {
         error = GetName() + ": 'columns' parameter is required (comma-sep list)";
@@ -485,6 +495,10 @@ OrdinalEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool TargetEncoderOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    columns_.clear();
+    target_col_.clear();
+    smoothing_ = 1.0;
+
     auto c = params.find("columns");
     if (c == params.end() || c->second.empty()) {
         error = GetName() + ": 'columns' parameter is required (categorical columns)";
@@ -589,6 +603,11 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool OutlierDetectorOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    columns_.clear();
+    label_col_.clear();
+    method_ = "iqr";
+    threshold_ = 1.5;
+
     // "columns" can be "all" or a csv list. "all" maps to empty =
     // auto-detect numeric (matches ResolveFeatureColumns semantic).
     auto c = params.find("columns");

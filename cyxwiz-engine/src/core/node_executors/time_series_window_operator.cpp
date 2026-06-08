@@ -36,6 +36,13 @@ bool TimeSeriesWindowOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    value_col_.clear();
+    feature_cols_.clear();
+    time_col_.clear();
+    input_width_ = 12;
+    label_width_ = 1;
+    shift_ = 1;
+
     auto it = params.find("value_col");
     if (it == params.end() || it->second.empty()) {
         error = "TimeSeriesWindow: 'value_col' parameter is required";

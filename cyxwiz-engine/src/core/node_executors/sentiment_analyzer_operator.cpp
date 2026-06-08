@@ -30,6 +30,10 @@ bool SentimentAnalyzerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    text_col_.clear();
+    label_col_.clear();
+    method_ = "vader";
+
     auto it = params.find("text_col");
     if (it == params.end() || it->second.empty()) {
         error = "SentimentAnalyzer: 'text_col' parameter is required";

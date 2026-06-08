@@ -106,6 +106,11 @@ bool TimeSeriesFeaturesOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    value_col_.clear();
+    lags_.clear();
+    rolling_windows_.clear();
+    rolling_aggregations_.clear();
+
     auto it = params.find("value_col");
     if (it == params.end() || it->second.empty()) {
         error = "TimeSeriesFeatures: 'value_col' parameter is required";
@@ -123,7 +128,6 @@ bool TimeSeriesFeaturesOperator::Configure(
 
     // Parse rolling aggregations. Default keeps the old mean-only
     // behavior so existing graphs continue to emit `{col}_roll_{w}_mean`.
-    rolling_aggregations_.clear();
     auto agg_it = params.find("rolling_aggregations");
     const std::string agg_str = (agg_it != params.end()) ? agg_it->second : "";
     if (agg_str.empty()) {

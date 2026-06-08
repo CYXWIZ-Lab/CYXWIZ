@@ -77,6 +77,9 @@ bool FFTOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    signal_col_.clear();
+    sample_rate_ = 1.0;
+
     auto it = params.find("signal_col");
     if (it == params.end() || it->second.empty()) {
         error = "FFT: 'signal_col' parameter is required";
@@ -170,6 +173,9 @@ bool Convolve1DOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    signal_col_.clear();
+    kernel_.clear();
+
     auto it = params.find("signal_col");
     if (it == params.end() || it->second.empty()) {
         error = "Convolve1D: 'signal_col' parameter is required";
@@ -226,7 +232,11 @@ Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     ARROW_ASSIGN_OR_RAISE(
         const int64_t row_count,
         CheckedSizeForArrow(signal.size(), "Convolve1D"));
-    std::vector<float> out_floats(result.output.begin(), result.output.end());
+    std::vector<float> out_floats;
+    out_floats.reserve(result.output.size());
+    for (double value : result.output) {
+        out_floats.push_back(static_cast<float>(value));
+    }
     ARROW_ASSIGN_OR_RAISE(
         auto new_table,
         ReplaceColumnWithFloat(input, col_idx, out_floats, row_count));
@@ -243,6 +253,13 @@ Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool FilterDesignerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+
+    signal_col_.clear();
+    filter_type_ = "lowpass";
+    cutoff_ = 0.5;
+    cutoff_high_ = 0.0;
+    sample_rate_ = 1.0;
+    order_ = 4;
 
     auto it = params.find("signal_col");
     if (it == params.end() || it->second.empty()) {
@@ -362,7 +379,11 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     ARROW_ASSIGN_OR_RAISE(
         const int64_t row_count,
         CheckedSizeForArrow(signal.size(), "FilterDesigner"));
-    std::vector<float> out_floats(filtered.begin(), filtered.end());
+    std::vector<float> out_floats;
+    out_floats.reserve(filtered.size());
+    for (double value : filtered) {
+        out_floats.push_back(static_cast<float>(value));
+    }
     ARROW_ASSIGN_OR_RAISE(
         auto new_table,
         ReplaceColumnWithFloat(input, col_idx, out_floats, row_count));

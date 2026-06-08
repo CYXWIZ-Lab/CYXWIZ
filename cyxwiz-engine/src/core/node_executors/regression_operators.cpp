@@ -89,6 +89,8 @@ bool LinearRegressionOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    feature_cols_.clear();
+    target_col_.clear();
     fit_intercept_ = true;
 
     auto fc = params.find("feature_cols");
@@ -200,6 +202,10 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool PolynomialRegressionOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+
+    feature_col_.clear();
+    target_col_.clear();
+    degree_ = 2;
 
     auto fc = params.find("feature_col");
     if (fc == params.end() || fc->second.empty()) {

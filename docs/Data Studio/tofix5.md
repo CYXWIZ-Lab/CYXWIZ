@@ -351,6 +351,16 @@ configuration. Cross-field rules and sentinel values such as `-1` auto
 modes remain local because the current central axis intentionally models
 only simple integer minimums.
 
+**Status 2026-06-08 follow-up 26:** Audited operator-backed
+`Configure()` implementations now reset optional fields and documented
+defaults before parsing new params. Reusing an operator instance no
+longer carries stale labels, column lists, enum choices, numeric bounds,
+time-series analysis settings, regression degree, clustering defaults,
+or signal-processing settings from a previous configuration. The
+executor normally creates a fresh operator per node, but direct
+operator/materializer tests and future pooling paths now get idempotent
+configuration semantics.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

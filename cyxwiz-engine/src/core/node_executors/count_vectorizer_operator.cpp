@@ -19,6 +19,11 @@ bool CountVectorizerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    text_col_.clear();
+    label_col_.clear();
+    max_features_ = 2000;
+    norm_ = "l2";
+
     auto it = params.find("text_col");
     if (it == params.end() || it->second.empty()) {
         error = "CountVectorizer: 'text_col' parameter is required";

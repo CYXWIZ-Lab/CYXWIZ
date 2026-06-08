@@ -81,6 +81,9 @@ int CountUniqueClusters(const std::vector<int>& labels) {
 bool ClusteringOperatorBase::ConfigureBase(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    feature_cols_.clear();
+    label_col_.clear();
+
     auto fc = params.find("feature_cols");
     const std::string fc_str = (fc != params.end()) ? fc->second : "";
     ParseCommaList(fc_str, feature_cols_);
@@ -99,6 +102,13 @@ bool ClusteringOperatorBase::ConfigureBase(
 bool KMeansOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    n_clusters_ = 8;
+    max_iter_ = 300;
+    init_ = "kmeans++";
+    n_init_ = 10;
+    tol_ = 1e-4;
+    seed_ = 0;
+
     if (!ConfigureBase(params, error)) return false;
 
     if (!ParseIntParam(params, "n_clusters", n_clusters_, GetName(), error)) return false;
@@ -165,6 +175,10 @@ KMeansOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool DBSCANOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    eps_ = 0.5;
+    min_samples_ = 5;
+    metric_ = "euclidean";
+
     if (!ConfigureBase(params, error)) return false;
 
     if (!ParseDoubleParam(params, "eps", eps_, GetName(), error)) return false;
@@ -223,6 +237,10 @@ DBSCANOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool HierarchicalOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    n_clusters_ = 3;
+    linkage_ = "ward";
+    metric_ = "euclidean";
+
     if (!ConfigureBase(params, error)) return false;
 
     if (!ParseIntParam(params, "n_clusters", n_clusters_, GetName(), error)) return false;
@@ -296,6 +314,13 @@ HierarchicalOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 bool GMMOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
+    n_components_ = 3;
+    covariance_type_ = "full";
+    max_iter_ = 100;
+    tol_ = 1e-3;
+    n_init_ = 1;
+    seed_ = 0;
+
     if (!ConfigureBase(params, error)) return false;
 
     if (!ParseIntParam(params, "n_components", n_components_, GetName(), error)) return false;

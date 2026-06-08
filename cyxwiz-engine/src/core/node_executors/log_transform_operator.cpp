@@ -10,6 +10,8 @@ bool LogTransformOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    value_col_.clear();
+
     auto it = params.find("value_col");
     if (it == params.end() || it->second.empty()) {
         error = "LogTransform: 'value_col' parameter is required";
