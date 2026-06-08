@@ -656,6 +656,76 @@ int main() {
           "LabelEncoder missing column validation should be specific: " +
               missing_label_encoder_column_executor.GetLastError());
 
+    const std::string bad_count_vectorizer_norm_json =
+        R"({"nodes":[)"
+        R"({"id":320,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":321,"type":"CountVectorizer","name":"BadNorm","parameters":{)"
+        R"("text_col":"phrase","norm":"cosine"}})"
+        R"(],"links":[{"start_node":320,"end_node":321}]})";
+
+    cyxwiz::PipelineExecutor bad_count_vectorizer_norm_executor;
+    Check(!bad_count_vectorizer_norm_executor.ExecutePipeline(
+              bad_count_vectorizer_norm_json),
+          "CountVectorizer bad norm should fail validation");
+    Check(bad_count_vectorizer_norm_executor.GetLastError().find(
+              "CountVectorizer norm 'cosine' is not supported") !=
+              std::string::npos,
+          "CountVectorizer bad norm validation should be specific: " +
+              bad_count_vectorizer_norm_executor.GetLastError());
+
+    const std::string bad_kmeans_init_json =
+        R"({"nodes":[)"
+        R"({"id":322,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":323,"type":"KMeansCluster","name":"BadInit","parameters":{)"
+        R"("init":"forgy"}})"
+        R"(],"links":[{"start_node":322,"end_node":323}]})";
+
+    cyxwiz::PipelineExecutor bad_kmeans_init_executor;
+    Check(!bad_kmeans_init_executor.ExecutePipeline(bad_kmeans_init_json),
+          "KMeansCluster bad init should fail validation");
+    Check(bad_kmeans_init_executor.GetLastError().find(
+              "KMeansCluster init 'forgy' is not supported") !=
+              std::string::npos,
+          "KMeansCluster bad init validation should be specific: " +
+              bad_kmeans_init_executor.GetLastError());
+
+    const std::string bad_exp_smoothing_method_json =
+        R"({"nodes":[)"
+        R"({"id":324,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":325,"type":"ExponentialSmoothing","name":"BadSmoothingMethod","parameters":{)"
+        R"("signal_col":"signal","method":"ets"}})"
+        R"(],"links":[{"start_node":324,"end_node":325}]})";
+
+    cyxwiz::PipelineExecutor bad_exp_smoothing_method_executor;
+    Check(!bad_exp_smoothing_method_executor.ExecutePipeline(
+              bad_exp_smoothing_method_json),
+          "ExponentialSmoothing bad method should fail validation");
+    Check(bad_exp_smoothing_method_executor.GetLastError().find(
+              "ExponentialSmoothing method 'ets' is not supported") !=
+              std::string::npos,
+          "ExponentialSmoothing bad method validation should be specific: " +
+              bad_exp_smoothing_method_executor.GetLastError());
+
+    const std::string missing_decomposition_period_json =
+        R"({"nodes":[)"
+        R"({"id":326,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":327,"type":"TimeSeriesDecomposition","name":"MissingPeriod","parameters":{)"
+        R"("signal_col":"signal"}})"
+        R"(],"links":[{"start_node":326,"end_node":327}]})";
+
+    cyxwiz::PipelineExecutor missing_decomposition_period_executor;
+    Check(!missing_decomposition_period_executor.ExecutePipeline(
+              missing_decomposition_period_json),
+          "TimeSeriesDecomposition missing period should fail validation");
+    Check(missing_decomposition_period_executor.GetLastError().find(
+              "missing required parameter 'period'") != std::string::npos,
+          "TimeSeriesDecomposition missing period validation should be specific: " +
+              missing_decomposition_period_executor.GetLastError());
+
     const std::string missing_ts_window_target_json =
         R"({"nodes":[)"
         R"({"id":172,"type":"DataInput","name":"Input","parameters":{)"

@@ -329,6 +329,15 @@ parameters such as `TextTokenizer.text_col`,
 `LabelEncoder.column` now fail during executor validation instead of
 after upstream source execution reaches operator configuration.
 
+**Status 2026-06-08 follow-up 24:** The central allowed-parameter axis
+now covers scalar enum choices for operator-backed vectorizers,
+sentiment, clustering, filter design, decomposition, smoothing, and
+encoder/outlier nodes. Unsupported values such as
+`CountVectorizer.norm=cosine`, `KMeansCluster.init=forgy`, or
+`ExponentialSmoothing.method=ets` now fail during executor validation.
+`TimeSeriesDecomposition.period` is also part of the required-parameter
+axis instead of falling through to a later local period-range error.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and
