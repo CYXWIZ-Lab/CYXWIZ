@@ -480,6 +480,38 @@ int main() {
           "DataInput unsupported file type error should be specific: " +
               bad_data_input_type_executor.GetLastError());
 
+    const std::string bad_data_input_json_type_json =
+        R"({"nodes":[)"
+        R"({"id":427,"type":"DataInput","name":"BadJsonType","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.json","type":"json"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor bad_data_input_json_type_executor;
+    Check(!bad_data_input_json_type_executor.ExecutePipeline(
+              bad_data_input_json_type_json),
+          "DataInput json type should fail validation until JSON loading is real");
+    Check(bad_data_input_json_type_executor.GetLastError().find(
+              "DataInput type 'json' is not supported") !=
+              std::string::npos,
+          "DataInput json type validation should be specific: " +
+              bad_data_input_json_type_executor.GetLastError());
+
+    const std::string bad_data_input_excel_type_json =
+        R"({"nodes":[)"
+        R"({"id":428,"type":"DataInput","name":"BadExcelType","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.xlsx","type":"excel"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor bad_data_input_excel_type_executor;
+    Check(!bad_data_input_excel_type_executor.ExecutePipeline(
+              bad_data_input_excel_type_json),
+          "DataInput excel type should fail validation until Excel loading is real");
+    Check(bad_data_input_excel_type_executor.GetLastError().find(
+              "DataInput type 'excel' is not supported") !=
+              std::string::npos,
+          "DataInput excel type validation should be specific: " +
+              bad_data_input_excel_type_executor.GetLastError());
+
     const std::string unsupported_ml_dataset_source_json =
         R"({"nodes":[)"
         R"({"id":360,"type":"DataInput","name":"PlannedMLDataset","parameters":{)"
@@ -527,22 +559,6 @@ int main() {
           "DataInput uppercase FILE bad skip_rows validation should be "
           "specific: " +
               uppercase_file_bad_skip_rows_executor.GetLastError());
-
-    const std::string bad_sheet_idx_json =
-        R"({"nodes":[)"
-        R"({"id":11,"type":"DataInput","name":"BadSheet","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.xlsx","type":"excel","sheet_idx":"-1"}},)"
-        R"({"id":12,"type":"StandardScaler","name":"Scale","parameters":{)"
-        R"("columns":"x"}})"
-        R"(],"links":[{"start_node":11,"end_node":12}]})";
-
-    cyxwiz::PipelineExecutor bad_sheet_idx_executor;
-    Check(!bad_sheet_idx_executor.ExecutePipeline(bad_sheet_idx_json),
-          "DataInput bad sheet_idx should fail validation");
-    Check(bad_sheet_idx_executor.GetLastError().find(
-              "sheet_idx must be a non-negative integer") != std::string::npos,
-          "bad sheet_idx validation should be specific: " +
-              bad_sheet_idx_executor.GetLastError());
 
     const std::string bad_has_header_json =
         R"({"nodes":[)"

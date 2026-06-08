@@ -590,10 +590,18 @@ construction.
 **Status 2026-06-07 follow-up 11:** File-source `DataInput.type` is now
 validated through the central allowed-parameter registry instead of
 falling through to late loader failures for unsupported declared formats.
-Supported declared types are `auto`, `csv`, `tsv`, `parquet`, `json`,
-`excel`, `feather`, `arrow`, and `ipc`. The legacy `Binning.method`
+Supported declared types are `auto`, `csv`, `tsv`, `parquet`, `feather`,
+`arrow`, and `ipc`. The legacy `Binning.method`
 contract also accepts the documented `equal_frequency` alias and
 normalizes it to the implemented `equal_freq` execution path.
+
+**Status 2026-06-08 follow-up 53:** `DataInput.type=json` and
+`DataInput.type=excel` now fail validation instead of being advertised as
+PipelineExecutor-supported while reaching incomplete DataRegistry loader
+paths. JSON loading still falls through to unsupported Arrow auto-detect,
+and Excel loading still returns no dataset, so those formats stay outside
+the executable PipelineExecutor type list until real Arrow-table loaders
+exist.
 
 **Status 2026-06-08 follow-up 12:** Cycle validation is covered by
 `ValidatePipeline()` through `TopologicalSort()`, and the executor routing

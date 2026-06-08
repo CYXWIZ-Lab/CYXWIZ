@@ -258,7 +258,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
     static const std::vector<PipelineAllowedParameterValuesRuntimeCapability> capabilities = {
         {"FileInput", "format", "auto", {"auto", "csv", "parquet"}},
         {"DataInput", "source_type", "file", {"file", "folder"}},
-        {"DataInput", "type", "auto", {"auto", "csv", "tsv", "parquet", "json", "excel", "feather", "arrow", "ipc"}},
+        {"DataInput", "type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}},
         {"DataOutput", "format", "csv", {"csv", "parquet"}},
         {"SaveDataset", "format", "csv", {"csv", "parquet"}},
         {"FillMissing", "strategy", "mean", {"mean", "median", "mode", "constant"}},
