@@ -1091,6 +1091,12 @@ bool HasSupportedParameterValues(
         }
     }
 
+    if (node_type == "TextVectorize" &&
+        HasNonEmptyParameter(parameters, "max_features")) {
+        error = "TextVectorize max_features is not supported by the legacy PipelineExecutor path; use CountVectorizer or TFIDFVectorizer";
+        return false;
+    }
+
     if (node_type == "TSWindow") {
         const auto stride_it = parameters.find("stride");
         if (stride_it != parameters.end() && !stride_it->second.empty() &&

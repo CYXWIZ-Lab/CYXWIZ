@@ -292,6 +292,11 @@ silently ignored. The implemented legacy text-clean path remains limited
 to HTML removal, special-character removal, lowercasing, whitespace
 normalization, and trimming until stopword removal has a real backend.
 
+**Status 2026-06-08 follow-up 18:** Legacy `TextVectorize.max_features`
+now fails closed instead of being accepted by the simple `text_length` /
+`word_count` branch and ignored. Vocabulary-size capping belongs to the
+operator-backed `CountVectorizer` and `TFIDFVectorizer` nodes.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

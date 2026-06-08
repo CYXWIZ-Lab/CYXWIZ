@@ -1534,6 +1534,24 @@ int main() {
           "TextVectorize unsupported method error should be specific: " +
               bad_text_vectorize_method_executor.GetLastError());
 
+    const std::string bad_text_vectorize_max_features_json =
+        R"({"nodes":[)"
+        R"({"id":213,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":214,"type":"TextVectorize","name":"IgnoredMaxFeatures","parameters":{)"
+        R"("text_column":"phrase","method":"count","max_features":"1000"}})"
+        R"(],"links":[{"start_node":213,"end_node":214}]})";
+
+    cyxwiz::PipelineExecutor bad_text_vectorize_max_features_executor;
+    Check(!bad_text_vectorize_max_features_executor.ExecutePipeline(
+              bad_text_vectorize_max_features_json),
+          "TextVectorize max_features should fail closed on the legacy path");
+    Check(bad_text_vectorize_max_features_executor.GetLastError().find(
+              "TextVectorize max_features is not supported") !=
+              std::string::npos,
+          "TextVectorize max_features error should be specific: " +
+              bad_text_vectorize_max_features_executor.GetLastError());
+
     const std::string binning_json =
         R"({"nodes":[)"
         R"({"id":71,"type":"DataInput","name":"Input","parameters":{)"
