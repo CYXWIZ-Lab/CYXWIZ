@@ -883,6 +883,25 @@ int main() {
           "disconnected graph validation should be specific: " +
               disconnected_executor.GetLastError());
 
+    const std::string cyclic_json =
+        R"({"nodes":[)"
+        R"({"id":200,"type":"StandardScaler","name":"ScaleA","parameters":{)"
+        R"("columns":"x"}},)"
+        R"({"id":201,"type":"StandardScaler","name":"ScaleB","parameters":{)"
+        R"("columns":"x"}})"
+        R"(],"links":[)"
+        R"({"start_node":200,"end_node":201},)"
+        R"({"start_node":201,"end_node":200})"
+        R"(]})";
+
+    cyxwiz::PipelineExecutor cyclic_executor;
+    Check(!cyclic_executor.ExecutePipeline(cyclic_json),
+          "cyclic graph should fail validation");
+    Check(cyclic_executor.GetLastError().find(
+              "Pipeline contains a cycle") != std::string::npos,
+          "cycle validation should be specific: " +
+              cyclic_executor.GetLastError());
+
     const std::string rename_columns_json =
         R"({"nodes":[)"
         R"({"id":43,"type":"DataInput","name":"Input","parameters":{)"

@@ -317,16 +317,25 @@ Supported declared types are `auto`, `csv`, `tsv`, `parquet`, `json`,
 contract also accepts the documented `equal_frequency` alias and
 normalizes it to the implemented `equal_freq` execution path.
 
+**Status 2026-06-08 follow-up 12:** Cycle validation is covered by
+`ValidatePipeline()` through `TopologicalSort()`, and the executor routing
+test now locks that behavior with a cyclic two-node graph. Disconnected
+graphs, dangling links, missing required inputs, unsupported node types,
+and required/allowed parameter baselines are already validated for the
+covered runtime paths. Remaining validation work is broader schema/type
+coverage for node families that still do not have loaded-table checks.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp:157`
 
 Problem:
 
-- validation currently only checks the most basic shape of the node
-  list
-- code comments still mark disconnected-node checks, type checks, and
-  parameter validation as TODOs
+- validation no longer only checks the most basic shape of the node list,
+  but loaded-table schema/type coverage is still uneven across node
+  families
+- some historical documentation still treated already-covered graph-shape
+  checks as pending
 
 Effect:
 
@@ -340,12 +349,6 @@ Recommendation:
 
 - validation must at minimum reject:
   - broader disconnected-graph policy for intentionally separate jobs
-  - cycles for DAG-only paths
-  - missing required params beyond the current source/export and active
-    legacy transform baseline
-  - missing required inputs
-  - unsupported node types for execution paths beyond the current legacy
-    executor/runtime registry baseline
   - obvious type/schema mismatches beyond the current source, legacy
     scalar-integer/enum parameter baseline, and active loaded-table
     column/list/aggregation transform checks
