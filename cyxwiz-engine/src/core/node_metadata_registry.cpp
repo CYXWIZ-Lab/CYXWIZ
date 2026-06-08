@@ -701,10 +701,10 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DataOutput, NodeCategory::DataSources, "Data Output", ICON_FA_FILE_EXPORT,
-        {"csv", "excel", "json", "parquet", "hdf5", "output", "save", "write", "export", "file"}, 0, false,
-        "Universal data exporter - supports CSV, Excel, JSON, Parquet, HDF5", "", "",
+        {"csv", "parquet", "output", "save", "write", "export", "file"}, 0, false,
+        "Universal data exporter - supports CSV and Parquet", "", "",
         {{"Data", PinType::Dataset, true, "Input dataset"}}, {},
-        {{"file_path", "file", "", "Output file", {}, "*.csv;*.xlsx;*.json;*.parquet;*.hdf5"},
+        {{"file_path", "file", "", "Output file", {}, "*.csv;*.parquet"},
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 

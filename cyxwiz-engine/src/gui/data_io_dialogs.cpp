@@ -24,11 +24,7 @@ DataOutputDialog::DataOutputDialog(MLNode* node)
         if (node_->parameters.count("file_type")) {
             std::string type = node_->parameters["file_type"];
             if (type == "csv") output_type_ = 0;
-            else if (type == "tsv") output_type_ = 1;
-            else if (type == "json") output_type_ = 2;
-            else if (type == "parquet") output_type_ = 3;
-            else if (type == "excel") output_type_ = 4;
-            else if (type == "hdf5") output_type_ = 5;
+            else if (type == "parquet") output_type_ = 1;
         }
     }
 }
@@ -37,7 +33,7 @@ void DataOutputDialog::Apply() {
     if (!node_) return;
 
     node_->parameters["file_path"] = file_path_;
-    const char* types[] = {"csv", "tsv", "json", "parquet", "excel", "hdf5"};
+    const char* types[] = {"csv", "parquet"};
     node_->parameters["file_type"] = types[output_type_];
     node_->parameters["overwrite"] = overwrite_ ? "true" : "false";
     node_->parameters["include_header"] = include_header_ ? "true" : "false";
@@ -98,15 +94,15 @@ void DataOutputDialog::RenderSettingsTab() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    const char* formats[] = {"CSV", "TSV", "JSON", "Parquet", "Excel", "HDF5"};
+    const char* formats[] = {"CSV", "Parquet"};
     ImGui::Text("Format:");
     ImGui::SameLine(80);
     ImGui::SetNextItemWidth(120);
-    if (ImGui::Combo("##format", &output_type_, formats, 6)) {
+    if (ImGui::Combo("##format", &output_type_, formats, 2)) {
         has_changes_ = true;
     }
 
-    if (output_type_ <= 1) {
+    if (output_type_ == 0) {
         if (ImGui::Checkbox("Include header", &include_header_)) {
             has_changes_ = true;
         }

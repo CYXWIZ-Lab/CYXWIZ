@@ -2996,7 +2996,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
         case NodeType::DataOutput: {
             // Universal Data Output node - smart dialog for export
-            // Supports: CSV, TSV, JSON, Parquet, Excel, HDF5
+            // Supports: CSV, Parquet
             NodePin input_pin;
             input_pin.id = next_pin_id_++;
             input_pin.type = PinType::Dataset;
@@ -3006,7 +3006,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
             // Core parameters (set by DataOutputDialog)
             node.parameters["file_path"] = "";
-            node.parameters["file_type"] = "csv";  // csv, tsv, json, parquet, excel, hdf5
+            node.parameters["file_type"] = "csv";  // csv, parquet
             node.parameters["configured"] = "false";  // Triggers dialog on first use
 
             // Export options
