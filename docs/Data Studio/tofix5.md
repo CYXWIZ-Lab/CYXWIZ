@@ -351,6 +351,13 @@ Arrow, and IPC instead of offering JSON, Excel, HDF5, TXT, or ARFF on the
 tabular path. Text-specific JSON/TXT selection remains in the Text source
 flow.
 
+**Status 2026-06-08 follow-up 71:** Node metadata now exposes the same
+format selectors the DataInput/DataOutput dialogs and runtime validation
+already use. `DataInput.type` defaults to `auto` with CSV, TSV, Parquet,
+Feather, Arrow, and IPC choices; `DataOutput.file_type` defaults to CSV
+with CSV/Parquet choices. Metadata drift tests now reject unsupported JSON,
+Excel, or HDF5/Excel exporter options from these enums.
+
 **Status 2026-06-08 follow-up 40:** `DeployToNodeEditor` now also
 publishes its deployed dataset name into the shared executor node-result
 binding. It still marks the graph deployment-ready, but can now be used

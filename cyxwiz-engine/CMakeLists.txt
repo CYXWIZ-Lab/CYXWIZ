@@ -815,11 +815,42 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     COMMENT "Copying resources..."
 )
 
-# Copy startup scripts to build directory
+# Copy runtime scripts to build directory. Avoid copying token-metadata/node_modules:
+# it is not a runtime asset for the engine and makes MSBuild post-build copies
+# pathologically slow.
 add_custom_command(TARGET cyxwiz-engine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/scripts
+    COMMAND ${CMAKE_COMMAND} -E make_directory
     $<TARGET_FILE_DIR:cyxwiz-engine>/scripts
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_SOURCE_DIR}/scripts/build.bat
+    ${CMAKE_SOURCE_DIR}/scripts/build.sh
+    ${CMAKE_SOURCE_DIR}/scripts/rebuild.cmd
+    ${CMAKE_SOURCE_DIR}/scripts/rebuild.sh
+    ${CMAKE_SOURCE_DIR}/scripts/setup-onnxruntime-gpu.ps1
+    ${CMAKE_SOURCE_DIR}/scripts/setup-onnxruntime-gpu.sh
+    ${CMAKE_SOURCE_DIR}/scripts/setup.bat
+    ${CMAKE_SOURCE_DIR}/scripts/setup.sh
+    $<TARGET_FILE_DIR:cyxwiz-engine>/scripts
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/scripts/startup
+    $<TARGET_FILE_DIR:cyxwiz-engine>/scripts/startup
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/scripts/templates
+    $<TARGET_FILE_DIR:cyxwiz-engine>/scripts/templates
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+    $<TARGET_FILE_DIR:cyxwiz-engine>/scripts/token-metadata
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/README.md
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/add-metadata.mjs
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/airdrop.mjs
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/check-metadata.mjs
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/metadata.json
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/package-lock.json
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/package.json
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/update-metadata-uri.mjs
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/upload-image.mjs
+    ${CMAKE_SOURCE_DIR}/scripts/token-metadata/upload-imgbb.ps1
+    $<TARGET_FILE_DIR:cyxwiz-engine>/scripts/token-metadata
     COMMENT "Copying scripts..."
 )
 

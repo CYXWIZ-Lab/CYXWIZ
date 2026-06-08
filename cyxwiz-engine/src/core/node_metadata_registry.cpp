@@ -697,6 +697,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         "Universal data loader - supports CSV, TSV, Parquet, Feather, Arrow, and IPC", "", "",
         {}, {{"Data", PinType::Dataset, true, "Output dataset"}},
         {{"file_path", "file", "", "Data file", {}, "*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc"},
+         {"type", "enum", "auto", "Input format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -705,6 +706,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         "Universal data exporter - supports CSV and Parquet", "", "",
         {{"Data", PinType::Dataset, true, "Input dataset"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.csv;*.parquet"},
+         {"file_type", "enum", "csv", "Output format", {"csv", "parquet"}, ""},
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 

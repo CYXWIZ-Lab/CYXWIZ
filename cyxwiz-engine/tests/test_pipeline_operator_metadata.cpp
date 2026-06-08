@@ -194,6 +194,39 @@ int main() {
                   file_path->validation.find("*.xlsx") == std::string::npos &&
                   file_path->validation.find("*.hdf5") == std::string::npos,
               "DataInput file filter should not advertise unsupported runtime formats");
+
+        const auto* type = FindParameter(data_input, "type");
+        Check(type != nullptr,
+              "DataInput metadata should expose runtime file type selector");
+        Check(type->default_value == "auto",
+              "DataInput type should default to runtime auto detection");
+        Check(ContainsString(type->enum_values, "csv") &&
+                  ContainsString(type->enum_values, "tsv") &&
+                  ContainsString(type->enum_values, "parquet") &&
+                  ContainsString(type->enum_values, "feather") &&
+                  ContainsString(type->enum_values, "arrow") &&
+                  ContainsString(type->enum_values, "ipc"),
+              "DataInput type enum should list runtime-supported formats");
+        Check(!ContainsString(type->enum_values, "json") &&
+                  !ContainsString(type->enum_values, "excel") &&
+                  !ContainsString(type->enum_values, "hdf5"),
+              "DataInput type enum should not advertise unsupported runtime formats");
+    }
+
+    {
+        const auto* data_output = metadata.GetMetadata(gui::NodeType::DataOutput);
+        Check(data_output != nullptr, "DataOutput metadata should exist");
+        const auto* file_type = FindParameter(data_output, "file_type");
+        Check(file_type != nullptr,
+              "DataOutput metadata should expose runtime output format selector");
+        Check(file_type->default_value == "csv",
+              "DataOutput file_type should default to CSV");
+        Check(ContainsString(file_type->enum_values, "csv") &&
+                  ContainsString(file_type->enum_values, "parquet"),
+              "DataOutput file_type enum should list runtime-supported output formats");
+        Check(!ContainsString(file_type->enum_values, "json") &&
+                  !ContainsString(file_type->enum_values, "excel"),
+              "DataOutput file_type enum should not advertise unsupported exporters");
     }
 
     auto& factory = cyxwiz::PipelineOperatorFactory::Instance();
