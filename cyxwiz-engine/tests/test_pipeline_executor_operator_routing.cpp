@@ -1539,6 +1539,31 @@ int main() {
     Check(registry.GetArrowDataset("saved_alias") != nullptr,
           "SaveDataset should preserve legacy in-memory alias behavior");
 
+    const std::string save_dataset_downstream_json =
+        R"({"nodes":[)"
+        R"({"id":361,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":362,"type":"SaveDataset","name":"Save","parameters":{)"
+        R"("name":"saved_downstream"}},)"
+        R"({"id":363,"type":"SelectColumns","name":"Select","parameters":{)"
+        R"("columns":"x"}})"
+        R"(],"links":[{"start_node":361,"end_node":362},{"start_node":362,"end_node":363}]})";
+
+    cyxwiz::PipelineExecutor save_dataset_downstream_executor;
+    Check(save_dataset_downstream_executor.ExecutePipeline(
+              save_dataset_downstream_json),
+          "SaveDataset should publish a dataset binding for downstream nodes: " +
+              save_dataset_downstream_executor.GetLastError());
+    auto saved_downstream = registry.GetArrowDataset("ds_select_363");
+    Check(saved_downstream != nullptr,
+          "SelectColumns should consume the SaveDataset output binding");
+    auto saved_downstream_table = saved_downstream->GetArrowTable();
+    Check(saved_downstream_table != nullptr,
+          "downstream SelectColumns output table should exist");
+    Check(saved_downstream_table->num_columns() == 1,
+          "downstream SelectColumns should preserve selected schema");
+
     const std::string bad_save_dataset_format_json =
         R"({"nodes":[)"
         R"({"id":137,"type":"DataInput","name":"Input","parameters":{)"

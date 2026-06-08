@@ -2251,6 +2251,7 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
         }
 
         // Store the output dataset name in context
+        ctx.node_results[node.id] = output_name;
         ctx.output_dataset = output_path.empty() ? output_name : output_path;
 
         spdlog::info("[Data Studio] Dataset saved successfully as '{}'",
