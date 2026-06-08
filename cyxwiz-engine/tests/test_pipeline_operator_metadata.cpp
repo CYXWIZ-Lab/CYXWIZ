@@ -896,7 +896,11 @@ int main() {
                 return std::string(runtime_capability.parameter_name) ==
                            capability.parameter_name &&
                        runtime_capability.minimum == capability.minimum &&
-                       runtime_capability.maximum == capability.maximum;
+                       runtime_capability.maximum == capability.maximum &&
+                       runtime_capability.minimum_inclusive ==
+                           capability.minimum_inclusive &&
+                       runtime_capability.maximum_inclusive ==
+                           capability.maximum_inclusive;
             });
         Check(supported_axis != support.float_parameters.end(),
               std::string("runtime support should carry float-parameter axis: ") +
@@ -905,7 +909,13 @@ int main() {
                   std::string(capability.parameter_name).size() > 1,
               std::string("float parameter name is too weak: ") +
                   capability.legacy_type_name);
-        Check(capability.maximum >= capability.minimum,
+        const bool range_has_bound =
+            capability.minimum.has_value() || capability.maximum.has_value();
+        const bool range_order_is_valid =
+            !capability.minimum.has_value() ||
+            !capability.maximum.has_value() ||
+            *capability.maximum >= *capability.minimum;
+        Check(range_has_bound && range_order_is_valid,
               std::string("float parameter range is invalid: ") +
                   capability.legacy_type_name + "." + capability.parameter_name);
     }

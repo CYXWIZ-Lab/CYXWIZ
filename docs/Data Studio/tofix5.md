@@ -559,6 +559,13 @@ zero train splits and ratio totals that do not sum to 1.0,
 must be a comma-separated finite-number list, and band filters require
 `FilterDesigner.cutoff_high > cutoff` before source execution.
 
+**Status 2026-06-08 follow-up 50:** The capability-metadata drift guard
+now accepts open-ended float bounds and checks inclusive/exclusive bound
+flags, matching the runtime capability model used by positive and
+nonnegative scalar parameters. This keeps open-ended rules such as
+`TargetEncoder.smoothing` and `FilterDesigner.cutoff_high` under the same
+registry test instead of treating them as invalid metadata.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or
