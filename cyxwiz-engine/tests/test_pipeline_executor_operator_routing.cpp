@@ -726,6 +726,94 @@ int main() {
           "TimeSeriesDecomposition missing period validation should be specific: " +
               missing_decomposition_period_executor.GetLastError());
 
+    const std::string bad_ts_window_input_width_json =
+        R"({"nodes":[)"
+        R"({"id":328,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":329,"type":"TimeSeriesWindow","name":"BadInputWidth","parameters":{)"
+        R"("value_col":"value","input_width":"0"}})"
+        R"(],"links":[{"start_node":328,"end_node":329}]})";
+
+    cyxwiz::PipelineExecutor bad_ts_window_input_width_executor;
+    Check(!bad_ts_window_input_width_executor.ExecutePipeline(
+              bad_ts_window_input_width_json),
+          "TimeSeriesWindow input_width 0 should fail validation");
+    Check(bad_ts_window_input_width_executor.GetLastError().find(
+              "TimeSeriesWindow input_width must be an integer >= 1") !=
+              std::string::npos,
+          "TimeSeriesWindow input_width validation should be specific: " +
+              bad_ts_window_input_width_executor.GetLastError());
+
+    const std::string bad_ts_features_lags_json =
+        R"({"nodes":[)"
+        R"({"id":330,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":331,"type":"TimeSeriesFeatures","name":"BadLags","parameters":{)"
+        R"("value_col":"value","lag_values":"1,0"}})"
+        R"(],"links":[{"start_node":330,"end_node":331}]})";
+
+    cyxwiz::PipelineExecutor bad_ts_features_lags_executor;
+    Check(!bad_ts_features_lags_executor.ExecutePipeline(
+              bad_ts_features_lags_json),
+          "TimeSeriesFeatures lag_values containing 0 should fail validation");
+    Check(bad_ts_features_lags_executor.GetLastError().find(
+              "TimeSeriesFeatures lag_values must be a comma-separated list of integers >= 1") !=
+              std::string::npos,
+          "TimeSeriesFeatures lag_values validation should be specific: " +
+              bad_ts_features_lags_executor.GetLastError());
+
+    const std::string bad_pca_components_json =
+        R"({"nodes":[)"
+        R"({"id":332,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":333,"type":"PCANode","name":"BadComponents","parameters":{)"
+        R"("n_components":"0"}})"
+        R"(],"links":[{"start_node":332,"end_node":333}]})";
+
+    cyxwiz::PipelineExecutor bad_pca_components_executor;
+    Check(!bad_pca_components_executor.ExecutePipeline(bad_pca_components_json),
+          "PCANode n_components 0 should fail validation");
+    Check(bad_pca_components_executor.GetLastError().find(
+              "PCANode n_components must be an integer >= 1") !=
+              std::string::npos,
+          "PCANode n_components validation should be specific: " +
+              bad_pca_components_executor.GetLastError());
+
+    const std::string bad_kmeans_max_iter_json =
+        R"({"nodes":[)"
+        R"({"id":334,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":335,"type":"KMeansCluster","name":"BadMaxIter","parameters":{)"
+        R"("max_iter":"0"}})"
+        R"(],"links":[{"start_node":334,"end_node":335}]})";
+
+    cyxwiz::PipelineExecutor bad_kmeans_max_iter_executor;
+    Check(!bad_kmeans_max_iter_executor.ExecutePipeline(bad_kmeans_max_iter_json),
+          "KMeansCluster max_iter 0 should fail validation");
+    Check(bad_kmeans_max_iter_executor.GetLastError().find(
+              "KMeansCluster max_iter must be an integer >= 1") !=
+              std::string::npos,
+          "KMeansCluster max_iter validation should be specific: " +
+              bad_kmeans_max_iter_executor.GetLastError());
+
+    const std::string bad_decomposition_period_json =
+        R"({"nodes":[)"
+        R"({"id":336,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":337,"type":"TimeSeriesDecomposition","name":"BadPeriod","parameters":{)"
+        R"("signal_col":"signal","period":"1"}})"
+        R"(],"links":[{"start_node":336,"end_node":337}]})";
+
+    cyxwiz::PipelineExecutor bad_decomposition_period_executor;
+    Check(!bad_decomposition_period_executor.ExecutePipeline(
+              bad_decomposition_period_json),
+          "TimeSeriesDecomposition period 1 should fail validation");
+    Check(bad_decomposition_period_executor.GetLastError().find(
+              "TimeSeriesDecomposition period must be an integer >= 2") !=
+              std::string::npos,
+          "TimeSeriesDecomposition period validation should be specific: " +
+              bad_decomposition_period_executor.GetLastError());
+
     const std::string missing_ts_window_target_json =
         R"({"nodes":[)"
         R"({"id":172,"type":"DataInput","name":"Input","parameters":{)"

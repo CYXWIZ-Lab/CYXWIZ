@@ -338,6 +338,19 @@ encoder/outlier nodes. Unsupported values such as
 `TimeSeriesDecomposition.period` is also part of the required-parameter
 axis instead of falling through to a later local period-range error.
 
+**Status 2026-06-08 follow-up 25:** The central integer-parameter axis
+now covers operator-backed minimum bounds that match current runtime
+semantics, including time-series window/features/differencing, text
+tokenizer/vectorizers, PCA, clustering iteration/count parameters,
+polynomial regression degree, filter order, and decomposition period.
+Invalid values such as `TimeSeriesWindow.input_width=0`,
+`TimeSeriesFeatures.lag_values=1,0`, `PCANode.n_components=0`,
+`KMeansCluster.max_iter=0`, and `TimeSeriesDecomposition.period=1`
+now fail before upstream source execution reaches operator
+configuration. Cross-field rules and sentinel values such as `-1` auto
+modes remain local because the current central axis intentionally models
+only simple integer minimums.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and
