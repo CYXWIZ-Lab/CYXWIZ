@@ -94,34 +94,40 @@ void UpsertSupportAxis(NodeMetadata& metadata,
 }
 
 void ApplyRuntimeSupportAxes(NodeMetadata& metadata,
-                             const PipelineRuntimeSupport& support) {
+                             const PipelineRuntimeSupport& support,
+                             std::string reason = {}) {
     UpsertSupportAxis(
         metadata,
         "Runtime",
         PipelineRuntimeSupportModeName(support.mode),
-        support.mode != PipelineRuntimeSupportMode::FailClosed);
+        support.mode != PipelineRuntimeSupportMode::FailClosed,
+        reason);
     UpsertSupportAxis(
         metadata,
         "Fail Mode",
         PipelineRuntimeFailModeName(support.fail_mode),
-        support.fail_mode == PipelineRuntimeFailMode::Real);
+        support.fail_mode == PipelineRuntimeFailMode::Real,
+        reason);
     UpsertSupportAxis(
         metadata,
         "Pipeline Executor",
         support.pipeline_executor_supported ? "supported" : "unsupported",
-        support.pipeline_executor_supported);
+        support.pipeline_executor_supported,
+        reason);
     UpsertSupportAxis(
         metadata,
         "Materializer",
         PipelineMaterializerStorageSupportName(
             support.materializer_storage_support),
-        support.materializer_arrow_table_supported);
+        support.materializer_arrow_table_supported,
+        reason);
     UpsertSupportAxis(
         metadata,
         "Implementation Owner",
         PipelineRuntimeImplementationOwnerName(
             support.implementation_owner),
-        support.implementation_owner != PipelineRuntimeImplementationOwner::None);
+        support.implementation_owner != PipelineRuntimeImplementationOwner::None,
+        reason);
 
     std::string summary = "Runtime support: mode=";
     summary += PipelineRuntimeSupportModeName(support.mode);
@@ -135,6 +141,10 @@ void ApplyRuntimeSupportAxes(NodeMetadata& metadata,
     summary += "; owner=";
     summary += PipelineRuntimeImplementationOwnerName(
         support.implementation_owner);
+    if (!reason.empty()) {
+        summary += "; reason=";
+        summary += reason;
+    }
     AppendHelpTextSection(metadata, summary);
 }
 
@@ -326,11 +336,15 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
     }
 
     for (const auto& capability : GetPipelineFailClosedRuntimeCapabilities()) {
-        if (!capability.metadata_node_type.has_value()) {
+        auto metadata_node_type = capability.metadata_node_type;
+        if (!metadata_node_type.has_value()) {
+            metadata_node_type = capability.node_type;
+        }
+        if (!metadata_node_type.has_value()) {
             continue;
         }
 
-        auto it = metadata_.find(*capability.metadata_node_type);
+        auto it = metadata_.find(*metadata_node_type);
         if (it == metadata_.end()) {
             continue;
         }
@@ -341,30 +355,9 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
 
         const std::string reason =
             capability.reason != nullptr ? capability.reason : "";
-        UpsertSupportAxis(
-            metadata,
-            "Runtime",
-            "fail_closed",
-            false,
-            reason);
-        UpsertSupportAxis(
-            metadata,
-            "Fail Mode",
-            PipelineRuntimeFailModeName(PipelineRuntimeFailMode::HardFail),
-            false,
-            reason);
-        UpsertSupportAxis(
-            metadata,
-            "Pipeline Executor",
-            "unsupported",
-            false,
-            reason);
-
-        if (capability.reason != nullptr) {
-            std::string summary = "Runtime support: ";
-            summary += capability.reason;
-            AppendHelpTextSection(metadata, summary);
-        }
+        const auto support =
+            ResolvePipelineRuntimeSupport(capability.legacy_type_name);
+        ApplyRuntimeSupportAxes(metadata, support, reason);
     }
 
     const auto apply_training_backend_status =

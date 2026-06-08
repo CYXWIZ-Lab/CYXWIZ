@@ -488,6 +488,48 @@ int main() {
                   cyxwiz::PipelineMaterializerStorageSupport::None,
               std::string("fail-closed runtime should not advertise materializer scope: ") +
                   capability.legacy_type_name);
+        if (expected_metadata_type.has_value()) {
+            const auto* meta = metadata.GetMetadata(*expected_metadata_type);
+            if (meta != nullptr) {
+                const std::string reason =
+                    capability.reason != nullptr ? capability.reason : "";
+                CheckSupportAxis(
+                    meta,
+                    "Runtime",
+                    cyxwiz::PipelineRuntimeSupportModeName(support.mode),
+                    false,
+                    capability.legacy_type_name);
+                CheckSupportAxis(
+                    meta,
+                    "Fail Mode",
+                    cyxwiz::PipelineRuntimeFailModeName(support.fail_mode),
+                    false,
+                    capability.legacy_type_name);
+                CheckSupportAxis(
+                    meta,
+                    "Pipeline Executor",
+                    "unsupported",
+                    false,
+                    capability.legacy_type_name);
+                CheckSupportAxis(
+                    meta,
+                    "Materializer",
+                    cyxwiz::PipelineMaterializerStorageSupportName(
+                        support.materializer_storage_support),
+                    false,
+                    capability.legacy_type_name);
+                CheckSupportAxis(
+                    meta,
+                    "Implementation Owner",
+                    cyxwiz::PipelineRuntimeImplementationOwnerName(
+                        support.implementation_owner),
+                    false,
+                    capability.legacy_type_name);
+                Check(meta->help_text.find(reason) != std::string::npos,
+                      std::string("fail-closed metadata should expose reason: ") +
+                          capability.legacy_type_name);
+            }
+        }
     }
 
     for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {

@@ -945,6 +945,14 @@ support-axis path. String-only legacy aliases without `gui::NodeType`
 metadata remain runtime-only entries until they become first-class typed
 nodes.
 
+**Status 2026-06-08 follow-up 15:** Fail-closed browser-visible metadata
+now resolves the same metadata target as runtime support (`metadata_node_type`
+when supplied, otherwise `node_type`) and applies the shared runtime
+support-axis path. Blocked nodes now expose runtime mode, fail mode,
+PipelineExecutor support, materializer scope, implementation owner, and
+the central fail-closed reason through Node Info instead of only carrying
+a smaller blocked-node subset.
+
 **Status 2026-06-07 follow-up 3:** The first training-support axis is now
 centralized too: compiler-blocked sequential-model layers and
 training-control nodes live in typed capability entries with explicit
