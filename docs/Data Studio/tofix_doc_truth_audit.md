@@ -58,6 +58,11 @@ scanning so stale or duplicate work is not reintroduced.
 
 ## Patch Log
 
+- 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
+  selected detection/segmentation training sketches (DNN detection/postprocess
+  nodes, box/mask/object/anchor markers, IoU/NMS/mAP markers, and segmentation
+  markers) until CyxWiz has target schemas, variable-object batching, detection
+  heads, loss aggregation, NMS/evaluation metrics, and output packaging.
 - 2026-06-08 follow-up: expanded `tofix19` with a missing algorithm/backend
   implementation backlog, and accepted a guardrail slice that rejects selected
   reinforcement-learning training sketches until CyxWiz has an environment

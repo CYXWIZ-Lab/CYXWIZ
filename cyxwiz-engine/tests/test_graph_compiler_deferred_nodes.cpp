@@ -546,6 +546,72 @@ int main() {
     Check(HasIssueText(config, "policy/value loss contracts"),
           "RL sketch should report missing policy/value loss contract");
 
+    auto detector = Node(32,
+                         gui::NodeType::DNNDetect,
+                         "Detector Sketch",
+                         {Pin(3201, gui::PinType::Tensor, "Image", true)},
+                         {Pin(3202, gui::PinType::Tensor, "Detections", false)});
+    detector.parameters["confidence"] = "0.5";
+
+    nodes = {data, detector, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 32, 3201),
+        Link(2, 32, 3202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected detection training path should be invalid");
+    Check(HasIssueText(config, "detection/segmentation training"),
+          "detection path should report missing detection training contract");
+    Check(HasIssueText(config, "box/mask/class target materialization"),
+          "detection path should report missing target materialization");
+
+    auto detector_side_output = Node(33,
+                                     gui::NodeType::Output,
+                                     "Detector Side Output",
+                                     {Pin(3301, gui::PinType::Tensor, "Input", true)},
+                                     {});
+
+    nodes = {data, dense, loss, optimizer, detector, detector_side_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 1, 101, 32, 3201),
+        Link(6, 32, 3202, 33, 3301),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side detection node outside selected training path should not block compile");
+    Check(!HasIssueText(config, "Detector Sketch"),
+          "side detection node should not be reported");
+
+    auto detection_dense = dense;
+    detection_dense.name = "Detection Dense Sketch";
+    detection_dense.parameters["bbox_column"] = "boxes";
+    detection_dense.parameters["mask_column"] = "masks";
+
+    nodes = {data, detection_dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected detection target sketch should be invalid");
+    Check(HasIssueText(config, "bbox_column"),
+          "detection sketch should report the matched parameter");
+    Check(HasIssueText(config, "multi-head loss contract"),
+          "detection sketch should report missing multi-head loss contract");
+
     for (const auto& scheduler_case :
          cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         auto scheduler = Node(18,

@@ -547,6 +547,12 @@ Completed so far:
   a supervised single-batch executor and lacks an environment stepping loop,
   rollout/replay buffer schema, policy/value loss contracts, target-network
   handling, and episodic metrics.
+- `GraphCompiler` now rejects selected training paths that sketch
+  detection/segmentation training with DNN detection/postprocessing nodes or
+  explicit object, box, mask, anchor, IoU, NMS, mAP, or segmentation markers.
+  The current trainer has no detection target schema, variable-object batching,
+  detection heads, multi-head loss aggregation, NMS/evaluation metrics, or
+  detection output packaging.
 
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.

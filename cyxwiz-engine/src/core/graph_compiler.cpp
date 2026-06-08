@@ -355,6 +355,69 @@ bool LooksLikeRLTrainingSketch(const gui::MLNode& node,
     return false;
 }
 
+bool LooksLikeDetectionSegmentationTrainingSketch(const gui::MLNode& node,
+                                                  std::string& matched_key) {
+    if (node.type == gui::NodeType::DNNDetect ||
+        node.type == gui::NodeType::DNNPoseEstimate ||
+        node.type == gui::NodeType::DNNFaceDetect ||
+        node.type == gui::NodeType::PretrainedYOLO ||
+        node.type == gui::NodeType::PretrainedOpenPose ||
+        node.type == gui::NodeType::PretrainedFaceNet ||
+        node.type == gui::NodeType::NonMaxSuppression ||
+        node.type == gui::NodeType::ThresholdFilter) {
+        matched_key = "detection node";
+        return true;
+    }
+
+    const auto& params = node.parameters;
+    const char* enabled_keys[] = {
+        "object_detection",
+        "detection_training",
+        "instance_segmentation",
+        "semantic_segmentation",
+        "segmentation_training",
+        "mask_training",
+        "yolo_training",
+        "pose_estimation"
+    };
+
+    for (const char* key : enabled_keys) {
+        if (ParamIsEnabled(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    const char* design_keys[] = {
+        "bbox_column",
+        "bboxes_column",
+        "boxes_column",
+        "box_target_column",
+        "mask_column",
+        "masks_column",
+        "segmentation_mask_column",
+        "class_target_column",
+        "object_id_column",
+        "image_id_column",
+        "area_column",
+        "iscrowd_column",
+        "anchor_boxes",
+        "anchors",
+        "nms_threshold",
+        "iou_threshold",
+        "map_metric"
+    };
+
+    for (const char* key : design_keys) {
+        if (HasParam(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -1300,6 +1363,22 @@ void ValidateTrainingPathImplementationStatus(
                    "stepping loop, rollout/replay buffer schema, policy/value "
                    "loss contracts, target-network handling, and episodic "
                    "metrics before it can compile truthfully.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        std::string detection_key;
+        if (LooksLikeDetectionSegmentationTrainingSketch(node, detection_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' sketches detection/segmentation training via '"
+                << detection_key
+                << "', but Studio training does not have a detection target "
+                   "schema or multi-head loss contract. This path needs "
+                   "box/mask/class target materialization, variable-object "
+                   "batching, detection heads, loss aggregation, NMS/evaluation "
+                   "metrics, and output packaging before it can compile "
+                   "truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
