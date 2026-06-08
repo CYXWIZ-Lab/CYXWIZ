@@ -361,6 +361,13 @@ executor normally creates a fresh operator per node, but direct
 operator/materializer tests and future pooling paths now get idempotent
 configuration semantics.
 
+**Status 2026-06-08 follow-up 27:** Added a direct
+`test_operator_configure_resets` regression target for representative
+operator reuse. It verifies `CountVectorizer` clears stale label and
+`max_features` state, `TimeSeriesFeatures` clears stale lag lists, and
+`TimeSeriesWindow` clears stale feature/time columns when the same
+operator instance is configured again.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

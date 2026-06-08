@@ -1141,6 +1141,36 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Pipeline Operator Configure Reset Semantics =====
+add_executable(test_operator_configure_resets
+    tests/test_operator_configure_resets.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/time_series_features_operator.cpp
+    src/core/node_executors/time_series_window_operator.cpp
+)
+
+target_include_directories(test_operator_configure_resets PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_operator_configure_resets PRIVATE
+    Arrow::arrow_shared
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_operator_configure_resets PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_operator_configure_resets PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Time-Series Analysis Operators =====
 add_executable(test_time_series_analysis_operators
     tests/test_time_series_analysis_operators.cpp
