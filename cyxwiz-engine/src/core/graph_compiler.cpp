@@ -418,6 +418,30 @@ bool LooksLikeDetectionSegmentationTrainingSketch(const gui::MLNode& node,
     return false;
 }
 
+bool LooksLikeTimeDistributedTrainingSketch(const gui::MLNode& node,
+                                            std::string& matched_key) {
+    if (node.type == gui::NodeType::TimeDistributed) {
+        matched_key = "TimeDistributed";
+        return true;
+    }
+
+    const auto& params = node.parameters;
+    const char* enabled_keys[] = {
+        "time_distributed",
+        "per_timestep",
+        "per_token_head"
+    };
+
+    for (const char* key : enabled_keys) {
+        if (ParamIsEnabled(params, key)) {
+            matched_key = key;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool IsTensorInputPin(const gui::MLNode& node, int pin_id) {
     for (const auto& pin : node.inputs) {
         if (pin.id == pin_id) {
@@ -1379,6 +1403,22 @@ void ValidateTrainingPathImplementationStatus(
                    "batching, detection heads, loss aggregation, NMS/evaluation "
                    "metrics, and output packaging before it can compile "
                    "truthfully.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        std::string time_distributed_key;
+        if (LooksLikeTimeDistributedTrainingSketch(node,
+                                                   time_distributed_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' sketches per-timestep/per-token training via '"
+                << time_distributed_key
+                << "', but Studio training does not have a trainable "
+                   "TimeDistributed wrapper. This path needs an inner-layer "
+                   "binding, sequence-shape preservation, token-level loss "
+                   "shape validation, padding ignore support, and per-token "
+                   "metrics before it can compile truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }

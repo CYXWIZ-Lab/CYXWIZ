@@ -553,6 +553,11 @@ Completed so far:
   The current trainer has no detection target schema, variable-object batching,
   detection heads, multi-head loss aggregation, NMS/evaluation metrics, or
   detection output packaging.
+- `GraphCompiler` now rejects selected training paths that sketch
+  per-timestep/per-token heads with `TimeDistributed` or explicit per-token
+  head markers. The current trainer has no trainable TimeDistributed wrapper,
+  inner-layer binding, sequence-shape preservation contract, token-level loss
+  shape validation, padding ignore support, or per-token metrics.
 
 1. Add import-time guards for graphs that use placeholder node types or Dense
    nodes as fake custom task nodes.

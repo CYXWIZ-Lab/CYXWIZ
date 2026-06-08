@@ -612,6 +612,72 @@ int main() {
     Check(HasIssueText(config, "multi-head loss contract"),
           "detection sketch should report missing multi-head loss contract");
 
+    auto time_distributed = Node(34,
+                                 gui::NodeType::TimeDistributed,
+                                 "Token Head Sketch",
+                                 {Pin(3401, gui::PinType::Tensor, "Input", true)},
+                                 {Pin(3402, gui::PinType::Tensor, "Output", false)});
+
+    nodes = {data, dense, time_distributed, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 34, 3401),
+        Link(3, 34, 3402, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected TimeDistributed training path should be invalid");
+    Check(HasIssueText(config, "TimeDistributed"),
+          "TimeDistributed path should report the matched wrapper");
+    Check(HasIssueText(config, "token-level loss shape validation"),
+          "TimeDistributed path should report missing token loss contract");
+
+    auto time_distributed_side_output = Node(35,
+                                             gui::NodeType::Output,
+                                             "Token Head Side Output",
+                                             {Pin(3501, gui::PinType::Tensor, "Input", true)},
+                                             {});
+
+    nodes = {data, dense, loss, optimizer, time_distributed,
+             time_distributed_side_output};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+        Link(5, 2, 202, 34, 3401),
+        Link(6, 34, 3402, 35, 3501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "side TimeDistributed outside selected training path should not block compile");
+    Check(!HasIssueText(config, "Token Head Sketch"),
+          "side TimeDistributed should not be reported");
+
+    auto per_token_dense = dense;
+    per_token_dense.name = "Per Token Dense Sketch";
+    per_token_dense.parameters["per_token_head"] = "true";
+
+    nodes = {data, per_token_dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected per-token head sketch should be invalid");
+    Check(HasIssueText(config, "per_token_head"),
+          "per-token sketch should report the matched parameter");
+    Check(HasIssueText(config, "per-token metrics"),
+          "per-token sketch should report missing metrics contract");
+
     for (const auto& scheduler_case :
          cyxwiz::GetPipelineUnsupportedTrainingControlCapabilities()) {
         auto scheduler = Node(18,

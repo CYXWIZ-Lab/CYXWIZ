@@ -59,6 +59,10 @@ scanning so stale or duplicate work is not reintroduced.
 ## Patch Log
 
 - 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
+  selected `TimeDistributed` and per-token-head sketches until CyxWiz has a
+  trainable wrapper, inner-layer binding, sequence-shape preservation,
+  token-level loss validation, padding ignore support, and per-token metrics.
+- 2026-06-08 follow-up: accepted a `tofix19` guardrail slice that rejects
   selected detection/segmentation training sketches (DNN detection/postprocess
   nodes, box/mask/object/anchor markers, IoU/NMS/mAP markers, and segmentation
   markers) until CyxWiz has target schemas, variable-object batching, detection
