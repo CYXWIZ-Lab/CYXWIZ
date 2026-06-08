@@ -82,6 +82,12 @@ gui::MLNode MakeDataInputNode() {
     return node;
 }
 
+gui::MLNode MakeNamedDataInputNode(const std::string& dataset_name) {
+    auto node = MakeDataInputNode();
+    node.parameters["dataset_name"] = dataset_name;
+    return node;
+}
+
 gui::MLNode MakeTokenizerNode() {
     gui::MLNode node;
     node.id = 2;
@@ -222,6 +228,28 @@ int main() {
     Check(table->GetColumnByName("y") != nullptr, "missing y label column");
     Check(table->GetColumnByName("text") == nullptr,
           "raw text column should not remain after tokenization");
+
+    {
+        std::vector<gui::MLNode> mismatched_nodes = {
+            MakeNamedDataInputNode("stale_text_dataset"),
+            MakeTokenizerNode(),
+        };
+        std::vector<gui::NodeLink> mismatched_links = {
+            {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
+        };
+
+        auto mismatched = cyxwiz::PipelineMaterializer::MaterializeTable(
+            mismatched_nodes, mismatched_links, MakeTextTable(),
+            "active_text_dataset");
+        Check(!mismatched.success,
+              "named source dataset mismatch should fail closed");
+        Check(mismatched.error_message.find("active_text_dataset") !=
+                  std::string::npos,
+              "source mismatch error should name the active dataset: " +
+                  mismatched.error_message);
+        Check(mismatched.operators_applied == 0,
+              "source mismatch must not apply materializer operators");
+    }
 
     {
         auto sibling_tokenizer = MakeTokenizerNode();

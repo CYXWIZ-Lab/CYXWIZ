@@ -47,6 +47,7 @@ const gui::MLNode* FindDataInputNode(
                 return &n;
             }
         }
+        return nullptr;
     }
 
     for (const auto& n : nodes) {
@@ -304,6 +305,13 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
 
     const gui::MLNode* data_input = FindDataInputNode(nodes, source_dataset_name);
     if (!data_input) {
+        if (!source_dataset_name.empty()) {
+            result.success = false;
+            result.error_message =
+                "PipelineMaterializer: source dataset '" +
+                source_dataset_name +
+                "' does not match any DataInput/DatasetInput node";
+        }
         return result;
     }
 

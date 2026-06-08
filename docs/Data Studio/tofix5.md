@@ -595,6 +595,13 @@ linear graph walk runs. Upstream graph compilation already rejects
 cycles for normal training launch, but `MaterializeTable()` no longer
 silently suppresses revisits if it is called directly.
 
+**Status 2026-06-08 follow-up 6:** Named-source Arrow-table
+materialization now binds to a matching `DataInput`/`DatasetInput`
+instead of falling back to the first data input. If callers provide a
+source dataset name and the graph has no matching source node, the
+materializer fails closed before applying operators, preventing stale
+preprocessing paths from being applied to the active dataset.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_materializer.h:34`
@@ -611,6 +618,8 @@ Problem:
 - traversal is a BFS from `DataInput`
 - cycles and parallel preprocessing branches are explicit v1 fail-closed
   graph shapes
+- named Arrow-table materialization now requires the selected graph source
+  node to match the active source dataset
 
 Effect:
 
