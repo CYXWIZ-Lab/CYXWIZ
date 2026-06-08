@@ -112,6 +112,31 @@ void CheckSupportAxis(const cyxwiz::NodeMetadata* meta,
               context);
 }
 
+std::vector<std::string> ParseCatalogEnumValues(
+    const std::string& parameter_type) {
+    std::vector<std::string> values;
+    if (parameter_type.rfind("enum:", 0) != 0) {
+        return values;
+    }
+
+    const std::string raw_values = parameter_type.substr(5);
+    std::size_t start = 0;
+    while (start <= raw_values.size()) {
+        const std::size_t end = raw_values.find(',', start);
+        const std::string value = raw_values.substr(
+            start,
+            end == std::string::npos ? std::string::npos : end - start);
+        if (!value.empty()) {
+            values.push_back(value);
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return values;
+}
+
 } // namespace
 
 int main() {
@@ -346,6 +371,38 @@ int main() {
                   data_studio_node.type_id != "DetectOutliers",
               "Data Studio node registry should not advertise stale unsupported type: " +
                   data_studio_node.type_id);
+        for (const auto& parameter : data_studio_node.parameters) {
+            const auto catalog_values = ParseCatalogEnumValues(parameter.second);
+            if (catalog_values.empty()) {
+                continue;
+            }
+
+            const auto runtime_axis = std::find_if(
+                support.allowed_parameter_values.begin(),
+                support.allowed_parameter_values.end(),
+                [&parameter](
+                    const cyxwiz::PipelineAllowedParameterValuesRuntimeCapability&
+                        axis) {
+                    return std::string(axis.parameter_name) == parameter.first;
+                });
+            if (runtime_axis == support.allowed_parameter_values.end()) {
+                continue;
+            }
+
+            for (const auto& catalog_value : catalog_values) {
+                const bool runtime_accepts_value = std::find_if(
+                    runtime_axis->allowed_values.begin(),
+                    runtime_axis->allowed_values.end(),
+                    [&catalog_value](const char* runtime_value) {
+                        return runtime_value != nullptr &&
+                               catalog_value == runtime_value;
+                    }) != runtime_axis->allowed_values.end();
+                Check(runtime_accepts_value,
+                      "Data Studio node registry advertises unsupported enum value: " +
+                          data_studio_node.type_id + "." + parameter.first +
+                          "=" + catalog_value);
+            }
+        }
     }
 
     for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {

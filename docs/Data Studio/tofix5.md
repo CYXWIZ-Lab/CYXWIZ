@@ -566,6 +566,12 @@ nonnegative scalar parameters. This keeps open-ended rules such as
 `TargetEncoder.smoothing` and `FilterDesigner.cutoff_high` under the same
 registry test instead of treating them as invalid metadata.
 
+**Status 2026-06-08 follow-up 51:** The active Data Studio node catalog
+now checks enum parameter values against the central runtime
+allowed-parameter axis when one exists. `SaveDataset.format` no longer
+advertises `json`; the catalog exposes only the executable `csv` and
+`parquet` formats until JSON export has a real Arrow-table backend.
+
 **Status 2026-06-07 follow-up 10:** `FilterRows.condition` now uses a
 small schema-checked condition language instead of appending raw text to
 DuckDB SQL. The executor accepts column comparisons against numeric or
