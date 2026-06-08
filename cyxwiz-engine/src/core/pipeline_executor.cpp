@@ -2370,8 +2370,6 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
     switch (*node.runtime_type) {
     case gui::NodeType::CSVFile:
         return ExecuteFileInput(node, ctx);
-    case gui::NodeType::ExcelFile:
-        return ExecuteExcelInput(node, ctx);
     case gui::NodeType::DataInput:
         return ExecuteDataInput(node, ctx);
     case gui::NodeType::DataOutput:
@@ -4627,34 +4625,6 @@ const PipelineExecutor::Node* PipelineExecutor::FindNodeById(
 // ============================================================================
 // KNIME-Style Table Manipulation Nodes
 // ============================================================================
-
-bool PipelineExecutor::ExecuteExcelInput(const Node& node, ExecutionContext& ctx) {
-    auto path_it = node.parameters.find("path");
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
-        ReportError("ExcelInput: Missing file path parameter");
-        return false;
-    }
-
-    const std::string& file_path = path_it->second;
-    std::string dataset_name = "ds_excel_" + std::to_string(node.id);
-
-    spdlog::info("[Data Studio] Loading Excel file: {} as dataset '{}'", file_path, dataset_name);
-
-    try {
-        auto& registry = DataRegistry::Instance();
-        auto arrow_dataset = registry.LoadArrowTable(file_path, dataset_name);
-        if (!arrow_dataset) {
-            ReportError("ExcelInput: Failed to load file");
-            return false;
-        }
-        ctx.node_results[node.id] = dataset_name;
-        if (ctx.input_dataset.empty()) ctx.input_dataset = dataset_name;
-        return true;
-    } catch (const std::exception& e) {
-        ReportError("ExcelInput error: " + std::string(e.what()));
-        return false;
-    }
-}
 
 bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx) {
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
