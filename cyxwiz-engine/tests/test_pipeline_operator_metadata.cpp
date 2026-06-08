@@ -701,6 +701,21 @@ int main() {
         }
     }
 
+    const std::set<std::string> expected_string_only_legacy_names = {
+        "SaveDataset",
+        "DeployToNodeEditor",
+        "TextClean",
+        "TextTokenize",
+        "TextVectorize",
+        "TSWindow",
+        "TSFeatures",
+        "TSLag",
+        "TSDiff",
+        "PolynomialFeatures",
+        "Binning",
+    };
+    std::set<std::string> observed_string_only_legacy_names;
+
     for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {
         Check(!cyxwiz::IsPipelineOperatorRuntimeNode(capability.legacy_type_name),
               std::string("legacy runtime name is also operator-backed: ") +
@@ -728,11 +743,25 @@ int main() {
                   std::string("typed legacy runtime should not also carry "
                               "string-only dispatch kind: ") +
                       capability.legacy_type_name);
+            Check(capability.compatibility_reason == nullptr,
+                  std::string("typed legacy runtime should not carry string-only "
+                              "compatibility reason: ") +
+                      capability.legacy_type_name);
         } else {
             Check(capability.dispatch_kind !=
                       cyxwiz::PipelineLegacyDispatchKind::Unknown,
                   std::string("string-only legacy runtime missing dispatch kind: ") +
                       capability.legacy_type_name);
+            Check(capability.compatibility_reason != nullptr &&
+                      std::string(capability.compatibility_reason).size() > 0,
+                  std::string("string-only legacy runtime missing compatibility "
+                              "reason: ") +
+                      capability.legacy_type_name);
+            Check(expected_string_only_legacy_names.count(
+                      capability.legacy_type_name) == 1,
+                  std::string("unexpected string-only legacy runtime exception: ") +
+                      capability.legacy_type_name);
+            observed_string_only_legacy_names.insert(capability.legacy_type_name);
         }
         const auto runtime_node_type =
             cyxwiz::ResolvePipelineRuntimeNodeType(capability.legacy_type_name);
@@ -790,6 +819,11 @@ int main() {
                     capability.legacy_type_name);
             }
         }
+    }
+
+    for (const auto& expected_name : expected_string_only_legacy_names) {
+        Check(observed_string_only_legacy_names.count(expected_name) == 1,
+              "missing string-only legacy runtime exception: " + expected_name);
     }
 
     Check(std::string(cyxwiz::PipelineRuntimeSupportModeName(

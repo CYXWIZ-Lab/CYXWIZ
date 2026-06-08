@@ -112,6 +112,17 @@ Definition of done:
   compatibility justification and dispatch kind.
 - Drift tests list every remaining exception.
 
+Status 2026-06-08:
+
+- Started. Remaining string-only legacy aliases now have explicit compatibility
+  reasons in `PipelineLegacyRuntimeCapability`.
+- Metadata drift tests pin the current exception list:
+  `SaveDataset`, `DeployToNodeEditor`, `TextClean`, `TextTokenize`,
+  `TextVectorize`, `TSWindow`, `TSFeatures`, `TSLag`, `TSDiff`,
+  `PolynomialFeatures`, and `Binning`.
+- Adding a new executable string-only alias now requires both a dispatch kind
+  and a compatibility reason, and the drift test must name it explicitly.
+
 ## Priority 4 - Broader Frontend Support-Axis Presentation
 
 Problem:

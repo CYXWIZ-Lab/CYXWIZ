@@ -150,25 +150,47 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"SelectColumns", gui::NodeType::SelectColumns},
         {"RemoveDuplicates", gui::NodeType::RemoveDuplicateRows},
         {"SaveDataset", std::nullopt,
-         PipelineLegacyDispatchKind::SaveDataset},
+         PipelineLegacyDispatchKind::SaveDataset,
+         "legacy saved-pipeline graphs use this output node name; canonical "
+         "metadata is DataOutput"},
         {"FillMissing", gui::NodeType::FillMissingValues},
         {"SortRows", gui::NodeType::SortRows},
         {"Join", gui::NodeType::JoinTables},
         {"GroupBy", gui::NodeType::GroupByAggregate},
         {"DeployToNodeEditor", std::nullopt,
-         PipelineLegacyDispatchKind::DeployToNodeEditor},
-        {"TextClean", std::nullopt, PipelineLegacyDispatchKind::TextClean},
+         PipelineLegacyDispatchKind::DeployToNodeEditor,
+         "legacy saved-pipeline graphs use this handoff node name; no "
+         "browser-visible typed metadata exists"},
+        {"TextClean", std::nullopt, PipelineLegacyDispatchKind::TextClean,
+         "legacy saved-pipeline graphs use pre-operator text preprocessing "
+         "names"},
         {"TextTokenize", std::nullopt,
-         PipelineLegacyDispatchKind::TextTokenize},
+         PipelineLegacyDispatchKind::TextTokenize,
+         "legacy saved-pipeline graphs use pre-operator text preprocessing "
+         "names"},
         {"TextVectorize", std::nullopt,
-         PipelineLegacyDispatchKind::TextVectorize},
-        {"TSWindow", std::nullopt, PipelineLegacyDispatchKind::TSWindow},
-        {"TSFeatures", std::nullopt, PipelineLegacyDispatchKind::TSFeatures},
-        {"TSLag", std::nullopt, PipelineLegacyDispatchKind::TSLag},
-        {"TSDiff", std::nullopt, PipelineLegacyDispatchKind::TSDiff},
+         PipelineLegacyDispatchKind::TextVectorize,
+         "legacy saved-pipeline graphs use pre-operator text preprocessing "
+         "names"},
+        {"TSWindow", std::nullopt, PipelineLegacyDispatchKind::TSWindow,
+         "legacy saved-pipeline graphs use pre-operator time-series "
+         "preprocessing names"},
+        {"TSFeatures", std::nullopt, PipelineLegacyDispatchKind::TSFeatures,
+         "legacy saved-pipeline graphs use pre-operator time-series "
+         "preprocessing names"},
+        {"TSLag", std::nullopt, PipelineLegacyDispatchKind::TSLag,
+         "legacy saved-pipeline graphs use pre-operator time-series "
+         "preprocessing names"},
+        {"TSDiff", std::nullopt, PipelineLegacyDispatchKind::TSDiff,
+         "legacy saved-pipeline graphs use pre-operator time-series "
+         "preprocessing names"},
         {"PolynomialFeatures", std::nullopt,
-         PipelineLegacyDispatchKind::PolynomialFeatures},
-        {"Binning", std::nullopt, PipelineLegacyDispatchKind::Binning},
+         PipelineLegacyDispatchKind::PolynomialFeatures,
+         "legacy saved-pipeline graphs use this feature-engineering node "
+         "name; no browser-visible typed metadata exists"},
+        {"Binning", std::nullopt, PipelineLegacyDispatchKind::Binning,
+         "legacy saved-pipeline graphs use this feature-engineering node "
+         "name; no browser-visible typed metadata exists"},
         {"ExportCSV", gui::NodeType::ExportCSV},
         {"RowToColumnNames", gui::NodeType::RowToColumnNames},
         {"TableCropper", gui::NodeType::TableCropper},

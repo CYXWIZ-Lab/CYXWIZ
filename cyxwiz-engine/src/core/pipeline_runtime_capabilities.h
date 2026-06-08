@@ -41,6 +41,7 @@ struct PipelineLegacyRuntimeCapability {
     std::optional<gui::NodeType> node_type = std::nullopt;
     PipelineLegacyDispatchKind dispatch_kind =
         PipelineLegacyDispatchKind::Unknown;
+    const char* compatibility_reason = nullptr;
 };
 
 struct PipelineSourceRuntimeCapability {

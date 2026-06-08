@@ -40,7 +40,7 @@ scanning so stale or duplicate work is not reintroduced.
 | `tofix17.md` | active/tracked | Updated. CPU fallback work from `done2.md`/`done10.md`/`done15.md` is no longer implied as undone. |
 | `tofix18.md` | active/tracked | Keep active. Pipeline canvas placeholder naming cleanup remains a separate deferred UI task. |
 | `tofix19.md` | active/tracked | Updated. Phase 1 truth guardrails now record the Dense-encoded NER compiler guard as started/completed slice. |
-| `tofix20.md` | active/tracked | New source of truth for broad runtime architecture follow-ups carried out of `done5.md`. |
+| `tofix20.md` | active/tracked | New source of truth for broad runtime architecture follow-ups carried out of `done5.md`; Priority 3 string-only alias guard started. |
 
 ## Findings
 
@@ -58,6 +58,9 @@ scanning so stale or duplicate work is not reintroduced.
 
 ## Patch Log
 
+- 2026-06-08 follow-up: started `tofix20` Priority 3 by adding explicit
+  compatibility reasons for remaining string-only legacy runtime aliases and
+  pinning their exception list in metadata drift tests.
 - 2026-06-08 closeout: closed `tofix5.md` as `done5.md` for the concrete
   executor/materializer correctness pass and created `tofix20.md` for the
   remaining broad runtime architecture follow-ups.
