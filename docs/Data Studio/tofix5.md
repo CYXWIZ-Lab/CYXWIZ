@@ -404,6 +404,11 @@ supported `0..1` range before upstream source execution reaches operator
 configuration. The same axis now covers `RobustScaler.quantile_min` and
 `quantile_max` in the implemented `0..100` range.
 
+**Status 2026-06-08 follow-up 33:** `OutlierDetector.method` now
+normalizes the centrally accepted enum value before operator
+configuration. Case variants such as `IQR` no longer pass executor
+validation and then fail after upstream source execution.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

@@ -575,6 +575,27 @@ int main() {
           "RobustScaler malformed quantile_min error should be specific: " +
               bad_robust_scaler_quantile_executor.GetLastError());
 
+    const std::string uppercase_outlier_method_json =
+        R"({"nodes":[)"
+        R"({"id":338,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":339,"type":"OutlierDetector","name":"Outliers","parameters":{)"
+        R"("method":"IQR","threshold":"1.5"}})"
+        R"(],"links":[{"start_node":338,"end_node":339}]})";
+
+    cyxwiz::PipelineExecutor uppercase_outlier_method_executor;
+    Check(uppercase_outlier_method_executor.ExecutePipeline(
+              uppercase_outlier_method_json),
+          "OutlierDetector uppercase IQR method should execute after normalization: " +
+              uppercase_outlier_method_executor.GetLastError());
+    auto outliers = registry.GetArrowDataset("ds_operator_OutlierDetector_339");
+    Check(outliers != nullptr, "OutlierDetector output dataset is registered");
+    auto outliers_table = outliers->GetArrowTable();
+    Check(outliers_table != nullptr, "OutlierDetector output table exists");
+    Check(outliers_table->schema()->GetFieldIndex("is_outlier") >= 0,
+          "OutlierDetector output has is_outlier column");
+
     const std::string bad_pca_center_json =
         R"({"nodes":[)"
         R"({"id":310,"type":"DataInput","name":"Input","parameters":{)"

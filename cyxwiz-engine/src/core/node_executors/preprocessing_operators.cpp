@@ -10,6 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -22,6 +23,25 @@
 namespace cyxwiz {
 
 namespace {
+
+std::string TrimString(const std::string& value) {
+    auto begin = std::find_if_not(value.begin(), value.end(),
+                                  [](unsigned char c) { return std::isspace(c); });
+    auto end = std::find_if_not(value.rbegin(), value.rend(),
+                                [](unsigned char c) { return std::isspace(c); }).base();
+    if (begin >= end) {
+        return {};
+    }
+    return std::string(begin, end);
+}
+
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
 
 // Shared Configure helper: parse columns (csv) + label_col.
 void ParseColumnsAndLabel(
@@ -620,7 +640,7 @@ bool OutlierDetectorOperator::Configure(
 
     auto m = params.find("method");
     if (m != params.end() && !m->second.empty()) {
-        method_ = m->second;
+        method_ = ToLowerAscii(TrimString(m->second));
         if (method_ != "iqr" && method_ != "zscore") {
             error = GetName() + ": only 'iqr' and 'zscore' methods supported "
                     "in v1 (isolation_forest / lof deferred to tofix); got '" +
