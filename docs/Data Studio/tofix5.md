@@ -534,9 +534,10 @@ Recommendation:
 `pipeline_runtime_capabilities.{h,cpp}` exposes lookup in both directions:
 legacy runtime name to `NodeType`, and `NodeType` back to the canonical
 runtime name. Operator-backed, fail-closed, and legacy-dispatched
-capabilities are covered by drift tests. The remaining issue is the
-`PipelineExecutor::ExecuteNode()` dispatch chain itself, which still
-branches on `node.type` strings.
+capabilities are covered by drift tests. The original direct
+`PipelineExecutor::ExecuteNode()` string dispatch chain has since been
+removed; remaining string storage is compatibility state on parsed
+legacy nodes, not the active dispatch mechanism.
 
 **Status 2026-06-07 follow-up:** `PipelineExecutor::ParsePipeline()`
 now resolves each parsed node to the central optional runtime
@@ -568,6 +569,13 @@ of comparing raw `node.type` strings, and the metadata drift guard now
 requires every string-only legacy runtime entry to declare its dispatch
 kind.
 
+**Status 2026-06-08 follow-up 5:** Audited against the current executor:
+`ExecuteNode()` no longer contains direct `node.type == ...` dispatch
+comparisons. It first routes typed legacy nodes through
+`ExecuteTypedLegacyNode()`, then operator-backed and fail-closed nodes
+through `PipelineRuntimeSupport`, and finally string-only compatibility
+aliases through `PipelineLegacyDispatchKind`.
+
 Relevant files:
 
 - `cyxwiz-engine/src/core/pipeline_executor.cpp`
@@ -578,23 +586,25 @@ Problem:
 
 - `PipelineExecutor::Node` still stores node type as string, but now also
   carries optional typed runtime identity from the central registry
-- dispatch is still partly a long chain of string comparisons
-- capability truth now bridges to `NodeType`, and validation/operator
-  routing can consume it, and the first exact legacy runtime names now
-  dispatch through typed cases
+- dispatch is no longer a raw string-comparison chain, but string-only
+  compatibility aliases still exist for legacy names that do not yet map
+  to a first-class `gui::NodeType`
+- capability truth now bridges to `NodeType`, validation/operator routing
+  consumes it, and remaining string-only aliases carry explicit dispatch
+  kinds
 
 Effect:
 
 - lower drift risk between runtime support truth, enum metadata, and
   operator registration
-- remaining bug risk during node additions or renames inside the legacy
-  executor dispatch branch
+- remaining bug risk is concentrated in ambiguous legacy aliases and
+  runtime entries that still need first-class typed ownership
 
 Recommendation:
 
 - continue using parsed `PipelineExecutor::Node` runtime identity
-- continue moving the remaining unambiguous legacy dispatch chain to
-  typed cases in small slices
+- continue migrating string-only compatibility aliases to first-class
+  typed nodes only when their ownership and UI metadata are clear
 - keep `pipeline_runtime_capabilities` as the central type-to-capability
   bridge; do not add another runtime registry
 
