@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <string>
 
@@ -45,6 +46,24 @@ bool ParseDoubleParam(const std::map<std::string, std::string>& params,
         return false;
     }
     return true;
+}
+
+std::string TrimString(const std::string& value) {
+    const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    });
+    const auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    }).base();
+    if (first >= last) return {};
+    return std::string(first, last);
+}
+
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
 }
 
 bool ValidateChoice(const std::string& value,
@@ -122,7 +141,7 @@ bool KMeansOperator::Configure(
 
     auto it = params.find("init");
     if (it != params.end() && !it->second.empty()) {
-        init_ = it->second;
+        init_ = ToLowerAscii(TrimString(it->second));
         if (!ValidateChoice(init_, {"random", "kmeans++"}, "init", GetName(), error))
             return false;
     }
@@ -186,7 +205,7 @@ bool DBSCANOperator::Configure(
 
     auto it = params.find("metric");
     if (it != params.end() && !it->second.empty()) {
-        metric_ = it->second;
+        metric_ = ToLowerAscii(TrimString(it->second));
         if (!ValidateChoice(metric_, {"euclidean", "manhattan", "cosine"},
                             "metric", GetName(), error))
             return false;
@@ -247,7 +266,7 @@ bool HierarchicalOperator::Configure(
 
     auto lk = params.find("linkage");
     if (lk != params.end() && !lk->second.empty()) {
-        linkage_ = lk->second;
+        linkage_ = ToLowerAscii(TrimString(lk->second));
         if (!ValidateChoice(linkage_, {"ward", "complete", "average", "single"},
                             "linkage", GetName(), error))
             return false;
@@ -255,7 +274,7 @@ bool HierarchicalOperator::Configure(
 
     auto m = params.find("metric");
     if (m != params.end() && !m->second.empty()) {
-        metric_ = m->second;
+        metric_ = ToLowerAscii(TrimString(m->second));
         if (!ValidateChoice(metric_, {"euclidean", "manhattan", "cosine"},
                             "metric", GetName(), error))
             return false;
@@ -334,7 +353,7 @@ bool GMMOperator::Configure(
 
     auto c = params.find("covariance_type");
     if (c != params.end() && !c->second.empty()) {
-        covariance_type_ = c->second;
+        covariance_type_ = ToLowerAscii(TrimString(c->second));
         if (!ValidateChoice(covariance_type_,
                             {"full", "tied", "diag", "spherical"},
                             "covariance_type", GetName(), error))

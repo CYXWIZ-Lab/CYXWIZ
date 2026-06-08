@@ -409,6 +409,14 @@ normalizes the centrally accepted enum value before operator
 configuration. Case variants such as `IQR` no longer pass executor
 validation and then fail after upstream source execution.
 
+**Status 2026-06-08 follow-up 34:** Operator-backed clustering enum
+parameters now normalize centrally accepted values before local operator
+configuration. Case variants and padded values for `KMeansCluster.init`,
+`DBSCANCluster.metric`, `HierarchicalCluster.linkage`,
+`HierarchicalCluster.metric`, and `GMMCluster.covariance_type` no longer
+pass executor validation and then fail or trip cross-field checks after
+the source node executes.
+
 **Status 2026-06-07 follow-up 7:** Legacy text and time-series SQL
 branches now require their explicit source-column selectors in the
 central required-parameter registry. `TextClean`, `TextTokenize`, and

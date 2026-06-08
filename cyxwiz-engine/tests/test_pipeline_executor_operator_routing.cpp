@@ -784,6 +784,80 @@ int main() {
           "KMeansCluster bad init validation should be specific: " +
               bad_kmeans_init_executor.GetLastError());
 
+    auto check_cluster_output = [&registry](const std::string& dataset_id,
+                                            const std::string& message) {
+        auto output = registry.GetArrowDataset(dataset_id);
+        Check(output != nullptr, message + " output dataset is registered");
+        auto table = output->GetArrowTable();
+        Check(table != nullptr, message + " output table exists");
+        Check(table->schema()->GetFieldIndex("cluster_id") >= 0,
+              message + " output has cluster_id column");
+    };
+
+    const std::string uppercase_kmeans_init_json =
+        R"({"nodes":[)"
+        R"({"id":340,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":341,"type":"KMeansCluster","name":"KMeans","parameters":{)"
+        R"("feature_cols":"x,y","n_clusters":"2","max_iter":"10","n_init":"1","init":" RANDOM "}})"
+        R"(],"links":[{"start_node":340,"end_node":341}]})";
+
+    cyxwiz::PipelineExecutor uppercase_kmeans_init_executor;
+    Check(uppercase_kmeans_init_executor.ExecutePipeline(uppercase_kmeans_init_json),
+          "KMeansCluster uppercase init should execute after normalization: " +
+              uppercase_kmeans_init_executor.GetLastError());
+    check_cluster_output("ds_operator_KMeansCluster_341", "KMeansCluster uppercase init");
+
+    const std::string uppercase_dbscan_metric_json =
+        R"({"nodes":[)"
+        R"({"id":342,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":343,"type":"DBSCANCluster","name":"DBSCAN","parameters":{)"
+        R"("feature_cols":"x,y","eps":"50","min_samples":"1","metric":"MANHATTAN"}})"
+        R"(],"links":[{"start_node":342,"end_node":343}]})";
+
+    cyxwiz::PipelineExecutor uppercase_dbscan_metric_executor;
+    Check(uppercase_dbscan_metric_executor.ExecutePipeline(
+              uppercase_dbscan_metric_json),
+          "DBSCANCluster uppercase metric should execute after normalization: " +
+              uppercase_dbscan_metric_executor.GetLastError());
+    check_cluster_output("ds_operator_DBSCANCluster_343", "DBSCANCluster uppercase metric");
+
+    const std::string uppercase_hierarchical_choices_json =
+        R"({"nodes":[)"
+        R"({"id":344,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":345,"type":"HierarchicalCluster","name":"Hierarchical","parameters":{)"
+        R"("feature_cols":"x,y","n_clusters":"2","linkage":" COMPLETE ","metric":"COSINE"}})"
+        R"(],"links":[{"start_node":344,"end_node":345}]})";
+
+    cyxwiz::PipelineExecutor uppercase_hierarchical_choices_executor;
+    Check(uppercase_hierarchical_choices_executor.ExecutePipeline(
+              uppercase_hierarchical_choices_json),
+          "HierarchicalCluster uppercase choices should execute after normalization: " +
+              uppercase_hierarchical_choices_executor.GetLastError());
+    check_cluster_output("ds_operator_HierarchicalCluster_345",
+                         "HierarchicalCluster uppercase choices");
+
+    const std::string uppercase_gmm_covariance_json =
+        R"({"nodes":[)"
+        R"({"id":346,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":347,"type":"GMMCluster","name":"GMM","parameters":{)"
+        R"("feature_cols":"x,y","n_components":"1","max_iter":"10","n_init":"1","covariance_type":"DIAG"}})"
+        R"(],"links":[{"start_node":346,"end_node":347}]})";
+
+    cyxwiz::PipelineExecutor uppercase_gmm_covariance_executor;
+    Check(uppercase_gmm_covariance_executor.ExecutePipeline(
+              uppercase_gmm_covariance_json),
+          "GMMCluster uppercase covariance_type should execute after normalization: " +
+              uppercase_gmm_covariance_executor.GetLastError());
+    check_cluster_output("ds_operator_GMMCluster_347", "GMMCluster uppercase covariance_type");
+
     const std::string bad_exp_smoothing_method_json =
         R"({"nodes":[)"
         R"({"id":324,"type":"DataInput","name":"Input","parameters":{)"
