@@ -296,6 +296,53 @@ int main() {
               "unsupported layer should report backend gap");
     }
 
+    auto sequence_data = data;
+    sequence_data.name = "NER Sentence CSV";
+    sequence_data.parameters["file_category"] = "sequence_text";
+    sequence_data.parameters["token_column"] = "tokens";
+    sequence_data.parameters["tag_column"] = "ner_tags";
+
+    nodes = {sequence_data, dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected sequence DataInput sketch should be invalid");
+    Check(HasIssueText(config, "file_category"),
+          "sequence DataInput sketch should report matched category marker");
+    Check(HasIssueText(config, "named sequence payloads"),
+          "sequence DataInput sketch should report missing sequence batch contract");
+
+    auto sequence_loader = Node(19,
+                                gui::NodeType::DataLoader,
+                                "Sequence DataLoader",
+                                {Pin(1901, gui::PinType::Tensor, "Input", true)},
+                                {Pin(1902, gui::PinType::Tensor, "Batch", false)});
+    sequence_loader.parameters["batch_size"] = "32";
+    sequence_loader.parameters["batch_layout"] = "batch_first";
+
+    nodes = {data, sequence_loader, dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 19, 1901),
+        Link(2, 19, 1902, 2, 201),
+        Link(3, 2, 202, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected sequence DataLoader sketch should be invalid");
+    Check(HasIssueText(config, "batch_layout"),
+          "sequence DataLoader sketch should report matched loader marker");
+    Check(HasIssueText(config, "single tensor/label batch contract"),
+          "sequence DataLoader sketch should report current batch limitation");
+
     auto encoded_ner = Node(20,
                             gui::NodeType::Dense,
                             "Sentence Sequences",

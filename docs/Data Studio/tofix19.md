@@ -600,6 +600,12 @@ Completed so far:
   the direct creator path. Dense-encoded NER placeholder names and target-design
   parameter markers are rejected before pattern insertion can create a fake
   trainable Dense layer.
+- `GraphCompiler` now rejects selected training paths that sketch sequence/NER
+  batch materialization through `DataInput` category/column markers or
+  sequence-style `DataLoader` payload markers. The current trainer still has a
+  single tensor/label batch contract and cannot materialize named sequence
+  payloads such as `word_ids`, optional `pos_ids`, `attention_mask`, and
+  `tag_ids`.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.

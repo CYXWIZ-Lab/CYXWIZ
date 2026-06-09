@@ -127,6 +127,14 @@ bool HasParam(const std::map<std::string, std::string>& params,
     return params.find(key) != params.end();
 }
 
+std::string LowerParamValue(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
+
 bool ParamIsEnabled(const std::map<std::string, std::string>& params,
                     const char* key) {
     auto it = params.find(key);
@@ -134,13 +142,75 @@ bool ParamIsEnabled(const std::map<std::string, std::string>& params,
         return false;
     }
 
-    std::string value = it->second;
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) {
-                       return static_cast<char>(std::tolower(c));
-                   });
+    std::string value = LowerParamValue(it->second);
     return value == "true" || value == "1" || value == "yes" ||
            value == "on";
+}
+
+bool LooksLikeUnsupportedSequenceBatchContract(const gui::MLNode& node,
+                                               std::string& matched_key) {
+    const auto& params = node.parameters;
+
+    if (node.type == gui::NodeType::DataInput ||
+        node.type == gui::NodeType::DatasetInput) {
+        const char* category_keys[] = {
+            "file_category",
+            "dataset_category",
+            "task_type"
+        };
+
+        for (const char* key : category_keys) {
+            auto it = params.find(key);
+            if (it == params.end()) {
+                continue;
+            }
+            const std::string value = LowerParamValue(it->second);
+            if (value == "sequence" || value == "sequence_text" ||
+                value == "sequence_tagging" || value == "token_tagging" ||
+                value == "ner") {
+                matched_key = key;
+                return true;
+            }
+        }
+
+        const char* sequence_column_keys[] = {
+            "token_column",
+            "tokens_column",
+            "tag_column",
+            "tags_column",
+            "pos_column",
+            "sentence_id_column",
+            "sequence_id_column"
+        };
+
+        for (const char* key : sequence_column_keys) {
+            if (HasParam(params, key)) {
+                matched_key = key;
+                return true;
+            }
+        }
+    }
+
+    if (node.type == gui::NodeType::DataLoader) {
+        const char* sequence_loader_keys[] = {
+            "batch_layout",
+            "word_ids",
+            "pos_ids",
+            "tag_ids",
+            "attention_mask",
+            "sequence_lengths",
+            "ignore_index"
+        };
+
+        for (const char* key : sequence_loader_keys) {
+            if (HasParam(params, key)) {
+                matched_key = key;
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 bool LooksLikeGenerativeTrainingSketch(const gui::MLNode& node,
@@ -1479,6 +1549,21 @@ void ValidateTrainingPathImplementationStatus(
                 << target_design_key
                 << "'. This graph needs first-class sequence/NER nodes and "
                    "cannot be compiled as a Dense layer.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            continue;
+        }
+
+        std::string sequence_contract_key;
+        if (LooksLikeUnsupportedSequenceBatchContract(node,
+                                                      sequence_contract_key)) {
+            std::ostringstream msg;
+            msg << "Node '" << node.name
+                << "' sketches sequence/NER batch materialization via '"
+                << sequence_contract_key
+                << "', but Studio training currently has a single tensor/label "
+                   "batch contract. This path needs named sequence payloads "
+                   "such as word_ids, optional pos_ids, attention_mask, and "
+                   "tag_ids before it can compile truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
