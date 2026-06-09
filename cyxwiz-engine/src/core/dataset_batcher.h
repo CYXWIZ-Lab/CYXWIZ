@@ -29,6 +29,40 @@ struct Batch {
 };
 
 /**
+ * Named sequence payload for token-level tasks such as NER.
+ *
+ * This is intentionally separate from Batch: token tagging needs multiple
+ * named tensors with sequence shape, while Batch represents the current
+ * single tensor/label runtime contract.
+ */
+struct SequenceBatch {
+    Tensor word_ids;        // [batch, seq] int ids, required
+    Tensor pos_ids;         // [batch, seq] int ids, optional
+    Tensor attention_mask;  // [batch, seq] 1 for real tokens, 0 for padding
+    Tensor tag_ids;         // [batch, seq] int tag ids, required for training
+    size_t size = 0;        // Actual batch size
+    size_t sequence_length = 0;
+
+    bool HasWordIds() const {
+        return !word_ids.Shape().empty() && word_ids.NumElements() > 0;
+    }
+    bool HasPosIds() const {
+        return !pos_ids.Shape().empty() && pos_ids.NumElements() > 0;
+    }
+    bool HasAttentionMask() const {
+        return !attention_mask.Shape().empty() &&
+               attention_mask.NumElements() > 0;
+    }
+    bool HasTagIds() const {
+        return !tag_ids.Shape().empty() && tag_ids.NumElements() > 0;
+    }
+    bool IsValid() const {
+        return size > 0 && sequence_length > 0 && HasWordIds();
+    }
+    bool IsSupervised() const { return IsValid() && HasTagIds(); }
+};
+
+/**
  * A batch of images with segmentation masks from annotations
  * Used for training semantic segmentation models
  */
@@ -76,6 +110,18 @@ struct AnnotatedBatch {
 // Arrow/Parquet/legacy batchers ignore this since they already instantiate
 // separate train vs val batchers.
 enum class BatcherPhase { Train, Val, Test };
+
+class ISequenceBatcher {
+public:
+    virtual ~ISequenceBatcher() = default;
+
+    virtual SequenceBatch GetNextSequenceBatch() = 0;
+    virtual void Reset() = 0;
+    virtual bool IsEpochComplete() const = 0;
+    virtual size_t GetNumBatches() const = 0;
+    virtual size_t GetNumSamples() const = 0;
+    virtual void SetPhase(BatcherPhase /*phase*/) {}
+};
 
 class IBatcher {
 public:

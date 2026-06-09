@@ -615,6 +615,11 @@ Completed so far:
   present. `StartGraphTrainingFromCompiledConfig`, `SmokeRunExecutor`, and
   `TrainingExecutor::Initialize` reject `SequenceBatchConfig` with a named
   payload message instead of falling through to the tabular/text batcher path.
+- The core batch interface now has a dedicated `SequenceBatch` and
+  `ISequenceBatcher` contract for token-level payloads (`word_ids`, optional
+  `pos_ids`, `attention_mask`, and training `tag_ids`). No implementation is
+  wired into training yet; this only fixes the missing typed payload shape that
+  the real NER batcher/executor slice will consume.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.

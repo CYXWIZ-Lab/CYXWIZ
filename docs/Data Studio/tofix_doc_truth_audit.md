@@ -75,6 +75,9 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-09 follow-up: extended the `tofix19` sequence-batch guard to runtime
   launch/executor boundaries so direct or stale configs with `SequenceBatchConfig`
   fail closed before materialization, smoke run, or model initialization.
+- 2026-06-09 follow-up: added the first typed `SequenceBatch`/`ISequenceBatcher`
+  payload contract for NER/token tagging (`word_ids`, optional `pos_ids`,
+  `attention_mask`, `tag_ids`) without wiring it into runtime execution yet.
 - 2026-06-09 follow-up: accepted a `tofix19` import guardrail slice that
   rejects unknown pattern node type strings and invalid/`Unknown` serialized
   node type ids instead of defaulting imports to Dense-like nodes.

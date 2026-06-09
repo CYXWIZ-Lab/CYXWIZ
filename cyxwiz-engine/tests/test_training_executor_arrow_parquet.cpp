@@ -92,6 +92,35 @@ cyxwiz::TrainingConfiguration MakeConfig(const std::filesystem::path& checkpoint
     return config;
 }
 
+void TestSequenceBatchContract() {
+    cyxwiz::SequenceBatch empty;
+    Check(!empty.IsValid(), "empty SequenceBatch should be invalid");
+    Check(!empty.IsSupervised(),
+          "empty SequenceBatch should not be supervised");
+
+    const std::vector<int64_t> word_ids = {1, 2, 0, 3, 4, 0};
+    const std::vector<int64_t> mask = {1, 1, 0, 1, 1, 0};
+    cyxwiz::SequenceBatch inference;
+    inference.word_ids =
+        cyxwiz::Tensor({2, 3}, word_ids.data(), cyxwiz::DataType::Int64);
+    inference.attention_mask =
+        cyxwiz::Tensor({2, 3}, mask.data(), cyxwiz::DataType::Int64);
+    inference.size = 2;
+    inference.sequence_length = 3;
+    Check(inference.IsValid(),
+          "SequenceBatch with word ids should be valid");
+    Check(inference.HasAttentionMask(),
+          "SequenceBatch should report attention mask");
+    Check(!inference.IsSupervised(),
+          "SequenceBatch without tag ids should not be supervised");
+
+    const std::vector<int64_t> tag_ids = {5, 6, -100, 7, 8, -100};
+    inference.tag_ids =
+        cyxwiz::Tensor({2, 3}, tag_ids.data(), cyxwiz::DataType::Int64);
+    Check(inference.IsSupervised(),
+          "SequenceBatch with tag ids should be supervised");
+}
+
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  const std::string& label) {
     bool saw_epoch = false;
@@ -139,6 +168,8 @@ void RunExecutor(cyxwiz::TrainingExecutor& executor,
 
 int main() {
     namespace fs = std::filesystem;
+
+    TestSequenceBatchContract();
 
     const fs::path work_dir =
         fs::temp_directory_path() / "cyxwiz_training_executor_arrow_parquet";
