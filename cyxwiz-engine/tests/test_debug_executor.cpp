@@ -11,6 +11,7 @@
 #include "../src/core/synthetic_batch.h"
 #include "../src/core/graph_compiler.h"
 
+#include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
 #include <spdlog/spdlog.h>
 
@@ -291,6 +292,82 @@ void TestCrossEntropyIgnoreIndexFromLossParams() {
     spdlog::info("  OK: CrossEntropy ignore_index=-100 propagates to loss");
 }
 
+void TestCrossEntropyTokenShapeIgnoreIndex() {
+    spdlog::info("--- TestCrossEntropyTokenShapeIgnoreIndex ---");
+    CrossEntropyLoss loss(Reduction::Mean, -100);
+    const std::vector<float> logits = {
+        4.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 4.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 4.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 4.0f,
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+    };
+    const std::vector<int64_t> tags = {
+        0, 1, -100,
+        3, 0, 1,
+    };
+    Tensor predictions({2, 3, 4}, logits.data(), DataType::Float32);
+    Tensor labels({2, 3}, tags.data(), DataType::Int64);
+
+    Tensor loss_value = loss.Forward(predictions, labels);
+    ExpectTrue(loss_value.NumElements() == 1,
+               "token CE mean loss should be scalar");
+    ExpectTrue(std::isfinite(loss_value.Data<float>()[0]),
+               "token CE mean loss should be finite");
+    const float exp4 = std::exp(4.0f);
+    const float confident_prob = exp4 / (exp4 + 3.0f);
+    const float exp1 = std::exp(1.0f);
+    const float medium_prob = exp1 / (exp1 + 3.0f);
+    const float expected_loss =
+        (3.0f * -std::log(confident_prob + 1e-10f) +
+         2.0f * -std::log(medium_prob + 1e-10f)) /
+        5.0f;
+    ExpectNear(loss_value.Data<float>()[0], expected_loss, 1e-5f,
+               "token CE mean should divide by non-ignored token count");
+
+    Tensor grad = loss.Backward(predictions, labels);
+    ExpectTrue(grad.Shape() == std::vector<size_t>({2, 3, 4}),
+               "token CE grad should preserve [batch, seq, classes]");
+    const float* g = grad.Data<float>();
+    ExpectNear(g[0], (confident_prob - 1.0f) / 5.0f, 1e-5f,
+               "token CE grad mean should divide by non-ignored token count");
+    const size_t ignored_base = 2 * 4;
+    for (size_t i = 0; i < 4; ++i) {
+        ExpectNear(g[ignored_base + i], 0.0f, 1e-6f,
+                   "ignored token CE grad row should be zero");
+    }
+
+    CrossEntropyLoss none_loss(Reduction::None, -100);
+    Tensor per_token = none_loss.Forward(predictions, labels);
+    ExpectTrue(per_token.Shape() == std::vector<size_t>({2, 3}),
+               "token CE unreduced loss should be [batch, seq]");
+
+    NLLLoss nll(Reduction::Mean, -100);
+    const std::vector<float> log_probs = {
+        -0.2f, -2.0f, -2.0f, -2.0f,
+        -2.0f, -0.3f, -2.0f, -2.0f,
+        -2.0f, -2.0f, -0.7f, -2.0f,
+        -2.0f, -2.0f, -2.0f, -0.4f,
+        -0.5f, -2.0f, -2.0f, -2.0f,
+        -2.0f, -0.6f, -2.0f, -2.0f,
+    };
+    Tensor log_prob_tensor({2, 3, 4}, log_probs.data(), DataType::Float32);
+    Tensor nll_value = nll.Forward(log_prob_tensor, labels);
+    ExpectNear(nll_value.Data<float>()[0], 0.4f, 1e-6f,
+               "token NLL mean should divide by non-ignored token count");
+    Tensor nll_grad = nll.Backward(log_prob_tensor, labels);
+    ExpectTrue(nll_grad.Shape() == std::vector<size_t>({2, 3, 4}),
+               "token NLL grad should preserve [batch, seq, classes]");
+    ExpectNear(nll_grad.Data<float>()[0], -0.2f, 1e-6f,
+               "token NLL grad mean should divide by non-ignored token count");
+    for (size_t i = 0; i < 4; ++i) {
+        ExpectNear(nll_grad.Data<float>()[ignored_base + i], 0.0f, 1e-6f,
+                   "ignored token NLL grad row should be zero");
+    }
+    spdlog::info("  OK: token-shaped CrossEntropy/NLL honor ignore_index");
+}
+
 void TestDebugExecutorGoldenPath() {
     spdlog::info("--- TestDebugExecutorGoldenPath ---");
     auto cfg = MakeTabularConfig();
@@ -480,6 +557,7 @@ int main() {
         TestSyntheticBatchText();
         TestMseLossLabelsAreFloat();
         TestCrossEntropyIgnoreIndexFromLossParams();
+        TestCrossEntropyTokenShapeIgnoreIndex();
         TestDebugExecutorGoldenPath();
         TestDebugExecutorGradNormBookkeeping();
         TestDebugExecutorTextGraph();

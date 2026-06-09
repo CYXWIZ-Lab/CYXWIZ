@@ -255,6 +255,8 @@ struct ClassAxisShape {
     size_t batch = 1;
     size_t classes = 0;
     bool batched = false;
+    std::vector<size_t> class_index_target_shape;
+    std::vector<size_t> unreduced_shape;
 };
 
 ClassAxisShape ValidateClassAxisPredictions(const Tensor& predictions, const char* name) {
@@ -263,12 +265,23 @@ ClassAxisShape ValidateClassAxisPredictions(const Tensor& predictions, const cha
     }
     const std::vector<size_t>& shape = predictions.Shape();
     if (shape.size() == 1) {
-        return {1, shape[0], false};
+        return {1, shape[0], false, {}, {1}};
     }
     if (shape.size() == 2) {
-        return {shape[0], shape[1], true};
+        return {shape[0], shape[1], true, {shape[0]}, {shape[0]}};
     }
-    throw std::runtime_error(std::string(name) + " CPU fallback supports 1D or 2D predictions");
+    if (shape.size() == 3) {
+        return {
+            shape[0] * shape[1],
+            shape[2],
+            true,
+            {shape[0], shape[1]},
+            {shape[0], shape[1]},
+        };
+    }
+    throw std::runtime_error(
+        std::string(name) +
+        " CPU fallback supports 1D, 2D, or [batch, seq, classes] predictions");
 }
 
 bool TargetsAreClassIndices(const Tensor& predictions, const Tensor& targets) {
@@ -280,8 +293,9 @@ void ValidateClassIndexTargets(const Tensor& targets, const ClassAxisShape& shap
         throw std::runtime_error(std::string(name) + " class-index targets must be Int32 or Int64");
     }
     const std::vector<size_t>& target_shape = targets.Shape();
-    const bool valid = shape.batched ? target_shape == std::vector<size_t>{shape.batch}
-                                     : targets.NumElements() == 1;
+    const bool valid = shape.batched
+                           ? target_shape == shape.class_index_target_shape
+                           : targets.NumElements() == 1;
     if (!valid) {
         throw std::runtime_error(std::string(name) + " class-index target shape is invalid");
     }
@@ -311,6 +325,25 @@ void ValidateClassIndex(int64_t class_index, size_t classes, const char* name) {
     if (class_index < 0 || class_index >= static_cast<int64_t>(classes)) {
         throw std::runtime_error(std::string(name) + " target class index is out of range");
     }
+}
+
+Tensor ApplyClassReduction(const std::vector<float>& per_sample,
+                           const ClassAxisShape& shape,
+                           Reduction reduction,
+                           size_t mean_count = 0) {
+    if (reduction == Reduction::None) {
+        return Tensor(shape.unreduced_shape, per_sample.data(), DataType::Float32);
+    }
+
+    float total = 0.0f;
+    for (float value : per_sample) {
+        total += value;
+    }
+    const size_t divisor = mean_count > 0 ? mean_count : shape.batch;
+    if (reduction == Reduction::Mean && divisor > 0) {
+        total /= static_cast<float>(divisor);
+    }
+    return Tensor({1}, &total, DataType::Float32);
 }
 
 Tensor ApplyClassReduction(const std::vector<float>& per_sample,
@@ -367,8 +400,10 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
 
     const float* probs = softmax.Data<float>();
     std::vector<float> losses(shape.batch, 0.0f);
+    size_t mean_count = shape.batch;
     if (TargetsAreClassIndices(predictions, targets)) {
         ValidateClassIndexTargets(targets, shape, "CrossEntropy");
+        mean_count = 0;
         for (size_t batch = 0; batch < shape.batch; ++batch) {
             const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
             if (class_index == ignore_index) {
@@ -376,6 +411,7 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
             }
             ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
             losses[batch] = -std::log(probs[batch * shape.classes + static_cast<size_t>(class_index)] + 1e-10f);
+            ++mean_count;
         }
     } else {
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
@@ -387,7 +423,7 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
             }
         }
     }
-    return ApplyClassReduction(losses, shape.batch, reduction);
+    return ApplyClassReduction(losses, shape, reduction, mean_count);
 }
 
 Tensor CpuCrossEntropyBackward(const Tensor& predictions,
@@ -404,9 +440,11 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
     const float* probs = softmax.Data<float>();
     float* out = grad.Data<float>();
     std::copy(probs, probs + predictions.NumElements(), out);
+    size_t mean_count = shape.batch;
 
     if (TargetsAreClassIndices(predictions, targets)) {
         ValidateClassIndexTargets(targets, shape, "CrossEntropy");
+        mean_count = 0;
         for (size_t batch = 0; batch < shape.batch; ++batch) {
             const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
             const size_t base = batch * shape.classes;
@@ -416,6 +454,7 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
             }
             ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
             out[base + static_cast<size_t>(class_index)] -= 1.0f;
+            ++mean_count;
         }
     } else {
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
@@ -425,8 +464,9 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
         }
     }
 
-    if (reduction == Reduction::Mean && shape.batch > 0) {
-        const float scale = 1.0f / static_cast<float>(shape.batch);
+    const size_t divisor = mean_count > 0 ? mean_count : shape.batch;
+    if (reduction == Reduction::Mean && divisor > 0) {
+        const float scale = 1.0f / static_cast<float>(divisor);
         for (size_t i = 0; i < predictions.NumElements(); ++i) {
             out[i] *= scale;
         }
@@ -443,6 +483,7 @@ Tensor CpuNLLForward(const Tensor& predictions,
 
     const float* log_probs = predictions.Data<float>();
     std::vector<float> losses(shape.batch, 0.0f);
+    size_t mean_count = 0;
     for (size_t batch = 0; batch < shape.batch; ++batch) {
         const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
         if (class_index == ignore_index) {
@@ -450,8 +491,9 @@ Tensor CpuNLLForward(const Tensor& predictions,
         }
         ValidateClassIndex(class_index, shape.classes, "NLL");
         losses[batch] = -log_probs[batch * shape.classes + static_cast<size_t>(class_index)];
+        ++mean_count;
     }
-    return ApplyClassReduction(losses, shape.batch, reduction);
+    return ApplyClassReduction(losses, shape, reduction, mean_count);
 }
 
 Tensor CpuNLLBackward(const Tensor& predictions,
@@ -463,14 +505,24 @@ Tensor CpuNLLBackward(const Tensor& predictions,
 
     Tensor grad = Tensor::Zeros(predictions.Shape(), DataType::Float32);
     float* out = grad.Data<float>();
-    const float scale = reduction == Reduction::Mean && shape.batch > 0 ? 1.0f / static_cast<float>(shape.batch)
-                                                                        : 1.0f;
+    size_t mean_count = 0;
     for (size_t batch = 0; batch < shape.batch; ++batch) {
         const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
         if (class_index == ignore_index) {
             continue;
         }
         ValidateClassIndex(class_index, shape.classes, "NLL");
+        ++mean_count;
+    }
+
+    const size_t divisor = mean_count > 0 ? mean_count : shape.batch;
+    const float scale = reduction == Reduction::Mean && divisor > 0 ? 1.0f / static_cast<float>(divisor)
+                                                                    : 1.0f;
+    for (size_t batch = 0; batch < shape.batch; ++batch) {
+        const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
+        if (class_index == ignore_index) {
+            continue;
+        }
         out[batch * shape.classes + static_cast<size_t>(class_index)] = -scale;
     }
     return grad;
@@ -498,7 +550,7 @@ Tensor CpuFocalForward(const Tensor& predictions,
         const float pt = std::max(prob_data[batch * shape.classes + static_cast<size_t>(class_index)], 1e-8f);
         losses[batch] = -alpha * std::pow(1.0f - pt, gamma) * std::log(pt);
     }
-    return ApplyClassReduction(losses, shape.batch, reduction);
+    return ApplyClassReduction(losses, shape, reduction);
 }
 
 Tensor CpuFocalBackward(const Tensor& predictions,

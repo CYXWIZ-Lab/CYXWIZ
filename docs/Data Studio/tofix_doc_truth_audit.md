@@ -85,6 +85,10 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-09 follow-up: wired CrossEntropy `ignore_index` through
   `TrainingConfiguration::loss_params`/`SequenceBatchConfig` and fixed CPU CE/NLL
   ignore checks to honor negative padding ids such as `-100`.
+- 2026-06-09 follow-up: extended CPU CrossEntropy/NLL to accept token class
+  axes shaped `[batch, seq, tags]` with `[batch, seq]` tag ids and
+  ignored-token gradients; mean loss/grad now excludes ignored padding labels,
+  while training executor wiring and token metrics remain pending.
 - 2026-06-09 follow-up: accepted a `tofix19` import guardrail slice that
   rejects unknown pattern node type strings and invalid/`Unknown` serialized
   node type ids instead of defaulting imports to Dense-like nodes.

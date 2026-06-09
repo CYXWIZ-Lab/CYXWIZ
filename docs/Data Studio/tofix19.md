@@ -628,7 +628,11 @@ Completed so far:
 - `CrossEntropyLoss` construction now preserves `ignore_index` from loss params
   and from `SequenceBatchConfig`; the default is aligned to `-100`. CPU
   CrossEntropy/NLL ignore handling now skips negative ignore values as well.
-  Native `[batch, seq, tags]` token-loss shapes are still pending.
+- CPU CrossEntropy/NLL now accept native token class axes shaped
+  `[batch, seq, tags]` with tag targets shaped `[batch, seq]`, preserving
+  unreduced `[batch, seq]` losses, excluding ignored/padded tokens from mean
+  loss/grad normalization, and zeroing ignored token gradients.
+  Training-executor wiring and token-level metrics are still pending.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
