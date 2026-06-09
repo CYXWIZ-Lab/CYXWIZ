@@ -263,7 +263,7 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
             try {
                 sequence.ignore_index = std::stoi(ignore_it->second);
             } catch (...) {
-                sequence.ignore_index = 0;
+                sequence.ignore_index = -100;
             }
         }
     }

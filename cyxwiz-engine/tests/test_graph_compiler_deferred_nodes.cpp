@@ -323,6 +323,8 @@ int main() {
           "sequence batch contract should capture token column");
     Check(config.sequence_batch.tag_column == "ner_tags",
           "sequence batch contract should capture tag column");
+    Check(config.sequence_batch.ignore_index == -100,
+          "sequence batch contract should default ignore_index to -100");
 
     auto sequence_loader = Node(19,
                                 gui::NodeType::DataLoader,
@@ -352,6 +354,8 @@ int main() {
           "sequence DataLoader sketch should populate the sequence batch contract");
     Check(config.sequence_batch.batch_first,
           "sequence DataLoader batch_first layout should be captured");
+    Check(config.sequence_batch.ignore_index == -100,
+          "sequence DataLoader contract should default ignore_index to -100");
 
     auto encoded_ner = Node(20,
                             gui::NodeType::Dense,

@@ -294,6 +294,19 @@ int64_t ClassIndexAt(const Tensor& targets, size_t index) {
     return targets.Data<int64_t>()[index];
 }
 
+bool ClassIndexTargetsContain(const Tensor& targets, int64_t value) {
+    if (targets.GetDataType() != DataType::Int32 &&
+        targets.GetDataType() != DataType::Int64) {
+        return false;
+    }
+    for (size_t i = 0; i < targets.NumElements(); ++i) {
+        if (ClassIndexAt(targets, i) == value) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ValidateClassIndex(int64_t class_index, size_t classes, const char* name) {
     if (class_index < 0 || class_index >= static_cast<int64_t>(classes)) {
         throw std::runtime_error(std::string(name) + " target class index is out of range");
@@ -358,7 +371,7 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
         ValidateClassIndexTargets(targets, shape, "CrossEntropy");
         for (size_t batch = 0; batch < shape.batch; ++batch) {
             const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
-            if (ignore_index >= 0 && class_index == ignore_index) {
+            if (class_index == ignore_index) {
                 continue;
             }
             ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
@@ -397,7 +410,7 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
         for (size_t batch = 0; batch < shape.batch; ++batch) {
             const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
             const size_t base = batch * shape.classes;
-            if (ignore_index >= 0 && class_index == ignore_index) {
+            if (class_index == ignore_index) {
                 std::fill(out + base, out + base + shape.classes, 0.0f);
                 continue;
             }
@@ -432,7 +445,7 @@ Tensor CpuNLLForward(const Tensor& predictions,
     std::vector<float> losses(shape.batch, 0.0f);
     for (size_t batch = 0; batch < shape.batch; ++batch) {
         const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
-        if (ignore_index >= 0 && class_index == ignore_index) {
+        if (class_index == ignore_index) {
             continue;
         }
         ValidateClassIndex(class_index, shape.classes, "NLL");
@@ -454,7 +467,7 @@ Tensor CpuNLLBackward(const Tensor& predictions,
                                                                         : 1.0f;
     for (size_t batch = 0; batch < shape.batch; ++batch) {
         const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
-        if (ignore_index >= 0 && class_index == ignore_index) {
+        if (class_index == ignore_index) {
             continue;
         }
         ValidateClassIndex(class_index, shape.classes, "NLL");
@@ -1095,6 +1108,12 @@ Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) 
 // ============================================================================
 
 Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    if (TargetsAreClassIndices(predictions, targets) &&
+        ClassIndexTargetsContain(targets, ignore_index_)) {
+        return CpuCrossEntropyForward(
+            predictions, targets, reduction_, ignore_index_, &cached_softmax_);
+    }
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = TensorToAf(predictions);
@@ -1156,6 +1175,12 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
 }
 
 Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    if (TargetsAreClassIndices(predictions, targets) &&
+        ClassIndexTargetsContain(targets, ignore_index_)) {
+        return CpuCrossEntropyBackward(
+            predictions, targets, reduction_, ignore_index_, cached_softmax_);
+    }
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = TensorToAf(predictions);
@@ -1310,6 +1335,10 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
 // ============================================================================
 
 Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    if (ClassIndexTargetsContain(targets, ignore_index_)) {
+        return CpuNLLForward(predictions, targets, reduction_, ignore_index_);
+    }
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array log_probs = TensorToAf(predictions);  // Expects log probabilities [batch, classes]
@@ -1349,6 +1378,10 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    if (ClassIndexTargetsContain(targets, ignore_index_)) {
+        return CpuNLLBackward(predictions, targets, reduction_, ignore_index_);
+    }
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array log_probs = TensorToAf(predictions);

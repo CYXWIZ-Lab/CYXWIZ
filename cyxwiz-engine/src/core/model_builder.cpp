@@ -618,11 +618,31 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
     return true;
 }
 
+int ResolveCrossEntropyIgnoreIndex(const TrainingConfiguration& config) {
+    auto it = config.loss_params.find("ignore_index");
+    if (it != config.loss_params.end() && !it->second.empty()) {
+        try {
+            return std::stoi(it->second);
+        } catch (...) {
+            spdlog::warn("TrainingExecutor: ignoring invalid CrossEntropy "
+                         "ignore_index='{}'", it->second);
+        }
+    }
+    if (config.sequence_batch.enabled) {
+        return config.sequence_batch.ignore_index;
+    }
+    return -100;
+}
+
 std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
     switch (config.loss_type) {
-        case gui::NodeType::CrossEntropyLoss:
-            spdlog::info("TrainingExecutor: Using CrossEntropy loss");
-            return CreateLoss(LossType::CrossEntropy);
+        case gui::NodeType::CrossEntropyLoss: {
+            const int ignore_index = ResolveCrossEntropyIgnoreIndex(config);
+            spdlog::info("TrainingExecutor: Using CrossEntropy loss "
+                         "(ignore_index={})", ignore_index);
+            return std::make_unique<CrossEntropyLoss>(
+                Reduction::Mean, ignore_index);
+        }
         case gui::NodeType::MSELoss:
             spdlog::info("TrainingExecutor: Using MSE loss");
             return CreateLoss(LossType::MSE);

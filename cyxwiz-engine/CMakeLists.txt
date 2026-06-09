@@ -1077,6 +1077,8 @@ add_executable(test_debug_executor
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/dataset_base.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
     src/core/model_builder.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp

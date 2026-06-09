@@ -82,6 +82,9 @@ scanning so stale or duplicate work is not reintroduced.
   already-tokenized NER samples into `SequenceBatch`, preserving token tag
   padding via `ignore_index`; training executor wiring remains intentionally
   blocked.
+- 2026-06-09 follow-up: wired CrossEntropy `ignore_index` through
+  `TrainingConfiguration::loss_params`/`SequenceBatchConfig` and fixed CPU CE/NLL
+  ignore checks to honor negative padding ids such as `-100`.
 - 2026-06-09 follow-up: accepted a `tofix19` import guardrail slice that
   rejects unknown pattern node type strings and invalid/`Unknown` serialized
   node type ids instead of defaulting imports to Dense-like nodes.

@@ -198,7 +198,7 @@ struct SequenceBatchConfig {
     std::string sentence_id_column;
     bool batch_first = true;
     bool create_attention_mask = false;
-    int ignore_index = 0;
+    int ignore_index = -100;
 };
 
 inline std::string SequenceBatchRuntimeUnsupportedMessage() {

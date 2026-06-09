@@ -173,6 +173,14 @@ void ExpectTrue(bool condition, const char* what) {
     }
 }
 
+void ExpectNear(float actual, float expected, float tolerance, const char* what) {
+    if (std::fabs(actual - expected) > tolerance) {
+        std::cerr << "FAIL: " << what << ": expected " << expected
+                  << " got " << actual << "\n";
+        std::exit(1);
+    }
+}
+
 void TestBuildSequentialTabular() {
     spdlog::info("--- TestBuildSequentialTabular ---");
     auto cfg = MakeTabularConfig();
@@ -248,6 +256,39 @@ void TestMseLossLabelsAreFloat() {
     ExpectEq(batch.labels.Shape()[0], 1, "mse labels dim0");
     ExpectEq(batch.labels.Shape()[1], 4, "mse labels dim1 (output_size)");
     spdlog::info("  OK: MSE labels are float [1, output_size]");
+}
+
+void TestCrossEntropyIgnoreIndexFromLossParams() {
+    spdlog::info("--- TestCrossEntropyIgnoreIndexFromLossParams ---");
+    auto cfg = MakeTabularConfig();
+    cfg.loss_params["ignore_index"] = "-100";
+    auto built = BuildSequentialFromConfig(cfg);
+    ExpectTrue(built.ok(), "config should build with CrossEntropy loss");
+    ExpectTrue(built.loss != nullptr, "loss should be built");
+
+    const std::vector<float> logits = {
+        2.0f, 0.0f,
+        0.0f, 2.0f,
+    };
+    const std::vector<int64_t> targets = {0, -100};
+    Tensor predictions({2, 2}, logits.data(), DataType::Float32);
+    Tensor labels({2}, targets.data(), DataType::Int64);
+
+    Tensor loss = built.loss->Forward(predictions, labels);
+    ExpectTrue(loss.NumElements() == 1, "ignored CE loss should be scalar");
+    ExpectTrue(std::isfinite(loss.Data<float>()[0]),
+               "ignored CE loss should be finite");
+
+    Tensor grad = built.loss->Backward(predictions, labels);
+    ExpectEq(grad.Shape().size(), 2, "ignored CE grad ndim");
+    ExpectEq(grad.Shape()[0], 2, "ignored CE grad rows");
+    ExpectEq(grad.Shape()[1], 2, "ignored CE grad classes");
+    const float* g = grad.Data<float>();
+    ExpectNear(g[2], 0.0f, 1e-6f,
+               "ignored CE grad row should zero class 0");
+    ExpectNear(g[3], 0.0f, 1e-6f,
+               "ignored CE grad row should zero class 1");
+    spdlog::info("  OK: CrossEntropy ignore_index=-100 propagates to loss");
 }
 
 void TestDebugExecutorGoldenPath() {
@@ -438,6 +479,7 @@ int main() {
         TestSyntheticBatchTabular();
         TestSyntheticBatchText();
         TestMseLossLabelsAreFloat();
+        TestCrossEntropyIgnoreIndexFromLossParams();
         TestDebugExecutorGoldenPath();
         TestDebugExecutorGradNormBookkeeping();
         TestDebugExecutorTextGraph();

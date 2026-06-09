@@ -625,6 +625,10 @@ Completed so far:
   `attention_mask`, optional POS ids, and `ignore_index` padding for token tags.
   It is intentionally not connected to `TrainingExecutor` yet because token
   cross-entropy and token-level model outputs are still missing.
+- `CrossEntropyLoss` construction now preserves `ignore_index` from loss params
+  and from `SequenceBatchConfig`; the default is aligned to `-100`. CPU
+  CrossEntropy/NLL ignore handling now skips negative ignore values as well.
+  Native `[batch, seq, tags]` token-loss shapes are still pending.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
