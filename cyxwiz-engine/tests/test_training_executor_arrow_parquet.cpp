@@ -1,5 +1,6 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/parquet_backed_dataset.h"
+#include "../src/core/sequence_batcher.h"
 #include "../src/core/training_executor.h"
 
 #include <arrow/api.h>
@@ -121,6 +122,84 @@ void TestSequenceBatchContract() {
           "SequenceBatch with tag ids should be supervised");
 }
 
+void TestSequenceBatcherPadsNamedPayloads() {
+    std::vector<cyxwiz::SequenceSample> samples = {
+        {{11, 12, 13}, {1, 2, 3}, {5, 6, 7}},
+        {{21}, {4}, {8}},
+        {{31, 32, 33, 34}, {9, 10, 11, 12}, {1, 2, 3, 4}},
+    };
+
+    cyxwiz::SequenceBatcherConfig config;
+    config.batch_size = 2;
+    config.max_sequence_length = 3;
+    config.shuffle = false;
+    config.create_attention_mask = true;
+    config.tag_ignore_index = -100;
+
+    cyxwiz::SequenceBatcher batcher(samples, config);
+    Check(batcher.GetNumSamples() == 3,
+          "SequenceBatcher should report sample count");
+    Check(batcher.GetNumBatches() == 2,
+          "SequenceBatcher should ceil partial final batch");
+
+    auto batch = batcher.GetNextSequenceBatch();
+    Check(batch.IsSupervised(),
+          "first sequence batch should be supervised");
+    Check(batch.HasPosIds(), "first sequence batch should include POS ids");
+    Check(batch.HasAttentionMask(),
+          "first sequence batch should include attention mask");
+    Check(batch.word_ids.Shape() == std::vector<size_t>({2, 3}),
+          "word_ids should be [batch, seq]");
+    Check(batch.tag_ids.Shape() == std::vector<size_t>({2, 3}),
+          "tag_ids should be [batch, seq]");
+
+    const auto* words = batch.word_ids.Data<int64_t>();
+    const auto* mask = batch.attention_mask.Data<int64_t>();
+    const auto* tags = batch.tag_ids.Data<int64_t>();
+    Check(words[0] == 11 && words[1] == 12 && words[2] == 13,
+          "first row words should copy exactly");
+    Check(words[3] == 21 && words[4] == 0 && words[5] == 0,
+          "short row words should pad with word_pad_id");
+    Check(mask[0] == 1 && mask[1] == 1 && mask[2] == 1,
+          "full row mask should be all ones");
+    Check(mask[3] == 1 && mask[4] == 0 && mask[5] == 0,
+          "short row mask should mark padding");
+    Check(tags[3] == 8 && tags[4] == -100 && tags[5] == -100,
+          "short row tags should pad with ignore_index");
+
+    auto final_batch = batcher.GetNextSequenceBatch();
+    Check(final_batch.size == 1,
+          "final sequence batch should keep partial batch by default");
+    const auto* final_words = final_batch.word_ids.Data<int64_t>();
+    const auto* final_tags = final_batch.tag_ids.Data<int64_t>();
+    Check(final_words[0] == 31 && final_words[1] == 32 &&
+              final_words[2] == 33,
+          "long row words should truncate to max_sequence_length");
+    Check(final_tags[0] == 1 && final_tags[1] == 2 && final_tags[2] == 3,
+          "long row tags should truncate with words");
+    Check(batcher.IsEpochComplete(),
+          "sequence batcher should complete after final batch");
+}
+
+void TestSequenceBatcherDropLast() {
+    std::vector<cyxwiz::SequenceSample> samples = {
+        {{1}, {}, {2}},
+        {{3}, {}, {4}},
+        {{5}, {}, {6}},
+    };
+
+    cyxwiz::SequenceBatcherConfig config;
+    config.batch_size = 2;
+    config.drop_last = true;
+    cyxwiz::SequenceBatcher batcher(samples, config);
+    Check(batcher.GetNumBatches() == 1,
+          "drop_last should floor sequence batch count");
+    Check(batcher.GetNextSequenceBatch().size == 2,
+          "drop_last first batch should be full");
+    Check(!batcher.GetNextSequenceBatch().IsValid(),
+          "drop_last should suppress partial final batch");
+}
+
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  const std::string& label) {
     bool saw_epoch = false;
@@ -170,6 +249,8 @@ int main() {
     namespace fs = std::filesystem;
 
     TestSequenceBatchContract();
+    TestSequenceBatcherPadsNamedPayloads();
+    TestSequenceBatcherDropLast();
 
     const fs::path work_dir =
         fs::temp_directory_path() / "cyxwiz_training_executor_arrow_parquet";

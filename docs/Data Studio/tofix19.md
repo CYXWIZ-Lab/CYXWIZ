@@ -620,6 +620,11 @@ Completed so far:
   `pos_ids`, `attention_mask`, and training `tag_ids`). No implementation is
   wired into training yet; this only fixes the missing typed payload shape that
   the real NER batcher/executor slice will consume.
+- A standalone `SequenceBatcher` can now batch already-tokenized sequence
+  samples into that payload contract, including truncation, padding,
+  `attention_mask`, optional POS ids, and `ignore_index` padding for token tags.
+  It is intentionally not connected to `TrainingExecutor` yet because token
+  cross-entropy and token-level model outputs are still missing.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
