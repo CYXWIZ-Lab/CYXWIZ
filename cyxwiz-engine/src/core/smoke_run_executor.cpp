@@ -159,6 +159,14 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     }
     result.supported = true;
 
+    if (config.sequence_batch.enabled) {
+        result.summary = SequenceBatchRuntimeUnsupportedMessage();
+        result.issues.push_back({
+            IssueLevel::Error, -1, "SequenceBatch", result.summary
+        });
+        return result;
+    }
+
     auto& registry = DataRegistry::Instance();
     const int batch_size = std::max(1, std::min(config.batch_size, 32));
     std::unique_ptr<IBatcher> batcher;

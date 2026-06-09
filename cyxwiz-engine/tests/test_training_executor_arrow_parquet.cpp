@@ -150,6 +150,32 @@ int main() {
     const auto config = MakeConfig(work_dir / "checkpoints");
 
     {
+        auto sequence_config = config;
+        sequence_config.sequence_batch.enabled = true;
+        sequence_config.sequence_batch.token_column = "tokens";
+        sequence_config.sequence_batch.tag_column = "ner_tags";
+        cyxwiz::TrainingExecutor sequence_executor(
+            sequence_config, dataset, "label");
+        bool saw_batch = false;
+        bool saw_epoch = false;
+        bool completed = false;
+        sequence_executor.Train(
+            1,
+            sequence_config.batch_size,
+            [&](int, int, int, float, float) { saw_batch = true; },
+            [&](int, float, float, float, float, float) { saw_epoch = true; },
+            [&](const cyxwiz::TrainingMetrics&) { completed = true; });
+        Check(!saw_batch,
+              "sequence batch guard should reject before any training batch");
+        Check(!saw_epoch,
+              "sequence batch guard should reject before epoch callback");
+        Check(!completed,
+              "sequence batch guard should reject before completion callback");
+        Check(!sequence_executor.IsTraining(),
+              "sequence batch guard should clear executor training state");
+    }
+
+    {
         cyxwiz::TrainingExecutor arrow_executor(config, dataset, "label");
         RunExecutor(arrow_executor, "Arrow TrainingExecutor");
     }

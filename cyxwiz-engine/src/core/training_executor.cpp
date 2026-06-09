@@ -86,6 +86,12 @@ TrainingExecutor::~TrainingExecutor() {
 }
 
 bool TrainingExecutor::Initialize(int /*batch_size*/) {
+    if (config_.sequence_batch.enabled) {
+        spdlog::error("TrainingExecutor: {}",
+                      SequenceBatchRuntimeUnsupportedMessage());
+        return false;
+    }
+
     auto built = BuildExecutableFromConfig(config_);
     if (!built.ok()) {
         spdlog::error("TrainingExecutor: Failed to build model from config");

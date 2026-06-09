@@ -201,6 +201,13 @@ struct SequenceBatchConfig {
     int ignore_index = 0;
 };
 
+inline std::string SequenceBatchRuntimeUnsupportedMessage() {
+    return "Sequence/NER training is blocked before runtime: the compiler can "
+           "capture the intended token/tag batch contract, but the runtime "
+           "batcher still cannot materialize named sequence payloads such as "
+           "word_ids, optional pos_ids, attention_mask, and tag_ids.";
+}
+
 /**
  * A single graph validation finding. Populated by GraphCompiler::Compile
  * during a Compile pass and surfaced to the user via the Compile popup.

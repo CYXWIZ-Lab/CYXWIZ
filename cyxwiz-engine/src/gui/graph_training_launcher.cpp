@@ -176,6 +176,11 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         result.error_message = "compiled training configuration is invalid";
         return result;
     }
+    if (config.sequence_batch.enabled) {
+        result.error_message = cyxwiz::SequenceBatchRuntimeUnsupportedMessage();
+        spdlog::error("StartTrainingFromGraph: {}", result.error_message);
+        return result;
+    }
     if (!dispatch) {
         result.error_message = "training dispatch callback is missing";
         return result;

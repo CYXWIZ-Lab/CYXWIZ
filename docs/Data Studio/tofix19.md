@@ -611,6 +611,10 @@ Completed so far:
   `DataLoader` markers. This is the first typed contract surface for Phase 2,
   but runtime sequence batching/execution remains blocked until the batcher and
   token-level trainer exist.
+- Runtime launch paths now also fail closed when a sequence batch contract is
+  present. `StartGraphTrainingFromCompiledConfig`, `SmokeRunExecutor`, and
+  `TrainingExecutor::Initialize` reject `SequenceBatchConfig` with a named
+  payload message instead of falling through to the tabular/text batcher path.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.

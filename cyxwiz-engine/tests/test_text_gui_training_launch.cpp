@@ -371,6 +371,40 @@ int main() {
     Check(result.epochs == 1, "result epochs should match config");
     Check(result.batch_size == 2, "result batch size should match config");
 
+    auto blocked_sequence_config =
+        MakeTrainingConfig(work_dir / "sequence_block_checkpoints");
+    blocked_sequence_config.sequence_batch.enabled = true;
+    blocked_sequence_config.sequence_batch.token_column = "tokens";
+    blocked_sequence_config.sequence_batch.tag_column = "ner_tags";
+    bool blocked_sequence_dispatch_called = false;
+    auto blocked_sequence_dispatch = [&](
+        cyxwiz::TrainingConfiguration,
+        const std::string&,
+        const std::string&,
+        int,
+        int,
+        std::weak_ptr<cyxwiz::TrainingPlotPanel>,
+        std::function<void(bool)>) {
+        blocked_sequence_dispatch_called = true;
+        return true;
+    };
+    auto blocked_sequence_result = gui::StartGraphTrainingFromCompiledConfig(
+        nodes,
+        links,
+        std::move(blocked_sequence_config),
+        registry,
+        std::weak_ptr<cyxwiz::TrainingPlotPanel>{},
+        [](bool) {},
+        blocked_sequence_dispatch);
+
+    Check(!blocked_sequence_result.started,
+          "sequence batch launch should not start runtime training");
+    Check(!blocked_sequence_dispatch_called,
+          "sequence batch launch should not call dispatch");
+    Check(blocked_sequence_result.error_message.find(
+              "named sequence payloads") != std::string::npos,
+          "sequence batch launch should explain missing named payloads");
+
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(kMaterializedDatasetName);
     registry.UnregisterTabularDataset(kUnusedDatasetName);
