@@ -643,6 +643,11 @@ Completed so far:
   token accuracy over non-ignored labels, and exact-match BIO entity
   precision/recall/F1. It is covered with NER-style padding and partial-entity
   tests, but these metrics are not yet surfaced by `TrainingExecutor`.
+- A standalone sequence vocabulary helper now builds deterministic token/POS/tag
+  id maps over already-tokenized sequence fields. Token/POS vocabularies can
+  reserve PAD/UNK ids and apply frequency caps; tag vocabularies keep `O` at id
+  zero when present and reject unknown labels. First-class vocabulary nodes are
+  still pending.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
@@ -658,7 +663,7 @@ NER is the best first target because it is concrete and already has an example.
 Implement:
 
 1. `NERSequenceBuilder`,
-2. word/POS/tag vocabulary node types,
+2. word/POS/tag vocabulary node types and executor wiring,
 3. sequence padding for tokens and labels,
 4. sequence batcher with `word_ids`, optional `pos_ids`, `attention_mask`,
    and `tag_ids`,

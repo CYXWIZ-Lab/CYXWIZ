@@ -2,6 +2,7 @@
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/sequence_batcher.h"
 #include "../src/core/sequence_tag_metrics.h"
+#include "../src/core/sequence_vocabulary.h"
 #include "../src/core/training_executor.h"
 
 #include <arrow/api.h>
@@ -262,6 +263,60 @@ void TestSequenceTagMetrics() {
               "BIO F1 should combine exact precision and recall");
 }
 
+void TestSequenceVocabulary() {
+    std::vector<std::vector<std::string>> token_sequences = {
+        {"John", "lives", "in", "Berlin"},
+        {"john", "works", "in", "Berlin"},
+        {"Mary", "lives", "there"},
+    };
+
+    cyxwiz::SequenceVocabularyConfig token_config;
+    token_config.kind = cyxwiz::SequenceVocabularyKind::Token;
+    token_config.lowercase = true;
+    token_config.min_frequency = 2;
+    token_config.max_size = 5;
+
+    const auto token_vocab =
+        cyxwiz::BuildSequenceVocabulary(token_sequences, token_config);
+    Check(token_vocab.Size() == 5,
+          "token vocabulary should honor max_size including PAD/UNK");
+    Check(token_vocab.PadId() == 0,
+          "token vocabulary should reserve PAD id first");
+    Check(token_vocab.UnkId() == 1,
+          "token vocabulary should reserve UNK id second");
+    Check(token_vocab.IdFor("berlin") == 2,
+          "token vocabulary should sort by frequency then lexical order");
+    Check(token_vocab.IdFor("in") == 3,
+          "token vocabulary should keep frequent tokens");
+    Check(token_vocab.IdFor("john") == 4,
+          "token vocabulary should lowercase before counting");
+    Check(token_vocab.IdFor("mary") == token_vocab.UnkId(),
+          "token vocabulary should map filtered tokens to UNK");
+
+    std::vector<std::vector<std::string>> tag_sequences = {
+        {"B-PER", "I-PER", "O"},
+        {"B-LOC", "O"},
+    };
+    cyxwiz::SequenceVocabularyConfig tag_config;
+    tag_config.kind = cyxwiz::SequenceVocabularyKind::Tag;
+    const auto tag_vocab =
+        cyxwiz::BuildSequenceVocabulary(tag_sequences, tag_config);
+    Check(!tag_vocab.HasPad() && !tag_vocab.HasUnk(),
+          "tag vocabulary should not reserve PAD/UNK ids");
+    Check(tag_vocab.ValueFor(0) == "O",
+          "tag vocabulary should keep O at id zero when present");
+    Check(tag_vocab.Contains("B-PER") && tag_vocab.Contains("I-PER"),
+          "tag vocabulary should contain BIO labels");
+    bool unknown_tag_failed = false;
+    try {
+        (void)tag_vocab.IdFor("B-ORG");
+    } catch (const std::runtime_error&) {
+        unknown_tag_failed = true;
+    }
+    Check(unknown_tag_failed,
+          "tag vocabulary should reject unknown labels instead of using UNK");
+}
+
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  const std::string& label) {
     bool saw_epoch = false;
@@ -314,6 +369,7 @@ int main() {
     TestSequenceBatcherPadsNamedPayloads();
     TestSequenceBatcherDropLast();
     TestSequenceTagMetrics();
+    TestSequenceVocabulary();
 
     const fs::path work_dir =
         fs::temp_directory_path() / "cyxwiz_training_executor_arrow_parquet";
