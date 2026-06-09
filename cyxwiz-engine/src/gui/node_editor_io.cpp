@@ -217,8 +217,28 @@ static NodeType StringToNodeType(const std::string& type_str) {
     if (it != type_map.end()) {
         return it->second;
     }
-    spdlog::warn("Unknown node type '{}', defaulting to Dense", type_str);
-    return NodeType::Dense;
+    spdlog::warn("Unknown node type '{}'", type_str);
+    return NodeType::Unknown;
+}
+
+static bool TryReadSerializedNodeType(const nlohmann::json& node_json,
+                                      NodeType& node_type) {
+    if (!node_json.contains("type") || !node_json["type"].is_number_integer()) {
+        spdlog::error("Serialized node '{}' is missing an integer node type",
+                      node_json.value("name", "<unnamed>"));
+        return false;
+    }
+
+    const int type_value = node_json["type"].get<int>();
+    if (type_value < 0 || type_value >= static_cast<int>(NodeType::Unknown)) {
+        spdlog::error("Serialized node '{}' has unsupported node type id {}",
+                      node_json.value("name", "<unnamed>"),
+                      type_value);
+        return false;
+    }
+
+    node_type = static_cast<NodeType>(type_value);
+    return true;
 }
 
 static bool HasParamValue(const std::map<std::string, std::string>& params,
@@ -316,6 +336,13 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
 
             // Convert string type to NodeType enum
             NodeType node_type = StringToNodeType(type_str);
+            if (node_type == NodeType::Unknown) {
+                spdlog::error("Cannot load pattern node '{}' with unknown type '{}'",
+                              name,
+                              type_str);
+                ClearGraph();
+                return false;
+            }
 
             // Create node with proper pins
             MLNode node = CreateNode(node_type, name);
@@ -687,8 +714,11 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
         for (const auto& node_json : j["nodes"]) {
             MLNode node;
             node.id = node_json["id"];
-            node.type = static_cast<NodeType>(node_json["type"].get<int>());
             node.name = node_json["name"];
+            if (!TryReadSerializedNodeType(node_json, node.type)) {
+                ClearGraph();
+                return false;
+            }
             if (node_json.contains("description")) {
                 node.description = node_json["description"];
             }
@@ -920,8 +950,11 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
         for (const auto& node_json : j["nodes"]) {
             MLNode node;
             node.id = node_json["id"];
-            node.type = static_cast<NodeType>(node_json["type"].get<int>());
             node.name = node_json["name"];
+            if (!TryReadSerializedNodeType(node_json, node.type)) {
+                ClearGraph();
+                return false;
+            }
             if (node_json.contains("description")) {
                 node.description = node_json["description"];
             }

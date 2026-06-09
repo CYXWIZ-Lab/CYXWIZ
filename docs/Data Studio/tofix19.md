@@ -586,9 +586,13 @@ Completed so far:
   current trainer has no graph batch schema, edge-index/adjacency routing,
   message-passing kernels, node/edge/graph target contracts, neighborhood
   batching, or graph-level output packaging.
+- Pattern and saved-graph imports now fail closed for unknown pattern node type
+  strings and invalid/`Unknown` serialized node type ids instead of silently
+  creating generic Dense-like nodes. This keeps unsupported placeholder
+  identity from being erased before compile-time guardrails can run.
 
-1. Add import-time guards for graphs that use placeholder node types or Dense
-   nodes as fake custom task nodes.
+1. Continue hardening import-time guards for graphs that use placeholder node
+   types or Dense nodes as fake custom task nodes.
 2. Mark unsupported model families as blocked at compile time with precise
    messages.
 3. Keep `tofix7.md` as the support matrix and update it after every real
