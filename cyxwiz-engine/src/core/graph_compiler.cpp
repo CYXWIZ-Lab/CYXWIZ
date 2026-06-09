@@ -213,6 +213,78 @@ bool LooksLikeUnsupportedSequenceBatchContract(const gui::MLNode& node,
     return false;
 }
 
+void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
+                                          SequenceBatchConfig& sequence) {
+    const auto& params = node.parameters;
+
+    if (node.type == gui::NodeType::DataInput ||
+        node.type == gui::NodeType::DatasetInput) {
+        auto copy_param = [&params](const char* from, std::string& to) {
+            auto it = params.find(from);
+            if (it != params.end() && !it->second.empty()) {
+                to = it->second;
+            }
+        };
+
+        std::string matched_key;
+        if (LooksLikeUnsupportedSequenceBatchContract(node, matched_key)) {
+            sequence.enabled = true;
+        }
+
+        copy_param("token_column", sequence.token_column);
+        copy_param("tokens_column", sequence.token_column);
+        copy_param("pos_column", sequence.pos_column);
+        copy_param("tag_column", sequence.tag_column);
+        copy_param("tags_column", sequence.tag_column);
+        copy_param("sentence_id_column", sequence.sentence_id_column);
+        copy_param("sequence_id_column", sequence.sentence_id_column);
+    }
+
+    if (node.type == gui::NodeType::DataLoader) {
+        std::string matched_key;
+        if (LooksLikeUnsupportedSequenceBatchContract(node, matched_key)) {
+            sequence.enabled = true;
+        }
+
+        auto layout_it = params.find("batch_layout");
+        if (layout_it != params.end()) {
+            sequence.batch_first = LowerParamValue(layout_it->second) != "time_first";
+        }
+
+        auto mask_it = params.find("attention_mask");
+        if (mask_it != params.end()) {
+            const std::string value = LowerParamValue(mask_it->second);
+            sequence.create_attention_mask =
+                value != "false" && value != "0" && value != "off";
+        }
+
+        auto ignore_it = params.find("ignore_index");
+        if (ignore_it != params.end()) {
+            try {
+                sequence.ignore_index = std::stoi(ignore_it->second);
+            } catch (...) {
+                sequence.ignore_index = 0;
+            }
+        }
+    }
+}
+
+void ExtractSequenceBatchContract(
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& training_path_ids,
+    TrainingConfiguration& config) {
+    if (training_path_ids.empty()) {
+        return;
+    }
+
+    for (const auto& node : nodes) {
+        if (training_path_ids.count(node.id) == 0) {
+            continue;
+        }
+        ExtractSequenceBatchContractFromNode(node, config.sequence_batch);
+    }
+}
+
 bool LooksLikeGenerativeTrainingSketch(const gui::MLNode& node,
                                        std::string& matched_key) {
     if (node.type == gui::NodeType::TransformerDecoder) {
@@ -2119,6 +2191,7 @@ TrainingConfiguration GraphCompiler::Compile(
             optimizer_node = path_optimizer_node;
         }
     }
+    ExtractSequenceBatchContract(nodes, training_path_ids, config);
     ValidateTrainingPathImplementationStatus(nodes, training_path_ids, config);
 
     if (dataset_node) {

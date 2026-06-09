@@ -317,6 +317,12 @@ int main() {
           "sequence DataInput sketch should report matched category marker");
     Check(HasIssueText(config, "named sequence payloads"),
           "sequence DataInput sketch should report missing sequence batch contract");
+    Check(config.sequence_batch.enabled,
+          "sequence DataInput sketch should populate the sequence batch contract");
+    Check(config.sequence_batch.token_column == "tokens",
+          "sequence batch contract should capture token column");
+    Check(config.sequence_batch.tag_column == "ner_tags",
+          "sequence batch contract should capture tag column");
 
     auto sequence_loader = Node(19,
                                 gui::NodeType::DataLoader,
@@ -342,6 +348,10 @@ int main() {
           "sequence DataLoader sketch should report matched loader marker");
     Check(HasIssueText(config, "single tensor/label batch contract"),
           "sequence DataLoader sketch should report current batch limitation");
+    Check(config.sequence_batch.enabled,
+          "sequence DataLoader sketch should populate the sequence batch contract");
+    Check(config.sequence_batch.batch_first,
+          "sequence DataLoader batch_first layout should be captured");
 
     auto encoded_ner = Node(20,
                             gui::NodeType::Dense,

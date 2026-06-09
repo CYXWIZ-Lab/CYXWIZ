@@ -187,6 +187,20 @@ struct TextPreprocessingConfig {
     int pad_value = 0;
 };
 
+// Sequence tagging / NER batch contract. Compile can identify the intended
+// named payloads even while runtime training still fails closed until a real
+// sequence batcher and token-level executor exist.
+struct SequenceBatchConfig {
+    bool enabled = false;
+    std::string token_column;
+    std::string pos_column;
+    std::string tag_column;
+    std::string sentence_id_column;
+    bool batch_first = true;
+    bool create_attention_mask = false;
+    int ignore_index = 0;
+};
+
 /**
  * A single graph validation finding. Populated by GraphCompiler::Compile
  * during a Compile pass and surfaced to the user via the Compile popup.
@@ -276,6 +290,10 @@ struct TrainingConfiguration {
     // Preprocessing - text-specific legacy override bundle. Graph text
     // nodes now route through PipelineMaterializer instead of this config.
     TextPreprocessingConfig text_preprocessing;
+
+    // Structured sequence tagging / NER contract. Populated when the selected
+    // training path advertises token/tag/POS sequence semantics.
+    SequenceBatchConfig sequence_batch;
 
     // Phase 4 Time-Series: set to true when Compile finds a TimeSeriesWindow
     // node in the graph. Signals to the training dispatch that the batcher

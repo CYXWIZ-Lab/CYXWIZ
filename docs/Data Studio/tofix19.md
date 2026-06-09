@@ -606,6 +606,11 @@ Completed so far:
   single tensor/label batch contract and cannot materialize named sequence
   payloads such as `word_ids`, optional `pos_ids`, `attention_mask`, and
   `tag_ids`.
+- `TrainingConfiguration` now has an explicit `SequenceBatchConfig` and the
+  compiler populates it from selected-path NER/sequence `DataInput` and
+  `DataLoader` markers. This is the first typed contract surface for Phase 2,
+  but runtime sequence batching/execution remains blocked until the batcher and
+  token-level trainer exist.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
