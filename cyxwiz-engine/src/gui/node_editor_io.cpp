@@ -242,18 +242,19 @@ static bool TryReadSerializedNodeType(const nlohmann::json& node_json,
     return true;
 }
 
-static bool RejectDenseEncodedSequencePlaceholder(NodeType node_type,
-                                                  const std::string& node_name,
+static bool RejectDenseEncodedSequencePlaceholder(const MLNode& node,
                                                   const std::string& source) {
-    if (!detail::IsDenseEncodedSequencePlaceholder(node_type, node_name)) {
+    std::string matched_marker;
+    if (!detail::IsDenseEncodedSequencePlaceholder(node, matched_marker)) {
         return false;
     }
 
-    spdlog::error("{} node '{}' is encoded as Dense but is a sequence/NER "
-                  "placeholder; import requires a first-class supported node "
-                  "type instead of erasing the original identity",
+    spdlog::error("{} node '{}' is encoded as Dense but matches sequence/NER "
+                  "placeholder marker '{}'; import requires a first-class "
+                  "supported node type instead of erasing the original identity",
                   source,
-                  node_name);
+                  node.name,
+                  matched_marker);
     return true;
 }
 
@@ -359,7 +360,10 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
                 ClearGraph();
                 return false;
             }
-            if (RejectDenseEncodedSequencePlaceholder(node_type, name, "Pattern")) {
+            MLNode early_node;
+            early_node.type = node_type;
+            early_node.name = name;
+            if (RejectDenseEncodedSequencePlaceholder(early_node, "Pattern")) {
                 ClearGraph();
                 return false;
             }
@@ -409,6 +413,10 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
                 }
             }
             MigrateLegacyNodeParameters(node.type, node.parameters, true);
+            if (RejectDenseEncodedSequencePlaceholder(node, "Pattern")) {
+                ClearGraph();
+                return false;
+            }
 
             nodes_.push_back(node);
 
@@ -739,10 +747,6 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
                 ClearGraph();
                 return false;
             }
-            if (RejectDenseEncodedSequencePlaceholder(node.type, node.name, "Saved graph")) {
-                ClearGraph();
-                return false;
-            }
             if (node_json.contains("description")) {
                 node.description = node_json["description"];
             }
@@ -751,6 +755,10 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
                 node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
             }
             MigrateLegacyNodeParameters(node.type, node.parameters);
+            if (RejectDenseEncodedSequencePlaceholder(node, "Saved graph")) {
+                ClearGraph();
+                return false;
+            }
 
             // Recreate pins based on node type using fresh pin IDs
             // Create node with fresh pin IDs
@@ -979,10 +987,6 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
                 ClearGraph();
                 return false;
             }
-            if (RejectDenseEncodedSequencePlaceholder(node.type, node.name, "Saved graph")) {
-                ClearGraph();
-                return false;
-            }
             if (node_json.contains("description")) {
                 node.description = node_json["description"];
             }
@@ -991,6 +995,10 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
                 node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
             }
             MigrateLegacyNodeParameters(node.type, node.parameters);
+            if (RejectDenseEncodedSequencePlaceholder(node, "Saved graph")) {
+                ClearGraph();
+                return false;
+            }
 
             // Recreate pins based on node type using fresh pin IDs
             MLNode template_node = CreateNode(node.type, node.name);

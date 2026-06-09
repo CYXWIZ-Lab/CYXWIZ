@@ -1,5 +1,6 @@
 #include "pattern_library.h"
 #include "../node_editor.h"
+#include "../node_import_guardrails.h"
 #include "../../core/node_metadata_registry.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -44,6 +45,22 @@ bool IsInstantiablePatternNode(NodeType type, const std::string& resolved_type) 
         return false;
     }
 
+    return true;
+}
+
+bool RejectDenseEncodedSequencePlaceholder(const MLNode& node,
+                                           const std::string& pattern_name) {
+    std::string matched_marker;
+    if (!detail::IsDenseEncodedSequencePlaceholder(node, matched_marker)) {
+        return false;
+    }
+
+    spdlog::error("Pattern '{}' node '{}' is encoded as Dense but matches "
+                  "sequence/NER placeholder marker '{}'; instantiate a "
+                  "first-class supported node type instead",
+                  pattern_name,
+                  node.name,
+                  matched_marker);
     return true;
 }
 
@@ -609,6 +626,11 @@ bool PatternLibrary::InstantiatePattern(
         for (const auto& [key, value] : pattern_node.params) {
             node.parameters[key] = SubstituteParams(value, merged_params);
         }
+        if (RejectDenseEncodedSequencePlaceholder(node, pattern->name)) {
+            out_nodes.clear();
+            out_links.clear();
+            return false;
+        }
 
         out_nodes.push_back(node);
     }
@@ -702,6 +724,15 @@ bool PatternLibrary::InstantiatePatternWithCreator(
             out_links.clear();
             return false;
         }
+        if (detail::IsDenseEncodedSequencePlaceholder(node_type, resolved_name)) {
+            MLNode rejected_node;
+            rejected_node.type = node_type;
+            rejected_node.name = resolved_name;
+            RejectDenseEncodedSequencePlaceholder(rejected_node, pattern->name);
+            out_nodes.clear();
+            out_links.clear();
+            return false;
+        }
 
         // Use the callback to create the node with proper pins
         MLNode node = node_creator(node_type, resolved_name);
@@ -720,6 +751,11 @@ bool PatternLibrary::InstantiatePatternWithCreator(
         // Copy parameters with substitution
         for (const auto& [key, value] : pattern_node.params) {
             node.parameters[key] = SubstituteParams(value, merged_params);
+        }
+        if (RejectDenseEncodedSequencePlaceholder(node, pattern->name)) {
+            out_nodes.clear();
+            out_links.clear();
+            return false;
         }
 
         out_nodes.push_back(node);

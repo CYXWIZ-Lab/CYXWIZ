@@ -18,7 +18,10 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
-std::filesystem::path WritePattern(const std::string& id, const std::string& type) {
+std::filesystem::path WritePatternWithNode(const std::string& id,
+                                           const std::string& type,
+                                           const std::string& name,
+                                           const std::string& params_json) {
     const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_pattern_guard";
     std::filesystem::create_directories(dir);
 
@@ -32,12 +35,20 @@ std::filesystem::path WritePattern(const std::string& id, const std::string& typ
         << "  \"template\": {\n"
         << "    \"nodes\": [\n"
         << "      {\"id\": \"n1\", \"type\": \"" << type
-        << "\", \"name\": \"" << type << "\", \"pos_x\": 0, \"pos_y\": 0}\n"
+        << "\", \"name\": \"" << name << "\", \"pos_x\": 0, \"pos_y\": 0";
+    if (!params_json.empty()) {
+        out << ", \"params\": " << params_json;
+    }
+    out << "}\n"
         << "    ],\n"
         << "    \"links\": []\n"
         << "  }\n"
         << "}\n";
     return path;
+}
+
+std::filesystem::path WritePattern(const std::string& id, const std::string& type) {
+    return WritePatternWithNode(id, type, type, "");
 }
 
 gui::MLNode MinimalNode(gui::NodeType type, const std::string& name) {
@@ -82,6 +93,15 @@ int main() {
           "failed to load scheduler template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_typo", "DefinitelyNotANode").string()),
           "failed to load unknown-node pattern");
+    Check(library.LoadPatternFromFile(
+              WritePatternWithNode("guard_ner_name", "Dense", "NERSequenceBuilder", "").string()),
+          "failed to load Dense-encoded NER placeholder-name pattern");
+    Check(library.LoadPatternFromFile(
+              WritePatternWithNode("guard_ner_param",
+                                   "Dense",
+                                   "Custom Sequence Builder",
+                                   "{\"bio_scheme\": \"BIO\", \"units\": \"128\"}").string()),
+          "failed to load Dense-encoded NER parameter-marker pattern");
 
     std::vector<gui::MLNode> nodes;
     std::vector<gui::NodeLink> links;
@@ -160,18 +180,46 @@ int main() {
     Check(creator_calls == 4, "unknown rejection should not call node creator");
 
     int next_pin_id = 2000;
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_ner_name", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
+          "Dense-encoded NER placeholder-name pattern should be rejected");
+    Check(nodes.empty() && links.empty(), "Dense-encoded NER name rejection should leave no partial graph");
+    Check(creator_calls == 4, "Dense-encoded NER name rejection should not call node creator");
+
+    Check(!library.InstantiatePattern(
+              "guard_ner_name", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
+          "legacy instantiation should reject Dense-encoded NER placeholder names");
+    Check(nodes.empty() && links.empty(), "legacy Dense-encoded NER name rejection should leave no partial graph");
+
+    Check(!library.InstantiatePattern(
+              "guard_ner_param", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
+          "legacy instantiation should reject Dense-encoded NER parameter markers");
+    Check(nodes.empty() && links.empty(), "legacy Dense-encoded NER parameter rejection should leave no partial graph");
+
     Check(!library.InstantiatePattern(
               "guard_batch_matmul", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
           "legacy instantiation should also reject template nodes");
 
     Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "NERSequenceBuilder"),
           "Dense-encoded NERSequenceBuilder placeholder should be rejected");
+    Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "Sentence Sequences"),
+          "Dense-encoded friendly NER placeholder name should be rejected");
     Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "TokenCrossEntropyLoss"),
           "Dense-encoded token loss placeholder should be rejected");
     Check(!gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "Dense (128)"),
           "ordinary Dense layer names should not be rejected");
     Check(!gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Embedding, "NERSequenceBuilder"),
           "first-class non-Dense node types should not be rejected by the Dense placeholder guard");
+
+    gui::MLNode dense_encoded_ner;
+    dense_encoded_ner.type = gui::NodeType::Dense;
+    dense_encoded_ner.name = "Custom Sequence Builder";
+    dense_encoded_ner.parameters["bio_scheme"] = "BIO";
+    std::string matched_marker;
+    Check(gui::detail::IsDenseEncodedSequencePlaceholder(dense_encoded_ner, matched_marker),
+          "Dense-encoded NER parameter marker should be rejected");
+    Check(matched_marker == "bio_scheme",
+          "Dense-encoded NER parameter marker should report the matching parameter");
 
     std::cout << "Pattern template guard passed\n";
     return 0;

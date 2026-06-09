@@ -596,6 +596,10 @@ Completed so far:
   metrics, and sequence outputs before they can masquerade as trainable Dense
   layers. The shared import-guard predicate is covered by
   `test_pattern_template_guard`.
+- The same shared guard is now used by `PatternLibrary` instantiation, including
+  the direct creator path. Dense-encoded NER placeholder names and target-design
+  parameter markers are rejected before pattern insertion can create a fake
+  trainable Dense layer.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
