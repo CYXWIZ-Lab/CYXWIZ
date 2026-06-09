@@ -1364,12 +1364,59 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"momentum", "float", "0.1", "Momentum", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::LayerNorm, NodeCategory::Normalization, "LayerNorm", ICON_FA_SCALE_BALANCED,
+        {"layernorm", "normalization", "transformer"}, 0, false, "Layer normalization", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Normalized"}},
+        {{"normalized_shape", "int", "128", "Normalized shape", {}, ""},
+         {"eps", "float", "1e-5", "Epsilon", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::GroupNorm, NodeCategory::Normalization, "GroupNorm", ICON_FA_SCALE_BALANCED,
+        {"groupnorm", "normalization"}, 0, false, "Group normalization", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Normalized"}},
+        {{"num_groups", "int", "32", "Groups", {}, ""},
+         {"eps", "float", "1e-5", "Epsilon", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::InstanceNorm, NodeCategory::Normalization, "InstanceNorm", ICON_FA_SCALE_BALANCED,
+        {"instancenorm", "normalization"}, 0, false, "Instance normalization", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Normalized"}},
+        {{"eps", "float", "1e-5", "Epsilon", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
     RegisterNode({NodeType::MultiHeadAttention, NodeCategory::Attention, "Multi-Head Attention", ICON_FA_BULLSEYE,
         {"attention", "transformer"}, 0, false, "Multi-head attention", "", "",
         {{"Query", PinType::Tensor, true, "Query"}, {"Key", PinType::Tensor, false, "Key"}},
         {{"Output", PinType::Tensor, true, "Output"}},
         {{"embed_dim", "int", "512", "Dim", {}, ""}, {"num_heads", "int", "8", "Heads", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::SelfAttention, NodeCategory::Attention, "Self Attention", ICON_FA_BULLSEYE,
+        {"attention", "self_attention", "transformer"}, 0, false, "Self attention", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"embed_dim", "int", "512", "Dim", {}, ""},
+         {"num_heads", "int", "8", "Heads", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::CrossAttention, NodeCategory::Attention, "Cross Attention", ICON_FA_BULLSEYE,
+        {"attention", "cross_attention", "transformer"}, 0, false, "Cross attention", "", "",
+        {{"Query", PinType::Tensor, true, "Query"}, {"Context", PinType::Tensor, true, "Context"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"embed_dim", "int", "512", "Dim", {}, ""},
+         {"num_heads", "int", "8", "Heads", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::LinearAttention, NodeCategory::Attention, "Linear Attention", ICON_FA_BULLSEYE,
+        {"attention", "linear_attention", "performer"}, 0, false, "Linear attention", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"embed_dim", "int", "512", "Dim", {}, ""},
+         {"num_heads", "int", "8", "Heads", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::MaxPool2D, NodeCategory::Pooling, "MaxPool2D", ICON_FA_COMPRESS,
         {"maxpool", "pooling"}, 0, false, "Max pooling", "", "",

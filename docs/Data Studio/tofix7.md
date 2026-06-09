@@ -92,10 +92,11 @@ Current recurring patterns:
 | `ConvTranspose2D` | Template/blocked | Blocked with error | No | `Blocked` | No longer accepted as trainable; metadata now marks it blocked. | Implement before unblocking. |
 | `Upsample` | Template/blocked | Blocked with error | No | `Blocked` | No longer accepted as trainable; metadata now marks it blocked. | Implement before unblocking. |
 | `PixelShuffle` | Template/blocked | Blocked with error | No | `Blocked` | No longer accepted as trainable; metadata now marks it blocked. | Implement before unblocking. |
-| `MultiHeadAttention` | Yes | Guarded/unavailable | No | `Blocked` | Pattern/template guards prevent unavailable attention from being imported as a real training node. | Add end-to-end support before unblocking. |
-| `LayerNorm` | Yes | No current primary build path | No | `Misleading` | Documented/visible beyond current training builder support. | Hide or implement. |
-| `GroupNorm` | Yes | No current primary build path | No | `Misleading` | Same issue. | Hide or implement. |
-| `InstanceNorm` | Yes | No current primary build path | No | `Misleading` | Same issue. | Hide or implement. |
+| `MultiHeadAttention` | Yes/blocked | Blocked with error | No | `Blocked` | Pattern/template guards and the central training support table prevent unavailable attention from compiling as a trainable layer. | Add end-to-end support before unblocking. |
+| `SelfAttention` / `CrossAttention` / `LinearAttention` | Yes/blocked | Blocked with error | No | `Blocked` | Visible/analyzable attention concepts now fail closed in selected training paths. | Add backend modules before unblocking. |
+| `LayerNorm` | Yes/blocked | Blocked with error | No | `Blocked` | Visible/analyzable normalization concept now fails closed before `ModelBuilder`. | Add backend module before unblocking. |
+| `GroupNorm` | Yes/blocked | Blocked with error | No | `Blocked` | Same issue. | Add backend module before unblocking. |
+| `InstanceNorm` | Yes/blocked | Blocked with error | No | `Blocked` | Same issue. | Add backend module before unblocking. |
 
 ### Recurrent training nodes
 

@@ -89,6 +89,11 @@ scanning so stale or duplicate work is not reintroduced.
   axes shaped `[batch, seq, tags]` with `[batch, seq]` tag ids and
   ignored-token gradients; mean loss/grad now excludes ignored padding labels,
   while training executor wiring and token metrics remain pending.
+- 2026-06-09 follow-up: added central blocked training support and blocked
+  metadata for unsupported normalization/attention concepts (`LayerNorm`,
+  `GroupNorm`, `InstanceNorm`, `MultiHeadAttention`, `SelfAttention`,
+  `CrossAttention`, `LinearAttention`) so selected training paths fail closed
+  before `ModelBuilder` can silently omit them.
 - 2026-06-09 follow-up: accepted a `tofix19` import guardrail slice that
   rejects unknown pattern node type strings and invalid/`Unknown` serialized
   node type ids instead of defaulting imports to Dense-like nodes.

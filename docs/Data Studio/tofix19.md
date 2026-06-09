@@ -633,6 +633,12 @@ Completed so far:
   unreduced `[batch, seq]` losses, excluding ignored/padded tokens from mean
   loss/grad normalization, and zeroing ignored token gradients.
   Training-executor wiring and token-level metrics are still pending.
+- Attention and normalization layer concepts that exist as node types or model
+  analysis concepts but are not trainable backend layers now fail closed through
+  the central training support table (`LayerNorm`, `GroupNorm`, `InstanceNorm`,
+  `MultiHeadAttention`, `SelfAttention`, `CrossAttention`, and
+  `LinearAttention`). Metadata marks them blocked instead of letting selected
+  training paths silently drop them before `ModelBuilder`.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
