@@ -639,6 +639,10 @@ Completed so far:
   `MultiHeadAttention`, `SelfAttention`, `CrossAttention`, and
   `LinearAttention`). Metadata marks them blocked instead of letting selected
   training paths silently drop them before `ModelBuilder`.
+- A standalone sequence-tag metric helper now computes argmax token predictions,
+  token accuracy over non-ignored labels, and exact-match BIO entity
+  precision/recall/F1. It is covered with NER-style padding and partial-entity
+  tests, but these metrics are not yet surfaced by `TrainingExecutor`.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
@@ -660,7 +664,7 @@ Implement:
    and `tag_ids`,
 5. `TimeDistributedDense` or equivalent token classifier head,
 6. token cross-entropy with `ignore_index`,
-7. token accuracy and BIO entity F1.
+7. executor surfacing for token accuracy and BIO entity F1.
 
 ### Phase 3 - Generalize To Multi-Input / Multi-Output
 

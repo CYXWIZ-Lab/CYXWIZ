@@ -1,6 +1,7 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/sequence_batcher.h"
+#include "../src/core/sequence_tag_metrics.h"
 #include "../src/core/training_executor.h"
 
 #include <arrow/api.h>
@@ -20,6 +21,17 @@ namespace {
 void Check(bool condition, const std::string& message) {
     if (!condition) {
         std::cerr << "FAIL: " << message << '\n';
+        std::exit(1);
+    }
+}
+
+void CheckNear(double actual,
+               double expected,
+               double tolerance,
+               const std::string& message) {
+    if (std::abs(actual - expected) > tolerance) {
+        std::cerr << "FAIL: " << message << " actual=" << actual
+                  << " expected=" << expected << '\n';
         std::exit(1);
     }
 }
@@ -200,6 +212,56 @@ void TestSequenceBatcherDropLast() {
           "drop_last should suppress partial final batch");
 }
 
+void TestSequenceTagMetrics() {
+    const std::vector<std::string> labels = {
+        "O",
+        "B-PER",
+        "I-PER",
+        "B-LOC",
+        "I-LOC",
+    };
+
+    const std::vector<float> logits = {
+        0.0f, 5.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 5.0f, 0.0f, 0.0f,
+        5.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 5.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 5.0f, 0.0f,
+        5.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        5.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 5.0f, 0.0f,
+    };
+    const std::vector<int64_t> gold = {
+        1, 2, 0, -100,
+        3, 4, 0, -100,
+    };
+
+    cyxwiz::Tensor logits_tensor(
+        {2, 4, labels.size()}, logits.data(), cyxwiz::DataType::Float32);
+    cyxwiz::Tensor gold_tensor({2, 4}, gold.data(), cyxwiz::DataType::Int64);
+    const auto metrics = cyxwiz::ComputeSequenceTagMetricsFromLogits(
+        logits_tensor, gold_tensor, labels, -100);
+
+    Check(metrics.correct_tokens == 5,
+          "token metrics should count correct non-ignored tokens");
+    Check(metrics.total_tokens == 6,
+          "token metrics should skip ignored padding labels");
+    CheckNear(metrics.token_accuracy, 5.0 / 6.0, 1e-9,
+              "token accuracy should use non-ignored denominator");
+    Check(metrics.predicted_entities == 2,
+          "BIO metrics should ignore entity predictions on padding labels");
+    Check(metrics.gold_entities == 2,
+          "BIO metrics should count gold PER and LOC entities");
+    Check(metrics.matched_entities == 1,
+          "BIO metrics should require exact span/type match");
+    CheckNear(metrics.entity_precision, 0.5, 1e-9,
+              "BIO precision should match exact entities over predictions");
+    CheckNear(metrics.entity_recall, 0.5, 1e-9,
+              "BIO recall should match exact entities over gold spans");
+    CheckNear(metrics.entity_f1, 0.5, 1e-9,
+              "BIO F1 should combine exact precision and recall");
+}
+
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  const std::string& label) {
     bool saw_epoch = false;
@@ -251,6 +313,7 @@ int main() {
     TestSequenceBatchContract();
     TestSequenceBatcherPadsNamedPayloads();
     TestSequenceBatcherDropLast();
+    TestSequenceTagMetrics();
 
     const fs::path work_dir =
         fs::temp_directory_path() / "cyxwiz_training_executor_arrow_parquet";

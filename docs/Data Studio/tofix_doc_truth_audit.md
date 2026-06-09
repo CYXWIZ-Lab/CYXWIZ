@@ -94,6 +94,9 @@ scanning so stale or duplicate work is not reintroduced.
   `GroupNorm`, `InstanceNorm`, `MultiHeadAttention`, `SelfAttention`,
   `CrossAttention`, `LinearAttention`) so selected training paths fail closed
   before `ModelBuilder` can silently omit them.
+- 2026-06-09 follow-up: added a standalone sequence-tag metric helper for
+  argmax token predictions, ignored-label token accuracy, and exact-match BIO
+  entity precision/recall/F1. Executor surfacing remains pending.
 - 2026-06-09 follow-up: accepted a `tofix19` import guardrail slice that
   rejects unknown pattern node type strings and invalid/`Unknown` serialized
   node type ids instead of defaulting imports to Dense-like nodes.
