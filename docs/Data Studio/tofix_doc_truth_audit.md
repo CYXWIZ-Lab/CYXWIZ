@@ -59,6 +59,10 @@ scanning so stale or duplicate work is not reintroduced.
 ## Patch Log
 
 - 2026-06-09 follow-up: accepted a `tofix19` import guardrail slice that
+  rejects exact NER/sequence placeholder names encoded as Dense during pattern
+  and saved-graph import, with shared predicate coverage in
+  `test_pattern_template_guard`.
+- 2026-06-09 follow-up: accepted a `tofix19` import guardrail slice that
   rejects unknown pattern node type strings and invalid/`Unknown` serialized
   node type ids instead of defaulting imports to Dense-like nodes.
 - 2026-06-08 follow-up: accepted a `tofix20` Priority 5 parity slice that

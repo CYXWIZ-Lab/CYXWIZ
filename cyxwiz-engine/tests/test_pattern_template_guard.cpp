@@ -1,4 +1,5 @@
 #include "../src/gui/patterns/pattern_library.h"
+#include "../src/gui/node_import_guardrails.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -162,6 +163,15 @@ int main() {
     Check(!library.InstantiatePattern(
               "guard_batch_matmul", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
           "legacy instantiation should also reject template nodes");
+
+    Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "NERSequenceBuilder"),
+          "Dense-encoded NERSequenceBuilder placeholder should be rejected");
+    Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "TokenCrossEntropyLoss"),
+          "Dense-encoded token loss placeholder should be rejected");
+    Check(!gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "Dense (128)"),
+          "ordinary Dense layer names should not be rejected");
+    Check(!gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Embedding, "NERSequenceBuilder"),
+          "first-class non-Dense node types should not be rejected by the Dense placeholder guard");
 
     std::cout << "Pattern template guard passed\n";
     return 0;

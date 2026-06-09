@@ -5,6 +5,7 @@
 // - Code export functionality (PyTorch, TensorFlow, Keras, PyCyxWiz)
 
 #include "node_editor.h"
+#include "node_import_guardrails.h"
 #include "../core/file_dialogs.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -241,6 +242,21 @@ static bool TryReadSerializedNodeType(const nlohmann::json& node_json,
     return true;
 }
 
+static bool RejectDenseEncodedSequencePlaceholder(NodeType node_type,
+                                                  const std::string& node_name,
+                                                  const std::string& source) {
+    if (!detail::IsDenseEncodedSequencePlaceholder(node_type, node_name)) {
+        return false;
+    }
+
+    spdlog::error("{} node '{}' is encoded as Dense but is a sequence/NER "
+                  "placeholder; import requires a first-class supported node "
+                  "type instead of erasing the original identity",
+                  source,
+                  node_name);
+    return true;
+}
+
 static bool HasParamValue(const std::map<std::string, std::string>& params,
                           const std::string& key) {
     auto it = params.find(key);
@@ -340,6 +356,10 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
                 spdlog::error("Cannot load pattern node '{}' with unknown type '{}'",
                               name,
                               type_str);
+                ClearGraph();
+                return false;
+            }
+            if (RejectDenseEncodedSequencePlaceholder(node_type, name, "Pattern")) {
                 ClearGraph();
                 return false;
             }
@@ -719,6 +739,10 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
                 ClearGraph();
                 return false;
             }
+            if (RejectDenseEncodedSequencePlaceholder(node.type, node.name, "Saved graph")) {
+                ClearGraph();
+                return false;
+            }
             if (node_json.contains("description")) {
                 node.description = node_json["description"];
             }
@@ -952,6 +976,10 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
             node.id = node_json["id"];
             node.name = node_json["name"];
             if (!TryReadSerializedNodeType(node_json, node.type)) {
+                ClearGraph();
+                return false;
+            }
+            if (RejectDenseEncodedSequencePlaceholder(node.type, node.name, "Saved graph")) {
                 ClearGraph();
                 return false;
             }

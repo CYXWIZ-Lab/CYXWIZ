@@ -590,6 +590,12 @@ Completed so far:
   strings and invalid/`Unknown` serialized node type ids instead of silently
   creating generic Dense-like nodes. This keeps unsupported placeholder
   identity from being erased before compile-time guardrails can run.
+- Pattern and saved-graph imports also reject exact NER/sequence placeholder
+  names when they are encoded as `Dense`, covering name-only placeholders such
+  as `NERSequenceBuilder`, vocabulary builders, sequence padding, token loss,
+  metrics, and sequence outputs before they can masquerade as trainable Dense
+  layers. The shared import-guard predicate is covered by
+  `test_pattern_template_guard`.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
