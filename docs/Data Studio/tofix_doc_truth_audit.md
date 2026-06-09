@@ -100,6 +100,11 @@ scanning so stale or duplicate work is not reintroduced.
 - 2026-06-09 follow-up: added a standalone sequence vocabulary helper for
   deterministic token/POS/tag ids over already-tokenized NER fields. First-class
   vocabulary nodes and executor wiring remain pending.
+- 2026-06-09 shutdown handoff: latest pushed `tofix19` commit is `4fa72a1a`
+  (`Add sequence vocabulary helper`). Last verified targets were
+  `test_training_executor_arrow_parquet` build/run and `cyxwiz-engine` Debug
+  build. Resume with standalone `NERSequenceBuilder` over already-tokenized
+  token/POS/tag columns before wiring `TrainingExecutor`.
 - 2026-06-09 follow-up: accepted a `tofix19` import guardrail slice that
   rejects unknown pattern node type strings and invalid/`Unknown` serialized
   node type ids instead of defaulting imports to Dense-like nodes.

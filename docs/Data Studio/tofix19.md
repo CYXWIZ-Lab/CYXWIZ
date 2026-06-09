@@ -649,6 +649,32 @@ Completed so far:
   zero when present and reject unknown labels. First-class vocabulary nodes are
   still pending.
 
+### Next Session Handoff - 2026-06-09
+
+Last pushed commit: `4fa72a1a Add sequence vocabulary helper`.
+
+Verified before shutdown:
+
+- `cmake --build build --config Debug --target test_training_executor_arrow_parquet`
+- `build\bin\Debug\test_training_executor_arrow_parquet.exe`
+- `cmake --build build --config Debug --target cyxwiz-engine`
+
+Current Phase 2 state:
+
+- The low-level NER primitives exist: typed sequence payload contract,
+  standalone sequence batcher, token-shaped CrossEntropy/NLL with
+  `ignore_index`, sequence tag metrics, and sequence vocabularies.
+- Runtime sequence training is still intentionally blocked by
+  `SequenceBatchRuntimeUnsupportedMessage()` so the app does not pretend NER
+  can train end to end yet.
+- The next practical slice is `NERSequenceBuilder`: compose
+  `SequenceVocabulary` + `SequenceBatcher` over already-tokenized token/POS/tag
+  columns and produce `SequenceSample` / `SequenceBatch` test fixtures. Keep it
+  standalone first; do not wire `TrainingExecutor` until the builder contract is
+  tested.
+- After that, wire first-class vocabulary/builder nodes or compiler metadata,
+  then tackle token classifier head / executor integration.
+
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.
 2. Mark unsupported model families as blocked at compile time with precise
