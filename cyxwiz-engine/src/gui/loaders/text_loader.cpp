@@ -130,6 +130,7 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     auto parse_options = arrow::csv::ParseOptions::Defaults();
                     auto convert_options = arrow::csv::ConvertOptions::Defaults();
                     parse_options.delimiter = delimiter;
+                    parse_options.newlines_in_values = true;
 
                     auto raw_arrow = cyxwiz::ArrowDataset::FromCSV(
                         path, name, read_options, parse_options, convert_options);

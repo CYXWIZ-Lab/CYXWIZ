@@ -236,6 +236,11 @@ Status 2026-06-08:
   Debug --target test_text_loader_csv_preflight -j 8`,
   `build\bin\Debug\test_text_loader_csv_preflight.exe`, and
   `cmake --build build --config Debug --target cyxwiz-engine -j 8`.
+- Follow-up 2026-06-10. The Release engine log showed Arrow still rejecting a
+  text CSV row with an embedded newline after preflight accepted it. `TextLoader`
+  now sets Arrow CSV `newlines_in_values=true` for raw text CSV/TSV backing so
+  Arrow registration matches the preflight/TextDataset parsing contract.
+  `test_text_loader_csv_preflight` now pins this Arrow registration path.
 - Verified 2026-06-10. The broad
   `test_pipeline_executor_operator_routing` suite still passes after the
   materializer scope and metadata support-axis changes; its expected negative

@@ -1,3 +1,4 @@
+#include "../src/core/arrow_dataset.h"
 #include "../src/gui/loaders/text_csv_preflight.h"
 
 #include <cstdlib>
@@ -37,6 +38,19 @@ int main() {
         const auto result =
             cyxwiz::loaders::ValidateTextCsvRowWidths(path.string(), ',');
         Check(result.ok, "quoted commas and embedded newlines should pass");
+
+        auto read_options = arrow::csv::ReadOptions::Defaults();
+        auto parse_options = arrow::csv::ParseOptions::Defaults();
+        auto convert_options = arrow::csv::ConvertOptions::Defaults();
+        parse_options.delimiter = ',';
+        parse_options.newlines_in_values = true;
+        auto raw_arrow = cyxwiz::ArrowDataset::FromCSV(
+            path.string(), "cyxwiz_text_preflight_valid",
+            read_options, parse_options, convert_options);
+        Check(raw_arrow != nullptr && raw_arrow->GetArrowTable() != nullptr,
+              "TextLoader Arrow options should accept embedded newlines after preflight");
+        Check(raw_arrow->GetArrowTable()->num_rows() == 2,
+              "embedded-newline CSV should register two data rows");
         std::filesystem::remove(path);
     }
 

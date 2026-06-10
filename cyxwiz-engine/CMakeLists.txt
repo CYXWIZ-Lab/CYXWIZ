@@ -1443,6 +1443,7 @@ set_target_properties(test_tabular_loader_apply_context PROPERTIES
 # ===== Test: Text Loader CSV Preflight =====
 add_executable(test_text_loader_csv_preflight
     tests/test_text_loader_csv_preflight.cpp
+    src/core/arrow_dataset.cpp
 )
 
 target_include_directories(test_text_loader_csv_preflight PRIVATE
@@ -1450,6 +1451,10 @@ target_include_directories(test_text_loader_csv_preflight PRIVATE
 )
 
 target_link_libraries(test_text_loader_csv_preflight PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
     cyxwiz-backend
 )
 
