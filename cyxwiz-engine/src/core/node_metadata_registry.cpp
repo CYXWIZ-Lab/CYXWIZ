@@ -1888,6 +1888,57 @@ void NodeMetadataRegistry::InitializeTextNodes() {
         {{"Padded", PinType::Tensor, true, "Padded"}},
         {{"max_length", "int", "128", "Max length", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::NERSequenceBuilder, NodeCategory::TextProcessing, "NER Sequence Builder", ICON_FA_TAG,
+        {"ner", "sequence", "builder", "token", "tagging"}, 0, false,
+        "Build token-level sequence samples for NER", "", "",
+        {{"Rows", PinType::Dataset, true, "Already-tokenized token/POS/tag rows"}},
+        {{"Sequence Samples", PinType::Tensor, true, "word_ids, optional pos_ids, attention_mask, tag_ids"}},
+        {{"token_column", "string", "tokens", "Token column", {}, ""},
+         {"pos_column", "string", "", "Optional POS column", {}, ""},
+         {"tag_column", "string", "ner_tags", "NER tag column", {}, ""},
+         {"sentence_id_column", "string", "", "Optional sentence id column", {}, ""},
+         {"max_sequence_length", "int", "0", "Max sequence length (0 = infer)", {}, ""},
+         {"ignore_index", "int", "-100", "Padding label ignore index", {}, ""},
+         {"create_attention_mask", "bool", "true", "Create attention mask", {}, ""}},
+        NodeImplementationStatus::Template, 0,
+        "Standalone backend contract exists, but Studio training still lacks sequence executor wiring"});
+
+    RegisterNode({NodeType::TokenVocabulary, NodeCategory::TextProcessing, "Token Vocabulary", ICON_FA_BOOK,
+        {"token", "vocabulary", "ner", "sequence"}, 0, false,
+        "Build token id vocabulary for sequence tagging", "", "",
+        {{"Tokens", PinType::Dataset, true, "Token sequences"}},
+        {{"Token Vocabulary", PinType::Parameters, true, "Token id mapping"}},
+        {{"min_freq", "int", "1", "Minimum frequency", {}, ""},
+         {"max_vocab_size", "int", "0", "Max vocab size (0 = unlimited)", {}, ""},
+         {"lowercase", "bool", "true", "Lowercase tokens", {}, ""},
+         {"pad_token", "string", "[PAD]", "Padding token", {}, ""},
+         {"unk_token", "string", "[UNK]", "Unknown token", {}, ""}},
+        NodeImplementationStatus::Template, 0,
+        "Standalone backend vocabulary exists, but Studio node execution is not wired yet"});
+
+    RegisterNode({NodeType::POSVocabulary, NodeCategory::TextProcessing, "POS Vocabulary", ICON_FA_BOOK,
+        {"pos", "part-of-speech", "vocabulary", "ner"}, 0, false,
+        "Build POS id vocabulary for sequence tagging", "", "",
+        {{"POS Tags", PinType::Dataset, true, "POS tag sequences"}},
+        {{"POS Vocabulary", PinType::Parameters, true, "POS id mapping"}},
+        {{"min_freq", "int", "1", "Minimum frequency", {}, ""},
+         {"max_vocab_size", "int", "0", "Max vocab size (0 = unlimited)", {}, ""},
+         {"lowercase", "bool", "false", "Lowercase POS tags", {}, ""},
+         {"pad_token", "string", "[PAD]", "Padding token", {}, ""},
+         {"unk_token", "string", "[UNK]", "Unknown token", {}, ""}},
+        NodeImplementationStatus::Template, 0,
+        "Standalone backend vocabulary exists, but Studio node execution is not wired yet"});
+
+    RegisterNode({NodeType::NERTagVocabulary, NodeCategory::TextProcessing, "NER Tag Vocabulary", ICON_FA_TAG,
+        {"ner", "tag", "bio", "vocabulary"}, 0, false,
+        "Build BIO tag vocabulary for sequence tagging", "", "",
+        {{"NER Tags", PinType::Dataset, true, "NER tag sequences"}},
+        {{"NER Tag Vocabulary", PinType::Parameters, true, "BIO tag id mapping"}},
+        {{"outside_tag", "string", "O", "Outside tag label", {}, ""},
+         {"bio_scheme", "enum", "BIO", "Tag scheme", {"BIO"}, ""}},
+        NodeImplementationStatus::Template, 0,
+        "Standalone backend tag vocabulary exists, but Studio node execution is not wired yet"});
 }
 
 // =============================================================================

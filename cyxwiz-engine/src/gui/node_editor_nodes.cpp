@@ -265,6 +265,10 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::TextTokenizer:
         case NodeType::TextVocabulary:
         case NodeType::TextPadding:
+        case NodeType::NERSequenceBuilder:
+        case NodeType::TokenVocabulary:
+        case NodeType::POSVocabulary:
+        case NodeType::NERTagVocabulary:
             return NodeCategory::TextProcessing;
 
         // Upsampling
@@ -2268,6 +2272,89 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.outputs.push_back(out);
             node.parameters["max_length"] = "512";
             node.parameters["pad_value"] = "0";
+            break;
+        }
+
+        case NodeType::NERSequenceBuilder: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Rows";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+            NodePin sequences_out;
+            sequences_out.id = next_pin_id_++;
+            sequences_out.type = PinType::Tensor;
+            sequences_out.name = "Sequence Samples";
+            sequences_out.is_input = false;
+            node.outputs.push_back(sequences_out);
+            node.parameters["token_column"] = "tokens";
+            node.parameters["pos_column"] = "";
+            node.parameters["tag_column"] = "ner_tags";
+            node.parameters["sentence_id_column"] = "";
+            node.parameters["max_sequence_length"] = "0";
+            node.parameters["ignore_index"] = "-100";
+            node.parameters["create_attention_mask"] = "true";
+            break;
+        }
+
+        case NodeType::TokenVocabulary: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "Tokens";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Parameters;
+            out.name = "Token Vocabulary";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["min_freq"] = "1";
+            node.parameters["max_vocab_size"] = "0";
+            node.parameters["lowercase"] = "true";
+            node.parameters["pad_token"] = "[PAD]";
+            node.parameters["unk_token"] = "[UNK]";
+            break;
+        }
+
+        case NodeType::POSVocabulary: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "POS Tags";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Parameters;
+            out.name = "POS Vocabulary";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["min_freq"] = "1";
+            node.parameters["max_vocab_size"] = "0";
+            node.parameters["lowercase"] = "false";
+            node.parameters["pad_token"] = "[PAD]";
+            node.parameters["unk_token"] = "[UNK]";
+            break;
+        }
+
+        case NodeType::NERTagVocabulary: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "NER Tags";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Parameters;
+            out.name = "NER Tag Vocabulary";
+            out.is_input = false;
+            node.outputs.push_back(out);
+            node.parameters["outside_tag"] = "O";
+            node.parameters["bio_scheme"] = "BIO";
             break;
         }
 
@@ -5412,6 +5499,12 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(38, 166, 154, 255);
         case NodeType::TextPadding:
             return IM_COL32(77, 182, 172, 255);
+        case NodeType::NERSequenceBuilder:
+            return IM_COL32(0, 137, 123, 255);
+        case NodeType::TokenVocabulary:
+        case NodeType::POSVocabulary:
+        case NodeType::NERTagVocabulary:
+            return IM_COL32(0, 150, 136, 255);
 
         // ===== Upsampling - Indigo =====
         case NodeType::ConvTranspose2D:

@@ -473,6 +473,7 @@ set(ENGINE_HEADERS
     src/core/async_task_manager.h
     src/core/graph_compiler.h
     src/core/dataset_batcher.h
+    src/core/ner_sequence_builder.h
     src/core/model_builder.h
     src/core/debug_executor.h
     src/core/synthetic_batch.h

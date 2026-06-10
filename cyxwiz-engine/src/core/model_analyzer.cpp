@@ -185,6 +185,10 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::DataSplit: return "DataSplit";
         case gui::NodeType::Normalize: return "Normalize";
         case gui::NodeType::OneHotEncode: return "OneHotEncode";
+        case gui::NodeType::NERSequenceBuilder: return "NERSequenceBuilder";
+        case gui::NodeType::TokenVocabulary: return "TokenVocabulary";
+        case gui::NodeType::POSVocabulary: return "POSVocabulary";
+        case gui::NodeType::NERTagVocabulary: return "NERTagVocabulary";
         default: return "Unknown";
     }
 }

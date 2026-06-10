@@ -545,6 +545,13 @@ enum class NodeType {
     // Plugin-defined nodes (sentinel — actual type resolved via string lookup)
     PluginCustom,
 
+    // ===== Sequence Tagging / NER Contract Nodes =====
+    // Appended to preserve existing serialized numeric NodeType ids.
+    NERSequenceBuilder, // Build word/POS/tag sequence samples
+    TokenVocabulary,    // Token id vocabulary for sequence tagging
+    POSVocabulary,      // Optional POS id vocabulary for sequence tagging
+    NERTagVocabulary,   // BIO tag vocabulary for sequence tagging
+
     // Special sentinel value
     Unknown
 };

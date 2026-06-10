@@ -648,6 +648,18 @@ Completed so far:
   reserve PAD/UNK ids and apply frequency caps; tag vocabularies keep `O` at id
   zero when present and reject unknown labels. First-class vocabulary nodes are
   still pending.
+- A standalone `NERSequenceBuilder` now composes sequence vocabularies with the
+  sequence batcher over already-tokenized token/POS/tag rows. It validates row
+  shape alignment, encodes `SequenceSample` fixtures, preserves PAD/UNK and
+  `ignore_index` settings, and can create a `SequenceBatcher` for focused
+  contract tests. It is intentionally not wired into `TrainingExecutor` yet.
+- First-class NER contract node identities now exist for
+  `NERSequenceBuilder`, `TokenVocabulary`, `POSVocabulary`, and
+  `NERTagVocabulary`. They import from pattern/saved graph type strings,
+  create default pins/parameters on the canvas, show blocked metadata in the
+  node registry, and compile-fail selected training paths through the sequence
+  payload guard while preserving `SequenceBatchConfig` details. Runtime
+  sequence training remains blocked.
 
 ### Next Session Handoff - 2026-06-09
 
@@ -661,19 +673,16 @@ Verified before shutdown:
 
 Current Phase 2 state:
 
-- The low-level NER primitives exist: typed sequence payload contract,
-  standalone sequence batcher, token-shaped CrossEntropy/NLL with
-  `ignore_index`, sequence tag metrics, and sequence vocabularies.
+- The low-level NER primitives and first metadata surface exist: typed sequence
+  payload contract, standalone sequence batcher, token-shaped CrossEntropy/NLL
+  with `ignore_index`, sequence tag metrics, sequence vocabularies, standalone
+  `NERSequenceBuilder`, and blocked first-class NER vocabulary/builder node
+  identities.
 - Runtime sequence training is still intentionally blocked by
   `SequenceBatchRuntimeUnsupportedMessage()` so the app does not pretend NER
   can train end to end yet.
-- The next practical slice is `NERSequenceBuilder`: compose
-  `SequenceVocabulary` + `SequenceBatcher` over already-tokenized token/POS/tag
-  columns and produce `SequenceSample` / `SequenceBatch` test fixtures. Keep it
-  standalone first; do not wire `TrainingExecutor` until the builder contract is
-  tested.
-- After that, wire first-class vocabulary/builder nodes or compiler metadata,
-  then tackle token classifier head / executor integration.
+- The next practical slice is the token classifier head (`TimeDistributedDense`
+  or equivalent) and executor integration for sequence batches.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.

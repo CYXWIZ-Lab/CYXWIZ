@@ -357,6 +357,49 @@ int main() {
     Check(config.sequence_batch.ignore_index == -100,
           "sequence DataLoader contract should default ignore_index to -100");
 
+    auto sequence_builder = Node(22,
+                                 gui::NodeType::NERSequenceBuilder,
+                                 "NER Sequence Builder",
+                                 {Pin(2201, gui::PinType::Dataset, "Rows", true)},
+                                 {Pin(2202, gui::PinType::Tensor, "Sequence Samples", false)});
+    sequence_builder.parameters["token_column"] = "tokens";
+    sequence_builder.parameters["pos_column"] = "pos_tags";
+    sequence_builder.parameters["tag_column"] = "ner_tags";
+    sequence_builder.parameters["sentence_id_column"] = "sentence_id";
+    sequence_builder.parameters["ignore_index"] = "-100";
+    sequence_builder.parameters["create_attention_mask"] = "true";
+
+    nodes = {data, sequence_builder, dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 22, 2201),
+        Link(2, 22, 2202, 2, 201),
+        Link(3, 2, 202, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected first-class NERSequenceBuilder should be invalid until runtime wiring exists");
+    Check(HasIssueText(config, "first_class_sequence_node"),
+          "first-class NERSequenceBuilder should report sequence node marker");
+    Check(HasIssueText(config, "named sequence payloads"),
+          "first-class NERSequenceBuilder should report missing sequence runtime payloads");
+    Check(config.sequence_batch.enabled,
+          "first-class NERSequenceBuilder should populate sequence batch contract");
+    Check(config.sequence_batch.token_column == "tokens",
+          "first-class NERSequenceBuilder should capture token column");
+    Check(config.sequence_batch.pos_column == "pos_tags",
+          "first-class NERSequenceBuilder should capture POS column");
+    Check(config.sequence_batch.tag_column == "ner_tags",
+          "first-class NERSequenceBuilder should capture tag column");
+    Check(config.sequence_batch.sentence_id_column == "sentence_id",
+          "first-class NERSequenceBuilder should capture sentence id column");
+    Check(config.sequence_batch.create_attention_mask,
+          "first-class NERSequenceBuilder should capture attention mask setting");
+    Check(config.sequence_batch.ignore_index == -100,
+          "first-class NERSequenceBuilder should capture ignore_index");
+
     auto encoded_ner = Node(20,
                             gui::NodeType::Dense,
                             "Sentence Sequences",

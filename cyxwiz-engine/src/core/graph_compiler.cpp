@@ -151,6 +151,14 @@ bool LooksLikeUnsupportedSequenceBatchContract(const gui::MLNode& node,
                                                std::string& matched_key) {
     const auto& params = node.parameters;
 
+    if (node.type == gui::NodeType::NERSequenceBuilder ||
+        node.type == gui::NodeType::TokenVocabulary ||
+        node.type == gui::NodeType::POSVocabulary ||
+        node.type == gui::NodeType::NERTagVocabulary) {
+        matched_key = "first_class_sequence_node";
+        return true;
+    }
+
     if (node.type == gui::NodeType::DataInput ||
         node.type == gui::NodeType::DatasetInput) {
         const char* category_keys[] = {
@@ -238,6 +246,40 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
         copy_param("tags_column", sequence.tag_column);
         copy_param("sentence_id_column", sequence.sentence_id_column);
         copy_param("sequence_id_column", sequence.sentence_id_column);
+    }
+
+    if (node.type == gui::NodeType::NERSequenceBuilder) {
+        sequence.enabled = true;
+        auto copy_param = [&params](const char* from, std::string& to) {
+            auto it = params.find(from);
+            if (it != params.end() && !it->second.empty()) {
+                to = it->second;
+            }
+        };
+
+        copy_param("token_column", sequence.token_column);
+        copy_param("tokens_column", sequence.token_column);
+        copy_param("pos_column", sequence.pos_column);
+        copy_param("tag_column", sequence.tag_column);
+        copy_param("tags_column", sequence.tag_column);
+        copy_param("sentence_id_column", sequence.sentence_id_column);
+        copy_param("sequence_id_column", sequence.sentence_id_column);
+
+        auto mask_it = params.find("create_attention_mask");
+        if (mask_it != params.end()) {
+            const std::string value = LowerParamValue(mask_it->second);
+            sequence.create_attention_mask =
+                value != "false" && value != "0" && value != "off";
+        }
+
+        auto ignore_it = params.find("ignore_index");
+        if (ignore_it != params.end()) {
+            try {
+                sequence.ignore_index = std::stoi(ignore_it->second);
+            } catch (...) {
+                sequence.ignore_index = -100;
+            }
+        }
     }
 
     if (node.type == gui::NodeType::DataLoader) {
@@ -3290,6 +3332,10 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::NERSequenceBuilder, PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::TokenVocabulary,    PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::POSVocabulary,      PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::NERTagVocabulary,   PreprocessingDomain::Text,        nullptr},
     // TimeSeries (Phase 4)
     {gui::NodeType::TimeSeriesWindow,   PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::TimeSeriesFeatures, PreprocessingDomain::TimeSeries,  nullptr},

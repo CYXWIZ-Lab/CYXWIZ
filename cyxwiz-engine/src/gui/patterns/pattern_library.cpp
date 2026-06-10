@@ -525,6 +525,10 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"TextTokenizer", NodeType::TextTokenizer},
         {"TextVocabulary", NodeType::TextVocabulary},
         {"TextPadding", NodeType::TextPadding},
+        {"NERSequenceBuilder", NodeType::NERSequenceBuilder},
+        {"TokenVocabulary", NodeType::TokenVocabulary},
+        {"POSVocabulary", NodeType::POSVocabulary},
+        {"NERTagVocabulary", NodeType::NERTagVocabulary},
 
         // Time Series Preprocessing (Phase 4) - real Cat-1 operators.
         {"TimeSeriesWindow", NodeType::TimeSeriesWindow},

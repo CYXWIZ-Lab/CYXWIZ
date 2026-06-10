@@ -1929,6 +1929,12 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_BOOK;
         case NodeType::TextPadding:
             return ICON_FA_ALIGN_LEFT;
+        case NodeType::NERSequenceBuilder:
+        case NodeType::NERTagVocabulary:
+            return ICON_FA_TAG;
+        case NodeType::TokenVocabulary:
+        case NodeType::POSVocabulary:
+            return ICON_FA_BOOK;
 
         // Upsampling
         case NodeType::ConvTranspose2D:

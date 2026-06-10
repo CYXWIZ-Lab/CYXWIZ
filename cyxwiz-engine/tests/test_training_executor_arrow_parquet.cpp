@@ -1,4 +1,5 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/ner_sequence_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/sequence_batcher.h"
 #include "../src/core/sequence_tag_metrics.h"
@@ -317,6 +318,83 @@ void TestSequenceVocabulary() {
           "tag vocabulary should reject unknown labels instead of using UNK");
 }
 
+void TestNERSequenceBuilder() {
+    std::vector<cyxwiz::NERSequenceRow> rows = {
+        {{"John", "lives", "in", "Berlin"},
+         {"NNP", "VBZ", "IN", "NNP"},
+         {"B-PER", "O", "O", "B-LOC"}},
+        {{"john", "works"},
+         {"NNP", "VBZ"},
+         {"B-PER", "O"}},
+    };
+
+    cyxwiz::NERSequenceBuilderConfig config;
+    config.token_vocabulary.lowercase = true;
+    config.batcher.batch_size = 2;
+    config.batcher.max_sequence_length = 5;
+    config.batcher.shuffle = false;
+
+    const auto built = cyxwiz::BuildNERSequenceData(rows, config);
+    Check(built.has_pos_tags,
+          "NERSequenceBuilder should detect POS payloads");
+    Check(built.has_tags,
+          "NERSequenceBuilder should detect supervised NER tags");
+    Check(built.samples.size() == 2,
+          "NERSequenceBuilder should produce one sample per row");
+    Check(built.token_vocabulary.PadId() == 0,
+          "NER token vocabulary should reserve PAD id");
+    Check(built.token_vocabulary.UnkId() == 1,
+          "NER token vocabulary should reserve UNK id");
+    Check(built.pos_vocabulary.PadId() == 0,
+          "NER POS vocabulary should reserve PAD id");
+    Check(built.tag_vocabulary.ValueFor(0) == "O",
+          "NER tag vocabulary should keep O at id zero");
+    Check(built.samples[0].word_ids[0] ==
+              built.token_vocabulary.IdFor("john"),
+          "NERSequenceBuilder should lowercase tokens during encoding");
+    Check(built.samples[0].pos_ids[0] ==
+              built.pos_vocabulary.IdFor("NNP"),
+          "NERSequenceBuilder should encode POS tags");
+    Check(built.samples[0].tag_ids[0] ==
+              built.tag_vocabulary.IdFor("B-PER"),
+          "NERSequenceBuilder should encode BIO tags");
+
+    auto batcher = built.CreateBatcher();
+    const auto batch = batcher.GetNextSequenceBatch();
+    Check(batch.IsSupervised(),
+          "NERSequenceBuilder batch should be supervised");
+    Check(batch.HasPosIds(),
+          "NERSequenceBuilder batch should include POS ids");
+    Check(batch.HasAttentionMask(),
+          "NERSequenceBuilder batch should include attention mask");
+    Check(batch.word_ids.Shape() == std::vector<size_t>({2, 5}),
+          "NERSequenceBuilder batch word ids should use configured length");
+
+    const auto* words = batch.word_ids.Data<int64_t>();
+    const auto* pos = batch.pos_ids.Data<int64_t>();
+    const auto* tags = batch.tag_ids.Data<int64_t>();
+    const auto* mask = batch.attention_mask.Data<int64_t>();
+    Check(words[4] == built.token_vocabulary.PadId(),
+          "NERSequenceBuilder should pad word ids with token PAD id");
+    Check(pos[4] == built.pos_vocabulary.PadId(),
+          "NERSequenceBuilder should pad POS ids with POS PAD id");
+    Check(tags[4] == -100,
+          "NERSequenceBuilder should pad tags with ignore_index");
+    Check(mask[0] == 1 && mask[3] == 1 && mask[4] == 0,
+          "NERSequenceBuilder should build attention masks from token length");
+
+    bool mismatch_failed = false;
+    try {
+        (void)cyxwiz::BuildNERSequenceData({
+            {{"bad", "row"}, {}, {"O"}},
+        });
+    } catch (const std::runtime_error&) {
+        mismatch_failed = true;
+    }
+    Check(mismatch_failed,
+          "NERSequenceBuilder should reject mismatched tag lengths");
+}
+
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  const std::string& label) {
     bool saw_epoch = false;
@@ -370,6 +448,7 @@ int main() {
     TestSequenceBatcherDropLast();
     TestSequenceTagMetrics();
     TestSequenceVocabulary();
+    TestNERSequenceBuilder();
 
     const fs::path work_dir =
         fs::temp_directory_path() / "cyxwiz_training_executor_arrow_parquet";
