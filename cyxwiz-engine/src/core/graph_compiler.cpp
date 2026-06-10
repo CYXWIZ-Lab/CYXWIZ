@@ -147,8 +147,8 @@ bool ParamIsEnabled(const std::map<std::string, std::string>& params,
            value == "on";
 }
 
-bool LooksLikeUnsupportedSequenceBatchContract(const gui::MLNode& node,
-                                               std::string& matched_key) {
+bool LooksLikeSequenceBatchContract(const gui::MLNode& node,
+                                    std::string& matched_key) {
     const auto& params = node.parameters;
 
     if (node.type == gui::NodeType::NERSequenceBuilder ||
@@ -184,9 +184,12 @@ bool LooksLikeUnsupportedSequenceBatchContract(const gui::MLNode& node,
         const char* sequence_column_keys[] = {
             "token_column",
             "tokens_column",
+            "token_sequence_column",
             "tag_column",
             "tags_column",
+            "tag_sequence_column",
             "pos_column",
+            "pos_sequence_column",
             "sentence_id_column",
             "sequence_id_column"
         };
@@ -235,15 +238,18 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
         };
 
         std::string matched_key;
-        if (LooksLikeUnsupportedSequenceBatchContract(node, matched_key)) {
+        if (LooksLikeSequenceBatchContract(node, matched_key)) {
             sequence.enabled = true;
         }
 
         copy_param("token_column", sequence.token_column);
         copy_param("tokens_column", sequence.token_column);
+        copy_param("token_sequence_column", sequence.token_column);
         copy_param("pos_column", sequence.pos_column);
+        copy_param("pos_sequence_column", sequence.pos_column);
         copy_param("tag_column", sequence.tag_column);
         copy_param("tags_column", sequence.tag_column);
+        copy_param("tag_sequence_column", sequence.tag_column);
         copy_param("sentence_id_column", sequence.sentence_id_column);
         copy_param("sequence_id_column", sequence.sentence_id_column);
     }
@@ -259,9 +265,12 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
 
         copy_param("token_column", sequence.token_column);
         copy_param("tokens_column", sequence.token_column);
+        copy_param("token_sequence_column", sequence.token_column);
         copy_param("pos_column", sequence.pos_column);
+        copy_param("pos_sequence_column", sequence.pos_column);
         copy_param("tag_column", sequence.tag_column);
         copy_param("tags_column", sequence.tag_column);
+        copy_param("tag_sequence_column", sequence.tag_column);
         copy_param("sentence_id_column", sequence.sentence_id_column);
         copy_param("sequence_id_column", sequence.sentence_id_column);
 
@@ -284,7 +293,7 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
 
     if (node.type == gui::NodeType::DataLoader) {
         std::string matched_key;
-        if (LooksLikeUnsupportedSequenceBatchContract(node, matched_key)) {
+        if (LooksLikeSequenceBatchContract(node, matched_key)) {
             sequence.enabled = true;
         }
 
@@ -557,11 +566,6 @@ bool LooksLikeDetectionSegmentationTrainingSketch(const gui::MLNode& node,
 
 bool LooksLikeTimeDistributedTrainingSketch(const gui::MLNode& node,
                                             std::string& matched_key) {
-    if (node.type == gui::NodeType::TimeDistributed) {
-        matched_key = "TimeDistributed";
-        return true;
-    }
-
     const auto& params = node.parameters;
     const char* enabled_keys[] = {
         "time_distributed",
@@ -1667,21 +1671,6 @@ void ValidateTrainingPathImplementationStatus(
             continue;
         }
 
-        std::string sequence_contract_key;
-        if (LooksLikeUnsupportedSequenceBatchContract(node,
-                                                      sequence_contract_key)) {
-            std::ostringstream msg;
-            msg << "Node '" << node.name
-                << "' sketches sequence/NER batch materialization via '"
-                << sequence_contract_key
-                << "', but Studio training currently has a single tensor/label "
-                   "batch contract. This path needs named sequence payloads "
-                   "such as word_ids, optional pos_ids, attention_mask, and "
-                   "tag_ids before it can compile truthfully.";
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
-            continue;
-        }
-
         std::string generative_key;
         if (LooksLikeGenerativeTrainingSketch(node, generative_key)) {
             std::ostringstream msg;
@@ -2457,6 +2446,17 @@ TrainingConfiguration GraphCompiler::Compile(
                     AddIssue(config, IssueLevel::Error, error, node->id, node->name);
                     layer.output_shape = current_shape;
                 }
+            } else if (node->type == gui::NodeType::TimeDistributed) {
+                if (current_shape.size() < 2) {
+                    AddIssue(config,
+                             IssueLevel::Error,
+                             "TimeDistributed requires sequence input shape [seq_len, features]",
+                             node->id,
+                             node->name);
+                    layer.output_shape = current_shape;
+                } else {
+                    layer.output_shape = InferOutputShape(layer, current_shape);
+                }
             } else {
                 layer.output_shape = InferOutputShape(layer, current_shape);
             }
@@ -2464,8 +2464,9 @@ TrainingConfiguration GraphCompiler::Compile(
 
             config.layers.push_back(layer);
 
-            // Track output size from last Dense layer
-            if (node->type == gui::NodeType::Dense) {
+            // Track output size from final class/logit projection layers.
+            if (node->type == gui::NodeType::Dense ||
+                node->type == gui::NodeType::TimeDistributed) {
                 config.output_size = layer.units;
             }
         }
@@ -3091,6 +3092,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::GRU:
         case gui::NodeType::RNN:
         case gui::NodeType::Bidirectional:
+        case gui::NodeType::TimeDistributed:
             return true;
         default:
             return false;
@@ -3332,7 +3334,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        nullptr},
-    {gui::NodeType::NERSequenceBuilder, PreprocessingDomain::Text,        nullptr},
+    {gui::NodeType::NERSequenceBuilder, PreprocessingDomain::General,     nullptr},
     {gui::NodeType::TokenVocabulary,    PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::POSVocabulary,      PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::NERTagVocabulary,   PreprocessingDomain::Text,        nullptr},
@@ -3372,6 +3374,11 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
     // Extract specific parameters
     switch (node.type) {
         case gui::NodeType::Dense:
+            if (node.parameters.count("units"))
+                layer.units = std::stoi(node.parameters.at("units"));
+            break;
+
+        case gui::NodeType::TimeDistributed:
             if (node.parameters.count("units"))
                 layer.units = std::stoi(node.parameters.at("units"));
             break;
@@ -3483,6 +3490,18 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
             // Dense: [...] -> [units]
             output_shape = {static_cast<size_t>(layer.units)};
             break;
+
+        case gui::NodeType::TimeDistributed: {
+            const size_t units = layer.units > 0
+                ? static_cast<size_t>(layer.units)
+                : ParseSizeParam(layer.parameters, "units", 64);
+            if (input_shape.size() >= 2) {
+                output_shape = {input_shape[0], units};
+            } else {
+                output_shape = {units};
+            }
+            break;
+        }
 
         case gui::NodeType::Embedding: {
             // Embedding: [seq_len] -> [seq_len, embedding_dim]

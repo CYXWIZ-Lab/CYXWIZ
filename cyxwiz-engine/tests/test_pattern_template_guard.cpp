@@ -1,12 +1,16 @@
 #include "../src/gui/patterns/pattern_library.h"
 #include "../src/gui/node_import_guardrails.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -71,6 +75,93 @@ gui::MLNode MinimalNode(gui::NodeType type, const std::string& name) {
     node.outputs.push_back(output);
 
     return node;
+}
+
+std::filesystem::path FindRepoRoot() {
+    auto dir = std::filesystem::current_path();
+    while (!dir.empty()) {
+        if (std::filesystem::exists(dir / "cyxwiz-engine" / "CMakeLists.txt") &&
+            std::filesystem::exists(dir / "examples" / "cyxgraph")) {
+            return dir;
+        }
+
+        const auto parent = dir.parent_path();
+        if (parent == dir) {
+            break;
+        }
+        dir = parent;
+    }
+
+    return std::filesystem::current_path();
+}
+
+std::string ReadFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    Check(in.is_open(), "could not open " + path.string());
+
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
+    const auto path = FindRepoRoot() /
+        "examples" / "cyxgraph" / "NER" / "ner_bilstm_sequence_tagger.cyxgraph";
+    const auto graph = nlohmann::json::parse(ReadFile(path));
+
+    Check(graph.contains("nodes") && graph["nodes"].is_array(),
+          "NER graph should contain saved nodes");
+
+    const std::unordered_map<int, gui::NodeType> expected_types = {
+        {1, gui::NodeType::DataInput},
+        {2, gui::NodeType::NERSequenceBuilder},
+        {3, gui::NodeType::TokenVocabulary},
+        {4, gui::NodeType::POSVocabulary},
+        {5, gui::NodeType::NERTagVocabulary},
+        {6, gui::NodeType::TextPadding},
+        {7, gui::NodeType::DataSplit},
+        {8, gui::NodeType::DataLoader},
+        {11, gui::NodeType::Concatenate},
+        {14, gui::NodeType::TimeDistributed},
+        {15, gui::NodeType::CrossEntropyLoss},
+        {16, gui::NodeType::Adam},
+        {18, gui::NodeType::Output},
+    };
+
+    int checked_nodes = 0;
+    for (const auto& node_json : graph["nodes"]) {
+        Check(node_json.contains("id") && node_json["id"].is_number_integer(),
+              "NER graph node should have integer id");
+        Check(node_json.contains("type") && node_json["type"].is_number_integer(),
+              "NER graph node should have integer type");
+
+        const int id = node_json["id"].get<int>();
+        const auto type = static_cast<gui::NodeType>(node_json["type"].get<int>());
+        const std::string name = node_json.value("name", "");
+
+        auto expected_it = expected_types.find(id);
+        if (expected_it != expected_types.end()) {
+            Check(type == expected_it->second,
+                  "NER graph node '" + name + "' has stale serialized node type");
+            ++checked_nodes;
+        }
+
+        gui::MLNode node;
+        node.type = type;
+        node.name = name;
+        if (node_json.contains("parameters") && node_json["parameters"].is_object()) {
+            node.parameters =
+                node_json["parameters"].get<std::map<std::string, std::string>>();
+        }
+
+        std::string marker;
+        Check(!gui::detail::IsDenseEncodedSequencePlaceholder(node, marker),
+              "NER graph node '" + name +
+              "' is still encoded as a Dense sequence placeholder");
+    }
+
+    Check(checked_nodes == static_cast<int>(expected_types.size()),
+          "NER graph should include every expected first-class sequence node");
 }
 
 } // namespace
@@ -220,6 +311,8 @@ int main() {
           "Dense-encoded NER parameter marker should be rejected");
     Check(matched_marker == "bio_scheme",
           "Dense-encoded NER parameter marker should report the matching parameter");
+
+    CheckSavedNERGraphUsesFirstClassSequenceNodes();
 
     std::cout << "Pattern template guard passed\n";
     return 0;

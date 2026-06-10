@@ -202,10 +202,12 @@ struct SequenceBatchConfig {
 };
 
 inline std::string SequenceBatchRuntimeUnsupportedMessage() {
-    return "Sequence/NER training is blocked before runtime: the compiler can "
-           "capture the intended token/tag batch contract, but the runtime "
-           "batcher still cannot materialize named sequence payloads such as "
-           "word_ids, optional pos_ids, attention_mask, and tag_ids.";
+    return "Sequence/NER graph training is blocked before Studio "
+           "materialization: the compiler can capture the intended token/tag "
+           "batch contract, and TrainingExecutor can consume a prebuilt "
+           "ISequenceBatcher, but the Studio Arrow/runtime path still cannot "
+           "materialize named sequence payloads such as word_ids, optional "
+           "pos_ids, attention_mask, and tag_ids.";
 }
 
 /**

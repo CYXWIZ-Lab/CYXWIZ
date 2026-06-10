@@ -5,13 +5,17 @@
 #include "../../core/data_registry.h"
 #include "../../core/dataset_audit.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
+#include "../../core/ner_sequence_builder.h"
+#include "../../core/node_executors/text_column_utils.h"
 #include "../../core/parquet_backed_dataset.h"
 #include "../../core/training_manager.h"
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <cctype>
 
 namespace fs = std::filesystem;
 
@@ -33,6 +37,132 @@ std::string FormatBytes(size_t bytes) {
     if (unit_idx == 0) std::snprintf(buf, sizeof(buf), "%zu %s", bytes, units[unit_idx]);
     else               std::snprintf(buf, sizeof(buf), "%.1f %s", size, units[unit_idx]);
     return std::string(buf);
+}
+
+std::vector<std::string> SplitSequenceTokens(const std::string& value) {
+    std::vector<std::string> tokens;
+    std::string current;
+    for (char ch : value) {
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (!current.empty()) {
+                tokens.push_back(std::move(current));
+                current.clear();
+            }
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        tokens.push_back(std::move(current));
+    }
+    return tokens;
+}
+
+bool LoadTabularSequenceRows(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& token_column,
+    const std::string& pos_column,
+    const std::string& tag_column,
+    std::vector<NERSequenceRow>& rows,
+    std::string& error) {
+
+    if (!table) {
+        error = "sequence dataset table is null";
+        return false;
+    }
+    if (token_column.empty()) {
+        error = "sequence token column is empty";
+        return false;
+    }
+    if (tag_column.empty()) {
+        error = "sequence tag column is empty";
+        return false;
+    }
+
+    auto read_string_column = [&](const std::string& column_name,
+                                  std::vector<std::string>& out) -> bool {
+        auto column = table->GetColumnByName(column_name);
+        if (!column) {
+            error = "sequence column '" + column_name + "' was not found";
+            return false;
+        }
+        std::string type_name;
+        if (!cyxwiz::ReadColumnAsStrings(column, out, type_name)) {
+            error = "sequence column '" + column_name + "' must be text, got " +
+                    type_name;
+            return false;
+        }
+        return true;
+    };
+
+    std::vector<std::string> token_cells;
+    std::vector<std::string> pos_cells;
+    std::vector<std::string> tag_cells;
+    if (!read_string_column(token_column, token_cells)) {
+        return false;
+    }
+    if (!pos_column.empty() && !read_string_column(pos_column, pos_cells)) {
+        return false;
+    }
+    if (!read_string_column(tag_column, tag_cells)) {
+        return false;
+    }
+    if (token_cells.size() != tag_cells.size() ||
+        (!pos_column.empty() && token_cells.size() != pos_cells.size())) {
+        error = "sequence column row counts do not match";
+        return false;
+    }
+
+    rows.clear();
+    rows.reserve(token_cells.size());
+    for (size_t i = 0; i < token_cells.size(); ++i) {
+        NERSequenceRow row;
+        row.tokens = SplitSequenceTokens(token_cells[i]);
+        if (row.tokens.empty()) {
+            continue;
+        }
+
+        if (!pos_column.empty()) {
+            row.pos_tags = SplitSequenceTokens(pos_cells[i]);
+            if (!row.pos_tags.empty() && row.pos_tags.size() != row.tokens.size()) {
+                error = "sequence POS row " + std::to_string(i) +
+                        " does not match token count";
+                return false;
+            }
+        }
+
+        row.ner_tags = SplitSequenceTokens(tag_cells[i]);
+        if (row.ner_tags.size() != row.tokens.size()) {
+            error = "sequence tag row " + std::to_string(i) +
+                    " does not match token count";
+            return false;
+        }
+
+        rows.push_back(std::move(row));
+    }
+
+    if (rows.empty()) {
+        error = "sequence dataset contained no usable rows";
+        return false;
+    }
+    return true;
+}
+
+std::shared_ptr<arrow::Table> LoadSequenceSourceTable(
+    const std::string& dataset_name) {
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    if (auto arrow_ds = registry.GetArrowDataset(dataset_name)) {
+        return arrow_ds->GetArrowTable();
+    }
+    if (auto parquet_ds = registry.GetParquetBackedDataset(dataset_name)) {
+        std::vector<int> all_row_groups;
+        all_row_groups.reserve(static_cast<size_t>(parquet_ds->GetNumRowGroups()));
+        for (int i = 0; i < parquet_ds->GetNumRowGroups(); ++i) {
+            all_row_groups.push_back(i);
+        }
+        return parquet_ds->ReadRowGroups(all_row_groups);
+    }
+    return nullptr;
 }
 
 }  // namespace
@@ -270,6 +400,62 @@ bool TabularLoader::LaunchTraining(
     std::function<void(bool)> node_editor_callback) {
     auto& registry = cyxwiz::DataRegistry::Instance();
     auto& tm       = cyxwiz::TrainingManager::Instance();
+
+    if (config.sequence_batch.enabled) {
+        auto table = LoadSequenceSourceTable(dataset_name);
+        if (!table) {
+            spdlog::error("TabularLoader: '{}' is registered but no Arrow/Parquet "
+                          "table could be retrieved for sequence training",
+                          dataset_name);
+            return false;
+        }
+
+        std::vector<NERSequenceRow> rows;
+        std::string error;
+        if (!LoadTabularSequenceRows(
+                table,
+                config.sequence_batch.token_column,
+                config.sequence_batch.pos_column,
+                config.sequence_batch.tag_column,
+                rows,
+                error)) {
+            spdlog::error("TabularLoader: sequence materialization failed for '{}': {}",
+                          dataset_name, error);
+            return false;
+        }
+
+        NERSequenceBuilderConfig builder_config;
+        builder_config.use_pos_tags = !config.sequence_batch.pos_column.empty();
+        builder_config.require_tags = true;
+        builder_config.batcher.batch_size = static_cast<size_t>(std::max(1, batch_size));
+        builder_config.batcher.shuffle = config.shuffle;
+        builder_config.batcher.drop_last = config.drop_last;
+        builder_config.batcher.create_attention_mask =
+            config.sequence_batch.create_attention_mask;
+        builder_config.batcher.tag_ignore_index = config.sequence_batch.ignore_index;
+        builder_config.token_vocabulary.lowercase = true;
+        builder_config.pos_vocabulary.lowercase = false;
+
+        auto built = BuildNERSequenceData(rows, builder_config);
+        if (!built.has_tags || built.samples.empty()) {
+            spdlog::error("TabularLoader: sequence build produced no supervised samples for '{}'",
+                          dataset_name);
+            return false;
+        }
+
+        spdlog::info("TabularLoader: Starting sequence training: dataset={}, epochs={}, "
+                     "batch_size={}, {} samples, {} labels",
+                     dataset_name, epochs, batch_size,
+                     built.samples.size(), built.tag_vocabulary.Size());
+        return tm.StartTrainingSequence(
+            std::move(config),
+            std::make_unique<SequenceBatcher>(built.samples, built.batcher_config),
+            built.tag_vocabulary.Values(),
+            epochs,
+            batch_size,
+            plot_panel,
+            std::move(node_editor_callback));
+    }
 
     // Tabular covers both backends: in-memory Arrow (the default fast
     // path) and disk-backed Parquet (picked by LoadTabularCSV when the

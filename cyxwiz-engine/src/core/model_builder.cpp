@@ -155,7 +155,8 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                     if (nt == gui::NodeType::LSTM ||
                         nt == gui::NodeType::GRU  ||
                         nt == gui::NodeType::RNN  ||
-                        nt == gui::NodeType::TransformerEncoder) {
+                        nt == gui::NodeType::TransformerEncoder ||
+                        nt == gui::NodeType::TimeDistributed) {
                         next_is_recurrent = true;
                     }
                 }
@@ -298,7 +299,8 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 bool next_is_transformer = false;
                 if (i + 1 < config.layers.size()) {
                     next_is_transformer =
-                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder;
+                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
+                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
 
                 const size_t downstream_features = current_sequence_length * d_model;
@@ -309,6 +311,26 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 current_input_size = next_is_transformer
                     ? d_model
                     : downstream_features;
+                break;
+            }
+
+            case gui::NodeType::TimeDistributed: {
+                size_t out_features = layer_cfg.units > 0
+                    ? layer_cfg.units
+                    : ParseSizeParam(layer_cfg, "units",
+                                     ParseSizeParam(layer_cfg, "out_features",
+                                                    config.output_size > 0 ? config.output_size : 64));
+                if (out_features < 1) {
+                    out_features = 1;
+                }
+                model.Add<TimeDistributedDenseModule>(current_input_size,
+                                                      out_features,
+                                                      true);
+                spdlog::info("  [{}] TimeDistributedDense({} -> {}) - output "
+                             "[batch, seq_len, {}]",
+                             i, current_input_size, out_features,
+                             out_features);
+                current_input_size = out_features;
                 break;
             }
 

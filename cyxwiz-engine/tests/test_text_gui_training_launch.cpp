@@ -67,6 +67,23 @@ std::shared_ptr<arrow::Table> MakeTextTable() {
     return arrow::Table::Make(schema, {text, label}, 4);
 }
 
+std::shared_ptr<arrow::Table> MakeSequenceTable() {
+    auto tokens = FinishStringArray({
+        "John lives in Berlin",
+        "Mary works in Paris",
+    });
+    auto ner_tags = FinishStringArray({
+        "B-PER O O B-LOC",
+        "B-PER O O B-LOC",
+    });
+
+    auto schema = arrow::schema({
+        arrow::field("tokens", arrow::utf8()),
+        arrow::field("ner_tags", arrow::utf8()),
+    });
+    return arrow::Table::Make(schema, {tokens, ner_tags}, 2);
+}
+
 gui::MLNode MakeDataInputNode(
     const std::string& dataset_name = kDatasetName) {
     gui::MLNode node;
@@ -371,39 +388,42 @@ int main() {
     Check(result.epochs == 1, "result epochs should match config");
     Check(result.batch_size == 2, "result batch size should match config");
 
-    auto blocked_sequence_config =
-        MakeTrainingConfig(work_dir / "sequence_block_checkpoints");
-    blocked_sequence_config.sequence_batch.enabled = true;
-    blocked_sequence_config.sequence_batch.token_column = "tokens";
-    blocked_sequence_config.sequence_batch.tag_column = "ner_tags";
-    bool blocked_sequence_dispatch_called = false;
-    auto blocked_sequence_dispatch = [&](
-        cyxwiz::TrainingConfiguration,
+    auto sequence_config =
+        MakeTrainingConfig(work_dir / "sequence_launch_checkpoints");
+    sequence_config.sequence_batch.enabled = true;
+    sequence_config.sequence_batch.token_column = "tokens";
+    sequence_config.sequence_batch.tag_column = "ner_tags";
+    bool sequence_dispatch_called = false;
+    auto sequence_dispatch = [&](
+        cyxwiz::TrainingConfiguration dispatch_config,
         const std::string&,
         const std::string&,
         int,
         int,
         std::weak_ptr<cyxwiz::TrainingPlotPanel>,
         std::function<void(bool)>) {
-        blocked_sequence_dispatch_called = true;
+        sequence_dispatch_called = true;
+        Check(dispatch_config.sequence_batch.enabled,
+              "sequence launch should preserve sequence_batch.enabled");
+        Check(dispatch_config.sequence_batch.token_column == "tokens",
+              "sequence launch should preserve token column");
+        Check(dispatch_config.sequence_batch.tag_column == "ner_tags",
+              "sequence launch should preserve tag column");
         return true;
     };
-    auto blocked_sequence_result = gui::StartGraphTrainingFromCompiledConfig(
+    auto sequence_result = gui::StartGraphTrainingFromCompiledConfig(
         nodes,
         links,
-        std::move(blocked_sequence_config),
+        std::move(sequence_config),
         registry,
         std::weak_ptr<cyxwiz::TrainingPlotPanel>{},
         [](bool) {},
-        blocked_sequence_dispatch);
+        sequence_dispatch);
 
-    Check(!blocked_sequence_result.started,
-          "sequence batch launch should not start runtime training");
-    Check(!blocked_sequence_dispatch_called,
-          "sequence batch launch should not call dispatch");
-    Check(blocked_sequence_result.error_message.find(
-              "named sequence payloads") != std::string::npos,
-          "sequence batch launch should explain missing named payloads");
+    Check(sequence_result.started,
+          sequence_result.error_message);
+    Check(sequence_dispatch_called,
+          "sequence batch launch should call dispatch");
 
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(kMaterializedDatasetName);

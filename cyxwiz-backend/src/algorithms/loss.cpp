@@ -1232,6 +1232,10 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
         return CpuCrossEntropyBackward(
             predictions, targets, reduction_, ignore_index_, cached_softmax_);
     }
+    if (predictions.Shape().size() == 3) {
+        return CpuCrossEntropyBackward(
+            predictions, targets, reduction_, ignore_index_, cached_softmax_);
+    }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {

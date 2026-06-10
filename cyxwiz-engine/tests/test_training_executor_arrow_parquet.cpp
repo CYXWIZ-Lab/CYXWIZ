@@ -3,6 +3,7 @@
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/sequence_batcher.h"
 #include "../src/core/sequence_tag_metrics.h"
+#include "../src/core/sequence_training_step.h"
 #include "../src/core/sequence_vocabulary.h"
 #include "../src/core/training_executor.h"
 
@@ -395,6 +396,191 @@ void TestNERSequenceBuilder() {
           "NERSequenceBuilder should reject mismatched tag lengths");
 }
 
+void TestSequenceTrainingStep() {
+    std::vector<cyxwiz::NERSequenceRow> rows = {
+        {{"John", "lives", "in", "Berlin"},
+         {},
+         {"B-PER", "O", "O", "B-LOC"}},
+        {{"Mary", "works", "in", "Paris"},
+         {},
+         {"B-PER", "O", "O", "B-LOC"}},
+    };
+
+    cyxwiz::NERSequenceBuilderConfig builder_config;
+    builder_config.use_pos_tags = false;
+    builder_config.token_vocabulary.lowercase = true;
+    builder_config.batcher.batch_size = 2;
+    builder_config.batcher.max_sequence_length = 4;
+    builder_config.batcher.shuffle = false;
+    builder_config.batcher.tag_ignore_index = -100;
+
+    const auto built = cyxwiz::BuildNERSequenceData(rows, builder_config);
+    auto batcher = built.CreateBatcher();
+
+    cyxwiz::TrainingConfiguration config;
+    config.input_size = 4;
+    config.input_shape = {4};
+    config.output_size = built.tag_vocabulary.Size();
+    config.loss_type = gui::NodeType::CrossEntropyLoss;
+    config.loss_params["ignore_index"] = "-100";
+    config.optimizer_type = gui::NodeType::SGD;
+    config.learning_rate = 0.01f;
+    config.sequence_batch.enabled = true;
+    config.sequence_batch.ignore_index = -100;
+
+    cyxwiz::CompiledLayer embedding;
+    embedding.type = gui::NodeType::Embedding;
+    embedding.parameters["num_embeddings"] =
+        std::to_string(built.token_vocabulary.Size());
+    embedding.parameters["embedding_dim"] = "6";
+    config.layers.push_back(embedding);
+
+    cyxwiz::CompiledLayer token_head;
+    token_head.type = gui::NodeType::TimeDistributed;
+    token_head.units = static_cast<int>(built.tag_vocabulary.Size());
+    config.layers.push_back(token_head);
+
+    const auto result = cyxwiz::TrainSequenceTaggerEpoch(
+        config, batcher, built.tag_vocabulary.Values());
+
+    Check(result.success,
+          "sequence training step should succeed: " + result.error);
+    Check(result.batches == 1,
+          "sequence training step should consume one batch");
+    Check(result.samples == 2,
+          "sequence training step should report trained samples");
+    Check(std::isfinite(result.mean_loss),
+          "sequence training step should produce finite loss");
+    Check(result.metrics.total_tokens == 8,
+          "sequence training step should score non-padding tokens");
+    Check(result.metrics.token_accuracy >= 0.0 &&
+              result.metrics.token_accuracy <= 1.0,
+          "sequence training step token accuracy should be a probability");
+}
+
+void TestSequenceTrainingExecutor() {
+    const std::vector<cyxwiz::NERSequenceRow> rows = {
+        {{"John", "lives", "in", "Berlin"},
+         {},
+         {"B-PER", "O", "O", "B-LOC"}},
+        {{"Mary", "works", "in", "Paris"},
+         {},
+         {"B-PER", "O", "O", "B-LOC"}},
+    };
+
+    cyxwiz::NERSequenceBuilderConfig builder_config;
+    builder_config.use_pos_tags = false;
+    builder_config.token_vocabulary.lowercase = true;
+    builder_config.batcher.batch_size = 2;
+    builder_config.batcher.max_sequence_length = 4;
+    builder_config.batcher.shuffle = false;
+    builder_config.batcher.tag_ignore_index = -100;
+
+    const auto built = cyxwiz::BuildNERSequenceData(rows, builder_config);
+
+    cyxwiz::TrainingConfiguration config;
+    config.input_size = 4;
+    config.input_shape = {4};
+    config.output_size = built.tag_vocabulary.Size();
+    config.loss_type = gui::NodeType::CrossEntropyLoss;
+    config.loss_params["ignore_index"] = "-100";
+    config.optimizer_type = gui::NodeType::SGD;
+    config.learning_rate = 0.01f;
+    config.sequence_batch.enabled = true;
+    config.sequence_batch.ignore_index = -100;
+    config.save_best_checkpoint = false;
+    const auto checkpoint_dir =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_sequence_training_executor";
+    std::filesystem::remove_all(checkpoint_dir);
+    config.checkpoint_dir = checkpoint_dir.string();
+
+    cyxwiz::CompiledLayer embedding;
+    embedding.type = gui::NodeType::Embedding;
+    embedding.parameters["num_embeddings"] =
+        std::to_string(built.token_vocabulary.Size());
+    embedding.parameters["embedding_dim"] = "6";
+    config.layers.push_back(embedding);
+
+    cyxwiz::CompiledLayer token_head;
+    token_head.type = gui::NodeType::TimeDistributed;
+    token_head.units = static_cast<int>(built.tag_vocabulary.Size());
+    config.layers.push_back(token_head);
+
+    auto batcher = std::make_unique<cyxwiz::SequenceBatcher>(
+        built.samples, built.batcher_config);
+    cyxwiz::TrainingExecutor executor(
+        config, std::move(batcher), built.tag_vocabulary.Values());
+
+    bool saw_batch = false;
+    bool saw_epoch = false;
+    bool completed = false;
+    cyxwiz::TrainingMetrics final_metrics;
+
+    executor.Train(
+        1,
+        2,
+        [&](int epoch, int batch, int total_batches, float loss, float acc) {
+            Check(epoch == 1,
+                  "sequence executor batch callback should report epoch 1");
+            Check(batch == 1,
+                  "sequence executor batch callback should report batch 1");
+            Check(total_batches == 1,
+                  "sequence executor should report one batch");
+            Check(std::isfinite(loss),
+                  "sequence executor batch loss should be finite");
+            Check(acc >= 0.0f && acc <= 1.0f,
+                  "sequence executor batch accuracy should be a probability");
+            saw_batch = true;
+        },
+        [&](int epoch,
+            float train_loss,
+            float train_acc,
+            float val_loss,
+            float val_acc,
+            float) {
+            Check(epoch == 1,
+                  "sequence executor epoch callback should report epoch 1");
+            Check(std::isfinite(train_loss),
+                  "sequence executor train loss should be finite");
+            Check(std::isfinite(val_loss),
+                  "sequence executor val loss should be finite");
+            Check(train_acc >= 0.0f && train_acc <= 1.0f,
+                  "sequence executor train token accuracy should be a probability");
+            Check(val_acc >= 0.0f && val_acc <= 1.0f,
+                  "sequence executor val token accuracy should be a probability");
+            saw_epoch = true;
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            final_metrics = metrics;
+            completed = true;
+        });
+
+    Check(saw_batch, "sequence executor should run a batch callback");
+    Check(saw_epoch, "sequence executor should run an epoch callback");
+    Check(completed, "sequence executor should run completion callback");
+    Check(final_metrics.is_complete,
+          "sequence executor should mark training complete");
+    Check(final_metrics.total_batches == 1,
+          "sequence executor should report one training batch");
+    Check(final_metrics.train_token_count == 8,
+          "sequence executor should score train tokens");
+    Check(final_metrics.val_token_count == 8,
+          "sequence executor should score validation tokens");
+    Check(final_metrics.train_token_accuracy == final_metrics.train_accuracy,
+          "sequence executor should mirror token accuracy to train_accuracy");
+    Check(final_metrics.val_token_accuracy == final_metrics.val_accuracy,
+          "sequence executor should mirror val token accuracy to val_accuracy");
+    Check(final_metrics.train_entity_f1 >= 0.0f &&
+              final_metrics.train_entity_f1 <= 1.0f,
+          "sequence executor train entity F1 should be a probability");
+    Check(final_metrics.val_entity_f1 >= 0.0f &&
+              final_metrics.val_entity_f1 <= 1.0f,
+          "sequence executor val entity F1 should be a probability");
+
+    std::filesystem::remove_all(checkpoint_dir);
+}
+
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  const std::string& label) {
     bool saw_epoch = false;
@@ -449,6 +635,8 @@ int main() {
     TestSequenceTagMetrics();
     TestSequenceVocabulary();
     TestNERSequenceBuilder();
+    TestSequenceTrainingStep();
+    TestSequenceTrainingExecutor();
 
     const fs::path work_dir =
         fs::temp_directory_path() / "cyxwiz_training_executor_arrow_parquet";

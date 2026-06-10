@@ -4,6 +4,7 @@
 #include <cyxwiz/debug_hooks.h>
 #include "training_trace_collector.h"
 #include "model_builder.h"
+#include "sequence_training_step.h"
 #include "training_batcher_setup.h"
 #ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
 #include "data_registry.h"
@@ -19,6 +20,7 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 
 namespace cyxwiz {
 
@@ -81,15 +83,45 @@ TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
 
+TrainingExecutor::TrainingExecutor(
+    TrainingConfiguration config,
+    std::unique_ptr<ISequenceBatcher> sequence_batcher,
+    std::vector<std::string> id_to_label)
+    : config_(std::move(config))
+    , mode_(DatasetMode::SequenceExternal)
+    , sequence_batcher_(std::move(sequence_batcher))
+    , sequence_id_to_label_(std::move(id_to_label))
+{
+    spdlog::info("TrainingExecutor: Created with external ISequenceBatcher, "
+                 "{} layers, input_size={}, output_size={}, labels={}",
+                 config_.layers.size(), config_.input_size,
+                 config_.output_size, sequence_id_to_label_.size());
+}
+
 TrainingExecutor::~TrainingExecutor() {
     Stop();
 }
 
 bool TrainingExecutor::Initialize(int /*batch_size*/) {
-    if (config_.sequence_batch.enabled) {
+    if (config_.sequence_batch.enabled &&
+        mode_ != DatasetMode::SequenceExternal) {
         spdlog::error("TrainingExecutor: {}",
                       SequenceBatchRuntimeUnsupportedMessage());
         return false;
+    }
+    if (mode_ == DatasetMode::SequenceExternal) {
+        if (!config_.sequence_batch.enabled) {
+            spdlog::error("TrainingExecutor: sequence batch config is not enabled");
+            return false;
+        }
+        if (!sequence_batcher_) {
+            spdlog::error("TrainingExecutor: sequence batcher is null");
+            return false;
+        }
+        if (sequence_id_to_label_.empty()) {
+            spdlog::error("TrainingExecutor: sequence label vocabulary is empty");
+            return false;
+        }
     }
 
     auto built = BuildExecutableFromConfig(config_);
@@ -138,6 +170,12 @@ void TrainingExecutor::Train(
         m.accuracy_history.clear();
         m.val_loss_history.clear();
         m.val_accuracy_history.clear();
+        m.train_token_accuracy = 0.0f;
+        m.val_token_accuracy = 0.0f;
+        m.train_entity_f1 = 0.0f;
+        m.val_entity_f1 = 0.0f;
+        m.train_token_count = 0;
+        m.val_token_count = 0;
     });
 
     // Create batchers - Arrow in-memory, Parquet disk-backed, external, or
@@ -154,6 +192,7 @@ void TrainingExecutor::Train(
     // IBatcher-aware loop; legacy DatasetHandle keeps its older loop.
     IBatcher* active_train_ibatcher = nullptr;
     IBatcher* active_val_ibatcher = nullptr;
+    ISequenceBatcher* active_sequence_batcher = nullptr;
 
     size_t num_train_samples = 0;
 
@@ -186,6 +225,19 @@ void TrainingExecutor::Train(
         num_train_samples = external_batcher_->GetNumSamples();
         active_train_ibatcher = external_batcher_.get();
         active_val_ibatcher = external_batcher_.get();
+    } else if (mode_ == DatasetMode::SequenceExternal) {
+        spdlog::info("TrainingExecutor: Using external sequence batcher for "
+                     "token tagging ({} samples, {} batches)",
+                     sequence_batcher_ ? sequence_batcher_->GetNumSamples() : 0,
+                     sequence_batcher_ ? sequence_batcher_->GetNumBatches() : 0);
+
+        if (!sequence_batcher_) {
+            spdlog::error("TrainingExecutor: sequence mode but no sequence batcher");
+            return;
+        }
+
+        num_train_samples = sequence_batcher_->GetNumSamples();
+        active_sequence_batcher = sequence_batcher_.get();
     } else {
 #ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
         // Legacy DatasetHandle batching
@@ -353,6 +405,9 @@ void TrainingExecutor::Train(
 #else
             break;
 #endif
+        } else if (mode_ == DatasetMode::SequenceExternal &&
+                   active_sequence_batcher) {
+            RunTrainingEpochSequence(*active_sequence_batcher, epoch, batch_cb);
         } else if (active_train_ibatcher) {
             RunTrainingEpochArrow(*active_train_ibatcher, epoch, batch_cb);
         }
@@ -375,6 +430,12 @@ void TrainingExecutor::Train(
             RunValidation(*legacy_val_batcher);
             validation_ran = true;
 #endif
+        } else if (mode_ == DatasetMode::SequenceExternal &&
+                   active_sequence_batcher) {
+            active_sequence_batcher->SetPhase(BatcherPhase::Val);
+            RunValidationSequence(*active_sequence_batcher);
+            active_sequence_batcher->SetPhase(BatcherPhase::Train);
+            validation_ran = true;
         } else if (active_val_ibatcher) {
             active_val_ibatcher->SetPhase(BatcherPhase::Val);
             RunValidationArrow(*active_val_ibatcher);
@@ -464,8 +525,13 @@ void TrainingExecutor::Train(
             legacy_val_batcher->Reset();
 #endif
         } else {
-            active_train_ibatcher->Reset();
-            active_val_ibatcher->Reset();
+            if (mode_ == DatasetMode::SequenceExternal &&
+                active_sequence_batcher) {
+                active_sequence_batcher->Reset();
+            } else {
+                active_train_ibatcher->Reset();
+                active_val_ibatcher->Reset();
+            }
         }
     }
 
@@ -948,6 +1014,229 @@ void TrainingExecutor::WaitWhilePaused() {
 
 void TrainingExecutor::PreprocessBatch(Batch& /*batch*/) {
     // Preprocessing is handled by DatasetBatcher
+}
+
+void TrainingExecutor::RunTrainingEpochSequence(
+    ISequenceBatcher& batcher,
+    int epoch,
+    BatchCallback batch_cb)
+{
+    float epoch_loss = 0.0f;
+    int batch_num = 0;
+    size_t sample_count = 0;
+    SequenceTagMetrics aggregate_metrics;
+
+    const size_t total_batches = batcher.GetNumBatches();
+    UpdateMetrics([total_batches](TrainingMetrics& m) {
+        m.total_batches = static_cast<int>(total_batches);
+        m.current_batch = 0;
+    });
+
+    const auto epoch_start_time = std::chrono::steady_clock::now();
+    batcher.Reset();
+
+    while (!batcher.IsEpochComplete()) {
+        if (ShouldStop()) break;
+        WaitWhilePaused();
+
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
+            static_cast<int>(total_batches));
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
+            static_cast<int>(total_batches));
+
+        SequenceBatch batch = batcher.GetNextSequenceBatch();
+        if (!batch.IsValid()) break;
+        if (!batch.IsSupervised()) {
+            throw std::runtime_error(
+                "TrainingExecutor: sequence batch is missing tag_ids");
+        }
+
+        ++batch_num;
+        sample_count += batch.size;
+
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::Forward, epoch, batch_num,
+            static_cast<int>(total_batches));
+        const auto forward_start = std::chrono::steady_clock::now();
+        Tensor predictions = Forward(batch.word_ids);
+        const auto forward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - forward_start).count();
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::Forward, epoch, batch_num,
+            static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
+
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::ComputeLoss, epoch, batch_num,
+            static_cast<int>(total_batches));
+        const float batch_loss = ComputeLoss(predictions, batch.tag_ids);
+        const std::string loss_status =
+            std::isfinite(batch_loss) ? "ok" : "failed";
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::ComputeLoss, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f,
+            loss_status,
+            std::isfinite(batch_loss) ? "" :
+                "Sequence training loss became NaN or Inf.");
+        if (!std::isfinite(batch_loss)) {
+            throw std::runtime_error(
+                "TrainingExecutor: sequence training loss is not finite");
+        }
+        epoch_loss += batch_loss;
+
+        const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
+            predictions, batch.tag_ids, sequence_id_to_label_,
+            config_.sequence_batch.ignore_index);
+        AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
+        FinalizeSequenceTagMetricRates(aggregate_metrics);
+
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::Backward, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss);
+        const auto backward_start = std::chrono::steady_clock::now();
+        Backward(predictions, batch.tag_ids);
+        const auto backward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - backward_start).count();
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::Backward, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
+
+        CrashRunRecorder::Instance().MarkStage(
+            TrainingTraceStage::UpdateParameters, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss);
+        model_->UpdateParameters(optimizer_.get());
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::UpdateParameters, epoch, batch_num,
+            static_cast<int>(total_batches), batch_loss);
+
+        const float current_loss = epoch_loss / batch_num;
+        const float current_acc =
+            static_cast<float>(aggregate_metrics.token_accuracy);
+        const float current_f1 =
+            static_cast<float>(aggregate_metrics.entity_f1);
+
+        UpdateMetrics([batch_num,
+                       current_loss,
+                       current_acc,
+                       current_f1,
+                       token_count = aggregate_metrics.total_tokens]
+                      (TrainingMetrics& m) {
+            m.current_batch = batch_num;
+            m.train_loss = current_loss;
+            m.train_accuracy = current_acc;
+            m.train_token_accuracy = current_acc;
+            m.train_entity_f1 = current_f1;
+            m.train_token_count = token_count;
+        });
+
+        if (batch_num == 1 || batch_num % 50 == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto elapsed_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - epoch_start_time).count();
+            const float elapsed_s = elapsed_ms / 1000.0f;
+            const float rate = elapsed_ms > 0
+                ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
+                : 0.0f;
+            spdlog::info("Epoch {} [{}/{}] seq_loss={:.4f} "
+                         "token_acc={:.2f}% entity_f1={:.2f}% "
+                         "({:.1f}s, {:.1f} batches/s)",
+                         epoch, batch_num, total_batches, current_loss,
+                         current_acc * 100.0f, current_f1 * 100.0f,
+                         elapsed_s, rate);
+        }
+
+        if (batch_cb) {
+            CrashRunRecorder::Instance().MarkStage(
+                TrainingTraceStage::BatchCallback, epoch, batch_num,
+                static_cast<int>(total_batches), batch_loss, current_acc);
+            TrainingTraceCollector::Instance().RecordStage(
+                TrainingTraceStage::BatchCallback, epoch, batch_num,
+                static_cast<int>(total_batches), batch_loss, current_acc);
+            batch_cb(epoch, batch_num, static_cast<int>(total_batches),
+                     batch_loss, current_acc);
+        }
+    }
+
+    FinalizeSequenceTagMetricRates(aggregate_metrics);
+    const float final_loss = batch_num > 0 ? epoch_loss / batch_num : 0.0f;
+    const float final_acc =
+        static_cast<float>(aggregate_metrics.token_accuracy);
+    const float final_f1 =
+        static_cast<float>(aggregate_metrics.entity_f1);
+
+    UpdateMetrics([final_loss,
+                   final_acc,
+                   final_f1,
+                   token_count = aggregate_metrics.total_tokens]
+                  (TrainingMetrics& m) {
+        m.train_loss = final_loss;
+        m.train_accuracy = final_acc;
+        m.train_token_accuracy = final_acc;
+        m.train_entity_f1 = final_f1;
+        m.train_token_count = token_count;
+    });
+    CrashRunRecorder::Instance().MarkStage(
+        TrainingTraceStage::EpochComplete, epoch, batch_num,
+        static_cast<int>(total_batches), final_loss, final_acc);
+    TrainingTraceCollector::Instance().RecordStage(
+        TrainingTraceStage::EpochComplete, epoch, batch_num,
+        static_cast<int>(total_batches), final_loss, final_acc);
+
+    spdlog::debug("TrainingExecutor: sequence epoch {} consumed {} samples",
+                  epoch, sample_count);
+}
+
+void TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
+    float val_loss = 0.0f;
+    int batch_num = 0;
+    SequenceTagMetrics aggregate_metrics;
+
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        if (ShouldStop()) break;
+
+        SequenceBatch batch = batcher.GetNextSequenceBatch();
+        if (!batch.IsValid()) break;
+        if (!batch.IsSupervised()) {
+            throw std::runtime_error(
+                "TrainingExecutor: sequence validation batch is missing tag_ids");
+        }
+
+        ++batch_num;
+        Tensor predictions = Forward(batch.word_ids);
+        const float batch_loss = ComputeLoss(predictions, batch.tag_ids);
+        if (!std::isfinite(batch_loss)) {
+            throw std::runtime_error(
+                "TrainingExecutor: sequence validation loss is not finite");
+        }
+        val_loss += batch_loss;
+
+        const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
+            predictions, batch.tag_ids, sequence_id_to_label_,
+            config_.sequence_batch.ignore_index);
+        AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
+    }
+
+    FinalizeSequenceTagMetricRates(aggregate_metrics);
+    const float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
+    const float final_acc =
+        static_cast<float>(aggregate_metrics.token_accuracy);
+    const float final_f1 =
+        static_cast<float>(aggregate_metrics.entity_f1);
+
+    UpdateMetrics([final_loss,
+                   final_acc,
+                   final_f1,
+                   token_count = aggregate_metrics.total_tokens]
+                  (TrainingMetrics& m) {
+        m.val_loss = final_loss;
+        m.val_accuracy = final_acc;
+        m.val_token_accuracy = final_acc;
+        m.val_entity_f1 = final_f1;
+        m.val_token_count = token_count;
+    });
 }
 
 // =============================================================================

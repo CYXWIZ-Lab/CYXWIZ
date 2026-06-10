@@ -111,6 +111,77 @@ std::string LinearModule::GetName() const {
 }
 
 // ============================================================================
+// TimeDistributedDenseModule Implementation
+// ============================================================================
+
+TimeDistributedDenseModule::TimeDistributedDenseModule(size_t in_features,
+                                                       size_t out_features,
+                                                       bool use_bias)
+    : linear_(in_features, out_features, use_bias)
+    , in_features_(in_features)
+    , out_features_(out_features) {}
+
+Tensor TimeDistributedDenseModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    input_shape_ = input.Shape();
+    if (input_shape_.size() != 3) {
+        throw std::runtime_error(
+            "TimeDistributedDenseModule: input must be [batch, seq_len, features]");
+    }
+    if (input_shape_[2] != in_features_) {
+        throw std::runtime_error(
+            "TimeDistributedDenseModule: Input features mismatch. Expected " +
+            std::to_string(in_features_) + ", got " +
+            std::to_string(input_shape_[2]));
+    }
+
+    const size_t batch = input_shape_[0];
+    const size_t seq_len = input_shape_[1];
+    Tensor flat = input.Reshape({batch * seq_len, in_features_});
+    Tensor projected = linear_.Forward(flat);
+    return projected.Reshape({batch, seq_len, out_features_});
+}
+
+Tensor TimeDistributedDenseModule::Backward(const Tensor& grad_output) {
+    if (input_shape_.size() != 3) {
+        throw std::runtime_error(
+            "TimeDistributedDenseModule: Backward called before Forward");
+    }
+    const auto& grad_shape = grad_output.Shape();
+    if (grad_shape.size() != 3 ||
+        grad_shape[0] != input_shape_[0] ||
+        grad_shape[1] != input_shape_[1] ||
+        grad_shape[2] != out_features_) {
+        throw std::runtime_error(
+            "TimeDistributedDenseModule: grad_output must be [batch, seq_len, out_features]");
+    }
+
+    const size_t batch = input_shape_[0];
+    const size_t seq_len = input_shape_[1];
+    Tensor flat_grad = grad_output.Reshape({batch * seq_len, out_features_});
+    Tensor flat_input_grad = linear_.Backward(flat_grad);
+    return flat_input_grad.Reshape(input_shape_);
+}
+
+std::map<std::string, Tensor> TimeDistributedDenseModule::GetParameters() {
+    return linear_.GetParameters();
+}
+
+void TimeDistributedDenseModule::SetParameters(
+    const std::map<std::string, Tensor>& params) {
+    linear_.SetParameters(params);
+}
+
+std::map<std::string, Tensor> TimeDistributedDenseModule::GetGradients() {
+    return linear_.GetGradients();
+}
+
+std::string TimeDistributedDenseModule::GetName() const {
+    return "TimeDistributedDense(" + std::to_string(in_features_) +
+           " -> " + std::to_string(out_features_) + ")";
+}
+
+// ============================================================================
 // EmbeddingModule Implementation
 // ============================================================================
 //
@@ -144,20 +215,33 @@ EmbeddingModule::EmbeddingModule(size_t num_embeddings, size_t embedding_dim,
 Tensor EmbeddingModule::Forward(const Tensor& input) {
     input_cache_ = input.Clone();
 
-    // Convert [batch, seq_len] float → int32. IBatcher stores every
-    // feature as float, so even integer token IDs arrive as floats
-    // like 1234.0f. We static_cast to int32 here, clamping negatives
-    // to 0 as a defensive fallback against NaN rounding.
+    // Convert [batch, seq_len] token IDs to int32. Most production batchers
+    // still carry token IDs as float32, while sequence/synthetic paths use
+    // integer tensors. Normalize both forms here so the model-facing contract
+    // stays narrow.
     const auto& shape = input.Shape();
     size_t total = 1;
     for (auto d : shape) total *= d;
 
     Tensor int_input(shape, DataType::Int32);
-    const float* src = input.Data<float>();
     int32_t* dst = static_cast<int32_t*>(int_input.Data());
     const int32_t vocab_max = static_cast<int32_t>(num_embeddings_) - 1;
     for (size_t i = 0; i < total; ++i) {
-        int32_t idx = static_cast<int32_t>(src[i]);
+        int32_t idx = 0;
+        switch (input.GetDataType()) {
+            case DataType::Float32:
+                idx = static_cast<int32_t>(input.Data<float>()[i]);
+                break;
+            case DataType::Int32:
+                idx = input.Data<int32_t>()[i];
+                break;
+            case DataType::Int64:
+                idx = static_cast<int32_t>(input.Data<int64_t>()[i]);
+                break;
+            default:
+                throw std::runtime_error(
+                    "EmbeddingModule: input token ids must be Float32, Int32, or Int64");
+        }
         // Clamp to valid range. Out-of-vocab IDs map to 0 (the [PAD]
         // slot by convention — safe fallback).
         if (idx < 0 || idx > vocab_max) idx = 0;

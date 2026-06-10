@@ -368,6 +368,87 @@ void TestCrossEntropyTokenShapeIgnoreIndex() {
     spdlog::info("  OK: token-shaped CrossEntropy/NLL honor ignore_index");
 }
 
+void TestTimeDistributedDenseModule() {
+    spdlog::info("--- TestTimeDistributedDenseModule ---");
+
+    const std::vector<float> input_values = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f,
+        7.0f, 8.0f, 9.0f,
+        10.0f, 11.0f, 12.0f,
+    };
+    Tensor input({2, 2, 3}, input_values.data(), DataType::Float32);
+
+    TimeDistributedDenseModule td(3, 4);
+    Tensor output = td.Forward(input);
+    ExpectTrue(output.Shape() == std::vector<size_t>({2, 2, 4}),
+               "TimeDistributedDense output should preserve batch/seq");
+
+    LinearModule linear(3, 4);
+    linear.SetParameters(td.GetParameters());
+    Tensor flat_input = input.Reshape({4, 3});
+    Tensor flat_output = linear.Forward(flat_input);
+    const float* td_out = output.Data<float>();
+    const float* ref_out = flat_output.Data<float>();
+    for (size_t i = 0; i < output.NumElements(); ++i) {
+        ExpectNear(td_out[i], ref_out[i], 1e-6f,
+                   "TimeDistributedDense forward should match flat Linear");
+    }
+
+    std::vector<float> grad_values(output.NumElements(), 1.0f);
+    Tensor grad_output({2, 2, 4}, grad_values.data(), DataType::Float32);
+    Tensor grad_input = td.Backward(grad_output);
+    ExpectTrue(grad_input.Shape() == std::vector<size_t>({2, 2, 3}),
+               "TimeDistributedDense grad should restore input shape");
+
+    Tensor flat_grad = grad_output.Reshape({4, 4});
+    Tensor ref_grad_input = linear.Backward(flat_grad);
+    const float* td_grad = grad_input.Data<float>();
+    const float* ref_grad = ref_grad_input.Data<float>();
+    for (size_t i = 0; i < grad_input.NumElements(); ++i) {
+        ExpectNear(td_grad[i], ref_grad[i], 1e-6f,
+                   "TimeDistributedDense backward should match flat Linear");
+    }
+
+    spdlog::info("  OK: TimeDistributedDense wraps Linear over [batch, seq]");
+}
+
+void TestBuildSequentialTimeDistributedHead() {
+    spdlog::info("--- TestBuildSequentialTimeDistributedHead ---");
+
+    TrainingConfiguration cfg;
+    cfg.input_size = 3;
+    cfg.output_size = 2;
+    cfg.loss_type = gui::NodeType::CrossEntropyLoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+
+    CompiledLayer lstm;
+    lstm.type = gui::NodeType::LSTM;
+    lstm.parameters["hidden_size"] = "5";
+    lstm.parameters["return_sequences"] = "true";
+    cfg.layers.push_back(lstm);
+
+    CompiledLayer head;
+    head.type = gui::NodeType::TimeDistributed;
+    head.units = 2;
+    cfg.layers.push_back(head);
+
+    auto built = BuildSequentialFromConfig(cfg);
+    ExpectTrue(built.ok(), "config should build TimeDistributed head");
+    ExpectEq(built.model->Size(), 2, "time-distributed model size");
+
+    std::vector<float> values(2 * 4 * 3);
+    for (size_t i = 0; i < values.size(); ++i) {
+        values[i] = static_cast<float>(i + 1) / 10.0f;
+    }
+    Tensor input({2, 4, 3}, values.data(), DataType::Float32);
+    Tensor output = built.model->Forward(input);
+    ExpectTrue(output.Shape() == std::vector<size_t>({2, 4, 2}),
+               "LSTM return_sequences + TimeDistributed should output [batch, seq, units]");
+
+    spdlog::info("  OK: ModelBuilder creates TimeDistributed token head");
+}
+
 void TestDebugExecutorGoldenPath() {
     spdlog::info("--- TestDebugExecutorGoldenPath ---");
     auto cfg = MakeTabularConfig();
@@ -558,6 +639,8 @@ int main() {
         TestMseLossLabelsAreFloat();
         TestCrossEntropyIgnoreIndexFromLossParams();
         TestCrossEntropyTokenShapeIgnoreIndex();
+        TestTimeDistributedDenseModule();
+        TestBuildSequentialTimeDistributedHead();
         TestDebugExecutorGoldenPath();
         TestDebugExecutorGradNormBookkeeping();
         TestDebugExecutorTextGraph();

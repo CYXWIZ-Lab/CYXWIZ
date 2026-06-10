@@ -86,22 +86,30 @@ CrossEntropyLoss(ignore_index=pad_tag)
 
 CyxWiz gap:
 
-- no first-class `NERSequenceBuilder`,
-- no typed batch with `word_ids`, `pos_ids`, `attention_mask`, and `tag_ids`,
-- no real `TokenVocabulary`, `POSVocabulary`, and `NERTagVocabulary` node types,
-- no sequence padding contract for labels,
-- no `TimeDistributedDense` or equivalent token classifier head,
-- current CPU cross-entropy supports 1D/2D predictions, not native
-  `[batch, seq, tags]`,
-- loss builder does not preserve graph-level `ignore_index`,
-- no token-level or entity-level BIO metrics.
+- first-class `NERSequenceBuilder` now exists as a training contract node,
+  and the compiler extracts its sequence batch contract,
+- typed sequence batches with `word_ids`, optional `pos_ids`,
+  `attention_mask`, and `tag_ids` are materialized by the tabular
+  Arrow/Parquet runtime path,
+- `TimeDistributedDense` token classifier support exists in the backend,
+  ModelBuilder, compiler validation, and executor path,
+- token-shaped CrossEntropy/NLL with `ignore_index` is wired for sequence
+  training, including the CPU backward path that avoids the ArrayFire 3D
+  CrossEntropy warning,
+- token accuracy and BIO entity F1 are produced by the sequence executor and
+  surfaced in the Studio training plot panel,
+- `TokenVocabulary`, `POSVocabulary`, and `NERTagVocabulary` are still
+  contract/documentation nodes, not executable graph runtime nodes,
+- placeholder sequence designs encoded as Dense nodes are rejected at import
+  or compile time rather than silently training as ordinary Dense layers.
 
 Concrete example:
 
-`examples/cyxgraph/NER/ner_bilstm_sequence_tagger.cyxgraph` is a target design,
-not a trainable graph yet. Several intended NER nodes are represented as
-generic Dense-typed nodes with custom names, so the engine would misinterpret
-them without new node types or import-time guards.
+`examples/cyxgraph/NER/ner_bilstm_sequence_tagger.cyxgraph` has been updated
+away from stale serialized node ids and Dense-encoded sequence placeholders.
+It now uses first-class sequence contract nodes where they exist. The remaining
+non-executable vocabulary nodes are still kept out of the selected training
+path until graph-runtime vocabulary execution is wired.
 
 ### 2. Sequence-To-Sequence And Generative Text
 
@@ -386,11 +394,13 @@ Implement:
   `attention_mask`, and `tag_ids`,
 - label padding and `ignore_index` preservation from graph config into the
   loss builder,
-- `TimeDistributedDense` or equivalent per-token projection over
-  `[batch, seq, hidden]`,
+- `TimeDistributedDense` per-token projection over `[batch, seq, hidden]`
+  is implemented as a backend/module and `ModelBuilder` layer,
 - token cross-entropy over `[batch, seq, tags]`,
 - token accuracy plus BIO entity precision/recall/F1,
-- compiler and executor tests that train one tiny NER graph end to end.
+- public `TrainingExecutor` support for prebuilt `ISequenceBatcher` payloads,
+- compiler and executor tests that train one tiny NER graph end to end through
+  the public Studio launch path.
 
 ### Decoder / Generative Text
 
@@ -561,10 +571,12 @@ Completed so far:
   detection heads, multi-head loss aggregation, NMS/evaluation metrics, or
   detection output packaging.
 - `GraphCompiler` now rejects selected training paths that sketch
-  per-timestep/per-token heads with `TimeDistributed` or explicit per-token
-  head markers. The current trainer has no trainable TimeDistributed wrapper,
-  inner-layer binding, sequence-shape preservation contract, token-level loss
-  shape validation, padding ignore support, or per-token metrics.
+  per-timestep/per-token heads with explicit per-token head markers.
+  First-class `TimeDistributed` is no longer blocked by identity alone: it
+  compiles only when its input shape is sequence-like and `ModelBuilder` builds
+  a `TimeDistributedDenseModule`. The sequence executor path now consumes
+  prebuilt `ISequenceBatcher` payloads and reports token/BIO metrics; Studio
+  graph materialization is still pending.
 - `GraphCompiler` now rejects selected training paths that sketch
   autoencoder/VAE/GAN/diffusion training with exact design names or explicit
   reconstruction, latent, KL, generator/discriminator, gradient penalty,
@@ -660,6 +672,21 @@ Completed so far:
   node registry, and compile-fail selected training paths through the sequence
   payload guard while preserving `SequenceBatchConfig` details. Runtime
   sequence training remains blocked.
+- `TimeDistributedDenseModule` now applies one dense projection over
+  `[batch, seq, hidden]` and returns `[batch, seq, units]`, reusing the normal
+  linear parameter/gradient path. `ModelBuilder` wires `TimeDistributed` to
+  that module, the node has editable `units` metadata, and compiler validation
+  rejects `TimeDistributed` over non-sequence tensors.
+- A focused `TrainSequenceTaggerEpoch` helper now builds the executable model,
+  consumes `ISequenceBatcher` named payloads, runs token-shaped CrossEntropy
+  with `ignore_index`, applies optimizer updates, and returns token/BIO
+  metrics. This proves the narrow sequence batch/model/loss step.
+- Public `TrainingExecutor::Train` now has a sequence mode for prebuilt
+  `ISequenceBatcher` payloads. It runs the normal lifecycle callbacks,
+  optimizer step, validation pass, token accuracy, and BIO entity F1. The
+  Arrow/Parquet/Studio graph launch paths still fail closed for
+  `SequenceBatchConfig` until Studio can materialize real sequence batchers
+  from graph/runtime data.
 
 ### Next Session Handoff - 2026-06-09
 
@@ -678,11 +705,14 @@ Current Phase 2 state:
   with `ignore_index`, sequence tag metrics, sequence vocabularies, standalone
   `NERSequenceBuilder`, and blocked first-class NER vocabulary/builder node
   identities.
-- Runtime sequence training is still intentionally blocked by
-  `SequenceBatchRuntimeUnsupportedMessage()` so the app does not pretend NER
-  can train end to end yet.
-- The next practical slice is the token classifier head (`TimeDistributedDense`
-  or equivalent) and executor integration for sequence batches.
+- Runtime sequence training is supported when the launcher can route the graph
+  through the tabular loader path and provide a prebuilt `ISequenceBatcher`.
+  Sequence runs now expose token accuracy and BIO F1 in the training dashboard
+  with sequence-specific labels and plot presentation.
+- The token classifier head backend slice, focused sequence-training step, and
+  public sequence executor mode are in place. The next practical slice is
+  validating the shipped NER example graph end to end and tightening
+  import-time guards for placeholder/custom-task node sketches.
 
 1. Continue hardening import-time guards for graphs that use placeholder node
    types or Dense nodes as fake custom task nodes.

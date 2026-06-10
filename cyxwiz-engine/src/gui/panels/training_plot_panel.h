@@ -41,6 +41,7 @@ public:
     // Configuration
     void ShowLossPlot(bool show) { show_loss_plot_ = show; }
     void ShowAccuracyPlot(bool show) { show_accuracy_plot_ = show; }
+    void ShowCustomMetrics(bool show) { show_custom_metrics_ = show; }
     void SetAutoScale(bool auto_scale) { auto_scale_ = auto_scale; }
 
     // Training state updates (thread-safe) - call from TrainingManager
@@ -126,6 +127,7 @@ private:
     void RenderCustomMetricsPlot();
     void RenderControls();
     void RenderCurveSummary();
+    void RenderSequenceMetricsSummary();
     void RenderStatistics();
 
     // Internal helpers

@@ -11,6 +11,17 @@
 
 namespace cyxwiz {
 
+namespace {
+
+bool IsSequenceMetricName(const std::string& name) {
+    return name == "Train Token Accuracy" ||
+           name == "Val Token Accuracy" ||
+           name == "Train Entity F1" ||
+           name == "Val Entity F1";
+}
+
+} // namespace
+
 TrainingPlotPanel::TrainingPlotPanel()
     : Panel("Training Dashboard") {
 
@@ -87,6 +98,7 @@ void TrainingPlotPanel::Render() {
         }
 
         RenderCurveSummary();
+        RenderSequenceMetricsSummary();
 
         // Render statistics
         if (!train_loss_.values.empty()) {
@@ -410,9 +422,31 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
 }
 
 void TrainingPlotPanel::RenderCustomMetricsPlot() {
-    if (ImPlot::BeginPlot("Custom Metrics", ImVec2(-1, 250))) {
+    bool has_sequence_metrics = false;
+    bool has_non_sequence_metrics = false;
+    for (const auto& metric : custom_metrics_) {
+        if (metric.values.empty()) {
+            continue;
+        }
+        if (IsSequenceMetricName(metric.name)) {
+            has_sequence_metrics = true;
+        } else {
+            has_non_sequence_metrics = true;
+        }
+    }
+
+    const char* plot_title =
+        has_sequence_metrics && !has_non_sequence_metrics
+            ? "Sequence Metrics"
+            : "Custom Metrics";
+    const char* y_label =
+        has_sequence_metrics && !has_non_sequence_metrics
+            ? "Score (%)"
+            : "Value";
+
+    if (ImPlot::BeginPlot(plot_title, ImVec2(-1, 250))) {
         // Enable zoom and pan on both axes
-        ImPlot::SetupAxes("Epoch", "Value", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+        ImPlot::SetupAxes("Epoch", y_label, ImPlotAxisFlags_None, ImPlotAxisFlags_None);
 
         for (const auto& metric : custom_metrics_) {
             if (!metric.values.empty()) {
@@ -489,8 +523,24 @@ void TrainingPlotPanel::RenderControls() {
     }
 
     if (!custom_metrics_.empty()) {
+        bool has_sequence_metrics = false;
+        bool has_non_sequence_metrics = false;
+        for (const auto& metric : custom_metrics_) {
+            if (metric.values.empty()) {
+                continue;
+            }
+            if (IsSequenceMetricName(metric.name)) {
+                has_sequence_metrics = true;
+            } else {
+                has_non_sequence_metrics = true;
+            }
+        }
+
         ImGui::SameLine();
-        ImGui::Checkbox("Show Custom", &show_custom_metrics_);
+        const char* label = has_sequence_metrics && !has_non_sequence_metrics
+            ? "Show Sequence"
+            : "Show Custom";
+        ImGui::Checkbox(label, &show_custom_metrics_);
     }
 
     // Show zoom/pan help
@@ -697,6 +747,74 @@ void TrainingPlotPanel::RenderCurveSummary() {
     ImGui::Text("Suggested Action:");
     ImGui::NextColumn();
     ImGui::TextColored(recommendation_color, "%s", recommendation);
+
+    ImGui::Columns(1);
+}
+
+void TrainingPlotPanel::RenderSequenceMetricsSummary() {
+    auto find_latest = [this](const char* metric_name, double& value, bool& found) {
+        for (const auto& metric : custom_metrics_) {
+            if (metric.name != metric_name || metric.values.empty()) {
+                continue;
+            }
+            value = metric.values.back();
+            found = true;
+            return;
+        }
+    };
+
+    double train_token_accuracy = 0.0;
+    double val_token_accuracy = 0.0;
+    double train_entity_f1 = 0.0;
+    double val_entity_f1 = 0.0;
+    bool has_train_token_accuracy = false;
+    bool has_val_token_accuracy = false;
+    bool has_train_entity_f1 = false;
+    bool has_val_entity_f1 = false;
+
+    find_latest("Train Token Accuracy", train_token_accuracy, has_train_token_accuracy);
+    find_latest("Val Token Accuracy", val_token_accuracy, has_val_token_accuracy);
+    find_latest("Train Entity F1", train_entity_f1, has_train_entity_f1);
+    find_latest("Val Entity F1", val_entity_f1, has_val_entity_f1);
+
+    if (!has_train_token_accuracy && !has_val_token_accuracy &&
+        !has_train_entity_f1 && !has_val_entity_f1) {
+        return;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Sequence Metrics");
+    ImGui::Columns(2, "sequence_metrics", false);
+
+    ImGui::Text("Token Accuracy");
+    ImGui::NextColumn();
+    if (has_train_token_accuracy || has_val_token_accuracy) {
+        if (has_train_token_accuracy) {
+            ImGui::Text("train %.2f%%", train_token_accuracy);
+            ImGui::SameLine();
+        }
+        if (has_val_token_accuracy) {
+            ImGui::Text("val %.2f%%", val_token_accuracy);
+        }
+    } else {
+        ImGui::TextDisabled("no data");
+    }
+    ImGui::NextColumn();
+
+    ImGui::Text("Entity F1");
+    ImGui::NextColumn();
+    if (has_train_entity_f1 || has_val_entity_f1) {
+        if (has_train_entity_f1) {
+            ImGui::Text("train %.2f%%", train_entity_f1);
+            ImGui::SameLine();
+        }
+        if (has_val_entity_f1) {
+            ImGui::Text("val %.2f%%", val_entity_f1);
+        }
+    } else {
+        ImGui::TextDisabled("no data");
+    }
+    ImGui::NextColumn();
 
     ImGui::Columns(1);
 }

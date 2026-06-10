@@ -196,6 +196,30 @@ private:
  * drop an Embedding node between DataLoader and the MLP head without
  * changing the batcher type.
  */
+// Applies a Dense projection independently to each timestep:
+// [batch, seq_len, in_features] -> [batch, seq_len, out_features].
+class CYXWIZ_API TimeDistributedDenseModule : public Module {
+public:
+    TimeDistributedDenseModule(size_t in_features,
+                               size_t out_features,
+                               bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    LinearModule linear_;
+    size_t in_features_;
+    size_t out_features_;
+    std::vector<size_t> input_shape_;
+};
+
+// Token embedding lookup: [batch, seq_len] -> [batch, seq_len, embedding_dim].
 class CYXWIZ_API EmbeddingModule : public Module {
 public:
     EmbeddingModule(size_t num_embeddings, size_t embedding_dim,

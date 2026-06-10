@@ -1298,6 +1298,8 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
             if (node.type == NodeType::Bidirectional) {
                 node.parameters["merge_mode"] = "concat";
+            } else {
+                node.parameters["units"] = "128";
             }
             break;
         }

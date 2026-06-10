@@ -85,6 +85,16 @@ public:
         std::function<void(bool)> node_editor_callback = nullptr
     );
 
+    bool StartTrainingSequence(
+        TrainingConfiguration config,
+        std::unique_ptr<ISequenceBatcher> sequence_batcher,
+        std::vector<std::string> id_to_label,
+        int epochs,
+        int batch_size,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
+
     bool StartTrainingImage(
         TrainingConfiguration config,
         const DataRegistry::ImageDatasetEntry& image_entry,

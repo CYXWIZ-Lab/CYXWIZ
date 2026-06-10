@@ -38,6 +38,16 @@ struct TrainingMetrics {
     float val_loss = 0.0f;
     float val_accuracy = 0.0f;
 
+    // Token-level sequence tagging metrics. For sequence training,
+    // train_accuracy/val_accuracy also mirror token accuracy so existing
+    // dashboards and callbacks keep working.
+    float train_token_accuracy = 0.0f;
+    float val_token_accuracy = 0.0f;
+    float train_entity_f1 = 0.0f;
+    float val_entity_f1 = 0.0f;
+    size_t train_token_count = 0;
+    size_t val_token_count = 0;
+
     // Timing
     float epoch_time_seconds = 0.0f;
     float samples_per_second = 0.0f;
@@ -105,6 +115,10 @@ public:
 
     TrainingExecutor(TrainingConfiguration config,
                      std::unique_ptr<IBatcher> external_batcher);
+
+    TrainingExecutor(TrainingConfiguration config,
+                     std::unique_ptr<ISequenceBatcher> sequence_batcher,
+                     std::vector<std::string> id_to_label);
 
     ~TrainingExecutor();
 
@@ -192,6 +206,7 @@ private:
         Legacy,   // DatasetHandle + legacy DatasetBatcher
         Arrow,    // ArrowDataset + ArrowDatasetBatcher
         External, // Image/Audio/Text IBatcher constructed by TrainingManager
+        SequenceExternal, // Token-tagging ISequenceBatcher constructed upstream
         Parquet   // ParquetBackedDataset + ParquetArrowBatcher (disk-backed)
     };
 
@@ -202,6 +217,8 @@ private:
     std::string label_column_;
     DatasetMode mode_ = DatasetMode::Legacy;
     std::unique_ptr<IBatcher> external_batcher_;
+    std::unique_ptr<ISequenceBatcher> sequence_batcher_;
+    std::vector<std::string> sequence_id_to_label_;
 
     // Thread safety
     std::atomic<bool> is_training_{false};
@@ -254,6 +271,20 @@ private:
      * Run validation through any IBatcher implementation.
      */
     void RunValidationArrow(IBatcher& batcher);
+
+    /**
+     * Run a single token-tagging epoch through an ISequenceBatcher.
+     */
+    void RunTrainingEpochSequence(
+        ISequenceBatcher& batcher,
+        int epoch,
+        BatchCallback batch_cb
+    );
+
+    /**
+     * Run validation for token-tagging batches.
+     */
+    void RunValidationSequence(ISequenceBatcher& batcher);
 
     /**
      * Forward pass through the model

@@ -59,6 +59,8 @@ bool TrainingManager::StartTrainingCommon(
     // Image, Audio, Text} verbatim.
     is_training_.store(true);
     stop_requested_.store(false);
+    const bool sequence_mode =
+        executor && executor->GetConfig().sequence_batch.enabled;
 
     if (node_editor_callback) {
         node_editor_callback(true);
@@ -66,6 +68,7 @@ bool TrainingManager::StartTrainingCommon(
 
     if (auto panel = plot_panel.lock()) {
         panel->Clear();
+        panel->ShowCustomMetrics(sequence_mode);
         panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
         panel->SetVisible(true);
     }
@@ -267,6 +270,40 @@ bool TrainingManager::StartTrainingParquet(
         std::move(executor), epochs, batch_size, plot_panel,
         std::move(node_editor_callback),
         "Training Model (Parquet)", "Training from Parquet-backed Dataset");
+}
+
+bool TrainingManager::StartTrainingSequence(
+    TrainingConfiguration config,
+    std::unique_ptr<ISequenceBatcher> sequence_batcher,
+    std::vector<std::string> id_to_label,
+    int epochs,
+    int batch_size,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
+    std::function<void(bool)> node_editor_callback)
+{
+    if (is_training_.load()) {
+        spdlog::warn("TrainingManager: Cannot start sequence training - already training");
+        return false;
+    }
+
+    if (!sequence_batcher) {
+        spdlog::error("TrainingManager: sequence batcher is null");
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_training_.load()) {
+        return false;
+    }
+
+    NormalizeTrainingNumWorkers(config, "TrainingManager");
+
+    auto executor = std::make_unique<TrainingExecutor>(
+        std::move(config), std::move(sequence_batcher), std::move(id_to_label));
+    return StartTrainingCommon(
+        std::move(executor), epochs, batch_size, plot_panel,
+        std::move(node_editor_callback),
+        "Training Model (Sequence)", "Training from sequence dataset");
 }
 
 bool TrainingManager::StartTrainingImage(
@@ -542,11 +579,16 @@ void TrainingManager::TrainingThreadFunc(
     // Track training start time for total duration
     auto training_start_time = std::chrono::steady_clock::now();
 
+    TrainingExecutor* exec = nullptr;
+
     // Set up callbacks
-    auto epoch_callback = [this, plot_panel, epochs, batch_size](int epoch, float train_loss, float train_acc,
+    auto epoch_callback = [this, plot_panel, epochs, batch_size, &exec](int epoch, float train_loss, float train_acc,
                                                float val_loss, float val_acc, float epoch_time) {
         // Update cached metrics
         float samples_per_sec = 0.0f;
+        TrainingMetrics seq_metrics;
+        const bool sequence_mode =
+            exec && exec->GetConfig().sequence_batch.enabled;
         {
             std::lock_guard<std::mutex> lock(metrics_mutex_);
             cached_metrics_.current_epoch = epoch;
@@ -564,6 +606,19 @@ void TrainingManager::TrainingThreadFunc(
             }
         }
 
+        if (sequence_mode) {
+            seq_metrics = exec->GetMetrics();
+            {
+                std::lock_guard<std::mutex> lock(metrics_mutex_);
+                cached_metrics_.train_token_accuracy = seq_metrics.train_token_accuracy;
+                cached_metrics_.val_token_accuracy = seq_metrics.val_token_accuracy;
+                cached_metrics_.train_entity_f1 = seq_metrics.train_entity_f1;
+                cached_metrics_.val_entity_f1 = seq_metrics.val_entity_f1;
+                cached_metrics_.train_token_count = seq_metrics.train_token_count;
+                cached_metrics_.val_token_count = seq_metrics.val_token_count;
+            }
+        }
+
         // Update plot panel with metrics and training state
         if (auto panel = plot_panel.lock()) {
             CrashRunRecorder::Instance().MarkStage(
@@ -574,6 +629,16 @@ void TrainingManager::TrainingThreadFunc(
             panel->AddAccuracyPoint(epoch, static_cast<double>(train_acc) * 100.0, static_cast<double>(val_acc) * 100.0);
             // Update training state with timing info
             panel->SetTrainingState(true, epoch, epochs, epoch_time, samples_per_sec);
+            if (sequence_mode) {
+                panel->AddCustomMetric("Train Token Accuracy", epoch,
+                    static_cast<double>(seq_metrics.train_token_accuracy) * 100.0);
+                panel->AddCustomMetric("Val Token Accuracy", epoch,
+                    static_cast<double>(seq_metrics.val_token_accuracy) * 100.0);
+                panel->AddCustomMetric("Train Entity F1", epoch,
+                    static_cast<double>(seq_metrics.train_entity_f1) * 100.0);
+                panel->AddCustomMetric("Val Entity F1", epoch,
+                    static_cast<double>(seq_metrics.val_entity_f1) * 100.0);
+            }
             spdlog::info("TrainingPlotPanel: Updated state - epoch={}/{}, time={:.1f}s, sps={:.0f}",
                          epoch, epochs, epoch_time, samples_per_sec);
         } else {
@@ -596,7 +661,6 @@ void TrainingManager::TrainingThreadFunc(
         spdlog::info("TrainingManager: Training cancelled before start");
     } else {
         // Run training
-        TrainingExecutor* exec = nullptr;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             exec = current_executor_.get();

@@ -311,14 +311,12 @@ int main() {
     };
 
     config = compiler.Compile(nodes, links, true);
-    Check(!config.is_valid,
-          "selected sequence DataInput sketch should be invalid");
-    Check(HasIssueText(config, "file_category"),
-          "sequence DataInput sketch should report matched category marker");
-    Check(HasIssueText(config, "named sequence payloads"),
-          "sequence DataInput sketch should report missing sequence batch contract");
+    Check(config.is_valid,
+          "selected sequence DataInput contract should compile");
+    Check(!HasIssueText(config, "single tensor/label batch contract"),
+          "sequence DataInput contract should not report the old batch limitation");
     Check(config.sequence_batch.enabled,
-          "sequence DataInput sketch should populate the sequence batch contract");
+          "sequence DataInput should populate the sequence batch contract");
     Check(config.sequence_batch.token_column == "tokens",
           "sequence batch contract should capture token column");
     Check(config.sequence_batch.tag_column == "ner_tags",
@@ -344,14 +342,12 @@ int main() {
     };
 
     config = compiler.Compile(nodes, links, true);
-    Check(!config.is_valid,
-          "selected sequence DataLoader sketch should be invalid");
-    Check(HasIssueText(config, "batch_layout"),
-          "sequence DataLoader sketch should report matched loader marker");
-    Check(HasIssueText(config, "single tensor/label batch contract"),
-          "sequence DataLoader sketch should report current batch limitation");
+    Check(config.is_valid,
+          "selected sequence DataLoader contract should compile");
+    Check(!HasIssueText(config, "single tensor/label batch contract"),
+          "sequence DataLoader contract should not report the old batch limitation");
     Check(config.sequence_batch.enabled,
-          "sequence DataLoader sketch should populate the sequence batch contract");
+          "sequence DataLoader should populate the sequence batch contract");
     Check(config.sequence_batch.batch_first,
           "sequence DataLoader batch_first layout should be captured");
     Check(config.sequence_batch.ignore_index == -100,
@@ -379,12 +375,10 @@ int main() {
     };
 
     config = compiler.Compile(nodes, links, true);
-    Check(!config.is_valid,
-          "selected first-class NERSequenceBuilder should be invalid until runtime wiring exists");
-    Check(HasIssueText(config, "first_class_sequence_node"),
-          "first-class NERSequenceBuilder should report sequence node marker");
-    Check(HasIssueText(config, "named sequence payloads"),
-          "first-class NERSequenceBuilder should report missing sequence runtime payloads");
+    Check(config.is_valid,
+          "selected first-class NERSequenceBuilder should compile");
+    Check(!HasIssueText(config, "single tensor/label batch contract"),
+          "first-class NERSequenceBuilder should not report the old batch limitation");
     Check(config.sequence_batch.enabled,
           "first-class NERSequenceBuilder should populate sequence batch contract");
     Check(config.sequence_batch.token_column == "tokens",
@@ -733,11 +727,11 @@ int main() {
 
     config = compiler.Compile(nodes, links, true);
     Check(!config.is_valid,
-          "selected TimeDistributed training path should be invalid");
+          "selected TimeDistributed path over non-sequence tensor should be invalid");
     Check(HasIssueText(config, "TimeDistributed"),
-          "TimeDistributed path should report the matched wrapper");
-    Check(HasIssueText(config, "token-level loss shape validation"),
-          "TimeDistributed path should report missing token loss contract");
+          "TimeDistributed path should report the wrapper");
+    Check(HasIssueText(config, "sequence input shape"),
+          "TimeDistributed path should report the required sequence shape");
 
     auto time_distributed_side_output = Node(35,
                                              gui::NodeType::Output,

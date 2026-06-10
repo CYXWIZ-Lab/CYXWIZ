@@ -26,7 +26,8 @@ void ScopeBuffer::Clear() {
 void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
     // Render editable parameters based on node type
     switch (node.type) {
-        case NodeType::Dense: {
+        case NodeType::Dense:
+        case NodeType::TimeDistributed: {
             // Units
             std::string& units = node.parameters["units"];
             if (units.empty()) units = "64";
@@ -43,6 +44,10 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             }
 
             ImGui::Spacing();
+
+            if (node.type == NodeType::TimeDistributed) {
+                break;
+            }
 
             // Activation function
             std::string& activation = node.parameters["activation"];

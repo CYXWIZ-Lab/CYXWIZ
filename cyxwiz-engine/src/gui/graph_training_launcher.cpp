@@ -176,11 +176,6 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         result.error_message = "compiled training configuration is invalid";
         return result;
     }
-    if (config.sequence_batch.enabled) {
-        result.error_message = cyxwiz::SequenceBatchRuntimeUnsupportedMessage();
-        spdlog::error("StartTrainingFromGraph: {}", result.error_message);
-        return result;
-    }
     if (!dispatch) {
         result.error_message = "training dispatch callback is missing";
         return result;
@@ -198,6 +193,17 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
 
     std::string label_column = FindLabelColumn(
         nodes, dataset_name, config.data_source_node_id);
+
+    if (config.sequence_batch.enabled) {
+        const bool has_arrow = registry.GetArrowDataset(dataset_name) != nullptr;
+        const bool has_parquet = registry.GetParquetBackedDataset(dataset_name) != nullptr;
+        if (!has_arrow && !has_parquet) {
+            result.error_message =
+                "Sequence training requires a registered tabular dataset.";
+            spdlog::error("StartTrainingFromGraph: {}", result.error_message);
+            return result;
+        }
+    }
 
     int batch_size = config.batch_size;
     int epochs = config.epochs;

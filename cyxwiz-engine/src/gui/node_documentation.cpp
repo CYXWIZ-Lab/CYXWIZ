@@ -631,9 +631,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
     docs_[NodeType::TimeDistributed] = {
         "TimeDistributed",
         "Applies a layer to every temporal slice of an input. "
-        "Useful for applying Dense/Conv to sequence outputs.",
-        "Wraps a layer and applies it at each timestep.",
-        {},
+        "Useful for applying Dense to sequence outputs.",
+        "Applies one Dense projection at each timestep.",
+        {{"units", "Per-timestep output features/classes"}},
         {
             "Use to apply Dense to each LSTM output",
             "Preserves sequence structure"

@@ -349,6 +349,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             continue;
         }
 
+        if (*metadata_node_type == gui::NodeType::NERSequenceBuilder) {
+            continue;
+        }
+
         auto& metadata = it->second;
         metadata.status = NodeImplementationStatus::Template;
         metadata.badge = "Blocked";
@@ -1350,6 +1354,14 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"merge_mode", "string", "concat", "Merge mode", {}, ""}},
         NodeImplementationStatus::Template, 0});
 
+    RegisterNode({NodeType::TimeDistributed, NodeCategory::Recurrent, "TimeDistributed", ICON_FA_REPEAT,
+        {"time", "distributed", "sequence", "token"}, 0, false,
+        "Apply one Dense projection to every timestep", "", "",
+        {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
+        {{"Output", PinType::Tensor, true, "Output [N,T,units]"}},
+        {{"units", "int", "128", "Per-timestep output units", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::Dropout, NodeCategory::Regularization, "Dropout", ICON_FA_SHUFFLE,
         {"dropout", "regularization"}, 0, false, "Dropout layer", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
@@ -1900,9 +1912,8 @@ void NodeMetadataRegistry::InitializeTextNodes() {
          {"sentence_id_column", "string", "", "Optional sentence id column", {}, ""},
          {"max_sequence_length", "int", "0", "Max sequence length (0 = infer)", {}, ""},
          {"ignore_index", "int", "-100", "Padding label ignore index", {}, ""},
-         {"create_attention_mask", "bool", "true", "Create attention mask", {}, ""}},
-        NodeImplementationStatus::Template, 0,
-        "Standalone backend contract exists, but Studio training still lacks sequence executor wiring"});
+        {"create_attention_mask", "bool", "true", "Create attention mask", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TokenVocabulary, NodeCategory::TextProcessing, "Token Vocabulary", ICON_FA_BOOK,
         {"token", "vocabulary", "ner", "sequence"}, 0, false,

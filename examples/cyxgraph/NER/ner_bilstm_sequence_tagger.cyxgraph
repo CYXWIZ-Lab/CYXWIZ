@@ -1,0 +1,514 @@
+{
+    "annotations": [],
+    "execution_mode": 0,
+    "framework": 0,
+    "groups": [],
+    "links": [
+        {
+            "from_node": 1,
+            "from_pin": 1,
+            "from_pin_index": 0,
+            "id": 1,
+            "link_type": 0,
+            "to_node": 2,
+            "to_pin": 3,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 2,
+            "from_pin": 4,
+            "from_pin_index": 0,
+            "id": 2,
+            "link_type": 0,
+            "to_node": 3,
+            "to_pin": 5,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 2,
+            "from_pin": 4,
+            "from_pin_index": 0,
+            "id": 3,
+            "link_type": 0,
+            "to_node": 4,
+            "to_pin": 7,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 2,
+            "from_pin": 4,
+            "from_pin_index": 0,
+            "id": 4,
+            "link_type": 0,
+            "to_node": 5,
+            "to_pin": 9,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 3,
+            "from_pin": 6,
+            "from_pin_index": 0,
+            "id": 5,
+            "link_type": 0,
+            "to_node": 6,
+            "to_pin": 11,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 4,
+            "from_pin": 8,
+            "from_pin_index": 0,
+            "id": 6,
+            "link_type": 0,
+            "to_node": 6,
+            "to_pin": 11,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 5,
+            "from_pin": 10,
+            "from_pin_index": 0,
+            "id": 7,
+            "link_type": 0,
+            "to_node": 6,
+            "to_pin": 11,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 2,
+            "from_pin": 12,
+            "from_pin_index": 0,
+            "id": 8,
+            "link_type": 0,
+            "to_node": 7,
+            "to_pin": 13,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 7,
+            "from_pin": 15,
+            "from_pin_index": 0,
+            "id": 9,
+            "link_type": 0,
+            "to_node": 8,
+            "to_pin": 21,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 8,
+            "from_pin": 23,
+            "from_pin_index": 0,
+            "id": 10,
+            "link_type": 0,
+            "to_node": 9,
+            "to_pin": 25,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 8,
+            "from_pin": 23,
+            "from_pin_index": 0,
+            "id": 11,
+            "link_type": 0,
+            "to_node": 10,
+            "to_pin": 27,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 9,
+            "from_pin": 26,
+            "from_pin_index": 0,
+            "id": 12,
+            "link_type": 0,
+            "to_node": 11,
+            "to_pin": 29,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 10,
+            "from_pin": 28,
+            "from_pin_index": 0,
+            "id": 13,
+            "link_type": 0,
+            "to_node": 11,
+            "to_pin": 29,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 11,
+            "from_pin": 30,
+            "from_pin_index": 0,
+            "id": 14,
+            "link_type": 0,
+            "to_node": 12,
+            "to_pin": 31,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 12,
+            "from_pin": 32,
+            "from_pin_index": 0,
+            "id": 15,
+            "link_type": 0,
+            "to_node": 13,
+            "to_pin": 34,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 13,
+            "from_pin": 35,
+            "from_pin_index": 0,
+            "id": 16,
+            "link_type": 0,
+            "to_node": 14,
+            "to_pin": 36,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 14,
+            "from_pin": 37,
+            "from_pin_index": 0,
+            "id": 17,
+            "link_type": 0,
+            "to_node": 15,
+            "to_pin": 38,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 15,
+            "from_pin": 39,
+            "from_pin_index": 0,
+            "id": 18,
+            "link_type": 0,
+            "to_node": 16,
+            "to_pin": 40,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 14,
+            "from_pin": 37,
+            "from_pin_index": 0,
+            "id": 19,
+            "link_type": 0,
+            "to_node": 17,
+            "to_pin": 42,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 16,
+            "from_pin": 41,
+            "from_pin_index": 0,
+            "id": 20,
+            "link_type": 0,
+            "to_node": 18,
+            "to_pin": 44,
+            "to_pin_index": 0
+        }
+    ],
+    "nodes": [
+        {
+            "category": 0,
+            "description": "",
+            "id": 1,
+            "name": "NER Sentence CSV",
+            "parameters": {
+                "chunk_size": "10000",
+                "columns": "*",
+                "configured": "false",
+                "delimiter": ",",
+                "enable_streaming": "false",
+                "feature_columns": "*",
+                "file_category": "sequence_text",
+                "file_path": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_sentences.csv",
+                "file_type": "auto",
+                "hdf5_key": "",
+                "header": "true",
+                "label_column": "",
+                "max_rows": "",
+                "pos_sequence_column": "pos_tags",
+                "raw_source_path": "D:/Dev/DataSet_List/NER/NER dataset.csv",
+                "sequence_id_column": "sentence_id",
+                "sheet_name": "",
+                "skip_rows": "0",
+                "source_type": "file",
+                "tag_sequence_column": "ner_tags",
+                "token_sequence_column": "tokens",
+                "where_clause": ""
+            },
+            "pos_x": 169.00003051757813,
+            "pos_y": 305.0,
+            "type": 155
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 2,
+            "name": "Sentence Sequences",
+            "parameters": {
+                "bio_scheme": "BIO",
+                "delimiter": " ",
+                "pos_column": "pos_tags",
+                "tag_column": "ner_tags",
+                "token_column": "tokens",
+                "units": "128"
+            },
+            "pos_x": 275.0,
+            "pos_y": 300.0,
+            "type": 316
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 3,
+            "name": "Word Vocabulary",
+            "parameters": {
+                "max_vocab_size": "30000",
+                "min_freq": "2",
+                "pad_token": "[PAD]",
+                "units": "128",
+                "unk_token": "[UNK]",
+                "vocab_file": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_word_vocab.txt"
+            },
+            "pos_x": 464.0000305175781,
+            "pos_y": 179.0,
+            "type": 317
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 4,
+            "name": "POS Vocabulary",
+            "parameters": {
+                "max_vocab_size": "128",
+                "min_freq": "1",
+                "pad_token": "[PAD]",
+                "units": "128",
+                "unk_token": "[UNK]",
+                "vocab_file": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_pos_vocab.txt"
+            },
+            "pos_x": 478.0000305175781,
+            "pos_y": 431.0,
+            "type": 318
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 5,
+            "name": "NER Tag Vocabulary",
+            "parameters": {
+                "outside_tag": "O",
+                "pad_tag": "[PAD]",
+                "units": "128",
+                "vocab_file": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_tag_vocab.txt"
+            },
+            "pos_x": 463.0000305175781,
+            "pos_y": 302.0,
+            "type": 319
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 6,
+            "name": "Pad Tokens + Tags",
+            "parameters": {
+                "create_attention_mask": "true",
+                "max_length": "96",
+                "pos_pad_value": "0",
+                "tag_pad_value": "0",
+                "token_pad_value": "0",
+                "units": "128"
+            },
+            "pos_x": 665.0,
+            "pos_y": 300.0,
+            "type": 136
+        },
+        {
+            "category": 21,
+            "description": "",
+            "id": 7,
+            "name": "Split 80/10/10",
+            "parameters": {
+                "seed": "42",
+                "split_unit": "sentence",
+                "stratified": "false",
+                "test_ratio": "0.1",
+                "train_ratio": "0.8",
+                "val_ratio": "0.1"
+            },
+            "pos_x": 723.0,
+            "pos_y": 170.0,
+            "type": 106
+        },
+        {
+            "category": 21,
+            "description": "",
+            "id": 8,
+            "name": "Sequence DataLoader",
+            "parameters": {
+                "batch_layout": "batch_first",
+                "batch_size": "32",
+                "checkpoint_dir": "",
+                "drop_last": "false",
+                "early_stopping_patience": "5",
+                "epochs": "8",
+                "grad_accum_steps": "1",
+                "log_interval": "10",
+                "num_workers": "4",
+                "pin_memory": "false",
+                "prefetch_factor": "2",
+                "save_best_checkpoint": "true",
+                "seed": "42",
+                "shuffle": "true",
+                "validation_freq": "1"
+            },
+            "pos_x": 659.0,
+            "pos_y": 527.0,
+            "type": 104
+        },
+        {
+            "category": 11,
+            "description": "",
+            "id": 9,
+            "name": "Word Embedding",
+            "parameters": {
+                "embedding_dim": "100",
+                "num_embeddings": "30000",
+                "padding_idx": "0"
+            },
+            "pos_x": 800.0,
+            "pos_y": 380.0,
+            "type": 21
+        },
+        {
+            "category": 11,
+            "description": "",
+            "id": 10,
+            "name": "POS Embedding",
+            "parameters": {
+                "embedding_dim": "16",
+                "num_embeddings": "128",
+                "padding_idx": "0"
+            },
+            "pos_x": 813.0,
+            "pos_y": 607.0,
+            "type": 21
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 11,
+            "name": "Concat Word + POS",
+            "parameters": {
+                "axis": "-1",
+                "units": "128"
+            },
+            "pos_x": 900.0,
+            "pos_y": 487.0000305175781,
+            "type": 46
+        },
+        {
+            "category": 11,
+            "description": "",
+            "id": 12,
+            "name": "BiLSTM Sequence Encoder",
+            "parameters": {
+                "batch_first": "true",
+                "bidirectional": "true",
+                "dropout": "0.3",
+                "hidden_size": "128",
+                "input_size": "256",
+                "num_layers": "2",
+                "return_sequences": "true"
+            },
+            "pos_x": 853.0,
+            "pos_y": 246.0,
+            "type": 17
+        },
+        {
+            "category": 16,
+            "description": "",
+            "id": 13,
+            "name": "Dropout",
+            "parameters": {
+                "rate": "0.3"
+            },
+            "pos_x": 1056.0,
+            "pos_y": 595.0,
+            "type": 14
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 14,
+            "name": "Token Classifier",
+            "parameters": {
+                "units": "19"
+            },
+            "pos_x": 1008.0,
+            "pos_y": 363.0,
+            "type": 20
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 15,
+            "name": "Token CrossEntropy",
+            "parameters": {
+                "from_logits": "true",
+                "ignore_index": "0",
+                "units": "128"
+            },
+            "pos_x": 1132.0,
+            "pos_y": 447.0,
+            "type": 73
+        },
+        {
+            "category": 15,
+            "description": "",
+            "id": 16,
+            "name": "Adam",
+            "parameters": {
+                "beta1": "0.9",
+                "beta2": "0.999",
+                "epsilon": "1e-8",
+                "learning_rate": "0.001",
+                "lr": "0.001"
+            },
+            "pos_x": 1195.0,
+            "pos_y": 383.0,
+            "type": 81
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 17,
+            "name": "NER Metrics",
+            "parameters": {
+                "ignore_index": "0",
+                "outside_tag": "O",
+                "scheme": "BIO",
+                "units": "128"
+            },
+            "pos_x": 1113.0,
+            "pos_y": 261.0,
+            "type": 71
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 18,
+            "name": "NER Output",
+            "parameters": {
+                "decode_scheme": "BIO",
+                "num_tags": "19",
+                "tag_vocab_file": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_tag_vocab.txt",
+                "units": "128"
+            },
+            "pos_x": 1293.0,
+            "pos_y": 300.0,
+            "type": 71
+        }
+    ],
+    "version": "2.1",
+    "workflow_description": ""
+}
