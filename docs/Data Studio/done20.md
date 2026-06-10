@@ -1,4 +1,12 @@
-# To Fix 20 - Runtime Architecture Follow-Ups From To Fix 5
+# Done 20 - Runtime Architecture Follow-Ups From To Fix 5
+
+**Created:** 2026-06-10
+**Completed:** 2026-06-10
+
+## Status
+
+Done. The practical `tofix20` runtime architecture slice has been implemented
+and pushed through commit `4cd44e5a`.
 
 Source: carried forward from `done5.md` closeout.
 
