@@ -1,4 +1,5 @@
 #include "text_loader.h"
+#include "text_csv_preflight.h"
 
 #include "../../core/async_task_manager.h"
 #include "../../core/arrow_dataset.h"
@@ -118,10 +119,17 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     fs::is_regular_file(source) &&
                     (ext == ".csv" || ext == ".tsv");
                 if (native_arrow_text_file) {
+                    const char delimiter = (ext == ".tsv") ? '\t' : ',';
+                    const auto csv_preflight =
+                        ValidateTextCsvRowWidths(path, delimiter);
+                    if (!csv_preflight.ok) {
+                        throw std::runtime_error(csv_preflight.message);
+                    }
+
                     auto read_options = arrow::csv::ReadOptions::Defaults();
                     auto parse_options = arrow::csv::ParseOptions::Defaults();
                     auto convert_options = arrow::csv::ConvertOptions::Defaults();
-                    parse_options.delimiter = (ext == ".tsv") ? '\t' : ',';
+                    parse_options.delimiter = delimiter;
 
                     auto raw_arrow = cyxwiz::ArrowDataset::FromCSV(
                         path, name, read_options, parse_options, convert_options);

@@ -1,8 +1,14 @@
-# To Fix 19 - Model Families CyxWiz Cannot Train Yet
+# Done 19 - Sequence Tagging Training Path
 
 **Created:** 2026-06-07
+**Completed:** 2026-06-10
 **Source:** Follow-up from the NER example audit in
 `examples/cyxgraph/NER/ner_bilstm_sequence_tagger.cyxgraph`.
+
+## Status
+
+Done. The `tofix19` planned slice has been implemented and pushed in
+commit `c543e504`.
 
 ## Boundary
 

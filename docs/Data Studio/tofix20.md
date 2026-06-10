@@ -195,3 +195,13 @@ Status 2026-06-08:
 - Started. `HierarchicalCluster` now validates the `linkage=ward` and
   `metric=euclidean` cross-field rule centrally before operator execution,
   matching the operator's existing runtime constraint.
+- Done 2026-06-10. `TextLoader` now runs a CSV/TSV row-width preflight before
+  raw Arrow table registration, using the same quoted-field and embedded-newline
+  parsing behavior as `TextDataset`. Malformed rows now fail with a specific
+  `Text CSV preflight failed` diagnostic that includes row number, expected
+  width, actual width, and delimiter hint instead of the generic
+  `failed to register text CSV as Arrow table` async loader error. Covered by
+  `test_text_loader_csv_preflight`; verified with `cmake --build build --config
+  Debug --target test_text_loader_csv_preflight -j 8`,
+  `build\bin\Debug\test_text_loader_csv_preflight.exe`, and
+  `cmake --build build --config Debug --target cyxwiz-engine -j 8`.
