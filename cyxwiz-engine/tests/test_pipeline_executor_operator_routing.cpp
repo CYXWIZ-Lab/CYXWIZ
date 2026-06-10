@@ -456,6 +456,48 @@ int main() {
           "TSNENode fail-closed error should come from runtime capabilities: " +
               unsupported_executor.GetLastError());
 
+    struct SequenceVocabularyFailClosedCase {
+        const char* node_type;
+        const char* name;
+        const char* expected_reason;
+    };
+
+    const SequenceVocabularyFailClosedCase sequence_vocabulary_cases[] = {
+        {"TokenVocabulary", "Token Vocabulary",
+         "token vocabulary node is a sequence-training contract node"},
+        {"POSVocabulary", "POS Vocabulary",
+         "POS vocabulary node is a sequence-training contract node"},
+        {"NERTagVocabulary", "NER Tag Vocabulary",
+         "NER tag vocabulary node is a sequence-training contract node"},
+    };
+
+    int sequence_vocab_id = 430;
+    for (const auto& sequence_vocab_case : sequence_vocabulary_cases) {
+        const std::string sequence_vocab_json =
+            R"({"nodes":[)"
+            R"({"id":)" + std::to_string(sequence_vocab_id) +
+            R"(,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":)" + std::to_string(sequence_vocab_id + 1) +
+            R"(,"type":")" + sequence_vocab_case.node_type +
+            R"(","name":")" + sequence_vocab_case.name +
+            R"(","parameters":{}})"
+            R"(],"links":[{"start_node":)" + std::to_string(sequence_vocab_id) +
+            R"(,"end_node":)" + std::to_string(sequence_vocab_id + 1) + R"(}]})";
+
+        cyxwiz::PipelineExecutor sequence_vocab_executor;
+        Check(!sequence_vocab_executor.ExecutePipeline(sequence_vocab_json),
+              std::string(sequence_vocab_case.node_type) +
+                  " should fail closed in PipelineExecutor");
+        Check(sequence_vocab_executor.GetLastError().find(
+                  sequence_vocab_case.expected_reason) != std::string::npos,
+              std::string(sequence_vocab_case.node_type) +
+                  " fail-closed error should come from runtime capabilities: " +
+                  sequence_vocab_executor.GetLastError());
+        sequence_vocab_id += 2;
+    }
+
     const std::string missing_parameter_json =
         R"({"nodes":[)"
         R"({"id":5,"type":"DataInput","name":"MissingPath","parameters":{)"

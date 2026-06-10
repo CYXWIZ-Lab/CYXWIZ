@@ -29,6 +29,14 @@ Implement:
 - metadata/status updates once execution is wired,
 - tests that prove vocab nodes are either executable or clearly fail closed.
 
+Status 2026-06-10:
+
+- Started. `TokenVocabulary`, `POSVocabulary`, and `NERTagVocabulary` remain
+  first-class sequence-training contract nodes rather than executable
+  PipelineExecutor transforms. `test_pipeline_executor_operator_routing` now
+  pins all three nodes as fail-closed through central runtime capability
+  reasons, giving future executable vocabulary work a guarded baseline.
+
 ### 2. Full NER Example Assets
 
 The saved NER graph now uses current first-class node IDs and avoids Dense
