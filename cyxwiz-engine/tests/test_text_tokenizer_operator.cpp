@@ -118,6 +118,45 @@ int main() {
           "unknown vocab token should use loaded UNK index");
     std::filesystem::remove(vocab_file);
 
+    const auto missing_vocab_file =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_text_tokenizer_operator_built_vocab.txt";
+    std::filesystem::remove(missing_vocab_file);
+
+    cyxwiz::TextTokenizerOperator strict_missing_op;
+    params["vocab_file"] = missing_vocab_file.string();
+    params.erase("vocab_build_if_missing");
+    Check(strict_missing_op.Configure(params, error), error);
+    auto strict_missing_result = strict_missing_op.Apply(input);
+    Check(!strict_missing_result.ok(),
+          "missing strict vocab_file should fail without build-if-missing");
+
+    cyxwiz::TextTokenizerOperator build_vocab_op;
+    params["vocab_build_if_missing"] = "true";
+    Check(build_vocab_op.Configure(params, error), error);
+    auto build_vocab_result = build_vocab_op.Apply(input);
+    Check(build_vocab_result.ok(), build_vocab_result.status().ToString());
+    Check(std::filesystem::exists(missing_vocab_file),
+          "build-if-missing should write vocab file");
+    Check(build_vocab_op.GetLastVocabSize() > 4,
+          "built vocabulary should include corpus tokens");
+    std::filesystem::remove(missing_vocab_file);
+
+    cyxwiz::TextTokenizerOperator character_op;
+    params.erase("vocab_file");
+    params.erase("vocab_build_if_missing");
+    params["tokenizer_type"] = "2";
+    params["max_length"] = "3";
+    params["max_vocab_size"] = "20";
+    Check(character_op.Configure(params, error), error);
+    auto character_result = character_op.Apply(input);
+    Check(character_result.ok(), character_result.status().ToString());
+    auto character_output = character_result.ValueOrDie();
+    Check(character_op.GetLastVocabSize() == 20,
+          "character vocabulary should honor total max vocab size including specials");
+    Check(ReadFloatValue(character_output, "tok_0", 0) != 1.0f,
+          "character tokenizer should train character tokens, not word-only UNKs");
+
     std::cout << "TextTokenizerOperator Arrow path passed\n";
     return 0;
 }

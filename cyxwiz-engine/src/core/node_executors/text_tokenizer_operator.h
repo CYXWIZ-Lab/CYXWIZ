@@ -42,6 +42,7 @@ namespace cyxwiz {
  *   min_word_freq     (default 2)       — vocabulary frequency floor
  *   max_vocab_size    (default 10000)   — vocabulary cap
  *   vocab_file        (optional)        — load vocabulary instead of training
+ *   vocab_build_if_missing (default false) — train and save vocab_file if absent
  */
 class TextTokenizerOperator : public IPipelineOperator {
 public:
@@ -66,6 +67,7 @@ private:
     int min_word_freq_ = 2;
     int max_vocab_size_ = 10000;
     std::string vocab_file_;
+    bool vocab_build_if_missing_ = false;
     size_t last_vocab_size_ = 0;
 };
 

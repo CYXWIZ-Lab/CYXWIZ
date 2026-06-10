@@ -231,6 +231,7 @@ void FoldTextConfigNodeParams(
         auto vocab_file = config_node.parameters.find("vocab_file");
         if (vocab_file != config_node.parameters.end()) {
             params["vocab_file"] = vocab_file->second;
+            params["vocab_build_if_missing"] = "true";
         }
     } else if (config_node.type == gui::NodeType::TextPadding) {
         auto max_length = config_node.parameters.find("max_length");

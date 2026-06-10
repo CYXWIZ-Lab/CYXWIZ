@@ -1331,6 +1331,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["num_embeddings"] = "10000";
             node.parameters["embedding_dim"] = "256";
             node.parameters["padding_idx"] = "-1";
+            node.parameters["max_norm"] = "0";
+            node.parameters["freeze"] = "false";
+            node.parameters["init_mode"] = "normal";
+            node.parameters["weights_file"] = "";
+            node.parameters["embedding_weights_file"] = "";
+            node.parameters["output_weights_file"] = "";
             break;
         }
 
@@ -2229,6 +2235,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["lowercase"] = "true";
             node.parameters["min_word_freq"] = "2";
             node.parameters["max_vocab_size"] = "10000";
+            node.parameters["vocab_file"] = "";
             // Legacy fields for back-compat with the existing extractor.
             // Operator implicitly sets both to true regardless.
             node.parameters["padding"] = "true";
@@ -2253,7 +2260,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             out.name = "Vocabulary";
             out.is_input = false;
             node.outputs.push_back(out);
+            node.parameters["source_csv"] = "";
+            node.parameters["text_col"] = "text";
+            node.parameters["tokenizer_type"] = "1";
+            node.parameters["method"] = "word";
+            node.parameters["lowercase"] = "true";
             node.parameters["min_freq"] = "1";
+            node.parameters["min_word_freq"] = "1";
             node.parameters["max_vocab_size"] = "-1";
             node.parameters["vocab_file"] = "";
             break;

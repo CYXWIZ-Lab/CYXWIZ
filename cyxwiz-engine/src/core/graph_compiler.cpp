@@ -2177,8 +2177,11 @@ TrainingConfiguration GraphCompiler::Compile(
                              requested_workers, config.num_workers);
             }
             if (loader_node->parameters.count("prefetch_factor")) {
-                spdlog::warn("GraphCompiler: DataLoader prefetch_factor is currently ignored; "
-                             "num_workers uses synchronous per-batch workers only");
+                spdlog::info("GraphCompiler: DataLoader prefetch_factor is reserved for future "
+                             "async prefetch queues and is ignored by the current batchers; "
+                             "num_workers={} still runs synchronous per-batch work in supported "
+                             "batchers, then joins before returning each batch",
+                             config.num_workers);
             }
             if (loader_node->parameters.count("pin_memory") &&
                 loader_node->parameters.at("pin_memory") == "true") {

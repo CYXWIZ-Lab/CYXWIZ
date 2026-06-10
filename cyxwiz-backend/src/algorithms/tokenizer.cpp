@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <spdlog/spdlog.h>
+#include <unordered_map>
 
 namespace cyxwiz {
 
@@ -49,13 +50,14 @@ void Vocabulary::BuildFromDocuments(const std::vector<std::string>& documents,
     std::sort(sorted.begin(), sorted.end(),
               [](const auto& a, const auto& b) { return a.second > b.second; });
 
-    // Limit size
-    if (max_vocab_size > 0 && static_cast<int>(sorted.size()) > max_vocab_size) {
-        sorted.resize(max_vocab_size);
-    }
-
     // Rebuild with special tokens first
     AddSpecialTokens();
+    const int token_capacity = max_vocab_size > 0
+        ? std::max(0, max_vocab_size - static_cast<int>(idx_to_word_.size()))
+        : static_cast<int>(sorted.size());
+    if (static_cast<int>(sorted.size()) > token_capacity) {
+        sorted.resize(static_cast<size_t>(token_capacity));
+    }
     for (const auto& [word, count] : sorted) {
         if (word_to_idx_.find(word) == word_to_idx_.end()) {
             int idx = static_cast<int>(idx_to_word_.size());
@@ -295,7 +297,41 @@ std::vector<std::vector<int>> Tokenizer::PadBatch(const std::vector<std::vector<
 
 void Tokenizer::Train(const std::vector<std::string>& documents,
                        int min_freq, int max_vocab_size) {
-    vocab_.BuildFromDocuments(documents, min_freq, max_vocab_size, lowercase_);
+    std::unordered_map<std::string, int> freq;
+    for (const auto& doc : documents) {
+        for (const auto& token : Split(doc)) {
+            ++freq[token];
+        }
+    }
+
+    std::vector<std::pair<std::string, int>> sorted;
+    sorted.reserve(freq.size());
+    for (const auto& [token, count] : freq) {
+        if (count >= min_freq) {
+            sorted.push_back({token, count});
+        }
+    }
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto& a, const auto& b) {
+                  if (a.second != b.second) return a.second > b.second;
+                  return a.first < b.first;
+              });
+
+    const int special_count = 4;
+    const int token_capacity = max_vocab_size > 0
+        ? std::max(0, max_vocab_size - special_count)
+        : static_cast<int>(sorted.size());
+    if (static_cast<int>(sorted.size()) > token_capacity) {
+        sorted.resize(static_cast<size_t>(token_capacity));
+    }
+
+    std::vector<std::string> words;
+    words.reserve(sorted.size());
+    for (const auto& [token, count] : sorted) {
+        (void)count;
+        words.push_back(token);
+    }
+    vocab_.SetVocabulary(words);
     spdlog::info("Tokenizer trained: vocab_size={}, type={}",
                  vocab_.Size(),
                  type_ == TokenizerType::Word ? "word" :

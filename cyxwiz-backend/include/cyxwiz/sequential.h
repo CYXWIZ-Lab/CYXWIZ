@@ -223,13 +223,14 @@ private:
 class CYXWIZ_API EmbeddingModule : public Module {
 public:
     EmbeddingModule(size_t num_embeddings, size_t embedding_dim,
-                    int padding_idx = -1);
+                    int padding_idx = -1, float max_norm = 0.0f);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
     std::map<std::string, Tensor> GetParameters() override;
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
+    void LoadPretrainedWeights(const Tensor& weights, bool freeze = false);
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
 
@@ -238,6 +239,7 @@ private:
     size_t num_embeddings_;
     size_t embedding_dim_;
     int padding_idx_;
+    float max_norm_;
 };
 
 /**

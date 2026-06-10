@@ -341,6 +341,13 @@ static Tensor AfToTensor3DRowMajor(const af::array& arr) {
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+static int CheckedIntDim(size_t value, const char* name) {
+    if (value > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::overflow_error(std::string(name) + " exceeds int dimension range");
+    }
+    return static_cast<int>(value);
+}
+
 static LSTMAfDirectionResult RunLSTMAfDirectionForward(
     const af::array& seq_input,
     const af::array& W_ih,
@@ -354,43 +361,62 @@ static LSTMAfDirectionResult RunLSTMAfDirectionForward(
     size_t input_dim,
     int hidden_size) {
 
-    const int gate_size = 4 * hidden_size;
     LSTMAfDirectionResult result;
+    const int seq_dim = CheckedIntDim(seq_len, "seq_len");
+    const int batch_dim = CheckedIntDim(batch_size, "batch_size");
+    const int input_dim_af = CheckedIntDim(input_dim, "input_dim");
+    const int batch_int = CheckedIntDim(batch_size, "batch_size");
+    const int seq_batch_int = CheckedIntDim(seq_len * batch_size, "seq_len * batch_size");
 
-    af::array h = af::moddims(init_h, af::dim4(batch_size, hidden_size));
-    af::array c = af::moddims(init_c, af::dim4(batch_size, hidden_size));
+    af::array h = af::moddims(init_h, af::dim4(batch_dim, hidden_size));
+    af::array c = af::moddims(init_c, af::dim4(batch_dim, hidden_size));
 
-    af::array input_flat = af::moddims(seq_input, af::dim4(seq_len * batch_size, input_dim));
+    af::array input_flat = af::moddims(seq_input, af::dim4(seq_dim * batch_dim, input_dim_af));
     af::array input_proj = af::matmul(input_flat, af::transpose(W_ih));
-    input_proj = input_proj + af::tile(af::transpose(b_ih), static_cast<unsigned int>(seq_len * batch_size));
-    input_proj = af::moddims(input_proj, af::dim4(seq_len, batch_size, 4 * hidden_size));
+    input_proj.eval();
+    input_proj = input_proj + af::tile(af::transpose(b_ih), seq_batch_int);
+    input_proj.eval();
+    input_proj = af::moddims(input_proj, af::dim4(seq_dim, batch_dim, 4 * hidden_size));
+    input_proj.eval();
 
-    af::array h_states = af::constant(0.0f, af::dim4(seq_len + 1, batch_size, hidden_size));
-    af::array c_states = af::constant(0.0f, af::dim4(seq_len + 1, batch_size, hidden_size));
-    af::array all_gates = af::constant(0.0f, af::dim4(seq_len, batch_size, 4 * hidden_size));
+    af::array h_states = af::constant(0.0f, af::dim4(seq_dim + 1, batch_dim, hidden_size));
+    af::array c_states = af::constant(0.0f, af::dim4(seq_dim + 1, batch_dim, hidden_size));
+    af::array all_gates = af::constant(0.0f, af::dim4(seq_dim, batch_dim, 4 * hidden_size));
 
-    h_states(0, af::span, af::span) = af::moddims(h, af::dim4(1, batch_size, hidden_size));
-    c_states(0, af::span, af::span) = af::moddims(c, af::dim4(1, batch_size, hidden_size));
+    h_states(0, af::span, af::span) = af::moddims(h, af::dim4(1, batch_dim, hidden_size));
+    c_states(0, af::span, af::span) = af::moddims(c, af::dim4(1, batch_dim, hidden_size));
 
     for (size_t t = 0; t < seq_len; ++t) {
-        af::array x_t = input_proj(t, af::span, af::span);
-        x_t = af::moddims(x_t, af::dim4(batch_size, 4 * hidden_size));
+        af::array x_t = input_proj(CheckedIntDim(t, "t"), af::span, af::span);
+        x_t = af::moddims(x_t, af::dim4(batch_dim, 4 * hidden_size));
 
         af::array h_proj = af::matmul(h, af::transpose(W_hh));
-        h_proj = h_proj + af::tile(af::transpose(b_hh), static_cast<unsigned int>(batch_size));
+        h_proj.eval();
+        h_proj = h_proj + af::tile(af::transpose(b_hh), batch_int);
+        h_proj.eval();
 
         af::array gates = x_t + h_proj;
+        gates.eval();
         af::array i_gate = af::sigmoid(gates(af::span, af::seq(0, hidden_size - 1)));
         af::array f_gate = af::sigmoid(gates(af::span, af::seq(hidden_size, 2 * hidden_size - 1)));
         af::array g_gate = af::tanh(gates(af::span, af::seq(2 * hidden_size, 3 * hidden_size - 1)));
         af::array o_gate = af::sigmoid(gates(af::span, af::seq(3 * hidden_size, 4 * hidden_size - 1)));
+        i_gate.eval();
+        f_gate.eval();
+        g_gate.eval();
+        o_gate.eval();
 
         c = f_gate * c + i_gate * g_gate;
+        c.eval();
         h = o_gate * af::tanh(c);
+        h.eval();
 
-        h_states(t + 1, af::span, af::span) = af::moddims(h, af::dim4(1, batch_size, hidden_size));
-        c_states(t + 1, af::span, af::span) = af::moddims(c, af::dim4(1, batch_size, hidden_size));
-        all_gates(t, af::span, af::span) = af::moddims(gates, af::dim4(1, batch_size, 4 * hidden_size));
+        h_states(CheckedIntDim(t + 1, "t + 1"), af::span, af::span) =
+            af::moddims(h, af::dim4(1, batch_dim, hidden_size));
+        c_states(CheckedIntDim(t + 1, "t + 1"), af::span, af::span) =
+            af::moddims(c, af::dim4(1, batch_dim, hidden_size));
+        all_gates(CheckedIntDim(t, "t"), af::span, af::span) =
+            af::moddims(gates, af::dim4(1, batch_dim, 4 * hidden_size));
     }
 
     result.output = h_states(af::seq(1, static_cast<double>(seq_len)), af::span, af::span);
@@ -1810,7 +1836,8 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
         for (dim_t i = 0; i < total_indices; i++) {
             int32_t idx = indices_ptr[i];
             if (idx >= 0 && idx < num_embeddings_) {
-                output_flat(i, af::span) = w(idx, af::span);
+                output_flat(CheckedIntDim(static_cast<size_t>(i), "embedding index"), af::span) =
+                    w(idx, af::span);
             }
             // If idx == padding_idx or out of bounds, leave as zero
         }
@@ -1887,7 +1914,8 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
         for (dim_t i = 0; i < total_indices; i++) {
             int32_t idx = indices_ptr[i];
             if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
-                dw(idx, af::span) += grad(i, af::span);
+                dw(idx, af::span) += grad(CheckedIntDim(static_cast<size_t>(i), "embedding grad index"),
+                                          af::span);
             }
         }
 
@@ -3119,9 +3147,14 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
             cached_inputs_.push_back(AfToTensor3DRowMajor(layer_input));
 
             // Storage for hidden states and cell states over time
-            af::array h_states = af::constant(0.0f, af::dim4(seq_len + 1, batch_size, hidden_size_));
-            af::array c_states = af::constant(0.0f, af::dim4(seq_len + 1, batch_size, hidden_size_));
-            af::array all_gates = af::constant(0.0f, af::dim4(seq_len, batch_size, 4 * hidden_size_));
+            const int seq_i = CheckedIntDim(static_cast<size_t>(seq_len), "seq_len");
+            const int batch_i = CheckedIntDim(static_cast<size_t>(batch_size), "batch_size");
+            const int seq_batch_i = CheckedIntDim(
+                static_cast<size_t>(seq_len * batch_size), "seq_len * batch_size");
+
+            af::array h_states = af::constant(0.0f, af::dim4(seq_i + 1, batch_i, hidden_size_));
+            af::array c_states = af::constant(0.0f, af::dim4(seq_i + 1, batch_i, hidden_size_));
+            af::array all_gates = af::constant(0.0f, af::dim4(seq_i, batch_i, 4 * hidden_size_));
 
             // Store initial states. Slice (k, span, span) of a 3D
             // [seq+1, batch, hidden] array yields a (1, batch, hidden)
@@ -3129,20 +3162,21 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
             // af "Size mismatch between input and output" (Invalid input
             // size:203). Wrap with explicit moddims to add the leading
             // 1 dim and match the proxy's rank.
-            h_states(0, af::span, af::span) = af::moddims(h, af::dim4(1, batch_size, hidden_size_));
-            c_states(0, af::span, af::span) = af::moddims(c, af::dim4(1, batch_size, hidden_size_));
+            h_states(0, af::span, af::span) = af::moddims(h, af::dim4(1, batch_i, hidden_size_));
+            c_states(0, af::span, af::span) = af::moddims(c, af::dim4(1, batch_i, hidden_size_));
 
             // Forward pass through time using vectorized operations per timestep
             // Note: The recurrent dependency requires sequential processing,
             // but each timestep is fully vectorized across the batch
             for (dim_t t = 0; t < seq_len; t++) {
                 // Get input projection for this timestep: [batch, 4 * hidden_size]
-                af::array x_t = input_proj(t, af::span, af::span);
-                x_t = af::moddims(x_t, af::dim4(batch_size, 4 * hidden_size_));
+                const int t_idx = CheckedIntDim(static_cast<size_t>(t), "t");
+                af::array x_t = input_proj(t_idx, af::span, af::span);
+                x_t = af::moddims(x_t, af::dim4(batch_i, 4 * hidden_size_));
 
                 // Compute hidden projection: h @ W_hh^T + b_hh
                 af::array h_proj = af::matmul(h, af::transpose(W_hh));
-                h_proj = h_proj + af::tile(af::transpose(b_hh), static_cast<unsigned int>(batch_size));
+                h_proj = h_proj + af::tile(af::transpose(b_hh), batch_i);
 
                 // Combined gates: [batch, 4 * hidden_size]
                 af::array gates = x_t + h_proj;
@@ -3163,11 +3197,11 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
                 // Store states. Same moddims-with-leading-1 pattern as
                 // the initial-state assignments above to keep the slice
                 // proxy and RHS rank consistent.
-                h_states(t + 1, af::span, af::span) = af::moddims(h, af::dim4(1, batch_size, hidden_size_));
-                c_states(t + 1, af::span, af::span) = af::moddims(c, af::dim4(1, batch_size, hidden_size_));
+                h_states(t_idx + 1, af::span, af::span) = af::moddims(h, af::dim4(1, batch_i, hidden_size_));
+                c_states(t_idx + 1, af::span, af::span) = af::moddims(c, af::dim4(1, batch_i, hidden_size_));
 
                 // Store gates for backward pass (pre-activation for efficiency)
-                all_gates(t, af::span, af::span) = af::moddims(gates, af::dim4(1, batch_size, 4 * hidden_size_));
+                all_gates(t_idx, af::span, af::span) = af::moddims(gates, af::dim4(1, batch_i, 4 * hidden_size_));
             }
 
             // Cache for backward — same row-major treatment so all
@@ -3192,27 +3226,30 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
                 // Get reverse initial state
                 af::array h_r = h_full(num_layers_ + layer, af::span, af::span);
                 af::array c_r = c_full(num_layers_ + layer, af::span, af::span);
-                h_r = af::moddims(h_r, af::dim4(batch_size, hidden_size_));
-                c_r = af::moddims(c_r, af::dim4(batch_size, hidden_size_));
+                h_r = af::moddims(h_r, af::dim4(batch_i, hidden_size_));
+                c_r = af::moddims(c_r, af::dim4(batch_i, hidden_size_));
 
                 // Pre-compute reverse input projections
                 af::array input_proj_r = af::matmul(input_flat, af::transpose(W_ih_r));
-                input_proj_r = input_proj_r + af::tile(af::transpose(b_ih_r), static_cast<unsigned int>(seq_len * batch_size));
-                input_proj_r = af::moddims(input_proj_r, af::dim4(seq_len, batch_size, 4 * hidden_size_));
+                input_proj_r = input_proj_r + af::tile(af::transpose(b_ih_r), seq_batch_i);
+                input_proj_r = af::moddims(input_proj_r, af::dim4(seq_i, batch_i, 4 * hidden_size_));
 
-                af::array h_states_r = af::constant(0.0f, af::dim4(seq_len + 1, batch_size, hidden_size_));
-                af::array c_states_r = af::constant(0.0f, af::dim4(seq_len + 1, batch_size, hidden_size_));
+                af::array h_states_r = af::constant(0.0f, af::dim4(seq_i + 1, batch_i, hidden_size_));
+                af::array c_states_r = af::constant(0.0f, af::dim4(seq_i + 1, batch_i, hidden_size_));
 
-                h_states_r(seq_len, af::span, af::span) = af::moddims(h_r, af::dim4(1, batch_size, hidden_size_));
-                c_states_r(seq_len, af::span, af::span) = af::moddims(c_r, af::dim4(1, batch_size, hidden_size_));
+                h_states_r(seq_i, af::span, af::span) =
+                    af::moddims(h_r, af::dim4(1, batch_i, hidden_size_));
+                c_states_r(seq_i, af::span, af::span) =
+                    af::moddims(c_r, af::dim4(1, batch_i, hidden_size_));
 
                 // Backward through time (reverse direction)
                 for (dim_t t = seq_len - 1; t >= 0; t--) {
-                    af::array x_t = input_proj_r(t, af::span, af::span);
-                    x_t = af::moddims(x_t, af::dim4(batch_size, 4 * hidden_size_));
+                    const int rt_idx = CheckedIntDim(static_cast<size_t>(t), "reverse t");
+                    af::array x_t = input_proj_r(rt_idx, af::span, af::span);
+                    x_t = af::moddims(x_t, af::dim4(batch_i, 4 * hidden_size_));
 
                     af::array h_proj = af::matmul(h_r, af::transpose(W_hh_r));
-                    h_proj = h_proj + af::tile(af::transpose(b_hh_r), static_cast<unsigned int>(batch_size));
+                    h_proj = h_proj + af::tile(af::transpose(b_hh_r), batch_i);
 
                     af::array gates = x_t + h_proj;
 
@@ -3224,8 +3261,8 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
                     c_r = f_gate * c_r + i_gate * g_gate;
                     h_r = o_gate * af::tanh(c_r);
 
-                    h_states_r(t, af::span, af::span) = af::moddims(h_r, af::dim4(1, batch_size, hidden_size_));
-                    c_states_r(t, af::span, af::span) = af::moddims(c_r, af::dim4(1, batch_size, hidden_size_));
+                    h_states_r(rt_idx, af::span, af::span) = af::moddims(h_r, af::dim4(1, batch_i, hidden_size_));
+                    c_states_r(rt_idx, af::span, af::span) = af::moddims(c_r, af::dim4(1, batch_i, hidden_size_));
                 }
 
                 // Extract reverse output and concatenate
@@ -3653,19 +3690,23 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
             af::array dc_next = af::constant(0.0f, af::dim4(batch_size, hidden_size_));
 
             af::array d_layer_input = af::constant(0.0f, cached_input.dims());
+            const int batch_i = CheckedIntDim(static_cast<size_t>(batch_size), "batch_size");
+            const int layer_input_i = CheckedIntDim(
+                static_cast<size_t>(layer_input_size), "layer_input_size");
 
             for (dim_t t = seq_len - 1; t >= 0; t--) {
+                const int t_idx = CheckedIntDim(static_cast<size_t>(t), "t");
                 // h_prev / c_prev are at cache index t (state BEFORE step t).
                 // c_t is at cache index t+1 (state AFTER step t).
                 // gates is at cache index t (pre-activation gates from step t).
-                af::array h_prev = af::moddims(cached_h(t, af::span, af::span),
-                                                af::dim4(batch_size, hidden_size_));
-                af::array c_prev = af::moddims(cached_c(t, af::span, af::span),
-                                                af::dim4(batch_size, hidden_size_));
-                af::array c_t    = af::moddims(cached_c(t + 1, af::span, af::span),
-                                                af::dim4(batch_size, hidden_size_));
-                af::array gates  = af::moddims(cached_gates(t, af::span, af::span),
-                                                af::dim4(batch_size, gate_size));
+                af::array h_prev = af::moddims(cached_h(t_idx, af::span, af::span),
+                                                af::dim4(batch_i, hidden_size_));
+                af::array c_prev = af::moddims(cached_c(t_idx, af::span, af::span),
+                                                af::dim4(batch_i, hidden_size_));
+                af::array c_t    = af::moddims(cached_c(t_idx + 1, af::span, af::span),
+                                                af::dim4(batch_i, hidden_size_));
+                af::array gates  = af::moddims(cached_gates(t_idx, af::span, af::span),
+                                                af::dim4(batch_i, gate_size));
 
                 // Recompute gate activations from cached pre-activations.
                 af::array i_gate = af::sigmoid(gates(af::span, af::seq(0, hidden_size_ - 1)));
@@ -3674,8 +3715,8 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
                 af::array o_gate = af::sigmoid(gates(af::span, af::seq(3 * hidden_size_, 4 * hidden_size_ - 1)));
 
                 // Output gradient for this timestep + carry-over from t+1.
-                af::array dh = af::moddims(layer_grad(t, af::span, af::span),
-                                            af::dim4(batch_size, hidden_size_));
+                af::array dh = af::moddims(layer_grad(t_idx, af::span, af::span),
+                                            af::dim4(batch_i, hidden_size_));
                 dh = dh + dh_next;
 
                 // h = o * tanh(c_t)
@@ -3694,8 +3735,8 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
                 af::array dgates = af::join(1, di_pre, df_pre, dg_pre, do_pre);
 
                 // Weight + bias grad accumulation.
-                af::array x_t = af::moddims(cached_input(t, af::span, af::span),
-                                             af::dim4(batch_size, layer_input_size));
+                af::array x_t = af::moddims(cached_input(t_idx, af::span, af::span),
+                                             af::dim4(batch_i, layer_input_i));
                 dW_ih = dW_ih + af::matmul(af::transpose(dgates), x_t);
                 dW_hh = dW_hh + af::matmul(af::transpose(dgates), h_prev);
 
@@ -3708,8 +3749,8 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
                 // explicit moddims to add the leading 1 — same fix Forward
                 // uses for h_states/c_states/all_gates writes.
                 af::array dx_t = af::matmul(dgates, W_ih);
-                d_layer_input(t, af::span, af::span) = af::moddims(
-                    dx_t, af::dim4(1, batch_size, layer_input_size));
+                d_layer_input(t_idx, af::span, af::span) = af::moddims(
+                    dx_t, af::dim4(1, batch_i, layer_input_i));
 
                 // dh_prev = dgates @ W_hh
                 dh_next = af::matmul(dgates, W_hh);
@@ -4210,18 +4251,21 @@ Tensor GRULayer::Forward(const Tensor& input) {
             af::array h = af::moddims(h_full(layer, af::span, af::span),
                                       af::dim4(batch_size, hidden_size_));
 
-            af::array layer_output = af::constant(0.0f, af::dim4(seq_len, batch_size, hidden_size_));
-            af::array layer_gates = af::constant(0.0f, af::dim4(seq_len, batch_size, 4 * hidden_size_));
-            af::array layer_h_states = af::constant(0.0f, af::dim4(seq_len + 1, batch_size, hidden_size_));
+            const int seq_i = CheckedIntDim(static_cast<size_t>(seq_len), "seq_len");
+            const int batch_i = CheckedIntDim(static_cast<size_t>(batch_size), "batch_size");
+            af::array layer_output = af::constant(0.0f, af::dim4(seq_i, batch_i, hidden_size_));
+            af::array layer_gates = af::constant(0.0f, af::dim4(seq_i, batch_i, 4 * hidden_size_));
+            af::array layer_h_states = af::constant(0.0f, af::dim4(seq_i + 1, batch_i, hidden_size_));
             layer_h_states(0, af::span, af::span) =
-                af::moddims(h, af::dim4(1, batch_size, hidden_size_));
+                af::moddims(h, af::dim4(1, batch_i, hidden_size_));
 
             for (dim_t t = 0; t < seq_len; ++t) {
-                af::array x_t = af::moddims(input_proj(t, af::span, af::span),
-                                            af::dim4(batch_size, 3 * hidden_size_));
+                const int t_idx = CheckedIntDim(static_cast<size_t>(t), "t");
+                af::array x_t = af::moddims(input_proj(t_idx, af::span, af::span),
+                                            af::dim4(batch_i, 3 * hidden_size_));
                 af::array h_proj = af::matmul(h, af::transpose(W_hh));
                 h_proj = h_proj + af::tile(af::transpose(b_hh),
-                                           static_cast<unsigned int>(batch_size));
+                                           batch_i);
 
                 af::array x_r = x_t(af::span, af::seq(0, hidden_size_ - 1));
                 af::array x_z = x_t(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1));
@@ -4237,12 +4281,12 @@ Tensor GRULayer::Forward(const Tensor& input) {
                 h = (1.0f - z) * n + z * h;
 
                 af::array gates_t = af::join(1, r, z, n, h_n);
-                layer_output(t, af::span, af::span) =
-                    af::moddims(h, af::dim4(1, batch_size, hidden_size_));
-                layer_gates(t, af::span, af::span) =
-                    af::moddims(gates_t, af::dim4(1, batch_size, 4 * hidden_size_));
-                layer_h_states(t + 1, af::span, af::span) =
-                    af::moddims(h, af::dim4(1, batch_size, hidden_size_));
+                layer_output(t_idx, af::span, af::span) =
+                    af::moddims(h, af::dim4(1, batch_i, hidden_size_));
+                layer_gates(t_idx, af::span, af::span) =
+                    af::moddims(gates_t, af::dim4(1, batch_i, 4 * hidden_size_));
+                layer_h_states(t_idx + 1, af::span, af::span) =
+                    af::moddims(h, af::dim4(1, batch_i, hidden_size_));
             }
 
             af::array h_full_out = TensorToAf3DRowMajor(h_n_);
@@ -4548,16 +4592,20 @@ Tensor GRULayer::Backward(const Tensor& grad_output) {
                 0.0f, af::dim4(seq_len, batch_size, static_cast<dim_t>(layer_input_size)));
             af::array dh_next = af::constant(0.0f, af::dim4(batch_size, H));
             af::array ones = af::constant(1.0f, af::dim4(batch_size, H));
+            const int batch_i = CheckedIntDim(static_cast<size_t>(batch_size), "batch_size");
+            const int layer_input_i = CheckedIntDim(layer_input_size, "layer_input_size");
+            const int hidden_i = CheckedIntDim(static_cast<size_t>(H), "hidden_size");
 
             for (int64_t t = static_cast<int64_t>(seq_len) - 1; t >= 0; --t) {
-                af::array x_t = af::moddims(input_cache(t, af::span, af::span),
-                                            af::dim4(batch_size, layer_input_size));
-                af::array gates_t = af::moddims(gate_cache(t, af::span, af::span),
-                                                af::dim4(batch_size, 4 * H));
-                af::array h_prev = af::moddims(h_cache(t, af::span, af::span),
-                                               af::dim4(batch_size, H));
-                af::array dh = af::moddims(layer_grad(t, af::span, af::span),
-                                           af::dim4(batch_size, H));
+                const int t_idx = CheckedIntDim(static_cast<size_t>(t), "t");
+                af::array x_t = af::moddims(input_cache(t_idx, af::span, af::span),
+                                            af::dim4(batch_i, layer_input_i));
+                af::array gates_t = af::moddims(gate_cache(t_idx, af::span, af::span),
+                                                af::dim4(batch_i, 4 * hidden_i));
+                af::array h_prev = af::moddims(h_cache(t_idx, af::span, af::span),
+                                               af::dim4(batch_i, hidden_i));
+                af::array dh = af::moddims(layer_grad(t_idx, af::span, af::span),
+                                           af::dim4(batch_i, hidden_i));
                 dh = dh + dh_next;
 
                 af::array r = gates_t(af::span, af::seq(0, H - 1));
@@ -4585,8 +4633,8 @@ Tensor GRULayer::Backward(const Tensor& grad_output) {
                 db_hh = db_hh + af::moddims(af::sum(dgates_h, 0), af::dim4(G));
 
                 af::array dx_t = af::matmul(dgates_x, W_ih);
-                d_layer_input(t, af::span, af::span) =
-                    af::moddims(dx_t, af::dim4(1, batch_size, static_cast<dim_t>(layer_input_size)));
+                d_layer_input(t_idx, af::span, af::span) =
+                    af::moddims(dx_t, af::dim4(1, batch_i, layer_input_i));
 
                 dh_next = dh_prev_direct + af::matmul(dgates_h, W_hh);
             }

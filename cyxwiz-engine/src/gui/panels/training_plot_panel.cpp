@@ -1,6 +1,8 @@
 #include "training_plot_panel.h"
+#ifndef CYXWIZ_PLOTTING_MODULE
 #include "../../core/crash_run_recorder.h"
 #include "../../core/training_manager.h"
+#endif
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
@@ -463,9 +465,11 @@ void TrainingPlotPanel::RenderCustomMetricsPlot() {
 }
 
 void TrainingPlotPanel::RenderControls() {
+#ifndef CYXWIZ_PLOTTING_MODULE
     auto& tm = TrainingManager::Instance();
     const bool training_active = tm.IsTrainingActive();
     const bool training_paused = tm.IsPaused();
+#endif
 
     if (ImGui::Button("Clear All")) {
         Clear();
@@ -497,6 +501,7 @@ void TrainingPlotPanel::RenderControls() {
     ImGui::SameLine();
     ImGui::Checkbox("Show Accuracy", &show_accuracy_plot_);
 
+#ifndef CYXWIZ_PLOTTING_MODULE
     ImGui::SameLine();
     ImGui::TextUnformatted("Training");
     ImGui::SameLine();
@@ -521,6 +526,7 @@ void TrainingPlotPanel::RenderControls() {
     } else {
         ImGui::TextDisabled("Idle");
     }
+#endif
 
     if (!custom_metrics_.empty()) {
         bool has_sequence_metrics = false;
@@ -1000,7 +1006,12 @@ void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {
 
 void TrainingPlotPanel::RecordPanelEvent(const std::string& action,
                                          const std::string& detail) const {
+#ifndef CYXWIZ_PLOTTING_MODULE
     CrashRunRecorder::Instance().MarkPanelEvent(action, detail);
+#else
+    (void)action;
+    (void)detail;
+#endif
 }
 
 std::pair<double, double> TrainingPlotPanel::CalculateEpochWindow(const MetricSeries& series) const {

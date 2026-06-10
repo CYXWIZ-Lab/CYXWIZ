@@ -7,6 +7,7 @@
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,6 +26,7 @@ bool TextTokenizerOperator::Configure(
     lowercase_ = true;
     min_word_freq_ = 2;
     max_vocab_size_ = 10000;
+    vocab_build_if_missing_ = false;
     last_vocab_size_ = 0;
 
     auto it = params.find("text_col");
@@ -38,6 +40,17 @@ bool TextTokenizerOperator::Configure(
     if (lc != params.end()) label_col_ = lc->second;
     auto vf = params.find("vocab_file");
     if (vf != params.end()) vocab_file_ = vf->second;
+    auto vb = params.find("vocab_build_if_missing");
+    if (vb != params.end() && !vb->second.empty()) {
+        if (vb->second == "true" || vb->second == "1") {
+            vocab_build_if_missing_ = true;
+        } else if (vb->second == "false" || vb->second == "0") {
+            vocab_build_if_missing_ = false;
+        } else {
+            error = "TextTokenizer: 'vocab_build_if_missing' must be true/false";
+            return false;
+        }
+    }
 
     auto read_int = [&](const char* key, int default_value, int& out) -> bool {
         auto p = params.find(key);
@@ -120,11 +133,34 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     tokenizer.SetPadding(true);
     tokenizer.SetTruncation(true);
 
-    if (!vocab_file_.empty()) {
+    if (!vocab_file_.empty() && std::filesystem::exists(vocab_file_)) {
         if (!tokenizer.GetVocabulary().LoadFromFile(vocab_file_)) {
             return arrow::Status::Invalid(
                 "TextTokenizer: failed to load vocab_file '" + vocab_file_ + "'");
         }
+    } else if (!vocab_file_.empty() && vocab_build_if_missing_) {
+        tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
+        const std::filesystem::path path(vocab_file_);
+        if (path.has_parent_path()) {
+            std::error_code ec;
+            std::filesystem::create_directories(path.parent_path(), ec);
+            if (ec) {
+                return arrow::Status::IOError(
+                    "TextTokenizer: failed to create vocabulary directory '" +
+                    path.parent_path().string() + "': " + ec.message());
+            }
+        }
+        if (!tokenizer.GetVocabulary().SaveToFile(vocab_file_)) {
+            return arrow::Status::IOError(
+                "TextTokenizer: failed to save built vocab_file '" +
+                vocab_file_ + "'");
+        }
+        spdlog::info("TextTokenizer: built and saved vocabulary '{}' with {} entries",
+                     vocab_file_, tokenizer.GetVocabulary().Size());
+    } else if (!vocab_file_.empty()) {
+        return arrow::Status::Invalid(
+            "TextTokenizer: vocab_file '" + vocab_file_ +
+            "' does not exist. Add a TextVocabulary node to build it, or remove vocab_file to train in memory.");
     } else {
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
     }

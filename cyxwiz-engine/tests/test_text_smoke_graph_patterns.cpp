@@ -421,6 +421,7 @@ int main() {
         root / "examples/cyxgraph/text/test_01_sentiment_basic.cyxgraph",
         root / "examples/cyxgraph/mental_health_sentiment_classifier.cyxgraph",
         root / "examples/cyxgraph/mental_health_sentiment_classifier_v2.cyxgraph",
+        root / "examples/cyxgraph/Sentiment analysis/sentiment_analysis_gru_classifier.cyxgraph",
         root / "examples/cyxgraph/text/test_02_sentiment_lstm.cyxgraph",
         root / "examples/cyxgraph/text/test_05_sentiment_transformer_mini.cyxgraph",
     };

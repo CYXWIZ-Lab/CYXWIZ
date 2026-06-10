@@ -40,3 +40,18 @@ That keeps the example reproducible and avoids building the vocab ad hoc inside 
 5. Add a sentiment vocab prep script that generates `sentiment_analysis_vocab.txt`.
 6. Wire the sentiment graph to that vocab file.
 7. Update the inference helper to read metadata and reuse the generated vocab.
+
+## 2026-06-11 Progress
+
+- Added dialog-backed configuration for `TextTokenizer`, `TextVocabulary`, `TextPadding`, and `Embedding`, including hover help for the main fields.
+- Added native `TextVocabulary` build/inspect flow that scans a CSV text column and writes a one-token-per-line vocab file.
+- Updated folded runtime behavior so `TextVocabulary` can build and save `vocab_file` if it is missing, while tokenizer-only `vocab_file` remains a strict load.
+- Fixed backend `Tokenizer::Train()` so word, whitespace, and character modes build matching vocabularies instead of always using word vocabulary.
+- Fixed vocabulary caps so `max_vocab_size` is the total table size including `[PAD]`, `[UNK]`, `[BOS]`, and `[EOS]`; this keeps vocab ids within the Embedding node's `num_embeddings`.
+- Wired Embedding load/freeze/max-norm parameters through graph build and model import.
+- Verified with `test_text_tokenizer_operator` in Release.
+
+## Remaining
+
+- Rebuild `cyxwiz-engine` after the running Release engine is closed; the compile phase passed, but the final link was blocked by the locked executable.
+- SentencePiece / `TextVocabulary_3prt` remains future plugin scope.

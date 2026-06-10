@@ -2,7 +2,12 @@
 #include "graph_executable_model.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <memory>
 #include <sstream>
+#include <stdexcept>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -45,6 +50,14 @@ bool ParseBoolParam(const CompiledLayer& layer,
     }
     return it->second == "true" || it->second == "1";
 }
+
+std::string ParseStringParam(const CompiledLayer& layer,
+                             const std::string& key,
+                             const std::string& fallback = "");
+
+Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
+                                    size_t expected_rows,
+                                    size_t expected_cols);
 
 std::vector<int> ParseIntListParam(const CompiledLayer& layer,
                                    const std::string& key) {
@@ -132,7 +145,41 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 if (num_embeddings < 2) num_embeddings = 2;
                 if (embedding_dim < 1) embedding_dim = 1;
 
-                model.Add<EmbeddingModule>(num_embeddings, embedding_dim);
+                int padding_idx = -1;
+                auto pad_it = layer_cfg.parameters.find("padding_idx");
+                if (pad_it != layer_cfg.parameters.end()) {
+                    try { padding_idx = std::stoi(pad_it->second); }
+                    catch (...) {}
+                }
+
+                const std::string weights_file =
+                    ParseStringParam(layer_cfg, "weights_file",
+                        ParseStringParam(layer_cfg, "embedding_weights_file"));
+                const bool freeze_embedding =
+                    ParseBoolParam(layer_cfg, "freeze", false);
+                const float max_norm =
+                    ParseFloatParam(layer_cfg, "max_norm", 0.0f);
+
+                if (!weights_file.empty()) {
+                    auto embedding = std::make_unique<EmbeddingModule>(
+                        num_embeddings, embedding_dim, padding_idx, max_norm);
+                    try {
+                        Tensor weights = LoadEmbeddingWeightsTextFile(
+                            weights_file, num_embeddings, embedding_dim);
+                        embedding->LoadPretrainedWeights(weights, freeze_embedding);
+                        spdlog::info("  [{}] Loaded embedding weights from '{}'{}",
+                                     i, weights_file,
+                                     freeze_embedding ? " (frozen)" : "");
+                    } catch (const std::exception& e) {
+                        throw std::runtime_error(
+                            "Embedding layer failed to load weights_file '" +
+                            weights_file + "': " + e.what());
+                    }
+                    model.AddModule(std::move(embedding));
+                } else {
+                    model.Add<EmbeddingModule>(num_embeddings, embedding_dim,
+                                               padding_idx, max_norm);
+                }
 
                 // Shape tracking: input is [batch, seq_len] with
                 // current_input_size = seq_len. Embedding output is
@@ -688,6 +735,58 @@ std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
             spdlog::info("TrainingExecutor: Defaulting to CrossEntropy loss");
             return CreateLoss(LossType::CrossEntropy);
     }
+}
+
+std::string ParseStringParam(const CompiledLayer& layer,
+                             const std::string& key,
+                             const std::string& fallback) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    return it->second;
+}
+
+Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
+                                    size_t expected_rows,
+                                    size_t expected_cols) {
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        throw std::runtime_error("could not open embedding weights file: " + path);
+    }
+
+    std::vector<float> values;
+    size_t rows = 0;
+    size_t cols = 0;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::istringstream iss(line);
+        std::vector<float> row;
+        float value = 0.0f;
+        while (iss >> value) {
+            row.push_back(value);
+        }
+        if (row.empty()) continue;
+        if (cols == 0) {
+            cols = row.size();
+        } else if (row.size() != cols) {
+            throw std::runtime_error("embedding weights file has inconsistent row widths");
+        }
+        values.insert(values.end(), row.begin(), row.end());
+        ++rows;
+    }
+
+    if (rows != expected_rows || cols != expected_cols) {
+        std::ostringstream msg;
+        msg << "embedding weights shape mismatch: expected "
+            << expected_rows << " x " << expected_cols
+            << ", got " << rows << " x " << cols;
+        throw std::runtime_error(msg.str());
+    }
+
+    return Tensor({rows, cols}, values.data(), DataType::Float32);
 }
 
 } // namespace

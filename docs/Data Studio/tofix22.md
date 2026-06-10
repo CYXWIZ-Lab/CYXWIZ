@@ -86,6 +86,45 @@ For every new executable Data Studio node:
 - schema checks should fail before SQL/operator execution,
 - routing tests should include at least one representative bad-schema case.
 
+### 6. ArrayFire CUDA JIT Fusion Overflow Policy
+
+Recent sentiment/LSTM runs exposed a repeated CUDA backend warning:
+
+`ArrayFire LSTMLayer::Forward failed ... NVRTC_ERROR_COMPILATION ... Formal parameter space overflowed (... bytes required, max 4096 bytes allowed) ... falling back to CPU`
+
+This is not a graph validation error. It is an ArrayFire/CUDA JIT codegen
+failure caused by large fused expressions. Dense and LSTM paths can build
+compound expressions such as matmul + tiled bias + gate activations + state
+updates. ArrayFire lazily fuses those into CUDA kernels; when the generated
+kernel argument footprint exceeds the backend limit, NVRTC refuses to compile
+the kernel and the engine falls back to CPU.
+
+Target this as a cross-node backend policy, not a one-off LSTM issue:
+
+- audit ArrayFire-first node paths for large lazy expression chains,
+- add `eval()` barriers after matmul, bias add, joins/slices, gate activation,
+  recurrent state updates, and other high-fan-in expressions,
+- record a structured fallback reason such as `cuda_jit_param_overflow`,
+  `arrayfire_jit_compile_failure`, or `gpu_backend_exception`,
+- avoid logging the full NVRTC compiler dump every batch after the first
+  occurrence for the same node/shape/backend,
+- surface the user-facing message as performance fallback, not training
+  failure: training continues on CPU but will be slower,
+- add focused smoke tests for Dense, LSTM, GRU, attention, and loss paths that
+  confirm GPU path success where available or a clean one-time fallback where
+  not available,
+- keep CPU fallback behavior correct and deterministic while GPU path fixes
+  are incremental.
+
+Known examples:
+
+- Dense/Linear: fixed with `eval()` barriers around matmul/bias and backward
+  gradients.
+- LSTM forward: warning observed in the Release engine log during sentiment
+  training; needs full audit across unidirectional and bidirectional paths.
+- GRU/attention/losses: likely candidates because they also build large gate,
+  join, reduction, or matmul expression graphs.
+
 ## Verification Targets
 
 Future work should keep these checks green:

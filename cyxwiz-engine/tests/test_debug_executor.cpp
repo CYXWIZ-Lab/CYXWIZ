@@ -19,6 +19,8 @@
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 
@@ -76,6 +78,16 @@ TrainingConfiguration MakeTextConfig() {
     cfg.loss_type      = gui::NodeType::CrossEntropyLoss;
     cfg.optimizer_type = gui::NodeType::Adam;
     cfg.learning_rate  = 0.001f;
+    return cfg;
+}
+
+TrainingConfiguration MakeTextConfigWithEmbeddingWeights(const std::filesystem::path& weights_file) {
+    TrainingConfiguration cfg = MakeTextConfig();
+    cfg.layers[0].parameters["num_embeddings"] = "500";
+    cfg.layers[0].parameters["embedding_dim"] = "8";
+    cfg.layers[0].parameters["padding_idx"] = "0";
+    cfg.layers[0].parameters["weights_file"] = weights_file.string();
+    cfg.layers[0].parameters["freeze"] = "true";
     return cfg;
 }
 
@@ -257,6 +269,37 @@ void TestMseLossLabelsAreFloat() {
     ExpectEq(batch.labels.Shape()[0], 1, "mse labels dim0");
     ExpectEq(batch.labels.Shape()[1], 4, "mse labels dim1 (output_size)");
     spdlog::info("  OK: MSE labels are float [1, output_size]");
+}
+
+void TestBuildSequentialTextEmbeddingWeights() {
+    spdlog::info("--- TestBuildSequentialTextEmbeddingWeights ---");
+
+    const auto weights_file =
+        std::filesystem::temp_directory_path() / "cyxwiz_test_embedding_weights.txt";
+    {
+        std::ofstream out(weights_file);
+        out << "# cyxwiz_embedding rows=500 dim=8\n";
+        for (int r = 0; r < 500; ++r) {
+            for (int c = 0; c < 8; ++c) {
+                if (c > 0) out << ' ';
+                out << ((r == 0) ? 0.0f : static_cast<float>((r + c) % 7) / 10.0f);
+            }
+            out << '\n';
+        }
+    }
+
+    auto built = BuildSequentialFromConfig(
+        MakeTextConfigWithEmbeddingWeights(weights_file));
+    std::filesystem::remove(weights_file);
+
+    if (!built.ok()) {
+        std::cerr << "FAIL: pretrained embedding BuildSequentialFromConfig returned !ok()\n";
+        std::exit(1);
+    }
+
+    auto params = built.model->AsSequentialModel()->GetParameters();
+    ExpectTrue(params.count("layer0.weight") == 0,
+               "frozen pretrained embedding should not expose trainable layer0.weight");
 }
 
 void TestCrossEntropyIgnoreIndexFromLossParams() {
@@ -637,6 +680,7 @@ int main() {
         TestSyntheticBatchTabular();
         TestSyntheticBatchText();
         TestMseLossLabelsAreFloat();
+        TestBuildSequentialTextEmbeddingWeights();
         TestCrossEntropyIgnoreIndexFromLossParams();
         TestCrossEntropyTokenShapeIgnoreIndex();
         TestTimeDistributedDenseModule();

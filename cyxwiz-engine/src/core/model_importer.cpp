@@ -4,8 +4,13 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <sstream>
+#include <stdexcept>
+#include <vector>
 #include <cstring>
 
 namespace cyxwiz {
@@ -16,6 +21,93 @@ static bool IsCyxwBinaryFormat(const std::string& path);
 static bool IsTrainingOnlyParameter(const std::string& name) {
     return name.find("grad_") != std::string::npos ||
            name.find(".grad") != std::string::npos;
+}
+
+static std::string GetStringParam(const CompiledLayer& layer,
+                                  const std::string& key,
+                                  const std::string& fallback = "") {
+    auto it = layer.parameters.find(key);
+    return it == layer.parameters.end() ? fallback : it->second;
+}
+
+static bool GetBoolParam(const CompiledLayer& layer,
+                         const std::string& key,
+                         bool fallback = false) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    return it->second == "true" || it->second == "1";
+}
+
+static int GetIntParam(const CompiledLayer& layer,
+                       const std::string& key,
+                       int fallback = 0) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    try {
+        return std::stoi(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+static float GetFloatParam(const CompiledLayer& layer,
+                           const std::string& key,
+                           float fallback = 0.0f) {
+    auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    try {
+        return std::stof(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+static Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
+                                           size_t expected_rows,
+                                           size_t expected_cols) {
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        throw std::runtime_error("could not open embedding weights file: " + path);
+    }
+
+    std::vector<float> values;
+    size_t rows = 0;
+    size_t cols = 0;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::istringstream iss(line);
+        std::vector<float> row;
+        float value = 0.0f;
+        while (iss >> value) {
+            row.push_back(value);
+        }
+        if (row.empty()) continue;
+        if (cols == 0) {
+            cols = row.size();
+        } else if (row.size() != cols) {
+            throw std::runtime_error("embedding weights file has inconsistent row widths");
+        }
+        values.insert(values.end(), row.begin(), row.end());
+        ++rows;
+    }
+
+    if (rows != expected_rows || cols != expected_cols) {
+        std::ostringstream msg;
+        msg << "embedding weights shape mismatch: expected "
+            << expected_rows << " x " << expected_cols
+            << ", got " << rows << " x " << cols;
+        throw std::runtime_error(msg.str());
+    }
+
+    return Tensor({rows, cols}, values.data(), DataType::Float32);
 }
 
 // Helper: Build model architecture from graph JSON
@@ -100,7 +192,31 @@ static bool BuildModelFromGraph(
                     if (num_embeddings < 2) num_embeddings = 2;
                     if (embedding_dim < 1) embedding_dim = 1;
 
-                    model.Add<EmbeddingModule>(num_embeddings, embedding_dim);
+                    const int padding_idx =
+                        GetIntParam(layer_cfg, "padding_idx", -1);
+                    const std::string weights_file =
+                        GetStringParam(layer_cfg, "weights_file",
+                            GetStringParam(layer_cfg, "embedding_weights_file"));
+                    const bool freeze_embedding =
+                        GetBoolParam(layer_cfg, "freeze", false);
+                    const float max_norm =
+                        GetFloatParam(layer_cfg, "max_norm", 0.0f);
+
+                    if (!weights_file.empty()) {
+                        auto embedding = std::make_unique<EmbeddingModule>(
+                            num_embeddings, embedding_dim, padding_idx,
+                            max_norm);
+                        Tensor weights = LoadEmbeddingWeightsTextFile(
+                            weights_file, num_embeddings, embedding_dim);
+                        embedding->LoadPretrainedWeights(weights, freeze_embedding);
+                        spdlog::debug("  [{}] Loaded embedding weights from '{}'{}",
+                                      i, weights_file,
+                                      freeze_embedding ? " (frozen)" : "");
+                        model.AddModule(std::move(embedding));
+                    } else {
+                        model.Add<EmbeddingModule>(num_embeddings, embedding_dim,
+                                                   padding_idx, max_norm);
+                    }
 
                     bool next_is_recurrent = false;
                     if (i + 1 < config.layers.size()) {

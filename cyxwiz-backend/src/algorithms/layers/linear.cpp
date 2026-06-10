@@ -141,11 +141,13 @@ Tensor LinearLayer::Forward(const Tensor& input) {
 
             af::array weight_gpu = weight_.GetArrayRowMajor2D();
             af::array output_gpu = af::matmul(input_gpu, weight_gpu, AF_MAT_NONE, AF_MAT_TRANS);
+            output_gpu.eval();
 
             // Add bias if present
             if (use_bias_) {
                 af::array bias_gpu = af::moddims(bias_.GetArray(), 1, static_cast<dim_t>(out_features_));
                 output_gpu = output_gpu + af::tile(bias_gpu, static_cast<unsigned int>(batch_size), 1);
+                output_gpu.eval();
             }
 
             if (is_batched) {
@@ -154,7 +156,14 @@ Tensor LinearLayer::Forward(const Tensor& input) {
 
             return Tensor(af::flat(output_gpu));
         } catch (const af::exception& e) {
-            spdlog::warn("GPU forward pass failed: {}, falling back to CPU", e.what());
+            spdlog::warn(
+                "LinearLayer GPU forward fallback: Dense(in={}, out={}, batch={}, bias={}) "
+                "could not run on the active ArrayFire GPU backend. This is usually an "
+                "ArrayFire CUDA/OpenCL JIT compilation limit from a fused matmul/bias "
+                "expression, not a graph wiring or dataset-label problem. Falling back "
+                "to the CPU implementation for this forward pass; training remains "
+                "correct but this batch/layer may run slower. Backend error: {}",
+                in_features_, out_features_, batch_size, use_bias_, e.what());
         }
     }
 #endif
@@ -230,15 +239,19 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
             af::array weight_gpu = weight_.GetArrayRowMajor2D();
 
             af::array weight_grad_gpu = af::matmul(grad_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
+            weight_grad_gpu.eval();
             weight_grad_gpu = weight_grad_gpu / static_cast<float>(batch_size);
+            weight_grad_gpu.eval();
             weight_grad_ = Tensor::FromArrayRowMajor2D(weight_grad_gpu);
 
             if (use_bias_) {
                 af::array bias_grad_gpu = af::flat(af::sum(grad_gpu, 0) / static_cast<float>(batch_size));
+                bias_grad_gpu.eval();
                 bias_grad_ = Tensor(bias_grad_gpu);
             }
 
             af::array grad_input_gpu = af::matmul(grad_gpu, weight_gpu);
+            grad_input_gpu.eval();
 
             if (is_batched) {
                 return Tensor::FromArrayRowMajor2D(grad_input_gpu);
@@ -246,7 +259,14 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
 
             return Tensor(af::flat(grad_input_gpu));
         } catch (const af::exception& e) {
-            spdlog::warn("GPU backward pass failed: {}, falling back to CPU", e.what());
+            spdlog::warn(
+                "LinearLayer GPU backward fallback: Dense(in={}, out={}, batch={}, bias={}) "
+                "could not run its gradient step on the active ArrayFire GPU backend. "
+                "This is normally a backend JIT/kernel limitation, not a model-shape "
+                "contract failure. Falling back to the CPU gradient implementation; "
+                "training remains correct but this batch/layer may run slower. "
+                "Backend error: {}",
+                in_features_, out_features_, batch_size, use_bias_, e.what());
         }
     }
 #endif

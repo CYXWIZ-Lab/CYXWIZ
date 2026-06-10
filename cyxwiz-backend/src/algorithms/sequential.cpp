@@ -201,15 +201,17 @@ std::string TimeDistributedDenseModule::GetName() const {
 // which is what a Dense layer head expects.
 
 EmbeddingModule::EmbeddingModule(size_t num_embeddings, size_t embedding_dim,
-                                 int padding_idx)
+                                 int padding_idx, float max_norm)
     : num_embeddings_(num_embeddings)
     , embedding_dim_(embedding_dim)
     , padding_idx_(padding_idx)
+    , max_norm_(max_norm)
 {
     layer_ = std::make_unique<EmbeddingLayer>(
         static_cast<int>(num_embeddings),
         static_cast<int>(embedding_dim),
-        padding_idx);
+        padding_idx,
+        max_norm);
 }
 
 Tensor EmbeddingModule::Forward(const Tensor& input) {
@@ -270,6 +272,11 @@ void EmbeddingModule::SetParameters(const std::map<std::string, Tensor>& params)
 
 std::map<std::string, Tensor> EmbeddingModule::GetGradients() {
     return layer_->GetGradients();
+}
+
+void EmbeddingModule::LoadPretrainedWeights(const Tensor& weights, bool freeze) {
+    layer_->LoadPretrainedWeights(weights, freeze);
+    SetTrainable(!freeze);
 }
 
 std::string EmbeddingModule::GetName() const {

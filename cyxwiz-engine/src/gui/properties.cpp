@@ -13,6 +13,24 @@
 
 namespace gui {
 
+namespace {
+
+bool IsDialogOnlyPropertiesNode(NodeType type) {
+    switch (type) {
+        case NodeType::DataInput:
+        case NodeType::DataOutput:
+        case NodeType::TextTokenizer:
+        case NodeType::TextVocabulary:
+        case NodeType::TextPadding:
+        case NodeType::Embedding:
+            return true;
+        default:
+            return false;
+    }
+}
+
+} // namespace
+
 Properties::Properties() : show_window_(true) {
 }
 
@@ -59,9 +77,10 @@ void Properties::Render() {
             const cyxwiz::NodeMetadata* metadata =
                 cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(selected_node_->type);
 
-            // Check if this is a dialog-only node (DataInput/DataOutput)
-            bool is_dialog_only = (selected_node_->type == NodeType::DataInput ||
-                                   selected_node_->type == NodeType::DataOutput);
+            // Dialog-backed nodes keep detailed settings in their dedicated
+            // dialogs. The side panel stays compact and avoids duplicated,
+            // partial parameter editors.
+            bool is_dialog_only = IsDialogOnlyPropertiesNode(selected_node_->type);
 
             // Phase 3: Section-based rendering
             RenderGeneralSection(*selected_node_);

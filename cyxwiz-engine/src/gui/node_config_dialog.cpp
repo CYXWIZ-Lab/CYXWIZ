@@ -23,12 +23,34 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <limits>
+#include <random>
+#include <set>
+#include <unordered_map>
 
 namespace gui {
 
 // Alias to avoid any potential macro conflicts
 using NT = NodeType;
+
+namespace {
+
+void HelpTooltip(const char* text) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+        ImGui::TextUnformatted(text);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
+} // namespace
 
 // ==================== NodeConfigDialog Base ====================
 
@@ -592,6 +614,191 @@ const char* MethodNameFromType(int tokenizer_type) {
     }
 }
 
+std::vector<std::string> TokenizePreviewText(const std::string& text,
+                                             int tokenizer_type,
+                                             bool lowercase) {
+    std::string normalized = text;
+    if (lowercase) {
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                       [](unsigned char c) {
+                           return static_cast<char>(std::tolower(c));
+                       });
+    }
+
+    std::vector<std::string> tokens;
+    if (tokenizer_type == 2) {
+        for (char c : normalized) {
+            if (!std::isspace(static_cast<unsigned char>(c))) {
+                tokens.emplace_back(1, c);
+            }
+        }
+        return tokens;
+    }
+
+    if (tokenizer_type == 0) {
+        std::istringstream iss(normalized);
+        std::string token;
+        while (iss >> token) tokens.push_back(token);
+        return tokens;
+    }
+
+    std::string current;
+    for (char c : normalized) {
+        const auto uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc) || c == '_') {
+            current.push_back(c);
+        } else {
+            if (!current.empty()) {
+                tokens.push_back(current);
+                current.clear();
+            }
+            if (!std::isspace(uc)) {
+                tokens.emplace_back(1, c);
+            }
+        }
+    }
+    if (!current.empty()) tokens.push_back(current);
+    return tokens;
+}
+
+std::vector<std::string> SplitCsvLineSimple(const std::string& line) {
+    std::vector<std::string> fields;
+    std::string field;
+    bool in_quotes = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (c == '"') {
+            if (in_quotes && i + 1 < line.size() && line[i + 1] == '"') {
+                field.push_back('"');
+                ++i;
+            } else {
+                in_quotes = !in_quotes;
+            }
+        } else if (c == ',' && !in_quotes) {
+            fields.push_back(field);
+            field.clear();
+        } else {
+            field.push_back(c);
+        }
+    }
+    fields.push_back(field);
+    return fields;
+}
+
+bool CsvRecordHasOpenQuote(const std::string& record) {
+    bool in_quotes = false;
+    for (size_t i = 0; i < record.size(); ++i) {
+        if (record[i] != '"') continue;
+        if (in_quotes && i + 1 < record.size() && record[i + 1] == '"') {
+            ++i;
+            continue;
+        }
+        in_quotes = !in_quotes;
+    }
+    return in_quotes;
+}
+
+bool ReadCsvRecord(std::istream& in, std::string& record) {
+    record.clear();
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!record.empty()) {
+            record.push_back('\n');
+        }
+        record += line;
+        if (!CsvRecordHasOpenQuote(record)) {
+            return true;
+        }
+    }
+    return !record.empty();
+}
+
+int FindColumnIndex(const std::vector<std::string>& headers,
+                    const std::string& name) {
+    for (size_t i = 0; i < headers.size(); ++i) {
+        if (headers[i] == name) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+bool WriteEmbeddingMatrix(const std::filesystem::path& path,
+                          int rows,
+                          int cols,
+                          int padding_idx,
+                          int init_mode,
+                          std::string& error) {
+    if (rows <= 0 || cols <= 0) {
+        error = "Embedding rows and dimensions must be positive.";
+        return false;
+    }
+
+    std::ofstream out(path, std::ios::binary);
+    if (!out.is_open()) {
+        error = "Could not open output file: " + path.string();
+        return false;
+    }
+
+    std::mt19937 rng(42);
+    const float limit = std::sqrt(6.0f / static_cast<float>(rows + cols));
+    std::normal_distribution<float> normal(0.0f, 1.0f);
+    std::uniform_real_distribution<float> uniform(-limit, limit);
+
+    out << "# cyxwiz_embedding rows=" << rows << " dim=" << cols << "\n";
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            float value = 0.0f;
+            if (r == padding_idx) {
+                value = 0.0f;
+            } else if (init_mode == 2) {
+                value = (r == c) ? 1.0f : 0.0f;
+            } else if (init_mode == 1) {
+                value = uniform(rng);
+            } else {
+                value = normal(rng);
+            }
+            if (c > 0) out << ' ';
+            out << value;
+        }
+        out << '\n';
+    }
+    return true;
+}
+
+bool InspectEmbeddingMatrix(const std::filesystem::path& path,
+                            int& rows,
+                            int& cols,
+                            std::string& error) {
+    rows = 0;
+    cols = -1;
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        error = "Could not open weights file: " + path.string();
+        return false;
+    }
+
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::replace(line.begin(), line.end(), ',', ' ');
+        std::istringstream iss(line);
+        float value = 0.0f;
+        int count = 0;
+        while (iss >> value) ++count;
+        if (count <= 0) continue;
+        if (cols < 0) cols = count;
+        if (count != cols) {
+            error = "Inconsistent embedding row width in " + path.string();
+            return false;
+        }
+        ++rows;
+    }
+    if (rows <= 0 || cols <= 0) {
+        error = "No numeric embedding rows found in " + path.string();
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 TokenizerDialog::TokenizerDialog(MLNode* node)
@@ -627,6 +834,9 @@ void TokenizerDialog::LoadFromNode() {
     text_col_[sizeof(text_col_) - 1] = '\0';
     label_col_[0] = '\0';
     vocab_file_[0] = '\0';
+    source_csv_[0] = '\0';
+    status_message_.clear();
+    status_is_error_ = false;
 
     auto method = node_->parameters.find("method");
     if (method != node_->parameters.end()) {
@@ -642,6 +852,7 @@ void TokenizerDialog::LoadFromNode() {
     }
     CopyParam(node_, "label_col", label_col_, sizeof(label_col_));
     CopyParam(node_, "vocab_file", vocab_file_, sizeof(vocab_file_));
+    CopyParam(node_, "source_csv", source_csv_, sizeof(source_csv_));
 
     ReadIntParam(node_, "tokenizer_type", tokenizer_type_);
     ReadIntParam(node_, "max_length", max_length_);
@@ -675,6 +886,7 @@ void TokenizerDialog::Apply() {
         node_->parameters["min_word_freq"] = std::to_string(min_word_freq_);
         node_->parameters["min_freq"] = std::to_string(min_word_freq_);
         node_->parameters["max_vocab_size"] = std::to_string(max_vocab_size_);
+        node_->parameters["vocab_file"] = vocab_file_;
     }
 
     if (IsVocabularyNode()) {
@@ -682,6 +894,11 @@ void TokenizerDialog::Apply() {
         node_->parameters["min_word_freq"] = std::to_string(min_word_freq_);
         node_->parameters["max_vocab_size"] = std::to_string(max_vocab_size_);
         node_->parameters["vocab_file"] = vocab_file_;
+        node_->parameters["source_csv"] = source_csv_;
+        node_->parameters["text_col"] = text_col_;
+        node_->parameters["method"] = MethodNameFromType(tokenizer_type_);
+        node_->parameters["tokenizer_type"] = std::to_string(tokenizer_type_);
+        node_->parameters["lowercase"] = lowercase_ ? "true" : "false";
     }
 
     if (IsPaddingNode()) {
@@ -693,6 +910,127 @@ void TokenizerDialog::Apply() {
 
     has_changes_ = false;
     spdlog::info("TokenizerDialog: Applied text preprocessing settings");
+}
+
+bool TokenizerDialog::BuildVocabularyFile() {
+    namespace fs = std::filesystem;
+    const fs::path csv_path(source_csv_);
+    const fs::path out_path(vocab_file_);
+    if (source_csv_[0] == '\0') {
+        status_message_ = "Choose a source CSV before building the vocabulary.";
+        status_is_error_ = true;
+        return false;
+    }
+    if (vocab_file_[0] == '\0') {
+        status_message_ = "Choose an output vocab file before building.";
+        status_is_error_ = true;
+        return false;
+    }
+
+    std::ifstream in(csv_path);
+    if (!in.is_open()) {
+        status_message_ = "Could not open source CSV: " + csv_path.string();
+        status_is_error_ = true;
+        return false;
+    }
+
+    std::string header_line;
+    if (!ReadCsvRecord(in, header_line)) {
+        status_message_ = "Source CSV is empty: " + csv_path.string();
+        status_is_error_ = true;
+        return false;
+    }
+
+    const auto headers = SplitCsvLineSimple(header_line);
+    const int text_idx = FindColumnIndex(headers, text_col_);
+    if (text_idx < 0) {
+        status_message_ = "Text column '" + std::string(text_col_) +
+                          "' was not found in the CSV header.";
+        status_is_error_ = true;
+        return false;
+    }
+
+    std::unordered_map<std::string, int> counts;
+    std::string line;
+    size_t rows = 0;
+    while (ReadCsvRecord(in, line)) {
+        const auto fields = SplitCsvLineSimple(line);
+        if (text_idx >= static_cast<int>(fields.size())) continue;
+        const auto tokens = TokenizePreviewText(fields[static_cast<size_t>(text_idx)],
+                                                tokenizer_type_, lowercase_);
+        if (tokens.empty()) continue;
+        ++rows;
+        for (const auto& token : tokens) {
+            ++counts[token];
+        }
+    }
+
+    std::vector<std::pair<std::string, int>> sorted(counts.begin(), counts.end());
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto& a, const auto& b) {
+                  if (a.second != b.second) return a.second > b.second;
+                  return a.first < b.first;
+              });
+
+    const std::vector<std::string> specials = {"[PAD]", "[UNK]", "[BOS]", "[EOS]"};
+    std::set<std::string> emitted(specials.begin(), specials.end());
+    std::vector<std::string> vocab = specials;
+    const int cap = max_vocab_size_ > 0 ? max_vocab_size_ : std::numeric_limits<int>::max();
+    for (const auto& [token, count] : sorted) {
+        if (count < min_word_freq_) continue;
+        if (emitted.count(token) > 0) continue;
+        if (static_cast<int>(vocab.size()) >= cap) break;
+        emitted.insert(token);
+        vocab.push_back(token);
+    }
+
+    if (out_path.has_parent_path()) {
+        std::error_code ec;
+        fs::create_directories(out_path.parent_path(), ec);
+    }
+    std::ofstream out(out_path, std::ios::binary);
+    if (!out.is_open()) {
+        status_message_ = "Could not write vocab file: " + out_path.string();
+        status_is_error_ = true;
+        return false;
+    }
+    for (const auto& token : vocab) {
+        out << token << '\n';
+    }
+
+    max_vocab_size_ = static_cast<int>(vocab.size());
+    if (node_) {
+        node_->parameters["max_vocab_size"] = std::to_string(max_vocab_size_);
+        node_->parameters["vocab_file"] = vocab_file_;
+        node_->parameters["source_csv"] = source_csv_;
+    }
+    status_message_ = "Built " + std::to_string(vocab.size()) +
+                      " vocabulary entries from " + std::to_string(rows) +
+                      " non-empty text rows.";
+    status_is_error_ = false;
+    return true;
+}
+
+bool TokenizerDialog::InspectVocabularyFile() {
+    if (vocab_file_[0] == '\0') {
+        status_message_ = "Choose a vocab file to inspect.";
+        status_is_error_ = true;
+        return false;
+    }
+    std::ifstream in(vocab_file_);
+    if (!in.is_open()) {
+        status_message_ = "Could not open vocab file: " + std::string(vocab_file_);
+        status_is_error_ = true;
+        return false;
+    }
+    size_t count = 0;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty()) ++count;
+    }
+    status_message_ = "Vocab file contains " + std::to_string(count) + " entries.";
+    status_is_error_ = false;
+    return true;
 }
 
 void TokenizerDialog::Reset() {
@@ -731,12 +1069,14 @@ void TokenizerDialog::RenderTokenizerTab() {
     ImGui::Spacing();
 
     ImGui::Text("Text column:");
+    HelpTooltip("CSV/Arrow column that contains the raw sentences or documents. For the sentiment graph this is usually 'statement'.");
     ImGui::SetNextItemWidth(240.0f);
     if (ImGui::InputText("##text_col", text_col_, sizeof(text_col_))) {
         has_changes_ = true;
     }
 
     ImGui::Text("Label column:");
+    HelpTooltip("Optional target column used for supervised training. Leave blank for unlabeled text; for sentiment this is usually 'status'.");
     ImGui::SetNextItemWidth(240.0f);
     if (ImGui::InputText("##label_col", label_col_, sizeof(label_col_))) {
         has_changes_ = true;
@@ -749,6 +1089,7 @@ void TokenizerDialog::RenderTokenizerTab() {
     ImGui::Spacing();
 
     ImGui::Text("Tokenizer:");
+    HelpTooltip("Controls how raw text is split before vocabulary lookup: whitespace splits on spaces, word keeps words and punctuation, character emits one token per character.");
     const char* methods[] = { "Whitespace", "Word", "Character" };
     ImGui::SetNextItemWidth(200.0f);
     if (ImGui::Combo("##tokenizer_type", &tokenizer_type_, methods, 3)) {
@@ -760,12 +1101,30 @@ void TokenizerDialog::RenderTokenizerTab() {
     if (ImGui::Checkbox("Convert to lowercase", &lowercase_)) {
         has_changes_ = true;
     }
+    HelpTooltip("Lowercasing reduces duplicate vocabulary entries like 'Happy' and 'happy'. Disable it when capitalization carries meaning.");
 }
 
 void TokenizerDialog::RenderVocabularyTab() {
     ImGui::Spacing();
 
+    if (IsVocabularyNode()) {
+        ImGui::Text("Source CSV:");
+        HelpTooltip("Dataset file scanned when building a vocabulary from this node. Quoted multi-line CSV text is supported.");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputText("##source_csv", source_csv_, sizeof(source_csv_))) {
+            has_changes_ = true;
+        }
+        ImGui::Text("Text column:");
+        HelpTooltip("Column in the source CSV used to count tokens for the vocabulary file.");
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::InputText("##vocab_text_col", text_col_, sizeof(text_col_))) {
+            has_changes_ = true;
+        }
+        ImGui::Spacing();
+    }
+
     ImGui::Text("Minimum token frequency:");
+    HelpTooltip("Tokens seen fewer than this many times are excluded. Higher values shrink the vocabulary and map rare words to [UNK].");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##min_word_freq", &min_word_freq_)) {
         if (min_word_freq_ < 1) min_word_freq_ = 1;
@@ -775,6 +1134,7 @@ void TokenizerDialog::RenderVocabularyTab() {
     ImGui::Spacing();
 
     ImGui::Text("Maximum vocabulary size:");
+    HelpTooltip("Upper bound for vocabulary entries, including special tokens like [PAD] and [UNK]. Use -1 for no cap.");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##max_vocab", &max_vocab_size_)) {
         if (max_vocab_size_ < -1) max_vocab_size_ = -1;
@@ -783,12 +1143,32 @@ void TokenizerDialog::RenderVocabularyTab() {
     ImGui::SameLine();
     ImGui::TextDisabled("-1 = unlimited");
 
-    if (IsVocabularyNode()) {
+    if (IsTokenizerNode() || IsVocabularyNode()) {
         ImGui::Spacing();
         ImGui::Text("Vocabulary file:");
+        HelpTooltip("One-token-per-line vocabulary file. Tokenizer can load it directly; TextVocabulary can build and save it from the source CSV.");
         ImGui::SetNextItemWidth(-1);
         if (ImGui::InputText("##vocab_file", vocab_file_, sizeof(vocab_file_))) {
             has_changes_ = true;
+        }
+
+        ImGui::Spacing();
+        if (IsVocabularyNode() && ImGui::Button("Build and Save Vocabulary")) {
+            BuildVocabularyFile();
+            has_changes_ = true;
+        }
+        if (IsVocabularyNode()) {
+            HelpTooltip("Scans the source CSV text column, counts tokens, applies frequency and size limits, then writes the vocabulary file.");
+        }
+        if (IsVocabularyNode()) {
+            ImGui::SameLine();
+        }
+        if (ImGui::Button("Inspect File")) {
+            InspectVocabularyFile();
+        }
+        HelpTooltip("Reads the vocabulary file and reports how many entries it contains.");
+        if (!status_message_.empty()) {
+            ValidationMessage(status_message_, status_is_error_);
         }
     }
 }
@@ -797,6 +1177,7 @@ void TokenizerDialog::RenderPaddingTab() {
     ImGui::Spacing();
 
     ImGui::Text("Maximum sequence length:");
+    HelpTooltip("Fixed token count emitted for each sample. Short sequences are padded; long sequences can be truncated.");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##max_length", &max_length_)) {
         if (max_length_ < 1) max_length_ = 1;
@@ -806,6 +1187,7 @@ void TokenizerDialog::RenderPaddingTab() {
     if (IsPaddingNode()) {
         ImGui::Spacing();
         ImGui::Text("Pad value:");
+        HelpTooltip("Token id used to fill short sequences. Use 0 when the vocabulary starts with [PAD] and the Embedding padding index is 0.");
         ImGui::SetNextItemWidth(150.0f);
         if (ImGui::InputInt("##pad_value", &pad_value_)) {
             has_changes_ = true;
@@ -818,16 +1200,19 @@ void TokenizerDialog::RenderPaddingTab() {
         if (ImGui::Checkbox("Pad sequences", &padding_)) {
             has_changes_ = true;
         }
+        HelpTooltip("Pads shorter token sequences to the maximum sequence length so batches have a stable tensor shape.");
     }
     if (ImGui::Checkbox("Truncate long sequences", &truncation_)) {
         has_changes_ = true;
     }
+    HelpTooltip("Cuts sequences longer than the maximum length. Disable only if downstream nodes can handle variable or longer sequences.");
 }
 
 void TokenizerDialog::RenderPreviewTab() {
     ImGui::Spacing();
 
     ImGui::Text("Sample Text:");
+    HelpTooltip("Local preview text for checking tokenizer behavior. It does not modify the dataset.");
     ImGui::SetNextItemWidth(-1);
     if (ImGui::InputTextMultiline("##sample", sample_text_, sizeof(sample_text_), ImVec2(0, 100))) {
         preview_tokens_.clear();
@@ -875,6 +1260,7 @@ void TokenizerDialog::RenderPreviewTab() {
             }
         }
     }
+    HelpTooltip("Runs the selected tokenizer settings against the sample text and shows the resulting tokens.");
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -915,6 +1301,235 @@ void TokenizerDialog::RenderPreviewTab() {
         }
         ImGui::NewLine();
     }
+}
+
+// ==================== EmbeddingDialog ====================
+
+EmbeddingDialog::EmbeddingDialog(MLNode* node)
+    : NodeConfigDialog("Embedding Configuration", node) {
+    LoadFromNode();
+}
+
+void EmbeddingDialog::LoadFromNode() {
+    if (!node_) return;
+
+    num_embeddings_ = 10000;
+    embedding_dim_ = 256;
+    padding_idx_ = -1;
+    max_norm_ = 0.0f;
+    freeze_ = false;
+    init_mode_ = 0;
+    weights_file_[0] = '\0';
+    output_file_[0] = '\0';
+    status_message_.clear();
+    status_is_error_ = false;
+
+    ReadIntParam(node_, "num_embeddings", num_embeddings_);
+    ReadIntParam(node_, "embedding_dim", embedding_dim_);
+    ReadIntParam(node_, "padding_idx", padding_idx_);
+    ReadBoolParam(node_, "freeze", freeze_);
+    CopyParam(node_, "weights_file", weights_file_, sizeof(weights_file_));
+    CopyParam(node_, "embedding_weights_file", weights_file_, sizeof(weights_file_));
+    CopyParam(node_, "output_weights_file", output_file_, sizeof(output_file_));
+
+    auto max_norm_it = node_->parameters.find("max_norm");
+    if (max_norm_it != node_->parameters.end() && !max_norm_it->second.empty()) {
+        try { max_norm_ = std::stof(max_norm_it->second); } catch (...) {}
+    }
+    auto init_it = node_->parameters.find("init_mode");
+    if (init_it != node_->parameters.end()) {
+        if (init_it->second == "uniform") init_mode_ = 1;
+        else if (init_it->second == "one_hot") init_mode_ = 2;
+        else init_mode_ = 0;
+    }
+
+    if (num_embeddings_ < 2) num_embeddings_ = 2;
+    if (embedding_dim_ < 1) embedding_dim_ = 1;
+}
+
+void EmbeddingDialog::Apply() {
+    if (!node_) return;
+
+    if (num_embeddings_ < 2) num_embeddings_ = 2;
+    if (embedding_dim_ < 1) embedding_dim_ = 1;
+    if (padding_idx_ >= num_embeddings_) padding_idx_ = num_embeddings_ - 1;
+    if (max_norm_ < 0.0f) max_norm_ = 0.0f;
+
+    node_->parameters["num_embeddings"] = std::to_string(num_embeddings_);
+    node_->parameters["embedding_dim"] = std::to_string(embedding_dim_);
+    node_->parameters["padding_idx"] = std::to_string(padding_idx_);
+    node_->parameters["max_norm"] = std::to_string(max_norm_);
+    node_->parameters["freeze"] = freeze_ ? "true" : "false";
+    node_->parameters["weights_file"] = weights_file_;
+    node_->parameters["embedding_weights_file"] = weights_file_;
+    node_->parameters["output_weights_file"] = output_file_;
+    switch (init_mode_) {
+        case 1: node_->parameters["init_mode"] = "uniform"; break;
+        case 2: node_->parameters["init_mode"] = "one_hot"; break;
+        default: node_->parameters["init_mode"] = "normal"; break;
+    }
+
+    has_changes_ = false;
+    spdlog::info("EmbeddingDialog: Applied embedding settings");
+}
+
+void EmbeddingDialog::Reset() {
+    if (!node_) return;
+    node_->parameters = original_params_;
+    LoadFromNode();
+    has_changes_ = false;
+}
+
+bool EmbeddingDialog::BuildAndSaveWeights() {
+    if (output_file_[0] == '\0') {
+        status_message_ = "Choose an output weights file before building.";
+        status_is_error_ = true;
+        return false;
+    }
+
+    std::string error;
+    if (!WriteEmbeddingMatrix(output_file_, num_embeddings_, embedding_dim_,
+                              padding_idx_, init_mode_, error)) {
+        status_message_ = error;
+        status_is_error_ = true;
+        return false;
+    }
+
+    std::strncpy(weights_file_, output_file_, sizeof(weights_file_) - 1);
+    weights_file_[sizeof(weights_file_) - 1] = '\0';
+    status_message_ = "Wrote embedding matrix " + std::to_string(num_embeddings_) +
+                      " x " + std::to_string(embedding_dim_) + ".";
+    status_is_error_ = false;
+    has_changes_ = true;
+    return true;
+}
+
+bool EmbeddingDialog::InspectWeightFile() {
+    if (weights_file_[0] == '\0') {
+        status_message_ = "Choose a weights file to inspect.";
+        status_is_error_ = true;
+        return false;
+    }
+    int rows = 0;
+    int cols = 0;
+    std::string error;
+    if (!InspectEmbeddingMatrix(weights_file_, rows, cols, error)) {
+        status_message_ = error;
+        status_is_error_ = true;
+        return false;
+    }
+
+    status_message_ = "Weights file shape: " + std::to_string(rows) +
+                      " x " + std::to_string(cols) + ".";
+    status_is_error_ = false;
+    if (rows != num_embeddings_ || cols != embedding_dim_) {
+        status_message_ += " This does not match the current node shape.";
+        status_is_error_ = true;
+    }
+    return !status_is_error_;
+}
+
+void EmbeddingDialog::RenderContent() {
+    if (ImGui::BeginTabBar("EmbeddingTabs")) {
+        if (ImGui::BeginTabItem("Shape")) {
+            RenderShapeTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Weights")) {
+            RenderWeightsTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Advanced")) {
+            RenderAdvancedTab();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+void EmbeddingDialog::RenderShapeTab() {
+    ImGui::Spacing();
+    ImGui::Text("Vocabulary size:");
+    HelpTooltip("Number of token ids the embedding table can look up. This must match the tokenizer/vocabulary size.");
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::InputInt("##num_embeddings", &num_embeddings_)) {
+        if (num_embeddings_ < 2) num_embeddings_ = 2;
+        has_changes_ = true;
+    }
+
+    ImGui::Text("Embedding dimension:");
+    HelpTooltip("Number of float features learned for each token id. Larger values can model richer text patterns but cost more memory and compute.");
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::InputInt("##embedding_dim", &embedding_dim_)) {
+        if (embedding_dim_ < 1) embedding_dim_ = 1;
+        has_changes_ = true;
+    }
+
+    ImGui::Text("Padding index:");
+    HelpTooltip("Token id treated as padding. Its vector is forced to zero so padded positions do not carry text meaning.");
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::InputInt("##padding_idx", &padding_idx_)) {
+        if (padding_idx_ < -1) padding_idx_ = -1;
+        has_changes_ = true;
+    }
+    ImGui::TextDisabled("-1 disables padding-zero behavior; 0 is typical for [PAD].");
+}
+
+void EmbeddingDialog::RenderWeightsTab() {
+    ImGui::Spacing();
+    ImGui::Text("Load pretrained weights:");
+    HelpTooltip("Optional text matrix file with one embedding row per token id. Its shape must be vocabulary_size x embedding_dimension.");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::InputText("##weights_file", weights_file_, sizeof(weights_file_))) {
+        has_changes_ = true;
+    }
+    if (ImGui::Button("Inspect Weights")) {
+        InspectWeightFile();
+    }
+    HelpTooltip("Checks that the selected weights file has a consistent matrix shape and matches this node.");
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Freeze loaded weights", &freeze_)) {
+        has_changes_ = true;
+    }
+    HelpTooltip("When enabled, pretrained vectors are used as fixed features and are not updated during training.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Build starter weights:");
+    HelpTooltip("Creates an initial embedding matrix from this node's shape. This is useful when you want a saved matrix file before training.");
+    const char* modes[] = {"Random normal", "Random uniform", "One-hot / truncated"};
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::Combo("##init_mode", &init_mode_, modes, 3)) {
+        has_changes_ = true;
+    }
+    ImGui::Text("Output weights file:");
+    HelpTooltip("Destination path for the generated embedding matrix. The file can be loaded back through 'Load pretrained weights'.");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::InputText("##output_weights_file", output_file_, sizeof(output_file_))) {
+        has_changes_ = true;
+    }
+    if (ImGui::Button("Build, Save, and Use")) {
+        BuildAndSaveWeights();
+    }
+    HelpTooltip("Writes the starter matrix and immediately selects it as this node's weights file.");
+
+    if (!status_message_.empty()) {
+        ValidationMessage(status_message_, status_is_error_);
+    }
+}
+
+void EmbeddingDialog::RenderAdvancedTab() {
+    ImGui::Spacing();
+    ImGui::Text("Max norm:");
+    HelpTooltip("Optional length cap for each token vector during lookup. Use 0 to disable clipping.");
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::InputFloat("##max_norm", &max_norm_, 0.1f, 1.0f, "%.4f")) {
+        if (max_norm_ < 0.0f) max_norm_ = 0.0f;
+        has_changes_ = true;
+    }
+    ImGui::TextDisabled("0 disables norm clipping. Positive values clip each vector during lookup.");
 }
 
 // ==================== FilterDialog ====================
@@ -1019,6 +1634,9 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
     });
     RegisterDialog(NT::TextPadding, [](MLNode* node) {
         return std::make_unique<TokenizerDialog>(node);
+    });
+    RegisterDialog(NT::Embedding, [](MLNode* node) {
+        return std::make_unique<EmbeddingDialog>(node);
     });
 
     RegisterDialog(NT::FilterRows, [](MLNode* node) {

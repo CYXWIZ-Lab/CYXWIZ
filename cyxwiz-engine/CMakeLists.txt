@@ -911,7 +911,10 @@ target_link_libraries(cyxwiz_plotting PRIVATE
     glfw
     fmt::fmt
     spdlog::spdlog
+    cyxwiz-backend
 )
+
+target_compile_definitions(cyxwiz_plotting PRIVATE CYXWIZ_PLOTTING_MODULE)
 
 # Include directories for the Python module
 target_include_directories(cyxwiz_plotting PRIVATE

@@ -127,6 +127,8 @@ private:
     void RenderPaddingTab();
     void RenderPreviewTab();
     void LoadFromNode();
+    bool BuildVocabularyFile();
+    bool InspectVocabularyFile();
     bool IsTokenizerNode() const;
     bool IsVocabularyNode() const;
     bool IsPaddingNode() const;
@@ -142,8 +144,48 @@ private:
     char text_col_[128] = "text";
     char label_col_[128] = "";
     char vocab_file_[260] = "";
+    char source_csv_[512] = "";
     char sample_text_[1024] = "Hello world! This is a sample text for tokenization preview.";
     std::vector<std::string> preview_tokens_;
+    std::string status_message_;
+    bool status_is_error_ = false;
+};
+
+/**
+ * EmbeddingDialog - Configuration dialog for token embedding lookup layers.
+ *
+ * The Embedding node is trainable by default. This dialog can also attach
+ * a prebuilt text matrix file or create a deterministic starter matrix
+ * from the configured vocabulary size/dimension.
+ */
+class EmbeddingDialog : public NodeConfigDialog {
+public:
+    EmbeddingDialog(MLNode* node);
+    void Apply() override;
+    void Reset() override;
+    ImVec2 GetDefaultSize() const override { return ImVec2(760, 560); }
+
+protected:
+    void RenderContent() override;
+
+private:
+    void LoadFromNode();
+    void RenderShapeTab();
+    void RenderWeightsTab();
+    void RenderAdvancedTab();
+    bool BuildAndSaveWeights();
+    bool InspectWeightFile();
+
+    int num_embeddings_ = 10000;
+    int embedding_dim_ = 256;
+    int padding_idx_ = -1;
+    float max_norm_ = 0.0f;
+    bool freeze_ = false;
+    int init_mode_ = 0;  // 0=random normal, 1=random uniform, 2=one-hot/truncated
+    char weights_file_[512] = "";
+    char output_file_[512] = "";
+    std::string status_message_;
+    bool status_is_error_ = false;
 };
 
 /**
