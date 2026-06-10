@@ -88,6 +88,17 @@ Definition of done:
 - Parquet/image/audio/text behavior is documented as supported, adapted, or
   intentionally skipped with user-visible reasons.
 
+Status 2026-06-10:
+
+- Decided. Materializer v2 remains an Arrow-table preprocessing adapter for
+  now, not a full graph planner. The current contract is explicit:
+  in-memory Arrow tables can materialize linear operator chains; Parquet-backed,
+  image, audio, and legacy text datasets pass through unchanged with central
+  unsupported-source reasons. Existing tests pin branched/cyclic graph
+  fail-closed behavior and selected-source matching; `test_text_gui_training_launch`
+  now also pins registry-backed pass-through for Parquet, image, audio, and text
+  source kinds.
+
 ## Priority 3 - Finish String-Only Alias Migration
 
 Problem:
@@ -122,6 +133,13 @@ Status 2026-06-08:
   `PolynomialFeatures`, and `Binning`.
 - Adding a new executable string-only alias now requires both a dispatch kind
   and a compatibility reason, and the drift test must name it explicitly.
+- Reviewed 2026-06-10. The remaining exceptions are intentionally kept as
+  compatibility aliases in this slice: several use legacy parameter schemas, and
+  `SaveDataset`, `DeployToNodeEditor`, `PolynomialFeatures`, and `Binning` do
+  not currently have equivalent browser-visible typed metadata with the same
+  contract. `test_pipeline_operator_metadata` and
+  `test_pipeline_executor_operator_routing` pin the dispatch/reason list and
+  broad executor behavior.
 
 ## Priority 4 - Broader Frontend Support-Axis Presentation
 
@@ -157,6 +175,11 @@ Status 2026-06-08:
   blocked runtime state. Current positive training support axes are pinned for
   Dense, Dropout, BatchNorm, LSTM, and GRU; broader tensor/training-node axis
   coverage remains a follow-up.
+- Done 2026-06-10. `NERSequenceBuilder` metadata now follows the same central
+  fail-closed runtime support-axis path as the other NER contract nodes instead
+  of skipping runtime axes. This keeps Node Info/Browser support presentation
+  aligned with `PipelineRuntimeCapabilities` and restores
+  `test_pipeline_operator_metadata`.
 
 ## Priority 5 - Complete Schema/Type Validation Parity
 
@@ -205,3 +228,12 @@ Status 2026-06-08:
   Debug --target test_text_loader_csv_preflight -j 8`,
   `build\bin\Debug\test_text_loader_csv_preflight.exe`, and
   `cmake --build build --config Debug --target cyxwiz-engine -j 8`.
+- Verified 2026-06-10. The broad
+  `test_pipeline_executor_operator_routing` suite still passes after the
+  materializer scope and metadata support-axis changes; its expected negative
+  cases include type/schema validation failures and the fail-closed
+  `TableSplitter` multi-output routing limitation.
+- Done 2026-06-10. Added focused routing-suite schema regression coverage for
+  less-used PipelineOperatorFactory families that were centrally validated but
+  not pinned by negative tests: `PolynomialRegressionNode`, `MinMaxScaler`,
+  `GMMCluster`, `LogTransform`, `Differencing`, and `ARIMAForecaster`.

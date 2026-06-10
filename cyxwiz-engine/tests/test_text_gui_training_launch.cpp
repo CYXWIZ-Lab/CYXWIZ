@@ -4,6 +4,7 @@
 #include "../src/core/model_builder.h"
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
+#include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/pipeline_materializer.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/graph_training_launcher.h"
@@ -24,6 +25,9 @@ constexpr const char* kDatasetName = "gui_text_runtime";
 constexpr const char* kMaterializedDatasetName = "gui_text_runtime__materialized";
 constexpr const char* kUnusedDatasetName = "unused_gui_text_runtime";
 constexpr const char* kScopeArrowDatasetName = "gui_text_runtime_scope_arrow";
+constexpr const char* kScopeParquetDatasetName = "gui_text_runtime_scope_parquet";
+constexpr const char* kScopeImageDatasetName = "gui_text_runtime_scope_image";
+constexpr const char* kScopeAudioDatasetName = "gui_text_runtime_scope_audio";
 constexpr const char* kScopeTextDatasetName = "gui_text_runtime_scope_legacy_text";
 
 void Check(bool condition, const std::string& message) {
@@ -181,6 +185,30 @@ cyxwiz::TrainingConfiguration MakeTrainingConfig(
     return config;
 }
 
+void CheckUnsupportedMaterializerSource(
+    const cyxwiz::MaterializeResult& result,
+    const std::string& dataset_name,
+    cyxwiz::PipelineMaterializerSourceKind source_kind,
+    cyxwiz::PipelineStorageBackend backend,
+    const std::string& label) {
+
+    Check(result.success, result.error_message);
+    Check(result.effective_dataset_name == dataset_name,
+          label + " source should pass through unchanged");
+    Check(result.operators_applied == 0,
+          label + " source should not apply Arrow operators");
+    Check(result.source_kind == source_kind,
+          label + " source should report its source kind");
+    Check(result.skipped_unsupported_source,
+          label + " source should report unsupported-source skip");
+    const auto backend_support =
+        cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(backend);
+    Check(backend_support.reason != nullptr,
+          label + " materializer backend reason should be registered");
+    Check(result.unsupported_source_reason == backend_support.reason,
+          label + " source should expose central materializer skip reason");
+}
+
 } // namespace
 
 namespace cyxwiz {
@@ -243,6 +271,9 @@ int main() {
     registry.UnregisterTabularDataset(
         std::string(kScopeArrowDatasetName) +
         cyxwiz::PipelineMaterializer::kMaterializedSuffix);
+    registry.UnregisterTabularDataset(kScopeParquetDatasetName);
+    registry.UnregisterImageDataset(kScopeImageDatasetName);
+    registry.UnregisterAudioDataset(kScopeAudioDatasetName);
     Check(registry.RegisterArrowTable(MakeTextTable(), kScopeArrowDatasetName) != nullptr,
           "Arrow source should register for materializer scope test");
     std::vector<gui::MLNode> scope_nodes = {
@@ -266,6 +297,59 @@ int main() {
         std::string(kScopeArrowDatasetName) +
         cyxwiz::PipelineMaterializer::kMaterializedSuffix);
 
+    const auto parquet_path = work_dir / "materializer_scope.parquet";
+    std::remove(parquet_path.string().c_str());
+    cyxwiz::ArrowDataset parquet_fixture(
+        MakeTextTable(), kScopeParquetDatasetName);
+    Check(parquet_fixture.ExportParquet(parquet_path.string()),
+          "materializer scope Parquet fixture should export");
+    auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        parquet_path.string(), kScopeParquetDatasetName);
+    Check(parquet_dataset != nullptr,
+          "materializer scope Parquet fixture should open");
+    registry.RegisterParquetBacked(kScopeParquetDatasetName, parquet_dataset);
+    auto parquet_scope = cyxwiz::PipelineMaterializer::Materialize(
+        scope_nodes, links, registry, kScopeParquetDatasetName);
+    CheckUnsupportedMaterializerSource(
+        parquet_scope,
+        kScopeParquetDatasetName,
+        cyxwiz::PipelineMaterializerSourceKind::ParquetBacked,
+        cyxwiz::PipelineStorageBackend::ParquetBacked,
+        "Parquet-backed");
+    registry.UnregisterTabularDataset(kScopeParquetDatasetName);
+    parquet_dataset.reset();
+    std::remove(parquet_path.string().c_str());
+
+    cyxwiz::DataRegistry::ImageDatasetEntry image_entry;
+    image_entry.folder_path = "images";
+    image_entry.num_images = 4;
+    image_entry.num_classes = 2;
+    registry.RegisterImageDataset(kScopeImageDatasetName, image_entry);
+    auto image_scope = cyxwiz::PipelineMaterializer::Materialize(
+        scope_nodes, links, registry, kScopeImageDatasetName);
+    CheckUnsupportedMaterializerSource(
+        image_scope,
+        kScopeImageDatasetName,
+        cyxwiz::PipelineMaterializerSourceKind::ImageDataset,
+        cyxwiz::PipelineStorageBackend::ImageDataset,
+        "Image");
+    registry.UnregisterImageDataset(kScopeImageDatasetName);
+
+    cyxwiz::DataRegistry::AudioDatasetEntry audio_entry;
+    audio_entry.folder_path = "audio";
+    audio_entry.num_samples = 4;
+    audio_entry.num_classes = 2;
+    registry.RegisterAudioDataset(kScopeAudioDatasetName, audio_entry);
+    auto audio_scope = cyxwiz::PipelineMaterializer::Materialize(
+        scope_nodes, links, registry, kScopeAudioDatasetName);
+    CheckUnsupportedMaterializerSource(
+        audio_scope,
+        kScopeAudioDatasetName,
+        cyxwiz::PipelineMaterializerSourceKind::AudioDataset,
+        cyxwiz::PipelineStorageBackend::AudioDataset,
+        "Audio");
+    registry.UnregisterAudioDataset(kScopeAudioDatasetName);
+
     cyxwiz::DataRegistry::TextDatasetEntry text_entry;
     text_entry.source_path = "legacy_text.csv";
     text_entry.text_column = "text";
@@ -274,23 +358,12 @@ int main() {
     registry.RegisterTextDataset(kScopeTextDatasetName, text_entry);
     auto text_scope = cyxwiz::PipelineMaterializer::Materialize(
         scope_nodes, links, registry, kScopeTextDatasetName);
-    Check(text_scope.success, text_scope.error_message);
-    Check(text_scope.effective_dataset_name == kScopeTextDatasetName,
-          "legacy text source should pass through unchanged");
-    Check(text_scope.operators_applied == 0,
-          "legacy text source should not apply Arrow operators");
-    Check(text_scope.source_kind ==
-              cyxwiz::PipelineMaterializerSourceKind::TextDataset,
-          "legacy text source should report TextDataset source kind");
-    Check(text_scope.skipped_unsupported_source,
-          "legacy text source should report unsupported-source skip");
-    const auto text_backend_support =
-        cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(
-            cyxwiz::PipelineStorageBackend::TextDataset);
-    Check(text_backend_support.reason != nullptr,
-          "text materializer backend reason should be registered");
-    Check(text_scope.unsupported_source_reason == text_backend_support.reason,
-          "legacy text source should expose central materializer skip reason");
+    CheckUnsupportedMaterializerSource(
+        text_scope,
+        kScopeTextDatasetName,
+        cyxwiz::PipelineMaterializerSourceKind::TextDataset,
+        cyxwiz::PipelineStorageBackend::TextDataset,
+        "Legacy text");
     registry.UnregisterTextDataset(kScopeTextDatasetName);
 
     bool dispatch_called = false;
@@ -484,8 +557,11 @@ int main() {
           "legacy text result should report TextDataset source kind");
     Check(legacy_text_result.materializer_skipped_unsupported_source,
           "legacy text result should report unsupported materializer skip");
+    const auto legacy_text_backend_support =
+        cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(
+            cyxwiz::PipelineStorageBackend::TextDataset);
     Check(legacy_text_result.materializer_unsupported_source_reason ==
-              text_backend_support.reason,
+              legacy_text_backend_support.reason,
           "legacy text result should expose central skip reason");
     registry.UnregisterTextDataset(kScopeTextDatasetName);
 

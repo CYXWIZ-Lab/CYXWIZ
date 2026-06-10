@@ -349,10 +349,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             continue;
         }
 
-        if (*metadata_node_type == gui::NodeType::NERSequenceBuilder) {
-            continue;
-        }
-
         auto& metadata = it->second;
         metadata.status = NodeImplementationStatus::Template;
         metadata.badge = "Blocked";

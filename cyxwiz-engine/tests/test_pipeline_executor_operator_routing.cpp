@@ -773,6 +773,25 @@ int main() {
           "LinearRegression feature_cols validation should be specific: " +
               bad_linear_regression_feature_type_executor.GetLastError());
 
+    const std::string bad_polynomial_regression_feature_type_json =
+        R"({"nodes":[)"
+        R"({"id":701,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":702,"type":"PolynomialRegressionNode","name":"BadPolyFeature","parameters":{)"
+        R"("feature_col":"phrase","target_col":"y","degree":"2"}})"
+        R"(],"links":[{"start_node":701,"end_node":702}]})";
+
+    cyxwiz::PipelineExecutor bad_polynomial_regression_feature_type_executor;
+    Check(!bad_polynomial_regression_feature_type_executor.ExecutePipeline(
+              bad_polynomial_regression_feature_type_json),
+          "PolynomialRegressionNode string feature_col should fail schema validation");
+    Check(bad_polynomial_regression_feature_type_executor.GetLastError().find(
+              "PolynomialRegressionNode: feature column 'phrase' must be numeric") !=
+              std::string::npos,
+          "PolynomialRegressionNode feature_col validation should be specific: " +
+              bad_polynomial_regression_feature_type_executor.GetLastError());
+
     const std::string bad_exp_smoothing_damped_json =
         R"({"nodes":[)"
         R"({"id":304,"type":"DataInput","name":"Input","parameters":{)"
@@ -849,6 +868,25 @@ int main() {
               std::string::npos,
           "StandardScaler label_col validation should be specific: " +
               bad_standard_scaler_label_col_executor.GetLastError());
+
+    const std::string bad_minmax_scaler_column_type_json =
+        R"({"nodes":[)"
+        R"({"id":703,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":704,"type":"MinMaxScaler","name":"BadMinMaxColumn","parameters":{)"
+        R"("columns":"phrase","feature_range_min":"0","feature_range_max":"1"}})"
+        R"(],"links":[{"start_node":703,"end_node":704}]})";
+
+    cyxwiz::PipelineExecutor bad_minmax_scaler_column_type_executor;
+    Check(!bad_minmax_scaler_column_type_executor.ExecutePipeline(
+              bad_minmax_scaler_column_type_json),
+          "MinMaxScaler string columns should fail schema validation");
+    Check(bad_minmax_scaler_column_type_executor.GetLastError().find(
+              "MinMaxScaler: column 'phrase' must be numeric") !=
+              std::string::npos,
+          "MinMaxScaler columns validation should be specific: " +
+              bad_minmax_scaler_column_type_executor.GetLastError());
 
     const std::string bad_robust_scaler_centering_json =
         R"({"nodes":[)"
@@ -1511,6 +1549,24 @@ int main() {
               uppercase_gmm_covariance_executor.GetLastError());
     check_cluster_output("ds_operator_GMMCluster_347", "GMMCluster uppercase covariance_type");
 
+    const std::string bad_gmm_feature_type_json =
+        R"({"nodes":[)"
+        R"({"id":705,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":706,"type":"GMMCluster","name":"BadGMMFeature","parameters":{)"
+        R"("feature_cols":"phrase","n_components":"1","max_iter":"10","n_init":"1"}})"
+        R"(],"links":[{"start_node":705,"end_node":706}]})";
+
+    cyxwiz::PipelineExecutor bad_gmm_feature_type_executor;
+    Check(!bad_gmm_feature_type_executor.ExecutePipeline(bad_gmm_feature_type_json),
+          "GMMCluster string feature_cols should fail schema validation");
+    Check(bad_gmm_feature_type_executor.GetLastError().find(
+              "GMMCluster: feature column 'phrase' must be numeric") !=
+              std::string::npos,
+          "GMMCluster feature_cols validation should be specific: " +
+              bad_gmm_feature_type_executor.GetLastError());
+
     const std::string bad_exp_smoothing_method_json =
         R"({"nodes":[)"
         R"({"id":324,"type":"DataInput","name":"Input","parameters":{)"
@@ -1743,6 +1799,63 @@ int main() {
               std::string::npos,
           "TimeSeriesFeatures value_col validation should be specific: " +
               bad_time_series_features_value_type_executor.GetLastError());
+
+    const std::string bad_log_transform_value_type_json =
+        R"({"nodes":[)"
+        R"({"id":707,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":708,"type":"LogTransform","name":"BadLogValue","parameters":{)"
+        R"("value_col":"phrase"}})"
+        R"(],"links":[{"start_node":707,"end_node":708}]})";
+
+    cyxwiz::PipelineExecutor bad_log_transform_value_type_executor;
+    Check(!bad_log_transform_value_type_executor.ExecutePipeline(
+              bad_log_transform_value_type_json),
+          "LogTransform string value_col should fail schema validation");
+    Check(bad_log_transform_value_type_executor.GetLastError().find(
+              "LogTransform: value column 'phrase' must be numeric") !=
+              std::string::npos,
+          "LogTransform value_col validation should be specific: " +
+              bad_log_transform_value_type_executor.GetLastError());
+
+    const std::string bad_differencing_value_type_json =
+        R"({"nodes":[)"
+        R"({"id":709,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":710,"type":"Differencing","name":"BadDifferencingValue","parameters":{)"
+        R"("value_col":"phrase","lag":"1","order":"1"}})"
+        R"(],"links":[{"start_node":709,"end_node":710}]})";
+
+    cyxwiz::PipelineExecutor bad_differencing_value_type_executor;
+    Check(!bad_differencing_value_type_executor.ExecutePipeline(
+              bad_differencing_value_type_json),
+          "Differencing string value_col should fail schema validation");
+    Check(bad_differencing_value_type_executor.GetLastError().find(
+              "Differencing: value column 'phrase' must be numeric") !=
+              std::string::npos,
+          "Differencing value_col validation should be specific: " +
+              bad_differencing_value_type_executor.GetLastError());
+
+    const std::string bad_arima_signal_type_json =
+        R"({"nodes":[)"
+        R"({"id":711,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":712,"type":"ARIMAForecaster","name":"BadARIMASignal","parameters":{)"
+        R"("signal_col":"phrase"}})"
+        R"(],"links":[{"start_node":711,"end_node":712}]})";
+
+    cyxwiz::PipelineExecutor bad_arima_signal_type_executor;
+    Check(!bad_arima_signal_type_executor.ExecutePipeline(
+              bad_arima_signal_type_json),
+          "ARIMAForecaster string signal_col should fail schema validation");
+    Check(bad_arima_signal_type_executor.GetLastError().find(
+              "ARIMAForecaster: signal column 'phrase' must be numeric") !=
+              std::string::npos,
+          "ARIMAForecaster signal_col validation should be specific: " +
+              bad_arima_signal_type_executor.GetLastError());
 
     const std::string missing_decomposition_period_json =
         R"({"nodes":[)"
