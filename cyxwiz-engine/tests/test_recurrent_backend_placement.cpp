@@ -350,6 +350,10 @@ int main() {
           "unclassified placement should use the unclassified reason code");
     Check(unclassified_placement->NeedsUserAttention(),
           "unclassified placement should require user attention");
+    Check(HasWarningText(
+              unclassified_config,
+              cyxwiz::BackendPlacementReason::BackendCapabilityUnclassified),
+          "unclassified placement should surface as a compiler warning");
     const auto unclassified_summary =
         unclassified_config.SummarizeBackendPlacements();
     Check(unclassified_summary.unknown == 1,

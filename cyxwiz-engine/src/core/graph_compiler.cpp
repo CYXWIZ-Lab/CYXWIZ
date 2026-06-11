@@ -880,9 +880,16 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                     backend_placement::BuildArrayFireTensorPlacement(layer));
                 continue;
             case backend_placement::LayerCapabilityKind::Unclassified:
-                config.backend_placements.push_back(
-                    backend_placement::BuildUnclassifiedPlacement(layer));
+            {
+                auto placement =
+                    backend_placement::BuildUnclassifiedPlacement(layer);
+                config.backend_placements.push_back(placement);
+                AddIssue(config, IssueLevel::Warning,
+                         placement.explanation + " Reason code: " +
+                             placement.reason_code + ".",
+                         layer.node_id, layer.name);
                 continue;
+            }
             case backend_placement::LayerCapabilityKind::Recurrent:
                 break;
         }
