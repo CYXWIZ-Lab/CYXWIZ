@@ -1418,6 +1418,45 @@ set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Recurrent Backend Placement Preflight =====
+add_executable(test_recurrent_backend_placement
+    tests/test_recurrent_backend_placement.cpp
+    src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+)
+
+target_include_directories(test_recurrent_backend_placement PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_recurrent_backend_placement PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_recurrent_backend_placement PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_recurrent_backend_placement PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Tabular Loader Apply Context Guard =====
 add_executable(test_tabular_loader_apply_context
     tests/test_tabular_loader_apply_context.cpp
