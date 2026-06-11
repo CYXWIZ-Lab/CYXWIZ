@@ -449,6 +449,13 @@ Current implementation slice:
 
 - `TrainingConfiguration` now carries a typed `backend_placements` report.
 - Recurrent compiler warnings include a stable placement `reason_code`.
+- The compiler now emits placement entries for every compiled model/tensor layer,
+  not only GRU/LSTM. Generic layers such as Embedding, Dense, Flatten, tensor
+  shape ops, reductions, pooling, convolution, dropout, and activations are
+  marked GPU-capable under the active ArrayFire backend with reason code
+  `arrayfire_tensor_op_capable`. Compiled layer types without a precise rule are
+  reported as `backend_capability_unclassified` instead of being incorrectly
+  promised as GPU-capable.
 - Graph compile logs include a backend placement plan.
 - Compile findings now log at their actual severity, so warning console filters
   see placement warnings instead of missing an info-level line containing

@@ -179,8 +179,18 @@ cyxwiz::TrainingConfiguration CompileRecurrentGraph(gui::NodeType recurrent_type
 int main() {
     auto gru_config = CompileRecurrentGraph(gui::NodeType::GRU, 32, false);
     Check(gru_config.is_valid, "GRU placement graph should compile");
-    Check(gru_config.backend_placements.size() == 1,
-          "GRU graph should produce one backend placement entry");
+    Check(gru_config.backend_placements.size() == 3,
+          "GRU graph should produce placement entries for Embedding, GRU, Dense");
+
+    const auto* gru_embedding_placement = FindPlacement(gru_config, 3);
+    Check(gru_embedding_placement != nullptr,
+          "GRU graph should report Embedding placement");
+    Check(gru_embedding_placement->node_type == "Embedding",
+          "Embedding placement should name the layer");
+    Check(gru_embedding_placement->status == "gpu",
+          "Embedding should be marked GPU-capable");
+    Check(gru_embedding_placement->reason_code == "arrayfire_tensor_op_capable",
+          "Embedding should use the generic tensor placement reason");
 
     const auto* gru_placement = FindPlacement(gru_config, 4);
     Check(gru_placement != nullptr, "GRU placement entry should reference node 4");
@@ -197,10 +207,18 @@ int main() {
     Check(HasWarningText(gru_config, "gru_arrayfire_cuda_probe_required"),
           "GRU CPU placement should surface as a compiler warning");
 
+    const auto* gru_dense_placement = FindPlacement(gru_config, 5);
+    Check(gru_dense_placement != nullptr,
+          "GRU graph should report Dense placement");
+    Check(gru_dense_placement->node_type == "Dense",
+          "Dense placement should name the layer");
+    Check(gru_dense_placement->status == "gpu",
+          "Dense should be marked GPU-capable");
+
     auto lstm_config = CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
     Check(lstm_config.is_valid, "small LSTM placement graph should compile");
-    Check(lstm_config.backend_placements.size() == 1,
-          "LSTM graph should produce one backend placement entry");
+    Check(lstm_config.backend_placements.size() == 3,
+          "LSTM graph should produce placement entries for Embedding, LSTM, Dense");
 
     const auto* lstm_placement = FindPlacement(lstm_config, 4);
     Check(lstm_placement != nullptr, "LSTM placement entry should reference node 4");
