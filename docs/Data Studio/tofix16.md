@@ -22,6 +22,16 @@ Current batchers can split work across synchronous per-batch workers, but
 they join before returning the batch. `prefetch_factor` is serialized for
 future compatibility but is currently ignored.
 
+2026-06-11 first slice:
+
+- Arrow training and validation now log aggregate batch-fetch timing
+  (`avg_fetch` and `max_fetch`) once per epoch/evaluation pass. This is
+  baseline instrumentation only; it does not implement prefetching or
+  change batcher behavior.
+- Use these timings to decide whether async prefetch is likely to help a
+  specific graph. If fetch time is small relative to forward/backward time,
+  prefetch should not be prioritized for that path.
+
 **Goal:** add a real async prefetch queue only where it improves training
 latency without making shutdown, cancellation, or dataset lifetime unsafe.
 

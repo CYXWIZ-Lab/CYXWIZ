@@ -1325,6 +1325,8 @@ void TrainingExecutor::RunTrainingEpochArrow(
     int correct = 0;
     int total = 0;
     int batch_num = 0;
+    double fetch_total_ms = 0.0;
+    double fetch_max_ms = 0.0;
 
     spdlog::debug("RunTrainingEpochArrow: Getting num batches");
     size_t total_batches = batcher.GetNumBatches();
@@ -1354,10 +1356,15 @@ void TrainingExecutor::RunTrainingEpochArrow(
         TrainingTraceCollector::Instance().RecordStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
             static_cast<int>(total_batches));
+        const auto fetch_start = std::chrono::steady_clock::now();
         Batch batch = batcher.GetNextBatch();
+        const double fetch_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - fetch_start).count();
         if (!batch.IsValid()) break;
 
         batch_num++;
+        fetch_total_ms += fetch_ms;
+        fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
 
         // Forward pass through model
         CrashRunRecorder::Instance().MarkStage(
@@ -1526,6 +1533,14 @@ void TrainingExecutor::RunTrainingEpochArrow(
         m.train_loss = final_loss;
         m.train_accuracy = final_acc;
     });
+    if (batch_num > 0) {
+        spdlog::info(
+            "Arrow loader timing epoch {}: batches={}, avg_fetch={:.2f} ms, max_fetch={:.2f} ms",
+            epoch,
+            batch_num,
+            fetch_total_ms / static_cast<double>(batch_num),
+            fetch_max_ms);
+    }
     CrashRunRecorder::Instance().MarkStage(
         TrainingTraceStage::EpochComplete, epoch, batch_num,
         static_cast<int>(total_batches), final_loss, final_acc);
@@ -1539,16 +1554,23 @@ std::pair<float, float> TrainingExecutor::EvaluateArrowBatcher(IBatcher& batcher
     int correct = 0;
     int total = 0;
     int batch_num = 0;
+    double fetch_total_ms = 0.0;
+    double fetch_max_ms = 0.0;
 
     batcher.Reset();
 
     while (!batcher.IsEpochComplete()) {
         if (ShouldStop()) break;
 
+        const auto fetch_start = std::chrono::steady_clock::now();
         Batch batch = batcher.GetNextBatch();
+        const double fetch_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - fetch_start).count();
         if (!batch.IsValid()) break;
 
         batch_num++;
+        fetch_total_ms += fetch_ms;
+        fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
 
         // Forward pass only (no backprop)
         Tensor predictions = Forward(batch.data);
@@ -1583,6 +1605,14 @@ std::pair<float, float> TrainingExecutor::EvaluateArrowBatcher(IBatcher& batcher
 
     float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
+
+    if (batch_num > 0) {
+        spdlog::info(
+            "Arrow loader timing validation: batches={}, avg_fetch={:.2f} ms, max_fetch={:.2f} ms",
+            batch_num,
+            fetch_total_ms / static_cast<double>(batch_num),
+            fetch_max_ms);
+    }
 
     return {final_loss, final_acc};
 }
