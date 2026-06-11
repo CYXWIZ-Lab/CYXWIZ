@@ -459,6 +459,9 @@ Current implementation slice:
 - Generic and unclassified layer placement rules now live in
   `backend_placement_capabilities.h`, which is the first small step toward a
   reusable backend capability registry.
+- Layer capability classification now returns an explicit kind:
+  `ArrayFireTensor`, `Recurrent`, or `Unclassified`, so future backend/plugin
+  placement rules can attach metadata without more ad hoc boolean checks.
 - Backend placement status and generic reason strings now have named constants
   in `graph_compiler.h`, reducing string drift between compiler, runtime logs,
   UI, and tests.

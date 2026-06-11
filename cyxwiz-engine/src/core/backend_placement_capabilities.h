@@ -6,6 +6,17 @@
 
 namespace cyxwiz::backend_placement {
 
+enum class LayerCapabilityKind {
+    ArrayFireTensor,
+    Recurrent,
+    Unclassified
+};
+
+struct LayerCapability {
+    LayerCapabilityKind kind = LayerCapabilityKind::Unclassified;
+    const char* type_name = "Layer";
+};
+
 inline const char* LayerTypeName(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Dense: return "Dense";
@@ -122,6 +133,19 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         default:
             return false;
     }
+}
+
+inline LayerCapability ClassifyLayer(gui::NodeType type) {
+    LayerCapability capability;
+    capability.type_name = LayerTypeName(type);
+    if (IsKnownArrayFireTensorLayer(type)) {
+        capability.kind = LayerCapabilityKind::ArrayFireTensor;
+    } else if (IsRecurrentLayer(type)) {
+        capability.kind = LayerCapabilityKind::Recurrent;
+    } else {
+        capability.kind = LayerCapabilityKind::Unclassified;
+    }
+    return capability;
 }
 
 inline BackendPlacementEntry BuildArrayFireTensorPlacement(

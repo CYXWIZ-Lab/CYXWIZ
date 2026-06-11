@@ -873,16 +873,18 @@ size_t EstimateSequenceLength(const CompiledLayer& layer) {
 
 void AddBackendPlacementReports(TrainingConfiguration& config) {
     for (const auto& layer : config.layers) {
-        if (backend_placement::IsKnownArrayFireTensorLayer(layer.type)) {
-            config.backend_placements.push_back(
-                backend_placement::BuildArrayFireTensorPlacement(layer));
-            continue;
-        }
-
-        if (!backend_placement::IsRecurrentLayer(layer.type)) {
-            config.backend_placements.push_back(
-                backend_placement::BuildUnclassifiedPlacement(layer));
-            continue;
+        const auto capability = backend_placement::ClassifyLayer(layer.type);
+        switch (capability.kind) {
+            case backend_placement::LayerCapabilityKind::ArrayFireTensor:
+                config.backend_placements.push_back(
+                    backend_placement::BuildArrayFireTensorPlacement(layer));
+                continue;
+            case backend_placement::LayerCapabilityKind::Unclassified:
+                config.backend_placements.push_back(
+                    backend_placement::BuildUnclassifiedPlacement(layer));
+                continue;
+            case backend_placement::LayerCapabilityKind::Recurrent:
+                break;
         }
 
         const size_t hidden_size =

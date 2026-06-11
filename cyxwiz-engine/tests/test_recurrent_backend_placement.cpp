@@ -234,6 +234,16 @@ int main() {
           "TimeDistributed should remain unclassified until capability rules exist");
     Check(cyxwiz::backend_placement::IsRecurrentLayer(gui::NodeType::GRU),
           "GRU should be classified as recurrent placement layer");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::Embedding).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "Embedding capability kind should be ArrayFireTensor");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::GRU).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::Recurrent,
+          "GRU capability kind should be Recurrent");
+    Check(cyxwiz::backend_placement::ClassifyLayer(
+              gui::NodeType::TimeDistributed).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::Unclassified,
+          "TimeDistributed capability kind should be Unclassified");
 
     auto gru_config = CompileRecurrentGraph(gui::NodeType::GRU, 32, false);
     Check(gru_config.is_valid, "GRU placement graph should compile");
