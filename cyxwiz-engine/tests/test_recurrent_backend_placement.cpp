@@ -1,4 +1,5 @@
 #include "../src/core/graph_compiler.h"
+#include "../src/core/backend_placement_capabilities.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <cstdlib>
@@ -225,6 +226,15 @@ cyxwiz::TrainingConfiguration CompileUnclassifiedLayerGraph() {
 } // namespace
 
 int main() {
+    Check(cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
+              gui::NodeType::Embedding),
+          "Embedding should be classified as ArrayFire tensor-capable");
+    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
+              gui::NodeType::TimeDistributed),
+          "TimeDistributed should remain unclassified until capability rules exist");
+    Check(cyxwiz::backend_placement::IsRecurrentLayer(gui::NodeType::GRU),
+          "GRU should be classified as recurrent placement layer");
+
     auto gru_config = CompileRecurrentGraph(gui::NodeType::GRU, 32, false);
     Check(gru_config.is_valid, "GRU placement graph should compile");
     Check(gru_config.backend_placements.size() == 3,

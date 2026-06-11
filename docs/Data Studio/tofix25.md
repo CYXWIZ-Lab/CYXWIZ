@@ -456,6 +456,9 @@ Current implementation slice:
   `arrayfire_tensor_op_capable`. Compiled layer types without a precise rule are
   reported as `backend_capability_unclassified` instead of being incorrectly
   promised as GPU-capable.
+- Generic and unclassified layer placement rules now live in
+  `backend_placement_capabilities.h`, which is the first small step toward a
+  reusable backend capability registry.
 - `TrainingConfiguration::SummarizeBackendPlacements()` now provides a shared
   whole-graph placement count for compiler logs, training startup logs, and the
   compile-result popup.
