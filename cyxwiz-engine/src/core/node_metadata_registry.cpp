@@ -1301,7 +1301,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"dense", "linear", "fc"}, 0, false, "Fully connected layer", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Output"}},
-        {{"units", "int", "128", "Output units", {}, ""}},
+        {{"units", "int", "64", "Output units", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv2D, NodeCategory::Layers, "Conv2D", ICON_FA_BORDER_ALL,
@@ -1315,10 +1315,11 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"lstm", "recurrent", "sequence"}, 0, false, "LSTM layer", "", "",
         {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
         {{"Output", PinType::Tensor, true, "Output"}, {"Hidden", PinType::Tensor, false, "Hidden"}},
-        {{"input_size", "int", "256", "Input size", {}, ""},
+        {{"input_size", "int", "0", "Input size (auto)", {}, "Derived from the previous layer output."},
          {"hidden_size", "int", "128", "Hidden size", {}, ""},
          {"num_layers", "int", "1", "Stacked layers", {}, ""},
          {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
+         {"return_sequences", "bool", "false", "Return sequences", {}, ""},
          {"dropout", "float", "0.0", "Dropout", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -1326,10 +1327,11 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"gru", "recurrent", "sequence"}, 0, false, "GRU layer", "", "",
         {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
         {{"Output", PinType::Tensor, true, "Output"}, {"Hidden", PinType::Tensor, false, "Hidden"}},
-        {{"input_size", "int", "256", "Input size", {}, ""},
+        {{"input_size", "int", "0", "Input size (auto)", {}, "Derived from the previous layer output."},
          {"hidden_size", "int", "128", "Hidden size", {}, ""},
          {"num_layers", "int", "1", "Stacked layers", {}, ""},
          {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
+         {"return_sequences", "bool", "false", "Return sequences", {}, ""},
          {"dropout", "float", "0.0", "Dropout", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -1337,9 +1339,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"rnn", "recurrent", "sequence"}, 0, false, "Simple RNN layer", "", "",
         {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
         {{"Output", PinType::Tensor, true, "Output"}, {"Hidden", PinType::Tensor, false, "Hidden"}},
-        {{"input_size", "int", "256", "Input size", {}, ""},
+        {{"input_size", "int", "0", "Input size (auto)", {}, "Derived from the previous layer output."},
          {"hidden_size", "int", "128", "Hidden size", {}, ""},
          {"num_layers", "int", "1", "Stacked layers", {}, ""},
+         {"return_sequences", "bool", "false", "Return sequences", {}, ""},
          {"nonlinearity", "string", "tanh", "Nonlinearity", {}, ""}},
         NodeImplementationStatus::Template, 0});
 

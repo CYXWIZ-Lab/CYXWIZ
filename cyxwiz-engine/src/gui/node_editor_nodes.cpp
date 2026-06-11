@@ -363,7 +363,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             if (start != std::string::npos && end != std::string::npos) {
                 node.parameters["units"] = name.substr(start + 1, end - start - 1);
             } else {
-                node.parameters["units"] = "128";
+                node.parameters["units"] = "64";
             }
             break;
         }
@@ -1260,10 +1260,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
                 "leave disconnected if you only want the Output.";
             node.outputs.push_back(hidden_pin);
 
-            node.parameters["input_size"] = "256";
+            node.parameters["input_size"] = "0";
             node.parameters["hidden_size"] = "256";
             node.parameters["num_layers"] = "1";
             node.parameters["bidirectional"] = "false";
+            node.parameters["return_sequences"] = "false";
             node.parameters["dropout"] = "0.0";
             break;
         }

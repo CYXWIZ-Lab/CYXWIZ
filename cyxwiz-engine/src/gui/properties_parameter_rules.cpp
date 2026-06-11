@@ -106,6 +106,13 @@ bool ShouldHideGenericParameter(NodeType type, const cyxwiz::ParameterDefinition
         return true;
     }
 
+    if ((type == NodeType::LSTM ||
+         type == NodeType::GRU ||
+         type == NodeType::RNN) &&
+        param.name == "input_size") {
+        return true;
+    }
+
     return false;
 }
 

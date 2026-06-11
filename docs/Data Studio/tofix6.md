@@ -453,6 +453,13 @@ Current strengths:
 - the frontend story for model construction is ambitious
 - backend layer support is broader than the training graph currently
   exposes
+- recurrent layer `input_size` is now treated as graph-derived UI truth:
+  the side-panel property is hidden for `LSTM`, `GRU`, and `RNN`, while
+  compile/model-building derive the real value from the previous node
+  output shape such as `Embedding.embedding_dim`
+- new `Dense` nodes now use the same default output width across metadata
+  and node creation (`units=64`), avoiding two different defaults for the
+  same layer
 
 Current gaps / misleading parts:
 
@@ -462,9 +469,12 @@ Current gaps / misleading parts:
 - several deep learning nodes are visible and documented but not
   reliably supported end to end by `GraphCompiler -> ModelBuilder ->
   TrainingExecutor`
-- CNN/RNN/Bidirectional and unavailable attention surfaces are now
+- CNN/Bidirectional and unavailable attention surfaces are now
   blocked or guarded rather than silently accepted; implementation is
   still pending before they can become real training nodes
+- recurrent GPU placement remains conservative: current `GRU` CUDA is
+  CPU-routed by compiler/runtime policy until a probe or fused/native
+  GPU recurrent implementation lands
 
 ---
 
@@ -543,6 +553,10 @@ Current gaps / misleading parts:
 - compile success does not always mean faithful graph realization
 - some nodes are accepted by compile logic but ignored or dropped by
   model building
+- model-building must keep owning derived tensor dimensions. Users should
+  edit architectural intent such as `hidden_size`, `embedding_dim`, and
+  `return_sequences`; connected layer input sizes should come from graph
+  shape propagation rather than hand-entered defaults
 
 ---
 
