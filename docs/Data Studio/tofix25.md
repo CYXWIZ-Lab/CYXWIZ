@@ -459,6 +459,9 @@ Current implementation slice:
 - Generic and unclassified layer placement rules now live in
   `backend_placement_capabilities.h`, which is the first small step toward a
   reusable backend capability registry.
+- Backend placement status and generic reason strings now have named constants
+  in `graph_compiler.h`, reducing string drift between compiler, runtime logs,
+  UI, and tests.
 - `TrainingConfiguration::SummarizeBackendPlacements()` now provides a shared
   whole-graph placement count for compiler logs, training startup logs, and the
   compile-result popup.

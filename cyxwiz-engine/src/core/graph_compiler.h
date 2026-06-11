@@ -232,24 +232,40 @@ struct ValidationIssue {
     std::string message;
 };
 
+namespace BackendPlacementStatus {
+inline constexpr const char* Gpu = "gpu";
+inline constexpr const char* Cpu = "cpu";
+inline constexpr const char* Mixed = "mixed";
+inline constexpr const char* Risk = "risk";
+inline constexpr const char* Unsupported = "unsupported";
+inline constexpr const char* Unknown = "unknown";
+} // namespace BackendPlacementStatus
+
+namespace BackendPlacementReason {
+inline constexpr const char* ArrayFireTensorOpCapable =
+    "arrayfire_tensor_op_capable";
+inline constexpr const char* BackendCapabilityUnclassified =
+    "backend_capability_unclassified";
+} // namespace BackendPlacementReason
+
 struct BackendPlacementEntry {
     int node_id = -1;
     std::string node_name;
     std::string node_type;
     std::string requested_backend = "auto";
-    std::string expected_backend = "unknown";
+    std::string expected_backend = BackendPlacementStatus::Unknown;
     std::string fallback_backend;
-    std::string status = "unknown";    // gpu, cpu, mixed, risk, unsupported, unknown
+    std::string status = BackendPlacementStatus::Unknown;
     std::string reason_code;
     std::string explanation;
     std::string suggested_action;
 
     bool NeedsUserAttention() const {
-        return status == "cpu" ||
-               status == "mixed" ||
-               status == "risk" ||
-               status == "unsupported" ||
-               status == "unknown";
+        return status == BackendPlacementStatus::Cpu ||
+               status == BackendPlacementStatus::Mixed ||
+               status == BackendPlacementStatus::Risk ||
+               status == BackendPlacementStatus::Unsupported ||
+               status == BackendPlacementStatus::Unknown;
     }
 };
 
@@ -391,15 +407,15 @@ struct TrainingConfiguration {
         BackendPlacementSummary summary;
         summary.total = backend_placements.size();
         for (const auto& placement : backend_placements) {
-            if (placement.status == "gpu") {
+            if (placement.status == BackendPlacementStatus::Gpu) {
                 ++summary.gpu;
-            } else if (placement.status == "cpu") {
+            } else if (placement.status == BackendPlacementStatus::Cpu) {
                 ++summary.cpu;
-            } else if (placement.status == "mixed") {
+            } else if (placement.status == BackendPlacementStatus::Mixed) {
                 ++summary.mixed;
-            } else if (placement.status == "risk") {
+            } else if (placement.status == BackendPlacementStatus::Risk) {
                 ++summary.risk;
-            } else if (placement.status == "unsupported") {
+            } else if (placement.status == BackendPlacementStatus::Unsupported) {
                 ++summary.unsupported;
             } else {
                 ++summary.unknown;

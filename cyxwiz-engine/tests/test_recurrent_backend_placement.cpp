@@ -250,9 +250,10 @@ int main() {
           "GRU graph should report Embedding placement");
     Check(gru_embedding_placement->node_type == "Embedding",
           "Embedding placement should name the layer");
-    Check(gru_embedding_placement->status == "gpu",
+    Check(gru_embedding_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
           "Embedding should be marked GPU-capable");
-    Check(gru_embedding_placement->reason_code == "arrayfire_tensor_op_capable",
+    Check(gru_embedding_placement->reason_code ==
+              cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
           "Embedding should use the generic tensor placement reason");
 
     const auto* gru_placement = FindPlacement(gru_config, 4);
@@ -260,7 +261,8 @@ int main() {
     Check(gru_placement->node_type == "GRU", "GRU placement should name the layer");
     Check(gru_placement->expected_backend == "CPU",
           "GRU should be conservatively placed on CPU");
-    Check(gru_placement->status == "cpu", "GRU placement status should be cpu");
+    Check(gru_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
+          "GRU placement status should be cpu");
     Check(gru_placement->reason_code == "gru_arrayfire_cuda_probe_required",
           "GRU placement should use the shared reason code");
     Check(gru_placement->explanation.find("batch_size=64") != std::string::npos,
@@ -275,7 +277,7 @@ int main() {
           "GRU graph should report Dense placement");
     Check(gru_dense_placement->node_type == "Dense",
           "Dense placement should name the layer");
-    Check(gru_dense_placement->status == "gpu",
+    Check(gru_dense_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
           "Dense should be marked GPU-capable");
 
     auto lstm_config = CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
@@ -292,7 +294,8 @@ int main() {
     Check(lstm_placement->node_type == "LSTM", "LSTM placement should name the layer");
     Check(lstm_placement->expected_backend == "ArrayFire CUDA",
           "small single-direction LSTM should remain GPU-eligible");
-    Check(lstm_placement->status == "gpu", "LSTM placement status should be gpu");
+    Check(lstm_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "LSTM placement status should be gpu");
     Check(lstm_placement->reason_code == "arrayfire_cuda_allowed_by_estimator",
           "LSTM placement should use the shared allow reason code");
     Check(!HasWarningText(lstm_config, "arrayfire_cuda_allowed_by_estimator"),
@@ -300,7 +303,7 @@ int main() {
 
     cyxwiz::TrainingConfiguration unknown_config;
     cyxwiz::BackendPlacementEntry unknown_placement;
-    unknown_placement.status = "unknown";
+    unknown_placement.status = cyxwiz::BackendPlacementStatus::Unknown;
     unknown_config.backend_placements.push_back(unknown_placement);
     const auto unknown_summary = unknown_config.SummarizeBackendPlacements();
     Check(unknown_summary.total == 1,
@@ -323,10 +326,10 @@ int main() {
           "unclassified placement should reference TimeDistributed node");
     Check(unclassified_placement->node_type == "TimeDistributed",
           "unclassified placement should name the layer");
-    Check(unclassified_placement->status == "unknown",
+    Check(unclassified_placement->status == cyxwiz::BackendPlacementStatus::Unknown,
           "unclassified placement should be unknown");
     Check(unclassified_placement->reason_code ==
-              "backend_capability_unclassified",
+              cyxwiz::BackendPlacementReason::BackendCapabilityUnclassified,
           "unclassified placement should use the unclassified reason code");
     Check(unclassified_placement->NeedsUserAttention(),
           "unclassified placement should require user attention");

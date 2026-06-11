@@ -917,7 +917,9 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
         placement.requested_backend = "auto";
         placement.expected_backend = decision.expected_backend;
         placement.fallback_backend = decision.fallback_backend;
-        placement.status = decision.should_attempt_arrayfire_cuda ? "gpu" : "cpu";
+        placement.status = decision.should_attempt_arrayfire_cuda
+            ? BackendPlacementStatus::Gpu
+            : BackendPlacementStatus::Cpu;
         placement.reason_code = decision.reason_code;
         placement.explanation = decision.should_attempt_arrayfire_cuda
             ? decision.layer_name + " recurrent step is allowed on ArrayFire CUDA by the current placement policy."

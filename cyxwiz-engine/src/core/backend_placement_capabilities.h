@@ -133,8 +133,8 @@ inline BackendPlacementEntry BuildArrayFireTensorPlacement(
     placement.requested_backend = "auto";
     placement.expected_backend = "ArrayFire active backend";
     placement.fallback_backend = "CPU";
-    placement.status = "gpu";
-    placement.reason_code = "arrayfire_tensor_op_capable";
+    placement.status = BackendPlacementStatus::Gpu;
+    placement.reason_code = BackendPlacementReason::ArrayFireTensorOpCapable;
     placement.explanation =
         std::string(placement.node_type) +
         " is compiled as a standard tensor/model layer. The runtime will "
@@ -151,10 +151,10 @@ inline BackendPlacementEntry BuildUnclassifiedPlacement(
     placement.node_name = layer.name;
     placement.node_type = LayerTypeName(layer.type);
     placement.requested_backend = "auto";
-    placement.expected_backend = "unknown";
+    placement.expected_backend = BackendPlacementStatus::Unknown;
     placement.fallback_backend = "CPU";
-    placement.status = "unknown";
-    placement.reason_code = "backend_capability_unclassified";
+    placement.status = BackendPlacementStatus::Unknown;
+    placement.reason_code = BackendPlacementReason::BackendCapabilityUnclassified;
     placement.explanation =
         std::string(placement.node_type) +
         " is compiled, but the compiler does not yet have a precise backend "
