@@ -174,6 +174,54 @@ cyxwiz::TrainingConfiguration CompileRecurrentGraph(gui::NodeType recurrent_type
     return compiler.Compile(nodes, links, true);
 }
 
+cyxwiz::TrainingConfiguration CompileUnclassifiedLayerGraph() {
+    auto data = Node(1,
+                     gui::NodeType::DataInput,
+                     "Sequence Data",
+                     {},
+                     {Pin(101, gui::PinType::Tensor, "Data", false),
+                      Pin(102, gui::PinType::Labels, "Labels", false)});
+    data.parameters["dataset_name"] = "placement_test_dataset";
+    data.parameters["data_loaded"] = "true";
+    data.parameters["file_category"] = "tabular";
+    data.parameters["label_column"] = "label";
+    data.parameters["shape"] = "[8, 4]";
+
+    auto time_distributed = Node(
+        8,
+        gui::NodeType::TimeDistributed,
+        "Token Head",
+        {Pin(801, gui::PinType::Tensor, "Input", true)},
+        {Pin(802, gui::PinType::Tensor, "Output", false)});
+    time_distributed.parameters["units"] = "2";
+
+    auto loss = Node(6,
+                     gui::NodeType::CrossEntropyLoss,
+                     "Loss",
+                     {Pin(601, gui::PinType::Tensor, "Predictions", true),
+                      Pin(602, gui::PinType::Labels, "Targets", true)},
+                     {Pin(603, gui::PinType::Loss, "Loss", false)});
+
+    auto optimizer = Node(7,
+                          gui::NodeType::Adam,
+                          "Adam",
+                          {Pin(701, gui::PinType::Loss, "Loss", true)},
+                          {});
+
+    std::vector<gui::MLNode> nodes = {
+        data, time_distributed, loss, optimizer,
+    };
+    std::vector<gui::NodeLink> links = {
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 6, 601),
+        Link(3, 1, 102, 6, 602),
+        Link(4, 6, 603, 7, 701),
+    };
+
+    cyxwiz::GraphCompiler compiler;
+    return compiler.Compile(nodes, links, true);
+}
+
 } // namespace
 
 int main() {
@@ -253,6 +301,29 @@ int main() {
           "unknown placement summary should be treated as non-GPU");
     Check(unknown_config.backend_placements.front().NeedsUserAttention(),
           "unknown placement should require user attention");
+
+    auto unclassified_config = CompileUnclassifiedLayerGraph();
+    Check(unclassified_config.is_valid,
+          "unclassified layer graph should still compile");
+    Check(unclassified_config.backend_placements.size() == 1,
+          "unclassified graph should produce one backend placement");
+    const auto* unclassified_placement =
+        FindPlacement(unclassified_config, 8);
+    Check(unclassified_placement != nullptr,
+          "unclassified placement should reference TimeDistributed node");
+    Check(unclassified_placement->node_type == "TimeDistributed",
+          "unclassified placement should name the layer");
+    Check(unclassified_placement->status == "unknown",
+          "unclassified placement should be unknown");
+    Check(unclassified_placement->reason_code ==
+              "backend_capability_unclassified",
+          "unclassified placement should use the unclassified reason code");
+    Check(unclassified_placement->NeedsUserAttention(),
+          "unclassified placement should require user attention");
+    const auto unclassified_summary =
+        unclassified_config.SummarizeBackendPlacements();
+    Check(unclassified_summary.unknown == 1,
+          "compiled unclassified layer should count as unknown");
 
     std::cout << "Recurrent backend placement tests passed\n";
     return 0;

@@ -463,6 +463,9 @@ Current implementation slice:
   startup logs warn for `cpu`, `mixed`, `risk`, `unsupported`, and `unknown`
   placements. Unknown backend capability should be visible to users; it should
   not look the same as a confirmed GPU placement.
+- Focused placement tests now cover both direct unknown-summary behavior and a
+  real compiled graph whose layer is reported as
+  `backend_capability_unclassified`.
 - Graph compile logs include a backend placement plan.
 - Compile findings now log at their actual severity, so warning console filters
   see placement warnings instead of missing an info-level line containing
