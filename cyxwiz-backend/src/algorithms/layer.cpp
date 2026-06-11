@@ -368,6 +368,15 @@ static bool IsCudaJitFormalParameterOverflow(const char* message) {
            text.find("formal parameter") != std::string::npos;
 }
 
+static std::string BuildRecurrentFormalParameterOverflowFallbackMessage(
+    const char* layer_name) {
+    return std::string("ArrayFire ") + layer_name +
+           " hit CUDA generated-kernel formal-parameter overflow "
+           "(reason=" +
+           RecurrentCudaPlacementReason::CudaJitParamOverflowRisk +
+           "); falling back to CPU. This is separate from VRAM capacity.";
+}
+
 static void DisableArrayFireCudaRecurrentAfterFailure(
     RecurrentLayerKind kind,
     const char* layer_name,
@@ -381,7 +390,9 @@ static void DisableArrayFireCudaRecurrentAfterFailure(
         const std::string reason =
             std::string(layer_name) +
             " ArrayFire CUDA recurrent path hit CUDA generated-kernel "
-            "formal-parameter overflow. Disabling this recurrent CUDA path "
+            "formal-parameter overflow (reason=" +
+            RecurrentCudaPlacementReason::CudaJitParamOverflowRisk +
+            "). Disabling this recurrent CUDA path "
             "for the rest of the process and using CPU directly for later "
             "batches. This is separate from VRAM capacity.";
         BackendDebugHooks::EmitDebugEvent(layer_name, reason);
@@ -3454,8 +3465,9 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
         DisableArrayFireCudaRecurrentAfterFailure(
             RecurrentLayerKind::LSTM, "LSTMLayer::Forward", e.what());
         if (IsCudaJitFormalParameterOverflow(e.what())) {
-            spdlog::warn("ArrayFire LSTMLayer::Forward hit CUDA generated-kernel "
-                         "formal-parameter overflow; falling back to CPU");
+            spdlog::warn("{}",
+                         BuildRecurrentFormalParameterOverflowFallbackMessage(
+                             "LSTMLayer::Forward"));
         } else {
             BackendDebugHooks::EmitDebugEvent(
                 "LSTMLayer::Forward",
@@ -4501,8 +4513,9 @@ Tensor GRULayer::Forward(const Tensor& input) {
         DisableArrayFireCudaRecurrentAfterFailure(
             RecurrentLayerKind::GRU, "GRULayer::Forward", e.what());
         if (IsCudaJitFormalParameterOverflow(e.what())) {
-            spdlog::warn("ArrayFire GRULayer::Forward hit CUDA generated-kernel "
-                         "formal-parameter overflow; falling back to CPU");
+            spdlog::warn("{}",
+                         BuildRecurrentFormalParameterOverflowFallbackMessage(
+                             "GRULayer::Forward"));
         } else {
             BackendDebugHooks::EmitDebugEvent(
                 "GRULayer::Forward",

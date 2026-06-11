@@ -488,6 +488,9 @@ Current implementation slice:
 - Runtime recurrent CUDA fallback classifies formal-parameter overflow and
   disables the affected ArrayFire recurrent path for the rest of the process, so
   later batches go directly to CPU instead of repeatedly dumping NVRTC output.
+- Runtime recurrent formal-parameter overflow fallback logs now include the
+  stable `cuda_jit_param_overflow_risk` reason code, matching compiler
+  placement terminology.
 
 ## 2026-06-11 GRU GPU Fallback Finding
 
