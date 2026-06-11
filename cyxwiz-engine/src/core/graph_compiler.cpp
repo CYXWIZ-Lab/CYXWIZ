@@ -6,6 +6,7 @@
 #include "worker_defaults.h"
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
+#include "cyxwiz/recurrent_cuda_placement.h"
 #include "../gui/loaders/data_loader.h"
 #include "../gui/node_import_guardrails.h"
 #include <spdlog/spdlog.h>
@@ -859,6 +860,78 @@ size_t ParseSizeParam(const std::map<std::string, std::string>& params,
         return parsed > 0 ? static_cast<size_t>(parsed) : fallback;
     } catch (...) {
         return fallback;
+    }
+}
+
+size_t EstimateSequenceLength(const CompiledLayer& layer) {
+    if (!layer.input_shape.empty()) {
+        return layer.input_shape[0];
+    }
+    return 0;
+}
+
+void AddRecurrentCudaPlacementWarnings(TrainingConfiguration& config) {
+    for (const auto& layer : config.layers) {
+        if (layer.type != gui::NodeType::GRU &&
+            layer.type != gui::NodeType::LSTM) {
+            continue;
+        }
+
+        const size_t hidden_size =
+            ParseSizeParam(layer.parameters, "hidden_size", 128);
+        const bool bidirectional =
+            ParseBoolParam(layer.parameters, "bidirectional", false);
+        const bool return_sequences =
+            ParseBoolParam(layer.parameters, "return_sequences", false);
+        const size_t num_layers =
+            ParseSizeParam(layer.parameters, "num_layers", 1);
+        const size_t seq_len = EstimateSequenceLength(layer);
+        const size_t input_size =
+            layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
+
+        RecurrentCudaPlacementRequest request;
+        request.kind = layer.type == gui::NodeType::GRU
+            ? RecurrentLayerKind::GRU
+            : RecurrentLayerKind::LSTM;
+        request.batch_size = static_cast<size_t>(std::max(1, config.batch_size));
+        request.seq_len = seq_len;
+        request.input_size = input_size;
+        request.hidden_size = hidden_size;
+        request.num_layers = num_layers;
+        request.bidirectional = bidirectional;
+        request.return_sequences = return_sequences;
+
+        const auto decision = EvaluateRecurrentCudaPlacement(request);
+        BackendPlacementEntry placement;
+        placement.node_id = layer.node_id;
+        placement.node_name = layer.name;
+        placement.node_type = decision.layer_name;
+        placement.requested_backend = "auto";
+        placement.expected_backend = decision.expected_backend;
+        placement.fallback_backend = decision.fallback_backend;
+        placement.status = decision.should_attempt_arrayfire_cuda ? "gpu" : "cpu";
+        placement.reason_code = decision.reason_code;
+        placement.explanation = decision.should_attempt_arrayfire_cuda
+            ? decision.layer_name + " recurrent step is allowed on ArrayFire CUDA by the current placement policy."
+            : decision.reason;
+        placement.suggested_action = decision.should_attempt_arrayfire_cuda
+            ? "No action needed."
+            : "Training can continue. To keep this recurrent step on GPU, use a future fused/native CUDA recurrent kernel or exact backend probe; reducing hidden_size, sequence length, layers, or bidirectionality may help only for LSTM estimator-limited shapes.";
+        config.backend_placements.push_back(placement);
+
+        if (decision.should_attempt_arrayfire_cuda) {
+            continue;
+        }
+
+        const std::string issue_name =
+            decision.layer_name + " hidden_size=" + std::to_string(hidden_size);
+        std::ostringstream msg;
+        msg << decision.layer_name << " layer is valid, but " << decision.reason
+            << " Reason code: " << decision.reason_code << ". "
+            << "Runtime will use the same placement policy instead of "
+            << "repeatedly attempting CUDA and falling back every batch.";
+        AddIssue(config, IssueLevel::Warning, msg.str(),
+                 layer.node_id, issue_name);
     }
 }
 
@@ -2565,6 +2638,8 @@ TrainingConfiguration GraphCompiler::Compile(
     // These need the values populated by the layer-extraction passes
     // above, so they live at the end of Compile().
 
+    AddRecurrentCudaPlacementWarnings(config);
+
     // DataSplit ratios should sum to ~1.0. Drift > 0.05 is almost
     // certainly a typo or stale state from the user adjusting one
     // ratio without rebalancing the others.
@@ -2848,10 +2923,33 @@ TrainingConfiguration GraphCompiler::Compile(
                  config.CountIssues(IssueLevel::Info),
                  config.is_valid);
     for (const auto& issue : config.issues) {
-        spdlog::info("  [{}] {}{}",
-                     IssueLevelLabel(issue.level),
-                     issue.node_name.empty() ? "" : ("[" + issue.node_name + "] "),
-                     issue.message);
+        const std::string prefix =
+            std::string("  [") + IssueLevelLabel(issue.level) + "] " +
+            (issue.node_name.empty() ? "" : ("[" + issue.node_name + "] ")) +
+            issue.message;
+        switch (issue.level) {
+            case IssueLevel::Error:
+                spdlog::error("{}", prefix);
+                break;
+            case IssueLevel::Warning:
+                spdlog::warn("{}", prefix);
+                break;
+            case IssueLevel::Info:
+                spdlog::info("{}", prefix);
+                break;
+        }
+    }
+    if (!config.backend_placements.empty()) {
+        spdlog::info("GraphCompiler: Backend placement plan:");
+        for (const auto& placement : config.backend_placements) {
+            spdlog::info("  [{}] {} '{}' -> expected={}, fallback={}, reason={}",
+                         placement.status,
+                         placement.node_type,
+                         placement.node_name,
+                         placement.expected_backend,
+                         placement.fallback_backend.empty() ? "none" : placement.fallback_backend,
+                         placement.reason_code);
+        }
     }
 
     return config;
@@ -3300,9 +3398,38 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
 }
 
 // --- Text preprocessing (Arrow materializer path) ---
-// TextTokenizer is applied by PipelineMaterializer. TextVocabulary and
-// TextPadding fold into the reachable tokenizer there instead of populating
-// TrainingConfiguration::text_preprocessing.
+// TextTokenizer is applied by PipelineMaterializer at runtime. The compiler
+// still extracts its shape contract so recurrent preflight uses the graph's
+// current max_length instead of the registered dataset's dialog default.
+static void ExtractTextTokenizerShape(
+    const gui::MLNode& node,
+    TrainingConfiguration& config) {
+    config.text_preprocessing.has_tokenizer_node = true;
+    config.text_preprocessing.has_padding_node = true;
+    if (node.parameters.count("max_length")) {
+        config.text_preprocessing.max_length =
+            static_cast<int>(ParseSizeParam(node.parameters, "max_length", 512));
+    }
+    if (node.parameters.count("tokenizer_type")) {
+        config.text_preprocessing.tokenizer_type =
+            static_cast<int>(ParseSizeParam(node.parameters, "tokenizer_type", 1));
+    }
+    config.text_preprocessing.lowercase =
+        ParseBoolParam(node.parameters, "lowercase", true);
+    config.text_preprocessing.do_padding =
+        ParseBoolParam(node.parameters, "padding", true);
+    config.text_preprocessing.do_truncation =
+        ParseBoolParam(node.parameters, "truncation", true);
+    if (node.parameters.count("pad_value")) {
+        config.text_preprocessing.pad_value =
+            static_cast<int>(ParseSizeParam(node.parameters, "pad_value", 0));
+    }
+    spdlog::info("GraphCompiler: TextTokenizer max_length={} drives text input shape",
+                 config.text_preprocessing.max_length);
+}
+
+// TextVocabulary and TextPadding fold into the reachable tokenizer in
+// PipelineMaterializer; they do not own a separate training shape.
 
 // --- TimeSeries extractors (Phase 4 — deferred) ---
 
@@ -3333,8 +3460,8 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::MelSpectrogram,     PreprocessingDomain::Audio,       ExtractMelSpectrogram},
     {gui::NodeType::MFCC,               PreprocessingDomain::Audio,       ExtractMFCC},
     {gui::NodeType::AudioAugmentation,  PreprocessingDomain::Audio,       ExtractAudioAugmentation},
-    // Text (Arrow materializer path; no TrainingConfiguration extraction)
-    {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        nullptr},
+    // Text (Arrow materializer path; extract shape only)
+    {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        ExtractTextTokenizerShape},
     {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::NERSequenceBuilder, PreprocessingDomain::General,     nullptr},

@@ -24,6 +24,43 @@
 
 namespace cyxwiz {
 
+namespace {
+
+void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
+    if (config.backend_placements.empty()) {
+        return;
+    }
+
+    spdlog::info("TrainingExecutor: Backend placement plan:");
+    for (const auto& placement : config.backend_placements) {
+        const std::string layer =
+            placement.node_type +
+            (placement.node_name.empty()
+                 ? std::string()
+                 : " '" + placement.node_name + "'");
+        const std::string detail =
+            layer + " -> expected=" + placement.expected_backend +
+            (placement.fallback_backend.empty()
+                 ? std::string()
+                 : ", fallback=" + placement.fallback_backend) +
+            (placement.reason_code.empty()
+                 ? std::string()
+                 : ", reason=" + placement.reason_code);
+
+        if (placement.status == "cpu" || placement.status == "risk" ||
+            placement.status == "unsupported") {
+            spdlog::warn("TrainingExecutor: {}", detail);
+            if (!placement.explanation.empty()) {
+                spdlog::warn("TrainingExecutor: {}", placement.explanation);
+            }
+        } else {
+            spdlog::info("TrainingExecutor: {}", detail);
+        }
+    }
+}
+
+} // namespace
+
 // ============================================================================
 // TrainingExecutor Implementation
 // ============================================================================
@@ -158,6 +195,7 @@ void TrainingExecutor::Train(
             is_training_.store(false);
             return;
         }
+        LogTrainingBackendPlacementPlan(config_);
 
     // Setup metrics
     UpdateMetrics([epochs](TrainingMetrics& m) {

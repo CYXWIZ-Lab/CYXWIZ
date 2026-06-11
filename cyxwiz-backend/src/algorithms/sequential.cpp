@@ -563,7 +563,10 @@ GRUModule::GRUModule(size_t input_size, size_t hidden_size,
         }
 
         spdlog::info("[GRUModule] Using split bidirectional GRU path "
-                     "({} layer pairs).", num_layers_);
+                     "({} layer pairs). GPU placement for this split path "
+                     "remains disabled until the single-direction ArrayFire "
+                     "GRU path has dedicated correctness and timeout coverage.",
+                     num_layers_);
     } else {
         layer_ = std::make_unique<GRULayer>(
             static_cast<int>(input_size),

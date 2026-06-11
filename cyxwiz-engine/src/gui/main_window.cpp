@@ -3680,6 +3680,26 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
                 << config.preprocessing.num_classes << " classes)\n";
         }
 
+        if (!config.backend_placements.empty()) {
+            out << "\n";
+            out << "Backend placement:\n";
+            for (const auto& placement : config.backend_placements) {
+                out << "  - " << placement.node_type;
+                if (!placement.node_name.empty()) {
+                    out << " '" << placement.node_name << "'";
+                }
+                out << ": " << placement.expected_backend;
+                if (!placement.fallback_backend.empty() &&
+                    placement.fallback_backend != placement.expected_backend) {
+                    out << " (fallback: " << placement.fallback_backend << ")";
+                }
+                if (!placement.reason_code.empty()) {
+                    out << " [" << placement.reason_code << "]";
+                }
+                out << "\n";
+            }
+        }
+
         compile_result_summary_ = out.str();
         compile_result_message_ = config.error_message;  // legacy
 

@@ -232,6 +232,19 @@ struct ValidationIssue {
     std::string message;
 };
 
+struct BackendPlacementEntry {
+    int node_id = -1;
+    std::string node_name;
+    std::string node_type;
+    std::string requested_backend = "auto";
+    std::string expected_backend = "unknown";
+    std::string fallback_backend;
+    std::string status = "unknown";    // gpu, cpu, mixed, risk, unsupported, unknown
+    std::string reason_code;
+    std::string explanation;
+    std::string suggested_action;
+};
+
 /**
  * Complete training configuration extracted from graph
  */
@@ -334,6 +347,10 @@ struct TrainingConfiguration {
     // Compile popup renders all of these with severity icons; Train is
     // blocked iff any Error-level issue is present.
     std::vector<ValidationIssue> issues;
+
+    // Backend placement preflight entries. This is the compiler-owned execution
+    // placement contract that the UI/runtime can surface before training starts.
+    std::vector<BackendPlacementEntry> backend_placements;
 
     // Convenience: count issues by level. Used by UI gating logic.
     size_t CountIssues(IssueLevel level) const {

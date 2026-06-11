@@ -1,5 +1,6 @@
 #include "cyxwiz/layer.h"
 #include "cyxwiz/debug_hooks.h"
+#include "cyxwiz/recurrent_cuda_placement.h"
 #include "cyxwiz/tensor.h"
 #include "layers/layer_utils.h"
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <random>
 #include <atomic>
 #include <limits>
+#include <string>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -348,11 +350,52 @@ static int CheckedIntDim(size_t value, const char* name) {
     return static_cast<int>(value);
 }
 
-static bool ShouldUseArrayFireRecurrentForward(
+static std::atomic<bool> g_disable_lstm_arrayfire_cuda_after_failure{false};
+static std::atomic<bool> g_disable_gru_arrayfire_cuda_after_failure{false};
+
+static std::atomic<bool>& RecurrentFailureDisableFlag(RecurrentLayerKind kind) {
+    return kind == RecurrentLayerKind::LSTM
+        ? g_disable_lstm_arrayfire_cuda_after_failure
+        : g_disable_gru_arrayfire_cuda_after_failure;
+}
+
+static bool IsCudaJitFormalParameterOverflow(const char* message) {
+    if (message == nullptr) {
+        return false;
+    }
+    const std::string text(message);
+    return text.find("Formal parameter space overflowed") != std::string::npos ||
+           text.find("formal parameter") != std::string::npos;
+}
+
+static void DisableArrayFireCudaRecurrentAfterFailure(
+    RecurrentLayerKind kind,
     const char* layer_name,
+    const char* error_message) {
+    if (!IsCudaJitFormalParameterOverflow(error_message)) {
+        return;
+    }
+
+    auto& disabled = RecurrentFailureDisableFlag(kind);
+    if (!disabled.exchange(true)) {
+        const std::string reason =
+            std::string(layer_name) +
+            " ArrayFire CUDA recurrent path hit CUDA generated-kernel "
+            "formal-parameter overflow. Disabling this recurrent CUDA path "
+            "for the rest of the process and using CPU directly for later "
+            "batches. This is separate from VRAM capacity.";
+        BackendDebugHooks::EmitDebugEvent(layer_name, reason);
+        spdlog::warn("{}", reason);
+    }
+}
+
+static bool ShouldUseArrayFireRecurrentForward(
+    RecurrentLayerKind kind,
     size_t batch_size,
     size_t seq_len,
+    size_t input_size,
     int hidden_size,
+    int num_layers,
     bool bidirectional) {
     try {
         if (af::getActiveBackend() != AF_BACKEND_CUDA) {
@@ -362,33 +405,50 @@ static bool ShouldUseArrayFireRecurrentForward(
         return true;
     }
 
-    // ArrayFire's CUDA JIT emits large generated kernels for recurrent gate
-    // expressions. On CUDA/NVRTC, formal kernel parameters are capped at 4096
-    // bytes; observed LSTM sentiment runs at hidden_size 64-96 exceed that
-    // limit and then pay a failed compile before falling back to CPU.
-    const bool likely_nvrtc_parameter_overflow = hidden_size >= 64;
-    if (!likely_nvrtc_parameter_overflow) {
+    auto& disabled_after_failure = RecurrentFailureDisableFlag(kind);
+    if (disabled_after_failure.load()) {
+        static std::atomic<bool> warned_disabled_lstm{false};
+        static std::atomic<bool> warned_disabled_gru{false};
+        std::atomic<bool>& warned =
+            kind == RecurrentLayerKind::LSTM ? warned_disabled_lstm : warned_disabled_gru;
+        if (!warned.exchange(true)) {
+            spdlog::warn(
+                "CUDA recurrent placement: ArrayFire {} forward is disabled "
+                "after a previous CUDA generated-kernel formal-parameter "
+                "overflow; runtime is using CPU directly for this process.",
+                RecurrentKindName(kind));
+        }
+        return false;
+    }
+
+    RecurrentCudaPlacementRequest request;
+    request.kind = kind;
+    request.batch_size = batch_size;
+    request.seq_len = seq_len;
+    request.input_size = input_size;
+    request.hidden_size = static_cast<size_t>(std::max(1, hidden_size));
+    request.num_layers = static_cast<size_t>(std::max(1, num_layers));
+    request.bidirectional = bidirectional;
+    request.return_sequences = false;
+
+    const auto decision = EvaluateRecurrentCudaPlacement(request);
+    if (decision.should_attempt_arrayfire_cuda) {
         return true;
     }
 
     static std::atomic<bool> warned_lstm{false};
     static std::atomic<bool> warned_gru{false};
-    std::atomic<bool>& warned = layer_name[0] == 'L' ? warned_lstm : warned_gru;
+    std::atomic<bool>& warned =
+        kind == RecurrentLayerKind::LSTM ? warned_lstm : warned_gru;
     if (!warned.exchange(true)) {
         const std::string reason =
             "CUDA recurrent preflight: skipping ArrayFire " +
-            std::string(layer_name) +
-            " forward for batch=" + std::to_string(batch_size) +
-            ", seq_len=" + std::to_string(seq_len) +
-            ", hidden_size=" + std::to_string(hidden_size) +
-            ", bidirectional=" + std::string(bidirectional ? "true" : "false") +
-            ". ArrayFire/NVRTC can exceed CUDA's 4096-byte kernel formal "
-            "parameter limit for this recurrent shape, which otherwise causes "
-            "a failed GPU compile and then CPU fallback. Using the CPU recurrent "
-            "path directly for this layer. To keep this layer on GPU, reduce "
-            "hidden_size/bidirectionality or replace this path with a fused "
-            "native recurrent CUDA kernel.";
-        BackendDebugHooks::EmitDebugEvent(layer_name, reason);
+            decision.layer_name + " forward. " + decision.reason +
+            " Runtime is using the CPU recurrent path directly to avoid "
+            "repeated failed GPU compiles. To keep this layer on GPU, reduce "
+            "hidden_size/sequence length/bidirectionality, or replace this "
+            "path with a fused native recurrent CUDA kernel.";
+        BackendDebugHooks::EmitDebugEvent(decision.layer_name + "Layer", reason);
         spdlog::warn("{}", reason);
     }
     return false;
@@ -3021,11 +3081,14 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
         const auto& af_guard_shape = input.Shape();
         const size_t af_guard_batch = batch_first_ ? af_guard_shape[0] : af_guard_shape[1];
         const size_t af_guard_seq = batch_first_ ? af_guard_shape[1] : af_guard_shape[0];
+        const size_t af_guard_input = af_guard_shape.size() >= 3 ? af_guard_shape[2] : 0;
         if (kAfPathEnabled &&
-            ShouldUseArrayFireRecurrentForward("LSTMLayer",
+            ShouldUseArrayFireRecurrentForward(RecurrentLayerKind::LSTM,
                                                af_guard_batch,
                                                af_guard_seq,
+                                               af_guard_input,
                                                hidden_size_,
+                                               num_layers_,
                                                bidirectional_)) try {
         // Use the 3D-aware helper — bare TensorToAf on [batch, seq, feat]
         // produces a column-major AF array with scrambled semantic axes.
@@ -3388,11 +3451,18 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
         // with the TensorToAf3DRowMajor at the entry.
         return AfToTensor3DRowMajor(output);
     } catch (const af::exception& e) {
-        BackendDebugHooks::EmitDebugEvent(
-            "LSTMLayer::Forward",
-            std::string("ArrayFire fallback: ") + e.what() +
-            (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-        spdlog::warn("ArrayFire LSTMLayer::Forward failed: {}, falling back to CPU", e.what());
+        DisableArrayFireCudaRecurrentAfterFailure(
+            RecurrentLayerKind::LSTM, "LSTMLayer::Forward", e.what());
+        if (IsCudaJitFormalParameterOverflow(e.what())) {
+            spdlog::warn("ArrayFire LSTMLayer::Forward hit CUDA generated-kernel "
+                         "formal-parameter overflow; falling back to CPU");
+        } else {
+            BackendDebugHooks::EmitDebugEvent(
+                "LSTMLayer::Forward",
+                std::string("ArrayFire fallback: ") + e.what() +
+                (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
+            spdlog::warn("ArrayFire LSTMLayer::Forward failed: {}, falling back to CPU", e.what());
+        }
     }
 #endif
 
@@ -4283,12 +4353,16 @@ Tensor GRULayer::Forward(const Tensor& input) {
     const auto& af_guard_shape = input.Shape();
     const size_t af_guard_batch = batch_first_ ? af_guard_shape[0] : af_guard_shape[1];
     const size_t af_guard_seq = batch_first_ ? af_guard_shape[1] : af_guard_shape[0];
-    if (!bidirectional_ &&
-        ShouldUseArrayFireRecurrentForward("GRULayer",
+    const size_t af_guard_input = af_guard_shape.size() >= 3 ? af_guard_shape[2] : 0;
+    const bool af_recurrent_allowed =
+        ShouldUseArrayFireRecurrentForward(RecurrentLayerKind::GRU,
                                            af_guard_batch,
                                            af_guard_seq,
+                                           af_guard_input,
                                            hidden_size_,
-                                           bidirectional_)) try {
+                                           num_layers_,
+                                           bidirectional_);
+    if (!bidirectional_ && af_recurrent_allowed) try {
         af::array x = TensorToAf3DRowMajor(input);
         if (batch_first_) {
             x = af::reorder(x, 1, 0, 2);
@@ -4352,30 +4426,40 @@ Tensor GRULayer::Forward(const Tensor& input) {
                 const int t_idx = CheckedIntDim(static_cast<size_t>(t), "t");
                 af::array x_t = af::moddims(input_proj(t_idx, af::span, af::span),
                                             af::dim4(batch_i, 3 * hidden_size_));
+                x_t.eval();
+
                 af::array h_proj = af::matmul(h, af::transpose(W_hh));
                 h_proj.eval();
                 h_proj = h_proj + af::tile(af::transpose(b_hh),
                                            batch_i);
                 h_proj.eval();
 
-                af::array x_r = x_t(af::span, af::seq(0, hidden_size_ - 1));
-                af::array x_z = x_t(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1));
-                af::array x_n = x_t(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1));
+                af::array gates = x_t + h_proj;
+                gates.eval();
 
-                af::array h_r = h_proj(af::span, af::seq(0, hidden_size_ - 1));
-                af::array h_z = h_proj(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1));
-                af::array h_n = h_proj(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1));
+                af::array r_gate = gates(af::span, af::seq(0, hidden_size_ - 1));
+                af::array z_gate = gates(af::span, af::seq(hidden_size_, 2 * hidden_size_ - 1));
+                af::array n_input = x_t(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1));
+                af::array n_hidden = h_proj(af::span, af::seq(2 * hidden_size_, 3 * hidden_size_ - 1));
+                r_gate.eval();
+                z_gate.eval();
+                n_input.eval();
+                n_hidden.eval();
 
-                af::array r = af::sigmoid(x_r + h_r);
-                af::array z = af::sigmoid(x_z + h_z);
-                af::array n = af::tanh(x_n + r * h_n);
+                af::array r = af::sigmoid(r_gate);
+                af::array z = af::sigmoid(z_gate);
                 r.eval();
                 z.eval();
+
+                af::array reset_hidden = r * n_hidden;
+                reset_hidden.eval();
+                af::array n = af::tanh(n_input + reset_hidden);
                 n.eval();
+
                 h = (1.0f - z) * n + z * h;
                 h.eval();
 
-                af::array gates_t = af::join(1, r, z, n, h_n);
+                af::array gates_t = af::join(1, r, z, n, n_hidden);
                 gates_t.eval();
                 layer_output(t_idx, af::span, af::span) =
                     af::moddims(h, af::dim4(1, batch_i, hidden_size_));
@@ -4383,11 +4467,20 @@ Tensor GRULayer::Forward(const Tensor& input) {
                     af::moddims(gates_t, af::dim4(1, batch_i, 4 * hidden_size_));
                 layer_h_states(t_idx + 1, af::span, af::span) =
                     af::moddims(h, af::dim4(1, batch_i, hidden_size_));
+
+                // ArrayFire is lazy: without these barriers, recurrent
+                // writes accumulate a large fused JIT graph across timesteps
+                // and NVRTC can exceed CUDA's 4096-byte formal parameter
+                // block even when VRAM is mostly idle.
+                layer_output.eval();
+                layer_gates.eval();
+                layer_h_states.eval();
             }
 
             af::array h_full_out = TensorToAf3DRowMajor(h_n_);
             h_full_out(layer, af::span, af::span) =
                 af::moddims(h, af::dim4(1, batch_size, hidden_size_));
+            h_full_out.eval();
             h_n_ = AfToTensor3DRowMajor(h_full_out);
 
             cached_inputs_.push_back(AfToTensor3DRowMajor(layer_input));
@@ -4395,19 +4488,28 @@ Tensor GRULayer::Forward(const Tensor& input) {
             cached_hidden_states_.push_back(AfToTensor3DRowMajor(layer_h_states));
 
             layer_input = layer_output;
+            layer_input.eval();
         }
 
         if (batch_first_) {
             layer_input = af::reorder(layer_input, 1, 0, 2);
         }
+        layer_input.eval();
 
         return AfToTensor3DRowMajor(layer_input);
     } catch (const af::exception& e) {
-        BackendDebugHooks::EmitDebugEvent(
-            "GRULayer::Forward",
-            std::string("ArrayFire fallback: ") + e.what() +
-            (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-        spdlog::warn("ArrayFire GRULayer::Forward failed: {}, falling back to CPU", e.what());
+        DisableArrayFireCudaRecurrentAfterFailure(
+            RecurrentLayerKind::GRU, "GRULayer::Forward", e.what());
+        if (IsCudaJitFormalParameterOverflow(e.what())) {
+            spdlog::warn("ArrayFire GRULayer::Forward hit CUDA generated-kernel "
+                         "formal-parameter overflow; falling back to CPU");
+        } else {
+            BackendDebugHooks::EmitDebugEvent(
+                "GRULayer::Forward",
+                std::string("ArrayFire fallback: ") + e.what() +
+                (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
+            spdlog::warn("ArrayFire GRULayer::Forward failed: {}, falling back to CPU", e.what());
+        }
     }
 #endif
 
@@ -4461,14 +4563,16 @@ Tensor GRULayer::Forward(const Tensor& input) {
     int num_directions = bidirectional_ ? 2 : 1;
 
     if (h_n_.NumElements() == 0 || h_n_.Data<float>() == nullptr) {
-        h_n_ = Tensor::Zeros({static_cast<size_t>(num_layers_ * num_directions),
-                               batch_size, static_cast<size_t>(hidden_size_)});
+        h_n_ = Tensor({static_cast<size_t>(num_layers_ * num_directions),
+                       batch_size,
+                       static_cast<size_t>(hidden_size_)},
+                      DataType::Float32);
     }
 
     size_t out_dim0 = batch_first_ ? batch_size : seq_len;
     size_t out_dim1 = batch_first_ ? seq_len : batch_size;
     size_t out_features = static_cast<size_t>(hidden_size_ * num_directions);
-    Tensor output = Tensor::Zeros({out_dim0, out_dim1, out_features});
+    Tensor output({out_dim0, out_dim1, out_features}, DataType::Float32);
 
     const float* input_data = input.Data<float>();
     float* output_data = output.Data<float>();
@@ -4500,7 +4604,7 @@ Tensor GRULayer::Forward(const Tensor& input) {
             static_cast<size_t>(layer * num_directions) * batch_size * static_cast<size_t>(H);
 
         const size_t layer_output_size = static_cast<size_t>(H * num_directions);
-        Tensor layer_output = Tensor::Zeros({seq_len, batch_size, layer_output_size});
+        Tensor layer_output({seq_len, batch_size, layer_output_size}, DataType::Float32);
         float* layer_out = layer_output.Data<float>();
         const float* layer_in = layer_input.Data<float>();
 
@@ -4517,12 +4621,12 @@ Tensor GRULayer::Forward(const Tensor& input) {
         //                                     hn_pre to split d_n into
         //                                     x-side and h-side parts)
         //   h      [seq_len + 1, batch, H]   (idx 0 = h_0)
-        Tensor layer_input_cache = Tensor::Zeros(
-            {seq_len, batch_size, layer_input_size});
-        Tensor layer_gates_cache = Tensor::Zeros(
-            {seq_len, batch_size, static_cast<size_t>(4 * H)});
-        Tensor layer_h_cache = Tensor::Zeros(
-            {seq_len + 1, batch_size, static_cast<size_t>(H)});
+        Tensor layer_input_cache({seq_len, batch_size, layer_input_size},
+                                 DataType::Float32);
+        Tensor layer_gates_cache({seq_len, batch_size, static_cast<size_t>(4 * H)},
+                                 DataType::Float32);
+        Tensor layer_h_cache({seq_len + 1, batch_size, static_cast<size_t>(H)},
+                             DataType::Float32);
         float* in_cache_data = layer_input_cache.Data<float>();
         float* gate_cache_data = layer_gates_cache.Data<float>();
         float* h_cache_data = layer_h_cache.Data<float>();
