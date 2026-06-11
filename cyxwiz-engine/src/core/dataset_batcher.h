@@ -391,7 +391,9 @@ public:
         // these args and keep chronological first-N% slicing unchanged.
         const std::string& partition_column = "",
         int partition_value = 0,
-        int num_workers = 0
+        int num_workers = 0,
+        BatcherPhase split_phase = BatcherPhase::Train,
+        float val_split = 0.0f
     );
 
     // IBatcher interface
@@ -424,6 +426,8 @@ private:
     int num_workers_ = 0;
     std::string partition_column_;   // Phase 4: time-series partition col name, "" = legacy slicing
     int partition_value_ = 0;        // which partition this batcher iterates (0=train, 1=val, 2=test)
+    BatcherPhase split_phase_ = BatcherPhase::Train;
+    float val_split_ = 0.0f;
 
     std::vector<int64_t> indices_;   // Row indices for this split
     size_t current_index_ = 0;

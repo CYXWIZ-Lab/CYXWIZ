@@ -17,6 +17,32 @@ namespace fs = std::filesystem;
 namespace cyxwiz {
 namespace core {
 
+namespace {
+
+std::string QuoteCommandArg(const std::string& value) {
+    std::string quoted = "\"";
+    for (char c : value) {
+        if (c == '"') {
+            quoted += "\\\"";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "\"";
+    return quoted;
+}
+
+#ifdef _WIN32
+std::string WrapForCmdExeIfNeeded(const std::string& command) {
+    if (!command.empty() && command.front() == '"') {
+        return "\"" + command + "\"";
+    }
+    return command;
+}
+#endif
+
+} // namespace
+
 std::vector<std::string> PythonDetector::GetCandidatePaths() {
     std::vector<std::string> candidates;
 
@@ -153,8 +179,11 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(co
         // Python launcher
         cmd = path + " -c \"import sys, json; print(json.dumps({'version': '.'.join(map(str, sys.version_info[:3])), 'executable': sys.executable, 'prefix': sys.prefix}))\"";
     } else {
-        cmd = "\"" + path + "\" -c \"import sys, json; print(json.dumps({'version': '.'.join(map(str, sys.version_info[:3])), 'executable': sys.executable, 'prefix': sys.prefix}))\"";
+        cmd = QuoteCommandArg(path) + " -c \"import sys, json; print(json.dumps({'version': '.'.join(map(str, sys.version_info[:3])), 'executable': sys.executable, 'prefix': sys.prefix}))\"";
     }
+#ifdef _WIN32
+    cmd = WrapForCmdExeIfNeeded(cmd) + " 2>nul";
+#endif
 
     std::string output;
     int exit_code = ExecuteCommand(cmd, output);
@@ -189,8 +218,9 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(co
     }
 
     // Check for venv module
-    std::string venv_cmd = "\"" + result.executable_path + "\" -m venv --help";
+    std::string venv_cmd = QuoteCommandArg(result.executable_path) + " -m venv --help";
 #ifdef _WIN32
+    venv_cmd = WrapForCmdExeIfNeeded(venv_cmd);
     venv_cmd += " >nul 2>&1";
 #else
     venv_cmd += " >/dev/null 2>&1";
@@ -199,8 +229,9 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(co
     result.has_venv_module = (system(venv_cmd.c_str()) == 0);
 
     // Check for pip
-    std::string pip_cmd = "\"" + result.executable_path + "\" -m pip --version";
+    std::string pip_cmd = QuoteCommandArg(result.executable_path) + " -m pip --version";
 #ifdef _WIN32
+    pip_cmd = WrapForCmdExeIfNeeded(pip_cmd);
     pip_cmd += " >nul 2>&1";
 #else
     pip_cmd += " >/dev/null 2>&1";

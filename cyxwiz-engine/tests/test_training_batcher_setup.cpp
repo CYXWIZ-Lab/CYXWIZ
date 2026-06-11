@@ -292,6 +292,23 @@ int main() {
     Check(batch.labels.Shape().size() == 2, "label tensor should be 2D");
     Check(batch.labels.Shape()[1] == 2, "labels should be one-hot by output_size");
 
+    auto explicit_split_config = MakeConfig();
+    explicit_split_config.has_data_split = true;
+    explicit_split_config.train_ratio = 0.50f;
+    explicit_split_config.val_ratio = 0.25f;
+    explicit_split_config.test_ratio = 0.25f;
+    auto explicit_split_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        explicit_split_config,
+        MakeMultiGroupDataset(),
+        "label",
+        /*batch_size=*/2);
+    Check(explicit_split_batchers.num_train_samples == 3,
+          "explicit Arrow DataSplit train split should contain 3 samples");
+    Check(explicit_split_batchers.num_val_samples == 1,
+          "explicit Arrow DataSplit val split should contain 1 sample");
+    Check(explicit_split_batchers.num_test_samples == 2,
+          "explicit Arrow DataSplit test split should contain 2 held-out samples");
+
     auto high_worker_config = MakeConfig();
     high_worker_config.num_workers = cyxwiz::GetDefaultNumWorkers() + 64;
     auto high_worker_batchers = cyxwiz::BuildArrowTrainingBatchers(
@@ -442,6 +459,7 @@ int main() {
         "Parquet model-step");
 
     parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    explicit_split_batchers = cyxwiz::TrainingBatcherSet{};
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};

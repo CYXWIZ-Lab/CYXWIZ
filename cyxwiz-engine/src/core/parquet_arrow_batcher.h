@@ -56,7 +56,9 @@ public:
                         bool is_training = true,
                         const std::string& partition_column = "",
                         int partition_value = 0,
-                        int num_workers = 0);
+                        int num_workers = 0,
+                        BatcherPhase split_phase = BatcherPhase::Train,
+                        float val_split = 0.0f);
 
     // IBatcher interface
     Batch GetNextBatch() override;
@@ -80,6 +82,8 @@ private:
     bool is_training_;
     int num_workers_ = 0;
     float train_split_;
+    float val_split_ = 0.0f;
+    BatcherPhase split_phase_ = BatcherPhase::Train;
     std::string partition_column_;
     int partition_value_ = 0;
 

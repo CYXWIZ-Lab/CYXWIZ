@@ -26,7 +26,9 @@ ParquetArrowBatcher::ParquetArrowBatcher(
     bool is_training,
     const std::string& partition_column,
     int partition_value,
-    int num_workers)
+    int num_workers,
+    BatcherPhase split_phase,
+    float val_split)
     : dataset_(std::move(dataset)),
       label_column_(label_column),
       batch_size_(batch_size),
@@ -34,6 +36,8 @@ ParquetArrowBatcher::ParquetArrowBatcher(
       is_training_(is_training),
       num_workers_(std::max(0, num_workers)),
       train_split_(train_split),
+      val_split_(val_split),
+      split_phase_(split_phase),
       partition_column_(partition_column),
       partition_value_(partition_value),
       rng_(std::random_device{}()) {
@@ -55,9 +59,11 @@ ParquetArrowBatcher::ParquetArrowBatcher(
             : CountPartitionRowsInGroup(g);
     }
 
+    const char* phase_name = split_phase_ == BatcherPhase::Train ? "train" :
+        (split_phase_ == BatcherPhase::Val ? "val" : "test");
     spdlog::info("ParquetArrowBatcher: {} ({} row groups assigned, {} samples, "
                  "{} features, batch_size={}, num_workers={}, label_col='{}', partition='{}')",
-                 is_training_ ? "train" : "val",
+                 phase_name,
                  assigned_row_groups_.size(),
                  num_samples_,
                  num_features_,
@@ -138,23 +144,36 @@ void ParquetArrowBatcher::AssignRowGroups() {
     const int total_groups = dataset_->GetNumRowGroups();
     if (total_groups == 0) return;
 
-    // First train_split fraction of row groups go to train; the rest are val.
-    // Clamp split so both sides always have at least one group when the file
-    // has at least 2 groups.
-    int train_cutoff = static_cast<int>(total_groups * train_split_);
-    if (total_groups >= 2) {
+    BatcherPhase effective_phase = split_phase_;
+    if (val_split_ <= 0.0f && split_phase_ == BatcherPhase::Train && !is_training_) {
+        effective_phase = BatcherPhase::Val;
+    }
+    split_phase_ = effective_phase;
+
+    const float safe_train_split = std::clamp(train_split_, 0.0f, 1.0f);
+    const float safe_val_split = std::clamp(val_split_, 0.0f, 1.0f);
+    int train_cutoff = static_cast<int>(total_groups * safe_train_split);
+    int val_cutoff = total_groups;
+
+    if (safe_val_split > 0.0f) {
+        val_cutoff = train_cutoff + static_cast<int>(total_groups * safe_val_split);
+        train_cutoff = std::clamp(train_cutoff, 0, total_groups);
+        val_cutoff = std::clamp(val_cutoff, train_cutoff, total_groups);
+    } else if (total_groups >= 2) {
         train_cutoff = std::max(1, std::min(train_cutoff, total_groups - 1));
     } else {
-        train_cutoff = total_groups;  // only one group — give it all to train
+        train_cutoff = total_groups;
     }
 
     assigned_row_groups_.reserve(total_groups);
     if (!partition_column_.empty()) {
         for (int i = 0; i < total_groups; ++i) assigned_row_groups_.push_back(i);
-    } else if (is_training_) {
+    } else if (effective_phase == BatcherPhase::Train) {
         for (int i = 0; i < train_cutoff; ++i) assigned_row_groups_.push_back(i);
+    } else if (effective_phase == BatcherPhase::Val) {
+        for (int i = train_cutoff; i < val_cutoff; ++i) assigned_row_groups_.push_back(i);
     } else {
-        for (int i = train_cutoff; i < total_groups; ++i) assigned_row_groups_.push_back(i);
+        for (int i = val_cutoff; i < total_groups; ++i) assigned_row_groups_.push_back(i);
     }
 }
 

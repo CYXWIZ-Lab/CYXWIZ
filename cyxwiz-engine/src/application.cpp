@@ -294,7 +294,7 @@ bool CyxWizApp::Initialize() {
 
     // Window hints for resizable window (set before context hints)
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);  // Start maximized
+    glfwWindowHint(GLFW_MAXIMIZED, GLFW_FALSE);
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
 
 #ifdef __APPLE__
@@ -355,6 +355,16 @@ bool CyxWizApp::Initialize() {
     // Make sure window is visible and focused
     glfwShowWindow(window_);
     glfwFocusWindow(window_);
+#ifdef _WIN32
+    if (HWND hwnd = glfwGetWin32Window(window_)) {
+        ShowWindow(hwnd, SW_RESTORE);
+        SetWindowPos(hwnd, HWND_TOP, 100, 100, 1280, 720, SWP_SHOWWINDOW);
+        SetForegroundWindow(hwnd);
+        spdlog::info("Native Windows window shown: HWND={}", reinterpret_cast<void*>(hwnd));
+    } else {
+        spdlog::error("GLFW window was created but no native HWND is available");
+    }
+#endif
 
     glfwMakeContextCurrent(window_);
     glfwSwapInterval(1); // Enable vsync

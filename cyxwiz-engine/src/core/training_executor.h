@@ -17,6 +17,7 @@
 #include <memory>
 #include <thread>
 #include <chrono>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -37,6 +38,10 @@ struct TrainingMetrics {
     // Validation metrics
     float val_loss = 0.0f;
     float val_accuracy = 0.0f;
+
+    // Held-out test metrics, populated after training when a test split exists.
+    float test_loss = 0.0f;
+    float test_accuracy = 0.0f;
 
     // Token-level sequence tagging metrics. For sequence training,
     // train_accuracy/val_accuracy also mirror token accuracy so existing
@@ -271,6 +276,7 @@ private:
      * Run validation through any IBatcher implementation.
      */
     void RunValidationArrow(IBatcher& batcher);
+    std::pair<float, float> EvaluateArrowBatcher(IBatcher& batcher);
 
     /**
      * Run a single token-tagging epoch through an ISequenceBatcher.

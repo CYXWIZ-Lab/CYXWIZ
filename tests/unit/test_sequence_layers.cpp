@@ -5,6 +5,7 @@
 #include <cmath>
 #include <vector>
 #include <cstring>
+#include <map>
 
 using namespace cyxwiz;
 using Catch::Matchers::WithinAbs;
@@ -28,6 +29,51 @@ bool TensorsApproxEqual(const Tensor& a, const Tensor& b, float epsilon = 1e-4f)
 // Helper to compare shapes (std::vector<size_t>)
 bool ShapesEqual(const std::vector<size_t>& a, const std::vector<size_t>& b) {
     return a == b;
+}
+
+float SigmoidRef(float x) {
+    return 1.0f / (1.0f + std::exp(-x));
+}
+
+Tensor FilledTensor(const std::vector<size_t>& shape, float value) {
+    size_t count = 1;
+    for (size_t dim : shape) count *= dim;
+    std::vector<float> values(count, value);
+    return Tensor(shape, values.data(), DataType::Float32);
+}
+
+std::map<std::string, Tensor> LstmOneUnitParams(float input_weight) {
+    return {
+        {"layer0_W_ih", FilledTensor({4, 1}, input_weight)},
+        {"layer0_W_hh", FilledTensor({4, 1}, 0.0f)},
+        {"layer0_b_ih", FilledTensor({4}, 0.0f)},
+        {"layer0_b_hh", FilledTensor({4}, 0.0f)}
+    };
+}
+
+std::map<std::string, Tensor> GruOneUnitParams(float input_weight) {
+    return {
+        {"layer0_W_ih", FilledTensor({3, 1}, input_weight)},
+        {"layer0_W_hh", FilledTensor({3, 1}, 0.0f)},
+        {"layer0_b_ih", FilledTensor({3}, 0.0f)},
+        {"layer0_b_hh", FilledTensor({3}, 0.0f)}
+    };
+}
+
+float LstmOneStepRef(float x, float input_weight) {
+    const float pre = input_weight * x;
+    const float i = SigmoidRef(pre);
+    const float g = std::tanh(pre);
+    const float o = SigmoidRef(pre);
+    const float c = i * g;
+    return o * std::tanh(c);
+}
+
+float GruOneStepRef(float x, float input_weight) {
+    const float pre = input_weight * x;
+    const float z = SigmoidRef(pre);
+    const float n = std::tanh(pre);
+    return (1.0f - z) * n;
 }
 
 // ============================================================================
@@ -327,6 +373,36 @@ TEST_CASE("LSTMLayer - Simple forward computation", "[lstm][forward][computation
     REQUIRE(out_data[1] <= 1.0f);
 }
 
+TEST_CASE("LSTMLayer - Matches one-step gate equation", "[lstm][forward][reference]") {
+    LSTMLayer lstm(1, 1, 1, true, false, 0.0f);
+    lstm.SetParameters(LstmOneUnitParams(1.0f));
+
+    std::vector<float> input_data = {0.5f};
+    Tensor input({1, 1, 1}, input_data.data(), DataType::Float32);
+
+    Tensor output = lstm.Forward(input);
+    REQUIRE(ShapesEqual(output.Shape(), {1, 1, 1}));
+    REQUIRE_THAT(output.Data<float>()[0], WithinAbs(LstmOneStepRef(0.5f, 1.0f), 1e-5f));
+}
+
+TEST_CASE("BiLSTMLayer - Concatenates forward and reverse reference outputs", "[lstm][bidirectional][reference]") {
+    LSTMLayer lstm(1, 1, 1, true, true, 0.0f);
+    auto params = LstmOneUnitParams(1.0f);
+    params["layer0_W_ih_reverse"] = FilledTensor({4, 1}, 0.5f);
+    params["layer0_W_hh_reverse"] = FilledTensor({4, 1}, 0.0f);
+    params["layer0_b_ih_reverse"] = FilledTensor({4}, 0.0f);
+    params["layer0_b_hh_reverse"] = FilledTensor({4}, 0.0f);
+    lstm.SetParameters(params);
+
+    std::vector<float> input_data = {0.5f};
+    Tensor input({1, 1, 1}, input_data.data(), DataType::Float32);
+
+    Tensor output = lstm.Forward(input);
+    REQUIRE(ShapesEqual(output.Shape(), {1, 1, 2}));
+    REQUIRE_THAT(output.Data<float>()[0], WithinAbs(LstmOneStepRef(0.5f, 1.0f), 1e-5f));
+    REQUIRE_THAT(output.Data<float>()[1], WithinAbs(LstmOneStepRef(0.5f, 0.5f), 1e-5f));
+}
+
 TEST_CASE("LSTMLayer - State persistence", "[lstm][state]") {
     LSTMLayer lstm(4, 8, 1, true, false, 0.0f);
 
@@ -428,6 +504,36 @@ TEST_CASE("GRULayer - Simple forward computation", "[gru][forward][computation]"
     REQUIRE(out_data[0] <= 1.0f);
     REQUIRE(out_data[1] >= -1.0f);
     REQUIRE(out_data[1] <= 1.0f);
+}
+
+TEST_CASE("GRULayer - Matches one-step gate equation", "[gru][forward][reference]") {
+    GRULayer gru(1, 1, 1, true, false, 0.0f);
+    gru.SetParameters(GruOneUnitParams(1.0f));
+
+    std::vector<float> input_data = {0.5f};
+    Tensor input({1, 1, 1}, input_data.data(), DataType::Float32);
+
+    Tensor output = gru.Forward(input);
+    REQUIRE(ShapesEqual(output.Shape(), {1, 1, 1}));
+    REQUIRE_THAT(output.Data<float>()[0], WithinAbs(GruOneStepRef(0.5f, 1.0f), 1e-5f));
+}
+
+TEST_CASE("BiGRULayer - Concatenates forward and reverse reference outputs", "[gru][bidirectional][reference]") {
+    GRULayer gru(1, 1, 1, true, true, 0.0f);
+    auto params = GruOneUnitParams(1.0f);
+    params["layer0_W_ih_reverse"] = FilledTensor({3, 1}, 0.5f);
+    params["layer0_W_hh_reverse"] = FilledTensor({3, 1}, 0.0f);
+    params["layer0_b_ih_reverse"] = FilledTensor({3}, 0.0f);
+    params["layer0_b_hh_reverse"] = FilledTensor({3}, 0.0f);
+    gru.SetParameters(params);
+
+    std::vector<float> input_data = {0.5f};
+    Tensor input({1, 1, 1}, input_data.data(), DataType::Float32);
+
+    Tensor output = gru.Forward(input);
+    REQUIRE(ShapesEqual(output.Shape(), {1, 1, 2}));
+    REQUIRE_THAT(output.Data<float>()[0], WithinAbs(GruOneStepRef(0.5f, 1.0f), 1e-5f));
+    REQUIRE_THAT(output.Data<float>()[1], WithinAbs(GruOneStepRef(0.5f, 0.5f), 1e-5f));
 }
 
 TEST_CASE("GRULayer - State persistence", "[gru][state]") {

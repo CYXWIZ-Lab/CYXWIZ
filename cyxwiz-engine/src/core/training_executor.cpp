@@ -192,6 +192,7 @@ void TrainingExecutor::Train(
     // IBatcher-aware loop; legacy DatasetHandle keeps its older loop.
     IBatcher* active_train_ibatcher = nullptr;
     IBatcher* active_val_ibatcher = nullptr;
+    IBatcher* active_test_ibatcher = nullptr;
     ISequenceBatcher* active_sequence_batcher = nullptr;
 
     size_t num_train_samples = 0;
@@ -202,12 +203,14 @@ void TrainingExecutor::Train(
         num_train_samples = modern_batchers.num_train_samples;
         active_train_ibatcher = modern_batchers.train;
         active_val_ibatcher = modern_batchers.val;
+        active_test_ibatcher = modern_batchers.test;
     } else if (mode_ == DatasetMode::Parquet) {
         modern_batchers = BuildParquetTrainingBatchers(
             config_, parquet_dataset_, label_column_, batch_size);
         num_train_samples = modern_batchers.num_train_samples;
         active_train_ibatcher = modern_batchers.train;
         active_val_ibatcher = modern_batchers.val;
+        active_test_ibatcher = modern_batchers.test;
     } else if (mode_ == DatasetMode::External) {
         // External batchers are constructed by TrainingManager for
         // image/audio/text datasets with the compiled graph config already
@@ -531,6 +534,9 @@ void TrainingExecutor::Train(
             } else {
                 active_train_ibatcher->Reset();
                 active_val_ibatcher->Reset();
+                if (active_test_ibatcher) {
+                    active_test_ibatcher->Reset();
+                }
             }
         }
     }
@@ -581,6 +587,25 @@ void TrainingExecutor::Train(
                              restored->epoch, restored->val_loss);
             }
         }
+    }
+
+    if (!stop_requested_.load() && active_test_ibatcher &&
+        active_test_ibatcher->GetNumSamples() > 0) {
+        model_->SetTraining(false);
+        active_test_ibatcher->SetPhase(BatcherPhase::Test);
+        const auto [test_loss, test_acc] = EvaluateArrowBatcher(*active_test_ibatcher);
+        active_test_ibatcher->SetPhase(BatcherPhase::Train);
+        UpdateMetrics([test_loss, test_acc](TrainingMetrics& m) {
+            m.test_loss = test_loss;
+            m.test_accuracy = test_acc;
+        });
+        final_metrics.test_loss = test_loss;
+        final_metrics.test_accuracy = test_acc;
+        spdlog::info("TrainingExecutor: Held-out test metrics test_loss={:.4f}, test_acc={:.2f}% ({} samples)",
+                     test_loss, test_acc * 100.0f, active_test_ibatcher->GetNumSamples());
+    } else if (!stop_requested_.load() && active_test_ibatcher) {
+        spdlog::warn("TrainingExecutor: configured test split produced 0 held-out samples; "
+                     "test metrics were skipped");
     }
 
     // Notify plugin hooks: training end
@@ -1463,7 +1488,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
         static_cast<int>(total_batches), final_loss, final_acc);
 }
 
-void TrainingExecutor::RunValidationArrow(IBatcher& batcher) {
+std::pair<float, float> TrainingExecutor::EvaluateArrowBatcher(IBatcher& batcher) {
     float val_loss = 0.0f;
     int correct = 0;
     int total = 0;
@@ -1512,6 +1537,12 @@ void TrainingExecutor::RunValidationArrow(IBatcher& batcher) {
 
     float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
+
+    return {final_loss, final_acc};
+}
+
+void TrainingExecutor::RunValidationArrow(IBatcher& batcher) {
+    const auto [final_loss, final_acc] = EvaluateArrowBatcher(batcher);
 
     UpdateMetrics([final_loss, final_acc](TrainingMetrics& m) {
         m.val_loss = final_loss;

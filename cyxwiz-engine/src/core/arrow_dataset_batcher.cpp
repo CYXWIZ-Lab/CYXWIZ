@@ -22,7 +22,9 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     bool is_training,
     const std::string& partition_column,
     int partition_value,
-    int num_workers)
+    int num_workers,
+    BatcherPhase split_phase,
+    float val_split)
     : dataset_(dataset)
     , label_column_(label_column)
     , batch_size_(batch_size)
@@ -31,6 +33,8 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     , num_workers_(std::max(0, num_workers))
     , partition_column_(partition_column)
     , partition_value_(partition_value)
+    , split_phase_(split_phase)
+    , val_split_(val_split)
     , rng_(std::random_device{}())
 {
     if (!dataset_) {
@@ -92,17 +96,33 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     }
 
     if (!partition_filtered) {
-        // Legacy path: chronological first-N% slicing. train_split fraction
-        // for the training batcher, remainder for the validation batcher.
-        int64_t train_count = static_cast<int64_t>(num_rows * train_split);
-        if (is_training_) {
-            indices_.reserve(train_count);
-            for (int64_t i = 0; i < train_count; ++i) {
+        const float safe_train_split = std::clamp(train_split, 0.0f, 1.0f);
+        const float safe_val_split = std::clamp(val_split, 0.0f, 1.0f);
+        const int64_t train_count = static_cast<int64_t>(num_rows * safe_train_split);
+        const int64_t val_count = safe_val_split > 0.0f
+            ? static_cast<int64_t>(num_rows * safe_val_split)
+            : (num_rows - train_count);
+        const int64_t val_end = std::min(num_rows, train_count + std::max<int64_t>(0, val_count));
+
+        BatcherPhase effective_phase = split_phase_;
+        if (val_split_ <= 0.0f && split_phase_ == BatcherPhase::Train && !is_training_) {
+            effective_phase = BatcherPhase::Val;
+        }
+        split_phase_ = effective_phase;
+
+        if (effective_phase == BatcherPhase::Train) {
+            indices_.reserve(static_cast<size_t>(train_count));
+            for (int64_t i = 0; i < train_count && i < num_rows; ++i) {
+                indices_.push_back(i);
+            }
+        } else if (effective_phase == BatcherPhase::Val) {
+            indices_.reserve(static_cast<size_t>(std::max<int64_t>(0, val_end - train_count)));
+            for (int64_t i = train_count; i < val_end; ++i) {
                 indices_.push_back(i);
             }
         } else {
-            indices_.reserve(num_rows - train_count);
-            for (int64_t i = train_count; i < num_rows; ++i) {
+            indices_.reserve(static_cast<size_t>(std::max<int64_t>(0, num_rows - val_end)));
+            for (int64_t i = val_end; i < num_rows; ++i) {
                 indices_.push_back(i);
             }
         }
@@ -111,8 +131,10 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     // Initialize feature/label column indices
     InitializeColumns();
 
-    spdlog::info("ArrowDatasetBatcher: {} samples, {} features, batch_size={}, shuffle={}, num_workers={}",
-                 indices_.size(), num_features_, batch_size_, shuffle_, num_workers_);
+    const char* phase_name = split_phase_ == BatcherPhase::Train ? "train" :
+        (split_phase_ == BatcherPhase::Val ? "val" : "test");
+    spdlog::info("ArrowDatasetBatcher: {} split, {} samples, {} features, batch_size={}, shuffle={}, num_workers={}",
+                 phase_name, indices_.size(), num_features_, batch_size_, shuffle_, num_workers_);
 
     if (shuffle_) {
         ShuffleIndices();
