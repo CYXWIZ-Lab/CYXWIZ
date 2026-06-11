@@ -465,6 +465,9 @@ Current implementation slice:
 - Backend placement status and generic reason strings now have named constants
   in `graph_compiler.h`, reducing string drift between compiler, runtime logs,
   UI, and tests.
+- Recurrent CUDA placement reason strings now have named constants in
+  `recurrent_cuda_placement.h`, keeping compiler preflight, backend fallback,
+  and tests on the same reason-code contract.
 - `TrainingConfiguration::SummarizeBackendPlacements()` now provides a shared
   whole-graph placement count for compiler logs, training startup logs, and the
   compile-result popup.

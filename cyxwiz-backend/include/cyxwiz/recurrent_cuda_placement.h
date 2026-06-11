@@ -34,6 +34,19 @@ struct RecurrentCudaPlacementDecision {
     std::string reason;
 };
 
+namespace RecurrentCudaPlacementReason {
+inline constexpr const char* ArrayFireCudaAllowedByEstimator =
+    "arrayfire_cuda_allowed_by_estimator";
+inline constexpr const char* CudaJitParamOverflowRisk =
+    "cuda_jit_param_overflow_risk";
+inline constexpr const char* GruArrayFireCudaProbeRequired =
+    "gru_arrayfire_cuda_probe_required";
+inline constexpr const char* GruBidirectionalArrayFireCudaDisabled =
+    "gru_bidirectional_arrayfire_cuda_disabled";
+inline constexpr const char* LstmBidirectionalCudaJitParamOverflowRisk =
+    "lstm_bidirectional_cuda_jit_param_overflow_risk";
+} // namespace RecurrentCudaPlacementReason
+
 inline const char* RecurrentKindName(RecurrentLayerKind kind) {
     switch (kind) {
         case RecurrentLayerKind::LSTM:
@@ -77,8 +90,8 @@ inline RecurrentCudaPlacementDecision EvaluateRecurrentCudaPlacement(
     if (request.kind == RecurrentLayerKind::GRU) {
         decision.should_attempt_arrayfire_cuda = false;
         decision.reason_code = request.bidirectional
-            ? "gru_bidirectional_arrayfire_cuda_disabled"
-            : "gru_arrayfire_cuda_probe_required";
+            ? RecurrentCudaPlacementReason::GruBidirectionalArrayFireCudaDisabled
+            : RecurrentCudaPlacementReason::GruArrayFireCudaProbeRequired;
         decision.expected_backend = "CPU";
         std::ostringstream msg;
         msg << decision.layer_name
@@ -107,7 +120,8 @@ inline RecurrentCudaPlacementDecision EvaluateRecurrentCudaPlacement(
 
     if (request.kind == RecurrentLayerKind::LSTM && request.bidirectional) {
         decision.should_attempt_arrayfire_cuda = false;
-        decision.reason_code = "lstm_bidirectional_cuda_jit_param_overflow_risk";
+        decision.reason_code =
+            RecurrentCudaPlacementReason::LstmBidirectionalCudaJitParamOverflowRisk;
         decision.expected_backend = "CPU";
         std::ostringstream msg;
         msg << decision.layer_name
@@ -138,7 +152,8 @@ inline RecurrentCudaPlacementDecision EvaluateRecurrentCudaPlacement(
         decision.formal_parameter_limit_bytes;
 
     if (!decision.should_attempt_arrayfire_cuda) {
-        decision.reason_code = "cuda_jit_param_overflow_risk";
+        decision.reason_code =
+            RecurrentCudaPlacementReason::CudaJitParamOverflowRisk;
         decision.expected_backend = "CPU";
         std::ostringstream msg;
         msg << decision.layer_name
@@ -161,7 +176,8 @@ inline RecurrentCudaPlacementDecision EvaluateRecurrentCudaPlacement(
             << "continue, but this recurrent step may be slower on CPU.";
         decision.reason = msg.str();
     } else {
-        decision.reason_code = "arrayfire_cuda_allowed_by_estimator";
+        decision.reason_code =
+            RecurrentCudaPlacementReason::ArrayFireCudaAllowedByEstimator;
     }
 
     return decision;

@@ -1,6 +1,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/backend_placement_capabilities.h"
 #include "../src/gui/loaders/data_loader.h"
+#include "cyxwiz/recurrent_cuda_placement.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -273,13 +274,16 @@ int main() {
           "GRU should be conservatively placed on CPU");
     Check(gru_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
           "GRU placement status should be cpu");
-    Check(gru_placement->reason_code == "gru_arrayfire_cuda_probe_required",
+    Check(gru_placement->reason_code ==
+              cyxwiz::RecurrentCudaPlacementReason::GruArrayFireCudaProbeRequired,
           "GRU placement should use the shared reason code");
     Check(gru_placement->explanation.find("batch_size=64") != std::string::npos,
           "GRU placement explanation should include compiled batch size");
     Check(gru_placement->explanation.find("seq_len=64") != std::string::npos,
           "GRU placement explanation should include inferred sequence length");
-    Check(HasWarningText(gru_config, "gru_arrayfire_cuda_probe_required"),
+    Check(HasWarningText(
+              gru_config,
+              cyxwiz::RecurrentCudaPlacementReason::GruArrayFireCudaProbeRequired),
           "GRU CPU placement should surface as a compiler warning");
 
     const auto* gru_dense_placement = FindPlacement(gru_config, 5);
@@ -306,9 +310,12 @@ int main() {
           "small single-direction LSTM should remain GPU-eligible");
     Check(lstm_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
           "LSTM placement status should be gpu");
-    Check(lstm_placement->reason_code == "arrayfire_cuda_allowed_by_estimator",
+    Check(lstm_placement->reason_code ==
+              cyxwiz::RecurrentCudaPlacementReason::ArrayFireCudaAllowedByEstimator,
           "LSTM placement should use the shared allow reason code");
-    Check(!HasWarningText(lstm_config, "arrayfire_cuda_allowed_by_estimator"),
+    Check(!HasWarningText(
+              lstm_config,
+              cyxwiz::RecurrentCudaPlacementReason::ArrayFireCudaAllowedByEstimator),
           "GPU-eligible LSTM placement should not create a warning");
 
     cyxwiz::TrainingConfiguration unknown_config;
