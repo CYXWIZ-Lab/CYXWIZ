@@ -3681,8 +3681,16 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         }
 
         if (!config.backend_placements.empty()) {
+            const auto placement_summary = config.SummarizeBackendPlacements();
             out << "\n";
             out << "Backend placement:\n";
+            out << "  Summary: total=" << placement_summary.total
+                << ", gpu=" << placement_summary.gpu
+                << ", cpu=" << placement_summary.cpu
+                << ", mixed=" << placement_summary.mixed
+                << ", risk=" << placement_summary.risk
+                << ", unsupported=" << placement_summary.unsupported
+                << ", unknown=" << placement_summary.unknown << "\n";
             for (const auto& placement : config.backend_placements) {
                 out << "  - " << placement.node_type;
                 if (!placement.node_name.empty()) {

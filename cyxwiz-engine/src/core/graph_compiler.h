@@ -245,6 +245,20 @@ struct BackendPlacementEntry {
     std::string suggested_action;
 };
 
+struct BackendPlacementSummary {
+    size_t total = 0;
+    size_t gpu = 0;
+    size_t cpu = 0;
+    size_t mixed = 0;
+    size_t risk = 0;
+    size_t unsupported = 0;
+    size_t unknown = 0;
+
+    bool HasCpuOrRisk() const {
+        return cpu > 0 || risk > 0 || unsupported > 0;
+    }
+};
+
 /**
  * Complete training configuration extracted from graph
  */
@@ -359,6 +373,27 @@ struct TrainingConfiguration {
         return n;
     }
     bool HasErrors() const { return CountIssues(IssueLevel::Error) > 0; }
+
+    BackendPlacementSummary SummarizeBackendPlacements() const {
+        BackendPlacementSummary summary;
+        summary.total = backend_placements.size();
+        for (const auto& placement : backend_placements) {
+            if (placement.status == "gpu") {
+                ++summary.gpu;
+            } else if (placement.status == "cpu") {
+                ++summary.cpu;
+            } else if (placement.status == "mixed") {
+                ++summary.mixed;
+            } else if (placement.status == "risk") {
+                ++summary.risk;
+            } else if (placement.status == "unsupported") {
+                ++summary.unsupported;
+            } else {
+                ++summary.unknown;
+            }
+        }
+        return summary;
+    }
 
     // Helper methods
     OptimizerType GetOptimizerType() const {

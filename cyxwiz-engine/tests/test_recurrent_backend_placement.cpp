@@ -181,6 +181,11 @@ int main() {
     Check(gru_config.is_valid, "GRU placement graph should compile");
     Check(gru_config.backend_placements.size() == 3,
           "GRU graph should produce placement entries for Embedding, GRU, Dense");
+    const auto gru_summary = gru_config.SummarizeBackendPlacements();
+    Check(gru_summary.total == 3, "GRU placement summary should count all entries");
+    Check(gru_summary.gpu == 2, "GRU placement summary should count Embedding and Dense as GPU");
+    Check(gru_summary.cpu == 1, "GRU placement summary should count GRU as CPU");
+    Check(gru_summary.unknown == 0, "GRU placement summary should have no unknown entries");
 
     const auto* gru_embedding_placement = FindPlacement(gru_config, 3);
     Check(gru_embedding_placement != nullptr,
@@ -219,6 +224,10 @@ int main() {
     Check(lstm_config.is_valid, "small LSTM placement graph should compile");
     Check(lstm_config.backend_placements.size() == 3,
           "LSTM graph should produce placement entries for Embedding, LSTM, Dense");
+    const auto lstm_summary = lstm_config.SummarizeBackendPlacements();
+    Check(lstm_summary.total == 3, "LSTM placement summary should count all entries");
+    Check(lstm_summary.gpu == 3, "LSTM placement summary should count all layers as GPU");
+    Check(lstm_summary.cpu == 0, "LSTM placement summary should have no CPU entries");
 
     const auto* lstm_placement = FindPlacement(lstm_config, 4);
     Check(lstm_placement != nullptr, "LSTM placement entry should reference node 4");

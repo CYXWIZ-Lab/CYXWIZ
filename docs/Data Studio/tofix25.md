@@ -456,6 +456,9 @@ Current implementation slice:
   `arrayfire_tensor_op_capable`. Compiled layer types without a precise rule are
   reported as `backend_capability_unclassified` instead of being incorrectly
   promised as GPU-capable.
+- `TrainingConfiguration::SummarizeBackendPlacements()` now provides a shared
+  whole-graph placement count for compiler logs, training startup logs, and the
+  compile-result popup.
 - Graph compile logs include a backend placement plan.
 - Compile findings now log at their actual severity, so warning console filters
   see placement warnings instead of missing an info-level line containing

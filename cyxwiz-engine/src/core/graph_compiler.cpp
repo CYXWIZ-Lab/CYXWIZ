@@ -3105,7 +3105,16 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     if (!config.backend_placements.empty()) {
-        spdlog::info("GraphCompiler: Backend placement plan:");
+        const auto summary = config.SummarizeBackendPlacements();
+        spdlog::info(
+            "GraphCompiler: Backend placement plan: total={}, gpu={}, cpu={}, mixed={}, risk={}, unsupported={}, unknown={}",
+            summary.total,
+            summary.gpu,
+            summary.cpu,
+            summary.mixed,
+            summary.risk,
+            summary.unsupported,
+            summary.unknown);
         for (const auto& placement : config.backend_placements) {
             spdlog::info("  [{}] {} '{}' -> expected={}, fallback={}, reason={}",
                          placement.status,
