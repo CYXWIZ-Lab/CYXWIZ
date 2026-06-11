@@ -56,8 +56,7 @@ void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
                  ? std::string()
                  : ", reason=" + placement.reason_code);
 
-        if (placement.status == "cpu" || placement.status == "risk" ||
-            placement.status == "unsupported") {
+        if (placement.NeedsUserAttention()) {
             spdlog::warn("TrainingExecutor: {}", detail);
             if (!placement.explanation.empty()) {
                 spdlog::warn("TrainingExecutor: {}", placement.explanation);

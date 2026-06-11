@@ -459,6 +459,10 @@ Current implementation slice:
 - `TrainingConfiguration::SummarizeBackendPlacements()` now provides a shared
   whole-graph placement count for compiler logs, training startup logs, and the
   compile-result popup.
+- Backend placement entries now expose `NeedsUserAttention()`, and training
+  startup logs warn for `cpu`, `mixed`, `risk`, `unsupported`, and `unknown`
+  placements. Unknown backend capability should be visible to users; it should
+  not look the same as a confirmed GPU placement.
 - Graph compile logs include a backend placement plan.
 - Compile findings now log at their actual severity, so warning console filters
   see placement warnings instead of missing an info-level line containing

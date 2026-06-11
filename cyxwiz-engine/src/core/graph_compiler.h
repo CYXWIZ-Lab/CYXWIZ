@@ -243,6 +243,14 @@ struct BackendPlacementEntry {
     std::string reason_code;
     std::string explanation;
     std::string suggested_action;
+
+    bool NeedsUserAttention() const {
+        return status == "cpu" ||
+               status == "mixed" ||
+               status == "risk" ||
+               status == "unsupported" ||
+               status == "unknown";
+    }
 };
 
 struct BackendPlacementSummary {
@@ -256,6 +264,11 @@ struct BackendPlacementSummary {
 
     bool HasCpuOrRisk() const {
         return cpu > 0 || risk > 0 || unsupported > 0;
+    }
+
+    bool HasNonGpu() const {
+        return cpu > 0 || mixed > 0 || risk > 0 ||
+               unsupported > 0 || unknown > 0;
     }
 };
 

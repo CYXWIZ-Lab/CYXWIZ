@@ -240,6 +240,20 @@ int main() {
     Check(!HasWarningText(lstm_config, "arrayfire_cuda_allowed_by_estimator"),
           "GPU-eligible LSTM placement should not create a warning");
 
+    cyxwiz::TrainingConfiguration unknown_config;
+    cyxwiz::BackendPlacementEntry unknown_placement;
+    unknown_placement.status = "unknown";
+    unknown_config.backend_placements.push_back(unknown_placement);
+    const auto unknown_summary = unknown_config.SummarizeBackendPlacements();
+    Check(unknown_summary.total == 1,
+          "unknown placement summary should count the entry");
+    Check(unknown_summary.unknown == 1,
+          "unknown placement summary should classify unknown status");
+    Check(unknown_summary.HasNonGpu(),
+          "unknown placement summary should be treated as non-GPU");
+    Check(unknown_config.backend_placements.front().NeedsUserAttention(),
+          "unknown placement should require user attention");
+
     std::cout << "Recurrent backend placement tests passed\n";
     return 0;
 }
