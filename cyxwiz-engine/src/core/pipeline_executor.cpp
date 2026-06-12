@@ -1578,6 +1578,15 @@ bool HasSupportedParameterValues(
         return false;
     }
 
+    if (node_type == "TextTokenizer") {
+        if (!ValidateOptionalBooleanParameter(
+                parameters, node_type, "lowercase", error) ||
+            !ValidateOptionalBooleanParameter(
+                parameters, node_type, "vocab_build_if_missing", error)) {
+            return false;
+        }
+    }
+
     if (node_type == "TSWindow") {
         const auto stride_it = parameters.find("stride");
         if (stride_it != parameters.end() && !stride_it->second.empty() &&

@@ -830,6 +830,7 @@ void TokenizerDialog::LoadFromNode() {
     lowercase_ = true;
     padding_ = true;
     truncation_ = true;
+    vocab_build_if_missing_ = false;
     std::strncpy(text_col_, "text", sizeof(text_col_) - 1);
     text_col_[sizeof(text_col_) - 1] = '\0';
     label_col_[0] = '\0';
@@ -864,6 +865,7 @@ void TokenizerDialog::LoadFromNode() {
     ReadBoolParam(node_, "lowercase", lowercase_);
     ReadBoolParam(node_, "padding", padding_);
     ReadBoolParam(node_, "truncation", truncation_);
+    ReadBoolParam(node_, "vocab_build_if_missing", vocab_build_if_missing_);
 
     if (tokenizer_type_ < 0 || tokenizer_type_ > 2) tokenizer_type_ = 1;
     if (max_length_ < 1) max_length_ = 1;
@@ -887,6 +889,9 @@ void TokenizerDialog::Apply() {
         node_->parameters["min_freq"] = std::to_string(min_word_freq_);
         node_->parameters["max_vocab_size"] = std::to_string(max_vocab_size_);
         node_->parameters["vocab_file"] = vocab_file_;
+        node_->parameters["source_csv"] = source_csv_;
+        node_->parameters["pad_value"] = std::to_string(pad_value_);
+        node_->parameters["vocab_build_if_missing"] = vocab_build_if_missing_ ? "true" : "false";
     }
 
     if (IsVocabularyNode()) {
@@ -1107,9 +1112,9 @@ void TokenizerDialog::RenderTokenizerTab() {
 void TokenizerDialog::RenderVocabularyTab() {
     ImGui::Spacing();
 
-    if (IsVocabularyNode()) {
+    if (IsTokenizerNode() || IsVocabularyNode()) {
         ImGui::Text("Source CSV:");
-        HelpTooltip("Dataset file scanned when building a vocabulary from this node. Quoted multi-line CSV text is supported.");
+        HelpTooltip("Optional dataset file scanned when using the Build and Save Vocabulary button. Training materialization can also build from the loaded Arrow dataset.");
         ImGui::SetNextItemWidth(-1);
         if (ImGui::InputText("##source_csv", source_csv_, sizeof(source_csv_))) {
             has_changes_ = true;
@@ -1146,23 +1151,25 @@ void TokenizerDialog::RenderVocabularyTab() {
     if (IsTokenizerNode() || IsVocabularyNode()) {
         ImGui::Spacing();
         ImGui::Text("Vocabulary file:");
-        HelpTooltip("One-token-per-line vocabulary file. Tokenizer can load it directly; TextVocabulary can build and save it from the source CSV.");
+        HelpTooltip("One-token-per-line vocabulary file. TextTokenizer can load it directly or build it from training text when the file is missing.");
         ImGui::SetNextItemWidth(-1);
         if (ImGui::InputText("##vocab_file", vocab_file_, sizeof(vocab_file_))) {
             has_changes_ = true;
         }
 
         ImGui::Spacing();
-        if (IsVocabularyNode() && ImGui::Button("Build and Save Vocabulary")) {
+        if (ImGui::Checkbox("Build and save if file is missing", &vocab_build_if_missing_)) {
+            has_changes_ = true;
+        }
+        HelpTooltip("When the vocab file path is set but missing, the materializer trains the vocabulary from the input text and writes it before tokenizing.");
+
+        ImGui::Spacing();
+        if (ImGui::Button("Build and Save Vocabulary")) {
             BuildVocabularyFile();
             has_changes_ = true;
         }
-        if (IsVocabularyNode()) {
-            HelpTooltip("Scans the source CSV text column, counts tokens, applies frequency and size limits, then writes the vocabulary file.");
-        }
-        if (IsVocabularyNode()) {
-            ImGui::SameLine();
-        }
+        HelpTooltip("Scans the source CSV text column, counts tokens, applies frequency and size limits, then writes the vocabulary file.");
+        ImGui::SameLine();
         if (ImGui::Button("Inspect File")) {
             InspectVocabularyFile();
         }
@@ -1184,14 +1191,12 @@ void TokenizerDialog::RenderPaddingTab() {
         has_changes_ = true;
     }
 
-    if (IsPaddingNode()) {
-        ImGui::Spacing();
-        ImGui::Text("Pad value:");
-        HelpTooltip("Token id used to fill short sequences. Use 0 when the vocabulary starts with [PAD] and the Embedding padding index is 0.");
-        ImGui::SetNextItemWidth(150.0f);
-        if (ImGui::InputInt("##pad_value", &pad_value_)) {
-            has_changes_ = true;
-        }
+    ImGui::Spacing();
+    ImGui::Text("Pad value:");
+    HelpTooltip("Token id used to fill short sequences. Use 0 when the vocabulary starts with [PAD] and the Embedding padding index is 0.");
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::InputInt("##pad_value", &pad_value_)) {
+        has_changes_ = true;
     }
 
     ImGui::Spacing();

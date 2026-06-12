@@ -118,7 +118,7 @@ public:
     TokenizerDialog(MLNode* node);
     void Apply() override;
     void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(700, 550); }
+    ImVec2 GetDefaultSize() const override { return ImVec2(780, 620); }
 
 protected:
     void RenderContent() override;
@@ -143,6 +143,7 @@ private:
     bool lowercase_ = true;
     bool padding_ = true;
     bool truncation_ = true;
+    bool vocab_build_if_missing_ = false;
     char text_col_[128] = "text";
     char label_col_[128] = "";
     char vocab_file_[260] = "";

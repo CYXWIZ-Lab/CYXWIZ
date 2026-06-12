@@ -2238,6 +2238,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["min_word_freq"] = "2";
             node.parameters["max_vocab_size"] = "10000";
             node.parameters["vocab_file"] = "";
+            node.parameters["source_csv"] = "";
+            node.parameters["pad_value"] = "0";
+            node.parameters["vocab_build_if_missing"] = "false";
             // Legacy fields for back-compat with the existing extractor.
             // Operator implicitly sets both to true regardless.
             node.parameters["padding"] = "true";

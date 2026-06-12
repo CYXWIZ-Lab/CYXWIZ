@@ -132,6 +132,12 @@ gui::MLNode MakePaddingNode() {
     return node;
 }
 
+gui::MLNode MakeCustomPaddingNode() {
+    auto node = MakePaddingNode();
+    node.parameters["pad_value"] = "9";
+    return node;
+}
+
 gui::MLNode MakeFactoryOnlyUnsupportedNode() {
     gui::MLNode node;
     node.id = 6;
@@ -318,7 +324,7 @@ int main() {
             MakeDataInputNode(),
             MakeTokenizerNode(),
             MakeVocabularyNode(),
-            MakePaddingNode(),
+            MakeCustomPaddingNode(),
         };
         std::vector<gui::NodeLink> folded_links = {
             {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
@@ -335,6 +341,8 @@ int main() {
               "TextPadding max_length should fold into tokenizer width");
         Check(ReadFloatValue(folded.table, "tok_0", 0) == 1.0f,
               "TextVocabulary min_freq should fold into tokenizer vocab");
+        Check(ReadFloatValue(folded.table, "tok_1", 0) == 9.0f,
+              "TextPadding pad_value should fold into tokenizer padding");
     }
 
     const auto parquet_path =

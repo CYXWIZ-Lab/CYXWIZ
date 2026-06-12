@@ -118,6 +118,19 @@ int main() {
           "unknown vocab token should use loaded UNK index");
     std::filesystem::remove(vocab_file);
 
+    cyxwiz::TextTokenizerOperator pad_value_op;
+    params.erase("vocab_file");
+    params["max_length"] = "5";
+    params["pad_value"] = "9";
+    Check(pad_value_op.Configure(params, error), error);
+    auto pad_value_result = pad_value_op.Apply(input);
+    Check(pad_value_result.ok(), pad_value_result.status().ToString());
+    auto pad_value_output = pad_value_result.ValueOrDie();
+    Check(ReadFloatValue(pad_value_output, "tok_3", 0) == 9.0f,
+          "custom pad_value should replace tokenizer PAD ids");
+    Check(ReadFloatValue(pad_value_output, "tok_4", 0) == 9.0f,
+          "custom pad_value should fill all padded positions");
+
     const auto missing_vocab_file =
         std::filesystem::temp_directory_path() /
         "cyxwiz_text_tokenizer_operator_built_vocab.txt";
@@ -145,6 +158,7 @@ int main() {
     cyxwiz::TextTokenizerOperator character_op;
     params.erase("vocab_file");
     params.erase("vocab_build_if_missing");
+    params.erase("pad_value");
     params["tokenizer_type"] = "2";
     params["max_length"] = "3";
     params["max_vocab_size"] = "20";

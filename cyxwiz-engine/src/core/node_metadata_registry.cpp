@@ -1893,25 +1893,35 @@ void NodeMetadataRegistry::InitializeDNNNodes() {
 // =============================================================================
 void NodeMetadataRegistry::InitializeTextNodes() {
     RegisterNode({NodeType::TextTokenizer, NodeCategory::TextProcessing, "Tokenizer", ICON_FA_ALIGN_LEFT,
-        {"tokenize", "text", "nlp"}, 0, false, "Tokenize text", "", "",
+        {"tokenize", "text", "nlp", "vocabulary", "padding"}, 0, false,
+        "Tokenize text, build/load vocabulary, and pad/truncate sequences", "", "",
         {{"Text", PinType::Dataset, true, "Text"}},
         {{"Tokens", PinType::Tensor, true, "Token indices"}},
-        {{"mode", "enum", "word", "Mode", {"word", "char"}, ""}},
+        {{"tokenizer_type", "enum", "1", "Mode", {"0", "1", "2"}, ""},
+         {"text_col", "string", "", "Text column", {}, ""},
+         {"label_col", "string", "", "Label column", {}, ""},
+         {"max_length", "int", "256", "Max sequence length", {}, ""},
+         {"min_word_freq", "int", "2", "Minimum token frequency", {}, ""},
+         {"max_vocab_size", "int", "10000", "Vocabulary cap", {}, ""},
+         {"vocab_file", "string", "", "Vocabulary file", {}, ""},
+         {"pad_value", "int", "0", "Padding token id", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::TextVocabulary, NodeCategory::TextProcessing, "Vocabulary", ICON_FA_LIST_UL,
-        {"vocabulary", "vocab"}, 0, false, "Build vocabulary", "", "",
+    RegisterNode({NodeType::TextVocabulary, NodeCategory::TextProcessing, "Vocabulary (legacy)", ICON_FA_LIST_UL,
+        {"vocabulary", "vocab", "legacy"}, 0, false,
+        "Legacy folded config node; use Tokenizer vocabulary settings for new graphs", "", "",
         {{"Text", PinType::Dataset, true, "Text"}},
         {{"Vocab", PinType::Parameters, true, "Vocabulary"}},
         {{"max_words", "int", "10000", "Max words", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Deprecated, 0, "Folded into TextTokenizer"});
 
-    RegisterNode({NodeType::TextPadding, NodeCategory::TextProcessing, "Padding", ICON_FA_ARROWS_LEFT_RIGHT,
-        {"pad", "sequence"}, 0, false, "Pad sequences", "", "",
+    RegisterNode({NodeType::TextPadding, NodeCategory::TextProcessing, "Padding (legacy)", ICON_FA_ARROWS_LEFT_RIGHT,
+        {"pad", "sequence", "legacy"}, 0, false,
+        "Legacy folded config node; use Tokenizer padding settings for new graphs", "", "",
         {{"Tokens", PinType::Tensor, true, "Tokens"}},
         {{"Padded", PinType::Tensor, true, "Padded"}},
         {{"max_length", "int", "128", "Max length", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Deprecated, 0, "Folded into TextTokenizer"});
 
     RegisterNode({NodeType::NERSequenceBuilder, NodeCategory::TextProcessing, "NER Sequence Builder", ICON_FA_TAG,
         {"ner", "sequence", "builder", "token", "tagging"}, 0, false,

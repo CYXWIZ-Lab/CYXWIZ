@@ -26,6 +26,7 @@ bool TextTokenizerOperator::Configure(
     lowercase_ = true;
     min_word_freq_ = 2;
     max_vocab_size_ = 10000;
+    pad_value_ = 0;
     vocab_build_if_missing_ = false;
     last_vocab_size_ = 0;
 
@@ -71,6 +72,7 @@ bool TextTokenizerOperator::Configure(
     if (!read_int("tokenizer_type", 1,     tokenizer_type_)) return false;
     if (!read_int("min_word_freq",  2,     min_word_freq_))  return false;
     if (!read_int("max_vocab_size", 10000, max_vocab_size_)) return false;
+    if (!read_int("pad_value",      0,     pad_value_))      return false;
 
     auto lcase = params.find("lowercase");
     if (lcase == params.end() || lcase->second.empty()) {
@@ -93,6 +95,11 @@ bool TextTokenizerOperator::Configure(
     if (tokenizer_type_ < 0 || tokenizer_type_ > 2) {
         error = "TextTokenizer: tokenizer_type must be 0..2 (got " +
                 std::to_string(tokenizer_type_) + ")";
+        return false;
+    }
+    if (pad_value_ < 0) {
+        error = "TextTokenizer: pad_value must be >= 0 (got " +
+                std::to_string(pad_value_) + ")";
         return false;
     }
 
@@ -160,7 +167,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     } else if (!vocab_file_.empty()) {
         return arrow::Status::Invalid(
             "TextTokenizer: vocab_file '" + vocab_file_ +
-            "' does not exist. Add a TextVocabulary node to build it, or remove vocab_file to train in memory.");
+            "' does not exist. Enable vocab_build_if_missing, build it from the TextTokenizer dialog, or remove vocab_file to train in memory.");
     } else {
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
     }
@@ -170,6 +177,16 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     // [num_samples, max_length] int matrix.
     auto encoded = tokenizer.EncodeBatch(texts);
     auto padded = tokenizer.PadBatch(encoded, max_length_);
+    if (pad_value_ != tokenizer.GetVocabulary().PadIndex()) {
+        const int tokenizer_pad = tokenizer.GetVocabulary().PadIndex();
+        for (auto& row : padded) {
+            for (int& id : row) {
+                if (id == tokenizer_pad) {
+                    id = pad_value_;
+                }
+            }
+        }
+    }
 
     const size_t n = padded.size();
 

@@ -238,8 +238,10 @@ void FoldTextConfigNodeParams(
         if (max_length != config_node.parameters.end()) {
             params["max_length"] = max_length->second;
         }
-        // pad_value is intentionally not folded in v1. TextTokenizer uses
-        // the tokenizer PAD id, which is fixed at 0.
+        auto pad_value = config_node.parameters.find("pad_value");
+        if (pad_value != config_node.parameters.end()) {
+            params["pad_value"] = pad_value->second;
+        }
     }
 }
 

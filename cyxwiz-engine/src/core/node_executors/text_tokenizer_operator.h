@@ -66,6 +66,7 @@ private:
     bool lowercase_ = true;
     int min_word_freq_ = 2;
     int max_vocab_size_ = 10000;
+    int pad_value_ = 0;
     std::string vocab_file_;
     bool vocab_build_if_missing_ = false;
     size_t last_vocab_size_ = 0;
