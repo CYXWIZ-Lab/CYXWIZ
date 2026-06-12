@@ -58,6 +58,12 @@ future compatibility but is currently ignored.
 - Values below 0 are clamped to 0; dialog input is capped at 64 to avoid
   accidental oversized queues.
 
+2026-06-12 Parquet prefetch coverage:
+
+- Focused batcher setup tests now exercise Parquet prefetch wrapper
+  ownership, sample-count preservation, queued batch consumption,
+  end-of-epoch behavior, and reset.
+
 **Goal:** add a real async prefetch queue only where it improves training
 latency without making shutdown, cancellation, or dataset lifetime unsafe.
 

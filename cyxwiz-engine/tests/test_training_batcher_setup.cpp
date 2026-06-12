@@ -384,6 +384,37 @@ int main() {
     auto parquet_batch = parquet_batchers.train->GetNextBatch();
     CheckFeatureAndLabelShapes(parquet_batch, 2, 2, 2, "tabular Parquet");
 
+    auto parquet_prefetch_config = MakeConfig();
+    parquet_prefetch_config.prefetch_factor = 2;
+    auto parquet_prefetch_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        parquet_prefetch_config,
+        parquet_dataset,
+        "label",
+        /*batch_size=*/2);
+    Check(parquet_prefetch_batchers.prefetch_train != nullptr,
+          "prefetch train wrapper should be owned for Parquet");
+    Check(parquet_prefetch_batchers.train == parquet_prefetch_batchers.prefetch_train.get(),
+          "Parquet train pointer should target prefetch wrapper");
+    Check(parquet_prefetch_batchers.train != parquet_prefetch_batchers.parquet_train.get(),
+          "Parquet prefetch wrapper should sit in front of train batcher");
+    Check(parquet_prefetch_batchers.num_train_samples == 4,
+          "Parquet prefetch train split should preserve sample count");
+    auto parquet_prefetch_first = parquet_prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(parquet_prefetch_first, 2, 2, 2,
+                               "prefetch Parquet first");
+    auto parquet_prefetch_second = parquet_prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(parquet_prefetch_second, 2, 2, 2,
+                               "prefetch Parquet second");
+    auto parquet_prefetch_end = parquet_prefetch_batchers.train->GetNextBatch();
+    Check(!parquet_prefetch_end.IsValid(),
+          "Parquet prefetch train should return invalid batch after epoch end");
+    Check(parquet_prefetch_batchers.train->IsEpochComplete(),
+          "Parquet prefetch train should complete after queued batches are consumed");
+    parquet_prefetch_batchers.train->Reset();
+    auto parquet_prefetch_after_reset = parquet_prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(parquet_prefetch_after_reset, 2, 2, 2,
+                               "prefetch Parquet after reset");
+
     auto ts_arrow_dataset = MakeTimeSeriesDataset();
     auto ts_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
         MakeTimeSeriesConfig(),
@@ -491,6 +522,7 @@ int main() {
 
     parquet_batchers = cyxwiz::TrainingBatcherSet{};
     prefetch_batchers = cyxwiz::TrainingBatcherSet{};
+    parquet_prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     explicit_split_batchers = cyxwiz::TrainingBatcherSet{};
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_parquet_batchers = cyxwiz::TrainingBatcherSet{};
