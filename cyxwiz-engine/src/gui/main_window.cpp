@@ -3663,7 +3663,11 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
 
         if (config.num_workers > 0) {
             out << "                 num_workers=" << config.num_workers
-                << " (forwarded to training batchers; prefetch still TODO)\n";
+                << " (synchronous per-batch conversion where supported)\n";
+        }
+        if (config.prefetch_factor > 0) {
+            out << "                 prefetch_factor=" << config.prefetch_factor
+                << " (bounded async queue for supported Arrow/Parquet batchers)\n";
         }
 
         out << "\n";

@@ -240,7 +240,7 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Synchronous per-batch workers where supported. 0 = single-threaded.\n"
-                                  "Empty uses a hardware-based default; async prefetch is not active yet.");
+                                  "Empty uses a hardware-based default. Async prefetch is controlled by Prefetch.");
             }
 
             std::string& prefetch = node.parameters["prefetch_factor"];
@@ -256,7 +256,8 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 prefetch = prefetch_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Reserved for future async prefetch. Current training batchers ignore this field.");
+                ImGui::SetTooltip("Bounded async queue depth for supported Arrow and Parquet batchers.\n"
+                                  "0 disables prefetch. Positive values overlap batch construction with model compute.");
             }
 
             std::string& pin_memory = node.parameters["pin_memory"];

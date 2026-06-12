@@ -282,7 +282,7 @@ void DataLoaderDialog::RenderContent() {
     }
     if (num_workers_ > 0) {
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                           "  Used as synchronous per-batch workers where supported; no async prefetch yet.");
+                           "  Used as synchronous per-batch workers where supported; Prefetch controls async queuing.");
     } else {
         ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
     }

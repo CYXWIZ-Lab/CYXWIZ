@@ -44,6 +44,16 @@ future compatibility but is currently ignored.
   synchronous per-batch conversion before each batch enters the queue.
 - This does not implement pinned host memory.
 
+2026-06-12 UI wording sync:
+
+- DataLoader property help and compile summaries now describe `num_workers`
+  and `prefetch_factor` separately: workers are synchronous per-batch
+  conversion, while prefetch is the bounded async queue for supported
+  Arrow/Parquet batchers.
+- The rich DataLoader dialog still does not expose a dedicated
+  `prefetch_factor` input; that is UI follow-up if we want parity with
+  the properties panel.
+
 **Goal:** add a real async prefetch queue only where it improves training
 latency without making shutdown, cancellation, or dataset lifetime unsafe.
 
