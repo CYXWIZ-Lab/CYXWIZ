@@ -19,6 +19,7 @@ bool IsDialogOnlyPropertiesNode(NodeType type) {
     switch (type) {
         case NodeType::DataInput:
         case NodeType::DataOutput:
+        case NodeType::DataConvert:
         case NodeType::TextTokenizer:
         case NodeType::TextVocabulary:
         case NodeType::TextPadding:

@@ -341,6 +341,7 @@ void DataConvertDialog::Apply() {
     if (last_result_.ok) {
         node_->parameters["rows_written"] =
             std::to_string(last_result_.rows_written);
+        node_->parameters["parquet_output_path"] = last_result_.output_path;
         node_->parameters["manifest_path"] = last_result_.manifest_path;
         node_->description = "Converted " +
             std::to_string(last_result_.rows_written) + " rows";
@@ -584,6 +585,10 @@ void DataConvertDialog::RenderRunTab() {
 
     ImGui::Spacing();
     if (last_result_.ok) {
+        const std::string output_path = last_result_.output_path.empty()
+            ? std::string(output_path_)
+            : last_result_.output_path;
+        ImGui::TextWrapped("Parquet output: %s", output_path.c_str());
         ImGui::Text("Rows written: %lld",
                     static_cast<long long>(last_result_.rows_written));
         ImGui::Text("Columns: %lld",
@@ -591,7 +596,7 @@ void DataConvertDialog::RenderRunTab() {
         ImGui::Text("Bytes written: %lld",
                     static_cast<long long>(last_result_.bytes_written));
         if (!last_result_.manifest_path.empty()) {
-            ImGui::TextWrapped("Manifest: %s",
+            ImGui::TextWrapped("Sidecar manifest: %s",
                                last_result_.manifest_path.c_str());
         }
     }
@@ -635,7 +640,7 @@ void DataConvertDialog::RunConversion() {
     if (last_result_.ok) {
         std::ostringstream msg;
         msg << "Conversion complete: " << last_result_.rows_written
-            << " rows written to Parquet.";
+            << " rows written to " << last_result_.output_path << ".";
         if (auto_detect_delimiter_) {
             msg << " Detected delimiter: "
                 << DelimiterLabel(last_result_.detected_delimiter) << ".";

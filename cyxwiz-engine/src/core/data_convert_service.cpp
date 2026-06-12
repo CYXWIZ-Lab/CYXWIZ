@@ -422,6 +422,7 @@ DataConvertResult DataConvertService::ConvertCsvToParquet(
     result.rows_read = table->num_rows();
     result.rows_written = table->num_rows();
     result.columns = table->num_columns();
+    result.output_path = options.output_path;
     if (std::filesystem::exists(output_path, ec)) {
         result.bytes_written = static_cast<int64_t>(
             std::filesystem::file_size(output_path, ec));

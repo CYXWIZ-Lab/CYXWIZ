@@ -19,6 +19,13 @@ namespace {
 
 namespace fs = std::filesystem;
 
+void RequireArrowStatus(const arrow::Status& status) {
+    if (!status.ok()) {
+        std::cerr << status.ToString() << "\n";
+        std::abort();
+    }
+}
+
 template <typename T>
 bool HasIssue(const DatasetAuditResult& result,
               DatasetAuditSeverity severity,
@@ -47,34 +54,37 @@ std::shared_ptr<ArrowDataset> MakeArrowDataset() {
     arrow::DoubleBuilder varying_builder;
     arrow::StringBuilder label_builder;
 
-    assert(feature_builder.Append(1.0).ok());
-    assert(feature_builder.Append(1.0).ok());
-    assert(feature_builder.Append(1.0).ok());
-    assert(feature_builder.Append(1.0).ok());
+    RequireArrowStatus(feature_builder.Append(1.0));
+    RequireArrowStatus(feature_builder.Append(1.0));
+    RequireArrowStatus(feature_builder.Append(1.0));
+    RequireArrowStatus(feature_builder.Append(1.0));
 
-    assert(varying_builder.Append(0.0).ok());
-    assert(varying_builder.Append(1.0).ok());
-    assert(varying_builder.Append(0.0).ok());
-    assert(varying_builder.Append(1.0).ok());
+    RequireArrowStatus(varying_builder.Append(0.0));
+    RequireArrowStatus(varying_builder.Append(1.0));
+    RequireArrowStatus(varying_builder.Append(0.0));
+    RequireArrowStatus(varying_builder.Append(1.0));
 
-    assert(label_builder.Append("A").ok());
-    assert(label_builder.Append("A").ok());
-    assert(label_builder.Append("A").ok());
-    assert(label_builder.Append("B").ok());
+    RequireArrowStatus(label_builder.Append("A"));
+    RequireArrowStatus(label_builder.Append("A"));
+    RequireArrowStatus(label_builder.Append("A"));
+    RequireArrowStatus(label_builder.Append("B"));
 
     std::shared_ptr<arrow::Array> feature_array;
     std::shared_ptr<arrow::Array> varying_array;
     std::shared_ptr<arrow::Array> label_array;
-    assert(feature_builder.Finish(&feature_array).ok());
-    assert(varying_builder.Finish(&varying_array).ok());
-    assert(label_builder.Finish(&label_array).ok());
+    RequireArrowStatus(feature_builder.Finish(&feature_array));
+    RequireArrowStatus(varying_builder.Finish(&varying_array));
+    RequireArrowStatus(label_builder.Finish(&label_array));
 
     auto schema = arrow::schema({
         arrow::field("feature", arrow::float64()),
         arrow::field("varying", arrow::float64()),
         arrow::field("label", arrow::utf8())
     });
-    auto table = arrow::Table::Make(schema, {feature_array, varying_array, label_array});
+    std::vector<std::shared_ptr<arrow::Array>> arrays = {
+        feature_array, varying_array, label_array};
+    assert(feature_array && varying_array && label_array);
+    auto table = arrow::Table::Make(schema, arrays, 4);
     return std::make_shared<ArrowDataset>(table, "audit_arrow");
 }
 
@@ -84,28 +94,30 @@ std::shared_ptr<ArrowDataset> MakeDegenerateArrowDataset() {
     arrow::StringBuilder label_builder;
 
     for (int i = 0; i < 4; ++i) {
-        assert(constant_a_builder.Append(1.0).ok());
-        assert(constant_b_builder.Append(2.0).ok());
+        RequireArrowStatus(constant_a_builder.Append(1.0));
+        RequireArrowStatus(constant_b_builder.Append(2.0));
     }
-    assert(label_builder.Append("A").ok());
-    assert(label_builder.Append("A").ok());
-    assert(label_builder.Append("B").ok());
-    assert(label_builder.Append("B").ok());
+    RequireArrowStatus(label_builder.Append("A"));
+    RequireArrowStatus(label_builder.Append("A"));
+    RequireArrowStatus(label_builder.Append("B"));
+    RequireArrowStatus(label_builder.Append("B"));
 
     std::shared_ptr<arrow::Array> constant_a_array;
     std::shared_ptr<arrow::Array> constant_b_array;
     std::shared_ptr<arrow::Array> label_array;
-    assert(constant_a_builder.Finish(&constant_a_array).ok());
-    assert(constant_b_builder.Finish(&constant_b_array).ok());
-    assert(label_builder.Finish(&label_array).ok());
+    RequireArrowStatus(constant_a_builder.Finish(&constant_a_array));
+    RequireArrowStatus(constant_b_builder.Finish(&constant_b_array));
+    RequireArrowStatus(label_builder.Finish(&label_array));
 
     auto schema = arrow::schema({
         arrow::field("constant_a", arrow::float64()),
         arrow::field("constant_b", arrow::float64()),
         arrow::field("label", arrow::utf8())
     });
-    auto table = arrow::Table::Make(
-        schema, {constant_a_array, constant_b_array, label_array});
+    std::vector<std::shared_ptr<arrow::Array>> arrays = {
+        constant_a_array, constant_b_array, label_array};
+    assert(constant_a_array && constant_b_array && label_array);
+    auto table = arrow::Table::Make(schema, arrays, 4);
     return std::make_shared<ArrowDataset>(table, "degenerate_arrow");
 }
 
@@ -369,6 +381,23 @@ void TestTextJsonSampleAudit() {
     fs::remove(path, ec);
 }
 
+void TestTextParquetSkipsPlainTextSampleAudit() {
+    DataRegistry::TextDatasetEntry entry;
+    entry.source_path = "reviews.parquet";
+    entry.text_column = "text";
+    entry.label_column = "label";
+    entry.has_labels = true;
+    entry.num_samples = 2;
+    entry.num_classes = 2;
+    entry.class_names = {"negative", "positive"};
+    entry.vocab_size = 4;
+
+    auto result = DatasetAudit::AuditText("reviews_parquet_audit", entry);
+    assert(!result.HasErrors());
+    assert(!HasIssue(result, DatasetAuditSeverity::Warning,
+                     "binary_like_text_samples"));
+}
+
 }  // namespace
 
 int main() {
@@ -381,6 +410,7 @@ int main() {
     TestTextCsvSampleAudit();
     TestTextFolderSampleAudit();
     TestTextJsonSampleAudit();
+    TestTextParquetSkipsPlainTextSampleAudit();
     std::cout << "Dataset audit tests passed\n";
     return 0;
 }

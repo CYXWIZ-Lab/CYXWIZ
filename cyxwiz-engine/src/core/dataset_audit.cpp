@@ -58,6 +58,22 @@ bool IsNumericType(arrow::Type::type id) {
     }
 }
 
+std::string LowerExtension(const std::string& path) {
+    std::string ext = fs::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return ext;
+}
+
+bool IsArrowNativeTableExtension(const std::string& path) {
+    const std::string ext = LowerExtension(path);
+    return ext == ".parquet" || ext == ".pq" ||
+           ext == ".feather" || ext == ".fea" ||
+           ext == ".arrow" || ext == ".ipc";
+}
+
 void AuditBasicCounts(DatasetAuditResult& result,
                       bool labels_expected,
                       bool class_counts_available) {
@@ -780,12 +796,7 @@ void AuditTextSourceSample(DatasetAuditResult& result,
         return;
     }
 
-    const std::string ext = fs::path(entry.source_path).extension().string();
-    std::string lowered = ext;
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-                   [](unsigned char c) {
-                       return static_cast<char>(std::tolower(c));
-                   });
+    const std::string lowered = LowerExtension(entry.source_path);
     if (lowered == ".csv" || lowered == ".tsv") {
         AuditDelimitedTextSource(result, entry.source_path, entry.text_column);
     } else if (lowered == ".json" || lowered == ".jsonl") {
@@ -1221,7 +1232,9 @@ DatasetAuditResult DatasetAudit::AuditText(
                    "empty_vocabulary",
                    "Text vocabulary is empty.");
     }
-    AuditTextSourceSample(result, entry);
+    if (!IsArrowNativeTableExtension(entry.source_path)) {
+        AuditTextSourceSample(result, entry);
+    }
     return result;
 }
 

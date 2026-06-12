@@ -9,6 +9,26 @@
 #include <vector>
 
 namespace gui::properties_node_editors {
+namespace {
+
+std::string ParamOr(const MLNode& node,
+                    const char* key,
+                    const char* fallback = "") {
+    auto it = node.parameters.find(key);
+    return it != node.parameters.end() ? it->second : fallback;
+}
+
+void RenderPathLine(const char* label, const std::string& value) {
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(120.0f);
+    if (value.empty()) {
+        ImGui::TextDisabled("<not set>");
+    } else {
+        ImGui::TextWrapped("%s", value.c_str());
+    }
+}
+
+}  // namespace
 
 void ScopeBuffer::Push(float t, float v) {
     times.push_back(t);
@@ -726,6 +746,31 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             // These nodes are configured via the Open Dialog button only
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Use 'Open Dialog' to configure");
             break;
+
+        case NodeType::DataConvert: {
+            const std::string status = ParamOr(node, "status", "Not run");
+            const std::string output = ParamOr(
+                node, "parquet_output_path",
+                ParamOr(node, "output_path").c_str());
+            const std::string manifest = ParamOr(node, "manifest_path");
+            const std::string rows = ParamOr(node, "rows_written", "0");
+
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
+                               "Use 'Open Dialog' to configure and run");
+            ImGui::Spacing();
+            RenderPathLine("Source:", ParamOr(node, "input_path"));
+            RenderPathLine("Parquet:", output);
+            if (!manifest.empty()) {
+                RenderPathLine("Manifest:", manifest);
+            }
+            ImGui::Text("Rows written:");
+            ImGui::SameLine(120.0f);
+            ImGui::TextUnformatted(rows.c_str());
+            ImGui::Text("Status:");
+            ImGui::SameLine(120.0f);
+            ImGui::TextWrapped("%s", status.c_str());
+            break;
+        }
 
         default: {
             // Generic parameter editor for nodes that don't have a

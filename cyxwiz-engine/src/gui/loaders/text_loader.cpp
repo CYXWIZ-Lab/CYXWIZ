@@ -15,11 +15,110 @@
 #include <filesystem>
 #include <algorithm>
 #include <cctype>
+#include <set>
+#include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 
 namespace cyxwiz::loaders {
+namespace {
+
+std::string LowerExtension(const fs::path& path) {
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return ext;
+}
+
+bool IsArrowNativeTextFile(const fs::path& path) {
+    const std::string ext = LowerExtension(path);
+    return fs::is_regular_file(path) &&
+           (ext == ".parquet" || ext == ".pq" ||
+            ext == ".feather" || ext == ".fea" ||
+            ext == ".arrow" || ext == ".ipc");
+}
+
+void RequireColumn(const std::shared_ptr<arrow::Table>& table,
+                   const std::string& column,
+                   const std::string& role) {
+    if (column.empty()) {
+        throw std::runtime_error(role + " column is not configured");
+    }
+    if (!table || !table->GetColumnByName(column)) {
+        throw std::runtime_error(role + " column '" + column + "' was not found");
+    }
+}
+
+std::vector<std::string> CollectClassNames(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& label_column) {
+    std::set<std::string> classes;
+    if (!table || label_column.empty()) {
+        return {};
+    }
+
+    auto column = table->GetColumnByName(label_column);
+    if (!column) {
+        return {};
+    }
+
+    for (const auto& chunk : column->chunks()) {
+        if (!chunk) continue;
+        for (int64_t row = 0; row < chunk->length(); ++row) {
+            if (chunk->IsNull(row)) continue;
+            auto scalar = chunk->GetScalar(row);
+            if (!scalar.ok() || !*scalar || !(*scalar)->is_valid) continue;
+            classes.insert((*scalar)->ToString());
+        }
+    }
+    return {classes.begin(), classes.end()};
+}
+
+size_t EstimateVocabularySize(const std::shared_ptr<arrow::Table>& table,
+                              const std::string& text_column,
+                              bool lowercase,
+                              int max_vocab) {
+    if (!table || text_column.empty()) {
+        return 0;
+    }
+    auto column = table->GetColumnByName(text_column);
+    if (!column) {
+        return 0;
+    }
+
+    const size_t cap = max_vocab > 0 ? static_cast<size_t>(max_vocab) : 0;
+    std::unordered_set<std::string> vocab;
+    for (const auto& chunk : column->chunks()) {
+        if (!chunk) continue;
+        for (int64_t row = 0; row < chunk->length(); ++row) {
+            if (chunk->IsNull(row)) continue;
+            auto scalar = chunk->GetScalar(row);
+            if (!scalar.ok() || !*scalar || !(*scalar)->is_valid) continue;
+            std::string text = (*scalar)->ToString();
+            if (lowercase) {
+                std::transform(text.begin(), text.end(), text.begin(),
+                               [](unsigned char c) {
+                                   return static_cast<char>(std::tolower(c));
+                               });
+            }
+            std::istringstream stream(text);
+            std::string token;
+            while (stream >> token) {
+                vocab.insert(std::move(token));
+                if (cap > 0 && vocab.size() >= cap) {
+                    return vocab.size();
+                }
+            }
+        }
+    }
+    return vocab.size();
+}
+
+}  // namespace
 
 bool TextLoader::ValidateApplyContext(const ApplyContext& ctx,
                                       std::string& err) const {
@@ -102,23 +201,24 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 probe_cfg.min_word_freq  = min_freq;
                 probe_cfg.max_vocab_size = max_vocab;
 
-                cyxwiz::TextDataset probe(path, probe_cfg);
-                auto info = probe.GetInfo();
-
                 task.ReportProgress(0.75f, "Registering raw text table");
 
                 auto& reg = cyxwiz::DataRegistry::Instance();
 
                 fs::path source(path);
-                std::string ext = source.extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(),
-                               [](unsigned char c) {
-                                   return static_cast<char>(std::tolower(c));
-                               });
+                const std::string ext = LowerExtension(source);
                 const bool native_arrow_text_file =
                     fs::is_regular_file(source) &&
                     (ext == ".csv" || ext == ".tsv");
+                size_t num_samples = 0;
+                size_t num_classes = 0;
+                std::vector<std::string> class_names;
+                size_t vocab_size = 0;
+
                 if (native_arrow_text_file) {
+                    cyxwiz::TextDataset probe(path, probe_cfg);
+                    auto info = probe.GetInfo();
+
                     const char delimiter = (ext == ".tsv") ? '\t' : ',';
                     const auto csv_preflight =
                         ValidateTextCsvRowWidths(path, delimiter);
@@ -142,7 +242,40 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         throw std::runtime_error(
                             "failed to store text CSV Arrow table");
                     }
+                    num_samples = info.num_samples;
+                    num_classes = info.num_classes;
+                    class_names = info.class_names;
+                    vocab_size = probe.GetVocabSize();
+                } else if (IsArrowNativeTextFile(source)) {
+                    auto raw_arrow = cyxwiz::ArrowDataset::FromFile(path, name);
+                    if (!raw_arrow || !raw_arrow->GetArrowTable()) {
+                        throw std::runtime_error(
+                            "failed to load Arrow-native text table");
+                    }
+                    auto raw_table = raw_arrow->GetArrowTable();
+                    RequireColumn(raw_table, text_col, "Text");
+                    if (has_labels) {
+                        RequireColumn(raw_table, label_col, "Label");
+                    }
+                    if (!reg.RegisterArrowTable(raw_table, name)) {
+                        throw std::runtime_error(
+                            "failed to store Arrow-native text table");
+                    }
+
+                    class_names = has_labels
+                        ? CollectClassNames(raw_table, label_col)
+                        : std::vector<std::string>{};
+                    num_samples = static_cast<size_t>(raw_table->num_rows());
+                    num_classes = class_names.size();
+                    vocab_size = EstimateVocabularySize(raw_table, text_col,
+                                                        lowercase, max_vocab);
+                    spdlog::info("TextLoader: '{}' registered Arrow-native text table "
+                                 "from {}",
+                                 name, path);
                 } else {
+                    cyxwiz::TextDataset probe(path, probe_cfg);
+                    auto info = probe.GetInfo();
+
                     auto raw_table_result = cyxwiz::BuildRawTextArrowTable(
                         probe, text_col, label_col);
                     if (!raw_table_result.ok()) {
@@ -162,6 +295,10 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     spdlog::info("TextLoader: '{}' registered raw text Arrow table "
                                  "from TextDataset adapter",
                                  name);
+                    num_samples = info.num_samples;
+                    num_classes = info.num_classes;
+                    class_names = info.class_names;
+                    vocab_size = probe.GetVocabSize();
                 }
 
                 task.ReportProgress(0.9f, "Registering text metadata");
@@ -178,28 +315,28 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 text_entry.do_truncation  = true;
                 text_entry.min_word_freq  = min_freq;
                 text_entry.max_vocab_size = max_vocab;
-                text_entry.num_samples    = info.num_samples;
-                text_entry.num_classes    = info.num_classes;
-                text_entry.class_names    = info.class_names;
-                text_entry.vocab_size     = probe.GetVocabSize();
+                text_entry.num_samples    = num_samples;
+                text_entry.num_classes    = num_classes;
+                text_entry.class_names    = class_names;
+                text_entry.vocab_size     = vocab_size;
 
                 reg.RegisterTextDataset(name, text_entry);
 
                 state->success      = true;
                 state->backend      = 5;
-                state->rows         = static_cast<int64_t>(info.num_samples);
+                state->rows         = static_cast<int64_t>(num_samples);
                 state->cols         = 1;
                 // Rough bytes estimate: max_length tokens * sizeof(float)
                 // per sample. TextDatasetBatcher materializes the real
                 // tensors lazily so this is a ceiling, not an actual
                 // allocation.
                 size_t per_sample   = static_cast<size_t>(max_length) * sizeof(float);
-                state->bytes        = info.num_samples * per_sample;
-                state->num_classes  = info.num_classes;
-                state->vocab_size   = probe.GetVocabSize();
-                state->message      = "Loaded " + std::to_string(info.num_samples) +
-                                      " text samples (" + std::to_string(info.num_classes) +
-                                      " classes, vocab " + std::to_string(probe.GetVocabSize()) + ")";
+                state->bytes        = num_samples * per_sample;
+                state->num_classes  = num_classes;
+                state->vocab_size   = vocab_size;
+                state->message      = "Loaded " + std::to_string(num_samples) +
+                                      " text samples (" + std::to_string(num_classes) +
+                                      " classes, vocab " + std::to_string(vocab_size) + ")";
                 auto audit = cyxwiz::DatasetAudit::AuditText(name, text_entry);
                 state->audit_errors = audit.ErrorCount();
                 state->audit_warnings = audit.WarningCount();

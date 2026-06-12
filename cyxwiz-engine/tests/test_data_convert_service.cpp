@@ -56,6 +56,8 @@ int main() {
     Check(result.rows_read == 3, "rows_read should match input");
     Check(result.rows_written == 3, "rows_written should match input");
     Check(result.columns == 3, "column count should match input");
+    Check(result.output_path == parquet_path.string(),
+          "result should report the Parquet output path");
     Check(fs::exists(parquet_path), "Parquet output should exist");
     Check(fs::exists(parquet_path.string() + ".manifest.json"),
           "manifest should exist");

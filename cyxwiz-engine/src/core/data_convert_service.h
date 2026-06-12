@@ -41,6 +41,7 @@ struct DataConvertOptions {
 struct DataConvertResult {
     bool ok = false;
     std::string error;
+    std::string output_path;
     std::string manifest_path;
     int64_t rows_read = 0;
     int64_t rows_written = 0;

@@ -37,10 +37,19 @@ Implemented first slice:
 - Preview: Arrow-inferred row count, column count, column names, data types, and nullable flags
 - Run: converts CSV/TSV to Parquet and records rows, columns, bytes written, status, and manifest path
 - Manifest: `<output>.manifest.json` containing input/output paths, formats, rows, columns, compression, settings hash, timestamp, and file sizes
+- Result clarity: conversion returns and displays the generated Parquet output path first; the manifest is labeled as a sidecar metadata file.
+- DataInput compatibility: Parquet text-table outputs can be loaded as text datasets without the audit treating the Parquet bytes as plain text.
+- Compact Properties panel: shows source path, Parquet output path, sidecar manifest, rows written, and status while keeping detailed editing in the dialog.
 
 Phase 1 is a manual Data Studio utility workflow. The node does not execute as
 part of the training `PipelineExecutor` yet. Users run conversion in the dialog,
 then point a downstream `DataInput` node at the generated Parquet file.
+
+Important output behavior:
+
+- The converted dataset is the `.parquet` / `.pq` file selected in Output.
+- `<output>.manifest.json` is optional sidecar metadata only. It records how the
+  file was produced; it is not the dataset to load into `DataInput`.
 
 ## Node Name
 
@@ -96,6 +105,10 @@ For `DataConvert`, the Properties panel should show:
 - Open Dialog button
 - Conversion status summary
 - Output file path summary
+
+Implemented: the compact Properties panel shows status, source path, Parquet
+output path, rows written, and sidecar manifest path. Raw conversion settings
+stay in the dialog.
 
 All detailed configuration belongs in the dialog.
 
