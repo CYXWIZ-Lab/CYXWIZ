@@ -137,6 +137,10 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_path_alias.csv";
     const fs::path data_output_file_type_parquet_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_file_type.parquet";
+    const fs::path data_convert_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_convert.parquet";
+    const fs::path data_convert_export_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_convert_export.csv";
     const fs::path save_dataset_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_save_dataset.csv";
     const fs::path save_dataset_file_type_parquet_path =
@@ -157,6 +161,9 @@ int main() {
     fs::remove(data_output_mixed_case_csv_path);
     fs::remove(data_output_path_alias_csv_path);
     fs::remove(data_output_file_type_parquet_path);
+    fs::remove(data_convert_parquet_path);
+    fs::remove(data_convert_parquet_path.string() + ".manifest.json");
+    fs::remove(data_convert_export_csv_path);
     fs::remove(save_dataset_csv_path);
     fs::remove(save_dataset_file_type_parquet_path);
     fs::remove(missing_csv_path);
@@ -2517,6 +2524,37 @@ int main() {
               data_output_file_type_parquet_executor.GetLastError());
     Check(fs::exists(data_output_file_type_parquet_path),
           "DataOutput file_type parquet should create the output file");
+
+    const std::string data_convert_json =
+        R"({"nodes":[)"
+        R"({"id":374,"type":"DataConvert","name":"Convert","parameters":{)"
+        R"("input_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","output_path":")" +
+        JsonEscapePath(data_convert_parquet_path.string()) +
+        R"(","delimiter":"auto","input_format":"csv","output_format":"parquet",)"
+        R"("overwrite":"true","write_manifest":"true"}},)"
+        R"({"id":375,"type":"DataOutput","name":"Export","parameters":{)"
+        R"("file_path":")" +
+        JsonEscapePath(data_convert_export_csv_path.string()) +
+        R"(","format":"csv"}})"
+        R"(],"links":[{"start_node":374,"end_node":375}]})";
+
+    cyxwiz::PipelineExecutor data_convert_executor;
+    Check(data_convert_executor.ExecutePipeline(data_convert_json),
+          "DataConvert should execute in PipelineExecutor and feed downstream nodes: " +
+              data_convert_executor.GetLastError());
+    Check(fs::exists(data_convert_parquet_path),
+          "DataConvert pipeline should create Parquet output");
+    Check(fs::exists(data_convert_parquet_path.string() + ".manifest.json"),
+          "DataConvert pipeline should create sidecar manifest");
+    Check(fs::exists(data_convert_export_csv_path),
+          "DataConvert pipeline output should be consumable by DataOutput");
+    auto data_convert_dataset =
+        registry.GetArrowDataset("ds_dataconvert_374");
+    Check(data_convert_dataset != nullptr,
+          "DataConvert pipeline should register output dataset");
+    Check(data_convert_dataset->GetNumRows() == 3,
+          "DataConvert registered dataset should preserve row count");
 
     const std::string column_appender_json =
         R"({"nodes":[)"

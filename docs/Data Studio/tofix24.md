@@ -40,10 +40,11 @@ Implemented first slice:
 - Result clarity: conversion returns and displays the generated Parquet output path first; the manifest is labeled as a sidecar metadata file.
 - DataInput compatibility: Parquet text-table outputs can be loaded as text datasets without the audit treating the Parquet bytes as plain text.
 - Compact Properties panel: shows source path, Parquet output path, sidecar manifest, rows written, and status while keeping detailed editing in the dialog.
+- PipelineExecutor execution: `DataConvert` can run as a file-based source node for the Phase 1 `CSV/TSV -> Parquet` path, register the generated Parquet table, and feed downstream pipeline nodes.
 
-Phase 1 is a manual Data Studio utility workflow. The node does not execute as
-part of the training `PipelineExecutor` yet. Users run conversion in the dialog,
-then point a downstream `DataInput` node at the generated Parquet file.
+Phase 1 supports both manual dialog execution and file-based PipelineExecutor
+execution for CSV/TSV to Parquet. Table-input execution through the optional
+input pin is still future scope.
 
 Important output behavior:
 
@@ -273,8 +274,8 @@ The node should be executable independently from model training.
 
 It should support:
 
-- Manual run from dialog
-- Pipeline run as part of Data Studio graph
+- Manual run from dialog - implemented for CSV/TSV to Parquet
+- Pipeline run as part of Data Studio graph - implemented for file-based CSV/TSV to Parquet
 - Optional automatic skip if output is already fresh
 
 Freshness check should compare:
@@ -342,6 +343,15 @@ It should expose:
 
 Downstream `DataInput` or `DataLoader` nodes should be able to use the converted
 output path directly.
+
+Implemented Phase 1 graph behavior:
+
+- `DataConvert` validates `input_path` and `output_path`.
+- It runs CSV/TSV to Parquet through `DataConvertService`.
+- It writes the optional sidecar manifest.
+- It reloads and registers the generated Parquet table as the node output so
+  downstream PipelineExecutor nodes can consume it.
+- The optional input pin is not consumed by PipelineExecutor yet.
 
 ## Implementation Notes
 

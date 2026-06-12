@@ -1293,6 +1293,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/data_registry.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
     src/core/dataset_base.cpp
     src/core/duckdb_connector.cpp

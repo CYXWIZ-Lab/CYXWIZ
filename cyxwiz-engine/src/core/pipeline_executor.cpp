@@ -2,6 +2,7 @@
 #include "duckdb_connector.h"
 #include "data_registry.h"
 #include "arrow_dataset.h"
+#include "data_convert_service.h"
 #include "node_executors/pipeline_operator_factory.h"
 #include "pipeline_runtime_capabilities.h"
 #include <arrow/table.h>
@@ -1268,6 +1269,40 @@ std::string NormalizeDataOutputPath(
     return {};
 }
 
+std::string ParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    const std::string& fallback = {}) {
+    auto it = parameters.find(key);
+    return it != parameters.end() ? it->second : fallback;
+}
+
+bool OptionalBooleanParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    bool fallback) {
+    auto it = parameters.find(key);
+    if (it == parameters.end() || it->second.empty()) {
+        return fallback;
+    }
+
+    bool parsed = false;
+    return TryParseBooleanParameterValue(it->second, parsed) ? parsed : fallback;
+}
+
+int64_t OptionalIntegerParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    int64_t fallback) {
+    auto it = parameters.find(key);
+    if (it == parameters.end() || it->second.empty()) {
+        return fallback;
+    }
+
+    int64_t parsed = fallback;
+    return TryParseInteger(it->second, parsed) ? parsed : fallback;
+}
+
 std::string NormalizeBinningMethod(const std::string& value) {
     const std::string method = ToLowerAscii(TrimString(value));
     if (method == "equal_frequency") {
@@ -1313,6 +1348,16 @@ const char* MissingRequiredParameter(
         return NormalizeDataOutputPath(parameters).empty()
             ? "file_path"
             : nullptr;
+    }
+
+    if (node_type == "DataConvert") {
+        if (!HasNonEmptyParameter(parameters, "input_path")) {
+            return "input_path";
+        }
+        if (!HasNonEmptyParameter(parameters, "output_path")) {
+            return "output_path";
+        }
+        return nullptr;
     }
 
     for (const char* parameter : required_parameters) {
@@ -1629,6 +1674,31 @@ bool HasSupportedParameterValues(
                 ToLowerAscii(TrimString(file_type_it->second));
             if (format != file_type) {
                 error = node_type + " format and file_type disagree";
+                return false;
+            }
+        }
+    }
+
+    if (node_type == "DataConvert") {
+        const auto skip_rows_it = parameters.find("skip_rows");
+        if (skip_rows_it != parameters.end() && !skip_rows_it->second.empty() &&
+            !IsIntegerAtLeast(skip_rows_it->second, 0)) {
+            error = "DataConvert skip_rows must be a non-negative integer";
+            return false;
+        }
+        const auto row_group_it = parameters.find("row_group_size");
+        if (row_group_it != parameters.end() && !row_group_it->second.empty() &&
+            !IsIntegerAtLeast(row_group_it->second, 1)) {
+            error = "DataConvert row_group_size must be an integer >= 1";
+            return false;
+        }
+        for (const char* bool_param : {"header", "has_header",
+                                       "allow_newlines_in_values",
+                                       "overwrite",
+                                       "create_parent_dirs",
+                                       "write_manifest"}) {
+            if (!ValidateOptionalBooleanParameter(parameters, node_type,
+                                                  bool_param, error)) {
                 return false;
             }
         }
@@ -2391,6 +2461,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteDataInput(node, ctx);
     case gui::NodeType::DataOutput:
         return ExecuteDataOutput(node, ctx);
+    case gui::NodeType::DataConvert:
+        return ExecuteDataConvert(node, ctx);
     case gui::NodeType::FilterRows:
         return ExecuteFilterRows(node, ctx);
     case gui::NodeType::SelectColumns:
@@ -2658,6 +2730,81 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
 
     } catch (const std::exception& e) {
         ReportError("DataOutput error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ctx) {
+    DataConvertOptions options;
+    options.input_path = ParameterOrDefault(node.parameters, "input_path");
+    options.output_path = ParameterOrDefault(node.parameters, "output_path");
+
+    const std::string delimiter =
+        ToLowerAscii(TrimString(ParameterOrDefault(node.parameters,
+                                                  "delimiter", "auto")));
+    if (delimiter == "auto" || delimiter.empty()) {
+        options.auto_detect_delimiter = true;
+        options.delimiter = ',';
+    } else {
+        options.auto_detect_delimiter = false;
+        options.delimiter = delimiter.front();
+    }
+
+    options.has_header = OptionalBooleanParameterOrDefault(
+        node.parameters, "has_header",
+        OptionalBooleanParameterOrDefault(node.parameters, "header", true));
+    options.allow_newlines_in_values = OptionalBooleanParameterOrDefault(
+        node.parameters, "allow_newlines_in_values", true);
+    options.skip_rows = static_cast<int>(OptionalIntegerParameterOrDefault(
+        node.parameters, "skip_rows", 0));
+    options.parquet_compression = ParameterOrDefault(
+        node.parameters, "compression", "snappy");
+    options.row_group_size = OptionalIntegerParameterOrDefault(
+        node.parameters, "row_group_size", 1024 * 1024);
+    options.overwrite = OptionalBooleanParameterOrDefault(
+        node.parameters, "overwrite", false);
+    options.create_parent_dirs = OptionalBooleanParameterOrDefault(
+        node.parameters, "create_parent_dirs", true);
+    options.write_manifest = OptionalBooleanParameterOrDefault(
+        node.parameters, "write_manifest", true);
+
+    spdlog::info("[Pipeline] DataConvert converting '{}' -> '{}'",
+                 options.input_path, options.output_path);
+
+    try {
+        auto result = DataConvertService::ConvertCsvToParquet(options);
+        if (!result.ok) {
+            ReportError("DataConvert: " + result.error);
+            return false;
+        }
+
+        auto output_dataset = ArrowDataset::FromFile(
+            result.output_path, "ds_dataconvert_" + std::to_string(node.id));
+        if (!output_dataset || !output_dataset->GetArrowTable()) {
+            ReportError("DataConvert: conversion succeeded, but generated Parquet could not be loaded: " +
+                        result.output_path);
+            return false;
+        }
+
+        const std::string dataset_name = "ds_dataconvert_" + std::to_string(node.id);
+        auto registered = DataRegistry::Instance().RegisterArrowTable(
+            output_dataset->GetArrowTable(), dataset_name);
+        if (!registered) {
+            ReportError("DataConvert: conversion succeeded, but output dataset could not be registered");
+            return false;
+        }
+
+        ctx.node_results[node.id] = dataset_name;
+        if (ctx.input_dataset.empty()) {
+            ctx.input_dataset = dataset_name;
+        }
+        ctx.output_dataset = result.output_path;
+
+        spdlog::info("[Pipeline] DataConvert wrote {} rows, {} columns to {}",
+                     result.rows_written, result.columns, result.output_path);
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("DataConvert error: " + std::string(e.what()));
         return false;
     }
 }
