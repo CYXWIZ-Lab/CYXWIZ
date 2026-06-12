@@ -30,12 +30,13 @@ Implemented first slice:
 
 - Node browser entry: `DataConvert`
 - Category: Data Sources / Smart I/O utility
-- Rich dialog with Source, Output, Preview, and Run tabs
+- Rich dialog with Source, Output, Options, Preview, Run, and Logs tabs
 - Input: CSV or TSV file path
 - Output: Parquet file path
 - Options: delimiter, header row, skipped rows, Parquet compression, row group size, overwrite, create parent folders, manifest writing
 - Preview: Arrow-inferred row count, column count, column names, data types, and nullable flags
 - Run: converts CSV/TSV to Parquet and records rows, columns, bytes written, status, and manifest path
+- Logs: records preview and conversion messages for the current dialog session
 - Manifest: `<output>.manifest.json` containing input/output paths, formats, rows, columns, compression, settings hash, timestamp, and file sizes
 - Result clarity: conversion returns and displays the generated Parquet output path first; the manifest is labeled as a sidecar metadata file.
 - DataInput compatibility: Parquet text-table outputs can be loaded as text datasets without the audit treating the Parquet bytes as plain text.
@@ -118,13 +119,13 @@ All detailed configuration belongs in the dialog.
 
 Recommended tabs:
 
-- Source
+- Source - implemented for file path selection
 - Schema
-- Output
-- Options
-- Preview
-- Run
-- Logs
+- Output - implemented for output path and output-file behavior controls
+- Options - implemented for CSV/TSV parsing and Parquet writer settings
+- Preview - implemented for schema and sample rows
+- Run - implemented for manual conversion
+- Logs - implemented for current-session preview and conversion messages
 
 ### Source Tab
 
@@ -268,6 +269,12 @@ Shows conversion-specific messages:
 - Rejected rows
 - Conversion errors
 - Final summary
+
+Phase 1 note:
+
+- Current-session preview and conversion status messages are shown in the Logs
+  tab. Engine-wide execution logs, rejected-row logs, and persisted conversion
+  history are future scope.
 
 ## Runtime Behavior
 

@@ -314,6 +314,10 @@ void DataConvertDialog::LoadFromNode() {
     status_message_ = ReadStringParamValue(
         node_->parameters, "status", "Not run");
     status_is_error_ = false;
+    log_lines_.clear();
+    if (!status_message_.empty() && status_message_ != "Not run") {
+        log_lines_.push_back(status_message_);
+    }
 }
 
 void DataConvertDialog::Apply() {
@@ -382,12 +386,20 @@ void DataConvertDialog::RenderContent() {
             RenderOutputTab();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Options")) {
+            RenderOptionsTab();
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Preview")) {
             RenderPreviewTab();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Run")) {
             RenderRunTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Logs")) {
+            RenderLogsTab();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -408,6 +420,16 @@ void DataConvertDialog::RenderSourceTab() {
     }
 
     ImGui::Spacing();
+    ImGui::TextDisabled(
+        "CSV/TSV input writes one Parquet file. Parsing controls are in Options.");
+}
+
+void DataConvertDialog::RenderOptionsTab() {
+    ImGui::Spacing();
+    ImGui::Text("CSV/TSV parsing");
+    ImGui::Separator();
+    ImGui::Spacing();
+
     if (ImGui::Checkbox("Auto-detect delimiter", &auto_detect_delimiter_)) {
         has_changes_ = true;
     }
@@ -444,6 +466,29 @@ void DataConvertDialog::RenderSourceTab() {
         if (skip_rows_ < 0) skip_rows_ = 0;
         has_changes_ = true;
     }
+
+    ImGui::Spacing();
+    ImGui::Text("Parquet writer");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    const char* compressions[] = {
+        "None", "Snappy", "Gzip", "Zstd", "Brotli"
+    };
+    ImGui::Text("Compression");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(140.0f);
+    if (ImGui::Combo("##compression", &compression_, compressions, 5)) {
+        has_changes_ = true;
+    }
+
+    ImGui::Text("Row group size");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(140.0f);
+    if (ImGui::InputInt("##row_group_size", &row_group_size_)) {
+        if (row_group_size_ < 1) row_group_size_ = 1;
+        has_changes_ = true;
+    }
 }
 
 void DataConvertDialog::RenderOutputTab() {
@@ -469,24 +514,6 @@ void DataConvertDialog::RenderOutputTab() {
     }
 
     ImGui::Spacing();
-    const char* compressions[] = {
-        "None", "Snappy", "Gzip", "Zstd", "Brotli"
-    };
-    ImGui::Text("Compression");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(140.0f);
-    if (ImGui::Combo("##compression", &compression_, compressions, 5)) {
-        has_changes_ = true;
-    }
-
-    ImGui::Text("Row group size");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(140.0f);
-    if (ImGui::InputInt("##row_group_size", &row_group_size_)) {
-        if (row_group_size_ < 1) row_group_size_ = 1;
-        has_changes_ = true;
-    }
-
     if (ImGui::Checkbox("Overwrite existing file", &overwrite_)) {
         has_changes_ = true;
     }
@@ -602,6 +629,33 @@ void DataConvertDialog::RenderRunTab() {
     }
 }
 
+void DataConvertDialog::RenderLogsTab() {
+    ImGui::Spacing();
+    if (ImGui::Button("Clear logs")) {
+        log_lines_.clear();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Shows messages from this dialog session.");
+
+    ImGui::Spacing();
+    if (ImGui::BeginChild("DataConvertLogs",
+                          ImVec2(0.0f, 0.0f),
+                          true,
+                          ImGuiWindowFlags_HorizontalScrollbar)) {
+        if (log_lines_.empty()) {
+            ImGui::TextDisabled("No conversion messages yet.");
+        } else {
+            for (const auto& line : log_lines_) {
+                ImGui::TextWrapped("%s", line.c_str());
+            }
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+                ImGui::SetScrollHereY(1.0f);
+            }
+        }
+    }
+    ImGui::EndChild();
+}
+
 cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
     cyxwiz::DataConvertOptions options;
     options.input_path = input_path_;
@@ -660,7 +714,20 @@ void DataConvertDialog::RunConversion() {
 void DataConvertDialog::SetStatus(std::string message, bool is_error) {
     status_message_ = std::move(message);
     status_is_error_ = is_error;
+    AddLogLine((is_error ? "Error: " : "Info: ") + status_message_);
     has_changes_ = true;
+}
+
+void DataConvertDialog::AddLogLine(const std::string& message) {
+    if (message.empty()) return;
+    log_lines_.push_back(message);
+    constexpr size_t kMaxLogLines = 200;
+    if (log_lines_.size() > kMaxLogLines) {
+        log_lines_.erase(log_lines_.begin(),
+                         log_lines_.begin() +
+                             static_cast<std::ptrdiff_t>(log_lines_.size() -
+                                                         kMaxLogLines));
+    }
 }
 
 // ==================== DataLoaderDialog ====================

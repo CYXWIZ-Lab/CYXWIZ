@@ -19,6 +19,7 @@
 #include <mutex>
 #include <cstdint>
 #include <chrono>
+#include <vector>
 #include <imgui.h>
 #include "node_editor.h"
 #include "data_input_capabilities.h"
@@ -554,12 +555,15 @@ private:
     void LoadFromNode();
     void RenderSourceTab();
     void RenderOutputTab();
+    void RenderOptionsTab();
     void RenderPreviewTab();
     void RenderRunTab();
+    void RenderLogsTab();
     cyxwiz::DataConvertOptions BuildOptions() const;
     void PreviewInput();
     void RunConversion();
     void SetStatus(std::string message, bool is_error);
+    void AddLogLine(const std::string& message);
 
     char input_path_[512] = {};
     char output_path_[512] = {};
@@ -577,6 +581,7 @@ private:
     cyxwiz::DataConvertResult last_result_;
     std::string status_message_ = "Not run";
     bool status_is_error_ = false;
+    std::vector<std::string> log_lines_;
 };
 
 /**
