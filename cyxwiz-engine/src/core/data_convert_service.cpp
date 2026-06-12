@@ -4,6 +4,7 @@
 
 #include <arrow/csv/api.h>
 #include <arrow/io/file.h>
+#include <arrow/scalar.h>
 #include <nlohmann/json.hpp>
 #include <parquet/arrow/writer.h>
 #include <spdlog/spdlog.h>
@@ -171,6 +172,31 @@ bool WriteManifest(const DataConvertOptions& options,
     return true;
 }
 
+std::string ScalarToPreviewString(const std::shared_ptr<arrow::Scalar>& scalar) {
+    if (!scalar || !scalar->is_valid) {
+        return "null";
+    }
+    return scalar->ToString();
+}
+
+std::string CellToPreviewString(const std::shared_ptr<arrow::Table>& table,
+                                int column_index,
+                                int64_t row_index) {
+    auto column = table->column(column_index);
+    int64_t remaining = row_index;
+    for (const auto& chunk : column->chunks()) {
+        if (remaining < chunk->length()) {
+            auto scalar = chunk->GetScalar(static_cast<int>(remaining));
+            if (!scalar.ok()) {
+                return "<error>";
+            }
+            return ScalarToPreviewString(scalar.ValueOrDie());
+        }
+        remaining -= chunk->length();
+    }
+    return "";
+}
+
 } // namespace
 
 DataConvertPreview DataConvertService::PreviewCsv(const DataConvertOptions& options) {
@@ -207,6 +233,17 @@ DataConvertPreview DataConvertService::PreviewCsv(const DataConvertOptions& opti
             field->type()->ToString(),
             field->nullable()
         });
+    }
+    const int64_t sample_count =
+        std::min<int64_t>(preview.rows, std::max(0, options.preview_rows));
+    preview.sample_rows.reserve(static_cast<size_t>(sample_count));
+    for (int64_t row = 0; row < sample_count; ++row) {
+        std::vector<std::string> values;
+        values.reserve(static_cast<size_t>(preview.columns));
+        for (int column = 0; column < table->num_columns(); ++column) {
+            values.push_back(CellToPreviewString(table, column, row));
+        }
+        preview.sample_rows.push_back(std::move(values));
     }
     preview.ok = true;
     return preview;

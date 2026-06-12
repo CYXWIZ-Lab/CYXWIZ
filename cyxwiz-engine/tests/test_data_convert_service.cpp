@@ -48,6 +48,8 @@ int main() {
     Check(preview.columns == 3, "preview column count should match CSV columns");
     Check(preview.schema.size() == 3, "preview schema should have three columns");
     Check(preview.schema[0].name == "id", "preview should preserve header names");
+    Check(preview.sample_rows.size() == 3, "preview should include sample rows");
+    Check(preview.sample_rows[0][0] == "1", "preview should expose cell values");
 
     auto result = cyxwiz::DataConvertService::ConvertCsvToParquet(options);
     Check(result.ok, "CSV to Parquet conversion should succeed: " + result.error);

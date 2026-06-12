@@ -103,6 +103,28 @@ bool BrowseCsvInput(char* destination, std::size_t destination_size) {
     return false;
 }
 
+bool BrowseParquetOutput(char* destination, std::size_t destination_size) {
+#ifdef _WIN32
+    OPENFILENAMEA ofn = {};
+    char file[512] = {};
+    CopyToBuffer(file, sizeof(file), destination);
+    ofn.lStructSize = sizeof(ofn);
+    ofn.lpstrFilter = "Parquet Files\0*.parquet;*.pq\0All Files\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = sizeof(file);
+    ofn.lpstrDefExt = "parquet";
+    ofn.Flags = OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST;
+    if (GetSaveFileNameA(&ofn)) {
+        CopyToBuffer(destination, destination_size, file);
+        return true;
+    }
+#else
+    (void)destination;
+    (void)destination_size;
+#endif
+    return false;
+}
+
 } // namespace
 
 // ==================== DataOutputDialog ====================
@@ -392,8 +414,13 @@ void DataConvertDialog::RenderSourceTab() {
 void DataConvertDialog::RenderOutputTab() {
     ImGui::Spacing();
     ImGui::Text("Output Parquet file");
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
     if (ImGui::InputText("##output_path", output_path_, sizeof(output_path_))) {
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save As", ImVec2(80.0f, 0.0f)) &&
+        BrowseParquetOutput(output_path_, sizeof(output_path_))) {
         has_changes_ = true;
     }
 
@@ -473,6 +500,36 @@ void DataConvertDialog::RenderPreviewTab() {
             ImGui::TextUnformatted(column.nullable ? "yes" : "no");
         }
         ImGui::EndTable();
+    }
+
+    if (!preview_.sample_rows.empty()) {
+        ImGui::Spacing();
+        ImGui::Text("Sample rows");
+        if (ImGui::BeginTable("DataConvertSampleRows",
+                              static_cast<int>(preview_.schema.size()),
+                              ImGuiTableFlags_Borders |
+                              ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_Resizable |
+                              ImGuiTableFlags_ScrollX)) {
+            for (const auto& column : preview_.schema) {
+                ImGui::TableSetupColumn(column.name.c_str());
+            }
+            ImGui::TableHeadersRow();
+            for (const auto& row : preview_.sample_rows) {
+                ImGui::TableNextRow();
+                for (int column = 0;
+                     column < static_cast<int>(preview_.schema.size());
+                     ++column) {
+                    ImGui::TableSetColumnIndex(column);
+                    const char* value =
+                        column < static_cast<int>(row.size())
+                            ? row[static_cast<size_t>(column)].c_str()
+                            : "";
+                    ImGui::TextUnformatted(value);
+                }
+            }
+            ImGui::EndTable();
+        }
     }
 }
 

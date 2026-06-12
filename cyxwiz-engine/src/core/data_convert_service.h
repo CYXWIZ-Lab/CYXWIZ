@@ -18,6 +18,7 @@ struct DataConvertPreview {
     int64_t rows = 0;
     int64_t columns = 0;
     std::vector<DataConvertColumnPreview> schema;
+    std::vector<std::vector<std::string>> sample_rows;
 };
 
 struct DataConvertOptions {
@@ -31,6 +32,7 @@ struct DataConvertOptions {
     bool overwrite = false;
     bool create_parent_dirs = true;
     bool write_manifest = true;
+    int preview_rows = 20;
 };
 
 struct DataConvertResult {
