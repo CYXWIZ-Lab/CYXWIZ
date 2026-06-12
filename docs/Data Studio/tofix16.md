@@ -50,9 +50,13 @@ future compatibility but is currently ignored.
   and `prefetch_factor` separately: workers are synchronous per-batch
   conversion, while prefetch is the bounded async queue for supported
   Arrow/Parquet batchers.
-- The rich DataLoader dialog still does not expose a dedicated
-  `prefetch_factor` input; that is UI follow-up if we want parity with
-  the properties panel.
+
+2026-06-12 rich dialog parity:
+
+- The DataLoader rich configuration dialog now reads, edits, resets, and
+  saves `prefetch_factor` with the same semantics as the properties panel.
+- Values below 0 are clamped to 0; dialog input is capped at 64 to avoid
+  accidental oversized queues.
 
 **Goal:** add a real async prefetch queue only where it improves training
 latency without making shutdown, cancellation, or dataset lifetime unsafe.

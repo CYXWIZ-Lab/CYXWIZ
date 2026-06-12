@@ -555,6 +555,7 @@ private:
     bool shuffle_ = true;
     bool drop_last_ = false;
     int num_workers_ = 0;
+    int prefetch_factor_ = 2;
 };
 
 /**

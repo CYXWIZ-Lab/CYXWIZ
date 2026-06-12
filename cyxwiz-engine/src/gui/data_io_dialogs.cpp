@@ -210,6 +210,8 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         ReadBoolParam(node_->parameters, "drop_last", drop_last_);
         num_workers_ = cyxwiz::GetDefaultNumWorkers();
         ReadIntParam(node_->parameters, "num_workers", num_workers_);
+        ReadIntParam(node_->parameters, "prefetch_factor", prefetch_factor_);
+        if (prefetch_factor_ < 0) prefetch_factor_ = 0;
     }
 }
 
@@ -219,6 +221,7 @@ void DataLoaderDialog::Apply() {
     node_->parameters["shuffle"] = shuffle_ ? "true" : "false";
     node_->parameters["drop_last"] = drop_last_ ? "true" : "false";
     node_->parameters["num_workers"] = std::to_string(num_workers_);
+    node_->parameters["prefetch_factor"] = std::to_string(prefetch_factor_);
     node_->description = "batch=" + std::to_string(batch_size_) +
                           (shuffle_ ? ", shuffled" : ", ordered");
     has_changes_ = false;
@@ -232,10 +235,13 @@ void DataLoaderDialog::Reset() {
     shuffle_ = true;
     drop_last_ = false;
     num_workers_ = cyxwiz::GetDefaultNumWorkers();
+    prefetch_factor_ = 2;
     ReadIntParam(original_params_, "batch_size", batch_size_);
     ReadBoolParam(original_params_, "shuffle", shuffle_);
     ReadBoolParam(original_params_, "drop_last", drop_last_);
     ReadIntParam(original_params_, "num_workers", num_workers_);
+    ReadIntParam(original_params_, "prefetch_factor", prefetch_factor_);
+    if (prefetch_factor_ < 0) prefetch_factor_ = 0;
     has_changes_ = false;
 }
 
@@ -285,6 +291,21 @@ void DataLoaderDialog::RenderContent() {
                            "  Used as synchronous per-batch workers where supported; Prefetch controls async queuing.");
     } else {
         ImGui::TextDisabled("  0 = load batches on the training thread (current behavior).");
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("Prefetch:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##prefetch_factor", &prefetch_factor_)) {
+        if (prefetch_factor_ < 0) prefetch_factor_ = 0;
+        if (prefetch_factor_ > 64) prefetch_factor_ = 64;
+        has_changes_ = true;
+    }
+    if (prefetch_factor_ > 0) {
+        ImGui::TextDisabled("  Bounded async queue depth for Arrow/Parquet batchers.");
+    } else {
+        ImGui::TextDisabled("  0 = disable async prefetch.");
     }
 
     ImGui::Spacing();
