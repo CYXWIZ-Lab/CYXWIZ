@@ -70,6 +70,64 @@ int main() {
     auto blocked = cyxwiz::DataConvertService::ConvertCsvToParquet(options);
     Check(!blocked.ok, "overwrite=false should block existing output");
 
+    const fs::path semicolon_csv_path = work_dir / "semicolon.csv";
+    const fs::path semicolon_parquet_path = work_dir / "semicolon.parquet";
+    {
+        std::ofstream csv(semicolon_csv_path, std::ios::binary);
+        csv << "id;value;label\n";
+        csv << "1;4.5;x\n";
+        csv << "2;5.5;y\n";
+    }
+
+    cyxwiz::DataConvertOptions auto_options;
+    auto_options.input_path = semicolon_csv_path.string();
+    auto_options.output_path = semicolon_parquet_path.string();
+    auto_options.auto_detect_delimiter = true;
+
+    auto auto_preview = cyxwiz::DataConvertService::PreviewCsv(auto_options);
+    Check(auto_preview.ok,
+          "auto delimiter preview should succeed: " + auto_preview.error);
+    Check(auto_preview.detected_delimiter == ';',
+          "auto delimiter should detect semicolon");
+    Check(auto_preview.columns == 3,
+          "auto delimiter preview should split semicolon columns");
+
+    auto auto_result =
+        cyxwiz::DataConvertService::ConvertCsvToParquet(auto_options);
+    Check(auto_result.ok,
+          "auto delimiter conversion should succeed: " + auto_result.error);
+    Check(auto_result.detected_delimiter == ';',
+          "auto delimiter conversion should report semicolon");
+
+    const fs::path multiline_csv_path = work_dir / "multiline.csv";
+    const fs::path multiline_parquet_path = work_dir / "multiline.parquet";
+    {
+        std::ofstream csv(multiline_csv_path, std::ios::binary);
+        csv << "id,statement,status\n";
+        csv << "1,\"first line\nsecond line\",Anxiety\n";
+        csv << "2,\"plain text\",Normal\n";
+    }
+
+    cyxwiz::DataConvertOptions multiline_options;
+    multiline_options.input_path = multiline_csv_path.string();
+    multiline_options.output_path = multiline_parquet_path.string();
+    multiline_options.auto_detect_delimiter = true;
+    multiline_options.allow_newlines_in_values = true;
+
+    auto multiline_preview =
+        cyxwiz::DataConvertService::PreviewCsv(multiline_options);
+    Check(multiline_preview.ok,
+          "quoted multiline CSV preview should succeed: " +
+              multiline_preview.error);
+    Check(multiline_preview.rows == 2,
+          "quoted multiline CSV should keep logical row count");
+
+    auto multiline_result =
+        cyxwiz::DataConvertService::ConvertCsvToParquet(multiline_options);
+    Check(multiline_result.ok,
+          "quoted multiline CSV conversion should succeed: " +
+              multiline_result.error);
+
     fs::remove_all(work_dir);
     return 0;
 }

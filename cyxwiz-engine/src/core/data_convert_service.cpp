@@ -11,6 +11,7 @@
 
 #include <chrono>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <filesystem>
 #include <functional>
@@ -52,6 +53,83 @@ bool IsParquetPath(const std::filesystem::path& path) {
     return ext == ".parquet" || ext == ".pq";
 }
 
+int CountDelimiterOutsideQuotes(const std::string& line, char delimiter) {
+    bool in_quotes = false;
+    int count = 0;
+    for (size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (c == '"') {
+            if (in_quotes && i + 1 < line.size() && line[i + 1] == '"') {
+                ++i;
+            } else {
+                in_quotes = !in_quotes;
+            }
+        } else if (!in_quotes && c == delimiter) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+char DetectCsvDelimiter(const std::string& path) {
+    const std::filesystem::path input_path(path);
+    if (LowerAscii(input_path.extension().string()) == ".tsv") {
+        return '\t';
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return ',';
+    }
+
+    const std::array<char, 4> candidates = {',', '\t', ';', '|'};
+    std::array<int, 4> total_counts = {};
+    std::array<int, 4> lines_with_delimiter = {};
+    std::array<int, 4> mismatch_counts = {};
+    std::array<int, 4> first_nonzero_counts = {};
+
+    std::string line;
+    int sampled_lines = 0;
+    while (sampled_lines < 32 && std::getline(in, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        ++sampled_lines;
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            const int count = CountDelimiterOutsideQuotes(line, candidates[i]);
+            total_counts[i] += count;
+            if (count > 0) {
+                ++lines_with_delimiter[i];
+                if (first_nonzero_counts[i] == 0) {
+                    first_nonzero_counts[i] = count;
+                } else if (count != first_nonzero_counts[i]) {
+                    ++mismatch_counts[i];
+                }
+            }
+        }
+    }
+
+    int best_index = 0;
+    int best_score = -1;
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        const int score = total_counts[i] * 4 +
+                          lines_with_delimiter[i] * 2 -
+                          mismatch_counts[i] * 3;
+        if (score > best_score) {
+            best_score = score;
+            best_index = static_cast<int>(i);
+        }
+    }
+
+    return best_score > 0 ? candidates[static_cast<size_t>(best_index)] : ',';
+}
+
+char ResolveDelimiter(const DataConvertOptions& options) {
+    return options.auto_detect_delimiter
+        ? DetectCsvDelimiter(options.input_path)
+        : options.delimiter;
+}
+
 arrow::csv::ReadOptions BuildReadOptions(const DataConvertOptions& options) {
     auto read_options = arrow::csv::ReadOptions::Defaults();
     read_options.skip_rows = std::max(0, options.skip_rows);
@@ -61,7 +139,8 @@ arrow::csv::ReadOptions BuildReadOptions(const DataConvertOptions& options) {
 
 arrow::csv::ParseOptions BuildParseOptions(const DataConvertOptions& options) {
     auto parse_options = arrow::csv::ParseOptions::Defaults();
-    parse_options.delimiter = options.delimiter;
+    parse_options.delimiter = ResolveDelimiter(options);
+    parse_options.newlines_in_values = options.allow_newlines_in_values;
     return parse_options;
 }
 
@@ -113,7 +192,9 @@ std::string BuildSettingsHashInput(const DataConvertOptions& options) {
     out << options.input_path << "|"
         << options.output_path << "|"
         << options.delimiter << "|"
+        << options.auto_detect_delimiter << "|"
         << options.has_header << "|"
+        << options.allow_newlines_in_values << "|"
         << options.skip_rows << "|"
         << options.parquet_compression << "|"
         << options.row_group_size;
@@ -144,6 +225,9 @@ bool WriteManifest(const DataConvertOptions& options,
         {"rows_written", result.rows_written},
         {"columns", result.columns},
         {"compression", options.parquet_compression},
+        {"delimiter", std::string(1, result.detected_delimiter)},
+        {"delimiter_mode", options.auto_detect_delimiter ? "auto" : "manual"},
+        {"allow_newlines_in_values", options.allow_newlines_in_values},
         {"settings_hash", SimpleSettingsHash(options)},
         {"created_at", NowIsoLikeUtc()}
     };
@@ -223,6 +307,7 @@ DataConvertPreview DataConvertService::PreviewCsv(const DataConvertOptions& opti
     }
 
     auto table = dataset->GetArrowTable();
+    preview.detected_delimiter = ResolveDelimiter(options);
     preview.rows = table->num_rows();
     preview.columns = table->num_columns();
     preview.schema.reserve(static_cast<size_t>(table->num_columns()));
@@ -299,6 +384,7 @@ DataConvertResult DataConvertService::ConvertCsvToParquet(
         return result;
     }
     auto table = dataset->GetArrowTable();
+    result.detected_delimiter = ResolveDelimiter(options);
 
     auto maybe_output = arrow::io::FileOutputStream::Open(options.output_path);
     if (!maybe_output.ok()) {

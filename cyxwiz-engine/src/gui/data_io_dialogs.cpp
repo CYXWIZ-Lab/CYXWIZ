@@ -82,6 +82,16 @@ const char* CompressionNameFromIndex(int index) {
     return kCompressions[index];
 }
 
+std::string DelimiterLabel(char delimiter) {
+    switch (delimiter) {
+        case ',': return "comma (,)";
+        case '\t': return "tab";
+        case ';': return "semicolon (;)";
+        case '|': return "pipe (|)";
+        default: return std::string("'") + delimiter + "'";
+    }
+}
+
 bool BrowseCsvInput(char* destination, std::size_t destination_size) {
 #ifdef _WIN32
     OPENFILENAMEA ofn = {};
@@ -283,9 +293,14 @@ void DataConvertDialog::LoadFromNode() {
                  ReadStringParamValue(node_->parameters, "input_path"));
     CopyToBuffer(output_path_, sizeof(output_path_),
                  ReadStringParamValue(node_->parameters, "output_path"));
+    const std::string delimiter =
+        ReadStringParamValue(node_->parameters, "delimiter", "auto");
+    auto_detect_delimiter_ = LowerAscii(delimiter) == "auto";
     CopyToBuffer(delimiter_, sizeof(delimiter_),
-                 ReadStringParamValue(node_->parameters, "delimiter", ","));
+                 auto_detect_delimiter_ ? "," : delimiter);
     has_header_ = ReadBoolParamValue(node_->parameters, "header", true);
+    allow_newlines_in_values_ =
+        ReadBoolParamValue(node_->parameters, "allow_newlines_in_values", true);
     skip_rows_ = ReadIntParamValue(node_->parameters, "skip_rows", 0);
     compression_ = CompressionIndexFromName(
         ReadStringParamValue(node_->parameters, "compression", "snappy"));
@@ -308,8 +323,11 @@ void DataConvertDialog::Apply() {
     node_->parameters["input_format"] = "csv";
     node_->parameters["output_path"] = output_path_;
     node_->parameters["output_format"] = "parquet";
-    node_->parameters["delimiter"] = delimiter_;
+    node_->parameters["delimiter"] =
+        auto_detect_delimiter_ ? "auto" : std::string(delimiter_);
     node_->parameters["header"] = has_header_ ? "true" : "false";
+    node_->parameters["allow_newlines_in_values"] =
+        allow_newlines_in_values_ ? "true" : "false";
     node_->parameters["skip_rows"] = std::to_string(skip_rows_);
     node_->parameters["compression"] = CompressionNameFromIndex(compression_);
     node_->parameters["row_group_size"] = std::to_string(row_group_size_);
@@ -389,18 +407,34 @@ void DataConvertDialog::RenderSourceTab() {
     }
 
     ImGui::Spacing();
-    ImGui::Text("Delimiter");
-    ImGui::SameLine(130.0f);
-    ImGui::SetNextItemWidth(90.0f);
-    if (ImGui::InputText("##delimiter", delimiter_, sizeof(delimiter_))) {
+    if (ImGui::Checkbox("Auto-detect delimiter", &auto_detect_delimiter_)) {
         has_changes_ = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Use comma for CSV, tab for TSV.");
+    ImGui::TextDisabled("Checks comma, tab, semicolon, and pipe.");
+
+    ImGui::Text("Delimiter");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::BeginDisabled(auto_detect_delimiter_);
+    if (ImGui::InputText("##delimiter", delimiter_, sizeof(delimiter_))) {
+        has_changes_ = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled(auto_detect_delimiter_
+        ? "Detected when preview or conversion runs."
+        : "Use comma for CSV, tab for TSV.");
 
     if (ImGui::Checkbox("First row contains headers", &has_header_)) {
         has_changes_ = true;
     }
+    if (ImGui::Checkbox("Allow quoted multiline values",
+                        &allow_newlines_in_values_)) {
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Needed for text columns that contain line breaks.");
 
     ImGui::Text("Skip rows");
     ImGui::SameLine(130.0f);
@@ -568,7 +602,9 @@ cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
     options.input_path = input_path_;
     options.output_path = output_path_;
     options.delimiter = delimiter_[0] == '\0' ? ',' : delimiter_[0];
+    options.auto_detect_delimiter = auto_detect_delimiter_;
     options.has_header = has_header_;
+    options.allow_newlines_in_values = allow_newlines_in_values_;
     options.skip_rows = skip_rows_;
     options.parquet_compression = CompressionNameFromIndex(compression_);
     options.row_group_size = row_group_size_;
@@ -584,6 +620,10 @@ void DataConvertDialog::PreviewInput() {
         std::ostringstream msg;
         msg << "Preview loaded: " << preview_.rows << " rows, "
             << preview_.columns << " columns.";
+        if (auto_detect_delimiter_) {
+            msg << " Detected delimiter: "
+                << DelimiterLabel(preview_.detected_delimiter) << ".";
+        }
         SetStatus(msg.str(), false);
     } else {
         SetStatus(preview_.error, true);
@@ -596,6 +636,10 @@ void DataConvertDialog::RunConversion() {
         std::ostringstream msg;
         msg << "Conversion complete: " << last_result_.rows_written
             << " rows written to Parquet.";
+        if (auto_detect_delimiter_) {
+            msg << " Detected delimiter: "
+                << DelimiterLabel(last_result_.detected_delimiter) << ".";
+        }
         SetStatus(msg.str(), false);
         Apply();
     } else {

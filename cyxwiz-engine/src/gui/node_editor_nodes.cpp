@@ -3145,8 +3145,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["input_format"] = "csv";
             node.parameters["output_path"] = "";
             node.parameters["output_format"] = "parquet";
-            node.parameters["delimiter"] = ",";
+            node.parameters["delimiter"] = "auto";
             node.parameters["header"] = "true";
+            node.parameters["allow_newlines_in_values"] = "true";
             node.parameters["skip_rows"] = "0";
             node.parameters["compression"] = "snappy";
             node.parameters["row_group_size"] = "1048576";

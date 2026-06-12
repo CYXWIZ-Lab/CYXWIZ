@@ -564,7 +564,9 @@ private:
     char input_path_[512] = {};
     char output_path_[512] = {};
     char delimiter_[8] = ",";
+    bool auto_detect_delimiter_ = true;
     bool has_header_ = true;
+    bool allow_newlines_in_values_ = true;
     int skip_rows_ = 0;
     int compression_ = 1;
     int row_group_size_ = 1048576;

@@ -17,6 +17,7 @@ struct DataConvertPreview {
     std::string error;
     int64_t rows = 0;
     int64_t columns = 0;
+    char detected_delimiter = ',';
     std::vector<DataConvertColumnPreview> schema;
     std::vector<std::vector<std::string>> sample_rows;
 };
@@ -25,7 +26,9 @@ struct DataConvertOptions {
     std::string input_path;
     std::string output_path;
     char delimiter = ',';
+    bool auto_detect_delimiter = false;
     bool has_header = true;
+    bool allow_newlines_in_values = true;
     int skip_rows = 0;
     std::string parquet_compression = "snappy";
     int64_t row_group_size = 1024 * 1024;
@@ -43,6 +46,7 @@ struct DataConvertResult {
     int64_t rows_written = 0;
     int64_t columns = 0;
     int64_t bytes_written = 0;
+    char detected_delimiter = ',';
 };
 
 class DataConvertService {

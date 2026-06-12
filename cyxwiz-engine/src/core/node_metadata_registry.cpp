@@ -765,6 +765,8 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {{"Output", PinType::Dataset, true, "Converted dataset artifact"}},
         {{"input_path", "file", "", "Input CSV file", {}, "*.csv;*.tsv"},
          {"output_path", "file", "", "Output Parquet file", {}, "*.parquet;*.pq"},
+         {"delimiter", "enum", "auto", "CSV delimiter", {"auto", ",", "\\t", ";", "|"}, ""},
+         {"allow_newlines_in_values", "bool", "true", "Allow quoted multiline CSV values", {}, ""},
          {"compression", "enum", "snappy", "Parquet compression", {"none", "snappy", "gzip", "zstd", "brotli"}, ""},
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
