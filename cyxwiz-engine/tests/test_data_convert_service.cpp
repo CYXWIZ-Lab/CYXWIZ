@@ -69,8 +69,16 @@ int main() {
     Check(parquet->GetNumColumns() == 3,
           "converted Parquet column count should match");
 
+    auto skipped = cyxwiz::DataConvertService::ConvertCsvToParquet(options);
+    Check(skipped.ok, "fresh output should be reusable without overwrite: " + skipped.error);
+    Check(skipped.skipped_fresh_output,
+          "fresh output should report skipped_fresh_output");
+    Check(skipped.rows_written == 3, "fresh manifest should preserve row count");
+
+    fs::remove(parquet_path.string() + ".manifest.json");
     auto blocked = cyxwiz::DataConvertService::ConvertCsvToParquet(options);
-    Check(!blocked.ok, "overwrite=false should block existing output");
+    Check(!blocked.ok,
+          "overwrite=false should block existing output when no fresh manifest exists");
 
     const fs::path semicolon_csv_path = work_dir / "semicolon.csv";
     const fs::path semicolon_parquet_path = work_dir / "semicolon.parquet";

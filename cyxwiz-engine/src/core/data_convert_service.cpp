@@ -256,6 +256,80 @@ bool WriteManifest(const DataConvertOptions& options,
     return true;
 }
 
+bool TryUseFreshOutput(const DataConvertOptions& options,
+                       DataConvertResult& result) {
+    if (!options.write_manifest) {
+        return false;
+    }
+
+    const std::filesystem::path input_path(options.input_path);
+    const std::filesystem::path output_path(options.output_path);
+    const std::filesystem::path manifest_path(BuildManifestPath(options.output_path));
+    std::error_code ec;
+    if (!std::filesystem::exists(input_path, ec) ||
+        !std::filesystem::exists(output_path, ec) ||
+        !std::filesystem::exists(manifest_path, ec)) {
+        return false;
+    }
+
+    std::ifstream in(manifest_path, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+
+    nlohmann::json manifest;
+    try {
+        in >> manifest;
+    } catch (...) {
+        return false;
+    }
+
+    if (manifest.value("node", "") != "DataConvert" ||
+        manifest.value("version", 0) != 1 ||
+        manifest.value("input_path", "") != options.input_path ||
+        manifest.value("output_path", "") != options.output_path ||
+        manifest.value("output_format", "") != "parquet" ||
+        manifest.value("settings_hash", "") != SimpleSettingsHash(options)) {
+        return false;
+    }
+
+    const int64_t current_input_size = static_cast<int64_t>(
+        std::filesystem::file_size(input_path, ec));
+    if (ec || manifest.value("input_size", int64_t{-1}) != current_input_size) {
+        return false;
+    }
+
+    const auto current_input_time = std::filesystem::last_write_time(input_path, ec);
+    if (ec) {
+        return false;
+    }
+    const int64_t current_input_time_native =
+        static_cast<int64_t>(current_input_time.time_since_epoch().count());
+    if (manifest.value("input_modified_time_native", int64_t{-1}) !=
+        current_input_time_native) {
+        return false;
+    }
+
+    const int64_t current_output_size = static_cast<int64_t>(
+        std::filesystem::file_size(output_path, ec));
+    if (ec || current_output_size <= 0 ||
+        manifest.value("output_size", int64_t{-1}) != current_output_size) {
+        return false;
+    }
+
+    result.ok = true;
+    result.skipped_fresh_output = true;
+    result.output_path = options.output_path;
+    result.manifest_path = manifest_path.string();
+    result.rows_read = manifest.value("rows_read", int64_t{0});
+    result.rows_written = manifest.value("rows_written", int64_t{0});
+    result.columns = manifest.value("columns", int64_t{0});
+    result.bytes_written = current_output_size;
+    const std::string delimiter = manifest.value("delimiter", ",");
+    result.detected_delimiter = delimiter.empty() ? ',' : delimiter.front();
+    return true;
+}
+
 std::string ScalarToPreviewString(const std::shared_ptr<arrow::Scalar>& scalar) {
     if (!scalar || !scalar->is_valid) {
         return "null";
@@ -359,6 +433,10 @@ DataConvertResult DataConvertService::ConvertCsvToParquet(
     }
     if (!IsParquetPath(output_path)) {
         result.error = "Phase 1 DataConvert writes Parquet only. Use a .parquet or .pq output path.";
+        return result;
+    }
+    if (TryUseFreshOutput(options, result)) {
+        spdlog::info("DataConvert: skipped fresh output '{}'", options.output_path);
         return result;
     }
     if (std::filesystem::exists(output_path) && !options.overwrite) {

@@ -40,6 +40,7 @@ struct DataConvertOptions {
 
 struct DataConvertResult {
     bool ok = false;
+    bool skipped_fresh_output = false;
     std::string error;
     std::string output_path;
     std::string manifest_path;

@@ -41,6 +41,7 @@ Implemented first slice:
 - DataInput compatibility: Parquet text-table outputs can be loaded as text datasets without the audit treating the Parquet bytes as plain text.
 - Compact Properties panel: shows source path, Parquet output path, sidecar manifest, rows written, and status while keeping detailed editing in the dialog.
 - PipelineExecutor execution: `DataConvert` can run as a file-based source node for the Phase 1 `CSV/TSV -> Parquet` path, register the generated Parquet table, and feed downstream pipeline nodes.
+- Freshness skip: when output Parquet and sidecar manifest already match the input file and conversion settings, conversion is skipped and the existing artifact is reused.
 
 Phase 1 supports both manual dialog execution and file-based PipelineExecutor
 execution for CSV/TSV to Parquet. Table-input execution through the optional
@@ -276,7 +277,7 @@ It should support:
 
 - Manual run from dialog - implemented for CSV/TSV to Parquet
 - Pipeline run as part of Data Studio graph - implemented for file-based CSV/TSV to Parquet
-- Optional automatic skip if output is already fresh
+- Optional automatic skip if output is already fresh - implemented for manifest-backed CSV/TSV to Parquet
 
 Freshness check should compare:
 
@@ -286,6 +287,12 @@ Freshness check should compare:
 - Conversion settings hash
 - Output path
 - Output manifest
+
+Implemented: the Phase 1 freshness check requires both the Parquet output and
+sidecar manifest to exist. The manifest must match the input path, output path,
+input file size, input modified time, output size, and settings hash. If the
+manifest is missing or stale and overwrite is disabled, conversion is refused
+instead of silently replacing the file.
 
 ## Conversion Manifest
 

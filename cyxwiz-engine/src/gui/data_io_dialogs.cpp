@@ -639,8 +639,13 @@ void DataConvertDialog::RunConversion() {
     last_result_ = cyxwiz::DataConvertService::ConvertCsvToParquet(BuildOptions());
     if (last_result_.ok) {
         std::ostringstream msg;
-        msg << "Conversion complete: " << last_result_.rows_written
-            << " rows written to " << last_result_.output_path << ".";
+        if (last_result_.skipped_fresh_output) {
+            msg << "Conversion skipped: existing Parquet output is fresh at "
+                << last_result_.output_path << ".";
+        } else {
+            msg << "Conversion complete: " << last_result_.rows_written
+                << " rows written to " << last_result_.output_path << ".";
+        }
         if (auto_detect_delimiter_) {
             msg << " Detected delimiter: "
                 << DelimiterLabel(last_result_.detected_delimiter) << ".";
