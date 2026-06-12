@@ -20,6 +20,9 @@ struct TrainingBatcherSet {
     std::unique_ptr<ParquetArrowBatcher> parquet_train;
     std::unique_ptr<ParquetArrowBatcher> parquet_val;
     std::unique_ptr<ParquetArrowBatcher> parquet_test;
+    std::unique_ptr<IBatcher> prefetch_train;
+    std::unique_ptr<IBatcher> prefetch_val;
+    std::unique_ptr<IBatcher> prefetch_test;
     IBatcher* train = nullptr;
     IBatcher* val = nullptr;
     IBatcher* test = nullptr;

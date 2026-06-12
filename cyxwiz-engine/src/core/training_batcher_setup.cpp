@@ -1,9 +1,47 @@
 #include "training_batcher_setup.h"
+#include "prefetch_batcher.h"
 #include "worker_defaults.h"
 
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz {
+
+namespace {
+
+void ApplyPrefetchWrappers(TrainingBatcherSet& result,
+                           const TrainingConfiguration& config,
+                           const char* dataset_kind) {
+    if (config.prefetch_factor <= 0) {
+        return;
+    }
+
+    const size_t queue_depth = static_cast<size_t>(config.prefetch_factor);
+    if (result.train) {
+        result.prefetch_train = std::make_unique<PrefetchBatcher>(
+            *result.train, queue_depth, std::string(dataset_kind) + " train");
+        result.train = result.prefetch_train.get();
+    }
+    if (result.val) {
+        result.prefetch_val = std::make_unique<PrefetchBatcher>(
+            *result.val, queue_depth, std::string(dataset_kind) + " validation");
+        result.val = result.prefetch_val.get();
+    }
+    if (result.test) {
+        result.prefetch_test = std::make_unique<PrefetchBatcher>(
+            *result.test, queue_depth, std::string(dataset_kind) + " test");
+        result.test = result.prefetch_test.get();
+    }
+
+    spdlog::info("TrainingExecutor: enabled {} async batch prefetch "
+                 "(prefetch_factor={}, train={}, val={}, test={})",
+                 dataset_kind,
+                 config.prefetch_factor,
+                 result.prefetch_train ? "yes" : "no",
+                 result.prefetch_val ? "yes" : "no",
+                 result.prefetch_test ? "yes" : "no");
+}
+
+} // namespace
 
 TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     const TrainingConfiguration& config,
@@ -32,9 +70,9 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
     }
 
     spdlog::info("TrainingExecutor: Using Arrow dataset for training "
-                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={})",
+                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={}, prefetch_factor={})",
                  batch_size, config.shuffle, config.train_ratio,
-                 config.is_time_series, num_workers);
+                 config.is_time_series, num_workers, config.prefetch_factor);
 
     const std::string partition_col = config.is_time_series
         ? "__partition__" : "";
@@ -92,6 +130,7 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
     result.train = result.arrow_train.get();
     result.val = result.arrow_val.get();
     result.test = result.arrow_test.get();
+    ApplyPrefetchWrappers(result, config, "Arrow");
     spdlog::info("TrainingExecutor: Arrow split samples train={} val={} test={}",
                  result.num_train_samples, result.num_val_samples, result.num_test_samples);
     return result;
@@ -111,9 +150,9 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     }
 
     spdlog::info("TrainingExecutor: Using Parquet-backed dataset for training "
-                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={})",
+                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={}, prefetch_factor={})",
                  batch_size, config.shuffle, config.train_ratio,
-                 config.is_time_series, num_workers);
+                 config.is_time_series, num_workers, config.prefetch_factor);
 
     const std::string partition_col = config.is_time_series
         ? "__partition__" : "";
@@ -171,6 +210,7 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     result.train = result.parquet_train.get();
     result.val = result.parquet_val.get();
     result.test = result.parquet_test.get();
+    ApplyPrefetchWrappers(result, config, "Parquet");
     spdlog::info("TrainingExecutor: Parquet split samples train={} val={} test={}",
                  result.num_train_samples, result.num_val_samples, result.num_test_samples);
     return result;

@@ -292,6 +292,37 @@ int main() {
     Check(batch.labels.Shape().size() == 2, "label tensor should be 2D");
     Check(batch.labels.Shape()[1] == 2, "labels should be one-hot by output_size");
 
+    auto prefetch_config = MakeConfig();
+    prefetch_config.prefetch_factor = 2;
+    auto prefetch_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        prefetch_config,
+        MakeDataset(),
+        "label",
+        /*batch_size=*/2);
+    Check(prefetch_batchers.prefetch_train != nullptr,
+          "prefetch train wrapper should be owned when prefetch_factor is positive");
+    Check(prefetch_batchers.prefetch_val != nullptr,
+          "prefetch val wrapper should be owned when prefetch_factor is positive");
+    Check(prefetch_batchers.train == prefetch_batchers.prefetch_train.get(),
+          "train pointer should target prefetch wrapper");
+    Check(prefetch_batchers.train != prefetch_batchers.arrow_train.get(),
+          "prefetch wrapper should sit in front of Arrow train batcher");
+    Check(prefetch_batchers.num_train_samples == 3,
+          "prefetch train split should preserve sample count");
+    auto prefetch_first = prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(prefetch_first, 2, 2, 2, "prefetch Arrow first");
+    auto prefetch_second = prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(prefetch_second, 1, 2, 2, "prefetch Arrow second");
+    auto prefetch_end = prefetch_batchers.train->GetNextBatch();
+    Check(!prefetch_end.IsValid(),
+          "prefetch train should return an invalid batch after epoch end");
+    Check(prefetch_batchers.train->IsEpochComplete(),
+          "prefetch train should complete after queued batches are consumed");
+    prefetch_batchers.train->Reset();
+    auto prefetch_after_reset = prefetch_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(prefetch_after_reset, 2, 2, 2,
+                               "prefetch Arrow after reset");
+
     auto explicit_split_config = MakeConfig();
     explicit_split_config.has_data_split = true;
     explicit_split_config.train_ratio = 0.50f;
@@ -459,6 +490,7 @@ int main() {
         "Parquet model-step");
 
     parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     explicit_split_batchers = cyxwiz::TrainingBatcherSet{};
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_parquet_batchers = cyxwiz::TrainingBatcherSet{};

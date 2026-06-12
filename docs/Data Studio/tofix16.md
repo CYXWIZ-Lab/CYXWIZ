@@ -32,6 +32,18 @@ future compatibility but is currently ignored.
   specific graph. If fetch time is small relative to forward/backward time,
   prefetch should not be prioritized for that path.
 
+2026-06-12 async prefetch slice:
+
+- `prefetch_factor` is now compiled into `TrainingConfiguration`.
+- Arrow and Parquet training setup can wrap train/validation/test
+  `IBatcher` instances with a bounded async `PrefetchBatcher` queue.
+- `prefetch_factor=0` keeps the old synchronous behavior. A positive value
+  is the queue depth in completed batches.
+- This overlaps batch construction with model compute, but does not change
+  `num_workers`: worker threads inside Arrow/Parquet batchers still do
+  synchronous per-batch conversion before each batch enters the queue.
+- This does not implement pinned host memory.
+
 **Goal:** add a real async prefetch queue only where it improves training
 latency without making shutdown, cancellation, or dataset lifetime unsafe.
 

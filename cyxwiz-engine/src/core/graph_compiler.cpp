@@ -2269,11 +2269,11 @@ TrainingConfiguration GraphCompiler::Compile(
                              requested_workers, config.num_workers);
             }
             if (loader_node->parameters.count("prefetch_factor")) {
-                spdlog::info("GraphCompiler: DataLoader prefetch_factor is reserved for future "
-                             "async prefetch queues and is ignored by the current batchers; "
-                             "num_workers={} still runs synchronous per-batch work in supported "
-                             "batchers, then joins before returning each batch",
-                             config.num_workers);
+                config.prefetch_factor = std::max(0, std::stoi(loader_node->parameters.at("prefetch_factor")));
+                spdlog::info("GraphCompiler: DataLoader prefetch_factor={} will enable a bounded "
+                             "async batch queue on supported Arrow/Parquet batchers; num_workers={} "
+                             "still controls synchronous per-batch conversion inside each fetch",
+                             config.prefetch_factor, config.num_workers);
             }
             if (loader_node->parameters.count("pin_memory") &&
                 loader_node->parameters.at("pin_memory") == "true") {
@@ -2290,8 +2290,8 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     if (config.has_data_loader) {
-        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}, save_best_checkpoint={}, early_stopping_patience={}, checkpoint_dir='{}'",
-                     config.batch_size, config.epochs, config.shuffle, config.drop_last, config.num_workers,
+        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}, prefetch_factor={}, save_best_checkpoint={}, early_stopping_patience={}, checkpoint_dir='{}'",
+                     config.batch_size, config.epochs, config.shuffle, config.drop_last, config.num_workers, config.prefetch_factor,
                      config.save_best_checkpoint, config.early_stopping_patience, config.checkpoint_dir);
         if (config.num_workers > 0) {
             spdlog::info("GraphCompiler: num_workers={} will be forwarded to supported batchers",

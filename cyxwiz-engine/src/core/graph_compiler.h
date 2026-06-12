@@ -327,6 +327,7 @@ struct TrainingConfiguration {
     bool shuffle = true;
     bool drop_last = false;
     int num_workers = 0;                // forwarded to supported batchers
+    int prefetch_factor = 0;            // bounded async batch queue depth; 0 disables prefetch
     bool has_data_loader = false;       // true if a DataLoader node was found
     bool save_best_checkpoint = true;   // keep best validation epoch
     int early_stopping_patience = 5;    // stop after this many non-improving epochs
