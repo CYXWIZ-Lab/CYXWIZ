@@ -23,6 +23,7 @@
 #include "node_editor.h"
 #include "data_input_capabilities.h"
 #include "loaders/data_loader.h"
+#include "../core/data_convert_service.h"
 
 namespace gui {
 
@@ -534,6 +535,46 @@ private:
     bool overwrite_ = false;
     bool include_header_ = true;
     int compression_ = 0;
+};
+
+/**
+ * DataConvertDialog - Data utility dialog for one-time dataset format conversion.
+ */
+class DataConvertDialog : public NodeConfigDialog {
+public:
+    DataConvertDialog(MLNode* node);
+    void Apply() override;
+    void Reset() override;
+    ImVec2 GetDefaultSize() const override { return ImVec2(820, 620); }
+
+protected:
+    void RenderContent() override;
+
+private:
+    void LoadFromNode();
+    void RenderSourceTab();
+    void RenderOutputTab();
+    void RenderPreviewTab();
+    void RenderRunTab();
+    cyxwiz::DataConvertOptions BuildOptions() const;
+    void PreviewInput();
+    void RunConversion();
+    void SetStatus(std::string message, bool is_error);
+
+    char input_path_[512] = {};
+    char output_path_[512] = {};
+    char delimiter_[8] = ",";
+    bool has_header_ = true;
+    int skip_rows_ = 0;
+    int compression_ = 1;
+    int row_group_size_ = 1048576;
+    bool overwrite_ = false;
+    bool create_parent_dirs_ = true;
+    bool write_manifest_ = true;
+    cyxwiz::DataConvertPreview preview_;
+    cyxwiz::DataConvertResult last_result_;
+    std::string status_message_ = "Not run";
+    bool status_is_error_ = false;
 };
 
 /**

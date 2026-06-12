@@ -17,6 +17,7 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         // Smart I/O Nodes (Universal)
         case NodeType::DataInput:
         case NodeType::DataOutput:
+        case NodeType::DataConvert:
         // Legacy Data Sources
         case NodeType::CSVFile:
         case NodeType::SQLQuery:
@@ -3119,6 +3120,45 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        case NodeType::DataConvert: {
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            input_pin.description =
+                "Optional input table. Phase 1 conversion runs from the "
+                "configured input file path.";
+            node.inputs.push_back(input_pin);
+
+            NodePin output_pin;
+            output_pin.id = next_pin_id_++;
+            output_pin.type = PinType::Dataset;
+            output_pin.name = "Output";
+            output_pin.is_input = false;
+            output_pin.description =
+                "Converted dataset artifact. Phase 1 writes a Parquet file "
+                "that downstream DataInput/DataLoader nodes can reuse.";
+            node.outputs.push_back(output_pin);
+
+            node.parameters["input_path"] = "";
+            node.parameters["input_format"] = "csv";
+            node.parameters["output_path"] = "";
+            node.parameters["output_format"] = "parquet";
+            node.parameters["delimiter"] = ",";
+            node.parameters["header"] = "true";
+            node.parameters["skip_rows"] = "0";
+            node.parameters["compression"] = "snappy";
+            node.parameters["row_group_size"] = "1048576";
+            node.parameters["overwrite"] = "false";
+            node.parameters["create_parent_dirs"] = "true";
+            node.parameters["write_manifest"] = "true";
+            node.parameters["configured"] = "false";
+            node.parameters["status"] = "Not run";
+            node.parameters["rows_written"] = "0";
+            break;
+        }
+
         // ========== Legacy Data Source Nodes (kept for compatibility) ==========
 
         case NodeType::CSVFile: {
@@ -5595,6 +5635,7 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         // ===== Smart I/O Nodes - Bright Blue =====
         case NodeType::DataInput:
         case NodeType::DataOutput:
+        case NodeType::DataConvert:
             return IM_COL32(30, 136, 229, 255);  // Material Blue 600
 
         // ===== Legacy Data Source Nodes - Light Blue =====

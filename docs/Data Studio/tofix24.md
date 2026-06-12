@@ -24,6 +24,24 @@ CSV file
 The first practical target is to make large CSV datasets easier and faster to
 reuse by converting them to Parquet or Arrow-friendly cached formats.
 
+## Phase 1 Implementation Scope
+
+Implemented first slice:
+
+- Node browser entry: `DataConvert`
+- Category: Data Sources / Smart I/O utility
+- Rich dialog with Source, Output, Preview, and Run tabs
+- Input: CSV or TSV file path
+- Output: Parquet file path
+- Options: delimiter, header row, skipped rows, Parquet compression, row group size, overwrite, create parent folders, manifest writing
+- Preview: Arrow-inferred row count, column count, column names, data types, and nullable flags
+- Run: converts CSV/TSV to Parquet and records rows, columns, bytes written, status, and manifest path
+- Manifest: `<output>.manifest.json` containing input/output paths, formats, rows, columns, compression, settings hash, timestamp, and file sizes
+
+Phase 1 is a manual Data Studio utility workflow. The node does not execute as
+part of the training `PipelineExecutor` yet. Users run conversion in the dialog,
+then point a downstream `DataInput` node at the generated Parquet file.
+
 ## Node Name
 
 `DataConvert`
@@ -48,7 +66,10 @@ Data / Preprocessing / Utility
 
 Phase 1 should focus on table formats:
 
-- `CSV -> Parquet`
+- `CSV -> Parquet` - implemented
+
+Next table conversions:
+
 - `Parquet -> CSV`
 - `CSV -> Arrow IPC / Feather`
 - `Parquet -> Arrow IPC / Feather`
@@ -216,6 +237,11 @@ Features:
 - Elapsed time
 - Throughput
 - Output file link/path
+
+Phase 1 note:
+
+- Convert button is implemented.
+- Progress/cancel should be added when conversion becomes streaming/async.
 
 ### Logs Tab
 

@@ -84,6 +84,7 @@ set(ENGINE_SOURCES
     src/core/data_registry.cpp
     src/core/data_registry_config.cpp
     src/core/data_registry_utils.cpp
+    src/core/data_convert_service.cpp
     src/core/dataset_base.cpp
     src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/hdf5_dataset.cpp
@@ -1751,6 +1752,36 @@ if(WIN32)
 endif()
 
 set_target_properties(test_training_batcher_setup PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: DataConvert CSV -> Parquet =====
+add_executable(test_data_convert_service
+    tests/test_data_convert_service.cpp
+    src/core/data_convert_service.cpp
+    src/core/arrow_dataset.cpp
+)
+
+target_include_directories(test_data_convert_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_data_convert_service PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+)
+
+if(WIN32)
+    target_compile_definitions(test_data_convert_service PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_data_convert_service PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

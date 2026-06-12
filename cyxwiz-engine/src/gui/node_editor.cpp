@@ -4731,6 +4731,7 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
         // Smart I/O nodes (universal data input/output)
         case NodeType::DataInput: return "DataInput";
         case NodeType::DataOutput: return "DataOutput";
+        case NodeType::DataConvert: return "DataConvert";
         case NodeType::CSVFile: return "FileInput";
         case NodeType::FilterRows: return "FilterRows";
         case NodeType::SelectColumns: return "SelectColumns";

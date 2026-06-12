@@ -758,6 +758,17 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::DataConvert, NodeCategory::DataSources, "Data Convert", ICON_FA_RIGHT_LEFT,
+        {"csv", "parquet", "convert", "conversion", "format", "cache", "file"}, 0, false,
+        "Convert datasets between file formats - phase 1 supports CSV to Parquet", "", "",
+        {{"Input", PinType::Dataset, true, "Optional input dataset artifact"}},
+        {{"Output", PinType::Dataset, true, "Converted dataset artifact"}},
+        {{"input_path", "file", "", "Input CSV file", {}, "*.csv;*.tsv"},
+         {"output_path", "file", "", "Output Parquet file", {}, "*.parquet;*.pq"},
+         {"compression", "enum", "snappy", "Parquet compression", {"none", "snappy", "gzip", "zstd", "brotli"}, ""},
+         {"configured", "bool", "false", "Dialog configured", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     // ===== Legacy File Format Nodes (hidden - use DataInput/DataOutput instead) =====
     // Note: Commented out to clean up Node Browser - functionality consolidated into DataInput/DataOutput
     /*

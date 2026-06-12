@@ -319,6 +319,7 @@ enum class NodeType {
     // ===== Smart I/O Nodes (Unified - replaces individual format nodes) =====
     DataInput,          // Universal data input with smart dialog (auto-detects format)
     DataOutput,         // Universal data export with smart dialog (supports all formats)
+    DataConvert,        // Convert datasets between supported file formats
 
     // ===== Legacy Data Source Nodes (kept for compatibility) =====
     CSVFile,            // Load CSV file into Arrow table

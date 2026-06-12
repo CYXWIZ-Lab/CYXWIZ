@@ -123,6 +123,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::JSONPathExtractor},
         {"DataProfiler", "DataProfiler is a panel/report workflow, not a real PipelineExecutor transform",
          gui::NodeType::DataProfiler},
+        {"DataConvert", "DataConvert phase 1 is a dialog-run file conversion utility; run conversion in the node dialog, then point DataInput at the generated Parquet file",
+         gui::NodeType::DataConvert},
         {"ParquetInput", "legacy ParquetInput execution is not implemented; use DataInput with type=parquet"},
         {"CellExtractor", "legacy CellExtractor execution is still a passthrough placeholder",
          gui::NodeType::CellExtractor},

@@ -1657,6 +1657,10 @@ NodeConfigDialogFactory::NodeConfigDialogFactory() {
         return std::make_unique<DataOutputDialog>(node);
     });
 
+    RegisterDialog(NT::DataConvert, [](MLNode* node) {
+        return std::make_unique<DataConvertDialog>(node);
+    });
+
     // Data pipeline nodes - single source of truth for batching and splitting
     RegisterDialog(NT::DataLoader, [](MLNode* node) {
         return std::make_unique<DataLoaderDialog>(node);

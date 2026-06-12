@@ -1973,6 +1973,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_FILE_IMPORT;
         case NodeType::DataOutput:
             return ICON_FA_FILE_EXPORT;
+        case NodeType::DataConvert:
+            return ICON_FA_RIGHT_LEFT;
 
         // Legacy Data Source Nodes (File Formats)
         case NodeType::CSVFile:

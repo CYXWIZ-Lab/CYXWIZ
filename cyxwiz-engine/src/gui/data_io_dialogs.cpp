@@ -1,5 +1,10 @@
 // Data output, loader, and split node dialog implementations.
 
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+#endif
+
 #include "node_config_dialog.h"
 #include "../core/worker_defaults.h"
 
@@ -9,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <sstream>
 #include <string>
 
 namespace gui {
@@ -29,6 +35,72 @@ std::string LowerAscii(std::string value) {
             std::tolower(static_cast<unsigned char>(c)));
     }
     return value;
+}
+
+bool ReadBoolParamValue(const std::map<std::string, std::string>& params,
+                        const char* key,
+                        bool fallback) {
+    auto it = params.find(key);
+    if (it == params.end()) return fallback;
+    return it->second == "true" || it->second == "1" || it->second == "yes";
+}
+
+int ReadIntParamValue(const std::map<std::string, std::string>& params,
+                      const char* key,
+                      int fallback) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) return fallback;
+    try {
+        return std::stoi(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+std::string ReadStringParamValue(
+    const std::map<std::string, std::string>& params,
+    const char* key,
+    const std::string& fallback = "") {
+    auto it = params.find(key);
+    return it == params.end() ? fallback : it->second;
+}
+
+int CompressionIndexFromName(const std::string& value) {
+    const std::string normalized = LowerAscii(value);
+    if (normalized == "none" || normalized == "uncompressed") return 0;
+    if (normalized == "gzip") return 2;
+    if (normalized == "zstd") return 3;
+    if (normalized == "brotli") return 4;
+    return 1;
+}
+
+const char* CompressionNameFromIndex(int index) {
+    static const char* kCompressions[] = {
+        "none", "snappy", "gzip", "zstd", "brotli"
+    };
+    if (index < 0 || index >= 5) return "snappy";
+    return kCompressions[index];
+}
+
+bool BrowseCsvInput(char* destination, std::size_t destination_size) {
+#ifdef _WIN32
+    OPENFILENAMEA ofn = {};
+    char file[512] = {};
+    CopyToBuffer(file, sizeof(file), destination);
+    ofn.lStructSize = sizeof(ofn);
+    ofn.lpstrFilter = "CSV/TSV Files\0*.csv;*.tsv\0All Files\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = sizeof(file);
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+    if (GetOpenFileNameA(&ofn)) {
+        CopyToBuffer(destination, destination_size, file);
+        return true;
+    }
+#else
+    (void)destination;
+    (void)destination_size;
+#endif
+    return false;
 }
 
 } // namespace
@@ -173,6 +245,311 @@ void DataOutputDialog::RenderAdvancedTab() {
     ImGui::SameLine(100);
     ImGui::SetNextItemWidth(120);
     ImGui::Combo("##outencoding", &out_encoding, encodings, 4);
+}
+
+// ==================== DataConvertDialog ====================
+
+DataConvertDialog::DataConvertDialog(MLNode* node)
+    : NodeConfigDialog("Data Convert", node)
+{
+    LoadFromNode();
+}
+
+void DataConvertDialog::LoadFromNode() {
+    if (!node_) return;
+    CopyToBuffer(input_path_, sizeof(input_path_),
+                 ReadStringParamValue(node_->parameters, "input_path"));
+    CopyToBuffer(output_path_, sizeof(output_path_),
+                 ReadStringParamValue(node_->parameters, "output_path"));
+    CopyToBuffer(delimiter_, sizeof(delimiter_),
+                 ReadStringParamValue(node_->parameters, "delimiter", ","));
+    has_header_ = ReadBoolParamValue(node_->parameters, "header", true);
+    skip_rows_ = ReadIntParamValue(node_->parameters, "skip_rows", 0);
+    compression_ = CompressionIndexFromName(
+        ReadStringParamValue(node_->parameters, "compression", "snappy"));
+    row_group_size_ = ReadIntParamValue(
+        node_->parameters, "row_group_size", 1048576);
+    overwrite_ = ReadBoolParamValue(node_->parameters, "overwrite", false);
+    create_parent_dirs_ = ReadBoolParamValue(
+        node_->parameters, "create_parent_dirs", true);
+    write_manifest_ = ReadBoolParamValue(
+        node_->parameters, "write_manifest", true);
+    status_message_ = ReadStringParamValue(
+        node_->parameters, "status", "Not run");
+    status_is_error_ = false;
+}
+
+void DataConvertDialog::Apply() {
+    if (!node_) return;
+
+    node_->parameters["input_path"] = input_path_;
+    node_->parameters["input_format"] = "csv";
+    node_->parameters["output_path"] = output_path_;
+    node_->parameters["output_format"] = "parquet";
+    node_->parameters["delimiter"] = delimiter_;
+    node_->parameters["header"] = has_header_ ? "true" : "false";
+    node_->parameters["skip_rows"] = std::to_string(skip_rows_);
+    node_->parameters["compression"] = CompressionNameFromIndex(compression_);
+    node_->parameters["row_group_size"] = std::to_string(row_group_size_);
+    node_->parameters["overwrite"] = overwrite_ ? "true" : "false";
+    node_->parameters["create_parent_dirs"] =
+        create_parent_dirs_ ? "true" : "false";
+    node_->parameters["write_manifest"] = write_manifest_ ? "true" : "false";
+    node_->parameters["configured"] =
+        (input_path_[0] != '\0' && output_path_[0] != '\0') ? "true" : "false";
+    node_->parameters["status"] = status_message_;
+    if (last_result_.ok) {
+        node_->parameters["rows_written"] =
+            std::to_string(last_result_.rows_written);
+        node_->parameters["manifest_path"] = last_result_.manifest_path;
+        node_->description = "Converted " +
+            std::to_string(last_result_.rows_written) + " rows";
+    } else if (output_path_[0] != '\0') {
+        node_->description = std::filesystem::path(output_path_).filename().string();
+    }
+
+    has_changes_ = false;
+}
+
+void DataConvertDialog::Reset() {
+    if (!node_) return;
+    node_->parameters = original_params_;
+    LoadFromNode();
+    has_changes_ = false;
+}
+
+void DataConvertDialog::RenderContent() {
+    ImGui::TextWrapped(
+        "Convert source data into an engine-friendly file. Phase 1 supports "
+        "CSV or TSV input and writes Parquet plus an optional manifest.");
+    ImGui::Spacing();
+
+    if (!status_message_.empty()) {
+        const ImVec4 color = status_is_error_
+            ? ImVec4(0.95f, 0.35f, 0.30f, 1.0f)
+            : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        ImGui::TextColored(color, "%s", status_message_.c_str());
+        ImGui::Separator();
+    }
+
+    if (ImGui::BeginTabBar("DataConvertTabs")) {
+        if (ImGui::BeginTabItem("Source")) {
+            RenderSourceTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Output")) {
+            RenderOutputTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Preview")) {
+            RenderPreviewTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Run")) {
+            RenderRunTab();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
+void DataConvertDialog::RenderSourceTab() {
+    ImGui::Spacing();
+    ImGui::Text("Input CSV or TSV");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
+    if (ImGui::InputText("##input_path", input_path_, sizeof(input_path_))) {
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Browse", ImVec2(80.0f, 0.0f)) &&
+        BrowseCsvInput(input_path_, sizeof(input_path_))) {
+        has_changes_ = true;
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("Delimiter");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(90.0f);
+    if (ImGui::InputText("##delimiter", delimiter_, sizeof(delimiter_))) {
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Use comma for CSV, tab for TSV.");
+
+    if (ImGui::Checkbox("First row contains headers", &has_header_)) {
+        has_changes_ = true;
+    }
+
+    ImGui::Text("Skip rows");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(90.0f);
+    if (ImGui::InputInt("##skip_rows", &skip_rows_)) {
+        if (skip_rows_ < 0) skip_rows_ = 0;
+        has_changes_ = true;
+    }
+}
+
+void DataConvertDialog::RenderOutputTab() {
+    ImGui::Spacing();
+    ImGui::Text("Output Parquet file");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::InputText("##output_path", output_path_, sizeof(output_path_))) {
+        has_changes_ = true;
+    }
+
+    if (ImGui::Button("Use input name + .parquet")) {
+        std::filesystem::path in(input_path_);
+        if (!in.empty()) {
+            in.replace_extension(".parquet");
+            CopyToBuffer(output_path_, sizeof(output_path_), in.string());
+            has_changes_ = true;
+        }
+    }
+
+    ImGui::Spacing();
+    const char* compressions[] = {
+        "None", "Snappy", "Gzip", "Zstd", "Brotli"
+    };
+    ImGui::Text("Compression");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(140.0f);
+    if (ImGui::Combo("##compression", &compression_, compressions, 5)) {
+        has_changes_ = true;
+    }
+
+    ImGui::Text("Row group size");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(140.0f);
+    if (ImGui::InputInt("##row_group_size", &row_group_size_)) {
+        if (row_group_size_ < 1) row_group_size_ = 1;
+        has_changes_ = true;
+    }
+
+    if (ImGui::Checkbox("Overwrite existing file", &overwrite_)) {
+        has_changes_ = true;
+    }
+    if (ImGui::Checkbox("Create parent folders", &create_parent_dirs_)) {
+        has_changes_ = true;
+    }
+    if (ImGui::Checkbox("Write conversion manifest", &write_manifest_)) {
+        has_changes_ = true;
+    }
+}
+
+void DataConvertDialog::RenderPreviewTab() {
+    ImGui::Spacing();
+    if (ImGui::Button("Preview schema")) {
+        PreviewInput();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Reads the CSV header and Arrow-inferred types.");
+
+    ImGui::Spacing();
+    if (!preview_.ok) {
+        if (!preview_.error.empty()) {
+            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.30f, 1.0f),
+                               "%s", preview_.error.c_str());
+        }
+        return;
+    }
+
+    ImGui::Text("Rows: %lld   Columns: %lld",
+                static_cast<long long>(preview_.rows),
+                static_cast<long long>(preview_.columns));
+    if (ImGui::BeginTable("DataConvertSchema", 3,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Column");
+        ImGui::TableSetupColumn("Type");
+        ImGui::TableSetupColumn("Nullable");
+        ImGui::TableHeadersRow();
+        for (const auto& column : preview_.schema) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(column.name.c_str());
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(column.type.c_str());
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(column.nullable ? "yes" : "no");
+        }
+        ImGui::EndTable();
+    }
+}
+
+void DataConvertDialog::RenderRunTab() {
+    ImGui::Spacing();
+    ImGui::TextWrapped(
+        "Run conversion when the source and output settings are correct. "
+        "Downstream DataInput nodes should point at the generated Parquet file.");
+    ImGui::Spacing();
+
+    if (ImGui::Button("Run conversion", ImVec2(160.0f, 0.0f))) {
+        RunConversion();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Apply settings")) {
+        Apply();
+    }
+
+    ImGui::Spacing();
+    if (last_result_.ok) {
+        ImGui::Text("Rows written: %lld",
+                    static_cast<long long>(last_result_.rows_written));
+        ImGui::Text("Columns: %lld",
+                    static_cast<long long>(last_result_.columns));
+        ImGui::Text("Bytes written: %lld",
+                    static_cast<long long>(last_result_.bytes_written));
+        if (!last_result_.manifest_path.empty()) {
+            ImGui::TextWrapped("Manifest: %s",
+                               last_result_.manifest_path.c_str());
+        }
+    }
+}
+
+cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
+    cyxwiz::DataConvertOptions options;
+    options.input_path = input_path_;
+    options.output_path = output_path_;
+    options.delimiter = delimiter_[0] == '\0' ? ',' : delimiter_[0];
+    options.has_header = has_header_;
+    options.skip_rows = skip_rows_;
+    options.parquet_compression = CompressionNameFromIndex(compression_);
+    options.row_group_size = row_group_size_;
+    options.overwrite = overwrite_;
+    options.create_parent_dirs = create_parent_dirs_;
+    options.write_manifest = write_manifest_;
+    return options;
+}
+
+void DataConvertDialog::PreviewInput() {
+    preview_ = cyxwiz::DataConvertService::PreviewCsv(BuildOptions());
+    if (preview_.ok) {
+        std::ostringstream msg;
+        msg << "Preview loaded: " << preview_.rows << " rows, "
+            << preview_.columns << " columns.";
+        SetStatus(msg.str(), false);
+    } else {
+        SetStatus(preview_.error, true);
+    }
+}
+
+void DataConvertDialog::RunConversion() {
+    last_result_ = cyxwiz::DataConvertService::ConvertCsvToParquet(BuildOptions());
+    if (last_result_.ok) {
+        std::ostringstream msg;
+        msg << "Conversion complete: " << last_result_.rows_written
+            << " rows written to Parquet.";
+        SetStatus(msg.str(), false);
+        Apply();
+    } else {
+        SetStatus(last_result_.error, true);
+    }
+}
+
+void DataConvertDialog::SetStatus(std::string message, bool is_error) {
+    status_message_ = std::move(message);
+    status_is_error_ = is_error;
+    has_changes_ = true;
 }
 
 // ==================== DataLoaderDialog ====================
