@@ -246,6 +246,8 @@ inline constexpr const char* ArrayFireTensorOpCapable =
     "arrayfire_tensor_op_capable";
 inline constexpr const char* BackendCapabilityUnclassified =
     "backend_capability_unclassified";
+inline constexpr const char* UnsupportedSequentialModelLayer =
+    "unsupported_sequential_model_layer";
 } // namespace BackendPlacementReason
 
 struct BackendPlacementEntry {

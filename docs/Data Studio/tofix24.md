@@ -55,26 +55,98 @@ finished and verified.
   an output path.
 - Consider replacing the manual CSV/TSV writer with `arrow::csv::WriteCSV` if
   the bundled Arrow version exposes a stable writer API.
-- Add the remaining data-file extensions that are visible elsewhere in the
-  engine but are not supported by DataConvert yet:
-  - HDF5: `.h5`, `.hdf5`, `.hdf`
-  - ARFF: `.arff`
-  - Excel: `.xlsx`, `.xls`
-  - JSON tables: `.json`, `.jsonl`
-  - Text tables: `.txt`
-  - NumPy arrays: `.npy`, `.npz`
-- For each remaining extension, first confirm the engine has a real table loader
-  and writer path. Metadata/UI visibility alone is not enough to mark the format
-  supported.
+
+## Missing Format Coverage
+
+DataConvert is still narrower than the engine's data/file surface. The expected
+behavior should be: if a format is a supported CyxWiz data file type, DataConvert
+should either convert it to another compatible supported type or reject it with a
+specific reason and required option. This includes non-table conversions such as
+`.jpg` to `.jpeg` and table extraction conversions such as `.xls` to `.csv`.
+
+Do not implement this as one giant generic converter. Keep the core
+`DataConvertService` as an orchestrator and add small typed adapters by data
+domain:
+
+- Table adapter: CSV, TSV, Parquet, Feather, Arrow IPC, JSON/JSONL, Excel, HDF5
+  dataset slices, ARFF, TXT tables, NumPy 1D/2D arrays.
+- Image adapter: JPEG/JPG, PNG, BMP, GIF, TIFF, WebP, TGA where OpenCV/stb can
+  read/write the format.
+- Text adapter: TXT, JSON/JSONL text records, CSV/TSV text columns, Parquet text
+  columns.
+- Audio/video adapter: future scope unless the engine has a tested decoder and
+  encoder path for the specific format pair.
+
+Known missing supported/visible formats:
+
+- Legacy `DataRegistry` files:
+  - `.csv`
+  - `.tsv`
+  - `.json`
+  - `.txt`
+  - `.h5`, `.hdf5`, `.hdf`
+- Current Arrow/table files:
+  - `.csv`
+  - `.tsv`
+  - `.parquet`, `.pq`
+  - `.feather`, `.fea`
+  - `.arrow`, `.ipc`
+- UI-detected table formats not wired through DataConvert:
+  - `.json`, `.jsonl`
+  - `.xlsx`, `.xls`
+  - `.h5`, `.hdf5`, `.hdf`
+  - `.arff`
+  - `.txt`
+- Image/data source formats not wired through DataConvert:
+  - `.jpg`, `.jpeg`
+  - `.png`
+  - `.bmp`
+  - `.gif`
+  - `.tiff`
+  - `.webp`
+  - `.tga` where the loader already accepts it
+- Audio/video formats are visible in DataInput detection but should stay pending
+  until encoder support is explicit:
+  - Audio: `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, `.aac`, `.aiff`, `.aif`
+  - Video: `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, `.wmv`
+- NumPy arrays remain a desired conversion target/source:
+  - `.npy`
+  - `.npz`
+
+Required conversion examples:
+
+- `.jpg` <-> `.jpeg`
+- `.png` -> `.jpg`
+- `.xls` / `.xlsx` -> `.csv`
+- `.csv` / `.tsv` / `.jsonl` -> `.parquet`
+- `.parquet` -> `.csv` / `.jsonl`
+- `.h5` / `.hdf5` dataset path -> `.csv` / `.parquet` / `.txt`
+- `.txt` table -> `.csv` / `.parquet`
+- `.npy` 2D array -> `.csv` / `.parquet`
+
+Format-specific decisions still required before marking those conversions
+supported:
+
 - HDF5 needs dataset-path selection because one file can contain many datasets.
-- ARFF needs a parser decision and type/null handling before it can be converted
-  safely.
-- Excel needs sheet selection and header/range options.
-- JSON/JSONL needs a record-orientation policy.
+  The UI must expose the dataset path and reject ambiguous files.
+- HDF5 to TXT needs an explicit text layout choice: delimited table, one value
+  per line, or text dataset export. It should not silently stringify arbitrary
+  tensors.
+- Excel needs sheet selection, header row, skip rows, range selection, and a
+  clear dependency choice.
+- JSON/JSONL needs a record-orientation policy: array of objects, line-delimited
+  objects, or selected JSON path.
+- TXT needs a declared mode: plain text corpus, delimited table, fixed-width
+  table, or one-record-per-line text.
+- ARFF needs a parser decision plus type/null/category handling.
 - NumPy needs shape-to-table rules for 1D/2D arrays and rejection for unsupported
   tensor shapes.
+- Image conversion needs image-specific options: quality, alpha handling,
+  color-space handling, overwrite policy, and batch folder conversion.
+- Audio/video conversion needs explicit codec/container support before appearing
+  as enabled UI.
 - SQLite/DuckDB query-to-table conversion remains future scope and is not a
-  file-extension conversion yet.
+  file-extension conversion until query input is modeled as a first-class source.
 
 ## Verification Checklist
 
@@ -90,10 +162,14 @@ finished and verified.
   - Freshness skip with manifest enabled
 - [ ] Add focused tests before marking any additional extension supported:
   - HDF5 dataset to Parquet
+  - HDF5 dataset to TXT with explicit export layout
   - ARFF to Parquet
   - Excel sheet to Parquet
+  - Excel sheet to CSV
   - JSONL to Parquet
   - NumPy 2D array to Parquet
+  - JPG to JPEG
+  - PNG to JPEG with alpha-handling validation
 
 ## Completion Criteria
 

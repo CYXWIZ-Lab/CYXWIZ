@@ -190,6 +190,89 @@ Effect:
 
 ---
 
+### 4a. RL graph nodes: `GymEnvironment`, `ReplayBuffer`, `PolicyNetwork`, `ValueNetwork`
+
+**Severity:** High
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- `PolicyNetwork` and `ValueNetwork` are now listed in the central
+  unsupported sequential-model-layer capability table.
+- `GymEnvironment`, `ReplayBuffer`, `PolicyNetwork`, and `ValueNetwork`
+  are now listed in the central fail-closed PipelineExecutor runtime
+  capability table because Data Studio graph execution has no real RL
+  runtime path for them.
+- `NodeMetadataRegistry` derives their blocked/template metadata from
+  the same central runtime/training backend support contracts used by
+  the other blocked nodes.
+- backend-placement reporting now classifies emitted unsupported
+  sequential-model layers as `unsupported` instead of claiming GPU
+  placement or falling back to an `unknown` backend capability.
+- all unsupported sequential-model entries now count as model layers for
+  graph validation, so selected `LayerNorm`/attention-style nodes report
+  the backend gap directly instead of also claiming the graph has no
+  model layer.
+- fail-closed PipelineExecutor capabilities now distinguish graph-runtime
+  gaps from training-compiler support with `blocks_metadata_status`; this
+  keeps `NERSequenceBuilder` implemented for its selected training path
+  while still exposing that PipelineExecutor cannot run it as a graph node.
+- selected training paths containing either node still fail compile with
+  the explicit reinforcement-learning training contract error.
+- side/disconnected RL sketches remain non-blocking for the selected
+  supervised training path.
+- metadata drift coverage verifies unsupported training nodes are not
+  marked implemented, while training-only nodes keep implemented metadata
+  when only their PipelineExecutor graph runtime is fail-closed.
+
+Relevant files:
+
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
+- `cyxwiz-engine/src/core/backend_placement_capabilities.h`
+- `cyxwiz-engine/src/core/node_metadata_registry.cpp`
+- `cyxwiz-engine/src/core/graph_compiler.cpp`
+- `cyxwiz-engine/tests/test_pipeline_operator_metadata.cpp`
+- `cyxwiz-engine/tests/test_graph_compiler_deferred_nodes.cpp`
+
+Problem:
+
+- the recommended hard-block list already included `PolicyNetwork` and
+  `ValueNetwork`
+- selected RL paths were blocked by graph-compiler sketch detection
+- unsupported layer compile errors and backend-placement reporting could
+  disagree, with placement showing GPU-capable or unknown even though
+  `ModelBuilder/SequentialModel` cannot execute the layer
+- `GymEnvironment`, `ReplayBuffer`, `PolicyNetwork`, and `ValueNetwork`
+  still registered as implemented despite having no truthful
+  PipelineExecutor graph runtime
+- `NERSequenceBuilder` showed the opposite split: it is a real training
+  contract node, but its PipelineExecutor graph-runtime gap could make
+  metadata look blocked if all fail-closed capabilities shared one status
+  rule
+
+Effect:
+
+- the UI/backend support contract could still overstate RL node support
+  even though supervised Studio training cannot build/train them and
+  Data Studio pipeline execution cannot run them as graph nodes
+- truthful metadata now reports unsupported RL nodes as blocked without
+  hiding implemented training-only paths such as selected
+  `NERSequenceBuilder` compilation
+- backend-placement summaries now show `unsupported` for blocked
+  sequential-model layers, making diagnostics match the compile verdict
+- unsupported layer diagnostics no longer include the unrelated "Graph
+  must have at least one model layer" error for visible-but-unimplemented
+  layer nodes
+
+**Recommendation:**
+
+- keep them blocked/template until there is a real RL training backend
+  contract, including environment stepping, rollout/replay schema,
+  policy/value losses, target-network handling, and episodic metrics
+
+---
+
 ## Priority 1: Training Nodes Exposed in UI but Not Fully Wired
 
 ### 5. `RMSprop`, `Adagrad`, `NAdam`
@@ -262,6 +345,8 @@ Implemented:
 - `GraphCompiler` now hard-blocks scheduler nodes because they are not wired into training execution.
 - the guard covers loaded/imported graphs for `StepLR`, `CosineAnnealing`, `ReduceOnPlateau`, `ExponentialLR`, and `WarmupScheduler`.
 - registered `CosineAnnealing` metadata is now `Template`, so metadata-driven UI/pattern paths no longer advertise it as implemented.
+- all scheduler metadata in this blocked group now carries the explicit
+  `Blocked` badge, including `CosineAnnealing`.
 - tests cover both compiler rejection and template-pattern rejection.
 
 Relevant files:
@@ -343,6 +428,13 @@ path. Unsupported nodes still fail closed with explicit runtime errors
 instead of returning passthrough/fake success. Exact registered
 operator-backed names now route through `PipelineOperatorFactory`, and
 their stale fail-closed dispatch branches have been removed.
+Central fail-closed runtime reasons now describe the current hard-fail
+state instead of saying disabled placeholders are "still" running.
+Typed fail-closed entries that have `NodeType` values now resolve through
+the central runtime support API instead of remaining string-only legacy
+names.
+The metadata drift guard now only permits untyped fail-closed entries for
+documented legacy aliases: `PCA`, `TrainTestSplit`, and `ParquetInput`.
 
 Routed operator-backed nodes include:
 
@@ -385,16 +477,27 @@ Problem before the 2026-06-07 runtime-truth pass:
 
 Current remaining problem:
 
-- old placeholder helper bodies remain only as quarantined historical
-  TODOs in the `.cpp`, not as active methods
 - real operator-backed implementations are now the active path for exact
   registered names, but broader runtime ownership is still split
 
 Effect now:
 
 - fake-success user harm is fixed for the audited legacy dispatch path
-- support truth remains harder to reason about until the quarantined
-  helper block and broader runtime ownership are cleaned up
+- user-facing runtime/metadata reasons no longer imply that disabled
+  passthrough placeholders are active behavior
+- metadata/runtime checks can now resolve enum support for fail-closed
+  nodes such as `UMAPNode`, `SVMRegressor`, `PRCurveNode`,
+  `RegressionMetricsNode`, `WordEmbeddings`, `NamedEntityRecognizer`,
+  image dataset loaders, and augmentation/image-preprocessing nodes
+- future fail-closed additions must carry a `NodeType` mapping unless
+  they are intentionally legacy-only aliases with no one-to-one metadata
+  node
+- source scan no longer finds active/quarantined placeholder helper
+  bodies in `PipelineExecutor`; support truth now depends on completing
+  broader runtime ownership convergence
+- `test_pipeline_executor_operator_routing` now checks representative
+  typed fail-closed families end-to-end through `PipelineExecutor` and
+  verifies the runtime error uses the central fail-closed reason
 
 **Recommendation:**
 
@@ -475,8 +578,8 @@ Problem now:
 - `PipelineOperatorFactory` registers them
 - the legacy `PipelineExecutor` now routes the exact registered node
   names through the operator-backed implementation
-- stale placeholder-era helper bodies still need cleanup after canonical
-  runtime ownership is settled
+- source scan no longer finds stale placeholder-era helper bodies for
+  these exact node names; runtime ownership convergence remains
 
 Effect:
 
@@ -517,8 +620,8 @@ Problem now:
   `PipelineOperatorFactory`
 - the main `PipelineExecutor` dispatch now has a matching active
   execution path for the exact registered node names
-- stale placeholder-era helper bodies still need cleanup after canonical
-  runtime ownership is settled
+- source scan no longer finds stale placeholder-era helper bodies for
+  these exact node names; runtime ownership convergence remains
 
 Effect:
 

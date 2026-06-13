@@ -292,8 +292,30 @@ int main() {
         config = compiler.Compile(nodes, links, true);
         Check(!config.is_valid,
               "unsupported layer should block compile");
-        Check(HasIssueText(config, unsupported_case.reason),
-              "unsupported layer should report backend gap");
+        Check(!HasIssueText(config, "Graph must have at least one model layer"),
+              "unsupported sequential layer should count as a model layer for validation");
+        const auto placement_summary = config.SummarizeBackendPlacements();
+        Check(placement_summary.unknown == 0,
+              "unsupported layer should not report unknown backend placement");
+        Check(placement_summary.unsupported == 1,
+              "unsupported layer should report unsupported backend placement");
+        Check(!config.backend_placements.empty() &&
+                  config.backend_placements.front().status ==
+                      cyxwiz::BackendPlacementStatus::Unsupported,
+              "unsupported layer placement status should be unsupported");
+        Check(!config.backend_placements.empty() &&
+                  config.backend_placements.front().reason_code ==
+                      cyxwiz::BackendPlacementReason::
+                          UnsupportedSequentialModelLayer,
+              "unsupported layer placement should use central reason code");
+        if (unsupported_case.node_type == gui::NodeType::PolicyNetwork ||
+            unsupported_case.node_type == gui::NodeType::ValueNetwork) {
+            Check(HasIssueText(config, "reinforcement-learning training"),
+                  "RL layer should report missing RL training contract");
+        } else {
+            Check(HasIssueText(config, unsupported_case.reason),
+                  "unsupported layer should report backend gap");
+        }
     }
 
     auto sequence_data = data;

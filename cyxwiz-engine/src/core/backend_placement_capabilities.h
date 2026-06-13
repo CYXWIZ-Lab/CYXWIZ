@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graph_compiler.h"
+#include "pipeline_runtime_capabilities.h"
 
 #include <string>
 
@@ -9,6 +10,7 @@ namespace cyxwiz::backend_placement {
 enum class LayerCapabilityKind {
     ArrayFireTensor,
     Recurrent,
+    UnsupportedSequentialModelLayer,
     Unclassified
 };
 
@@ -138,7 +140,9 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
 inline LayerCapability ClassifyLayer(gui::NodeType type) {
     LayerCapability capability;
     capability.type_name = LayerTypeName(type);
-    if (IsKnownArrayFireTensorLayer(type)) {
+    if (IsPipelineUnsupportedSequentialModelLayer(type)) {
+        capability.kind = LayerCapabilityKind::UnsupportedSequentialModelLayer;
+    } else if (IsKnownArrayFireTensorLayer(type)) {
         capability.kind = LayerCapabilityKind::ArrayFireTensor;
     } else if (IsRecurrentLayer(type)) {
         capability.kind = LayerCapabilityKind::Recurrent;
@@ -165,6 +169,29 @@ inline BackendPlacementEntry BuildArrayFireTensorPlacement(
         "execute it on the active ArrayFire backend when that backend is "
         "available for the selected device and dtype.";
     placement.suggested_action = "No action needed.";
+    return placement;
+}
+
+inline BackendPlacementEntry BuildUnsupportedSequentialModelPlacement(
+    const CompiledLayer& layer,
+    const char* reason) {
+    BackendPlacementEntry placement;
+    placement.node_id = layer.node_id;
+    placement.node_name = layer.name;
+    placement.node_type = LayerTypeName(layer.type);
+    placement.requested_backend = "auto";
+    placement.expected_backend = BackendPlacementStatus::Unsupported;
+    placement.status = BackendPlacementStatus::Unsupported;
+    placement.reason_code =
+        BackendPlacementReason::UnsupportedSequentialModelLayer;
+    placement.explanation =
+        std::string(placement.node_type) +
+        " cannot be placed on a backend because it is not supported by "
+        "ModelBuilder/SequentialModel yet. " +
+        (reason != nullptr ? reason : "");
+    placement.suggested_action =
+        "Replace this node with a supported layer or keep it disconnected from "
+        "the selected training path until backend support lands.";
     return placement;
 }
 

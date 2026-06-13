@@ -879,6 +879,13 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                 config.backend_placements.push_back(
                     backend_placement::BuildArrayFireTensorPlacement(layer));
                 continue;
+            case backend_placement::LayerCapabilityKind::UnsupportedSequentialModelLayer:
+                config.backend_placements.push_back(
+                    backend_placement::BuildUnsupportedSequentialModelPlacement(
+                        layer,
+                        ResolvePipelineUnsupportedSequentialModelLayerReason(
+                            layer.type)));
+                continue;
             case backend_placement::LayerCapabilityKind::Unclassified:
             {
                 auto placement =
@@ -3171,6 +3178,10 @@ const gui::MLNode* GraphCompiler::FindOutputNode(const std::vector<gui::MLNode>&
 }
 
 bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
+    if (IsPipelineUnsupportedSequentialModelLayer(type)) {
+        return true;
+    }
+
     switch (type) {
         case gui::NodeType::Dense:
         case gui::NodeType::Conv2D:

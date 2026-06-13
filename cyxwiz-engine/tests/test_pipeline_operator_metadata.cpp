@@ -659,6 +659,14 @@ int main() {
             capability.legacy_type_name);
     }
 
+    const std::set<std::string> allowed_untyped_fail_closed_names = {
+        // Legacy canvas aliases with no one-to-one metadata node. The current
+        // typed metadata entries are PCANode, DataSplit, and DataInput.
+        "PCA",
+        "TrainTestSplit",
+        "ParquetInput",
+    };
+
     for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
         Check(!cyxwiz::IsPipelineOperatorRuntimeNode(capability.legacy_type_name),
               std::string("fail-closed runtime name is also operator-backed: ") +
@@ -671,6 +679,12 @@ int main() {
                   capability.legacy_type_name);
         Check(capability.reason != nullptr && std::string(capability.reason).size() > 8,
               std::string("fail-closed runtime reason is too weak: ") +
+                  capability.legacy_type_name);
+        const std::string fail_closed_reason =
+            capability.reason != nullptr ? capability.reason : "";
+        Check(fail_closed_reason.find("is still a") == std::string::npos &&
+                  fail_closed_reason.find("is still an") == std::string::npos,
+              std::string("fail-closed runtime reason should describe current hard-fail state: ") +
                   capability.legacy_type_name);
         const auto support = cyxwiz::ResolvePipelineRuntimeSupport(
             capability.legacy_type_name);
@@ -686,6 +700,12 @@ int main() {
         auto expected_metadata_type = capability.metadata_node_type;
         if (!expected_metadata_type.has_value()) {
             expected_metadata_type = capability.node_type;
+        }
+        if (!expected_metadata_type.has_value()) {
+            Check(allowed_untyped_fail_closed_names.count(
+                      capability.legacy_type_name) > 0,
+                  std::string("fail-closed runtime should be typed unless it is a documented legacy alias: ") +
+                      capability.legacy_type_name);
         }
         Check(support.metadata_node_type == expected_metadata_type,
               std::string("runtime support fail-closed metadata node mismatch: ") +
@@ -957,6 +977,26 @@ int main() {
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::SVMClassifier).mode ==
               cyxwiz::PipelineRuntimeSupportMode::FailClosed,
           "SVMClassifier enum support should resolve to fail-closed");
+    const gui::NodeType additional_fail_closed_enum_cases[] = {
+        gui::NodeType::UMAPNode,
+        gui::NodeType::SVMRegressor,
+        gui::NodeType::PRCurveNode,
+        gui::NodeType::RegressionMetricsNode,
+        gui::NodeType::WordEmbeddings,
+        gui::NodeType::NamedEntityRecognizer,
+        gui::NodeType::ImagePreprocessor,
+        gui::NodeType::ImageFolderDataset,
+        gui::NodeType::AugmentationPreset,
+    };
+    for (const auto type : additional_fail_closed_enum_cases) {
+        Check(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(type) != nullptr,
+              "typed fail-closed runtime enum should resolve legacy name: " +
+                  TypeId(type));
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(type).mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+              "typed fail-closed runtime enum should resolve fail-closed support: " +
+                  TypeId(type));
+    }
 
     Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
               cyxwiz::PipelineTrainingBackendSupportMode::Allowed)) ==
@@ -1187,19 +1227,32 @@ int main() {
 
     for (const auto& capability :
          cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
-        if (!capability.metadata_node_type.has_value()) {
+        auto expected_metadata_type = capability.metadata_node_type;
+        if (!expected_metadata_type.has_value()) {
+            expected_metadata_type = capability.node_type;
+        }
+        if (!expected_metadata_type.has_value()) {
             continue;
         }
-        const auto* meta = metadata.GetMetadata(*capability.metadata_node_type);
-        Check(meta != nullptr,
-              std::string("missing fail-closed metadata for runtime name ") +
-                  capability.legacy_type_name);
-        Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
-              std::string("fail-closed runtime metadata should not be marked implemented: ") +
-                  capability.legacy_type_name);
-        Check(meta->badge == "Blocked",
-              std::string("fail-closed runtime metadata should carry blocked badge: ") +
-                  capability.legacy_type_name);
+        const auto* meta = metadata.GetMetadata(*expected_metadata_type);
+        if (!meta) {
+            Check(!capability.metadata_node_type.has_value(),
+                  std::string("missing explicitly mapped fail-closed metadata for runtime name ") +
+                      capability.legacy_type_name);
+            continue;
+        }
+        if (capability.blocks_metadata_status) {
+            Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
+                  std::string("fail-closed runtime metadata should not be marked implemented: ") +
+                      capability.legacy_type_name);
+            Check(meta->badge == "Blocked",
+                  std::string("fail-closed runtime metadata should carry blocked badge: ") +
+                      capability.legacy_type_name);
+        } else {
+            Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+                  std::string("training-only fail-closed runtime metadata should keep implemented status: ") +
+                      capability.legacy_type_name);
+        }
         Check(capability.reason != nullptr &&
                   meta->help_text.find(capability.reason) != std::string::npos,
               std::string("fail-closed runtime metadata should expose central reason: ") +

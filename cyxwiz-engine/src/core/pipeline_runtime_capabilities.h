@@ -19,6 +19,7 @@ struct PipelineFailClosedRuntimeCapability {
     const char* reason;
     std::optional<gui::NodeType> node_type = std::nullopt;
     std::optional<gui::NodeType> metadata_node_type = std::nullopt;
+    bool blocks_metadata_status = true;
 };
 
 enum class PipelineLegacyDispatchKind {

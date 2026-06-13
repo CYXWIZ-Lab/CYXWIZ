@@ -1,6 +1,7 @@
 #include "core/arrow_dataset.h"
 #include "core/data_registry.h"
 #include "core/pipeline_executor.h"
+#include "core/pipeline_runtime_capabilities.h"
 
 #include <arrow/api.h>
 
@@ -458,10 +459,66 @@ int main() {
     cyxwiz::PipelineExecutor unsupported_executor;
     Check(!unsupported_executor.ExecutePipeline(unsupported_json),
           "TSNENode should fail closed in PipelineExecutor");
-    Check(unsupported_executor.GetLastError().find("legacy t-SNE execution") !=
+    Check(unsupported_executor.GetLastError().find(
+              "legacy t-SNE graph execution is not implemented") !=
               std::string::npos,
           "TSNENode fail-closed error should come from runtime capabilities: " +
               unsupported_executor.GetLastError());
+
+    struct RepresentativeFailClosedCase {
+        const char* node_type;
+        bool source_node;
+    };
+
+    const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
+        {"UMAPNode", false},
+        {"SVMRegressor", false},
+        {"PRCurveNode", false},
+        {"RegressionMetricsNode", false},
+        {"WordEmbeddings", false},
+        {"NamedEntityRecognizer", false},
+        {"ImagePreprocessor", false},
+        {"ImageFolderDataset", true},
+        {"AugmentationPreset", false},
+    };
+
+    int fail_closed_id = 900;
+    for (const auto& fail_closed_case : representative_fail_closed_nodes) {
+        const char* node_type = fail_closed_case.node_type;
+        const char* expected_reason =
+            cyxwiz::ResolvePipelineFailClosedReason(node_type);
+        Check(expected_reason != nullptr,
+              std::string(node_type) +
+                  " should have central fail-closed reason");
+
+        const std::string fail_closed_json = fail_closed_case.source_node
+            ? R"({"nodes":[{"id":)" + std::to_string(fail_closed_id) +
+                  R"(,"type":")" + node_type +
+                  R"(","name":")" + node_type +
+                  R"(","parameters":{}}],"links":[]})"
+            : R"({"nodes":[)"
+                  R"({"id":)" + std::to_string(fail_closed_id) +
+                  R"(,"type":"DataInput","name":"Input","parameters":{)"
+                  R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+                  R"(","type":"csv","has_header":"true"}},)"
+                  R"({"id":)" + std::to_string(fail_closed_id + 1) +
+                  R"(,"type":")" + node_type +
+                  R"(","name":")" + node_type +
+                  R"(","parameters":{}})"
+                  R"(],"links":[{"start_node":)" + std::to_string(fail_closed_id) +
+                  R"(,"end_node":)" + std::to_string(fail_closed_id + 1) + R"(}]})";
+
+        cyxwiz::PipelineExecutor fail_closed_executor;
+        Check(!fail_closed_executor.ExecutePipeline(fail_closed_json),
+              std::string(node_type) +
+                  " should fail closed in PipelineExecutor");
+        Check(fail_closed_executor.GetLastError().find(expected_reason) !=
+                  std::string::npos,
+              std::string(node_type) +
+                  " should use central fail-closed runtime reason: " +
+                  fail_closed_executor.GetLastError());
+        fail_closed_id += 2;
+    }
 
     struct SequenceVocabularyFailClosedCase {
         const char* node_type;
@@ -2568,7 +2625,7 @@ int main() {
     Check(!column_appender_executor.ExecutePipeline(column_appender_json),
           "ColumnAppender placeholder should fail closed");
     Check(column_appender_executor.GetLastError().find(
-              "legacy ColumnAppender execution is still a passthrough placeholder") !=
+              "legacy ColumnAppender graph execution is not implemented") !=
               std::string::npos,
           "ColumnAppender should use fail-closed runtime support: " +
               column_appender_executor.GetLastError());
@@ -2762,7 +2819,7 @@ int main() {
     Check(!export_json_executor.ExecutePipeline(export_json_json),
           "ExportJSON fake-success placeholder should fail closed");
     Check(export_json_executor.GetLastError().find(
-              "legacy ExportJSON execution is still a fake-success placeholder") !=
+              "legacy ExportJSON graph execution is not implemented") !=
               std::string::npos,
           "ExportJSON should use fail-closed runtime support: " +
               export_json_executor.GetLastError());

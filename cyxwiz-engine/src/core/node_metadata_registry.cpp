@@ -350,8 +350,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         }
 
         auto& metadata = it->second;
-        metadata.status = NodeImplementationStatus::Template;
-        metadata.badge = "Blocked";
+        if (capability.blocks_metadata_status) {
+            metadata.status = NodeImplementationStatus::Template;
+            metadata.badge = "Blocked";
+        }
 
         const std::string reason =
             capability.reason != nullptr ? capability.reason : "";
@@ -1813,7 +1815,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
         {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
         {{"T_max", "int", "100", "Max iterations", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::ReduceOnPlateau, NodeCategory::Training, "Reduce LR", ICON_FA_GRADUATION_CAP,
         {"plateau", "scheduler"}, 0, false, "Reduce learning rate on plateau", "", "",
