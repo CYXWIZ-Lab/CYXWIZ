@@ -750,8 +750,9 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
         case NodeType::DataConvert: {
             const std::string status = ParamOr(node, "status", "Not run");
             const std::string output = ParamOr(
-                node, "parquet_output_path",
-                ParamOr(node, "output_path").c_str());
+                node, "converted_output_path",
+                ParamOr(node, "parquet_output_path",
+                        ParamOr(node, "output_path").c_str()).c_str());
             const std::string manifest = ParamOr(node, "manifest_path");
             const std::string rows = ParamOr(node, "rows_written", "0");
 
@@ -759,7 +760,7 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
                                "Use 'Open Dialog' to configure and run");
             ImGui::Spacing();
             RenderPathLine("Source:", ParamOr(node, "input_path"));
-            RenderPathLine("Parquet:", output);
+            RenderPathLine("Output:", output);
             if (!manifest.empty()) {
                 RenderPathLine("Manifest:", manifest);
             }

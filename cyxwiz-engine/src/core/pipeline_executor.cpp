@@ -5,6 +5,7 @@
 #include "data_convert_service.h"
 #include "node_executors/pipeline_operator_factory.h"
 #include "pipeline_runtime_capabilities.h"
+#include <arrow/csv/api.h>
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -48,6 +49,34 @@ std::string ToLowerAscii(std::string value) {
                        return static_cast<char>(std::tolower(c));
                    });
     return value;
+}
+
+std::string DetectFormatNameFromPath(const std::string& path) {
+    std::filesystem::path file_path(path);
+    std::string extension = file_path.extension().string();
+    if (!extension.empty() && extension.front() == '.') {
+        extension.erase(extension.begin());
+    }
+    return ToLowerAscii(extension);
+}
+
+std::shared_ptr<ArrowDataset> LoadDataConvertOutputDataset(
+    const std::string& output_path,
+    const std::string& dataset_name,
+    const std::string& output_format) {
+    std::string format = ToLowerAscii(TrimString(output_format));
+    if (format.empty() || format == "auto") {
+        format = DetectFormatNameFromPath(output_path);
+    }
+    if (format == "tsv") {
+        auto read_options = arrow::csv::ReadOptions::Defaults();
+        auto parse_options = arrow::csv::ParseOptions::Defaults();
+        parse_options.delimiter = '\t';
+        return ArrowDataset::FromCSV(output_path, dataset_name,
+                                     read_options, parse_options,
+                                     arrow::csv::ConvertOptions::Defaults());
+    }
+    return ArrowDataset::FromFile(output_path, dataset_name);
 }
 
 std::string ToUpperAscii(std::string value) {
@@ -2747,6 +2776,8 @@ bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ct
     DataConvertOptions options;
     options.input_path = ParameterOrDefault(node.parameters, "input_path");
     options.output_path = ParameterOrDefault(node.parameters, "output_path");
+    options.input_format = ParameterOrDefault(node.parameters, "input_format", "auto");
+    options.output_format = ParameterOrDefault(node.parameters, "output_format", "auto");
 
     const std::string delimiter =
         ToLowerAscii(TrimString(ParameterOrDefault(node.parameters,
@@ -2781,21 +2812,21 @@ bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ct
                  options.input_path, options.output_path);
 
     try {
-        auto result = DataConvertService::ConvertCsvToParquet(options);
+        auto result = DataConvertService::Convert(options);
         if (!result.ok) {
             ReportError("DataConvert: " + result.error);
             return false;
         }
 
-        auto output_dataset = ArrowDataset::FromFile(
-            result.output_path, "ds_dataconvert_" + std::to_string(node.id));
+        const std::string dataset_name = "ds_dataconvert_" + std::to_string(node.id);
+        auto output_dataset = LoadDataConvertOutputDataset(
+            result.output_path, dataset_name, options.output_format);
         if (!output_dataset || !output_dataset->GetArrowTable()) {
-            ReportError("DataConvert: conversion succeeded, but generated Parquet could not be loaded: " +
+            ReportError("DataConvert: conversion succeeded, but generated output could not be loaded: " +
                         result.output_path);
             return false;
         }
 
-        const std::string dataset_name = "ds_dataconvert_" + std::to_string(node.id);
         auto registered = DataRegistry::Instance().RegisterArrowTable(
             output_dataset->GetArrowTable(), dataset_name);
         if (!registered) {

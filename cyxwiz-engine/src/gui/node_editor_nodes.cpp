@@ -3130,8 +3130,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.name = "Input";
             input_pin.is_input = true;
             input_pin.description =
-                "Optional input table. Phase 1 conversion runs from the "
-                "configured input file path.";
+                "Optional input table. File conversion runs from the configured input path.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -3140,14 +3139,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.name = "Output";
             output_pin.is_input = false;
             output_pin.description =
-                "Converted dataset artifact. Phase 1 writes a Parquet file "
-                "that downstream DataInput/DataLoader nodes can reuse.";
+                "Converted dataset artifact that downstream nodes can reuse.";
             node.outputs.push_back(output_pin);
 
             node.parameters["input_path"] = "";
-            node.parameters["input_format"] = "csv";
+            node.parameters["input_format"] = "auto";
             node.parameters["output_path"] = "";
-            node.parameters["output_format"] = "parquet";
+            node.parameters["output_format"] = "auto";
             node.parameters["delimiter"] = "auto";
             node.parameters["header"] = "true";
             node.parameters["allow_newlines_in_values"] = "true";

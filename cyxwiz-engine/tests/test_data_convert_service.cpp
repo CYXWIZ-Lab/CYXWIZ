@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 
 namespace {
 
@@ -68,6 +69,42 @@ int main() {
     Check(parquet->GetNumRows() == 3, "converted Parquet row count should match");
     Check(parquet->GetNumColumns() == 3,
           "converted Parquet column count should match");
+
+    const fs::path roundtrip_csv_path = work_dir / "roundtrip.csv";
+    cyxwiz::DataConvertOptions parquet_to_csv;
+    parquet_to_csv.input_path = parquet_path.string();
+    parquet_to_csv.input_format = "parquet";
+    parquet_to_csv.output_path = roundtrip_csv_path.string();
+    parquet_to_csv.output_format = "csv";
+    parquet_to_csv.overwrite = true;
+    auto csv_result = cyxwiz::DataConvertService::Convert(parquet_to_csv);
+    Check(csv_result.ok, "Parquet to CSV conversion should succeed: " + csv_result.error);
+    Check(fs::exists(roundtrip_csv_path), "CSV output should exist");
+    {
+        std::ifstream csv(roundtrip_csv_path, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(csv)),
+                         std::istreambuf_iterator<char>());
+        Check(text.find("id,value,label") != std::string::npos,
+              "CSV output should include the header");
+        Check(text.find("1,1.5") != std::string::npos,
+              "CSV output should include data rows");
+    }
+
+    const fs::path feather_path = work_dir / "roundtrip.feather";
+    cyxwiz::DataConvertOptions parquet_to_feather;
+    parquet_to_feather.input_path = parquet_path.string();
+    parquet_to_feather.input_format = "parquet";
+    parquet_to_feather.output_path = feather_path.string();
+    parquet_to_feather.output_format = "feather";
+    parquet_to_feather.overwrite = true;
+    auto feather_result = cyxwiz::DataConvertService::Convert(parquet_to_feather);
+    Check(feather_result.ok,
+          "Parquet to Feather conversion should succeed: " + feather_result.error);
+    auto feather = cyxwiz::ArrowDataset::FromFeather(
+        feather_path.string(), "converted_feather");
+    Check(feather != nullptr, "converted Feather should load");
+    Check(feather->GetNumRows() == 3,
+          "converted Feather row count should match");
 
     auto skipped = cyxwiz::DataConvertService::ConvertCsvToParquet(options);
     Check(skipped.ok, "fresh output should be reusable without overwrite: " + skipped.error);

@@ -568,6 +568,8 @@ private:
 
     char input_path_[512] = {};
     char output_path_[512] = {};
+    int input_format_ = 0;
+    int output_format_ = 0;
     char delimiter_[8] = ",";
     bool auto_detect_delimiter_ = true;
     bool has_header_ = true;

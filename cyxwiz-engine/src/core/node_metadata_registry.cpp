@@ -759,12 +759,14 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DataConvert, NodeCategory::DataSources, "Data Convert", ICON_FA_RIGHT_LEFT,
-        {"csv", "parquet", "convert", "conversion", "format", "cache", "file"}, 0, false,
-        "Convert datasets between file formats - phase 1 supports CSV to Parquet", "", "",
+        {"csv", "tsv", "parquet", "feather", "arrow", "ipc", "convert", "conversion", "format", "cache", "file"}, 0, false,
+        "Convert datasets between supported table file formats", "", "",
         {{"Input", PinType::Dataset, true, "Optional input dataset artifact"}},
         {{"Output", PinType::Dataset, true, "Converted dataset artifact"}},
-        {{"input_path", "file", "", "Input CSV file", {}, "*.csv;*.tsv"},
-         {"output_path", "file", "", "Output Parquet file", {}, "*.parquet;*.pq"},
+        {{"input_path", "file", "", "Input data file", {}, "*.csv;*.tsv;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc"},
+         {"input_format", "enum", "auto", "Input format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
+         {"output_path", "file", "", "Output data file", {}, "*.csv;*.tsv;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc"},
+         {"output_format", "enum", "auto", "Output format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
          {"delimiter", "enum", "auto", "CSV delimiter", {"auto", ",", "\\t", ";", "|"}, ""},
          {"allow_newlines_in_values", "bool", "true", "Allow quoted multiline CSV values", {}, ""},
          {"compression", "enum", "snappy", "Parquet compression", {"none", "snappy", "gzip", "zstd", "brotli"}, ""},

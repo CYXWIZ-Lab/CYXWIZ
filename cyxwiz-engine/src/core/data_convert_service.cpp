@@ -4,29 +4,52 @@
 
 #include <arrow/csv/api.h>
 #include <arrow/io/file.h>
+#include <arrow/ipc/writer.h>
 #include <arrow/scalar.h>
 #include <nlohmann/json.hpp>
 #include <parquet/arrow/writer.h>
 #include <spdlog/spdlog.h>
 
-#include <chrono>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cctype>
 #include <filesystem>
-#include <functional>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 
 namespace cyxwiz {
 namespace {
 
+enum class DataConvertFormat {
+    Unknown,
+    Csv,
+    Tsv,
+    Parquet,
+    Feather,
+    ArrowIpc
+};
+
 std::string LowerAscii(std::string value) {
     for (char& c : value) {
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return value;
+}
+
+std::string TrimAscii(const std::string& value) {
+    const auto begin = std::find_if_not(value.begin(), value.end(), [](char c) {
+        return std::isspace(static_cast<unsigned char>(c)) != 0;
+    });
+    const auto end = std::find_if_not(value.rbegin(), value.rend(), [](char c) {
+        return std::isspace(static_cast<unsigned char>(c)) != 0;
+    }).base();
+    if (begin >= end) {
+        return {};
+    }
+    return std::string(begin, end);
 }
 
 std::string NowIsoLikeUtc() {
@@ -43,14 +66,65 @@ std::string NowIsoLikeUtc() {
     return out.str();
 }
 
-bool IsCsvPath(const std::filesystem::path& path) {
-    const std::string ext = LowerAscii(path.extension().string());
-    return ext == ".csv" || ext == ".tsv";
+DataConvertFormat FormatFromName(const std::string& raw_name) {
+    const std::string name = LowerAscii(TrimAscii(raw_name));
+    if (name == "csv") return DataConvertFormat::Csv;
+    if (name == "tsv") return DataConvertFormat::Tsv;
+    if (name == "parquet" || name == "pq") return DataConvertFormat::Parquet;
+    if (name == "feather" || name == "fea") return DataConvertFormat::Feather;
+    if (name == "arrow" || name == "ipc" || name == "arrowipc") {
+        return DataConvertFormat::ArrowIpc;
+    }
+    return DataConvertFormat::Unknown;
 }
 
-bool IsParquetPath(const std::filesystem::path& path) {
-    const std::string ext = LowerAscii(path.extension().string());
-    return ext == ".parquet" || ext == ".pq";
+DataConvertFormat FormatFromPath(const std::filesystem::path& path) {
+    return FormatFromName(path.extension().string().empty()
+                              ? std::string{}
+                              : path.extension().string().substr(1));
+}
+
+std::string FormatName(DataConvertFormat format) {
+    switch (format) {
+        case DataConvertFormat::Csv: return "csv";
+        case DataConvertFormat::Tsv: return "tsv";
+        case DataConvertFormat::Parquet: return "parquet";
+        case DataConvertFormat::Feather: return "feather";
+        case DataConvertFormat::ArrowIpc: return "ipc";
+        default: return "unknown";
+    }
+}
+
+bool IsDelimitedFormat(DataConvertFormat format) {
+    return format == DataConvertFormat::Csv ||
+           format == DataConvertFormat::Tsv;
+}
+
+bool IsSupportedFormat(DataConvertFormat format) {
+    return format != DataConvertFormat::Unknown;
+}
+
+bool IsAutoFormat(const std::string& value) {
+    const std::string normalized = LowerAscii(TrimAscii(value));
+    return normalized.empty() || normalized == "auto";
+}
+
+DataConvertFormat ResolveInputFormat(const DataConvertOptions& options) {
+    if (!IsAutoFormat(options.input_format)) {
+        return FormatFromName(options.input_format);
+    }
+    return FormatFromPath(options.input_path);
+}
+
+DataConvertFormat ResolveOutputFormat(const DataConvertOptions& options) {
+    if (!IsAutoFormat(options.output_format)) {
+        return FormatFromName(options.output_format);
+    }
+    return FormatFromPath(options.output_path);
+}
+
+std::string SupportedFormatList() {
+    return "csv, tsv, parquet, feather, arrow, or ipc";
 }
 
 int CountDelimiterOutsideQuotes(const std::string& line, char delimiter) {
@@ -71,9 +145,8 @@ int CountDelimiterOutsideQuotes(const std::string& line, char delimiter) {
     return count;
 }
 
-char DetectCsvDelimiter(const std::string& path) {
-    const std::filesystem::path input_path(path);
-    if (LowerAscii(input_path.extension().string()) == ".tsv") {
+char DetectCsvDelimiter(const std::string& path, DataConvertFormat format) {
+    if (format == DataConvertFormat::Tsv) {
         return '\t';
     }
 
@@ -124,9 +197,13 @@ char DetectCsvDelimiter(const std::string& path) {
     return best_score > 0 ? candidates[static_cast<size_t>(best_index)] : ',';
 }
 
-char ResolveDelimiter(const DataConvertOptions& options) {
+char ResolveDelimiter(const DataConvertOptions& options,
+                      DataConvertFormat format) {
+    if (format == DataConvertFormat::Tsv) {
+        return '\t';
+    }
     return options.auto_detect_delimiter
-        ? DetectCsvDelimiter(options.input_path)
+        ? DetectCsvDelimiter(options.input_path, format)
         : options.delimiter;
 }
 
@@ -137,23 +214,48 @@ arrow::csv::ReadOptions BuildReadOptions(const DataConvertOptions& options) {
     return read_options;
 }
 
-arrow::csv::ParseOptions BuildParseOptions(const DataConvertOptions& options) {
+arrow::csv::ParseOptions BuildParseOptions(const DataConvertOptions& options,
+                                           DataConvertFormat format) {
     auto parse_options = arrow::csv::ParseOptions::Defaults();
-    parse_options.delimiter = ResolveDelimiter(options);
+    parse_options.delimiter = ResolveDelimiter(options, format);
     parse_options.newlines_in_values = options.allow_newlines_in_values;
     return parse_options;
 }
 
-std::shared_ptr<ArrowDataset> LoadCsv(const DataConvertOptions& options,
-                                      std::string& error) {
+std::shared_ptr<ArrowDataset> LoadDelimited(
+    const DataConvertOptions& options,
+    DataConvertFormat format,
+    std::string& error) {
     auto dataset = ArrowDataset::FromCSV(
         options.input_path,
-        "data_convert_preview",
+        "data_convert_input",
         BuildReadOptions(options),
-        BuildParseOptions(options),
+        BuildParseOptions(options, format),
         arrow::csv::ConvertOptions::Defaults());
     if (!dataset || !dataset->GetArrowTable()) {
-        error = "CSV read failed. Check the file path, delimiter, header setting, and row consistency.";
+        error = "Delimited file read failed. Check the path, delimiter, header setting, and row consistency.";
+        return nullptr;
+    }
+    return dataset;
+}
+
+std::shared_ptr<ArrowDataset> LoadInputDataset(
+    const DataConvertOptions& options,
+    DataConvertFormat input_format,
+    std::string& error) {
+    if (options.input_table) {
+        return std::make_shared<ArrowDataset>(options.input_table,
+                                              "data_convert_input");
+    }
+    if (IsDelimitedFormat(input_format)) {
+        return LoadDelimited(options, input_format, error);
+    }
+
+    auto dataset = ArrowDataset::FromFile(options.input_path,
+                                          "data_convert_input");
+    if (!dataset || !dataset->GetArrowTable()) {
+        error = "Could not load " + FormatName(input_format) +
+                " input file: " + options.input_path;
         return nullptr;
     }
     return dataset;
@@ -161,36 +263,240 @@ std::shared_ptr<ArrowDataset> LoadCsv(const DataConvertOptions& options,
 
 parquet::Compression::type ResolveCompression(const std::string& name,
                                               std::string& error) {
-    const std::string normalized = LowerAscii(name);
+    const std::string normalized = LowerAscii(TrimAscii(name));
     if (normalized == "none" || normalized == "uncompressed") {
         return parquet::Compression::UNCOMPRESSED;
     }
-    if (normalized == "snappy") {
-        return parquet::Compression::SNAPPY;
-    }
-    if (normalized == "gzip") {
-        return parquet::Compression::GZIP;
-    }
-    if (normalized == "zstd") {
-        return parquet::Compression::ZSTD;
-    }
-    if (normalized == "brotli") {
-        return parquet::Compression::BROTLI;
-    }
+    if (normalized == "snappy") return parquet::Compression::SNAPPY;
+    if (normalized == "gzip") return parquet::Compression::GZIP;
+    if (normalized == "zstd") return parquet::Compression::ZSTD;
+    if (normalized == "brotli") return parquet::Compression::BROTLI;
 
     error = "Unsupported Parquet compression '" + name +
             "'. Choose none, snappy, gzip, zstd, or brotli.";
     return parquet::Compression::UNCOMPRESSED;
 }
 
+bool WriteParquet(const std::shared_ptr<arrow::Table>& table,
+                  const DataConvertOptions& options,
+                  std::string& error) {
+    auto maybe_output = arrow::io::FileOutputStream::Open(options.output_path);
+    if (!maybe_output.ok()) {
+        error = "Could not open Parquet output '" + options.output_path +
+                "': " + maybe_output.status().ToString();
+        return false;
+    }
+
+    std::string compression_error;
+    const auto compression = ResolveCompression(options.parquet_compression,
+                                                compression_error);
+    if (!compression_error.empty()) {
+        error = compression_error;
+        return false;
+    }
+
+    parquet::WriterProperties::Builder props_builder;
+    props_builder.compression(compression);
+    const auto props = props_builder.build();
+    const int64_t row_group_size =
+        std::max<int64_t>(1, options.row_group_size);
+
+    const auto status = parquet::arrow::WriteTable(
+        *table,
+        arrow::default_memory_pool(),
+        maybe_output.ValueOrDie(),
+        row_group_size,
+        props);
+    if (!status.ok()) {
+        error = "Parquet write failed for '" + options.output_path +
+                "': " + status.ToString();
+        return false;
+    }
+    return true;
+}
+
+bool WriteArrowIpc(const std::shared_ptr<arrow::Table>& table,
+                   const DataConvertOptions& options,
+                   std::string& error) {
+    auto maybe_output = arrow::io::FileOutputStream::Open(options.output_path);
+    if (!maybe_output.ok()) {
+        error = "Could not open Arrow IPC output '" + options.output_path +
+                "': " + maybe_output.status().ToString();
+        return false;
+    }
+
+    auto maybe_writer = arrow::ipc::MakeFileWriter(maybe_output.ValueOrDie(),
+                                                   table->schema());
+    if (!maybe_writer.ok()) {
+        error = "Could not create Arrow IPC writer: " +
+                maybe_writer.status().ToString();
+        return false;
+    }
+    auto writer = maybe_writer.ValueOrDie();
+
+    arrow::TableBatchReader reader(*table);
+    std::shared_ptr<arrow::RecordBatch> batch;
+    while (true) {
+        const auto read_status = reader.ReadNext(&batch);
+        if (!read_status.ok()) {
+            error = "Arrow IPC batch read failed: " + read_status.ToString();
+            return false;
+        }
+        if (!batch) {
+            break;
+        }
+        const auto write_status = writer->WriteRecordBatch(*batch);
+        if (!write_status.ok()) {
+            error = "Arrow IPC write failed: " + write_status.ToString();
+            return false;
+        }
+    }
+
+    const auto close_status = writer->Close();
+    if (!close_status.ok()) {
+        error = "Arrow IPC close failed: " + close_status.ToString();
+        return false;
+    }
+    return true;
+}
+
+std::string ScalarToPreviewString(const std::shared_ptr<arrow::Scalar>& scalar) {
+    if (!scalar || !scalar->is_valid) {
+        return "null";
+    }
+    return scalar->ToString();
+}
+
+std::string CellToPreviewString(const std::shared_ptr<arrow::Table>& table,
+                                int column_index,
+                                int64_t row_index) {
+    auto column = table->column(column_index);
+    int64_t remaining = row_index;
+    for (const auto& chunk : column->chunks()) {
+        if (remaining < chunk->length()) {
+            auto scalar = chunk->GetScalar(static_cast<int>(remaining));
+            if (!scalar.ok()) {
+                return "<error>";
+            }
+            return ScalarToPreviewString(scalar.ValueOrDie());
+        }
+        remaining -= chunk->length();
+    }
+    return "";
+}
+
+std::string CsvEscape(const std::string& value, char delimiter) {
+    const bool quote = value.find(delimiter) != std::string::npos ||
+                       value.find('"') != std::string::npos ||
+                       value.find('\n') != std::string::npos ||
+                       value.find('\r') != std::string::npos;
+    if (!quote) {
+        return value;
+    }
+
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (char c : value) {
+        if (c == '"') {
+            escaped.push_back('"');
+        }
+        escaped.push_back(c);
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+std::string ScalarToDelimitedString(
+    const std::shared_ptr<arrow::Scalar>& scalar,
+    char delimiter) {
+    if (!scalar || !scalar->is_valid) {
+        return "";
+    }
+    return CsvEscape(scalar->ToString(), delimiter);
+}
+
+bool WriteDelimited(const std::shared_ptr<arrow::Table>& table,
+                    const DataConvertOptions& options,
+                    DataConvertFormat output_format,
+                    std::string& error) {
+    const char delimiter =
+        output_format == DataConvertFormat::Tsv ? '\t' : ',';
+    std::ofstream out(options.output_path, std::ios::binary);
+    if (!out) {
+        error = "Could not open delimited output '" + options.output_path + "'.";
+        return false;
+    }
+
+    for (int column = 0; column < table->num_columns(); ++column) {
+        if (column > 0) out << delimiter;
+        out << CsvEscape(table->schema()->field(column)->name(), delimiter);
+    }
+    out << '\n';
+
+    for (int64_t row = 0; row < table->num_rows(); ++row) {
+        for (int column = 0; column < table->num_columns(); ++column) {
+            if (column > 0) out << delimiter;
+            auto chunked = table->column(column);
+            int64_t remaining = row;
+            std::shared_ptr<arrow::Scalar> scalar;
+            for (const auto& chunk : chunked->chunks()) {
+                if (remaining < chunk->length()) {
+                    auto maybe_scalar =
+                        chunk->GetScalar(static_cast<int>(remaining));
+                    if (!maybe_scalar.ok()) {
+                        error = "Could not read cell while writing delimited output: " +
+                                maybe_scalar.status().ToString();
+                        return false;
+                    }
+                    scalar = maybe_scalar.ValueOrDie();
+                    break;
+                }
+                remaining -= chunk->length();
+            }
+            out << ScalarToDelimitedString(scalar, delimiter);
+        }
+        out << '\n';
+    }
+
+    if (!out) {
+        error = "Delimited write failed for '" + options.output_path + "'.";
+        return false;
+    }
+    return true;
+}
+
+bool WriteOutputDataset(const std::shared_ptr<arrow::Table>& table,
+                        const DataConvertOptions& options,
+                        DataConvertFormat output_format,
+                        std::string& error) {
+    switch (output_format) {
+        case DataConvertFormat::Csv:
+        case DataConvertFormat::Tsv:
+            return WriteDelimited(table, options, output_format, error);
+        case DataConvertFormat::Parquet:
+            return WriteParquet(table, options, error);
+        case DataConvertFormat::Feather:
+        case DataConvertFormat::ArrowIpc:
+            return WriteArrowIpc(table, options, error);
+        default:
+            error = "Unsupported output format. Choose " + SupportedFormatList() + ".";
+            return false;
+    }
+}
+
 std::string BuildManifestPath(const std::string& output_path) {
     return output_path + ".manifest.json";
 }
 
-std::string BuildSettingsHashInput(const DataConvertOptions& options) {
+std::string BuildSettingsHashInput(const DataConvertOptions& options,
+                                   DataConvertFormat input_format,
+                                   DataConvertFormat output_format) {
     std::ostringstream out;
     out << options.input_path << "|"
         << options.output_path << "|"
+        << FormatName(input_format) << "|"
+        << FormatName(output_format) << "|"
         << options.delimiter << "|"
         << options.auto_detect_delimiter << "|"
         << options.has_header << "|"
@@ -201,8 +507,11 @@ std::string BuildSettingsHashInput(const DataConvertOptions& options) {
     return out.str();
 }
 
-std::string SimpleSettingsHash(const DataConvertOptions& options) {
-    const auto value = std::hash<std::string>{}(BuildSettingsHashInput(options));
+std::string SimpleSettingsHash(const DataConvertOptions& options,
+                               DataConvertFormat input_format,
+                               DataConvertFormat output_format) {
+    const auto value = std::hash<std::string>{}(
+        BuildSettingsHashInput(options, input_format, output_format));
     std::ostringstream out;
     out << std::hex << value;
     return out.str();
@@ -210,17 +519,19 @@ std::string SimpleSettingsHash(const DataConvertOptions& options) {
 
 bool WriteManifest(const DataConvertOptions& options,
                    const DataConvertResult& result,
+                   DataConvertFormat input_format,
+                   DataConvertFormat output_format,
                    std::string& error) {
     const std::filesystem::path input_path(options.input_path);
     const std::filesystem::path output_path(options.output_path);
 
     nlohmann::json manifest = {
         {"node", "DataConvert"},
-        {"version", 1},
+        {"version", 2},
         {"input_path", options.input_path},
-        {"input_format", "csv"},
+        {"input_format", FormatName(input_format)},
         {"output_path", options.output_path},
-        {"output_format", "parquet"},
+        {"output_format", FormatName(output_format)},
         {"rows_read", result.rows_read},
         {"rows_written", result.rows_written},
         {"columns", result.columns},
@@ -228,13 +539,14 @@ bool WriteManifest(const DataConvertOptions& options,
         {"delimiter", std::string(1, result.detected_delimiter)},
         {"delimiter_mode", options.auto_detect_delimiter ? "auto" : "manual"},
         {"allow_newlines_in_values", options.allow_newlines_in_values},
-        {"settings_hash", SimpleSettingsHash(options)},
+        {"settings_hash", SimpleSettingsHash(options, input_format, output_format)},
         {"created_at", NowIsoLikeUtc()}
     };
 
     std::error_code ec;
-    if (std::filesystem::exists(input_path, ec)) {
-        manifest["input_size"] = static_cast<int64_t>(std::filesystem::file_size(input_path, ec));
+    if (!options.input_path.empty() && std::filesystem::exists(input_path, ec)) {
+        manifest["input_size"] =
+            static_cast<int64_t>(std::filesystem::file_size(input_path, ec));
         const auto write_time = std::filesystem::last_write_time(input_path, ec);
         if (!ec) {
             manifest["input_modified_time_native"] =
@@ -242,7 +554,8 @@ bool WriteManifest(const DataConvertOptions& options,
         }
     }
     if (std::filesystem::exists(output_path, ec)) {
-        manifest["output_size"] = static_cast<int64_t>(std::filesystem::file_size(output_path, ec));
+        manifest["output_size"] =
+            static_cast<int64_t>(std::filesystem::file_size(output_path, ec));
     }
 
     const std::string manifest_path = BuildManifestPath(options.output_path);
@@ -257,8 +570,10 @@ bool WriteManifest(const DataConvertOptions& options,
 }
 
 bool TryUseFreshOutput(const DataConvertOptions& options,
+                       DataConvertFormat input_format,
+                       DataConvertFormat output_format,
                        DataConvertResult& result) {
-    if (!options.write_manifest) {
+    if (!options.write_manifest || options.input_path.empty()) {
         return false;
     }
 
@@ -284,12 +599,20 @@ bool TryUseFreshOutput(const DataConvertOptions& options,
         return false;
     }
 
+    const int manifest_version = manifest.value("version", 0);
     if (manifest.value("node", "") != "DataConvert" ||
-        manifest.value("version", 0) != 1 ||
+        manifest_version < 1 ||
         manifest.value("input_path", "") != options.input_path ||
         manifest.value("output_path", "") != options.output_path ||
-        manifest.value("output_format", "") != "parquet" ||
-        manifest.value("settings_hash", "") != SimpleSettingsHash(options)) {
+        manifest.value("output_format", "") != FormatName(output_format)) {
+        return false;
+    }
+    if (manifest_version >= 2 &&
+        manifest.value("input_format", "") != FormatName(input_format)) {
+        return false;
+    }
+    if (manifest.value("settings_hash", "") !=
+        SimpleSettingsHash(options, input_format, output_format)) {
         return false;
     }
 
@@ -330,58 +653,11 @@ bool TryUseFreshOutput(const DataConvertOptions& options,
     return true;
 }
 
-std::string ScalarToPreviewString(const std::shared_ptr<arrow::Scalar>& scalar) {
-    if (!scalar || !scalar->is_valid) {
-        return "null";
-    }
-    return scalar->ToString();
-}
-
-std::string CellToPreviewString(const std::shared_ptr<arrow::Table>& table,
-                                int column_index,
-                                int64_t row_index) {
-    auto column = table->column(column_index);
-    int64_t remaining = row_index;
-    for (const auto& chunk : column->chunks()) {
-        if (remaining < chunk->length()) {
-            auto scalar = chunk->GetScalar(static_cast<int>(remaining));
-            if (!scalar.ok()) {
-                return "<error>";
-            }
-            return ScalarToPreviewString(scalar.ValueOrDie());
-        }
-        remaining -= chunk->length();
-    }
-    return "";
-}
-
-} // namespace
-
-DataConvertPreview DataConvertService::PreviewCsv(const DataConvertOptions& options) {
-    DataConvertPreview preview;
-    const std::filesystem::path input_path(options.input_path);
-    if (options.input_path.empty()) {
-        preview.error = "Input file is empty. Select a CSV file first.";
-        return preview;
-    }
-    if (!std::filesystem::exists(input_path)) {
-        preview.error = "Input file does not exist: " + options.input_path;
-        return preview;
-    }
-    if (!IsCsvPath(input_path)) {
-        preview.error = "Phase 1 DataConvert preview supports CSV/TSV input only.";
-        return preview;
-    }
-
-    std::string error;
-    auto dataset = LoadCsv(options, error);
-    if (!dataset) {
-        preview.error = error;
-        return preview;
-    }
-
-    auto table = dataset->GetArrowTable();
-    preview.detected_delimiter = ResolveDelimiter(options);
+void FillPreviewFromTable(const std::shared_ptr<arrow::Table>& table,
+                          int preview_rows,
+                          char detected_delimiter,
+                          DataConvertPreview& preview) {
+    preview.detected_delimiter = detected_delimiter;
     preview.rows = table->num_rows();
     preview.columns = table->num_columns();
     preview.schema.reserve(static_cast<size_t>(table->num_columns()));
@@ -394,7 +670,7 @@ DataConvertPreview DataConvertService::PreviewCsv(const DataConvertOptions& opti
         });
     }
     const int64_t sample_count =
-        std::min<int64_t>(preview.rows, std::max(0, options.preview_rows));
+        std::min<int64_t>(preview.rows, std::max(0, preview_rows));
     preview.sample_rows.reserve(static_cast<size_t>(sample_count));
     for (int64_t row = 0; row < sample_count; ++row) {
         std::vector<std::string> values;
@@ -405,37 +681,72 @@ DataConvertPreview DataConvertService::PreviewCsv(const DataConvertOptions& opti
         preview.sample_rows.push_back(std::move(values));
     }
     preview.ok = true;
+}
+
+} // namespace
+
+DataConvertPreview DataConvertService::Preview(const DataConvertOptions& options) {
+    DataConvertPreview preview;
+    const DataConvertFormat input_format = ResolveInputFormat(options);
+    if (!options.input_table && options.input_path.empty()) {
+        preview.error = "Input file is empty. Select a supported data file first.";
+        return preview;
+    }
+    if (!options.input_table && !std::filesystem::exists(options.input_path)) {
+        preview.error = "Input file does not exist: " + options.input_path;
+        return preview;
+    }
+    if (!IsSupportedFormat(input_format)) {
+        preview.error = "Input format is not supported. Choose " +
+                        SupportedFormatList() + ".";
+        return preview;
+    }
+
+    std::string error;
+    auto dataset = LoadInputDataset(options, input_format, error);
+    if (!dataset) {
+        preview.error = error;
+        return preview;
+    }
+
+    const char detected_delimiter = IsDelimitedFormat(input_format)
+        ? ResolveDelimiter(options, input_format)
+        : ',';
+    FillPreviewFromTable(dataset->GetArrowTable(), options.preview_rows,
+                         detected_delimiter, preview);
     return preview;
 }
 
-DataConvertResult DataConvertService::ConvertCsvToParquet(
-    const DataConvertOptions& options) {
+DataConvertResult DataConvertService::Convert(const DataConvertOptions& options) {
     DataConvertResult result;
-    const std::filesystem::path input_path(options.input_path);
+    const DataConvertFormat input_format = ResolveInputFormat(options);
+    const DataConvertFormat output_format = ResolveOutputFormat(options);
     const std::filesystem::path output_path(options.output_path);
 
-    if (options.input_path.empty()) {
-        result.error = "Input file is empty. Select a CSV file first.";
+    if (!options.input_table && options.input_path.empty()) {
+        result.error = "Input file is empty. Select a supported data file first.";
         return result;
     }
-    if (!std::filesystem::exists(input_path)) {
+    if (!options.input_table && !std::filesystem::exists(options.input_path)) {
         result.error = "Input file does not exist: " + options.input_path;
         return result;
     }
-    if (!IsCsvPath(input_path)) {
-        result.error = "Phase 1 DataConvert supports CSV/TSV input only. Input was '" +
-                       input_path.extension().string() + "'.";
+    if (!IsSupportedFormat(input_format)) {
+        result.error = "Input format is not supported. Choose " +
+                       SupportedFormatList() + ".";
         return result;
     }
     if (options.output_path.empty()) {
-        result.error = "Output path is empty. Choose where to write the Parquet file.";
+        result.error = "Output path is empty. Choose where to write the converted file.";
         return result;
     }
-    if (!IsParquetPath(output_path)) {
-        result.error = "Phase 1 DataConvert writes Parquet only. Use a .parquet or .pq output path.";
+    if (!IsSupportedFormat(output_format)) {
+        result.error = "Output format is not supported. Choose " +
+                       SupportedFormatList() + ".";
         return result;
     }
-    if (TryUseFreshOutput(options, result)) {
+
+    if (TryUseFreshOutput(options, input_format, output_format, result)) {
         spdlog::info("DataConvert: skipped fresh output '{}'", options.output_path);
         return result;
     }
@@ -450,50 +761,25 @@ DataConvertResult DataConvertService::ConvertCsvToParquet(
         std::filesystem::create_directories(output_path.parent_path(), ec);
         if (ec) {
             result.error = "Could not create output folder '" +
-                           output_path.parent_path().string() + "': " + ec.message();
+                           output_path.parent_path().string() + "': " +
+                           ec.message();
             return result;
         }
     }
 
     std::string error;
-    auto dataset = LoadCsv(options, error);
+    auto dataset = LoadInputDataset(options, input_format, error);
     if (!dataset) {
         result.error = error;
         return result;
     }
     auto table = dataset->GetArrowTable();
-    result.detected_delimiter = ResolveDelimiter(options);
+    result.detected_delimiter = IsDelimitedFormat(input_format)
+        ? ResolveDelimiter(options, input_format)
+        : ',';
 
-    auto maybe_output = arrow::io::FileOutputStream::Open(options.output_path);
-    if (!maybe_output.ok()) {
-        result.error = "Could not open Parquet output '" + options.output_path +
-                       "': " + maybe_output.status().ToString();
-        return result;
-    }
-
-    std::string compression_error;
-    const auto compression = ResolveCompression(options.parquet_compression,
-                                                compression_error);
-    if (!compression_error.empty()) {
-        result.error = compression_error;
-        return result;
-    }
-
-    parquet::WriterProperties::Builder props_builder;
-    props_builder.compression(compression);
-    auto props = props_builder.build();
-    const int64_t row_group_size =
-        std::max<int64_t>(1, options.row_group_size);
-
-    const auto status = parquet::arrow::WriteTable(
-        *table,
-        arrow::default_memory_pool(),
-        maybe_output.ValueOrDie(),
-        row_group_size,
-        props);
-    if (!status.ok()) {
-        result.error = "Parquet write failed for '" + options.output_path +
-                       "': " + status.ToString();
+    if (!WriteOutputDataset(table, options, output_format, error)) {
+        result.error = error;
         return result;
     }
 
@@ -508,7 +794,8 @@ DataConvertResult DataConvertService::ConvertCsvToParquet(
 
     if (options.write_manifest) {
         std::string manifest_error;
-        if (!WriteManifest(options, result, manifest_error)) {
+        if (!WriteManifest(options, result, input_format, output_format,
+                           manifest_error)) {
             result.error = manifest_error;
             return result;
         }
@@ -516,10 +803,29 @@ DataConvertResult DataConvertService::ConvertCsvToParquet(
     }
 
     result.ok = true;
-    spdlog::info("DataConvert: converted '{}' -> '{}' ({} rows, {} columns)",
-                 options.input_path, options.output_path,
+    spdlog::info("DataConvert: converted '{}' ({}) -> '{}' ({}) ({} rows, {} columns)",
+                 options.input_path, FormatName(input_format),
+                 options.output_path, FormatName(output_format),
                  result.rows_written, result.columns);
     return result;
+}
+
+DataConvertPreview DataConvertService::PreviewCsv(const DataConvertOptions& options) {
+    DataConvertOptions csv_options = options;
+    if (IsAutoFormat(csv_options.input_format)) {
+        csv_options.input_format = FormatName(ResolveInputFormat(options));
+    }
+    return Preview(csv_options);
+}
+
+DataConvertResult DataConvertService::ConvertCsvToParquet(
+    const DataConvertOptions& options) {
+    DataConvertOptions parquet_options = options;
+    if (IsAutoFormat(parquet_options.input_format)) {
+        parquet_options.input_format = FormatName(ResolveInputFormat(options));
+    }
+    parquet_options.output_format = "parquet";
+    return Convert(parquet_options);
 }
 
 } // namespace cyxwiz

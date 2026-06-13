@@ -82,6 +82,33 @@ const char* CompressionNameFromIndex(int index) {
     return kCompressions[index];
 }
 
+int DataFormatIndexFromName(const std::string& value) {
+    const std::string normalized = LowerAscii(value);
+    if (normalized == "csv") return 1;
+    if (normalized == "tsv") return 2;
+    if (normalized == "parquet" || normalized == "pq") return 3;
+    if (normalized == "feather" || normalized == "fea") return 4;
+    if (normalized == "arrow") return 5;
+    if (normalized == "ipc") return 6;
+    return 0;
+}
+
+const char* DataFormatNameFromIndex(int index) {
+    static const char* kFormats[] = {
+        "auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"
+    };
+    if (index < 0 || index >= 7) return "auto";
+    return kFormats[index];
+}
+
+const char* DataFormatExtensionFromIndex(int index) {
+    static const char* kExtensions[] = {
+        ".parquet", ".csv", ".tsv", ".parquet", ".feather", ".arrow", ".ipc"
+    };
+    if (index < 0 || index >= 7) return ".parquet";
+    return kExtensions[index];
+}
+
 std::string DelimiterLabel(char delimiter) {
     switch (delimiter) {
         case ',': return "comma (,)";
@@ -92,13 +119,18 @@ std::string DelimiterLabel(char delimiter) {
     }
 }
 
-bool BrowseCsvInput(char* destination, std::size_t destination_size) {
+bool BrowseDataInput(char* destination, std::size_t destination_size) {
 #ifdef _WIN32
     OPENFILENAMEA ofn = {};
     char file[512] = {};
     CopyToBuffer(file, sizeof(file), destination);
     ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter = "CSV/TSV Files\0*.csv;*.tsv\0All Files\0*.*\0";
+    ofn.lpstrFilter =
+        "Supported Data Files\0*.csv;*.tsv;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc\0"
+        "CSV/TSV Files\0*.csv;*.tsv\0"
+        "Parquet Files\0*.parquet;*.pq\0"
+        "Arrow IPC/Feather Files\0*.feather;*.fea;*.arrow;*.ipc\0"
+        "All Files\0*.*\0";
     ofn.lpstrFile = file;
     ofn.nMaxFile = sizeof(file);
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
@@ -113,16 +145,25 @@ bool BrowseCsvInput(char* destination, std::size_t destination_size) {
     return false;
 }
 
-bool BrowseParquetOutput(char* destination, std::size_t destination_size) {
+bool BrowseDataOutput(char* destination,
+                      std::size_t destination_size,
+                      int output_format_index) {
 #ifdef _WIN32
     OPENFILENAMEA ofn = {};
     char file[512] = {};
     CopyToBuffer(file, sizeof(file), destination);
     ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter = "Parquet Files\0*.parquet;*.pq\0All Files\0*.*\0";
+    ofn.lpstrFilter =
+        "Supported Data Files\0*.csv;*.tsv;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc\0"
+        "CSV Files\0*.csv\0"
+        "TSV Files\0*.tsv\0"
+        "Parquet Files\0*.parquet;*.pq\0"
+        "Arrow IPC/Feather Files\0*.feather;*.fea;*.arrow;*.ipc\0"
+        "All Files\0*.*\0";
     ofn.lpstrFile = file;
     ofn.nMaxFile = sizeof(file);
-    ofn.lpstrDefExt = "parquet";
+    const char* extension = DataFormatExtensionFromIndex(output_format_index);
+    ofn.lpstrDefExt = extension[0] == '.' ? extension + 1 : extension;
     ofn.Flags = OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST;
     if (GetSaveFileNameA(&ofn)) {
         CopyToBuffer(destination, destination_size, file);
@@ -131,6 +172,7 @@ bool BrowseParquetOutput(char* destination, std::size_t destination_size) {
 #else
     (void)destination;
     (void)destination_size;
+    (void)output_format_index;
 #endif
     return false;
 }
@@ -293,6 +335,10 @@ void DataConvertDialog::LoadFromNode() {
                  ReadStringParamValue(node_->parameters, "input_path"));
     CopyToBuffer(output_path_, sizeof(output_path_),
                  ReadStringParamValue(node_->parameters, "output_path"));
+    input_format_ = DataFormatIndexFromName(
+        ReadStringParamValue(node_->parameters, "input_format", "auto"));
+    output_format_ = DataFormatIndexFromName(
+        ReadStringParamValue(node_->parameters, "output_format", "auto"));
     const std::string delimiter =
         ReadStringParamValue(node_->parameters, "delimiter", "auto");
     auto_detect_delimiter_ = LowerAscii(delimiter) == "auto";
@@ -324,9 +370,9 @@ void DataConvertDialog::Apply() {
     if (!node_) return;
 
     node_->parameters["input_path"] = input_path_;
-    node_->parameters["input_format"] = "csv";
+    node_->parameters["input_format"] = DataFormatNameFromIndex(input_format_);
     node_->parameters["output_path"] = output_path_;
-    node_->parameters["output_format"] = "parquet";
+    node_->parameters["output_format"] = DataFormatNameFromIndex(output_format_);
     node_->parameters["delimiter"] =
         auto_detect_delimiter_ ? "auto" : std::string(delimiter_);
     node_->parameters["header"] = has_header_ ? "true" : "false";
@@ -345,6 +391,7 @@ void DataConvertDialog::Apply() {
     if (last_result_.ok) {
         node_->parameters["rows_written"] =
             std::to_string(last_result_.rows_written);
+        node_->parameters["converted_output_path"] = last_result_.output_path;
         node_->parameters["parquet_output_path"] = last_result_.output_path;
         node_->parameters["manifest_path"] = last_result_.manifest_path;
         node_->description = "Converted " +
@@ -365,8 +412,8 @@ void DataConvertDialog::Reset() {
 
 void DataConvertDialog::RenderContent() {
     ImGui::TextWrapped(
-        "Convert source data into an engine-friendly file. Phase 1 supports "
-        "CSV or TSV input and writes Parquet plus an optional manifest.");
+        "Convert source data between supported table file formats and write "
+        "an optional sidecar manifest.");
     ImGui::Spacing();
 
     if (!status_message_.empty()) {
@@ -408,25 +455,34 @@ void DataConvertDialog::RenderContent() {
 
 void DataConvertDialog::RenderSourceTab() {
     ImGui::Spacing();
-    ImGui::Text("Input CSV or TSV");
+    ImGui::Text("Input data file");
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
     if (ImGui::InputText("##input_path", input_path_, sizeof(input_path_))) {
         has_changes_ = true;
     }
     ImGui::SameLine();
     if (ImGui::Button("Browse", ImVec2(80.0f, 0.0f)) &&
-        BrowseCsvInput(input_path_, sizeof(input_path_))) {
+        BrowseDataInput(input_path_, sizeof(input_path_))) {
         has_changes_ = true;
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled(
-        "CSV/TSV input writes one Parquet file. Parsing controls are in Options.");
+    const char* formats[] = {
+        "Auto", "CSV", "TSV", "Parquet", "Feather", "Arrow", "IPC"
+    };
+    ImGui::Text("Input format");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::Combo("##input_format", &input_format_, formats, 7)) {
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Auto detects from extension.");
 }
 
 void DataConvertDialog::RenderOptionsTab() {
     ImGui::Spacing();
-    ImGui::Text("CSV/TSV parsing");
+    ImGui::Text("Delimited input parsing");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -493,21 +549,32 @@ void DataConvertDialog::RenderOptionsTab() {
 
 void DataConvertDialog::RenderOutputTab() {
     ImGui::Spacing();
-    ImGui::Text("Output Parquet file");
+    ImGui::Text("Output data file");
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
     if (ImGui::InputText("##output_path", output_path_, sizeof(output_path_))) {
         has_changes_ = true;
     }
     ImGui::SameLine();
     if (ImGui::Button("Save As", ImVec2(80.0f, 0.0f)) &&
-        BrowseParquetOutput(output_path_, sizeof(output_path_))) {
+        BrowseDataOutput(output_path_, sizeof(output_path_), output_format_)) {
         has_changes_ = true;
     }
 
-    if (ImGui::Button("Use input name + .parquet")) {
+    ImGui::Spacing();
+    const char* formats[] = {
+        "Auto", "CSV", "TSV", "Parquet", "Feather", "Arrow", "IPC"
+    };
+    ImGui::Text("Output format");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::Combo("##output_format", &output_format_, formats, 7)) {
+        has_changes_ = true;
+    }
+
+    if (ImGui::Button("Use input name + selected extension")) {
         std::filesystem::path in(input_path_);
         if (!in.empty()) {
-            in.replace_extension(".parquet");
+            in.replace_extension(DataFormatExtensionFromIndex(output_format_));
             CopyToBuffer(output_path_, sizeof(output_path_), in.string());
             has_changes_ = true;
         }
@@ -531,7 +598,7 @@ void DataConvertDialog::RenderPreviewTab() {
         PreviewInput();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Reads the CSV header and Arrow-inferred types.");
+    ImGui::TextDisabled("Reads the input and Arrow-inferred types.");
 
     ImGui::Spacing();
     if (!preview_.ok) {
@@ -599,7 +666,7 @@ void DataConvertDialog::RenderRunTab() {
     ImGui::Spacing();
     ImGui::TextWrapped(
         "Run conversion when the source and output settings are correct. "
-        "Downstream DataInput nodes should point at the generated Parquet file.");
+        "Downstream nodes can consume the generated output directly.");
     ImGui::Spacing();
 
     if (ImGui::Button("Run conversion", ImVec2(160.0f, 0.0f))) {
@@ -615,7 +682,7 @@ void DataConvertDialog::RenderRunTab() {
         const std::string output_path = last_result_.output_path.empty()
             ? std::string(output_path_)
             : last_result_.output_path;
-        ImGui::TextWrapped("Parquet output: %s", output_path.c_str());
+        ImGui::TextWrapped("Output: %s", output_path.c_str());
         ImGui::Text("Rows written: %lld",
                     static_cast<long long>(last_result_.rows_written));
         ImGui::Text("Columns: %lld",
@@ -660,6 +727,8 @@ cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
     cyxwiz::DataConvertOptions options;
     options.input_path = input_path_;
     options.output_path = output_path_;
+    options.input_format = DataFormatNameFromIndex(input_format_);
+    options.output_format = DataFormatNameFromIndex(output_format_);
     options.delimiter = delimiter_[0] == '\0' ? ',' : delimiter_[0];
     options.auto_detect_delimiter = auto_detect_delimiter_;
     options.has_header = has_header_;
@@ -674,7 +743,7 @@ cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
 }
 
 void DataConvertDialog::PreviewInput() {
-    preview_ = cyxwiz::DataConvertService::PreviewCsv(BuildOptions());
+    preview_ = cyxwiz::DataConvertService::Preview(BuildOptions());
     if (preview_.ok) {
         std::ostringstream msg;
         msg << "Preview loaded: " << preview_.rows << " rows, "
@@ -690,11 +759,11 @@ void DataConvertDialog::PreviewInput() {
 }
 
 void DataConvertDialog::RunConversion() {
-    last_result_ = cyxwiz::DataConvertService::ConvertCsvToParquet(BuildOptions());
+    last_result_ = cyxwiz::DataConvertService::Convert(BuildOptions());
     if (last_result_.ok) {
         std::ostringstream msg;
         if (last_result_.skipped_fresh_output) {
-            msg << "Conversion skipped: existing Parquet output is fresh at "
+            msg << "Conversion skipped: existing output is fresh at "
                 << last_result_.output_path << ".";
         } else {
             msg << "Conversion complete: " << last_result_.rows_written
