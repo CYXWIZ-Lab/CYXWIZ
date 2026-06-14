@@ -2540,6 +2540,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteMathFormula(node, ctx);
     case gui::NodeType::RenameColumns:
         return ExecuteRenameColumns(node, ctx);
+    case gui::NodeType::CountVectorizer:
+        return ExecuteTextVectorize(node, ctx);
     default:
         handled = false;
         return false;

@@ -1512,6 +1512,23 @@ Updated coverage:
 - Metadata tests assert that `TSDiff` remains legacy-executor routed while
   resolving to typed `Differencing` metadata.
 
+### Progress note: typed Text Vectorize compatibility coverage
+
+The legacy-only `TextVectorize` operator has been tied to the existing
+canonical `CountVectorizer` metadata while preserving `TextVectorize` as an
+executable legacy alias.
+
+Updated coverage:
+
+- The runtime capability map resolves `TextVectorize` to
+  `NodeType::CountVectorizer`.
+- `PipelineExecutor` routes the typed `TextVectorize` compatibility alias
+  through the existing legacy vectorization implementation.
+- Data Studio quick-add continues to expose canonical `CountVectorizer`
+  instead of the legacy `TextVectorize` alias.
+- Metadata tests assert that `TextVectorize` remains legacy-executor routed
+  while resolving to typed `CountVectorizer` metadata.
+
 At the moment, some nodes are:
 
 - over-exposed
