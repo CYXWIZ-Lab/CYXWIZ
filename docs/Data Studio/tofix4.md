@@ -1674,6 +1674,22 @@ Updated coverage:
   coercing or fabricating missing values.
 - Executor routing tests cover successful row append.
 
+### Progress note: Column Appender runtime implementation
+
+`ColumnAppender` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `ColumnAppender` metadata is now marked implemented.
+- The runtime capability map resolves `ColumnAppender` to the legacy executor
+  with two required input datasets.
+- `PipelineExecutor` appends columns from two row-aligned input tables.
+- Duplicate right-side column names are suffixed using the `suffix` parameter.
+- The first implementation fails clearly when row counts differ instead of
+  padding or truncating rows.
+- Executor routing tests cover successful column append.
+
 At the moment, some nodes are:
 
 - over-exposed

@@ -2551,6 +2551,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteCellUpdater(node, ctx);
     case gui::NodeType::RowAppender:
         return ExecuteRowAppender(node, ctx);
+    case gui::NodeType::ColumnAppender:
+        return ExecuteColumnAppender(node, ctx);
     case gui::NodeType::CountVectorizer:
         return ExecuteTextVectorize(node, ctx);
     case gui::NodeType::TextTokenizer:
@@ -5249,6 +5251,91 @@ bool PipelineExecutor::ExecuteRowAppender(const Node& node, ExecutionContext& ct
         return true;
     } catch (const std::exception& e) {
         ReportError("RowAppender error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteColumnAppender(const Node& node, ExecutionContext& ctx) {
+    const auto input_dataset_names = GetInputDatasetNames(node, ctx, 2);
+    if (input_dataset_names.empty()) {
+        return false;
+    }
+
+    const std::string& left_dataset_name = input_dataset_names[0];
+    const std::string& right_dataset_name = input_dataset_names[1];
+    const auto suffix_it = node.parameters.find("suffix");
+    const std::string suffix =
+        (suffix_it != node.parameters.end() && !suffix_it->second.empty())
+            ? suffix_it->second
+            : "_right";
+    std::string output_dataset_name =
+        "ds_column_append_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] ColumnAppender appending '{}' and '{}'",
+                 left_dataset_name, right_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto left_dataset = registry.GetArrowDataset(left_dataset_name);
+        auto right_dataset = registry.GetArrowDataset(right_dataset_name);
+        if (!left_dataset || !right_dataset) {
+            ReportError("ColumnAppender: Input datasets not found");
+            return false;
+        }
+
+        auto left_table = left_dataset->GetArrowTable();
+        auto right_table = right_dataset->GetArrowTable();
+        if (!left_table || !right_table || !left_table->schema() ||
+            !right_table->schema()) {
+            ReportError("ColumnAppender: Input table is null");
+            return false;
+        }
+        if (left_table->num_rows() != right_table->num_rows()) {
+            ReportError("ColumnAppender: input row counts must match");
+            return false;
+        }
+
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> columns;
+        fields.reserve(left_table->num_columns() + right_table->num_columns());
+        columns.reserve(left_table->num_columns() + right_table->num_columns());
+
+        std::set<std::string> output_names;
+        for (int i = 0; i < left_table->num_columns(); ++i) {
+            const auto field = left_table->schema()->field(i);
+            if (!output_names.insert(field->name()).second) {
+                ReportError("ColumnAppender: duplicate left column name '" +
+                            field->name() + "'");
+                return false;
+            }
+            fields.push_back(field);
+            columns.push_back(left_table->column(i));
+        }
+
+        for (int i = 0; i < right_table->num_columns(); ++i) {
+            const auto field = right_table->schema()->field(i);
+            std::string output_name = field->name();
+            if (output_names.find(output_name) != output_names.end()) {
+                output_name += suffix;
+            }
+            if (!output_names.insert(output_name).second) {
+                ReportError("ColumnAppender: duplicate output column name '" +
+                            output_name + "'");
+                return false;
+            }
+            fields.push_back(output_name == field->name()
+                                 ? field
+                                 : field->WithName(output_name));
+            columns.push_back(right_table->column(i));
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema(fields), columns, left_table->num_rows());
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ColumnAppender error: " + std::string(e.what()));
         return false;
     }
 }

@@ -2237,7 +2237,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
          {"Right", PinType::Dataset, true, "Right table"}},
         {{"Table", PinType::Dataset, true, "Combined table"}},
         {{"suffix", "string", "_right", "Suffix for duplicate columns", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RowAppender, NodeCategory::DataTransform, "Row Appender", ICON_FA_LAYER_GROUP,
         {"append", "rows", "vertical", "union"}, 0, false,

@@ -2615,20 +2615,31 @@ int main() {
 
     const std::string column_appender_json =
         R"({"nodes":[)"
-        R"({"id":33,"type":"DataInput","name":"Input","parameters":{)"
+        R"({"id":33,"type":"DataInput","name":"Left","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":34,"type":"ColumnAppender","name":"AppendColumns","parameters":{}})"
-        R"(],"links":[{"start_node":33,"end_node":34}]})";
+        R"({"id":133,"type":"DataInput","name":"Right","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":34,"type":"ColumnAppender","name":"AppendColumns","parameters":{)"
+        R"("suffix":"_copy"}})"
+        R"(],"links":[{"start_node":33,"end_node":34},{"start_node":133,"end_node":34}]})";
 
     cyxwiz::PipelineExecutor column_appender_executor;
-    Check(!column_appender_executor.ExecutePipeline(column_appender_json),
-          "ColumnAppender placeholder should fail closed");
-    Check(column_appender_executor.GetLastError().find(
-              "legacy ColumnAppender graph execution is not implemented") !=
-              std::string::npos,
-          "ColumnAppender should use fail-closed runtime support: " +
+    Check(column_appender_executor.ExecutePipeline(column_appender_json),
+          "ColumnAppender should append schema-compatible input columns: " +
               column_appender_executor.GetLastError());
+    auto column_appended = registry.GetArrowDataset("ds_column_append_34");
+    Check(column_appended != nullptr,
+          "ColumnAppender output dataset is registered");
+    auto column_appended_table = column_appended->GetArrowTable();
+    Check(column_appended_table != nullptr, "ColumnAppender output table exists");
+    Check(column_appended_table->num_columns() == 4,
+          "ColumnAppender should append both right input columns");
+    Check(column_appended_table->schema()->GetFieldIndex("x_copy") >= 0,
+          "ColumnAppender should suffix duplicate right column names");
+    Check(ReadNumericValue(column_appended_table, "y_copy", 2) == 30.0,
+          "ColumnAppender should preserve right input values");
 
     const std::string row_appender_json =
         R"({"nodes":[)"

@@ -1236,6 +1236,16 @@ int main() {
     Check(row_appender_type.has_value() &&
               *row_appender_type == gui::NodeType::RowAppender,
           "RowAppender runtime name should resolve typed metadata");
+    const auto column_appender_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ColumnAppender);
+    Check(column_appender_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "ColumnAppender enum support should resolve to legacy executor");
+    const auto column_appender_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("ColumnAppender");
+    Check(column_appender_type.has_value() &&
+              *column_appender_type == gui::NodeType::ColumnAppender,
+          "ColumnAppender runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
