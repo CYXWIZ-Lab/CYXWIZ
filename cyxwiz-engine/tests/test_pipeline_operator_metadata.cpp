@@ -1,6 +1,7 @@
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_metadata_registry.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
+#include "../src/gui/data_studio/pipeline_canvas.h"
 #include "../src/gui/data_studio/node_registry.h"
 
 #include <algorithm>
@@ -544,6 +545,59 @@ int main() {
                           "=" + catalog_value);
             }
         }
+    }
+
+    const std::set<std::string> intentional_quick_add_compatibility_nodes = {
+        "TextClean",
+    };
+    const std::set<std::string> disallowed_quick_add_legacy_aliases = {
+        "ArrowDataset",
+        "FileInput",
+        "SaveDataset",
+        "RemoveDuplicates",
+        "TextTokenize",
+        "TextVectorize",
+        "TSWindow",
+        "TSFeatures",
+        "TSLag",
+        "TSDiff",
+        "PCA",
+        "PolynomialFeatures",
+        "Binning",
+    };
+    std::vector<std::string> data_studio_quick_add_type_ids;
+    for (const auto& item : cyxwiz::PipelineCanvas::GetQuickAddNodes()) {
+        Check(item.label != nullptr && std::string(item.label).size() > 0,
+              "Data Studio quick-add item should have a label");
+        Check(item.type_id != nullptr && std::string(item.type_id).size() > 0,
+              "Data Studio quick-add item should have a type id");
+        const std::string type_id = item.type_id;
+        data_studio_quick_add_type_ids.push_back(type_id);
+        Check(disallowed_quick_add_legacy_aliases.count(type_id) == 0,
+              "Data Studio quick-add should not promote legacy alias: " +
+                  type_id);
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type_id);
+        Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
+              "Data Studio quick-add node has unknown runtime support: " +
+                  type_id);
+        Check(support.pipeline_executor_supported,
+              "Data Studio quick-add node is not PipelineExecutor-supported: " +
+                  type_id);
+        Check(support.fail_mode == cyxwiz::PipelineRuntimeFailMode::Real,
+              "Data Studio quick-add node should have real fail mode: " +
+                  type_id);
+        if (intentional_quick_add_compatibility_nodes.count(type_id) == 0) {
+            Check(support.node_type.has_value(),
+                  "Data Studio quick-add canonical node should resolve typed metadata: " +
+                      type_id);
+        }
+    }
+    for (const auto& legacy_alias : disallowed_quick_add_legacy_aliases) {
+        Check(std::find(data_studio_quick_add_type_ids.begin(),
+                        data_studio_quick_add_type_ids.end(),
+                        legacy_alias) == data_studio_quick_add_type_ids.end(),
+              "Data Studio quick-add contract contains disallowed alias: " +
+                  legacy_alias);
     }
 
     for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {

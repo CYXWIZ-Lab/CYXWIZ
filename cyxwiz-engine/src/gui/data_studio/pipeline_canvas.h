@@ -33,8 +33,21 @@ class PipelineExecutor;
  */
 class PipelineCanvas {
 public:
+    struct QuickAddNode {
+        const char* label;
+        const char* type_id;
+    };
+
     PipelineCanvas();
     ~PipelineCanvas();
+
+    /**
+     * Canonical Data Studio quick-add node contract.
+     *
+     * Exposed so runtime/metadata tests can verify the UI palette does not
+     * regress to unsupported or legacy-only node type strings.
+     */
+    static const std::vector<QuickAddNode>& GetQuickAddNodes();
 
     /**
      * Render the pipeline canvas
@@ -155,6 +168,7 @@ private:
 
     // Rendering helpers
     void RenderNodePalette();
+    bool RenderQuickAddItem(const QuickAddNode& item);
     void RenderNode(const Node& node);
     void RenderToolbar();  // Phase 7: Toolbar with Save/Load buttons
     void RenderContextMenu();

@@ -1198,6 +1198,50 @@ Reason:
 - keep `TextClean` until a canonical typed/operator-backed cleaner lands,
   then migrate quick-add the same way as tokenizer/vectorizer nodes
 
+### 26. Quick-add runtime contract now has regression coverage
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- metadata/runtime tests now lock the Data Studio quick-add node set to
+  runtime-supported names
+- `PipelineCanvas` now exposes the canonical quick-add list through
+  `GetQuickAddNodes()`, so the test verifies the same contract the UI
+  renders instead of duplicating a stale list
+- tests explicitly reject the legacy aliases removed from quick-add:
+  `ArrowDataset`, `FileInput`, `SaveDataset`, `RemoveDuplicates`,
+  `TextTokenize`, `TextVectorize`, `TSWindow`, `TSFeatures`, `TSLag`,
+  `TSDiff`, `PCA`, `PolynomialFeatures`, and `Binning`
+- `TextClean` is captured as the only intentional compatibility-node
+  exception because it still has real guarded execution and no exact
+  typed replacement
+
+Relevant files:
+
+- `cyxwiz-engine/tests/test_pipeline_operator_metadata.cpp`
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.h`
+
+Problem:
+
+- quick-add regressions are easy to introduce because the palette is UI
+  code while runtime support truth lives in capability tables
+- prior fixes moved many menu entries from old aliases to canonical
+  runtime names, but no single test described the intended new-graph
+  creation contract
+
+Effect now:
+
+- future quick-add additions must resolve to known supported runtime
+  nodes
+- intentionally retained compatibility nodes must be named explicitly
+
+**Recommendation:**
+
+- if `pipeline_canvas.cpp` gains a new quick-add entry, update this test
+  contract and prefer canonical typed/operator-backed node names
+
 ---
 
 ## Priority 5: Template Nodes Are Correctly Blocked, But Need Import-Time Guardrails

@@ -55,6 +55,34 @@ PipelineCanvas::~PipelineCanvas() {
     // application shutdown if ImGui is already destroyed.
 }
 
+const std::vector<PipelineCanvas::QuickAddNode>&
+PipelineCanvas::GetQuickAddNodes() {
+    static const std::vector<QuickAddNode> nodes = {
+        {"File Input", "DataInput"},
+        {"Save Dataset", "DataOutput"},
+        {"Filter Rows", "FilterRows"},
+        {"Select Columns", "SelectColumns"},
+        {"Remove Duplicates", "RemoveDuplicateRows"},
+        {"Text Clean", "TextClean"},
+        {"Text Tokenize", "TextTokenizer"},
+        {"Text Vectorize", "CountVectorizer"},
+        {"TS Window", "TimeSeriesWindow"},
+        {"TS Features", "TimeSeriesFeatures"},
+        {"TS Diff", "Differencing"},
+        {"PCA", "PCANode"},
+    };
+    return nodes;
+}
+
+bool PipelineCanvas::RenderQuickAddItem(const QuickAddNode& item) {
+    if (!ImGui::Selectable(item.label)) {
+        return false;
+    }
+    AddNode(item.type_id, ImGui::GetMousePos());
+    show_node_palette_ = false;
+    return true;
+}
+
 void PipelineCanvas::Render() {
     // Set Data Studio ImNodes context
     ImNodes::SetCurrentContext(context_);
@@ -137,77 +165,45 @@ void PipelineCanvas::RenderNodePalette() {
     ImGui::OpenPopup("Add Node");
 
     if (ImGui::BeginPopup("Add Node")) {
+        const auto& quick_add_nodes = GetQuickAddNodes();
+        size_t quick_add_index = 0;
+
         // Phase 7: Data Input/Output category with icon
         ImGui::Text(ICON_FA_DATABASE " Data Input/Output");
         ImGui::Separator();
-        if (ImGui::Selectable("File Input")) {
-            AddNode("DataInput", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("Save Dataset")) {
-            AddNode("DataOutput", ImGui::GetMousePos());
-            show_node_palette_ = false;
+        for (int i = 0; i < 2; ++i) {
+            RenderQuickAddItem(quick_add_nodes[quick_add_index++]);
         }
 
         ImGui::Spacing();
         // Phase 7: Tabular Operations category with icon
         ImGui::Text(ICON_FA_TABLE " Tabular Operations");
         ImGui::Separator();
-        if (ImGui::Selectable("Filter Rows")) {
-            AddNode("FilterRows", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("Select Columns")) {
-            AddNode("SelectColumns", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("Remove Duplicates")) {
-            AddNode("RemoveDuplicateRows", ImGui::GetMousePos());
-            show_node_palette_ = false;
+        for (int i = 0; i < 3; ++i) {
+            RenderQuickAddItem(quick_add_nodes[quick_add_index++]);
         }
 
         // Phase 6 Week 8-9: Text Processing with icon
         ImGui::Spacing();
         ImGui::Text(ICON_FA_FILE_LINES " Text Processing");
         ImGui::Separator();
-        if (ImGui::Selectable("Text Clean")) {
-            AddNode("TextClean", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("Text Tokenize")) {
-            AddNode("TextTokenizer", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("Text Vectorize")) {
-            AddNode("CountVectorizer", ImGui::GetMousePos());
-            show_node_palette_ = false;
+        for (int i = 0; i < 3; ++i) {
+            RenderQuickAddItem(quick_add_nodes[quick_add_index++]);
         }
 
         // Phase 6 Week 8-9: Time-Series with icon
         ImGui::Spacing();
         ImGui::Text(ICON_FA_CHART_LINE " Time-Series");
         ImGui::Separator();
-        if (ImGui::Selectable("TS Window")) {
-            AddNode("TimeSeriesWindow", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("TS Features")) {
-            AddNode("TimeSeriesFeatures", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("TS Diff")) {
-            AddNode("Differencing", ImGui::GetMousePos());
-            show_node_palette_ = false;
+        for (int i = 0; i < 3; ++i) {
+            RenderQuickAddItem(quick_add_nodes[quick_add_index++]);
         }
 
         // Phase 6 Week 8-9: Feature Engineering with icon
         ImGui::Spacing();
         ImGui::Text(ICON_FA_GEARS " Feature Engineering");
         ImGui::Separator();
-        if (ImGui::Selectable("PCA")) {
-            AddNode("PCANode", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
+        RenderQuickAddItem(quick_add_nodes[quick_add_index++]);
         ImGui::EndPopup();
     } else {
         show_node_palette_ = false;
