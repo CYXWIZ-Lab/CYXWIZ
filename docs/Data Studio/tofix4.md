@@ -1720,6 +1720,22 @@ Updated coverage:
   alias, matching `ExportCSV`.
 - Executor routing tests cover real file creation and emitted JSON content.
 
+### Progress note: Rule Engine runtime implementation
+
+`RuleEngine` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `RuleEngine` metadata is now marked implemented.
+- The runtime capability map resolves `RuleEngine` to the legacy executor.
+- `PipelineExecutor` evaluates newline-separated `condition => value` rules as
+  a DuckDB `CASE` expression.
+- The first implementation intentionally supports simple column comparisons
+  only, rather than a broad ad hoc rule language.
+- Ordered comparisons require numeric columns and numeric values.
+- Executor routing tests cover matching and default rule outputs.
+
 At the moment, some nodes are:
 
 - over-exposed

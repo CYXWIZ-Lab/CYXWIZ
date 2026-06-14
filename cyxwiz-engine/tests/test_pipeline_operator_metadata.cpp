@@ -1265,6 +1265,16 @@ int main() {
     Check(export_json_type.has_value() &&
               *export_json_type == gui::NodeType::ExportJSON,
           "ExportJSON runtime name should resolve typed metadata");
+    const auto rule_engine_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::RuleEngine);
+    Check(rule_engine_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "RuleEngine enum support should resolve to legacy executor");
+    const auto rule_engine_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("RuleEngine");
+    Check(rule_engine_type.has_value() &&
+              *rule_engine_type == gui::NodeType::RuleEngine,
+          "RuleEngine runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

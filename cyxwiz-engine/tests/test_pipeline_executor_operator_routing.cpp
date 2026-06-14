@@ -3245,12 +3245,17 @@ int main() {
         R"(],"links":[{"start_node":61,"end_node":62}]})";
 
     cyxwiz::PipelineExecutor rule_engine_executor;
-    Check(!rule_engine_executor.ExecutePipeline(rule_engine_json),
-          "RuleEngine placeholder should fail closed");
-    Check(rule_engine_executor.GetLastError().find(
-              "legacy RuleEngine execution ignores rules") != std::string::npos,
-          "RuleEngine should use fail-closed runtime support: " +
+    Check(rule_engine_executor.ExecutePipeline(rule_engine_json),
+          "RuleEngine should apply CASE-style rules: " +
               rule_engine_executor.GetLastError());
+    auto rule_result = registry.GetArrowDataset("ds_ruleengine_62");
+    Check(rule_result != nullptr, "RuleEngine output dataset is registered");
+    auto rule_table = rule_result->GetArrowTable();
+    Check(rule_table != nullptr, "RuleEngine output table exists");
+    Check(ReadStringValue(rule_table, "bucket", 0) == "low",
+          "RuleEngine should emit default value for non-matching rows");
+    Check(ReadStringValue(rule_table, "bucket", 2) == "high",
+          "RuleEngine should emit matching rule values");
 
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"

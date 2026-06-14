@@ -221,6 +221,149 @@ std::string ScalarToJsonValue(const std::shared_ptr<arrow::Scalar>& scalar) {
     }
 }
 
+struct RuleEngineLiteral {
+    std::string sql;
+    bool numeric = false;
+    bool null_value = false;
+};
+
+bool BuildRuleEngineLiteral(const std::string& raw_value,
+                            RuleEngineLiteral& literal,
+                            std::string& error) {
+    const std::string value = TrimString(raw_value);
+    if (value.empty()) {
+        error = "RuleEngine: rule value is required";
+        return false;
+    }
+
+    if (ToLowerAscii(value) == "null") {
+        literal.sql = "NULL";
+        literal.null_value = true;
+        return true;
+    }
+
+    if (value.size() >= 2 &&
+        ((value.front() == '\'' && value.back() == '\'') ||
+         (value.front() == '"' && value.back() == '"'))) {
+        literal.sql = QuoteSqlStringLiteral(value.substr(1, value.size() - 2));
+        return true;
+    }
+
+    double numeric_value = 0.0;
+    if (TryParseFiniteDouble(value, numeric_value)) {
+        literal.sql = value;
+        literal.numeric = true;
+        return true;
+    }
+
+    literal.sql = QuoteSqlStringLiteral(value);
+    return true;
+}
+
+bool BuildRuleEngineCondition(const std::shared_ptr<arrow::Table>& table,
+                              const std::string& condition,
+                              std::string& expression,
+                              std::string& error) {
+    static const std::vector<std::string> operators = {
+        ">=", "<=", "!=", "==", "=", ">", "<"};
+    for (const auto& op : operators) {
+        const auto pos = condition.find(op);
+        if (pos == std::string::npos) {
+            continue;
+        }
+
+        const std::string column = TrimString(condition.substr(0, pos));
+        const std::string raw_value = TrimString(condition.substr(pos + op.size()));
+        if (column.empty() || raw_value.empty()) {
+            error = "RuleEngine: condition must use column operator value";
+            return false;
+        }
+        if (!table || !table->schema()) {
+            error = "RuleEngine: input table schema is unavailable";
+            return false;
+        }
+
+        const int column_index = table->schema()->GetFieldIndex(column);
+        if (column_index < 0) {
+            error = "RuleEngine: condition column '" + column + "' not found";
+            return false;
+        }
+
+        RuleEngineLiteral literal;
+        if (!BuildRuleEngineLiteral(raw_value, literal, error)) {
+            return false;
+        }
+        const bool ordered_compare = op == ">" || op == "<" || op == ">=" || op == "<=";
+        if (ordered_compare) {
+            const auto field = table->schema()->field(column_index);
+            if (!field || !IsNumericArrowType(field->type()) || !literal.numeric) {
+                error = "RuleEngine: ordered comparisons require numeric columns and values";
+                return false;
+            }
+        }
+
+        const std::string sql_op = (op == "==" || op == "=") ? "=" : op;
+        expression = QuoteSqlIdentifier(column) + " " + sql_op + " " + literal.sql;
+        return true;
+    }
+
+    error = "RuleEngine: condition must contain a supported comparison operator";
+    return false;
+}
+
+bool BuildRuleEngineCaseExpression(const std::shared_ptr<arrow::Table>& table,
+                                   const std::string& rules,
+                                   const std::string& default_value,
+                                   std::string& expression,
+                                   std::string& error) {
+    RuleEngineLiteral default_literal;
+    if (!BuildRuleEngineLiteral(default_value.empty() ? "NULL" : default_value,
+                                default_literal, error)) {
+        return false;
+    }
+
+    expression = "CASE";
+    bool saw_rule = false;
+    std::stringstream lines(rules);
+    std::string line;
+    while (std::getline(lines, line)) {
+        line = TrimString(line);
+        if (line.empty()) {
+            continue;
+        }
+
+        const auto delimiter = line.find("=>");
+        if (delimiter == std::string::npos) {
+            error = "RuleEngine: rules must use condition => value";
+            return false;
+        }
+
+        std::string condition_expression;
+        if (!BuildRuleEngineCondition(table, TrimString(line.substr(0, delimiter)),
+                                      condition_expression, error)) {
+            return false;
+        }
+
+        RuleEngineLiteral value_literal;
+        if (!BuildRuleEngineLiteral(TrimString(line.substr(delimiter + 2)),
+                                    value_literal, error)) {
+            return false;
+        }
+
+        expression += " WHEN " + condition_expression + " THEN " +
+                      value_literal.sql;
+        saw_rule = true;
+    }
+
+    if (!saw_rule) {
+        error = "RuleEngine: rules are required";
+        return false;
+    }
+
+    expression += " ELSE " + default_literal.sql + " END";
+    return true;
+}
+
 std::vector<std::string> ParseCommaSeparatedNames(const std::string& value) {
     std::vector<std::string> result;
     std::stringstream stream(value);
@@ -2612,6 +2755,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteExportCSV(node, ctx);
     case gui::NodeType::ExportJSON:
         return ExecuteExportJSON(node, ctx);
+    case gui::NodeType::RuleEngine:
+        return ExecuteRuleEngine(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -5049,6 +5194,75 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = output_path;
     return true;
+}
+
+bool PipelineExecutor::ExecuteRuleEngine(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("RuleEngine: No input dataset");
+        return false;
+    }
+
+    const auto rules_it = node.parameters.find("rules");
+    const std::string rules =
+        rules_it != node.parameters.end() ? rules_it->second : "";
+    const auto output_column_it = node.parameters.find("output_column");
+    const std::string output_column =
+        output_column_it != node.parameters.end() &&
+                !output_column_it->second.empty()
+            ? output_column_it->second
+            : "result";
+    const auto default_value_it = node.parameters.find("default_value");
+    const std::string default_value =
+        default_value_it != node.parameters.end() ? default_value_it->second
+                                                  : "NULL";
+    if (rules.empty()) {
+        ReportError("RuleEngine: rules are required");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("RuleEngine: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string case_expression;
+        std::string rule_error;
+        if (!BuildRuleEngineCaseExpression(input_table, rules, default_value,
+                                           case_expression, rule_error)) {
+            ReportError(rule_error);
+            return false;
+        }
+
+        const std::string temp_table = "temp_rule_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("RuleEngine: Failed to register table");
+            return false;
+        }
+
+        const std::string sql = "SELECT *, " + case_expression + " AS " +
+                                QuoteSqlIdentifier(output_column) + " FROM " +
+                                temp_table;
+        auto output_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+        if (!output_table) {
+            ReportError("RuleEngine: Query failed");
+            return false;
+        }
+
+        const std::string output_dataset_name =
+            "ds_ruleengine_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("RuleEngine error: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool PipelineExecutor::ExecuteRenameColumns(const Node& node, ExecutionContext& ctx) {

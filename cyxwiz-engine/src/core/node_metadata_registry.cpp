@@ -2286,7 +2286,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
         {{"output_column", "string", "result", "Output column name", {}, ""},
          {"rules", "string", "", "Rules (one per line: condition => value)", {}, ""},
          {"default_value", "string", "NULL", "Default value if no rule matches", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================
