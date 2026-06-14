@@ -1529,6 +1529,23 @@ Updated coverage:
 - Metadata tests assert that `TextVectorize` remains legacy-executor routed
   while resolving to typed `CountVectorizer` metadata.
 
+### Progress note: typed Text Tokenize compatibility coverage
+
+The legacy-only `TextTokenize` operator has been tied to the existing
+canonical `TextTokenizer` metadata while preserving `TextTokenize` as an
+executable legacy alias.
+
+Updated coverage:
+
+- The runtime capability map resolves `TextTokenize` to
+  `NodeType::TextTokenizer`.
+- `PipelineExecutor` routes the typed `TextTokenize` compatibility alias
+  through the existing legacy tokenization implementation.
+- Data Studio quick-add continues to expose canonical `TextTokenizer` instead
+  of the legacy `TextTokenize` alias.
+- Metadata tests assert that `TextTokenize` remains legacy-executor routed
+  while resolving to typed `TextTokenizer` metadata.
+
 At the moment, some nodes are:
 
 - over-exposed

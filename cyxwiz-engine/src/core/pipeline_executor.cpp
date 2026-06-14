@@ -2542,6 +2542,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteRenameColumns(node, ctx);
     case gui::NodeType::CountVectorizer:
         return ExecuteTextVectorize(node, ctx);
+    case gui::NodeType::TextTokenizer:
+        return ExecuteTextTokenize(node, ctx);
     default:
         handled = false;
         return false;

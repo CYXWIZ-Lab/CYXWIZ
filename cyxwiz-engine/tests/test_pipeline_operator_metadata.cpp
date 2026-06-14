@@ -841,7 +841,6 @@ int main() {
         "SaveDataset",
         "DeployToNodeEditor",
         "TextClean",
-        "TextTokenize",
     };
     std::set<std::string> observed_string_only_legacy_names;
 
@@ -1130,6 +1129,20 @@ int main() {
     Check(legacy_text_vectorize_type.has_value() &&
               *legacy_text_vectorize_type == gui::NodeType::CountVectorizer,
           "legacy TextVectorize runtime name should remain an executable alias");
+    const auto legacy_text_tokenize_support =
+        cyxwiz::ResolvePipelineRuntimeSupport("TextTokenize");
+    Check(legacy_text_tokenize_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "legacy TextTokenize runtime name should remain legacy-executor routed");
+    Check(legacy_text_tokenize_support.node_type.has_value() &&
+              *legacy_text_tokenize_support.node_type ==
+                  gui::NodeType::TextTokenizer,
+          "legacy TextTokenize runtime name should resolve to TextTokenizer metadata");
+    const auto legacy_text_tokenize_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("TextTokenize");
+    Check(legacy_text_tokenize_type.has_value() &&
+              *legacy_text_tokenize_type == gui::NodeType::TextTokenizer,
+          "legacy TextTokenize runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
