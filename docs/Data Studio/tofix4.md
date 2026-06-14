@@ -1643,6 +1643,21 @@ Updated coverage:
 - Runtime validation requires `column` and validates non-negative `row`.
 - Executor routing tests cover successful cell extraction.
 
+### Progress note: Cell Updater runtime implementation
+
+`CellUpdater` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `CellUpdater` metadata is now marked implemented.
+- The runtime capability map resolves `CellUpdater` to the legacy executor.
+- `PipelineExecutor` updates one requested row/column value and preserves the
+  remaining table rows and schema.
+- Runtime validation requires `column` and `value`, and validates
+  non-negative `row`.
+- Executor routing tests cover successful cell update.
+
 At the moment, some nodes are:
 
 - over-exposed

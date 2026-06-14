@@ -2919,6 +2919,28 @@ int main() {
     Check(ReadNumericValue(cell_value_table, "value", 0) == 20.0,
           "CellExtractor should return the requested row/column value");
 
+    const std::string cell_updater_json =
+        R"({"nodes":[)"
+        R"({"id":346,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":347,"type":"CellUpdater","name":"Update","parameters":{)"
+        R"("column":"y","row":"1","value":"99"}})"
+        R"(],"links":[{"start_node":346,"end_node":347}]})";
+
+    cyxwiz::PipelineExecutor cell_updater_executor;
+    Check(cell_updater_executor.ExecutePipeline(cell_updater_json),
+          "CellUpdater should update the requested table cell: " +
+              cell_updater_executor.GetLastError());
+    auto updated_cell = registry.GetArrowDataset("ds_cell_update_347");
+    Check(updated_cell != nullptr, "CellUpdater output dataset is registered");
+    auto updated_cell_table = updated_cell->GetArrowTable();
+    Check(updated_cell_table != nullptr, "CellUpdater output table exists");
+    Check(ReadNumericValue(updated_cell_table, "y", 1) == 99.0,
+          "CellUpdater should write the requested row/column value");
+    Check(ReadNumericValue(updated_cell_table, "y", 0) == 10.0,
+          "CellUpdater should preserve other rows");
+
     const std::string missing_rename_mapping_json =
         R"({"nodes":[)"
         R"({"id":45,"type":"DataInput","name":"Input","parameters":{)"

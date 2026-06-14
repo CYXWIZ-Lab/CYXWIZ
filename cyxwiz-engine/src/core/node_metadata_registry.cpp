@@ -2218,7 +2218,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
         {{"row", "int", "0", "Row index", {}, ""},
          {"column", "string", "", "Column name", {}, ""},
          {"value", "string", "", "New value (if not using input)", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TableCropper, NodeCategory::DataTransform, "Table Cropper", ICON_FA_COMPRESS,
         {"crop", "slice", "subset"}, 0, false,

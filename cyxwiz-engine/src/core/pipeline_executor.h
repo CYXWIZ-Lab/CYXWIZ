@@ -210,6 +210,7 @@ private:
     bool ExecuteMathFormula(const Node& node, ExecutionContext& ctx);
     bool ExecuteRenameColumns(const Node& node, ExecutionContext& ctx);
     bool ExecuteCellExtractor(const Node& node, ExecutionContext& ctx);
+    bool ExecuteCellUpdater(const Node& node, ExecutionContext& ctx);
     bool ExecuteExportCSV(const Node& node, ExecutionContext& ctx);
     // Helper methods
     void UpdateProgress(float progress, const std::string& status = "");  // Phase 8: Added status parameter

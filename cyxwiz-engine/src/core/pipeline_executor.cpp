@@ -2547,6 +2547,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteRenameColumns(node, ctx);
     case gui::NodeType::CellExtractor:
         return ExecuteCellExtractor(node, ctx);
+    case gui::NodeType::CellUpdater:
+        return ExecuteCellUpdater(node, ctx);
     case gui::NodeType::CountVectorizer:
         return ExecuteTextVectorize(node, ctx);
     case gui::NodeType::TextTokenizer:
@@ -5039,6 +5041,121 @@ bool PipelineExecutor::ExecuteCellExtractor(const Node& node, ExecutionContext& 
         return true;
     } catch (const std::exception& e) {
         ReportError("CellExtractor error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("CellUpdater: No input dataset");
+        return false;
+    }
+
+    const auto column_it = node.parameters.find("column");
+    const std::string column =
+        (column_it != node.parameters.end()) ? column_it->second : "";
+    if (column.empty()) {
+        ReportError("CellUpdater: column is required");
+        return false;
+    }
+
+    const auto value_it = node.parameters.find("value");
+    const std::string value =
+        (value_it != node.parameters.end()) ? value_it->second : "";
+    if (value.empty()) {
+        ReportError("CellUpdater: value is required");
+        return false;
+    }
+
+    const auto row_it = node.parameters.find("row");
+    const int row =
+        (row_it != node.parameters.end() && !row_it->second.empty())
+            ? std::stoi(row_it->second)
+            : 0;
+    if (row < 0) {
+        ReportError("CellUpdater: row must be >= 0");
+        return false;
+    }
+
+    std::string output_dataset_name = "ds_cell_update_" + std::to_string(node.id);
+    spdlog::info("[Data Studio] CellUpdater row={} column='{}' from '{}'",
+                 row, column, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("CellUpdater: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("CellUpdater: Input table is null");
+            return false;
+        }
+        const int column_index = input_table->schema()->GetFieldIndex(column);
+        if (column_index < 0) {
+            ReportError("CellUpdater: column '" + column + "' not found");
+            return false;
+        }
+        if (row >= input_table->num_rows()) {
+            ReportError("CellUpdater: row index out of range");
+            return false;
+        }
+
+        std::string update_value_expression;
+        std::string value_error;
+        if (!BuildFillMissingConstantExpression(
+                input_table->schema()->field(column_index), value,
+                update_value_expression, value_error)) {
+            ReportError("CellUpdater: unsupported value for column '" + column + "'");
+            return false;
+        }
+
+        const std::string temp_table = "temp_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("CellUpdater: Failed to register table");
+            return false;
+        }
+
+        std::vector<std::string> select_exprs;
+        select_exprs.reserve(input_table->num_columns());
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto field = input_table->schema()->field(i);
+            const std::string quoted_column = QuoteSqlIdentifier(field->name());
+            if (field->name() == column) {
+                select_exprs.push_back(
+                    "CASE WHEN row_number() OVER () - 1 = " +
+                    std::to_string(row) + " THEN " + update_value_expression +
+                    " ELSE " + quoted_column + " END AS " + quoted_column);
+            } else {
+                select_exprs.push_back(quoted_column);
+            }
+        }
+
+        std::string sql = "SELECT ";
+        for (size_t i = 0; i < select_exprs.size(); ++i) {
+            if (i > 0) {
+                sql += ", ";
+            }
+            sql += select_exprs[i];
+        }
+        sql += " FROM " + temp_table;
+
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+        if (!result_table) {
+            ReportError("CellUpdater: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("CellUpdater error: " + std::string(e.what()));
         return false;
     }
 }
