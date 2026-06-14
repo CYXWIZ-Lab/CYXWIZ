@@ -6,6 +6,7 @@
 #include "node_executors/pipeline_operator_factory.h"
 #include "pipeline_runtime_capabilities.h"
 #include <arrow/csv/api.h>
+#include <arrow/scalar.h>
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -13,6 +14,7 @@
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <fstream>
 #include <queue>
 #include <sstream>
 #include <future>
@@ -144,6 +146,79 @@ std::string QuoteSqlStringLiteral(const std::string& value) {
     }
     quoted += "'";
     return quoted;
+}
+
+std::string QuoteJsonString(const std::string& value) {
+    std::string quoted = "\"";
+    const char* hex = "0123456789abcdef";
+    for (unsigned char c : value) {
+        switch (c) {
+        case '"':
+            quoted += "\\\"";
+            break;
+        case '\\':
+            quoted += "\\\\";
+            break;
+        case '\b':
+            quoted += "\\b";
+            break;
+        case '\f':
+            quoted += "\\f";
+            break;
+        case '\n':
+            quoted += "\\n";
+            break;
+        case '\r':
+            quoted += "\\r";
+            break;
+        case '\t':
+            quoted += "\\t";
+            break;
+        default:
+            if (c < 0x20) {
+                quoted += "\\u00";
+                quoted.push_back(hex[(c >> 4) & 0x0f]);
+                quoted.push_back(hex[c & 0x0f]);
+            } else {
+                quoted.push_back(static_cast<char>(c));
+            }
+            break;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+std::string ScalarToJsonValue(const std::shared_ptr<arrow::Scalar>& scalar) {
+    if (!scalar || !scalar->is_valid) {
+        return "null";
+    }
+
+    switch (scalar->type->id()) {
+    case arrow::Type::BOOL:
+        return std::static_pointer_cast<arrow::BooleanScalar>(scalar)->value
+                   ? "true"
+                   : "false";
+    case arrow::Type::STRING:
+        return QuoteJsonString(
+            std::static_pointer_cast<arrow::StringScalar>(scalar)->value);
+    case arrow::Type::LARGE_STRING:
+        return QuoteJsonString(
+            std::static_pointer_cast<arrow::LargeStringScalar>(scalar)->value);
+    case arrow::Type::INT8:
+    case arrow::Type::INT16:
+    case arrow::Type::INT32:
+    case arrow::Type::INT64:
+    case arrow::Type::UINT8:
+    case arrow::Type::UINT16:
+    case arrow::Type::UINT32:
+    case arrow::Type::UINT64:
+    case arrow::Type::FLOAT:
+    case arrow::Type::DOUBLE:
+        return scalar->ToString();
+    default:
+        return QuoteJsonString(scalar->ToString());
+    }
 }
 
 std::vector<std::string> ParseCommaSeparatedNames(const std::string& value) {
@@ -1366,7 +1441,7 @@ const char* MissingRequiredParameter(
             : "mapping";
     }
 
-    if (node_type == "ExportCSV") {
+    if (node_type == "ExportCSV" || node_type == "ExportJSON") {
         return (HasNonEmptyParameter(parameters, "file_path") ||
                 HasNonEmptyParameter(parameters, "path"))
             ? nullptr
@@ -2535,6 +2610,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteGroupBy(node, ctx);
     case gui::NodeType::ExportCSV:
         return ExecuteExportCSV(node, ctx);
+    case gui::NodeType::ExportJSON:
+        return ExecuteExportJSON(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -4905,6 +4982,72 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
 
     ctx.node_results[node.id] = input_dataset_name;
     ctx.output_dataset = path_it->second;
+    return true;
+}
+
+bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ExportJSON: No input dataset");
+        return false;
+    }
+
+    const std::string output_path = NormalizeDataOutputPath(node.parameters);
+    if (output_path.empty()) {
+        ReportError("ExportJSON: Missing output file path");
+        return false;
+    }
+
+    spdlog::info("[Data Studio] Exporting to JSON: {}", output_path);
+    auto& registry = DataRegistry::Instance();
+    auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+    if (!input_dataset) {
+        ReportError("ExportJSON: Input dataset not found in registry");
+        return false;
+    }
+
+    auto table = input_dataset->GetArrowTable();
+    if (!table || !table->schema()) {
+        ReportError("ExportJSON: Input table is null");
+        return false;
+    }
+
+    std::ofstream output(output_path, std::ios::binary);
+    if (!output) {
+        ReportError("ExportJSON: Failed to open output file");
+        return false;
+    }
+
+    output << "[\n";
+    for (int64_t row = 0; row < table->num_rows(); ++row) {
+        output << "  {";
+        for (int column = 0; column < table->num_columns(); ++column) {
+            if (column > 0) {
+                output << ", ";
+            }
+            output << QuoteJsonString(table->schema()->field(column)->name())
+                   << ": ";
+            auto scalar_result = table->column(column)->GetScalar(row);
+            if (!scalar_result.ok()) {
+                ReportError("ExportJSON: Failed to read scalar value");
+                return false;
+            }
+            output << ScalarToJsonValue(*scalar_result);
+        }
+        output << "}";
+        if (row + 1 < table->num_rows()) {
+            output << ",";
+        }
+        output << "\n";
+    }
+    output << "]\n";
+    if (!output) {
+        ReportError("ExportJSON: Failed to write output file");
+        return false;
+    }
+
+    ctx.node_results[node.id] = input_dataset_name;
+    ctx.output_dataset = output_path;
     return true;
 }
 

@@ -1255,6 +1255,16 @@ int main() {
         cyxwiz::ResolvePipelineRuntimeNodeType("Unpivot");
     Check(unpivot_type.has_value() && *unpivot_type == gui::NodeType::Unpivot,
           "Unpivot runtime name should resolve typed metadata");
+    const auto export_json_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ExportJSON);
+    Check(export_json_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "ExportJSON enum support should resolve to legacy executor");
+    const auto export_json_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("ExportJSON");
+    Check(export_json_type.has_value() &&
+              *export_json_type == gui::NodeType::ExportJSON,
+          "ExportJSON runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

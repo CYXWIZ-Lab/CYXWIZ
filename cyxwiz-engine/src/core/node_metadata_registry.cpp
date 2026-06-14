@@ -2162,7 +2162,7 @@ void NodeMetadataRegistry::InitializeExportNodes() {
         {"export", "json"}, 0, false, "Export to JSON", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.json"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ExportSQL, NodeCategory::DataSources, "Export SQL", ICON_FA_DATABASE,
         {"export", "sql", "database"}, 0, false, "Export to SQL DB", "", "",

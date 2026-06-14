@@ -1706,6 +1706,20 @@ Updated coverage:
 - Runtime validation rejects missing ID columns and output-name conflicts.
 - Executor routing tests cover successful unpivot execution.
 
+### Progress note: Export JSON runtime implementation
+
+`ExportJSON` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `ExportJSON` metadata is now marked implemented.
+- The runtime capability map resolves `ExportJSON` to the legacy executor.
+- `PipelineExecutor` writes Arrow table rows as a JSON array.
+- Export path handling accepts both `file_path` and the Data Studio `path`
+  alias, matching `ExportCSV`.
+- Executor routing tests cover real file creation and emitted JSON content.
+
 At the moment, some nodes are:
 
 - over-exposed

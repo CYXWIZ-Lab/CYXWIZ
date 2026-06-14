@@ -215,6 +215,7 @@ private:
     bool ExecuteColumnAppender(const Node& node, ExecutionContext& ctx);
     bool ExecuteUnpivot(const Node& node, ExecutionContext& ctx);
     bool ExecuteExportCSV(const Node& node, ExecutionContext& ctx);
+    bool ExecuteExportJSON(const Node& node, ExecutionContext& ctx);
     // Helper methods
     void UpdateProgress(float progress, const std::string& status = "");  // Phase 8: Added status parameter
     void ReportError(const std::string& error);

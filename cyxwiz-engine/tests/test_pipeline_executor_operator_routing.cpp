@@ -132,6 +132,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.csv";
     const fs::path export_csv_alias_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export_alias.csv";
+    const fs::path export_json_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.json";
     const fs::path data_output_mixed_case_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_mixed_case.csv";
     const fs::path data_output_path_alias_csv_path =
@@ -2847,17 +2849,22 @@ int main() {
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":38,"type":"ExportJSON","name":"Export","parameters":{)"
-        R"("file_path":"ignored.json"}})"
+        R"("file_path":")" + JsonEscapePath(export_json_path.string()) + R"("}})"
         R"(],"links":[{"start_node":37,"end_node":38}]})";
 
     cyxwiz::PipelineExecutor export_json_executor;
-    Check(!export_json_executor.ExecutePipeline(export_json_json),
-          "ExportJSON fake-success placeholder should fail closed");
-    Check(export_json_executor.GetLastError().find(
-              "legacy ExportJSON graph execution is not implemented") !=
-              std::string::npos,
-          "ExportJSON should use fail-closed runtime support: " +
+    Check(export_json_executor.ExecutePipeline(export_json_json),
+          "ExportJSON should write a real JSON file: " +
               export_json_executor.GetLastError());
+    Check(fs::exists(export_json_path),
+          "ExportJSON should create the output file");
+    std::ifstream exported_json(export_json_path);
+    std::string exported_json_body((std::istreambuf_iterator<char>(exported_json)),
+                                   std::istreambuf_iterator<char>());
+    Check(exported_json_body.find("\"x\": 1") != std::string::npos,
+          "ExportJSON should include numeric fields");
+    Check(exported_json_body.find("\"y\": 30") != std::string::npos,
+          "ExportJSON should include all input rows");
 
     const std::string dangling_link_json =
         R"({"nodes":[)"
