@@ -2672,6 +2672,9 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             // Get file type and options from parameters
             std::string file_type =
                 NormalizeDataInputFileType(node.parameters);
+            if (node.type == "ParquetInput" && file_type == "auto") {
+                file_type = "parquet";
+            }
 
             // Load based on file type
             if (file_type == "csv" || file_type == "tsv") {

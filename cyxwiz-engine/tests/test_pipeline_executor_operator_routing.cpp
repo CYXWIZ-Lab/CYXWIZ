@@ -2435,11 +2435,11 @@ int main() {
 
     cyxwiz::PipelineExecutor parquet_input_executor;
     Check(!parquet_input_executor.ExecutePipeline(parquet_input_json),
-          "legacy ParquetInput source should fail closed");
+          "legacy ParquetInput source should route to the DataInput loader");
     Check(parquet_input_executor.GetLastError().find(
-              "legacy ParquetInput execution is not implemented") !=
+              "legacy ParquetInput execution is not implemented") ==
               std::string::npos,
-          "ParquetInput should use fail-closed runtime support: " +
+          "ParquetInput should no longer use fail-closed runtime support: " +
               parquet_input_executor.GetLastError());
 
     const std::string bad_output_format_json =

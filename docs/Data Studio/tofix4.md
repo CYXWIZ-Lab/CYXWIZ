@@ -1614,6 +1614,21 @@ Updated coverage:
 - Metadata tests assert that legacy `PCA` resolves to typed `PCANode` metadata
   and no longer appears in the fail-closed exception list.
 
+### Progress note: typed Parquet Input compatibility coverage
+
+The legacy `ParquetInput` source alias has been tied to the existing
+`DataInput` runtime contract instead of remaining fail-closed.
+
+Updated coverage:
+
+- The runtime capability map resolves `ParquetInput` to `NodeType::DataInput`.
+- `PipelineExecutor` routes `ParquetInput` through `DataInput` and defaults
+  the legacy alias to `type=parquet` when no file type is supplied.
+- Metadata tests assert that legacy `ParquetInput` resolves to typed
+  `DataInput` metadata and no longer appears in the fail-closed exception list.
+- Executor routing tests assert that `ParquetInput` reaches the loader path
+  instead of failing through the fail-closed runtime path.
+
 At the moment, some nodes are:
 
 - over-exposed

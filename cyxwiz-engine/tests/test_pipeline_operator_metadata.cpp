@@ -723,7 +723,6 @@ int main() {
         // Legacy canvas aliases with no one-to-one metadata node. The current
         // typed metadata entries are DataSplit and DataInput.
         "TrainTestSplit",
-        "ParquetInput",
     };
 
     for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
@@ -1194,6 +1193,19 @@ int main() {
     Check(legacy_pca_type.has_value() &&
               *legacy_pca_type == gui::NodeType::PCANode,
           "legacy PCA runtime name should remain an executable alias");
+    const auto legacy_parquet_input_support =
+        cyxwiz::ResolvePipelineRuntimeSupport("ParquetInput");
+    Check(legacy_parquet_input_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "legacy ParquetInput runtime name should resolve to legacy executor");
+    Check(legacy_parquet_input_support.node_type.has_value() &&
+              *legacy_parquet_input_support.node_type == gui::NodeType::DataInput,
+          "legacy ParquetInput runtime name should resolve to DataInput metadata");
+    const auto legacy_parquet_input_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("ParquetInput");
+    Check(legacy_parquet_input_type.has_value() &&
+              *legacy_parquet_input_type == gui::NodeType::DataInput,
+          "legacy ParquetInput runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

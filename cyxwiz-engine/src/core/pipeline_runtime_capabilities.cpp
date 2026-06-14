@@ -150,7 +150,6 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::JSONPathExtractor},
         {"DataProfiler", "DataProfiler is a panel/report workflow, not a real PipelineExecutor transform",
          gui::NodeType::DataProfiler},
-        {"ParquetInput", "legacy ParquetInput execution is not implemented; use DataInput with type=parquet"},
         {"CellExtractor", "legacy CellExtractor graph execution is not implemented; old passthrough behavior is disabled",
          gui::NodeType::CellExtractor},
         {"CellUpdater", "legacy CellUpdater graph execution is not implemented; old passthrough behavior is disabled",
@@ -180,6 +179,7 @@ GetPipelineLegacyRuntimeCapabilities() {
     static const std::vector<PipelineLegacyRuntimeCapability> capabilities = {
         {"FileInput", gui::NodeType::CSVFile},
         {"DataInput", gui::NodeType::DataInput},
+        {"ParquetInput", gui::NodeType::DataInput},
         {"DataOutput", gui::NodeType::DataOutput},
         {"DataConvert", gui::NodeType::DataConvert},
         {"FilterRows", gui::NodeType::FilterRows},
@@ -248,6 +248,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"ExcelInput", {"path"}},
         {"DataOutput", {"file_path"}},
         {"DataConvert", {"input_path", "output_path"}},
+        {"ParquetInput", {"file_path"}},
         {"ExportCSV", {"file_path"}},
         {"FilterRows", {"condition"}},
         {"SelectColumns", {"columns"}},
