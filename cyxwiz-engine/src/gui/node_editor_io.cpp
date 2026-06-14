@@ -23,6 +23,7 @@ static NodeType StringToNodeType(const std::string& type_str) {
         // Data pipeline - Smart I/O nodes
         {"DataInput", NodeType::DataInput},           // Smart universal data input (2 outputs: Features, Labels)
         {"DataOutput", NodeType::DataOutput},         // Smart universal data output
+        {"DeployToNodeEditorNode", NodeType::DeployToNodeEditorNode},
         // Legacy data input nodes
         {"Input", NodeType::DatasetInput},            // Pattern uses "Input" for legacy data input
         {"DatasetInput", NodeType::DatasetInput},     // Legacy single-output data input

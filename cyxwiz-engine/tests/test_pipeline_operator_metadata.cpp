@@ -836,9 +836,7 @@ int main() {
         }
     }
 
-    const std::set<std::string> expected_string_only_legacy_names = {
-        "DeployToNodeEditor",
-    };
+    const std::set<std::string> expected_string_only_legacy_names;
     std::set<std::string> observed_string_only_legacy_names;
 
     for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {
@@ -1169,6 +1167,23 @@ int main() {
     Check(legacy_save_dataset_type.has_value() &&
               *legacy_save_dataset_type == gui::NodeType::DataOutput,
           "legacy SaveDataset runtime name should remain an executable alias");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::DeployToNodeEditorNode)) == "DeployToNodeEditorNode",
+          "runtime enum lookup for DeployToNodeEditorNode should prefer canonical spelling");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(
+              gui::NodeType::DeployToNodeEditorNode).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "DeployToNodeEditorNode enum support should resolve to legacy executor");
+    const auto canonical_deploy_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("DeployToNodeEditorNode");
+    Check(canonical_deploy_type.has_value() &&
+              *canonical_deploy_type == gui::NodeType::DeployToNodeEditorNode,
+          "canonical DeployToNodeEditorNode runtime name should resolve to typed metadata");
+    const auto legacy_deploy_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("DeployToNodeEditor");
+    Check(legacy_deploy_type.has_value() &&
+              *legacy_deploy_type == gui::NodeType::DeployToNodeEditorNode,
+          "legacy DeployToNodeEditor runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

@@ -1582,6 +1582,23 @@ Updated coverage:
 - Metadata tests assert that `SaveDataset` remains legacy-executor routed while
   resolving to typed `DataOutput` metadata.
 
+### Progress note: typed Deploy to Node Editor runtime coverage
+
+The legacy-only `DeployToNodeEditor` handoff node has been promoted behind a
+canonical `DeployToNodeEditorNode` runtime contract while preserving
+`DeployToNodeEditor` as an executable legacy alias.
+
+Updated coverage:
+
+- `NodeType::DeployToNodeEditorNode` is now serializable and registered in
+  metadata.
+- The runtime capability map resolves `DeployToNodeEditorNode` to the legacy
+  executor and keeps `DeployToNodeEditor` as a compatibility alias.
+- `PipelineExecutor` routes typed `DeployToNodeEditorNode` execution through
+  the existing deployment handoff implementation.
+- Metadata tests assert both canonical and compatibility runtime names resolve
+  to typed metadata.
+
 At the moment, some nodes are:
 
 - over-exposed

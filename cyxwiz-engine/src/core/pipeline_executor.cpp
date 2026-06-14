@@ -2503,6 +2503,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
             return ExecuteSaveDataset(node, ctx);
         }
         return ExecuteDataOutput(node, ctx);
+    case gui::NodeType::DeployToNodeEditorNode:
+        return ExecuteDeployToNodeEditor(node, ctx);
     case gui::NodeType::DataConvert:
         return ExecuteDataConvert(node, ctx);
     case gui::NodeType::FilterRows:

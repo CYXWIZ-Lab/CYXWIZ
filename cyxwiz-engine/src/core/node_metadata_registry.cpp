@@ -760,6 +760,14 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::DeployToNodeEditorNode, NodeCategory::DataSources, "Deploy to Node Editor", ICON_FA_FILE_EXPORT,
+        {"deploy", "node", "editor", "handoff", "dataset"}, 0, false,
+        "Mark a dataset ready for Node Editor deployment", "", "",
+        {{"Data", PinType::Dataset, true, "Input dataset"}},
+        {{"Dataset", PinType::Dataset, true, "Deployment-ready dataset"}},
+        {{"name", "string", "", "Deployment dataset name", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::DataConvert, NodeCategory::DataSources, "Data Convert", ICON_FA_RIGHT_LEFT,
         {"csv", "tsv", "parquet", "feather", "arrow", "ipc", "convert", "conversion", "format", "cache", "file"}, 0, false,
         "Convert datasets between supported table file formats", "", "",
