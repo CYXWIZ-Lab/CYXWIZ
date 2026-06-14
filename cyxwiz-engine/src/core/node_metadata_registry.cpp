@@ -2021,6 +2021,14 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
          {"rolling_aggregations", "string", "mean", "Rolling aggregations", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::TimeSeriesLag, NodeCategory::TimeSeries, "TS Lag", ICON_FA_CHART_LINE,
+        {"lag", "lagged", "time", "series"}, 0, false, "Add lag columns for one numeric time-series column", "", "",
+        {{"Data", PinType::Dataset, true, "Input time-ordered table"}},
+        {{"Lagged", PinType::Dataset, true, "Input table plus lag feature columns"}},
+        {{"columns", "string", "", "Numeric column to lag", {}, ""},
+         {"lag_periods", "string", "1", "Comma-separated lag periods", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::TimeSeriesSplit, NodeCategory::TimeSeries, "TS Split", ICON_FA_SCISSORS,
         {"split", "train", "test"}, 0, false, "Chronological split", "", "",
         {{"Data", PinType::Dataset, true, "Input time-ordered table"}},

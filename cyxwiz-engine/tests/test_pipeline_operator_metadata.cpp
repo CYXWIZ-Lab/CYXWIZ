@@ -845,7 +845,6 @@ int main() {
         "TextVectorize",
         "TSWindow",
         "TSFeatures",
-        "TSLag",
         "TSDiff",
     };
     std::set<std::string> observed_string_only_legacy_names;
@@ -1064,6 +1063,22 @@ int main() {
               *legacy_polynomial_features_type ==
                   gui::NodeType::PolynomialFeaturesNode,
           "legacy PolynomialFeatures runtime name should remain an executable alias");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::TimeSeriesLag)) == "TimeSeriesLag",
+          "runtime enum lookup for TimeSeriesLag should prefer canonical spelling");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::TimeSeriesLag).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "TimeSeriesLag enum support should resolve to legacy executor");
+    const auto canonical_ts_lag_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("TimeSeriesLag");
+    Check(canonical_ts_lag_type.has_value() &&
+              *canonical_ts_lag_type == gui::NodeType::TimeSeriesLag,
+          "canonical TimeSeriesLag runtime name should resolve to typed metadata");
+    const auto legacy_ts_lag_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("TSLag");
+    Check(legacy_ts_lag_type.has_value() &&
+              *legacy_ts_lag_type == gui::NodeType::TimeSeriesLag,
+          "legacy TSLag runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

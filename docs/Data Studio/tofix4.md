@@ -1443,6 +1443,26 @@ Updated coverage:
 - Executor routing tests cover canonical `PolynomialFeaturesNode` success and
   legacy `PolynomialFeatures` alias success.
 
+### Progress note: typed Time Series Lag runtime coverage
+
+The legacy-only `TSLag` operator has been promoted behind a canonical
+`TimeSeriesLag` runtime contract while preserving `TSLag` as an executable
+legacy alias.
+
+Updated coverage:
+
+- `NodeType::TimeSeriesLag` is now serializable and registered in metadata.
+- The runtime capability map resolves `TimeSeriesLag` to the legacy executor
+  and keeps `TSLag` as a compatibility alias.
+- `PipelineExecutor` routes typed `TimeSeriesLag` execution through the real
+  lag-column implementation.
+- Data Studio quick-add exposes `TimeSeriesLag` instead of the legacy `TSLag`
+  alias.
+- Metadata tests assert both canonical and compatibility runtime names resolve
+  to typed metadata.
+- Executor routing tests cover canonical `TimeSeriesLag` success and legacy
+  `TSLag` alias success.
+
 At the moment, some nodes are:
 
 - over-exposed

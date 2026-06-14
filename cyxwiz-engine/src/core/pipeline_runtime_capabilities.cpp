@@ -188,6 +188,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"RemoveDuplicates", gui::NodeType::RemoveDuplicateRows},
         {"BinningNode", gui::NodeType::BinningNode},
         {"PolynomialFeaturesNode", gui::NodeType::PolynomialFeaturesNode},
+        {"TimeSeriesLag", gui::NodeType::TimeSeriesLag},
         {"SaveDataset", std::nullopt,
          PipelineLegacyDispatchKind::SaveDataset,
          "legacy saved-pipeline graphs use this output node name; canonical "
@@ -217,9 +218,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"TSFeatures", std::nullopt, PipelineLegacyDispatchKind::TSFeatures,
          "legacy saved-pipeline graphs use pre-operator time-series "
          "preprocessing names"},
-        {"TSLag", std::nullopt, PipelineLegacyDispatchKind::TSLag,
-         "legacy saved-pipeline graphs use pre-operator time-series "
-         "preprocessing names"},
+        {"TSLag", gui::NodeType::TimeSeriesLag},
         {"TSDiff", std::nullopt, PipelineLegacyDispatchKind::TSDiff,
          "legacy saved-pipeline graphs use pre-operator time-series "
          "preprocessing names"},
@@ -278,6 +277,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"TextVectorize", {"text_column"}},
         {"TSWindow", {"target_column"}},
         {"TSFeatures", {"columns"}},
+        {"TimeSeriesLag", {"columns"}},
         {"TSLag", {"columns"}},
         {"TSDiff", {"columns"}},
         {"PolynomialFeaturesNode", {"columns"}},
@@ -362,6 +362,7 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"TSWindow", "window_size", 1, false},
         {"TSWindow", "stride", 1, false},
         {"TSFeatures", "rolling_window", 1, false},
+        {"TimeSeriesLag", "lag_periods", 1, true},
         {"TSLag", "lag_periods", 1, true},
         {"TSDiff", "order", 1, false},
         {"PolynomialFeaturesNode", "degree", 2, false},

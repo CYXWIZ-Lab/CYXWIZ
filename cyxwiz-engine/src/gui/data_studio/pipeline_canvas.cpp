@@ -68,6 +68,7 @@ PipelineCanvas::GetQuickAddNodes() {
         {"Text Vectorize", "CountVectorizer"},
         {"TS Window", "TimeSeriesWindow"},
         {"TS Features", "TimeSeriesFeatures"},
+        {"TS Lag", "TimeSeriesLag"},
         {"TS Diff", "Differencing"},
         {"PCA", "PCANode"},
         {"Binning", "BinningNode"},
@@ -327,6 +328,9 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
     } else if (type == "TSLag") {
         node.parameters["columns"] = "value";
         node.parameters["lag_periods"] = "1,7,30";
+    } else if (type == "TimeSeriesLag") {
+        node.parameters["columns"] = "value";
+        node.parameters["lag_periods"] = "1";
     } else if (type == "Differencing") {
         node.parameters["value_col"] = "value";
         node.parameters["lag"] = "1";
@@ -782,7 +786,7 @@ std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
                "Features: mean, std, min, max\n"
                "Input: Time-series dataset\n"
                "Output: Dataset with rolling features";
-    } else if (node_type == "TSLag") {
+    } else if (node_type == "TimeSeriesLag" || node_type == "TSLag") {
         return "Create lagged features (shifted values)\n"
                "Example: lag_1, lag_7, lag_30 for daily data\n"
                "Input: Time-series dataset\n"

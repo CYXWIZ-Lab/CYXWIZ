@@ -2512,6 +2512,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteBinning(node, ctx);
     case gui::NodeType::PolynomialFeaturesNode:
         return ExecutePolynomialFeatures(node, ctx);
+    case gui::NodeType::TimeSeriesLag:
+        return ExecuteTSLag(node, ctx);
     case gui::NodeType::FillMissingValues:
         return ExecuteFillMissing(node, ctx);
     case gui::NodeType::SortRows:
@@ -4188,9 +4190,12 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
 }
 
 bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
+    const std::string diagnostic_name =
+        node.type == "TimeSeriesLag" ? "TimeSeriesLag" : "TSLag";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TSLag: No input connection or dataset not found");
+        ReportError(diagnostic_name +
+                    ": No input connection or dataset not found");
         return false;
     }
 
@@ -4202,20 +4207,20 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
 
     std::string output_dataset_name = "ds_tslag_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TSLag (periods={}) on '{}' from '{}'",
-                lag_periods, columns, input_dataset_name);
+    spdlog::info("[Data Studio] {} (periods={}) on '{}' from '{}'",
+                 diagnostic_name, lag_periods, columns, input_dataset_name);
 
     try {
         auto& registry = DataRegistry::Instance();
         auto input_dataset = registry.GetArrowDataset(input_dataset_name);
         if (!input_dataset) {
-            ReportError("TSLag: Input dataset not found");
+            ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
 
         auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
-        if (!RequireColumnKind(input_table, "TSLag", columns,
+        if (!RequireColumnKind(input_table, diagnostic_name, columns,
                                "numeric", IsNumericArrowType,
                                schema_error)) {
             ReportError(schema_error);
@@ -4225,7 +4230,7 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TSLag: Failed to register table");
+            ReportError(diagnostic_name + ": Failed to register table");
             return false;
         }
 
@@ -4250,19 +4255,19 @@ bool PipelineExecutor::ExecuteTSLag(const Node& node, ExecutionContext& ctx) {
         duckdb_->UnregisterTable(temp_table);
 
         if (!result_table) {
-            ReportError("TSLag: Query failed");
+            ReportError(diagnostic_name + ": Query failed");
             return false;
         }
 
         registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TSLag completed: {} rows with lag features",
-                    result_table->num_rows());
+        spdlog::info("[Data Studio] {} completed: {} rows with lag features",
+                     diagnostic_name, result_table->num_rows());
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("TSLag error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }

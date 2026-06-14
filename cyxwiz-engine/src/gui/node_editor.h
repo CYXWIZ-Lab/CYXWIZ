@@ -298,6 +298,7 @@ enum class NodeType {
     // ===== Time-Series Nodes =====
     TimeSeriesWindow,   // Sliding window for sequential data
     TimeSeriesFeatures, // Lag, rolling, differencing features
+    TimeSeriesLag,      // Add lag columns for one numeric time-series column
     TimeSeriesSplit,    // Chronological train/val/test split
     LogTransform,       // log1p stabilization for exponential growth
     Differencing,       // Subtract lagged values to remove trend/seasonality

@@ -191,6 +191,7 @@ static NodeType StringToNodeType(const std::string& type_str) {
         // before training.
         {"TimeSeriesWindow", NodeType::TimeSeriesWindow},
         {"TimeSeriesFeatures", NodeType::TimeSeriesFeatures},
+        {"TimeSeriesLag", NodeType::TimeSeriesLag},
         {"TimeSeriesSplit", NodeType::TimeSeriesSplit},
         {"TimeSeriesCSV", NodeType::TimeSeriesCSV},
         {"LogTransform", NodeType::LogTransform},

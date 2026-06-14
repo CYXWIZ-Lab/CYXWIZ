@@ -4102,25 +4102,47 @@ int main() {
               0.001,
           "TSFeatures rolling mean should use requested column");
 
-    const std::string ts_lag_json =
+    const std::string time_series_lag_json =
         R"({"nodes":[)"
         R"({"id":144,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":145,"type":"TSLag","name":"Lag","parameters":{)"
+        R"({"id":145,"type":"TimeSeriesLag","name":"Lag","parameters":{)"
         R"("columns":"y","lag_periods":"1"}})"
         R"(],"links":[{"start_node":144,"end_node":145}]})";
 
-    cyxwiz::PipelineExecutor ts_lag_executor;
-    Check(ts_lag_executor.ExecutePipeline(ts_lag_json),
-          "TSLag should validate and quote numeric source column: " +
-              ts_lag_executor.GetLastError());
+    cyxwiz::PipelineExecutor time_series_lag_executor;
+    Check(time_series_lag_executor.ExecutePipeline(time_series_lag_json),
+          "TimeSeriesLag should validate and quote numeric source column: " +
+              time_series_lag_executor.GetLastError());
     auto ts_lag = registry.GetArrowDataset("ds_tslag_145");
-    Check(ts_lag != nullptr, "TSLag output dataset is registered");
+    Check(ts_lag != nullptr, "TimeSeriesLag output dataset is registered");
     auto ts_lag_table = ts_lag->GetArrowTable();
-    Check(ts_lag_table != nullptr, "TSLag output table exists");
+    Check(ts_lag_table != nullptr, "TimeSeriesLag output table exists");
     Check(ReadNumericValue(ts_lag_table, "y_lag1", 1) == 10.0,
-          "TSLag should create requested lag column");
+          "TimeSeriesLag should create requested lag column");
+
+    const std::string ts_lag_alias_json =
+        R"({"nodes":[)"
+        R"({"id":244,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":245,"type":"TSLag","name":"LagAlias","parameters":{)"
+        R"("columns":"y","lag_periods":"1"}})"
+        R"(],"links":[{"start_node":244,"end_node":245}]})";
+
+    cyxwiz::PipelineExecutor ts_lag_alias_executor;
+    Check(ts_lag_alias_executor.ExecutePipeline(ts_lag_alias_json),
+          "TSLag legacy alias should validate and quote numeric source column: " +
+              ts_lag_alias_executor.GetLastError());
+    auto ts_lag_alias = registry.GetArrowDataset("ds_tslag_245");
+    Check(ts_lag_alias != nullptr,
+          "TSLag legacy alias output dataset is registered");
+    auto ts_lag_alias_table = ts_lag_alias->GetArrowTable();
+    Check(ts_lag_alias_table != nullptr,
+          "TSLag legacy alias output table exists");
+    Check(ReadNumericValue(ts_lag_alias_table, "y_lag1", 1) == 10.0,
+          "TSLag legacy alias should create requested lag column");
 
     const std::string ts_diff_json =
         R"({"nodes":[)"
