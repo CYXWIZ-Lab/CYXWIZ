@@ -1209,6 +1209,8 @@ Implemented:
 - `PipelineCanvas` now exposes the canonical quick-add list through
   `GetQuickAddNodes()`, so the test verifies the same contract the UI
   renders instead of duplicating a stale list
+- typed quick-add nodes must also resolve to implemented metadata; the
+  only exception remains compatibility-only `TextClean`
 - tests explicitly reject the legacy aliases removed from quick-add:
   `ArrowDataset`, `FileInput`, `SaveDataset`, `RemoveDuplicates`,
   `TextTokenize`, `TextVectorize`, `TSWindow`, `TSFeatures`, `TSLag`,
@@ -1399,6 +1401,26 @@ Right now the engine has a node-coverage truth problem.
 The frontend node system is richer than the actual backend execution
 contract. That is acceptable during development only if the UI is honest
 about it.
+
+### Progress note: typed Binning runtime coverage
+
+The legacy-only `Binning` operator has been promoted behind a canonical
+`BinningNode` runtime contract while preserving `Binning` as an executable
+legacy alias.
+
+Updated coverage:
+
+- `NodeType::BinningNode` is now serializable and registered in metadata.
+- The runtime capability map resolves `BinningNode` to the legacy executor
+  and keeps `Binning` as a compatibility alias.
+- `PipelineExecutor` routes typed `BinningNode` execution through the real
+  binning implementation.
+- Data Studio quick-add exposes `BinningNode` instead of the legacy
+  `Binning` alias.
+- Metadata tests assert that quick-add nodes do not expose the legacy alias
+  and that both canonical and compatibility runtime names resolve correctly.
+- Executor routing tests cover canonical `BinningNode` success and legacy
+  `Binning` alias success.
 
 At the moment, some nodes are:
 

@@ -70,6 +70,7 @@ PipelineCanvas::GetQuickAddNodes() {
         {"TS Features", "TimeSeriesFeatures"},
         {"TS Diff", "Differencing"},
         {"PCA", "PCANode"},
+        {"Binning", "BinningNode"},
     };
     return nodes;
 }
@@ -203,7 +204,9 @@ void PipelineCanvas::RenderNodePalette() {
         ImGui::Spacing();
         ImGui::Text(ICON_FA_GEARS " Feature Engineering");
         ImGui::Separator();
-        RenderQuickAddItem(quick_add_nodes[quick_add_index++]);
+        while (quick_add_index < quick_add_nodes.size()) {
+            RenderQuickAddItem(quick_add_nodes[quick_add_index++]);
+        }
         ImGui::EndPopup();
     } else {
         show_node_palette_ = false;
@@ -336,6 +339,10 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
         node.parameters["n_components"] = "2";
         node.parameters["center"] = "true";
         node.parameters["scale"] = "false";
+    } else if (type == "BinningNode") {
+        node.parameters["columns"] = "value";
+        node.parameters["n_bins"] = "10";
+        node.parameters["method"] = "equal_width";
     } else if (type == "PolynomialFeatures") {
         node.parameters["degree"] = "2";
         node.parameters["columns"] = "";
@@ -786,6 +793,11 @@ std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
                "Reduces feature space while preserving variance\n"
                "Input: Numeric dataset\n"
                "Output: Transformed dataset";
+    } else if (node_type == "BinningNode") {
+        return "Bin one numeric column into discrete buckets\n"
+               "Methods: equal width, equal frequency\n"
+               "Input: Numeric dataset\n"
+               "Output: Dataset with bin column";
     } else if (node_type == "PolynomialFeatures") {
         return "Generate polynomial features (x^2, x^3, etc.)\n"
                "Useful for capturing non-linear relationships\n"

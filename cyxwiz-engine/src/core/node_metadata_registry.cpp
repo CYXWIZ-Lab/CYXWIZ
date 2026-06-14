@@ -987,6 +987,15 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {{"Unique", PinType::Dataset, true, "Unique rows"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::BinningNode, NodeCategory::DataTransform, "Binning", ICON_FA_CHART_COLUMN,
+        {"bin", "binning", "bucket", "discretize"}, 0, false, "Bin one numeric column", "", "",
+        {{"Table", PinType::Dataset, true, "Input"}},
+        {{"Binned", PinType::Dataset, true, "Dataset with bin column"}},
+        {{"columns", "string", "", "Numeric column", {}, ""},
+         {"method", "enum", "equal_width", "Method", {"equal_width", "equal_freq", "equal_frequency"}, ""},
+         {"n_bins", "int", "10", "Number of bins", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::Normalize, NodeCategory::DataTransform, "Normalizer", ICON_FA_SCALE_BALANCED,
         {"normalize", "scale"}, 0, false, "Normalize values", "", "",
         {{"Data", PinType::Tensor, true, "Input"}},

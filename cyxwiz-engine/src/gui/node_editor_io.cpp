@@ -153,6 +153,7 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"LabelEncoder", NodeType::LabelEncoder},
         {"OrdinalEncoder", NodeType::OrdinalEncoder},
         {"TargetEncoder", NodeType::TargetEncoder},
+        {"BinningNode", NodeType::BinningNode},
         {"OutlierDetector", NodeType::OutlierDetector},
         {"PCANode", NodeType::PCANode},
         {"KMeansCluster", NodeType::KMeansCluster},

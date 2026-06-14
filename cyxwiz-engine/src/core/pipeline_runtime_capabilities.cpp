@@ -186,6 +186,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"SelectColumns", gui::NodeType::SelectColumns},
         {"RemoveDuplicateRows", gui::NodeType::RemoveDuplicateRows},
         {"RemoveDuplicates", gui::NodeType::RemoveDuplicateRows},
+        {"BinningNode", gui::NodeType::BinningNode},
         {"SaveDataset", std::nullopt,
          PipelineLegacyDispatchKind::SaveDataset,
          "legacy saved-pipeline graphs use this output node name; canonical "
@@ -225,9 +226,7 @@ GetPipelineLegacyRuntimeCapabilities() {
          PipelineLegacyDispatchKind::PolynomialFeatures,
          "legacy saved-pipeline graphs use this feature-engineering node "
          "name; no browser-visible typed metadata exists"},
-        {"Binning", std::nullopt, PipelineLegacyDispatchKind::Binning,
-         "legacy saved-pipeline graphs use this feature-engineering node "
-         "name; no browser-visible typed metadata exists"},
+        {"Binning", gui::NodeType::BinningNode},
         {"ExportCSV", gui::NodeType::ExportCSV},
         {"RowToColumnNames", gui::NodeType::RowToColumnNames},
         {"TableCropper", gui::NodeType::TableCropper},
@@ -284,6 +283,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"TSLag", {"columns"}},
         {"TSDiff", {"columns"}},
         {"PolynomialFeatures", {"columns"}},
+        {"BinningNode", {"columns"}},
         {"Binning", {"columns"}},
         {"StringManipulation", {"column"}},
         {"MathFormula", {"formula"}},
@@ -333,6 +333,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"SortRows", "order", "asc", {"asc", "desc"}},
         {"SortRows", "ascending", "true", {"true", "false"}},
         {"Join", "join_type", "inner", {"inner", "left", "right", "outer"}},
+        {"BinningNode", "method", "equal_width", {"equal_width", "equal_freq", "equal_frequency"}},
         {"Binning", "method", "equal_width", {"equal_width", "equal_freq", "equal_frequency"}},
         {"TextTokenize", "method", "word", {"word", "sentence", "character"}},
         {"TextTokenizer", "tokenizer_type", "1", {"0", "1", "2"}},
@@ -365,6 +366,7 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"TSLag", "lag_periods", 1, true},
         {"TSDiff", "order", 1, false},
         {"PolynomialFeatures", "degree", 2, false},
+        {"BinningNode", "n_bins", 1, false},
         {"Binning", "n_bins", 1, false},
         {"RowToColumnNames", "row_index", 0, false},
         {"TableCropper", "start_row", 0, false},

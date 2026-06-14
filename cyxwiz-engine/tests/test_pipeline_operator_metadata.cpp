@@ -590,6 +590,13 @@ int main() {
             Check(support.node_type.has_value(),
                   "Data Studio quick-add canonical node should resolve typed metadata: " +
                       type_id);
+            const auto* meta = metadata.GetMetadata(*support.node_type);
+            Check(meta != nullptr,
+                  "Data Studio quick-add canonical node metadata missing: " +
+                      type_id);
+            Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+                  "Data Studio quick-add canonical node should be implemented metadata: " +
+                      type_id);
         }
     }
     for (const auto& legacy_alias : disallowed_quick_add_legacy_aliases) {
@@ -841,7 +848,6 @@ int main() {
         "TSLag",
         "TSDiff",
         "PolynomialFeatures",
-        "Binning",
     };
     std::set<std::string> observed_string_only_legacy_names;
 
@@ -1024,6 +1030,22 @@ int main() {
     Check(legacy_dedup_type.has_value() &&
               *legacy_dedup_type == gui::NodeType::RemoveDuplicateRows,
           "legacy RemoveDuplicates runtime name should remain an executable alias");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::BinningNode)) == "BinningNode",
+          "runtime enum lookup for BinningNode should prefer canonical spelling");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::BinningNode).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "BinningNode enum support should resolve to legacy executor");
+    const auto canonical_binning_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("BinningNode");
+    Check(canonical_binning_type.has_value() &&
+              *canonical_binning_type == gui::NodeType::BinningNode,
+          "canonical BinningNode runtime name should resolve to typed metadata");
+    const auto legacy_binning_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("Binning");
+    Check(legacy_binning_type.has_value() &&
+              *legacy_binning_type == gui::NodeType::BinningNode,
+          "legacy Binning runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

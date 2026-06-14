@@ -3586,29 +3586,29 @@ int main() {
           "TFIDFVectorizer malformed boolean error should be specific: " +
               tfidf_vectorizer_bad_bool_executor.GetLastError());
 
-    const std::string binning_json =
+    const std::string binning_node_json =
         R"({"nodes":[)"
         R"({"id":71,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":72,"type":"Binning","name":"Bin","parameters":{)"
+        R"({"id":72,"type":"BinningNode","name":"Bin","parameters":{)"
         R"("columns":"x","method":"equal_width","n_bins":"2"}})"
         R"(],"links":[{"start_node":71,"end_node":72}]})";
 
-    cyxwiz::PipelineExecutor binning_executor;
-    Check(binning_executor.ExecutePipeline(binning_json),
-          "Binning equal_width should execute real bins: " +
-              binning_executor.GetLastError());
+    cyxwiz::PipelineExecutor binning_node_executor;
+    Check(binning_node_executor.ExecutePipeline(binning_node_json),
+          "BinningNode equal_width should execute real bins: " +
+              binning_node_executor.GetLastError());
     auto binned = registry.GetArrowDataset("ds_binning_72");
-    Check(binned != nullptr, "Binning output dataset is registered");
+    Check(binned != nullptr, "BinningNode output dataset is registered");
     auto binned_table = binned->GetArrowTable();
-    Check(binned_table != nullptr, "Binning output table exists");
+    Check(binned_table != nullptr, "BinningNode output table exists");
     Check(binned_table->num_columns() == 3,
-          "Binning output should only add the requested bin column");
+          "BinningNode output should only add the requested bin column");
     Check(ReadNumericValue(binned_table, "x_bin", 0) == 1.0,
-          "Binning equal_width should place minimum in first bin");
+          "BinningNode equal_width should place minimum in first bin");
     Check(ReadNumericValue(binned_table, "x_bin", 2) == 2.0,
-          "Binning equal_width should place maximum in last bin");
+          "BinningNode equal_width should place maximum in last bin");
 
     const std::string binning_equal_frequency_alias_json =
         R"({"nodes":[)"

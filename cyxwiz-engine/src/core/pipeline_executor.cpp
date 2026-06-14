@@ -1625,11 +1625,11 @@ bool HasSupportedParameterValues(
         }
     }
 
-    if (node_type == "Binning") {
+    if (node_type == "BinningNode" || node_type == "Binning") {
         const auto columns_it = parameters.find("columns");
         if (columns_it != parameters.end() &&
             columns_it->second.find(',') != std::string::npos) {
-            error = "Binning columns supports exactly one column";
+            error = node_type + " columns supports exactly one column";
             return false;
         }
     }
@@ -2507,6 +2507,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteSelectColumns(node, ctx);
     case gui::NodeType::RemoveDuplicateRows:
         return ExecuteRemoveDuplicates(node, ctx);
+    case gui::NodeType::BinningNode:
+        return ExecuteBinning(node, ctx);
     case gui::NodeType::FillMissingValues:
         return ExecuteFillMissing(node, ctx);
     case gui::NodeType::SortRows:
@@ -4428,16 +4430,18 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
 }
 
 bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
+    const std::string diagnostic_name =
+        node.type == "BinningNode" ? "BinningNode" : "Binning";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("Binning: No input connection or dataset not found");
+        ReportError(diagnostic_name + ": No input connection or dataset not found");
         return false;
     }
 
     auto column_it = node.parameters.find("columns");
     std::string column = (column_it != node.parameters.end()) ? column_it->second : "";
     if (column.empty()) {
-        ReportError("Binning: Column name required");
+        ReportError(diagnostic_name + ": Column name required");
         return false;
     }
 
@@ -4452,20 +4456,20 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
 
     std::string output_dataset_name = "ds_binning_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Binning (method={}, bins={}) on '{}' from '{}'",
-                method, n_bins, column, input_dataset_name);
+    spdlog::info("[Data Studio] {} (method={}, bins={}) on '{}' from '{}'",
+                diagnostic_name, method, n_bins, column, input_dataset_name);
 
     try {
         auto& registry = DataRegistry::Instance();
         auto input_dataset = registry.GetArrowDataset(input_dataset_name);
         if (!input_dataset) {
-            ReportError("Binning: Input dataset not found");
+            ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
 
         auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
-        if (!RequireColumnKind(input_table, "Binning", column,
+        if (!RequireColumnKind(input_table, diagnostic_name, column,
                                "numeric", IsNumericArrowType, schema_error)) {
             ReportError(schema_error);
             return false;
@@ -4473,7 +4477,7 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("Binning: Failed to register table");
+            ReportError(diagnostic_name + ": Failed to register table");
             return false;
         }
 
@@ -4498,7 +4502,7 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
                   quoted_column + ") AS DOUBLE) AS max_value FROM " + temp_table +
                   ") stats";
         } else {
-            ReportError("Binning: Unsupported method '" + method + "'");
+            ReportError(diagnostic_name + ": Unsupported method '" + method + "'");
             return false;
         }
 
@@ -4506,19 +4510,19 @@ bool PipelineExecutor::ExecuteBinning(const Node& node, ExecutionContext& ctx) {
         duckdb_->UnregisterTable(temp_table);
 
         if (!result_table) {
-            ReportError("Binning: Query failed");
+            ReportError(diagnostic_name + ": Query failed");
             return false;
         }
 
         registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] Binning completed: {} rows with {} bins",
-                    result_table->num_rows(), n_bins);
+        spdlog::info("[Data Studio] {} completed: {} rows with {} bins",
+                    diagnostic_name, result_table->num_rows(), n_bins);
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("Binning error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }

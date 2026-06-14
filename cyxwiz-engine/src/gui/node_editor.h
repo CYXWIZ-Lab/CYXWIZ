@@ -429,6 +429,7 @@ enum class NodeType {
     LabelEncoder,       // Encode categorical labels as integers
     OrdinalEncoder,     // Encode ordinal categories
     TargetEncoder,      // Target-based encoding
+    BinningNode,        // Bin continuous numeric columns
     // (TrainTestSplit removed — use DataSplit, which supports 3-way train/val/test)
 
     // ===== Advanced Preprocessing Nodes (Phase 3 - UI Consolidation) =====
