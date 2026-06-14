@@ -2899,6 +2899,26 @@ int main() {
     Check(renamed_table->schema()->GetFieldIndex("x") < 0,
           "RenameColumns should remove old x field name");
 
+    const std::string cell_extractor_json =
+        R"({"nodes":[)"
+        R"({"id":344,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":345,"type":"CellExtractor","name":"Extract","parameters":{)"
+        R"("column":"y","row":"1"}})"
+        R"(],"links":[{"start_node":344,"end_node":345}]})";
+
+    cyxwiz::PipelineExecutor cell_extractor_executor;
+    Check(cell_extractor_executor.ExecutePipeline(cell_extractor_json),
+          "CellExtractor should extract the requested table cell: " +
+              cell_extractor_executor.GetLastError());
+    auto cell_value = registry.GetArrowDataset("ds_cell_345");
+    Check(cell_value != nullptr, "CellExtractor output dataset is registered");
+    auto cell_value_table = cell_value->GetArrowTable();
+    Check(cell_value_table != nullptr, "CellExtractor output table exists");
+    Check(ReadNumericValue(cell_value_table, "value", 0) == 20.0,
+          "CellExtractor should return the requested row/column value");
+
     const std::string missing_rename_mapping_json =
         R"({"nodes":[)"
         R"({"id":45,"type":"DataInput","name":"Input","parameters":{)"

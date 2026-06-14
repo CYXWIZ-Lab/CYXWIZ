@@ -150,8 +150,6 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::JSONPathExtractor},
         {"DataProfiler", "DataProfiler is a panel/report workflow, not a real PipelineExecutor transform",
          gui::NodeType::DataProfiler},
-        {"CellExtractor", "legacy CellExtractor graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::CellExtractor},
         {"CellUpdater", "legacy CellUpdater graph execution is not implemented; old passthrough behavior is disabled",
          gui::NodeType::CellUpdater},
         {"ColumnAppender", "legacy ColumnAppender graph execution is not implemented; old passthrough behavior is disabled",
@@ -212,6 +210,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"StringManipulation", gui::NodeType::StringManipulation},
         {"MathFormula", gui::NodeType::MathFormula},
         {"RenameColumns", gui::NodeType::RenameColumns},
+        {"CellExtractor", gui::NodeType::CellExtractor},
     };
     return capabilities;
 }
@@ -271,6 +270,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"StringManipulation", {"column"}},
         {"MathFormula", {"formula"}},
         {"RenameColumns", {"mapping"}},
+        {"CellExtractor", {"column"}},
         {"TimeSeriesWindow", {"value_col"}},
         {"TimeSeriesFeatures", {"value_col"}},
         {"LogTransform", {"value_col"}},
@@ -356,6 +356,7 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"RowToColumnNames", "row_index", 0, false},
         {"TableCropper", "start_row", 0, false},
         {"TableCropper", "end_row", -1, false},
+        {"CellExtractor", "row", 0, false},
         {"TimeSeriesWindow", "input_width", 1, false},
         {"TimeSeriesWindow", "shift", 1, false},
         {"TimeSeriesFeatures", "lag_values", 1, true},

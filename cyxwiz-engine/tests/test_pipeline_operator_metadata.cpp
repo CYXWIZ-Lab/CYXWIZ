@@ -1206,6 +1206,16 @@ int main() {
     Check(legacy_parquet_input_type.has_value() &&
               *legacy_parquet_input_type == gui::NodeType::DataInput,
           "legacy ParquetInput runtime name should remain an executable alias");
+    const auto cell_extractor_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::CellExtractor);
+    Check(cell_extractor_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "CellExtractor enum support should resolve to legacy executor");
+    const auto cell_extractor_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("CellExtractor");
+    Check(cell_extractor_type.has_value() &&
+              *cell_extractor_type == gui::NodeType::CellExtractor,
+          "CellExtractor runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

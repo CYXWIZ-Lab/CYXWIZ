@@ -2545,6 +2545,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteMathFormula(node, ctx);
     case gui::NodeType::RenameColumns:
         return ExecuteRenameColumns(node, ctx);
+    case gui::NodeType::CellExtractor:
+        return ExecuteCellExtractor(node, ctx);
     case gui::NodeType::CountVectorizer:
         return ExecuteTextVectorize(node, ctx);
     case gui::NodeType::TextTokenizer:
@@ -4965,6 +4967,78 @@ bool PipelineExecutor::ExecuteRenameColumns(const Node& node, ExecutionContext& 
         return true;
     } catch (const std::exception& e) {
         ReportError("RenameColumns error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteCellExtractor(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("CellExtractor: No input dataset");
+        return false;
+    }
+
+    const auto column_it = node.parameters.find("column");
+    const std::string column =
+        (column_it != node.parameters.end()) ? column_it->second : "";
+    if (column.empty()) {
+        ReportError("CellExtractor: column is required");
+        return false;
+    }
+
+    const auto row_it = node.parameters.find("row");
+    const int row =
+        (row_it != node.parameters.end() && !row_it->second.empty())
+            ? std::stoi(row_it->second)
+            : 0;
+
+    std::string output_dataset_name = "ds_cell_" + std::to_string(node.id);
+    spdlog::info("[Data Studio] CellExtractor row={} column='{}' from '{}'",
+                 row, column, input_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("CellExtractor: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("CellExtractor: Input table is null");
+            return false;
+        }
+        if (input_table->schema()->GetFieldIndex(column) < 0) {
+            ReportError("CellExtractor: column '" + column + "' not found");
+            return false;
+        }
+        if (row >= input_table->num_rows()) {
+            ReportError("CellExtractor: row index out of range");
+            return false;
+        }
+
+        const std::string temp_table = "temp_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("CellExtractor: Failed to register table");
+            return false;
+        }
+
+        const std::string sql =
+            "SELECT " + QuoteSqlIdentifier(column) + " AS value FROM " +
+            temp_table + " LIMIT 1 OFFSET " + std::to_string(row);
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+        if (!result_table || result_table->num_rows() != 1) {
+            ReportError("CellExtractor: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("CellExtractor error: " + std::string(e.what()));
         return false;
     }
 }

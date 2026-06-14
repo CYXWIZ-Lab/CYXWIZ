@@ -2207,7 +2207,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
          {"Table", PinType::Dataset, true, "Table passthrough"}},
         {{"row", "int", "0", "Row index", {}, ""},
          {"column", "string", "", "Column name", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CellUpdater, NodeCategory::DataTransform, "Cell Updater", ICON_FA_PEN,
         {"cell", "update", "modify"}, 0, false,

@@ -1629,6 +1629,20 @@ Updated coverage:
 - Executor routing tests assert that `ParquetInput` reaches the loader path
   instead of failing through the fail-closed runtime path.
 
+### Progress note: Cell Extractor runtime implementation
+
+`CellExtractor` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `CellExtractor` metadata is now marked implemented.
+- The runtime capability map resolves `CellExtractor` to the legacy executor.
+- `PipelineExecutor` extracts one requested row/column value into a one-row
+  dataset named `ds_cell_<node_id>`.
+- Runtime validation requires `column` and validates non-negative `row`.
+- Executor routing tests cover successful cell extraction.
+
 At the moment, some nodes are:
 
 - over-exposed
