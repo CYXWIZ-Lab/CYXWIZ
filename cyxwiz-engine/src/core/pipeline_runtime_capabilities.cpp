@@ -215,9 +215,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"TSWindow", gui::NodeType::TimeSeriesWindow},
         {"TSFeatures", gui::NodeType::TimeSeriesFeatures},
         {"TSLag", gui::NodeType::TimeSeriesLag},
-        {"TSDiff", std::nullopt, PipelineLegacyDispatchKind::TSDiff,
-         "legacy saved-pipeline graphs use pre-operator time-series "
-         "preprocessing names"},
+        {"TSDiff", gui::NodeType::Differencing},
         {"PolynomialFeatures", gui::NodeType::PolynomialFeaturesNode},
         {"Binning", gui::NodeType::BinningNode},
         {"ExportCSV", gui::NodeType::ExportCSV},

@@ -843,7 +843,6 @@ int main() {
         "TextClean",
         "TextTokenize",
         "TextVectorize",
-        "TSDiff",
     };
     std::set<std::string> observed_string_only_legacy_names;
 
@@ -1105,6 +1104,19 @@ int main() {
     Check(legacy_ts_features_type.has_value() &&
               *legacy_ts_features_type == gui::NodeType::TimeSeriesFeatures,
           "legacy TSFeatures runtime name should remain an executable alias");
+    const auto legacy_ts_diff_support =
+        cyxwiz::ResolvePipelineRuntimeSupport("TSDiff");
+    Check(legacy_ts_diff_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "legacy TSDiff runtime name should remain legacy-executor routed");
+    Check(legacy_ts_diff_support.node_type.has_value() &&
+              *legacy_ts_diff_support.node_type == gui::NodeType::Differencing,
+          "legacy TSDiff runtime name should resolve to Differencing metadata");
+    const auto legacy_ts_diff_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("TSDiff");
+    Check(legacy_ts_diff_type.has_value() &&
+              *legacy_ts_diff_type == gui::NodeType::Differencing,
+          "legacy TSDiff runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

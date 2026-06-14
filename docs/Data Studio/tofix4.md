@@ -1496,6 +1496,22 @@ Updated coverage:
 - Metadata tests assert that `TSFeatures` remains legacy-executor routed while
   resolving to typed `TimeSeriesFeatures` metadata.
 
+### Progress note: typed Time Series Differencing compatibility coverage
+
+The legacy-only `TSDiff` operator has been tied to the existing canonical
+`Differencing` metadata while preserving `TSDiff` as an executable legacy
+alias.
+
+Updated coverage:
+
+- The runtime capability map resolves `TSDiff` to `NodeType::Differencing`.
+- `PipelineExecutor` routes the typed `TSDiff` compatibility alias through the
+  existing legacy differencing implementation.
+- Data Studio quick-add continues to expose canonical `Differencing` instead
+  of the legacy `TSDiff` alias.
+- Metadata tests assert that `TSDiff` remains legacy-executor routed while
+  resolving to typed `Differencing` metadata.
+
 At the moment, some nodes are:
 
 - over-exposed
