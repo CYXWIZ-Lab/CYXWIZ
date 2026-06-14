@@ -213,9 +213,7 @@ GetPipelineLegacyRuntimeCapabilities() {
          "legacy saved-pipeline graphs use pre-operator text preprocessing "
          "names"},
         {"TSWindow", gui::NodeType::TimeSeriesWindow},
-        {"TSFeatures", std::nullopt, PipelineLegacyDispatchKind::TSFeatures,
-         "legacy saved-pipeline graphs use pre-operator time-series "
-         "preprocessing names"},
+        {"TSFeatures", gui::NodeType::TimeSeriesFeatures},
         {"TSLag", gui::NodeType::TimeSeriesLag},
         {"TSDiff", std::nullopt, PipelineLegacyDispatchKind::TSDiff,
          "legacy saved-pipeline graphs use pre-operator time-series "

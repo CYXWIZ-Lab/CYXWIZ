@@ -2516,6 +2516,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteTSLag(node, ctx);
     case gui::NodeType::TimeSeriesWindow:
         return ExecuteTSWindow(node, ctx);
+    case gui::NodeType::TimeSeriesFeatures:
+        return ExecuteTSFeatures(node, ctx);
     case gui::NodeType::FillMissingValues:
         return ExecuteFillMissing(node, ctx);
     case gui::NodeType::SortRows:

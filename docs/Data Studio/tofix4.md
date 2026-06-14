@@ -1479,6 +1479,23 @@ Updated coverage:
 - Metadata tests assert that `TSWindow` remains legacy-executor routed while
   resolving to typed `TimeSeriesWindow` metadata.
 
+### Progress note: typed Time Series Features compatibility coverage
+
+The legacy-only `TSFeatures` operator has been tied to the existing canonical
+`TimeSeriesFeatures` metadata while preserving `TSFeatures` as an executable
+legacy alias.
+
+Updated coverage:
+
+- The runtime capability map resolves `TSFeatures` to
+  `NodeType::TimeSeriesFeatures`.
+- `PipelineExecutor` routes the typed `TSFeatures` compatibility alias through
+  the existing legacy feature implementation.
+- Data Studio quick-add continues to expose canonical `TimeSeriesFeatures`
+  instead of the legacy `TSFeatures` alias.
+- Metadata tests assert that `TSFeatures` remains legacy-executor routed while
+  resolving to typed `TimeSeriesFeatures` metadata.
+
 At the moment, some nodes are:
 
 - over-exposed
