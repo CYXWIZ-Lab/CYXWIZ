@@ -1599,6 +1599,21 @@ Updated coverage:
 - Metadata tests assert both canonical and compatibility runtime names resolve
   to typed metadata.
 
+### Progress note: typed PCA compatibility coverage
+
+The legacy `PCA` canvas alias has been tied to the existing operator-backed
+`PCANode` runtime contract instead of remaining fail-closed.
+
+Updated coverage:
+
+- The runtime capability map resolves `PCA` to `NodeType::PCANode`.
+- `PCA` now advertises operator-backed support through the existing
+  `PCAOperator`.
+- Data Studio quick-add continues to expose canonical `PCANode` instead of the
+  legacy `PCA` alias.
+- Metadata tests assert that legacy `PCA` resolves to typed `PCANode` metadata
+  and no longer appears in the fail-closed exception list.
+
 At the moment, some nodes are:
 
 - over-exposed

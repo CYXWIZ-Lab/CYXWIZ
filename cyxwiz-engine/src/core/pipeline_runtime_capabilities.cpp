@@ -18,6 +18,7 @@ GetPipelineOperatorRuntimeCapabilities() {
         {"CountVectorizer", gui::NodeType::CountVectorizer},
         {"SentimentAnalyzer", gui::NodeType::SentimentAnalyzer},
         {"PCANode", gui::NodeType::PCANode},
+        {"PCA", gui::NodeType::PCANode},
         {"KMeansCluster", gui::NodeType::KMeansCluster},
         {"DBSCANCluster", gui::NodeType::DBSCANCluster},
         {"HierarchicalCluster", gui::NodeType::HierarchicalCluster},
@@ -48,7 +49,6 @@ GetPipelineOperatorRuntimeCapabilities() {
 const std::vector<PipelineFailClosedRuntimeCapability>&
 GetPipelineFailClosedRuntimeCapabilities() {
     static const std::vector<PipelineFailClosedRuntimeCapability> capabilities = {
-        {"PCA", "legacy PCA graph execution is not implemented; old passthrough behavior is disabled"},
         {"TSNENode", "legacy t-SNE graph execution is not implemented; old passthrough behavior is disabled",
          gui::NodeType::TSNENode},
         {"UMAPNode", "legacy UMAP graph execution is not implemented; old passthrough behavior is disabled",

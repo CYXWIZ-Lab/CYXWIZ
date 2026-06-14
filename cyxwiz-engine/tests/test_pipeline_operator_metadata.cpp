@@ -721,8 +721,7 @@ int main() {
 
     const std::set<std::string> allowed_untyped_fail_closed_names = {
         // Legacy canvas aliases with no one-to-one metadata node. The current
-        // typed metadata entries are PCANode, DataSplit, and DataInput.
-        "PCA",
+        // typed metadata entries are DataSplit and DataInput.
         "TrainTestSplit",
         "ParquetInput",
     };
@@ -1184,6 +1183,17 @@ int main() {
     Check(legacy_deploy_type.has_value() &&
               *legacy_deploy_type == gui::NodeType::DeployToNodeEditorNode,
           "legacy DeployToNodeEditor runtime name should remain an executable alias");
+    Check(std::string(cyxwiz::ResolvePipelineOperatorRuntimeLegacyTypeName(
+              gui::NodeType::PCANode)) == "PCANode",
+          "operator runtime enum lookup for PCANode should prefer canonical spelling");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport("PCA").mode ==
+              cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+          "legacy PCA runtime name should resolve to operator-backed support");
+    const auto legacy_pca_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("PCA");
+    Check(legacy_pca_type.has_value() &&
+              *legacy_pca_type == gui::NodeType::PCANode,
+          "legacy PCA runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
