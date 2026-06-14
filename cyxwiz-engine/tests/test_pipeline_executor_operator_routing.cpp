@@ -3684,29 +3684,51 @@ int main() {
           "Binning text column error should be specific: " +
               text_binning_executor.GetLastError());
 
-    const std::string polynomial_json =
+    const std::string polynomial_node_json =
         R"({"nodes":[)"
         R"({"id":77,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":78,"type":"PolynomialFeatures","name":"Poly","parameters":{)"
+        R"({"id":78,"type":"PolynomialFeaturesNode","name":"Poly","parameters":{)"
         R"("columns":"x","degree":"3"}})"
         R"(],"links":[{"start_node":77,"end_node":78}]})";
 
-    cyxwiz::PipelineExecutor polynomial_executor;
-    Check(polynomial_executor.ExecutePipeline(polynomial_json),
-          "PolynomialFeatures should generate requested powers: " +
-              polynomial_executor.GetLastError());
+    cyxwiz::PipelineExecutor polynomial_node_executor;
+    Check(polynomial_node_executor.ExecutePipeline(polynomial_node_json),
+          "PolynomialFeaturesNode should generate requested powers: " +
+              polynomial_node_executor.GetLastError());
     auto polynomial = registry.GetArrowDataset("ds_poly_78");
-    Check(polynomial != nullptr, "PolynomialFeatures output dataset is registered");
+    Check(polynomial != nullptr, "PolynomialFeaturesNode output dataset is registered");
     auto polynomial_table = polynomial->GetArrowTable();
-    Check(polynomial_table != nullptr, "PolynomialFeatures output table exists");
+    Check(polynomial_table != nullptr, "PolynomialFeaturesNode output table exists");
     Check(polynomial_table->num_columns() == 4,
-          "PolynomialFeatures degree 3 should add squared and cubed columns");
+          "PolynomialFeaturesNode degree 3 should add squared and cubed columns");
     Check(ReadNumericValue(polynomial_table, "x_squared", 2) == 9.0,
-          "PolynomialFeatures should compute squared values");
+          "PolynomialFeaturesNode should compute squared values");
     Check(ReadNumericValue(polynomial_table, "x_cubed", 2) == 27.0,
-          "PolynomialFeatures should compute cubed values");
+          "PolynomialFeaturesNode should compute cubed values");
+
+    const std::string polynomial_alias_json =
+        R"({"nodes":[)"
+        R"({"id":277,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":278,"type":"PolynomialFeatures","name":"PolyAlias","parameters":{)"
+        R"("columns":"x","degree":"2"}})"
+        R"(],"links":[{"start_node":277,"end_node":278}]})";
+
+    cyxwiz::PipelineExecutor polynomial_alias_executor;
+    Check(polynomial_alias_executor.ExecutePipeline(polynomial_alias_json),
+          "PolynomialFeatures legacy alias should generate requested powers: " +
+              polynomial_alias_executor.GetLastError());
+    auto polynomial_alias = registry.GetArrowDataset("ds_poly_278");
+    Check(polynomial_alias != nullptr,
+          "PolynomialFeatures legacy alias output dataset is registered");
+    auto polynomial_alias_table = polynomial_alias->GetArrowTable();
+    Check(polynomial_alias_table != nullptr,
+          "PolynomialFeatures legacy alias output table exists");
+    Check(ReadNumericValue(polynomial_alias_table, "x_squared", 2) == 9.0,
+          "PolynomialFeatures legacy alias should compute squared values");
 
     const std::string bad_polynomial_degree_json =
         R"({"nodes":[)"

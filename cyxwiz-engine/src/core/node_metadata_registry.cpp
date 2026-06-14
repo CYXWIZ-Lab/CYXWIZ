@@ -996,6 +996,14 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
          {"n_bins", "int", "10", "Number of bins", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::PolynomialFeaturesNode, NodeCategory::DataTransform, "Polynomial Features", ICON_FA_CHART_LINE,
+        {"polynomial", "features", "power", "squared", "cubed"}, 0, false, "Generate polynomial features for one numeric column", "", "",
+        {{"Table", PinType::Dataset, true, "Input"}},
+        {{"Features", PinType::Dataset, true, "Dataset with polynomial feature columns"}},
+        {{"columns", "string", "", "Numeric column", {}, ""},
+         {"degree", "int", "2", "Maximum polynomial degree", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::Normalize, NodeCategory::DataTransform, "Normalizer", ICON_FA_SCALE_BALANCED,
         {"normalize", "scale"}, 0, false, "Normalize values", "", "",
         {{"Data", PinType::Tensor, true, "Input"}},

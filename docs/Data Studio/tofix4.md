@@ -1422,6 +1422,27 @@ Updated coverage:
 - Executor routing tests cover canonical `BinningNode` success and legacy
   `Binning` alias success.
 
+### Progress note: typed Polynomial Features runtime coverage
+
+The legacy-only `PolynomialFeatures` operator has been promoted behind a
+canonical `PolynomialFeaturesNode` runtime contract while preserving
+`PolynomialFeatures` as an executable legacy alias.
+
+Updated coverage:
+
+- `NodeType::PolynomialFeaturesNode` is now serializable and registered in
+  metadata.
+- The runtime capability map resolves `PolynomialFeaturesNode` to the legacy
+  executor and keeps `PolynomialFeatures` as a compatibility alias.
+- `PipelineExecutor` routes typed `PolynomialFeaturesNode` execution through
+  the real polynomial feature implementation.
+- Data Studio quick-add exposes `PolynomialFeaturesNode` instead of the legacy
+  `PolynomialFeatures` alias.
+- Metadata tests assert both canonical and compatibility runtime names resolve
+  to typed metadata.
+- Executor routing tests cover canonical `PolynomialFeaturesNode` success and
+  legacy `PolynomialFeatures` alias success.
+
 At the moment, some nodes are:
 
 - over-exposed

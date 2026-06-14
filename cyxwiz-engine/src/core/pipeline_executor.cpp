@@ -1634,11 +1634,12 @@ bool HasSupportedParameterValues(
         }
     }
 
-    if (node_type == "PolynomialFeatures") {
+    if (node_type == "PolynomialFeaturesNode" ||
+        node_type == "PolynomialFeatures") {
         const auto columns_it = parameters.find("columns");
         if (columns_it != parameters.end() &&
             columns_it->second.find(',') != std::string::npos) {
-            error = "PolynomialFeatures columns supports exactly one column";
+            error = node_type + " columns supports exactly one column";
             return false;
         }
     }
@@ -2509,6 +2510,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteRemoveDuplicates(node, ctx);
     case gui::NodeType::BinningNode:
         return ExecuteBinning(node, ctx);
+    case gui::NodeType::PolynomialFeaturesNode:
+        return ExecutePolynomialFeatures(node, ctx);
     case gui::NodeType::FillMissingValues:
         return ExecuteFillMissing(node, ctx);
     case gui::NodeType::SortRows:
@@ -4342,9 +4345,13 @@ bool PipelineExecutor::ExecuteTSDiff(const Node& node, ExecutionContext& ctx) {
 // ============================================================================
 
 bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionContext& ctx) {
+    const std::string diagnostic_name =
+        node.type == "PolynomialFeaturesNode" ? "PolynomialFeaturesNode"
+                                               : "PolynomialFeatures";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("PolynomialFeatures: No input connection or dataset not found");
+        ReportError(diagnostic_name +
+                    ": No input connection or dataset not found");
         return false;
     }
 
@@ -4354,26 +4361,26 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
     auto columns_it = node.parameters.find("columns");
     std::string column = (columns_it != node.parameters.end()) ? columns_it->second : "";
     if (column.empty()) {
-        ReportError("PolynomialFeatures: Column name required");
+        ReportError(diagnostic_name + ": Column name required");
         return false;
     }
 
     std::string output_dataset_name = "ds_poly_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] PolynomialFeatures (degree={}) on '{}' from '{}'",
-                degree, column, input_dataset_name);
+    spdlog::info("[Data Studio] {} (degree={}) on '{}' from '{}'",
+                 diagnostic_name, degree, column, input_dataset_name);
 
     try {
         auto& registry = DataRegistry::Instance();
         auto input_dataset = registry.GetArrowDataset(input_dataset_name);
         if (!input_dataset) {
-            ReportError("PolynomialFeatures: Input dataset not found");
+            ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
 
         auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
-        if (!RequireColumnKind(input_table, "PolynomialFeatures", column,
+        if (!RequireColumnKind(input_table, diagnostic_name, column,
                                "numeric", IsNumericArrowType, schema_error)) {
             ReportError(schema_error);
             return false;
@@ -4381,7 +4388,7 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("PolynomialFeatures: Failed to register table");
+            ReportError(diagnostic_name + ": Failed to register table");
             return false;
         }
 
@@ -4412,19 +4419,19 @@ bool PipelineExecutor::ExecutePolynomialFeatures(const Node& node, ExecutionCont
         duckdb_->UnregisterTable(temp_table);
 
         if (!result_table) {
-            ReportError("PolynomialFeatures: Query failed");
+            ReportError(diagnostic_name + ": Query failed");
             return false;
         }
 
         registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] PolynomialFeatures completed: {} rows",
-                    result_table->num_rows());
+        spdlog::info("[Data Studio] {} completed: {} rows",
+                     diagnostic_name, result_table->num_rows());
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("PolynomialFeatures error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }

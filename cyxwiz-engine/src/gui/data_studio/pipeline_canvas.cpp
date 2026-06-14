@@ -71,6 +71,7 @@ PipelineCanvas::GetQuickAddNodes() {
         {"TS Diff", "Differencing"},
         {"PCA", "PCANode"},
         {"Binning", "BinningNode"},
+        {"Polynomial Features", "PolynomialFeaturesNode"},
     };
     return nodes;
 }
@@ -343,6 +344,9 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
         node.parameters["columns"] = "value";
         node.parameters["n_bins"] = "10";
         node.parameters["method"] = "equal_width";
+    } else if (type == "PolynomialFeaturesNode") {
+        node.parameters["degree"] = "2";
+        node.parameters["columns"] = "value";
     } else if (type == "PolynomialFeatures") {
         node.parameters["degree"] = "2";
         node.parameters["columns"] = "";
@@ -798,6 +802,11 @@ std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
                "Methods: equal width, equal frequency\n"
                "Input: Numeric dataset\n"
                "Output: Dataset with bin column";
+    } else if (node_type == "PolynomialFeaturesNode") {
+        return "Generate polynomial features for one numeric column\n"
+               "Creates x^2, x^3, and higher-degree columns\n"
+               "Input: Numeric dataset\n"
+               "Output: Dataset with polynomial features";
     } else if (node_type == "PolynomialFeatures") {
         return "Generate polynomial features (x^2, x^3, etc.)\n"
                "Useful for capturing non-linear relationships\n"

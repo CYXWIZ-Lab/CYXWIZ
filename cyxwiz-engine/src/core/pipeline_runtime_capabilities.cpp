@@ -187,6 +187,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"RemoveDuplicateRows", gui::NodeType::RemoveDuplicateRows},
         {"RemoveDuplicates", gui::NodeType::RemoveDuplicateRows},
         {"BinningNode", gui::NodeType::BinningNode},
+        {"PolynomialFeaturesNode", gui::NodeType::PolynomialFeaturesNode},
         {"SaveDataset", std::nullopt,
          PipelineLegacyDispatchKind::SaveDataset,
          "legacy saved-pipeline graphs use this output node name; canonical "
@@ -222,10 +223,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"TSDiff", std::nullopt, PipelineLegacyDispatchKind::TSDiff,
          "legacy saved-pipeline graphs use pre-operator time-series "
          "preprocessing names"},
-        {"PolynomialFeatures", std::nullopt,
-         PipelineLegacyDispatchKind::PolynomialFeatures,
-         "legacy saved-pipeline graphs use this feature-engineering node "
-         "name; no browser-visible typed metadata exists"},
+        {"PolynomialFeatures", gui::NodeType::PolynomialFeaturesNode},
         {"Binning", gui::NodeType::BinningNode},
         {"ExportCSV", gui::NodeType::ExportCSV},
         {"RowToColumnNames", gui::NodeType::RowToColumnNames},
@@ -282,6 +280,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"TSFeatures", {"columns"}},
         {"TSLag", {"columns"}},
         {"TSDiff", {"columns"}},
+        {"PolynomialFeaturesNode", {"columns"}},
         {"PolynomialFeatures", {"columns"}},
         {"BinningNode", {"columns"}},
         {"Binning", {"columns"}},
@@ -365,6 +364,7 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"TSFeatures", "rolling_window", 1, false},
         {"TSLag", "lag_periods", 1, true},
         {"TSDiff", "order", 1, false},
+        {"PolynomialFeaturesNode", "degree", 2, false},
         {"PolynomialFeatures", "degree", 2, false},
         {"BinningNode", "n_bins", 1, false},
         {"Binning", "n_bins", 1, false},

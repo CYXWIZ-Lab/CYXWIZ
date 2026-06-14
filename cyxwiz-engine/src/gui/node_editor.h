@@ -430,6 +430,7 @@ enum class NodeType {
     OrdinalEncoder,     // Encode ordinal categories
     TargetEncoder,      // Target-based encoding
     BinningNode,        // Bin continuous numeric columns
+    PolynomialFeaturesNode, // Generate polynomial features for one numeric column
     // (TrainTestSplit removed — use DataSplit, which supports 3-way train/val/test)
 
     // ===== Advanced Preprocessing Nodes (Phase 3 - UI Consolidation) =====

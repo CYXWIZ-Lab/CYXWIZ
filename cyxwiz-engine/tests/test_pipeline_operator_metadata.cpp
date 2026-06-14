@@ -847,7 +847,6 @@ int main() {
         "TSFeatures",
         "TSLag",
         "TSDiff",
-        "PolynomialFeatures",
     };
     std::set<std::string> observed_string_only_legacy_names;
 
@@ -1046,6 +1045,25 @@ int main() {
     Check(legacy_binning_type.has_value() &&
               *legacy_binning_type == gui::NodeType::BinningNode,
           "legacy Binning runtime name should remain an executable alias");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::PolynomialFeaturesNode)) == "PolynomialFeaturesNode",
+          "runtime enum lookup for PolynomialFeaturesNode should prefer canonical spelling");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(
+              gui::NodeType::PolynomialFeaturesNode).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "PolynomialFeaturesNode enum support should resolve to legacy executor");
+    const auto canonical_polynomial_features_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("PolynomialFeaturesNode");
+    Check(canonical_polynomial_features_type.has_value() &&
+              *canonical_polynomial_features_type ==
+                  gui::NodeType::PolynomialFeaturesNode,
+          "canonical PolynomialFeaturesNode runtime name should resolve to typed metadata");
+    const auto legacy_polynomial_features_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("PolynomialFeatures");
+    Check(legacy_polynomial_features_type.has_value() &&
+              *legacy_polynomial_features_type ==
+                  gui::NodeType::PolynomialFeaturesNode,
+          "legacy PolynomialFeatures runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
