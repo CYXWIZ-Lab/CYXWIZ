@@ -189,10 +189,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"BinningNode", gui::NodeType::BinningNode},
         {"PolynomialFeaturesNode", gui::NodeType::PolynomialFeaturesNode},
         {"TimeSeriesLag", gui::NodeType::TimeSeriesLag},
-        {"SaveDataset", std::nullopt,
-         PipelineLegacyDispatchKind::SaveDataset,
-         "legacy saved-pipeline graphs use this output node name; canonical "
-         "metadata is DataOutput"},
+        {"SaveDataset", gui::NodeType::DataOutput},
         {"FillMissing", gui::NodeType::FillMissingValues},
         {"SortRows", gui::NodeType::SortRows},
         {"Join", gui::NodeType::JoinTables},

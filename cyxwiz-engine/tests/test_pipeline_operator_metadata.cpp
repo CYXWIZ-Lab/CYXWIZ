@@ -837,7 +837,6 @@ int main() {
     }
 
     const std::set<std::string> expected_string_only_legacy_names = {
-        "SaveDataset",
         "DeployToNodeEditor",
     };
     std::set<std::string> observed_string_only_legacy_names;
@@ -1157,6 +1156,19 @@ int main() {
     Check(legacy_text_clean_type.has_value() &&
               *legacy_text_clean_type == gui::NodeType::TextCleanNode,
           "legacy TextClean runtime name should remain an executable alias");
+    const auto legacy_save_dataset_support =
+        cyxwiz::ResolvePipelineRuntimeSupport("SaveDataset");
+    Check(legacy_save_dataset_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "legacy SaveDataset runtime name should remain legacy-executor routed");
+    Check(legacy_save_dataset_support.node_type.has_value() &&
+              *legacy_save_dataset_support.node_type == gui::NodeType::DataOutput,
+          "legacy SaveDataset runtime name should resolve to DataOutput metadata");
+    const auto legacy_save_dataset_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("SaveDataset");
+    Check(legacy_save_dataset_type.has_value() &&
+              *legacy_save_dataset_type == gui::NodeType::DataOutput,
+          "legacy SaveDataset runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

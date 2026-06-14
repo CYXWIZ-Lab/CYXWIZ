@@ -2499,6 +2499,9 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
     case gui::NodeType::DataInput:
         return ExecuteDataInput(node, ctx);
     case gui::NodeType::DataOutput:
+        if (node.type == "SaveDataset") {
+            return ExecuteSaveDataset(node, ctx);
+        }
         return ExecuteDataOutput(node, ctx);
     case gui::NodeType::DataConvert:
         return ExecuteDataConvert(node, ctx);

@@ -1566,6 +1566,22 @@ Updated coverage:
 - Executor routing tests cover canonical `TextCleanNode` success and legacy
   `TextClean` alias success.
 
+### Progress note: typed Save Dataset compatibility coverage
+
+The legacy-only `SaveDataset` output node has been tied to the existing
+canonical `DataOutput` metadata while preserving `SaveDataset` legacy behavior.
+
+Updated coverage:
+
+- The runtime capability map resolves `SaveDataset` to `NodeType::DataOutput`.
+- `PipelineExecutor` routes the typed `SaveDataset` compatibility alias through
+  the legacy save implementation so optional `path`, `name`, and downstream
+  in-memory alias behavior remain intact.
+- Data Studio quick-add continues to expose canonical `DataOutput` instead of
+  the legacy `SaveDataset` alias.
+- Metadata tests assert that `SaveDataset` remains legacy-executor routed while
+  resolving to typed `DataOutput` metadata.
+
 At the moment, some nodes are:
 
 - over-exposed
