@@ -184,6 +184,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"DataConvert", gui::NodeType::DataConvert},
         {"FilterRows", gui::NodeType::FilterRows},
         {"SelectColumns", gui::NodeType::SelectColumns},
+        {"RemoveDuplicateRows", gui::NodeType::RemoveDuplicateRows},
         {"RemoveDuplicates", gui::NodeType::RemoveDuplicateRows},
         {"SaveDataset", std::nullopt,
          PipelineLegacyDispatchKind::SaveDataset,

@@ -446,6 +446,15 @@ Routed operator-backed nodes include:
 - `LinearRegressionNode`
 - `PolynomialRegressionNode`
 
+Additional current-branch UI wiring fix:
+
+- Data Studio's quick-add PCA menu entry now instantiates the real
+  operator-backed `PCANode` instead of the fail-closed legacy `PCA`
+  alias.
+- default PCA parameters now match `PCAOperator`
+  (`n_components`, `center`, `scale`) instead of carrying the stale
+  legacy `variance_threshold` parameter.
+
 Still fail-closed unsupported nodes include:
 
 - `TSNENode`
@@ -762,6 +771,432 @@ Effect now:
 **Recommendation:**
 
 - keep them blocked until implemented
+
+### 14. Legacy `TextClean` stop-word option was seeded but unsupported
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- new Data Studio `TextClean` nodes no longer seed the unsupported
+  `remove_stopwords=false` parameter
+- imported/saved graphs that set `remove_stopwords=true` still fail
+  closed with a specific runtime-parameter validation error
+- the executor comment now points at the fail-closed validation path
+  rather than describing a silent MVP omission
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/core/pipeline_executor.cpp`
+
+Problem:
+
+- the legacy `TextClean` executor cannot truthfully remove stop words
+  without a dictionary-backed implementation
+- UI-created nodes still carried an unsupported parameter, even though
+  the tooltip did not advertise it and the executor rejected `true`
+
+Effect now:
+
+- newly created nodes no longer carry a misleading unsupported option
+- old/imported graphs remain safe because enabling the option fails
+  before execution
+
+**Recommendation:**
+
+- only expose stop-word removal in Data Studio once there is a real
+  dictionary-backed runtime path
+
+### 15. Data Studio palette exposed internal `ArrowDataset` as a node
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- the Data Studio quick-add palette no longer offers `ArrowDataset`
+- the `ArrowDataset` tooltip now labels it as an internal storage type,
+  not an addable pipeline runtime node
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+
+Problem:
+
+- `ArrowDataset` is an internal data representation used by registry,
+  batcher, and materializer code
+- it is intentionally not a declared Data Studio runtime capability
+- the palette still let users create a graph node named `ArrowDataset`,
+  which had no truthful `PipelineExecutor` dispatch contract
+
+Effect now:
+
+- users are guided through executable input nodes instead of an internal
+  storage abstraction
+- old/imported `ArrowDataset` graph nodes are still not promoted as
+  supported runtime nodes
+
+**Recommendation:**
+
+- keep storage abstractions out of the add-node palette unless they gain
+  a real graph execution contract
+
+### 16. Data Studio file tooltips advertised unsupported formats
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- `FileInput` tooltip no longer lists Excel/HDF5 as supported pipeline
+  input formats
+- `SaveDataset` tooltip now lists only the runtime-supported CSV and
+  Parquet export formats
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+
+Problem:
+
+- the Data Studio palette/tooltips could advertise broader file support
+  than `PipelineExecutor` and the runtime capability tables allow
+- this repeated the same node-truth failure mode in documentation/UI
+  text rather than metadata
+
+Effect now:
+
+- the quick-add UI describes the executable file contract instead of
+  implying unsupported Excel/HDF5/Arrow export paths
+
+**Recommendation:**
+
+- keep tooltip format lists derived from runtime capability tables where
+  practical
+
+### 17. Legacy `TextVectorize` seeded unsupported `max_features`
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- new Data Studio `TextVectorize` nodes no longer seed the unsupported
+  `max_features=1000` parameter
+- imported/saved graphs that still include `max_features` continue to
+  fail closed through runtime-parameter validation
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/core/pipeline_executor.cpp`
+
+Problem:
+
+- the legacy `TextVectorize` path only supports its simple count-based
+  feature contract
+- `PipelineExecutor` rejects `max_features`, but the Data Studio
+  quick-add path still created nodes with that parameter by default
+
+Effect now:
+
+- new UI-created `TextVectorize` nodes match the executable legacy
+  contract
+- older graphs remain safe because unsupported `max_features` still
+  fails before execution
+
+**Recommendation:**
+
+- expose feature limits only on real vectorizer operator nodes such as
+  `CountVectorizer` or `TFIDFVectorizer`, not on the legacy alias
+
+### 18. Time-series quick-add used legacy aliases despite real operators
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- Data Studio quick-add now creates operator-backed
+  `TimeSeriesWindow`, `TimeSeriesFeatures`, and `Differencing` nodes
+  for the window/features/diff menu entries
+- defaults now use the operator parameter contracts:
+  `value_col`, `input_width`, `shift`, `lag_values`,
+  `rolling_windows`, `lag`, and `order`
+- legacy `TSWindow`, `TSFeatures`, and `TSDiff` tooltip handling remains
+  for imported/saved graphs
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
+
+Problem:
+
+- the runtime already has canonical operator-backed time-series nodes
+- the palette still created legacy alias nodes, keeping new graphs on
+  the compatibility dispatch path instead of the converged operator path
+
+Effect now:
+
+- new time-series graphs use the real operator-backed runtime where the
+  operator exists
+- legacy aliases remain loadable and executable for existing projects
+
+**Recommendation:**
+
+- continue migrating quick-add aliases to operator-backed names only
+  where the parameter contract is clear and covered by runtime
+  capabilities
+
+### 19. Text quick-add used legacy aliases despite real operators
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- Data Studio quick-add now creates operator-backed `TextTokenizer` for
+  tokenization and `CountVectorizer` for vectorization
+- defaults now use the operator parameter contracts:
+  `text_col`, `tokenizer_type`, `max_length`, `min_word_freq`,
+  `max_vocab_size`, `max_features`, and `norm`
+- legacy `TextTokenize` and `TextVectorize` tooltip/default handling
+  remains for compatibility paths and old/imported graphs
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
+
+Problem:
+
+- real text operators already exist and are registered through
+  `PipelineOperatorFactory`
+- new Data Studio graphs still started from legacy alias nodes, including
+  a `TextVectorize` path with a smaller/simple feature contract
+
+Effect now:
+
+- new tokenization/vectorization graphs use the operator-backed runtime
+  path by default
+- legacy text aliases remain available to saved/imported graphs without
+  being promoted by quick-add
+
+**Recommendation:**
+
+- prefer exact operator-backed node names in new graph creation, and
+  keep legacy aliases as compatibility-only dispatch names
+
+### 20. `TSLag` was still promoted as a new-graph quick-add
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- removed `TSLag` from the Data Studio quick-add palette
+- retained `TSLag` default/tooltip handling for compatibility with
+  saved/imported graphs
+- new lag-style time-series work should use the operator-backed
+  `TimeSeriesFeatures` node, which supports `lag_values`
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+
+Problem:
+
+- after moving time-series quick-add entries to operator-backed nodes,
+  `TSLag` remained as a promoted legacy alias
+- this kept new graphs on compatibility dispatch even though the
+  canonical time-series feature operator already covers lag features
+
+Effect now:
+
+- new graph creation no longer advertises `TSLag` as a first-class
+  runtime node
+- old/imported `TSLag` graphs still have compatibility handling
+
+**Recommendation:**
+
+- keep compatibility aliases loadable but avoid adding them from new
+  graph creation surfaces
+
+### 21. `SaveDataset` was still promoted instead of canonical `DataOutput`
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- Data Studio's "Save Dataset" quick-add now creates canonical
+  `DataOutput`
+- `DataOutput` defaults to the metadata/runtime parameter contract:
+  blank required `file_path` plus runtime-supported `file_type=csv`
+- `SaveDataset` tooltip handling remains for old/imported compatibility
+  graphs
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
+
+Problem:
+
+- `SaveDataset` is documented in runtime capabilities as a legacy
+  saved-pipeline output alias
+- new graphs still created that alias instead of the canonical
+  browser-visible output node
+
+Effect now:
+
+- new graph creation uses the canonical output node name
+- saved/imported `SaveDataset` graphs remain compatible
+
+**Recommendation:**
+
+- use typed/canonical node names from quick-add surfaces; reserve
+  legacy aliases for import and saved-pipeline compatibility
+
+### 22. Legacy-only feature engineering aliases were still promoted
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- removed `PolynomialFeatures` and `Binning` from the Data Studio
+  quick-add palette
+- retained their default/tooltip/runtime compatibility handling for
+  saved/imported graphs
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
+
+Problem:
+
+- runtime capabilities document both names as legacy saved-pipeline
+  aliases with no browser-visible typed metadata
+- the quick-add palette still promoted them as new first-class graph
+  nodes
+
+Effect now:
+
+- new graph creation no longer advertises legacy-only feature
+  engineering aliases
+- old/imported graphs remain compatible through the existing legacy
+  dispatch path
+
+**Recommendation:**
+
+- add canonical typed/operator-backed feature-engineering nodes before
+  reintroducing polynomial expansion or binning to quick-add
+
+### 23. File input quick-add still created legacy `FileInput`
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- Data Studio's "File Input" quick-add now creates canonical
+  `DataInput`
+- `DataInput` defaults now match the metadata/runtime contract:
+  `source_type=file`, blank required `file_path`, and `type=auto`
+- `FileInput` tooltip/default handling remains for legacy compatibility
+  graphs
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
+- `cyxwiz-engine/src/core/node_metadata_registry.cpp`
+
+Problem:
+
+- `FileInput` is still executable but represents the older file-source
+  path
+- the canonical smart input metadata and runtime capability is
+  `DataInput`
+- quick-add promoted the older node name for new graphs
+
+Effect now:
+
+- new graph creation uses the canonical input node contract
+- old/imported `FileInput` graphs remain compatible
+
+**Recommendation:**
+
+- continue using canonical smart I/O nodes in new UI surfaces and keep
+  format-specific/legacy aliases as import compatibility only
+
+### 24. Duplicate-removal quick-add used old runtime spelling
+
+**Status:** Fixed in current branch.
+
+Implemented:
+
+- added `RemoveDuplicateRows` as the canonical executable runtime string
+  for `NodeType::RemoveDuplicateRows`
+- retained `RemoveDuplicates` as an old graph compatibility alias
+- Data Studio quick-add now creates `RemoveDuplicateRows`
+- execution diagnostics now use `RemoveDuplicateRows` for canonical
+  graphs and keep `RemoveDuplicates` for legacy alias graphs
+- metadata/runtime tests now verify that enum lookup prefers
+  `RemoveDuplicateRows` while the old `RemoveDuplicates` runtime string
+  still resolves to the same typed node
+
+Relevant files:
+
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/core/pipeline_executor.cpp`
+- `cyxwiz-engine/tests/test_pipeline_operator_metadata.cpp`
+
+Problem:
+
+- metadata and enum naming use `RemoveDuplicateRows`
+- Data Studio quick-add still created the older `RemoveDuplicates`
+  spelling
+- changing only the UI name would have broken execution because the
+  runtime string resolver did not know the canonical spelling
+
+Effect now:
+
+- new graphs use the canonical typed node string
+- old/imported `RemoveDuplicates` graphs remain executable
+
+**Recommendation:**
+
+- when migrating UI node strings, add explicit runtime aliases before
+  changing graph creation surfaces
+
+### 25. `TextClean` remains an intentional quick-add compatibility node
+
+**Status:** Documented in current branch.
+
+Current decision:
+
+- keep `TextClean` in Data Studio quick-add for now
+- there is no typed metadata/operator-backed replacement such as
+  `TextCleaner`
+- the legacy executor path is not a fake placeholder; it has guarded
+  execution for lowercase, HTML removal, and special-character removal
+- unsupported stop-word removal remains fail-closed
+
+Relevant files:
+
+- `cyxwiz-engine/src/gui/data_studio/pipeline_canvas.cpp`
+- `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
+- `cyxwiz-engine/src/core/pipeline_executor.cpp`
+
+Reason:
+
+- removing `TextClean` would remove real, guarded Data Studio
+  functionality rather than just hiding an unsafe placeholder
+- unlike `TextTokenize`/`TextVectorize`, there is no exact
+  operator-backed node available today
+
+**Recommendation:**
+
+- keep `TextClean` until a canonical typed/operator-backed cleaner lands,
+  then migrate quick-add the same way as tokenizer/vectorizer nodes
 
 ---
 

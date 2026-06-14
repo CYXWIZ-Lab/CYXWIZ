@@ -141,15 +141,11 @@ void PipelineCanvas::RenderNodePalette() {
         ImGui::Text(ICON_FA_DATABASE " Data Input/Output");
         ImGui::Separator();
         if (ImGui::Selectable("File Input")) {
-            AddNode("FileInput", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("Arrow Dataset")) {
-            AddNode("ArrowDataset", ImGui::GetMousePos());
+            AddNode("DataInput", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
         if (ImGui::Selectable("Save Dataset")) {
-            AddNode("SaveDataset", ImGui::GetMousePos());
+            AddNode("DataOutput", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
 
@@ -166,7 +162,7 @@ void PipelineCanvas::RenderNodePalette() {
             show_node_palette_ = false;
         }
         if (ImGui::Selectable("Remove Duplicates")) {
-            AddNode("RemoveDuplicates", ImGui::GetMousePos());
+            AddNode("RemoveDuplicateRows", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
 
@@ -179,11 +175,11 @@ void PipelineCanvas::RenderNodePalette() {
             show_node_palette_ = false;
         }
         if (ImGui::Selectable("Text Tokenize")) {
-            AddNode("TextTokenize", ImGui::GetMousePos());
+            AddNode("TextTokenizer", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
         if (ImGui::Selectable("Text Vectorize")) {
-            AddNode("TextVectorize", ImGui::GetMousePos());
+            AddNode("CountVectorizer", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
 
@@ -192,19 +188,15 @@ void PipelineCanvas::RenderNodePalette() {
         ImGui::Text(ICON_FA_CHART_LINE " Time-Series");
         ImGui::Separator();
         if (ImGui::Selectable("TS Window")) {
-            AddNode("TSWindow", ImGui::GetMousePos());
+            AddNode("TimeSeriesWindow", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
         if (ImGui::Selectable("TS Features")) {
-            AddNode("TSFeatures", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("TS Lag")) {
-            AddNode("TSLag", ImGui::GetMousePos());
+            AddNode("TimeSeriesFeatures", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
         if (ImGui::Selectable("TS Diff")) {
-            AddNode("TSDiff", ImGui::GetMousePos());
+            AddNode("Differencing", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
 
@@ -213,18 +205,9 @@ void PipelineCanvas::RenderNodePalette() {
         ImGui::Text(ICON_FA_GEARS " Feature Engineering");
         ImGui::Separator();
         if (ImGui::Selectable("PCA")) {
-            AddNode("PCA", ImGui::GetMousePos());
+            AddNode("PCANode", ImGui::GetMousePos());
             show_node_palette_ = false;
         }
-        if (ImGui::Selectable("Polynomial Features")) {
-            AddNode("PolynomialFeatures", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-        if (ImGui::Selectable("Binning")) {
-            AddNode("Binning", ImGui::GetMousePos());
-            show_node_palette_ = false;
-        }
-
         ImGui::EndPopup();
     } else {
         show_node_palette_ = false;
@@ -288,6 +271,13 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
     // Set default parameters based on type
     if (type == "FileInput") {
         node.parameters["path"] = "";
+    } else if (type == "DataInput") {
+        node.parameters["source_type"] = "file";
+        node.parameters["file_path"] = "";
+        node.parameters["type"] = "auto";
+    } else if (type == "DataOutput") {
+        node.parameters["file_path"] = "";
+        node.parameters["file_type"] = "csv";
     } else if (type == "FilterRows") {
         node.parameters["condition"] = "";
     } else if (type == "SelectColumns") {
@@ -299,20 +289,36 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
         node.parameters["lowercase"] = "true";
         node.parameters["remove_html"] = "true";
         node.parameters["remove_special_chars"] = "true";
-        node.parameters["remove_stopwords"] = "false";
+    } else if (type == "TextTokenizer") {
+        node.parameters["text_col"] = "text";
+        node.parameters["tokenizer_type"] = "1";
+        node.parameters["max_length"] = "256";
+        node.parameters["min_word_freq"] = "2";
+        node.parameters["max_vocab_size"] = "10000";
     } else if (type == "TextTokenize") {
         node.parameters["text_column"] = "text";
         node.parameters["method"] = "word";
+    } else if (type == "CountVectorizer") {
+        node.parameters["text_col"] = "text";
+        node.parameters["max_features"] = "2000";
+        node.parameters["norm"] = "l2";
     } else if (type == "TextVectorize") {
         node.parameters["text_column"] = "text";
         node.parameters["method"] = "count";
-        node.parameters["max_features"] = "1000";
     }
     // Phase 6 Week 8-9: Time-Series
-    else if (type == "TSWindow") {
+    else if (type == "TimeSeriesWindow") {
+        node.parameters["value_col"] = "value";
+        node.parameters["input_width"] = "10";
+        node.parameters["shift"] = "1";
+    } else if (type == "TSWindow") {
         node.parameters["window_size"] = "10";
         node.parameters["stride"] = "1";
         node.parameters["target_column"] = "value";
+    } else if (type == "TimeSeriesFeatures") {
+        node.parameters["value_col"] = "value";
+        node.parameters["lag_values"] = "1,7,30";
+        node.parameters["rolling_windows"] = "7";
     } else if (type == "TSFeatures") {
         node.parameters["columns"] = "value";
         node.parameters["rolling_window"] = "7";
@@ -321,14 +327,19 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
     } else if (type == "TSLag") {
         node.parameters["columns"] = "value";
         node.parameters["lag_periods"] = "1,7,30";
+    } else if (type == "Differencing") {
+        node.parameters["value_col"] = "value";
+        node.parameters["lag"] = "1";
+        node.parameters["order"] = "1";
     } else if (type == "TSDiff") {
         node.parameters["columns"] = "value";
         node.parameters["order"] = "1";
     }
     // Phase 6 Week 8-9: Feature Engineering
-    else if (type == "PCA") {
+    else if (type == "PCANode") {
         node.parameters["n_components"] = "2";
-        node.parameters["variance_threshold"] = "0.95";
+        node.parameters["center"] = "true";
+        node.parameters["scale"] = "false";
     } else if (type == "PolynomialFeatures") {
         node.parameters["degree"] = "2";
         node.parameters["columns"] = "";
@@ -710,16 +721,16 @@ void PipelineCanvas::RenderToolbar() {
 
 std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
     // Phase 7: Comprehensive tooltips for all node types
-    if (node_type == "FileInput") {
-        return "Load data from CSV, Excel, Parquet, or HDF5 files\n"
+    if (node_type == "DataInput" || node_type == "FileInput") {
+        return "Load supported tabular files through the pipeline runtime\n"
                "Output: Dataset";
     } else if (node_type == "ArrowDataset") {
-        return "Load an existing Arrow dataset from DataRegistry\n"
-               "Output: Dataset";
-    } else if (node_type == "SaveDataset") {
+        return "Internal Arrow storage type\n"
+               "Not addable as a pipeline runtime node";
+    } else if (node_type == "DataOutput" || node_type == "SaveDataset") {
         return "Save processed dataset to file or register for ML training\n"
                "Input: Dataset\n"
-               "Formats: CSV, Parquet, HDF5, Arrow";
+               "Formats: CSV, Parquet";
     } else if (node_type == "FilterRows") {
         return "Filter rows based on SQL WHERE condition\n"
                "Example: age > 18 AND status = 'active'\n"
@@ -730,7 +741,7 @@ std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
                "Example: id, name, price\n"
                "Input: Dataset\n"
                "Output: Dataset with selected columns";
-    } else if (node_type == "RemoveDuplicates") {
+    } else if (node_type == "RemoveDuplicateRows" || node_type == "RemoveDuplicates") {
         return "Remove duplicate rows from dataset\n"
                "Uses all columns or specified columns for comparison\n"
                "Input: Dataset\n"
@@ -740,22 +751,26 @@ std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
                "Options: lowercase, remove HTML, remove special chars\n"
                "Input: Dataset with text column\n"
                "Output: Cleaned dataset";
-    } else if (node_type == "TextTokenize") {
+    } else if (node_type == "TextTokenizer" || node_type == "TextTokenize") {
         return "Split text into tokens (words, sentences, or characters)\n"
                "Methods: word, sentence, character\n"
                "Input: Dataset with text column\n"
                "Output: Tokenized dataset";
+    } else if (node_type == "CountVectorizer") {
+        return "Convert text to bag-of-words count features\n"
+               "Input: Dataset with text column\n"
+               "Output: Count feature matrix";
     } else if (node_type == "TextVectorize") {
-        return "Convert text to numerical features\n"
+        return "Convert text to simple numerical features\n"
                "Features: text length, word count\n"
                "Input: Dataset with text column\n"
                "Output: Dataset with text features";
-    } else if (node_type == "TSWindow") {
+    } else if (node_type == "TimeSeriesWindow" || node_type == "TSWindow") {
         return "Create sliding windows for time-series sequences\n"
                "Useful for LSTM/GRU input preparation\n"
                "Input: Time-series dataset\n"
                "Output: Windowed dataset";
-    } else if (node_type == "TSFeatures") {
+    } else if (node_type == "TimeSeriesFeatures" || node_type == "TSFeatures") {
         return "Compute rolling statistics over time windows\n"
                "Features: mean, std, min, max\n"
                "Input: Time-series dataset\n"
@@ -765,12 +780,12 @@ std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
                "Example: lag_1, lag_7, lag_30 for daily data\n"
                "Input: Time-series dataset\n"
                "Output: Dataset with lag features";
-    } else if (node_type == "TSDiff") {
+    } else if (node_type == "Differencing" || node_type == "TSDiff") {
         return "Compute differences between consecutive values\n"
                "Useful for making time-series stationary\n"
                "Input: Time-series dataset\n"
                "Output: Differenced dataset";
-    } else if (node_type == "PCA") {
+    } else if (node_type == "PCANode") {
         return "Dimensionality reduction using Principal Component Analysis\n"
                "Reduces feature space while preserving variance\n"
                "Input: Numeric dataset\n"

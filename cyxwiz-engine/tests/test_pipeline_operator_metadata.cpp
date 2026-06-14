@@ -954,6 +954,23 @@ int main() {
               cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
           "FilterRows enum support should resolve to legacy executor");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::RemoveDuplicateRows)) == "RemoveDuplicateRows",
+          "runtime enum lookup for RemoveDuplicateRows should prefer canonical spelling");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(
+              gui::NodeType::RemoveDuplicateRows).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "RemoveDuplicateRows enum support should resolve to legacy executor");
+    const auto canonical_dedup_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("RemoveDuplicateRows");
+    Check(canonical_dedup_type.has_value() &&
+              *canonical_dedup_type == gui::NodeType::RemoveDuplicateRows,
+          "canonical RemoveDuplicateRows runtime name should resolve to typed metadata");
+    const auto legacy_dedup_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("RemoveDuplicates");
+    Check(legacy_dedup_type.has_value() &&
+              *legacy_dedup_type == gui::NodeType::RemoveDuplicateRows,
+          "legacy RemoveDuplicates runtime name should remain an executable alias");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::CSVFile).mode ==

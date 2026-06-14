@@ -2995,6 +2995,9 @@ bool PipelineExecutor::ExecuteSelectColumns(const Node& node, ExecutionContext& 
 }
 
 bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContext& ctx) {
+    const std::string diagnostic_name =
+        node.type == "RemoveDuplicateRows" ? "RemoveDuplicateRows" :
+                                              "RemoveDuplicates";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
         return false;
@@ -3008,20 +3011,21 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
         auto& registry = DataRegistry::Instance();
         auto input_dataset = registry.GetArrowDataset(input_dataset_name);
         if (!input_dataset) {
-            ReportError("RemoveDuplicates: Input dataset not found in registry");
+            ReportError(diagnostic_name + ": Input dataset not found in registry");
             return false;
         }
 
         auto input_table = input_dataset->GetArrowTable();
         if (!input_table || !input_table->schema()) {
-            ReportError("RemoveDuplicates: Input table schema is unavailable");
+            ReportError(diagnostic_name + ": Input table schema is unavailable");
             return false;
         }
 
         // Register input table with DuckDB
         std::string temp_table = "temp_" + std::to_string(node.id);
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("RemoveDuplicates: Failed to register table with DuckDB");
+            ReportError(diagnostic_name +
+                        ": Failed to register table with DuckDB");
             return false;
         }
 
@@ -3032,7 +3036,7 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
             !TrimString(columns_it->second).empty()) {
             std::vector<std::string> dedupe_columns;
             std::string column_error;
-            if (!ResolveExistingColumns(input_table, "RemoveDuplicates",
+            if (!ResolveExistingColumns(input_table, diagnostic_name,
                                         columns_it->second, dedupe_columns,
                                         column_error)) {
                 duckdb_->UnregisterTable(temp_table);
@@ -3063,7 +3067,7 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
         duckdb_->UnregisterTable(temp_table);
 
         if (!result_table) {
-            ReportError("RemoveDuplicates: Query execution failed");
+            ReportError(diagnostic_name + ": Query execution failed");
             return false;
         }
 
@@ -3073,12 +3077,13 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] RemoveDuplicates: {} -> {} rows",
-                    input_table->num_rows(), result_table->num_rows());
+        spdlog::info("[Data Studio] {}: {} -> {} rows",
+                    diagnostic_name, input_table->num_rows(),
+                    result_table->num_rows());
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("RemoveDuplicates error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }
@@ -3784,7 +3789,8 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
     bool remove_special_chars =
         OptionalBooleanParameterIsTrue(node.parameters,
                                        "remove_special_chars");
-    // Note: remove_stopwords would require dictionary integration - not implemented in MVP
+    // remove_stopwords=true is rejected by ValidateNodeRuntimeParameters
+    // until dictionary-backed stop-word removal is implemented.
 
     auto column_it = node.parameters.find("text_column");
     std::string text_column = (column_it != node.parameters.end()) ? column_it->second : "text";
