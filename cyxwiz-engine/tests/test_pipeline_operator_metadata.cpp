@@ -843,7 +843,6 @@ int main() {
         "TextClean",
         "TextTokenize",
         "TextVectorize",
-        "TSWindow",
         "TSFeatures",
         "TSDiff",
     };
@@ -1079,6 +1078,20 @@ int main() {
     Check(legacy_ts_lag_type.has_value() &&
               *legacy_ts_lag_type == gui::NodeType::TimeSeriesLag,
           "legacy TSLag runtime name should remain an executable alias");
+    const auto legacy_ts_window_support =
+        cyxwiz::ResolvePipelineRuntimeSupport("TSWindow");
+    Check(legacy_ts_window_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "legacy TSWindow runtime name should remain legacy-executor routed");
+    Check(legacy_ts_window_support.node_type.has_value() &&
+              *legacy_ts_window_support.node_type ==
+                  gui::NodeType::TimeSeriesWindow,
+          "legacy TSWindow runtime name should resolve to TimeSeriesWindow metadata");
+    const auto legacy_ts_window_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("TSWindow");
+    Check(legacy_ts_window_type.has_value() &&
+              *legacy_ts_window_type == gui::NodeType::TimeSeriesWindow,
+          "legacy TSWindow runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

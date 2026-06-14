@@ -212,9 +212,7 @@ GetPipelineLegacyRuntimeCapabilities() {
          PipelineLegacyDispatchKind::TextVectorize,
          "legacy saved-pipeline graphs use pre-operator text preprocessing "
          "names"},
-        {"TSWindow", std::nullopt, PipelineLegacyDispatchKind::TSWindow,
-         "legacy saved-pipeline graphs use pre-operator time-series "
-         "preprocessing names"},
+        {"TSWindow", gui::NodeType::TimeSeriesWindow},
         {"TSFeatures", std::nullopt, PipelineLegacyDispatchKind::TSFeatures,
          "legacy saved-pipeline graphs use pre-operator time-series "
          "preprocessing names"},

@@ -1463,6 +1463,22 @@ Updated coverage:
 - Executor routing tests cover canonical `TimeSeriesLag` success and legacy
   `TSLag` alias success.
 
+### Progress note: typed Time Series Window compatibility coverage
+
+The legacy-only `TSWindow` operator has been tied to the existing canonical
+`TimeSeriesWindow` metadata while preserving `TSWindow` as an executable
+legacy alias.
+
+Updated coverage:
+
+- The runtime capability map resolves `TSWindow` to `NodeType::TimeSeriesWindow`.
+- `PipelineExecutor` routes the typed `TSWindow` compatibility alias through
+  the existing legacy window implementation.
+- Data Studio quick-add continues to expose canonical `TimeSeriesWindow`
+  instead of the legacy `TSWindow` alias.
+- Metadata tests assert that `TSWindow` remains legacy-executor routed while
+  resolving to typed `TimeSeriesWindow` metadata.
+
 At the moment, some nodes are:
 
 - over-exposed
