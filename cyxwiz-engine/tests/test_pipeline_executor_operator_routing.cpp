@@ -3200,6 +3200,34 @@ int main() {
           "MathFormula raw SQL token error should be specific: " +
               raw_sql_formula_executor.GetLastError());
 
+    const std::string unpivot_json =
+        R"({"nodes":[)"
+        R"({"id":581,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":582,"type":"Unpivot","name":"Melt","parameters":{)"
+        R"("id_columns":"x","variable_name":"metric","value_name":"reading"}})"
+        R"(],"links":[{"start_node":581,"end_node":582}]})";
+
+    cyxwiz::PipelineExecutor unpivot_executor;
+    Check(unpivot_executor.ExecutePipeline(unpivot_json),
+          "Unpivot should melt value columns into long rows: " +
+              unpivot_executor.GetLastError());
+    auto unpivoted = registry.GetArrowDataset("ds_unpivot_582");
+    Check(unpivoted != nullptr, "Unpivot output dataset is registered");
+    auto unpivoted_table = unpivoted->GetArrowTable();
+    Check(unpivoted_table != nullptr, "Unpivot output table exists");
+    Check(unpivoted_table->num_rows() == 3,
+          "Unpivot should emit one row per input row and value column");
+    Check(unpivoted_table->schema()->GetFieldIndex("metric") >= 0,
+          "Unpivot should expose requested variable column");
+    Check(unpivoted_table->schema()->GetFieldIndex("reading") >= 0,
+          "Unpivot should expose requested value column");
+    Check(ReadStringValue(unpivoted_table, "metric", 0) == "y",
+          "Unpivot should name the melted source column");
+    Check(ReadStringValue(unpivoted_table, "reading", 2) == "30",
+          "Unpivot should preserve value cells as strings");
+
     const std::string rule_engine_json =
         R"({"nodes":[)"
         R"({"id":61,"type":"DataInput","name":"Input","parameters":{)"

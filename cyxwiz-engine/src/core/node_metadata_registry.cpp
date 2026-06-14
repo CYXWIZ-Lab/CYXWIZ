@@ -2256,7 +2256,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
         {{"id_columns", "string", "", "ID columns (comma-separated)", {}, ""},
          {"value_name", "string", "value", "Name for value column", {}, ""},
          {"variable_name", "string", "variable", "Name for variable column", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::StringManipulation, NodeCategory::DataTransform, "String Manipulation", ICON_FA_FONT,
         {"string", "text", "replace", "trim"}, 0, false,

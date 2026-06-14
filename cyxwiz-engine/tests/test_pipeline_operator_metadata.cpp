@@ -1246,6 +1246,15 @@ int main() {
     Check(column_appender_type.has_value() &&
               *column_appender_type == gui::NodeType::ColumnAppender,
           "ColumnAppender runtime name should resolve typed metadata");
+    const auto unpivot_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::Unpivot);
+    Check(unpivot_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "Unpivot enum support should resolve to legacy executor");
+    const auto unpivot_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("Unpivot");
+    Check(unpivot_type.has_value() && *unpivot_type == gui::NodeType::Unpivot,
+          "Unpivot runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

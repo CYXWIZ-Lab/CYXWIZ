@@ -2553,6 +2553,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteRowAppender(node, ctx);
     case gui::NodeType::ColumnAppender:
         return ExecuteColumnAppender(node, ctx);
+    case gui::NodeType::Unpivot:
+        return ExecuteUnpivot(node, ctx);
     case gui::NodeType::CountVectorizer:
         return ExecuteTextVectorize(node, ctx);
     case gui::NodeType::TextTokenizer:
@@ -5336,6 +5338,129 @@ bool PipelineExecutor::ExecuteColumnAppender(const Node& node, ExecutionContext&
         return true;
     } catch (const std::exception& e) {
         ReportError("ColumnAppender error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("Unpivot: No input dataset");
+        return false;
+    }
+
+    const auto value_name_it = node.parameters.find("value_name");
+    const std::string value_name =
+        (value_name_it != node.parameters.end() && !value_name_it->second.empty())
+            ? TrimString(value_name_it->second)
+            : "value";
+    const auto variable_name_it = node.parameters.find("variable_name");
+    const std::string variable_name =
+        (variable_name_it != node.parameters.end() &&
+         !variable_name_it->second.empty())
+            ? TrimString(variable_name_it->second)
+            : "variable";
+    if (value_name.empty() || variable_name.empty()) {
+        ReportError("Unpivot: value_name and variable_name are required");
+        return false;
+    }
+    if (value_name == variable_name) {
+        ReportError("Unpivot: value_name and variable_name must differ");
+        return false;
+    }
+
+    const auto id_columns_it = node.parameters.find("id_columns");
+    const std::vector<std::string> requested_id_columns =
+        id_columns_it != node.parameters.end()
+            ? ParseCommaSeparatedNames(id_columns_it->second)
+            : std::vector<std::string>{};
+    const std::string output_dataset_name =
+        "ds_unpivot_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] Unpivot '{}' with {} id columns",
+                 input_dataset_name, requested_id_columns.size());
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("Unpivot: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("Unpivot: Input table is null");
+            return false;
+        }
+
+        std::set<std::string> id_column_names;
+        std::vector<std::string> id_columns;
+        id_columns.reserve(requested_id_columns.size());
+        for (const auto& column : requested_id_columns) {
+            if (input_table->schema()->GetFieldIndex(column) < 0) {
+                ReportError("Unpivot: id column '" + column + "' not found");
+                return false;
+            }
+            if (!id_column_names.insert(column).second) {
+                ReportError("Unpivot: duplicate id column '" + column + "'");
+                return false;
+            }
+            if (column == value_name || column == variable_name) {
+                ReportError("Unpivot: id column '" + column +
+                            "' conflicts with output column names");
+                return false;
+            }
+            id_columns.push_back(column);
+        }
+
+        std::vector<std::string> value_columns;
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const std::string field_name = input_table->schema()->field(i)->name();
+            if (id_column_names.find(field_name) == id_column_names.end()) {
+                value_columns.push_back(field_name);
+            }
+        }
+        if (value_columns.empty()) {
+            ReportError("Unpivot: no value columns remain after id_columns");
+            return false;
+        }
+
+        const std::string temp_table = "temp_unpivot_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("Unpivot: Failed to register table");
+            return false;
+        }
+
+        std::string sql;
+        for (size_t value_index = 0; value_index < value_columns.size();
+             ++value_index) {
+            if (value_index > 0) {
+                sql += " UNION ALL ";
+            }
+            sql += "SELECT ";
+            for (const auto& id_column : id_columns) {
+                sql += QuoteSqlIdentifier(id_column) + ", ";
+            }
+            sql += QuoteSqlStringLiteral(value_columns[value_index]) + " AS " +
+                   QuoteSqlIdentifier(variable_name) + ", CAST(" +
+                   QuoteSqlIdentifier(value_columns[value_index]) +
+                   " AS VARCHAR) AS " + QuoteSqlIdentifier(value_name) +
+                   " FROM " + temp_table;
+        }
+
+        auto output_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+        if (!output_table) {
+            ReportError("Unpivot: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("Unpivot error: " + std::string(e.what()));
         return false;
     }
 }

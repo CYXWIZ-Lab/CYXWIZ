@@ -150,8 +150,6 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::JSONPathExtractor},
         {"DataProfiler", "DataProfiler is a panel/report workflow, not a real PipelineExecutor transform",
          gui::NodeType::DataProfiler},
-        {"Unpivot", "legacy Unpivot graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::Unpivot},
         {"TableSplitter", "legacy TableSplitter needs pin-aware multi-output routing; PipelineExecutor can only carry one dataset per node",
          gui::NodeType::TableSplitter},
         {"ExportExcel", "legacy ExportExcel graph execution is not implemented; fake success is disabled",
@@ -208,6 +206,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"CellUpdater", gui::NodeType::CellUpdater},
         {"RowAppender", gui::NodeType::RowAppender},
         {"ColumnAppender", gui::NodeType::ColumnAppender},
+        {"Unpivot", gui::NodeType::Unpivot},
     };
     return capabilities;
 }

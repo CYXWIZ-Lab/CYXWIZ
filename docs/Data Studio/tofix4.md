@@ -1690,6 +1690,22 @@ Updated coverage:
   padding or truncating rows.
 - Executor routing tests cover successful column append.
 
+### Progress note: Unpivot runtime implementation
+
+`Unpivot` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `Unpivot` metadata is now marked implemented.
+- The runtime capability map resolves `Unpivot` to the legacy executor.
+- `PipelineExecutor` melts wide tables into long tables using configured
+  `id_columns`, `variable_name`, and `value_name`.
+- Value cells are emitted as strings so mixed-type input columns do not create
+  unsafe union coercion failures.
+- Runtime validation rejects missing ID columns and output-name conflicts.
+- Executor routing tests cover successful unpivot execution.
+
 At the moment, some nodes are:
 
 - over-exposed
