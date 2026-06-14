@@ -2246,7 +2246,7 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
          {"Bottom", PinType::Dataset, true, "Bottom table"}},
         {{"Table", PinType::Dataset, true, "Combined table"}},
         {{"match_columns", "bool", "true", "Match columns by name", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Unpivot, NodeCategory::DataTransform, "Unpivot", ICON_FA_ROTATE,
         {"unpivot", "melt", "wide to long"}, 0, false,

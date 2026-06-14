@@ -2630,6 +2630,30 @@ int main() {
           "ColumnAppender should use fail-closed runtime support: " +
               column_appender_executor.GetLastError());
 
+    const std::string row_appender_json =
+        R"({"nodes":[)"
+        R"({"id":530,"type":"DataInput","name":"Top","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":531,"type":"DataInput","name":"Bottom","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":532,"type":"RowAppender","name":"AppendRows","parameters":{}})"
+        R"(],"links":[{"start_node":530,"end_node":532},{"start_node":531,"end_node":532}]})";
+
+    cyxwiz::PipelineExecutor row_appender_executor;
+    Check(row_appender_executor.ExecutePipeline(row_appender_json),
+          "RowAppender should append schema-compatible input tables: " +
+              row_appender_executor.GetLastError());
+    auto row_appended = registry.GetArrowDataset("ds_row_append_532");
+    Check(row_appended != nullptr, "RowAppender output dataset is registered");
+    auto row_appended_table = row_appended->GetArrowTable();
+    Check(row_appended_table != nullptr, "RowAppender output table exists");
+    Check(row_appended_table->num_rows() == 6,
+          "RowAppender should append rows from both inputs");
+    Check(ReadNumericValue(row_appended_table, "x", 3) == 1.0,
+          "RowAppender should preserve second input row order");
+
     const std::string export_csv_json =
         R"({"nodes":[)"
         R"({"id":35,"type":"DataInput","name":"Input","parameters":{)"

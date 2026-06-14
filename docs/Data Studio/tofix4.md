@@ -1658,6 +1658,22 @@ Updated coverage:
   non-negative `row`.
 - Executor routing tests cover successful cell update.
 
+### Progress note: Row Appender runtime implementation
+
+`RowAppender` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `RowAppender` metadata is now marked implemented.
+- The runtime capability map resolves `RowAppender` to the legacy executor
+  with two required input datasets.
+- `PipelineExecutor` appends rows from two schema-compatible input tables using
+  `UNION ALL`.
+- The first implementation fails clearly when schemas differ instead of
+  coercing or fabricating missing values.
+- Executor routing tests cover successful row append.
+
 At the moment, some nodes are:
 
 - over-exposed

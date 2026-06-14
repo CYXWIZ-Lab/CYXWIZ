@@ -152,8 +152,6 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::DataProfiler},
         {"ColumnAppender", "legacy ColumnAppender graph execution is not implemented; old passthrough behavior is disabled",
          gui::NodeType::ColumnAppender},
-        {"RowAppender", "legacy RowAppender graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::RowAppender},
         {"Unpivot", "legacy Unpivot graph execution is not implemented; old passthrough behavior is disabled",
          gui::NodeType::Unpivot},
         {"TableSplitter", "legacy TableSplitter needs pin-aware multi-output routing; PipelineExecutor can only carry one dataset per node",
@@ -210,6 +208,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"RenameColumns", gui::NodeType::RenameColumns},
         {"CellExtractor", gui::NodeType::CellExtractor},
         {"CellUpdater", gui::NodeType::CellUpdater},
+        {"RowAppender", gui::NodeType::RowAppender},
     };
     return capabilities;
 }
@@ -235,6 +234,7 @@ const std::vector<PipelineInputArityRuntimeCapability>&
 GetPipelineInputArityRuntimeCapabilities() {
     static const std::vector<PipelineInputArityRuntimeCapability> capabilities = {
         {"Join", 2},
+        {"RowAppender", 2},
     };
     return capabilities;
 }

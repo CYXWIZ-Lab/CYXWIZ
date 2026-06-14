@@ -2549,6 +2549,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteCellExtractor(node, ctx);
     case gui::NodeType::CellUpdater:
         return ExecuteCellUpdater(node, ctx);
+    case gui::NodeType::RowAppender:
+        return ExecuteRowAppender(node, ctx);
     case gui::NodeType::CountVectorizer:
         return ExecuteTextVectorize(node, ctx);
     case gui::NodeType::TextTokenizer:
@@ -5156,6 +5158,97 @@ bool PipelineExecutor::ExecuteCellUpdater(const Node& node, ExecutionContext& ct
         return true;
     } catch (const std::exception& e) {
         ReportError("CellUpdater error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteRowAppender(const Node& node, ExecutionContext& ctx) {
+    const auto input_dataset_names = GetInputDatasetNames(node, ctx, 2);
+    if (input_dataset_names.empty()) {
+        return false;
+    }
+
+    const std::string& top_dataset_name = input_dataset_names[0];
+    const std::string& bottom_dataset_name = input_dataset_names[1];
+    std::string output_dataset_name = "ds_row_append_" + std::to_string(node.id);
+
+    spdlog::info("[Data Studio] RowAppender appending '{}' and '{}'",
+                 top_dataset_name, bottom_dataset_name);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto top_dataset = registry.GetArrowDataset(top_dataset_name);
+        auto bottom_dataset = registry.GetArrowDataset(bottom_dataset_name);
+        if (!top_dataset || !bottom_dataset) {
+            ReportError("RowAppender: Input datasets not found");
+            return false;
+        }
+
+        auto top_table = top_dataset->GetArrowTable();
+        auto bottom_table = bottom_dataset->GetArrowTable();
+        if (!top_table || !bottom_table || !top_table->schema() ||
+            !bottom_table->schema()) {
+            ReportError("RowAppender: Input table is null");
+            return false;
+        }
+        if (top_table->num_columns() != bottom_table->num_columns()) {
+            ReportError("RowAppender: input schemas must have the same column count");
+            return false;
+        }
+        if (top_table->num_columns() == 0) {
+            ReportError("RowAppender: input tables must have at least one column");
+            return false;
+        }
+
+        std::vector<std::string> output_columns;
+        output_columns.reserve(top_table->num_columns());
+        for (int i = 0; i < top_table->num_columns(); ++i) {
+            const auto top_field = top_table->schema()->field(i);
+            const auto bottom_field = bottom_table->schema()->field(i);
+            if (top_field->name() != bottom_field->name()) {
+                ReportError("RowAppender: input column names differ at index " +
+                            std::to_string(i));
+                return false;
+            }
+            if (!top_field->type()->Equals(*bottom_field->type())) {
+                ReportError("RowAppender: input column type differs for '" +
+                            top_field->name() + "'");
+                return false;
+            }
+            output_columns.push_back(top_field->name());
+        }
+
+        const std::string top_table_name = "temp_top_" + std::to_string(node.id);
+        const std::string bottom_table_name =
+            "temp_bottom_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(top_table_name, top_table)) {
+            ReportError("RowAppender: Failed to register top table");
+            return false;
+        }
+        if (!duckdb_->RegisterTable(bottom_table_name, bottom_table)) {
+            duckdb_->UnregisterTable(top_table_name);
+            ReportError("RowAppender: Failed to register bottom table");
+            return false;
+        }
+
+        const std::string selected_columns = JoinQuotedColumns(output_columns);
+        const std::string sql = "SELECT " + selected_columns + " FROM " +
+                                top_table_name + " UNION ALL SELECT " +
+                                selected_columns + " FROM " +
+                                bottom_table_name;
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(top_table_name);
+        duckdb_->UnregisterTable(bottom_table_name);
+        if (!result_table) {
+            ReportError("RowAppender: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("RowAppender error: " + std::string(e.what()));
         return false;
     }
 }
