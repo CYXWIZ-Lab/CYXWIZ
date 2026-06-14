@@ -63,7 +63,7 @@ PipelineCanvas::GetQuickAddNodes() {
         {"Filter Rows", "FilterRows"},
         {"Select Columns", "SelectColumns"},
         {"Remove Duplicates", "RemoveDuplicateRows"},
-        {"Text Clean", "TextClean"},
+        {"Text Clean", "TextCleanNode"},
         {"Text Tokenize", "TextTokenizer"},
         {"Text Vectorize", "CountVectorizer"},
         {"TS Window", "TimeSeriesWindow"},
@@ -285,7 +285,7 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
         node.parameters["columns"] = "";
     }
     // Phase 6 Week 8-9: Text Processing
-    else if (type == "TextClean") {
+    else if (type == "TextCleanNode" || type == "TextClean") {
         node.parameters["text_column"] = "text";
         node.parameters["lowercase"] = "true";
         node.parameters["remove_html"] = "true";
@@ -757,7 +757,7 @@ std::string PipelineCanvas::GetNodeTooltip(const std::string& node_type) const {
                "Uses all columns or specified columns for comparison\n"
                "Input: Dataset\n"
                "Output: Deduplicated dataset";
-    } else if (node_type == "TextClean") {
+    } else if (node_type == "TextCleanNode" || node_type == "TextClean") {
         return "Remove HTML tags, special characters, and normalize text\n"
                "Options: lowercase, remove HTML, remove special chars\n"
                "Input: Dataset with text column\n"

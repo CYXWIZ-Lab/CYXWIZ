@@ -1582,7 +1582,7 @@ bool HasSupportedParameterValues(
         }
     }
 
-    if (node_type == "TextClean") {
+    if (node_type == "TextCleanNode" || node_type == "TextClean") {
         if (!ValidateOptionalBooleanParameter(
                 parameters, node_type, "lowercase", error) ||
             !ValidateOptionalBooleanParameter(
@@ -1596,7 +1596,7 @@ bool HasSupportedParameterValues(
         const auto remove_stopwords_it = parameters.find("remove_stopwords");
         if (remove_stopwords_it != parameters.end() &&
             OptionalBooleanParameterIsTrue(parameters, "remove_stopwords")) {
-            error = "TextClean remove_stopwords is not supported by PipelineExecutor";
+            error = node_type + " remove_stopwords is not supported by PipelineExecutor";
             return false;
         }
     }
@@ -2544,6 +2544,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteTextVectorize(node, ctx);
     case gui::NodeType::TextTokenizer:
         return ExecuteTextTokenize(node, ctx);
+    case gui::NodeType::TextCleanNode:
+        return ExecuteTextClean(node, ctx);
     default:
         handled = false;
         return false;
@@ -3794,9 +3796,12 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
 // ============================================================================
 
 bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx) {
+    const std::string diagnostic_name =
+        node.type == "TextCleanNode" ? "TextCleanNode" : "TextClean";
     std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
-        ReportError("TextClean: No input connection or dataset not found");
+        ReportError(diagnostic_name +
+                    ": No input connection or dataset not found");
         return false;
     }
 
@@ -3814,19 +3819,20 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
 
     std::string output_dataset_name = "ds_textclean_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] TextClean on column '{}' from '{}'", text_column, input_dataset_name);
+    spdlog::info("[Data Studio] {} on column '{}' from '{}'",
+                 diagnostic_name, text_column, input_dataset_name);
 
     try {
         auto& registry = DataRegistry::Instance();
         auto input_dataset = registry.GetArrowDataset(input_dataset_name);
         if (!input_dataset) {
-            ReportError("TextClean: Input dataset not found");
+            ReportError(diagnostic_name + ": Input dataset not found");
             return false;
         }
 
         auto input_table = input_dataset->GetArrowTable();
         std::string schema_error;
-        if (!RequireColumnKind(input_table, "TextClean", text_column,
+        if (!RequireColumnKind(input_table, diagnostic_name, text_column,
                                "string", IsStringArrowType, schema_error)) {
             ReportError(schema_error);
             return false;
@@ -3837,7 +3843,7 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
         std::string temp_table = "temp_" + std::to_string(node.id);
 
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("TextClean: Failed to register table");
+            ReportError(diagnostic_name + ": Failed to register table");
             return false;
         }
 
@@ -3864,18 +3870,19 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
         duckdb_->UnregisterTable(temp_table);
 
         if (!result_table) {
-            ReportError("TextClean: Query failed");
+            ReportError(diagnostic_name + ": Query failed");
             return false;
         }
 
         registry.RegisterArrowTable(result_table, output_dataset_name);
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] TextClean completed: {} rows", result_table->num_rows());
+        spdlog::info("[Data Studio] {} completed: {} rows",
+                     diagnostic_name, result_table->num_rows());
         return true;
 
     } catch (const std::exception& e) {
-        ReportError("TextClean error: " + std::string(e.what()));
+        ReportError(diagnostic_name + " error: " + std::string(e.what()));
         return false;
     }
 }

@@ -171,6 +171,7 @@ static NodeType StringToNodeType(const std::string& type_str) {
         // a layer to the model chain. Missing here previously → loader
         // fell through to NodeType::Dense, compile crashed on a missing
         // "units" param with "invalid stoi argument".
+        {"TextCleanNode", NodeType::TextCleanNode},
         {"TextTokenizer", NodeType::TextTokenizer},
         {"TextVocabulary", NodeType::TextVocabulary},
         {"TextPadding", NodeType::TextPadding},

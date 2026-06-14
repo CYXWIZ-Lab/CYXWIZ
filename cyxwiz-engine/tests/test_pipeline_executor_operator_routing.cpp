@@ -3321,25 +3321,47 @@ int main() {
           "StringManipulation numeric column error should be specific: " +
               numeric_string_manipulation_executor.GetLastError());
 
-    const std::string text_clean_json =
+    const std::string text_clean_node_json =
         R"({"nodes":[)"
         R"({"id":152,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":153,"type":"TextClean","name":"Clean","parameters":{)"
+        R"({"id":153,"type":"TextCleanNode","name":"Clean","parameters":{)"
         R"("text_column":"phrase","lowercase":"TRUE"}})"
         R"(],"links":[{"start_node":152,"end_node":153}]})";
 
-    cyxwiz::PipelineExecutor text_clean_executor;
-    Check(text_clean_executor.ExecutePipeline(text_clean_json),
-          "TextClean should validate and quote text column: " +
-              text_clean_executor.GetLastError());
+    cyxwiz::PipelineExecutor text_clean_node_executor;
+    Check(text_clean_node_executor.ExecutePipeline(text_clean_node_json),
+          "TextCleanNode should validate and quote text column: " +
+              text_clean_node_executor.GetLastError());
     auto text_clean = registry.GetArrowDataset("ds_textclean_153");
-    Check(text_clean != nullptr, "TextClean output dataset is registered");
+    Check(text_clean != nullptr, "TextCleanNode output dataset is registered");
     auto text_clean_table = text_clean->GetArrowTable();
-    Check(text_clean_table != nullptr, "TextClean output table exists");
+    Check(text_clean_table != nullptr, "TextCleanNode output table exists");
     Check(ReadStringValue(text_clean_table, "phrase_cleaned", 0) == "tea cup",
-          "TextClean should write cleaned output column");
+          "TextCleanNode should write cleaned output column");
+
+    const std::string text_clean_alias_json =
+        R"({"nodes":[)"
+        R"({"id":252,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":253,"type":"TextClean","name":"CleanAlias","parameters":{)"
+        R"("text_column":"phrase","lowercase":"TRUE"}})"
+        R"(],"links":[{"start_node":252,"end_node":253}]})";
+
+    cyxwiz::PipelineExecutor text_clean_alias_executor;
+    Check(text_clean_alias_executor.ExecutePipeline(text_clean_alias_json),
+          "TextClean legacy alias should validate and quote text column: " +
+              text_clean_alias_executor.GetLastError());
+    auto text_clean_alias = registry.GetArrowDataset("ds_textclean_253");
+    Check(text_clean_alias != nullptr,
+          "TextClean legacy alias output dataset is registered");
+    auto text_clean_alias_table = text_clean_alias->GetArrowTable();
+    Check(text_clean_alias_table != nullptr,
+          "TextClean legacy alias output table exists");
+    Check(ReadStringValue(text_clean_alias_table, "phrase_cleaned", 0) == "tea cup",
+          "TextClean legacy alias should write cleaned output column");
 
     const std::string text_clean_stopwords_json =
         R"({"nodes":[)"

@@ -1913,6 +1913,18 @@ void NodeMetadataRegistry::InitializeDNNNodes() {
 // Text Nodes
 // =============================================================================
 void NodeMetadataRegistry::InitializeTextNodes() {
+    RegisterNode({NodeType::TextCleanNode, NodeCategory::TextProcessing, "Text Clean", ICON_FA_BROOM,
+        {"clean", "text", "normalize", "lowercase", "html"}, 0, false,
+        "Clean one text column with lowercase, HTML removal, and special-character normalization", "", "",
+        {{"Text", PinType::Dataset, true, "Input text table"}},
+        {{"Cleaned", PinType::Dataset, true, "Input table plus cleaned text column"}},
+        {{"text_column", "string", "", "Text column", {}, ""},
+         {"lowercase", "bool", "true", "Lowercase text", {}, ""},
+         {"remove_html", "bool", "true", "Remove HTML tags", {}, ""},
+         {"remove_special_chars", "bool", "true", "Normalize special characters", {}, ""},
+         {"remove_stopwords", "bool", "false", "Remove stopwords (unsupported)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::TextTokenizer, NodeCategory::TextProcessing, "Tokenizer", ICON_FA_ALIGN_LEFT,
         {"tokenize", "text", "nlp", "vocabulary", "padding"}, 0, false,
         "Tokenize text, build/load vocabulary, and pad/truncate sequences", "", "",

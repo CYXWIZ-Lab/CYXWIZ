@@ -286,6 +286,7 @@ enum class NodeType {
     ThresholdFilter,    // Filter by confidence
 
     // ===== Text Processing Nodes =====
+    TextCleanNode,      // Clean one text column
     TextTokenizer,      // Tokenize text -> integer sequences
     TextVocabulary,     // Manage word<->index vocabulary
     TextPadding,        // Pad/truncate sequences to fixed length

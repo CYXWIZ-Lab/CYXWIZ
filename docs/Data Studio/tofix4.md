@@ -1546,6 +1546,26 @@ Updated coverage:
 - Metadata tests assert that `TextTokenize` remains legacy-executor routed
   while resolving to typed `TextTokenizer` metadata.
 
+### Progress note: typed Text Clean runtime coverage
+
+The legacy-only `TextClean` operator has been promoted behind a canonical
+`TextCleanNode` runtime contract while preserving `TextClean` as an executable
+legacy alias.
+
+Updated coverage:
+
+- `NodeType::TextCleanNode` is now serializable and registered in metadata.
+- The runtime capability map resolves `TextCleanNode` to the legacy executor
+  and keeps `TextClean` as a compatibility alias.
+- `PipelineExecutor` routes typed `TextCleanNode` execution through the real
+  text-cleaning implementation.
+- Data Studio quick-add exposes `TextCleanNode` instead of the legacy
+  `TextClean` alias.
+- Metadata tests assert both canonical and compatibility runtime names resolve
+  to typed metadata.
+- Executor routing tests cover canonical `TextCleanNode` success and legacy
+  `TextClean` alias success.
+
 At the moment, some nodes are:
 
 - over-exposed

@@ -201,9 +201,8 @@ GetPipelineLegacyRuntimeCapabilities() {
          PipelineLegacyDispatchKind::DeployToNodeEditor,
          "legacy saved-pipeline graphs use this handoff node name; no "
          "browser-visible typed metadata exists"},
-        {"TextClean", std::nullopt, PipelineLegacyDispatchKind::TextClean,
-         "legacy saved-pipeline graphs use pre-operator text preprocessing "
-         "names"},
+        {"TextCleanNode", gui::NodeType::TextCleanNode},
+        {"TextClean", gui::NodeType::TextCleanNode},
         {"TextTokenize", gui::NodeType::TextTokenizer},
         {"TextVectorize", gui::NodeType::CountVectorizer},
         {"TSWindow", gui::NodeType::TimeSeriesWindow},
@@ -260,6 +259,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"SortRows", {"columns"}},
         {"Join", {"on_column"}},
         {"GroupBy", {"group_columns", "aggregations"}},
+        {"TextCleanNode", {"text_column"}},
         {"TextClean", {"text_column"}},
         {"TextTokenize", {"text_column"}},
         {"TextVectorize", {"text_column"}},

@@ -547,14 +547,13 @@ int main() {
         }
     }
 
-    const std::set<std::string> intentional_quick_add_compatibility_nodes = {
-        "TextClean",
-    };
+    const std::set<std::string> intentional_quick_add_compatibility_nodes;
     const std::set<std::string> disallowed_quick_add_legacy_aliases = {
         "ArrowDataset",
         "FileInput",
         "SaveDataset",
         "RemoveDuplicates",
+        "TextClean",
         "TextTokenize",
         "TextVectorize",
         "TSWindow",
@@ -840,7 +839,6 @@ int main() {
     const std::set<std::string> expected_string_only_legacy_names = {
         "SaveDataset",
         "DeployToNodeEditor",
-        "TextClean",
     };
     std::set<std::string> observed_string_only_legacy_names;
 
@@ -1143,6 +1141,22 @@ int main() {
     Check(legacy_text_tokenize_type.has_value() &&
               *legacy_text_tokenize_type == gui::NodeType::TextTokenizer,
           "legacy TextTokenize runtime name should remain an executable alias");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::TextCleanNode)) == "TextCleanNode",
+          "runtime enum lookup for TextCleanNode should prefer canonical spelling");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::TextCleanNode).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "TextCleanNode enum support should resolve to legacy executor");
+    const auto canonical_text_clean_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("TextCleanNode");
+    Check(canonical_text_clean_type.has_value() &&
+              *canonical_text_clean_type == gui::NodeType::TextCleanNode,
+          "canonical TextCleanNode runtime name should resolve to typed metadata");
+    const auto legacy_text_clean_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("TextClean");
+    Check(legacy_text_clean_type.has_value() &&
+              *legacy_text_clean_type == gui::NodeType::TextCleanNode,
+          "legacy TextClean runtime name should remain an executable alias");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
