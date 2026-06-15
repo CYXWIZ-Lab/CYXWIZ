@@ -1584,7 +1584,8 @@ const char* MissingRequiredParameter(
             : "mapping";
     }
 
-    if (node_type == "ExportCSV" || node_type == "ExportJSON") {
+    if (node_type == "ExportCSV" || node_type == "ExportJSON" ||
+        node_type == "ExportParquet") {
         return (HasNonEmptyParameter(parameters, "file_path") ||
                 HasNonEmptyParameter(parameters, "path"))
             ? nullptr
@@ -2755,6 +2756,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteExportCSV(node, ctx);
     case gui::NodeType::ExportJSON:
         return ExecuteExportJSON(node, ctx);
+    case gui::NodeType::ExportParquet:
+        return ExecuteExportParquet(node, ctx);
     case gui::NodeType::RuleEngine:
         return ExecuteRuleEngine(node, ctx);
     case gui::NodeType::RowToColumnNames:
@@ -5188,6 +5191,35 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
     output << "]\n";
     if (!output) {
         ReportError("ExportJSON: Failed to write output file");
+        return false;
+    }
+
+    ctx.node_results[node.id] = input_dataset_name;
+    ctx.output_dataset = output_path;
+    return true;
+}
+
+bool PipelineExecutor::ExecuteExportParquet(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ExportParquet: No input dataset");
+        return false;
+    }
+
+    const std::string output_path = NormalizeDataOutputPath(node.parameters);
+    if (output_path.empty()) {
+        ReportError("ExportParquet: Missing output file path");
+        return false;
+    }
+
+    spdlog::info("[Data Studio] Exporting to Parquet: {}", output_path);
+    auto& registry = DataRegistry::Instance();
+    if (!registry.GetArrowDataset(input_dataset_name)) {
+        ReportError("ExportParquet: Input dataset not found in registry");
+        return false;
+    }
+    if (!registry.ExportArrowToParquet(input_dataset_name, output_path)) {
+        ReportError("ExportParquet: Export failed");
         return false;
     }
 

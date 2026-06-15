@@ -1736,6 +1736,20 @@ Updated coverage:
 - Ordered comparisons require numeric columns and numeric values.
 - Executor routing tests cover matching and default rule outputs.
 
+### Progress note: Export Parquet runtime implementation
+
+`ExportParquet` metadata already claimed implementation, but the node was not
+mapped into PipelineExecutor runtime support.
+
+Updated coverage:
+
+- The runtime capability map resolves `ExportParquet` to the legacy executor.
+- `PipelineExecutor` writes Arrow datasets through
+  `DataRegistry::ExportArrowToParquet`.
+- Export path handling accepts both `file_path` and the Data Studio `path`
+  alias.
+- Executor routing tests cover Parquet file creation and read-back row count.
+
 At the moment, some nodes are:
 
 - over-exposed

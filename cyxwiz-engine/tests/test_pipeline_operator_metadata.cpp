@@ -1265,6 +1265,16 @@ int main() {
     Check(export_json_type.has_value() &&
               *export_json_type == gui::NodeType::ExportJSON,
           "ExportJSON runtime name should resolve typed metadata");
+    const auto export_parquet_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ExportParquet);
+    Check(export_parquet_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "ExportParquet enum support should resolve to legacy executor");
+    const auto export_parquet_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("ExportParquet");
+    Check(export_parquet_type.has_value() &&
+              *export_parquet_type == gui::NodeType::ExportParquet,
+          "ExportParquet runtime name should resolve typed metadata");
     const auto rule_engine_support =
         cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::RuleEngine);
     Check(rule_engine_support.mode ==

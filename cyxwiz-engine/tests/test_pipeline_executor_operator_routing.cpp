@@ -134,6 +134,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export_alias.csv";
     const fs::path export_json_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.json";
+    const fs::path export_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.parquet";
     const fs::path data_output_mixed_case_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_mixed_case.csv";
     const fs::path data_output_path_alias_csv_path =
@@ -2698,6 +2700,29 @@ int main() {
               export_csv_path_alias_executor.GetLastError());
     Check(fs::exists(export_csv_alias_path),
           "ExportCSV path alias should create the output file");
+
+    const std::string export_parquet_json =
+        R"({"nodes":[)"
+        R"({"id":571,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":572,"type":"ExportParquet","name":"Export","parameters":{)"
+        R"("path":")" + JsonEscapePath(export_parquet_path.string()) + R"("}})"
+        R"(],"links":[{"start_node":571,"end_node":572}]})";
+
+    cyxwiz::PipelineExecutor export_parquet_executor;
+    Check(export_parquet_executor.ExecutePipeline(export_parquet_json),
+          "ExportParquet should write through DataRegistry: " +
+              export_parquet_executor.GetLastError());
+    Check(fs::exists(export_parquet_path),
+          "ExportParquet should create the output file");
+    auto exported_parquet =
+        cyxwiz::ArrowDataset::FromParquet(export_parquet_path.string(),
+                                          "exported_parquet_check");
+    Check(exported_parquet != nullptr,
+          "ExportParquet output should be readable as Arrow dataset");
+    Check(exported_parquet->GetNumRows() == 3,
+          "ExportParquet output should preserve row count");
 
     const std::string save_dataset_json =
         R"({"nodes":[)"
