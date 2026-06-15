@@ -1750,6 +1750,22 @@ Updated coverage:
   alias.
 - Executor routing tests cover Parquet file creation and read-back row count.
 
+### Progress note: Unit Converter runtime implementation
+
+`UnitConverter` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `UnitConverter` metadata is now marked implemented.
+- The runtime capability map resolves `UnitConverter` to the legacy executor.
+- `PipelineExecutor` converts every numeric input column while preserving
+  non-numeric columns.
+- Supported categories cover the metadata surface: length, mass, temperature,
+  time, area, and volume.
+- Unsupported units fail clearly instead of falling back to a silent no-op.
+- Executor routing tests cover meter-to-foot conversion.
+
 At the moment, some nodes are:
 
 - over-exposed

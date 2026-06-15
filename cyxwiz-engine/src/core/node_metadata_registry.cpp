@@ -2410,7 +2410,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"category", "enum", "length", "Unit category", {"length", "mass", "temperature", "time", "area", "volume"}, ""},
          {"from_unit", "string", "m", "From unit", {}, ""},
          {"to_unit", "string", "ft", "To unit", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RegexTester, NodeCategory::Utility, "Regex Tester", ICON_FA_CODE,
         {"regex", "regular", "expression", "pattern"}, 0, false, "Regular expression tester",

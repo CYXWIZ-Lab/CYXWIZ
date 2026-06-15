@@ -1285,6 +1285,16 @@ int main() {
     Check(rule_engine_type.has_value() &&
               *rule_engine_type == gui::NodeType::RuleEngine,
           "RuleEngine runtime name should resolve typed metadata");
+    const auto unit_converter_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::UnitConverter);
+    Check(unit_converter_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "UnitConverter enum support should resolve to legacy executor");
+    const auto unit_converter_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("UnitConverter");
+    Check(unit_converter_type.has_value() &&
+              *unit_converter_type == gui::NodeType::UnitConverter,
+          "UnitConverter runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

@@ -3282,6 +3282,28 @@ int main() {
     Check(ReadStringValue(rule_table, "bucket", 2) == "high",
           "RuleEngine should emit matching rule values");
 
+    const std::string unit_converter_json =
+        R"({"nodes":[)"
+        R"({"id":641,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":642,"type":"UnitConverter","name":"Convert","parameters":{)"
+        R"("category":"length","from_unit":"m","to_unit":"ft"}})"
+        R"(],"links":[{"start_node":641,"end_node":642}]})";
+
+    cyxwiz::PipelineExecutor unit_converter_executor;
+    Check(unit_converter_executor.ExecutePipeline(unit_converter_json),
+          "UnitConverter should convert numeric table columns: " +
+              unit_converter_executor.GetLastError());
+    auto converted_units = registry.GetArrowDataset("ds_unitconverter_642");
+    Check(converted_units != nullptr,
+          "UnitConverter output dataset is registered");
+    auto converted_units_table = converted_units->GetArrowTable();
+    Check(converted_units_table != nullptr, "UnitConverter output table exists");
+    Check(std::fabs(ReadNumericValue(converted_units_table, "x", 0) -
+                    3.28084) < 0.001,
+          "UnitConverter should convert meters to feet");
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

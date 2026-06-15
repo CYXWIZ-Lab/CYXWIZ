@@ -218,6 +218,7 @@ private:
     bool ExecuteExportJSON(const Node& node, ExecutionContext& ctx);
     bool ExecuteExportParquet(const Node& node, ExecutionContext& ctx);
     bool ExecuteRuleEngine(const Node& node, ExecutionContext& ctx);
+    bool ExecuteUnitConverter(const Node& node, ExecutionContext& ctx);
     // Helper methods
     void UpdateProgress(float progress, const std::string& status = "");  // Phase 8: Added status parameter
     void ReportError(const std::string& error);

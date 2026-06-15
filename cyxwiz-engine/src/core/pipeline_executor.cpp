@@ -364,6 +364,125 @@ bool BuildRuleEngineCaseExpression(const std::shared_ptr<arrow::Table>& table,
     return true;
 }
 
+std::string NormalizeUnitName(std::string unit) {
+    unit = ToLowerAscii(TrimString(unit));
+    unit.erase(std::remove_if(unit.begin(), unit.end(),
+                              [](unsigned char c) { return std::isspace(c); }),
+               unit.end());
+    return unit;
+}
+
+bool UnitScaleToBase(const std::string& category,
+                     const std::string& unit,
+                     double& scale,
+                     std::string& error) {
+    const std::string normalized = NormalizeUnitName(unit);
+    const auto fail = [&]() {
+        error = "UnitConverter: unsupported " + category + " unit '" + unit + "'";
+        return false;
+    };
+
+    if (category == "length") {
+        if (normalized == "m" || normalized == "meter" || normalized == "meters") scale = 1.0;
+        else if (normalized == "km" || normalized == "kilometer" || normalized == "kilometers") scale = 1000.0;
+        else if (normalized == "cm" || normalized == "centimeter" || normalized == "centimeters") scale = 0.01;
+        else if (normalized == "mm" || normalized == "millimeter" || normalized == "millimeters") scale = 0.001;
+        else if (normalized == "ft" || normalized == "foot" || normalized == "feet") scale = 0.3048;
+        else if (normalized == "in" || normalized == "inch" || normalized == "inches") scale = 0.0254;
+        else if (normalized == "mi" || normalized == "mile" || normalized == "miles") scale = 1609.344;
+        else return fail();
+        return true;
+    }
+
+    if (category == "mass") {
+        if (normalized == "kg" || normalized == "kilogram" || normalized == "kilograms") scale = 1.0;
+        else if (normalized == "g" || normalized == "gram" || normalized == "grams") scale = 0.001;
+        else if (normalized == "mg" || normalized == "milligram" || normalized == "milligrams") scale = 0.000001;
+        else if (normalized == "lb" || normalized == "lbs" || normalized == "pound" || normalized == "pounds") scale = 0.45359237;
+        else if (normalized == "oz" || normalized == "ounce" || normalized == "ounces") scale = 0.028349523125;
+        else return fail();
+        return true;
+    }
+
+    if (category == "time") {
+        if (normalized == "s" || normalized == "sec" || normalized == "second" || normalized == "seconds") scale = 1.0;
+        else if (normalized == "min" || normalized == "minute" || normalized == "minutes") scale = 60.0;
+        else if (normalized == "h" || normalized == "hr" || normalized == "hour" || normalized == "hours") scale = 3600.0;
+        else if (normalized == "day" || normalized == "days" || normalized == "d") scale = 86400.0;
+        else return fail();
+        return true;
+    }
+
+    if (category == "area") {
+        if (normalized == "m2" || normalized == "m^2" || normalized == "sqm") scale = 1.0;
+        else if (normalized == "cm2" || normalized == "cm^2") scale = 0.0001;
+        else if (normalized == "ft2" || normalized == "ft^2" || normalized == "sqft") scale = 0.09290304;
+        else if (normalized == "acre" || normalized == "acres") scale = 4046.8564224;
+        else return fail();
+        return true;
+    }
+
+    if (category == "volume") {
+        if (normalized == "l" || normalized == "liter" || normalized == "liters") scale = 1.0;
+        else if (normalized == "ml" || normalized == "milliliter" || normalized == "milliliters") scale = 0.001;
+        else if (normalized == "m3" || normalized == "m^3") scale = 1000.0;
+        else if (normalized == "ft3" || normalized == "ft^3") scale = 28.316846592;
+        else if (normalized == "gal" || normalized == "gallon" || normalized == "gallons") scale = 3.785411784;
+        else return fail();
+        return true;
+    }
+
+    error = "UnitConverter: unsupported category '" + category + "'";
+    return false;
+}
+
+bool BuildUnitConverterExpression(const std::string& category,
+                                  const std::string& from_unit,
+                                  const std::string& to_unit,
+                                  const std::string& quoted_column,
+                                  std::string& expression,
+                                  std::string& error) {
+    const std::string normalized_category = ToLowerAscii(TrimString(category));
+    if (normalized_category == "temperature") {
+        const std::string from = NormalizeUnitName(from_unit);
+        const std::string to = NormalizeUnitName(to_unit);
+        std::string celsius_expression;
+        if (from == "c" || from == "celsius") {
+            celsius_expression = quoted_column;
+        } else if (from == "f" || from == "fahrenheit") {
+            celsius_expression = "((" + quoted_column + " - 32.0) * 5.0 / 9.0)";
+        } else if (from == "k" || from == "kelvin") {
+            celsius_expression = "(" + quoted_column + " - 273.15)";
+        } else {
+            error = "UnitConverter: unsupported temperature unit '" + from_unit + "'";
+            return false;
+        }
+
+        if (to == "c" || to == "celsius") {
+            expression = celsius_expression;
+        } else if (to == "f" || to == "fahrenheit") {
+            expression = "((" + celsius_expression + ") * 9.0 / 5.0 + 32.0)";
+        } else if (to == "k" || to == "kelvin") {
+            expression = "((" + celsius_expression + ") + 273.15)";
+        } else {
+            error = "UnitConverter: unsupported temperature unit '" + to_unit + "'";
+            return false;
+        }
+        return true;
+    }
+
+    double from_scale = 1.0;
+    double to_scale = 1.0;
+    if (!UnitScaleToBase(normalized_category, from_unit, from_scale, error) ||
+        !UnitScaleToBase(normalized_category, to_unit, to_scale, error)) {
+        return false;
+    }
+
+    expression = "((" + quoted_column + ") * " + std::to_string(from_scale) +
+                 " / " + std::to_string(to_scale) + ")";
+    return true;
+}
+
 std::vector<std::string> ParseCommaSeparatedNames(const std::string& value) {
     std::vector<std::string> result;
     std::stringstream stream(value);
@@ -2760,6 +2879,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteExportParquet(node, ctx);
     case gui::NodeType::RuleEngine:
         return ExecuteRuleEngine(node, ctx);
+    case gui::NodeType::UnitConverter:
+        return ExecuteUnitConverter(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -5293,6 +5414,95 @@ bool PipelineExecutor::ExecuteRuleEngine(const Node& node, ExecutionContext& ctx
         return true;
     } catch (const std::exception& e) {
         ReportError("RuleEngine error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteUnitConverter(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("UnitConverter: No input dataset");
+        return false;
+    }
+
+    const std::string category =
+        ParameterOrDefault(node.parameters, "category", "length");
+    const std::string from_unit =
+        ParameterOrDefault(node.parameters, "from_unit", "m");
+    const std::string to_unit =
+        ParameterOrDefault(node.parameters, "to_unit", "ft");
+    const std::string output_dataset_name =
+        "ds_unitconverter_" + std::to_string(node.id);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("UnitConverter: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("UnitConverter: Input table is null");
+            return false;
+        }
+
+        std::vector<std::string> select_expressions;
+        select_expressions.reserve(input_table->num_columns());
+        bool converted_column = false;
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto field = input_table->schema()->field(i);
+            const std::string quoted_column = QuoteSqlIdentifier(field->name());
+            if (field && IsNumericArrowType(field->type())) {
+                std::string converted_expression;
+                std::string conversion_error;
+                if (!BuildUnitConverterExpression(
+                        category, from_unit, to_unit, quoted_column,
+                        converted_expression, conversion_error)) {
+                    ReportError(conversion_error);
+                    return false;
+                }
+                select_expressions.push_back(converted_expression + " AS " +
+                                             quoted_column);
+                converted_column = true;
+            } else {
+                select_expressions.push_back(quoted_column);
+            }
+        }
+
+        if (!converted_column) {
+            ReportError("UnitConverter: input table has no numeric columns");
+            return false;
+        }
+
+        const std::string temp_table = "temp_unit_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("UnitConverter: Failed to register table");
+            return false;
+        }
+
+        std::string sql = "SELECT ";
+        for (size_t i = 0; i < select_expressions.size(); ++i) {
+            if (i > 0) {
+                sql += ", ";
+            }
+            sql += select_expressions[i];
+        }
+        sql += " FROM " + temp_table;
+
+        auto output_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+        if (!output_table) {
+            ReportError("UnitConverter: Query failed");
+            return false;
+        }
+
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("UnitConverter error: " + std::string(e.what()));
         return false;
     }
 }
