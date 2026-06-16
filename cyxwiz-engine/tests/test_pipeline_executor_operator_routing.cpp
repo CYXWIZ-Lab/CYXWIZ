@@ -558,6 +558,7 @@ int main() {
         {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},
         {"CrossValidationNode", false},
+        {"VisualizeData", false},
         {"QualityAnalyzer", false},
         {"TableSplitter", false},
         {"ExportExcel", false},

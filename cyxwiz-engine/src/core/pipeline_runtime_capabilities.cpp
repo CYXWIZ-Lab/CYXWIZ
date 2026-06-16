@@ -75,6 +75,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::FeatureImportanceNode},
         {"CrossValidationNode", "cross-validation graph execution is not implemented in PipelineExecutor",
          gui::NodeType::CrossValidationNode},
+        {"VisualizeData", "visualization rendering is UI-only and is not implemented in PipelineExecutor",
+         gui::NodeType::VisualizeData},
         {"TrainTestSplit", "legacy TrainTestSplit graph execution is not implemented; old passthrough behavior is disabled"},
         {"ImagePreprocessor", "legacy ImagePreprocessor graph execution is not implemented; old passthrough behavior is disabled",
          gui::NodeType::ImagePreprocessor},

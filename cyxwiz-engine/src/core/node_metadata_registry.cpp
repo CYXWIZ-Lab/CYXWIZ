@@ -1048,7 +1048,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {"plot", "chart", "visualize"}, 0, false, "Create visualizations", "", "",
         {{"Table", PinType::Dataset, true, "Input"}}, {},
         {{"chart_type", "enum", "scatter", "Type", {"scatter", "bar", "line", "histogram"}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "UI-only"});
 
     RegisterNode({NodeType::SampleRows, NodeCategory::Analytics, "Row Sampler", ICON_FA_DICE,
         {"sample", "random"}, 0, false, "Sample random rows", "", "",

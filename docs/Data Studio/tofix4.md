@@ -1975,6 +1975,20 @@ Updated coverage:
   treated as Pearson.
 - Executor routing tests cover Pearson output and unsupported-method rejection.
 
+### Progress note: Visualize Data runtime truth correction
+
+`VisualizeData` was marked implemented in metadata even though rendering charts
+is a UI concern and PipelineExecutor has no visualization output contract.
+
+Updated coverage:
+
+- `VisualizeData` metadata is now marked `Template` / `UI-only`.
+- The runtime capability map fails `VisualizeData` closed with a central reason.
+- Metadata drift tests assert the node remains blocked while the executor path
+  is unavailable.
+- Executor routing tests verify `VisualizeData` fails closed instead of
+  returning a passthrough dataset.
+
 ### Progress note: remaining hard-gap fail-closed coverage
 
 The remaining high-risk nodes that still need larger backend contracts now have
