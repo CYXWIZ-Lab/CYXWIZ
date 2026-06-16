@@ -2168,6 +2168,20 @@ Implemented:
 - extended metadata and representative executor routing coverage so Data
   Studio graph execution reports the central tensor backend-gap reason.
 
+### Progress note: embedding PipelineExecutor truth correction
+
+`Embedding` is a training model layer node. It is valid in model construction,
+but it is not a Data Studio Arrow-table runtime operator.
+
+Implemented:
+
+- added a central fail-closed PipelineExecutor capability entry for
+  `Embedding`;
+- preserved its global `Implemented` metadata because the model/training graph
+  owns the real execution contract;
+- extended metadata and representative executor routing coverage so Data
+  Studio graph execution reports the central embedding backend-gap reason.
+
 At the moment, some nodes are:
 
 - over-exposed

@@ -613,6 +613,7 @@ int main() {
         {"TensorExpand", false},
         {"TensorIndexSelect", false},
         {"TensorLogicalMask", false},
+        {"Embedding", false},
         {"QualityAnalyzer", false},
         {"TableSplitter", false},
         {"ExportExcel", false},

@@ -185,6 +185,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::TensorIndexSelect, std::nullopt, false},
         {"TensorLogicalMask", "TensorLogicalMask is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
          gui::NodeType::TensorLogicalMask, std::nullopt, false},
+        {"Embedding", "Embedding is a training model layer node; PipelineExecutor embedding-layer execution is not implemented",
+         gui::NodeType::Embedding, std::nullopt, false},
         {"TrainTestSplit", "legacy TrainTestSplit graph execution is not implemented; old passthrough behavior is disabled"},
         {"ImagePreprocessor", "legacy ImagePreprocessor graph execution is not implemented; old passthrough behavior is disabled",
          gui::NodeType::ImagePreprocessor},
