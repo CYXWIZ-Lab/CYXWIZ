@@ -330,19 +330,44 @@ Current CyxWiz nodes and UI:
 - `DataProfiler` style functionality
 - table viewers / data preview panels
 
+Current strengths:
+
+- `DataInputDialog` has preview and profiling UI for early data inspection
+- `DataProfiler`, `DescribeStats`, and `CorrelationMatrix` now have real
+  tested `PipelineExecutor` runtimes for Arrow-table graphs
+- table viewers and tool panels provide useful interactive inspection outside
+  the training graph
+
 Current gaps / misleading parts:
 
-- profiling support is not yet trustworthy enough as a graph-stage
-  decision tool
-- some runtime data analysis nodes are still passthrough or partial
+- inspection is still split between dialog preview, panels/tools, and graph
+  nodes
+- profiling is not yet a mandatory or strongly guided pre-train gate
 - there is no strong "inspect before training" workflow baked into the
   graph
 
+Current backend truth:
+
+- graph-level profiling is real for the audited tabular metric/statistics
+  nodes
+- class balance, label preview, and training-target suitability are not yet a
+  unified compile-time data-quality contract
+- non-tabular inspection still depends mostly on source-specific preview UI
+  and domain panels
+
 Recommendation:
 
-- make data profiling a first-class graph and UI step
+- make data profiling a first-class graph and UI step without duplicating the
+  existing tested statistic operators
 - surface missing values, class balance, column types, label preview,
   and shape summary before compile/train
+
+Progress note:
+
+Stage 3 has been updated to reflect that the audited tabular inspection nodes
+are no longer placeholder-like. The remaining gap is workflow integration:
+profiling should help users choose label columns, detect leakage and imbalance,
+and catch bad training inputs before they reach the compiler.
 
 ---
 
@@ -630,17 +655,41 @@ Current strengths:
 
 - there is a real compiled training path
 - training and debug share the same model-building path
+- `StartTrainingFromGraph` now runs a compile gate before launch and can block
+  training when the graph has error-level findings
+- optional debug-before-train policy can warn or block when the graph changed
+  since the last successful Local Debug run
+- loader-based dispatch routes registered datasets through their owning
+  loaders instead of hard-coding one dataset kind
+- Arrow and Parquet training batchers both build train/validation/test
+  batchers and report split sample counts
 
 Current gaps / misleading parts:
 
 - training support is narrower than the visible node surface
-- compile success does not always mean faithful graph realization
+- compile success is guarded more than before, but still does not mean every
+  visible node type has faithful graph realization
 - some nodes are accepted by compile logic but ignored or dropped by
   model building
 - model-building must keep owning derived tensor dimensions. Users should
   edit architectural intent such as `hidden_size`, `embedding_dim`, and
   `return_sequences`; connected layer input sizes should come from graph
   shape propagation rather than hand-entered defaults
+
+Current backend truth:
+
+- `GraphCompiler -> TrainingConfiguration -> TrainingManager ->
+  TrainingExecutor -> BuildExecutableFromConfig` is the real training path
+- `PipelineExecutor` remains the table/data pipeline runtime, not the model
+  training executor
+- supported training nodes should be described by the compiler/model-builder
+  boundary, not by Data Studio operator availability
+
+Progress note:
+
+Stage 10 has been updated to include the current launch guards and dataset
+dispatch behavior. The remaining work is to keep visible training nodes aligned
+with what `ModelBuilder` and graph executable models can actually construct.
 
 ---
 
@@ -811,8 +860,13 @@ Current product issue:
 
 - CyxWiz currently presents a stronger deep-learning node vocabulary
   than the current end-to-end training graph fully supports
-- at the same time, many classical ML / analytics nodes exist but still
-  have placeholder or split runtime paths
+- at the same time, classical ML / analytics support is no longer uniformly
+  placeholder-like: preprocessing, profiling, PCA, clustering, text
+  vectorizers, linear/polynomial regression, evaluation metrics, and several
+  time-series feature nodes now have real table-path coverage
+- the remaining classical ML issue is uneven ownership: some capabilities are
+  graph operators, some are tools/panels, and some model families remain
+  deferred or fail-closed
 
 So both sides need support cleanup, but in different ways.
 
