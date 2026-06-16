@@ -1526,6 +1526,26 @@ int main() {
                   TypeId(type));
     }
 
+    const gui::NodeType blocked_metadata_cases[] = {
+        gui::NodeType::LearningCurvesNode,
+        gui::NodeType::FeatureImportanceNode,
+        gui::NodeType::CrossValidationNode,
+        gui::NodeType::ExportExcel,
+        gui::NodeType::TableSplitter,
+        gui::NodeType::IFFTNode,
+        gui::NodeType::WaveletTransform,
+        gui::NodeType::WordEmbeddings,
+        gui::NodeType::NamedEntityRecognizer,
+    };
+    for (const auto type : blocked_metadata_cases) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "blocked fail-closed metadata should exist: " + TypeId(type));
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
+              "blocked fail-closed metadata should remain template: " +
+                  TypeId(type));
+    }
+
     Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
               cyxwiz::PipelineTrainingBackendSupportMode::Allowed)) ==
               "allowed",

@@ -1940,6 +1940,12 @@ Locked fail-closed coverage now includes:
 This deliberately keeps these nodes blocked until their real execution
 contracts exist rather than adding dataset-shaped approximations.
 
+Additional metadata drift coverage now asserts active registrations for
+`LearningCurvesNode`, `FeatureImportanceNode`, `CrossValidationNode`,
+`ExportExcel`, `TableSplitter`, `IFFTNode`, `WaveletTransform`,
+`WordEmbeddings`, and `NamedEntityRecognizer` remain `Template` while their
+PipelineExecutor runtime stays fail-closed.
+
 ### Progress note: Export SQL metadata truth correction
 
 `ExportSQL` was marked implemented in metadata even though PipelineExecutor has
