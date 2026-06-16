@@ -5,6 +5,7 @@
 #include "data_convert_service.h"
 #include "node_executors/pipeline_operator_factory.h"
 #include "pipeline_runtime_capabilities.h"
+#include <arrow/api.h>
 #include <arrow/csv/api.h>
 #include <arrow/scalar.h>
 #include <arrow/table.h>
@@ -1368,6 +1369,62 @@ bool BuildCalculatorExpression(const std::string& formula,
         return false;
     }
     return true;
+}
+
+bool ParseSimpleJsonPath(const std::string& path,
+                         std::vector<std::string>& segments,
+                         std::string& error) {
+    segments.clear();
+    const std::string trimmed = TrimString(path);
+    if (trimmed.empty()) {
+        error = "JSONPathExtractor: path is required";
+        return false;
+    }
+    if (trimmed == "$") {
+        return true;
+    }
+    if (trimmed.rfind("$.", 0) != 0) {
+        error = "JSONPathExtractor: only simple $.field paths are supported";
+        return false;
+    }
+
+    std::stringstream tokens(trimmed.substr(2));
+    std::string token;
+    while (std::getline(tokens, token, '.')) {
+        token = TrimString(token);
+        if (token.empty() || token.find('[') != std::string::npos ||
+            token.find(']') != std::string::npos) {
+            error = "JSONPathExtractor: only dot-separated object fields are supported";
+            return false;
+        }
+        segments.push_back(token);
+    }
+    return true;
+}
+
+bool ExtractJsonPathValue(const nlohmann::json& document,
+                          const std::vector<std::string>& segments,
+                          nlohmann::json& value) {
+    const nlohmann::json* current = &document;
+    for (const auto& segment : segments) {
+        if (!current->is_object()) {
+            return false;
+        }
+        const auto it = current->find(segment);
+        if (it == current->end()) {
+            return false;
+        }
+        current = &(*it);
+    }
+    value = *current;
+    return true;
+}
+
+std::string JsonValueToDatasetString(const nlohmann::json& value) {
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    return value.dump();
 }
 
 bool TryParseInteger(const std::string& value, int64_t& parsed) {
@@ -2965,6 +3022,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteUnitConverter(node, ctx);
     case gui::NodeType::CalculatorNode:
         return ExecuteCalculatorNode(node, ctx);
+    case gui::NodeType::JSONPathExtractor:
+        return ExecuteJSONPathExtractor(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -5621,6 +5680,141 @@ bool PipelineExecutor::ExecuteCalculatorNode(const Node& node, ExecutionContext&
         return true;
     } catch (const std::exception& e) {
         ReportError("CalculatorNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteJSONPathExtractor(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("JSONPathExtractor: No input dataset");
+        return false;
+    }
+
+    const std::string path = ParameterOrDefault(node.parameters, "path", "$");
+    std::vector<std::string> path_segments;
+    std::string path_error;
+    if (!ParseSimpleJsonPath(path, path_segments, path_error)) {
+        ReportError(path_error);
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("JSONPathExtractor: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("JSONPathExtractor: Input table is null");
+            return false;
+        }
+
+        std::string json_column =
+            ParameterOrDefault(node.parameters, "json_column", "");
+        if (json_column.empty()) {
+            json_column = ParameterOrDefault(node.parameters, "column", "");
+        }
+        int column_index = json_column.empty()
+                               ? -1
+                               : input_table->schema()->GetFieldIndex(json_column);
+        if (column_index < 0 && !json_column.empty()) {
+            ReportError("JSONPathExtractor: json column '" + json_column +
+                        "' not found");
+            return false;
+        }
+        if (column_index < 0) {
+            for (int i = 0; i < input_table->num_columns(); ++i) {
+                const auto field = input_table->schema()->field(i);
+                if (field && IsStringArrowType(field->type())) {
+                    column_index = i;
+                    json_column = field->name();
+                    break;
+                }
+            }
+        }
+        if (column_index < 0) {
+            ReportError("JSONPathExtractor: input table has no JSON string column");
+            return false;
+        }
+
+        arrow::StringBuilder result_builder;
+        const auto column = input_table->column(column_index);
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto scalar_result = column->GetScalar(row);
+            if (!scalar_result.ok()) {
+                ReportError("JSONPathExtractor: Failed to read JSON scalar");
+                return false;
+            }
+            const auto scalar = *scalar_result;
+            if (!scalar || !scalar->is_valid) {
+                auto status = result_builder.AppendNull();
+                if (!status.ok()) {
+                    ReportError("JSONPathExtractor: Failed to append null result");
+                    return false;
+                }
+                continue;
+            }
+
+            std::string json_text;
+            if (scalar->type->id() == arrow::Type::STRING) {
+                json_text =
+                    std::static_pointer_cast<arrow::StringScalar>(scalar)->value;
+            } else if (scalar->type->id() == arrow::Type::LARGE_STRING) {
+                json_text =
+                    std::static_pointer_cast<arrow::LargeStringScalar>(scalar)->value;
+            } else {
+                ReportError("JSONPathExtractor: selected column must be string");
+                return false;
+            }
+
+            nlohmann::json document;
+            try {
+                document = nlohmann::json::parse(json_text);
+            } catch (const std::exception& e) {
+                ReportError("JSONPathExtractor: invalid JSON at row " +
+                            std::to_string(row) + ": " + e.what());
+                return false;
+            }
+
+            nlohmann::json value;
+            if (!ExtractJsonPathValue(document, path_segments, value) ||
+                value.is_null()) {
+                auto status = result_builder.AppendNull();
+                if (!status.ok()) {
+                    ReportError("JSONPathExtractor: Failed to append null result");
+                    return false;
+                }
+                continue;
+            }
+
+            auto status = result_builder.Append(JsonValueToDatasetString(value));
+            if (!status.ok()) {
+                ReportError("JSONPathExtractor: Failed to append extracted value");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> result_array;
+        auto finish_status = result_builder.Finish(&result_array);
+        if (!finish_status.ok()) {
+            ReportError("JSONPathExtractor: Failed to build result array");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("value", arrow::utf8())}),
+            {result_array});
+        const std::string output_dataset_name =
+            "ds_jsonpath_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("JSONPathExtractor error: " + std::string(e.what()));
         return false;
     }
 }

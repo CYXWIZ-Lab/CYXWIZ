@@ -1782,6 +1782,24 @@ Updated coverage:
 - Unsupported identifier or SQL-like tokens fail before query construction.
 - Executor routing tests cover arithmetic precedence and output registration.
 
+### Progress note: JSONPath Extractor runtime implementation
+
+`JSONPathExtractor` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `JSONPathExtractor` metadata is now marked implemented.
+- The runtime capability map resolves `JSONPathExtractor` to the legacy
+  executor.
+- `PipelineExecutor` extracts values from a JSON string column into a one-column
+  `value` dataset.
+- Supported path syntax is intentionally narrow: `$` and dot-separated object
+  fields such as `$.user.name`.
+- Array selectors and full JSONPath expressions still fail clearly instead of
+  being silently ignored.
+- Executor routing tests cover simple object-field extraction.
+
 At the moment, some nodes are:
 
 - over-exposed

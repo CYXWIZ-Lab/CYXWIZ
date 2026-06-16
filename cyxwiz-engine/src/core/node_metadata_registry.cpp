@@ -2427,7 +2427,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"JSON", PinType::Dataset, true, "JSON data"}},
         {{"Result", PinType::Dataset, true, "Extracted values"}},
         {{"path", "string", "$.data[*].value", "JSONPath expression", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

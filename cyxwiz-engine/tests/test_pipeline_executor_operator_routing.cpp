@@ -160,6 +160,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_strings.csv";
     const fs::path duplicates_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_duplicates.csv";
+    const fs::path json_payload_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_json_payload.csv";
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
@@ -176,12 +178,19 @@ int main() {
     fs::remove(mixed_csv_path);
     fs::remove(missing_string_csv_path);
     fs::remove(duplicates_csv_path);
+    fs::remove(json_payload_csv_path);
     {
         std::ofstream csv(csv_path);
         csv << "x,y\n";
         csv << "1,10\n";
         csv << "2,20\n";
         csv << "3,30\n";
+    }
+    {
+        std::ofstream csv(json_payload_csv_path);
+        csv << "payload\n";
+        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Ada\"\"}}\"\n";
+        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Grace\"\"}}\"\n";
     }
     {
         std::ofstream csv(missing_csv_path);
@@ -3321,6 +3330,29 @@ int main() {
     Check(calculator_table != nullptr, "CalculatorNode output table exists");
     Check(ReadNumericValue(calculator_table, "result", 0) == 14.0,
           "CalculatorNode should respect arithmetic precedence");
+
+    const std::string json_path_json =
+        R"({"nodes":[)"
+        R"({"id":651,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(json_payload_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":652,"type":"JSONPathExtractor","name":"Extract","parameters":{)"
+        R"("path":"$.user.name","json_column":"payload"}})"
+        R"(],"links":[{"start_node":651,"end_node":652}]})";
+
+    cyxwiz::PipelineExecutor json_path_executor;
+    Check(json_path_executor.ExecutePipeline(json_path_json),
+          "JSONPathExtractor should extract simple object paths: " +
+              json_path_executor.GetLastError());
+    auto json_path_result = registry.GetArrowDataset("ds_jsonpath_652");
+    Check(json_path_result != nullptr,
+          "JSONPathExtractor output dataset is registered");
+    auto json_path_table = json_path_result->GetArrowTable();
+    Check(json_path_table != nullptr, "JSONPathExtractor output table exists");
+    Check(ReadStringValue(json_path_table, "value", 0) == "Ada",
+          "JSONPathExtractor should extract first row value");
+    Check(ReadStringValue(json_path_table, "value", 1) == "Grace",
+          "JSONPathExtractor should extract second row value");
 
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"

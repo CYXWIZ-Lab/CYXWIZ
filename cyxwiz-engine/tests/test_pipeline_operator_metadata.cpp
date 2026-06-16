@@ -1305,6 +1305,16 @@ int main() {
     Check(calculator_type.has_value() &&
               *calculator_type == gui::NodeType::CalculatorNode,
           "CalculatorNode runtime name should resolve typed metadata");
+    const auto json_path_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::JSONPathExtractor);
+    Check(json_path_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "JSONPathExtractor enum support should resolve to legacy executor");
+    const auto json_path_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("JSONPathExtractor");
+    Check(json_path_type.has_value() &&
+              *json_path_type == gui::NodeType::JSONPathExtractor,
+          "JSONPathExtractor runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
