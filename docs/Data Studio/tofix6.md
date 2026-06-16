@@ -895,10 +895,17 @@ What currently maps well:
 
 What is missing or misleading:
 
-- many classical ML nodes exist in surface area but not as trustworthy
-  runtime-supported graph nodes
-- evaluation nodes overstate real graph execution support
-- support truth varies too much by execution path
+- several classical model-family nodes still exist in the surface area without
+  real graph execution, including tree/forest/SVM/KNN/Naive Bayes/logistic
+  variants that now fail closed instead of pretending to run
+- model-coupled evaluation nodes such as learning curves, feature importance,
+  and cross-validation remain UI-only/fail-closed; tabular metric nodes are
+  real
+- support truth still varies by ownership boundary:
+  - Arrow-table graph operator
+  - legacy executor alias
+  - panel/tool workflow
+  - training graph compiler/model builder
 
 ### B. Deep learning pipeline mapped to current CyxWiz
 
@@ -930,18 +937,27 @@ What is missing or misleading:
 
 ### Strong enough today
 
-- `DataInput` as the entry point
-- basic preprocessing and scaling concepts
+- `DataInput` for supported tabular graph sources
+- table preprocessing and scaling operators
+- tabular profiling/statistics nodes
 - time-series feature/windowing direction
+- text cleaning/tokenization/vectorization table operators
+- PCA and clustering table operators
+- linear/polynomial regression table operators
+- regression/classification metric table nodes
 - basic dense-network training path
 - standard loss-node surface
+- optimizer selection for `SGD`, `Adam`, `AdamW`, `RMSprop`, `Adagrad`, and
+  `NAdam`
 
 ### Present but still inconsistent
 
 - split handling across different dataset/storage modes
-- feature-engineering execution across old/new runtime paths
+- feature-engineering execution ownership across table operators, legacy
+  aliases, and training batchers
 - model export clarity
-- evaluation as graph-execution truth
+- evaluation as a unified graph-execution and training-tuning story
+- data inspection as an explicit pre-train workflow gate
 
 ### Present but misleading
 
@@ -951,6 +967,9 @@ What is missing or misleading:
   though the compiler now blocks them until backend support lands
 - some Data Studio nodes look executable but are now blocked or UI-only
   rather than real graph transforms
+- save/export UI still needs clearer separation between native model save,
+  `.cyxmodel` package export, `.safetensors` weights, ONNX export availability,
+  and disabled GGUF
 
 ### Missing or needs stronger product truth
 
@@ -958,8 +977,8 @@ What is missing or misleading:
 - clear distinction between classic ML workflows and deep learning
   workflows
 - one authoritative support matrix for nodes
-- complete fail-closed behavior for every unsupported graph node, beyond
-  the audited legacy executor and training-compiler slices
+- continued fail-closed coverage for unsupported graph nodes outside the
+  already-audited legacy executor and training-compiler slices
 - visible user messaging when a node is:
   - real
   - partial
