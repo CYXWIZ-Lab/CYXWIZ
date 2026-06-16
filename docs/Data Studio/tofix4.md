@@ -1960,6 +1960,21 @@ Updated coverage:
 - Non-numeric columns are skipped instead of being coerced.
 - Executor routing tests cover summary shape and numeric values.
 
+### Progress note: Correlation Matrix runtime implementation
+
+`CorrelationMatrix` metadata already claimed implementation, but the node was
+missing a PipelineExecutor runtime path.
+
+Updated coverage:
+
+- The runtime capability map resolves `CorrelationMatrix` to the legacy
+  executor.
+- `PipelineExecutor` computes Pearson correlations for numeric columns and
+  emits a long-form dataset with `column_x`, `column_y`, and `correlation`.
+- Spearman remains unsupported and fails clearly instead of being silently
+  treated as Pearson.
+- Executor routing tests cover Pearson output and unsupported-method rejection.
+
 ### Progress note: remaining hard-gap fail-closed coverage
 
 The remaining high-risk nodes that still need larger backend contracts now have

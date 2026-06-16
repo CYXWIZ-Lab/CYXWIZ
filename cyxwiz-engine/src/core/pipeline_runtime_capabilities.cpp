@@ -199,6 +199,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"SampleRows", gui::NodeType::SampleRows},
         {"ValueCounts", gui::NodeType::ValueCounts},
         {"DescribeStats", gui::NodeType::DescribeStats},
+        {"CorrelationMatrix", gui::NodeType::CorrelationMatrix},
         {"RowToColumnNames", gui::NodeType::RowToColumnNames},
         {"TableCropper", gui::NodeType::TableCropper},
         {"StringManipulation", gui::NodeType::StringManipulation},

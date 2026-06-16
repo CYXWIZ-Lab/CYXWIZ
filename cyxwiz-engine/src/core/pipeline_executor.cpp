@@ -3066,6 +3066,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteValueCounts(node, ctx);
     case gui::NodeType::DescribeStats:
         return ExecuteDescribeStats(node, ctx);
+    case gui::NodeType::CorrelationMatrix:
+        return ExecuteCorrelationMatrix(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -7400,6 +7402,207 @@ bool PipelineExecutor::ExecuteDescribeStats(const Node& node, ExecutionContext& 
         return true;
     } catch (const std::exception& e) {
         ReportError("DescribeStats error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteCorrelationMatrix(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("CorrelationMatrix: No input dataset");
+        return false;
+    }
+
+    std::string method = "pearson";
+    auto method_it = node.parameters.find("method");
+    if (method_it != node.parameters.end() && !TrimString(method_it->second).empty()) {
+        method = ToLowerAscii(TrimString(method_it->second));
+    }
+    if (method != "pearson") {
+        ReportError("CorrelationMatrix: only pearson correlation is supported by PipelineExecutor");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("CorrelationMatrix: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("CorrelationMatrix: Input table is null");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        struct NumericColumnValues {
+            std::string name;
+            std::vector<double> values;
+        };
+        std::vector<NumericColumnValues> numeric_columns;
+        for (int column_index = 0; column_index < input_table->num_columns(); ++column_index) {
+            const auto field = input_table->schema()->field(column_index);
+            if (!field || !field->type() || !IsNumericArrowType(field->type())) {
+                continue;
+            }
+            auto column = input_table->column(column_index);
+            if (!column) {
+                continue;
+            }
+
+            NumericColumnValues numeric_column;
+            numeric_column.name = field->name();
+            numeric_column.values.resize(static_cast<size_t>(input_table->num_rows()),
+                                         std::numeric_limits<double>::quiet_NaN());
+            for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+                auto scalar_result = column->GetScalar(row);
+                if (!scalar_result.ok()) {
+                    ReportError("CorrelationMatrix: Failed to read numeric value");
+                    return false;
+                }
+                double value = 0.0;
+                if (scalar_to_double(*scalar_result, value)) {
+                    numeric_column.values[static_cast<size_t>(row)] = value;
+                }
+            }
+            numeric_columns.push_back(std::move(numeric_column));
+        }
+
+        if (numeric_columns.empty()) {
+            ReportError("CorrelationMatrix: no numeric columns available");
+            return false;
+        }
+
+        const auto compute_correlation =
+            [](const std::vector<double>& x, const std::vector<double>& y) {
+                int64_t count = 0;
+                double sum_x = 0.0;
+                double sum_y = 0.0;
+                for (size_t i = 0; i < x.size() && i < y.size(); ++i) {
+                    if (std::isnan(x[i]) || std::isnan(y[i])) {
+                        continue;
+                    }
+                    sum_x += x[i];
+                    sum_y += y[i];
+                    ++count;
+                }
+                if (count < 2) {
+                    return std::numeric_limits<double>::quiet_NaN();
+                }
+
+                const double mean_x = sum_x / static_cast<double>(count);
+                const double mean_y = sum_y / static_cast<double>(count);
+                double numerator = 0.0;
+                double sum_x2 = 0.0;
+                double sum_y2 = 0.0;
+                for (size_t i = 0; i < x.size() && i < y.size(); ++i) {
+                    if (std::isnan(x[i]) || std::isnan(y[i])) {
+                        continue;
+                    }
+                    const double dx = x[i] - mean_x;
+                    const double dy = y[i] - mean_y;
+                    numerator += dx * dy;
+                    sum_x2 += dx * dx;
+                    sum_y2 += dy * dy;
+                }
+                const double denominator = std::sqrt(sum_x2 * sum_y2);
+                if (denominator <= 0.0) {
+                    return std::numeric_limits<double>::quiet_NaN();
+                }
+                return numerator / denominator;
+            };
+
+        arrow::StringBuilder column_x_builder;
+        arrow::StringBuilder column_y_builder;
+        arrow::DoubleBuilder correlation_builder;
+        for (const auto& left : numeric_columns) {
+            for (const auto& right : numeric_columns) {
+                const double correlation =
+                    compute_correlation(left.values, right.values);
+                if (!column_x_builder.Append(left.name).ok() ||
+                    !column_y_builder.Append(right.name).ok()) {
+                    ReportError("CorrelationMatrix: Failed to append correlation labels");
+                    return false;
+                }
+                if (std::isnan(correlation)) {
+                    if (!correlation_builder.AppendNull().ok()) {
+                        ReportError("CorrelationMatrix: Failed to append null correlation");
+                        return false;
+                    }
+                } else if (!correlation_builder.Append(correlation).ok()) {
+                    ReportError("CorrelationMatrix: Failed to append correlation");
+                    return false;
+                }
+            }
+        }
+
+        std::shared_ptr<arrow::Array> column_x_array;
+        std::shared_ptr<arrow::Array> column_y_array;
+        std::shared_ptr<arrow::Array> correlation_array;
+        if (!column_x_builder.Finish(&column_x_array).ok() ||
+            !column_y_builder.Finish(&column_y_array).ok() ||
+            !correlation_builder.Finish(&correlation_array).ok()) {
+            ReportError("CorrelationMatrix: Failed to build correlation table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("column_x", arrow::utf8()),
+                           arrow::field("column_y", arrow::utf8()),
+                           arrow::field("correlation", arrow::float64())}),
+            {column_x_array, column_y_array, correlation_array});
+        const std::string output_dataset_name =
+            "ds_correlationmatrix_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("CorrelationMatrix error: " + std::string(e.what()));
         return false;
     }
 }

@@ -3853,6 +3853,55 @@ int main() {
     Check(ReadNumericValue(describe_stats_table, "max", 0) == 3.0,
           "DescribeStats should compute max");
 
+    const std::string correlation_matrix_json =
+        R"({"nodes":[)"
+        R"({"id":886,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":887,"type":"CorrelationMatrix","name":"Correlation","parameters":{)"
+        R"("method":"pearson"}})"
+        R"(],"links":[{"start_node":886,"end_node":887}]})";
+
+    cyxwiz::PipelineExecutor correlation_matrix_executor;
+    Check(correlation_matrix_executor.ExecutePipeline(correlation_matrix_json),
+          "CorrelationMatrix should compute Pearson correlations: " +
+              correlation_matrix_executor.GetLastError());
+    auto correlation_matrix =
+        registry.GetArrowDataset("ds_correlationmatrix_887");
+    Check(correlation_matrix != nullptr,
+          "CorrelationMatrix output dataset is registered");
+    auto correlation_matrix_table = correlation_matrix->GetArrowTable();
+    Check(correlation_matrix_table != nullptr,
+          "CorrelationMatrix output table exists");
+    Check(correlation_matrix_table->num_rows() == 4,
+          "CorrelationMatrix should emit long-form numeric column pairs");
+    Check(ReadStringValue(correlation_matrix_table, "column_x", 1) == "x",
+          "CorrelationMatrix should preserve left column names");
+    Check(ReadStringValue(correlation_matrix_table, "column_y", 1) == "y",
+          "CorrelationMatrix should preserve right column names");
+    Check(std::fabs(ReadNumericValue(correlation_matrix_table, "correlation", 1) -
+                    1.0) < 0.001,
+          "CorrelationMatrix should compute perfect positive correlation");
+
+    const std::string bad_correlation_matrix_json =
+        R"({"nodes":[)"
+        R"({"id":888,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":889,"type":"CorrelationMatrix","name":"BadCorrelation","parameters":{)"
+        R"("method":"spearman"}})"
+        R"(],"links":[{"start_node":888,"end_node":889}]})";
+
+    cyxwiz::PipelineExecutor bad_correlation_matrix_executor;
+    Check(!bad_correlation_matrix_executor.ExecutePipeline(
+              bad_correlation_matrix_json),
+          "CorrelationMatrix should reject unsupported methods");
+    Check(bad_correlation_matrix_executor.GetLastError().find(
+              "CorrelationMatrix: only pearson correlation is supported") !=
+              std::string::npos,
+          "CorrelationMatrix unsupported-method error should be specific: " +
+              bad_correlation_matrix_executor.GetLastError());
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

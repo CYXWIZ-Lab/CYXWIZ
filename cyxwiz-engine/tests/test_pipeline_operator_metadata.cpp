@@ -1450,6 +1450,16 @@ int main() {
     Check(describe_stats_type.has_value() &&
               *describe_stats_type == gui::NodeType::DescribeStats,
           "DescribeStats runtime name should resolve typed metadata");
+    const auto correlation_matrix_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::CorrelationMatrix);
+    Check(correlation_matrix_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "CorrelationMatrix enum support should resolve to legacy executor");
+    const auto correlation_matrix_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("CorrelationMatrix");
+    Check(correlation_matrix_type.has_value() &&
+              *correlation_matrix_type == gui::NodeType::CorrelationMatrix,
+          "CorrelationMatrix runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
