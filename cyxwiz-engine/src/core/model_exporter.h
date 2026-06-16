@@ -67,7 +67,7 @@ public:
 
     /**
      * Export model to ONNX format (.onnx)
-     * Note: Requires CYXWIZ_HAS_ONNX compile flag
+     * Note: Requires CYXWIZ_HAS_ONNX_EXPORT compile flag
      */
     ExportResult ExportONNX(
         SequentialModel& model,

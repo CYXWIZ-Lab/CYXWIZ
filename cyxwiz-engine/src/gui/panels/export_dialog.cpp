@@ -160,7 +160,7 @@ void ExportDialog::RenderFormatSelection() {
     bool format_supported[] = {
         true,
         true,
-#ifdef CYXWIZ_HAS_ONNX
+#ifdef CYXWIZ_HAS_ONNX_EXPORT
         true,
 #else
         false,

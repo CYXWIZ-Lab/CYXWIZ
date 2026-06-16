@@ -614,6 +614,28 @@ Current gaps / misleading parts:
 - the line between "save graph", "save weights", and "export deployable
   model" is not yet clean enough
 
+Current backend truth:
+
+- `Save Model` in the main window calls `TrainingManager::SaveModel`, which
+  preserves the last trained `SequentialModel` and writes the model through
+  `SequentialModel::Save`;
+- `Export Model` uses `ExportDialog -> ModelExporter`, which is the richer
+  deployment/export path;
+- `.cyxmodel` export is implemented by `CyxModelFormat`, currently using a
+  directory-based package layout with manifest, config, optional graph/history,
+  and weights;
+- `.safetensors` export writes model parameter tensors;
+- ONNX export is only available when `CYXWIZ_HAS_ONNX_EXPORT` is compiled, not
+  merely when ONNX runtime/import support is present;
+- GGUF export is intentionally disabled and returns a planned/future-release
+  error if called directly.
+
+Progress note:
+
+- the export dialog now uses the same ONNX availability macro as
+  `ModelExporter`, so ONNX export is not shown as available when only ONNX
+  inference/runtime support is present.
+
 ---
 
 ## Difference Between a Classic ML Pipeline and a Deep Learning Pipeline
