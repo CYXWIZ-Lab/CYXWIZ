@@ -1832,6 +1832,19 @@ Updated coverage:
   panel/report workflow.
 - Executor routing tests cover profile output shape and row/null counts.
 
+### Progress note: Export SQL metadata truth correction
+
+`ExportSQL` was marked implemented in metadata even though PipelineExecutor has
+no SQL database export backend.
+
+Updated coverage:
+
+- `ExportSQL` metadata is now marked blocked/template instead of implemented.
+- The runtime capability map now fails `ExportSQL` closed with a central reason.
+- Executor routing tests verify `ExportSQL` does not return fake success.
+- Metadata tests verify the typed `ExportSQL` runtime resolves to fail-closed
+  support.
+
 At the moment, some nodes are:
 
 - over-exposed

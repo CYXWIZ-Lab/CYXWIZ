@@ -2900,6 +2900,23 @@ int main() {
     Check(exported_json_body.find("\"y\": 30") != std::string::npos,
           "ExportJSON should include all input rows");
 
+    const std::string export_sql_json =
+        R"({"nodes":[)"
+        R"({"id":681,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":682,"type":"ExportSQL","name":"ExportSQL","parameters":{)"
+        R"("connection":"sqlite:///ignored.db"}})"
+        R"(],"links":[{"start_node":681,"end_node":682}]})";
+
+    cyxwiz::PipelineExecutor export_sql_executor;
+    Check(!export_sql_executor.ExecutePipeline(export_sql_json),
+          "ExportSQL should fail closed until database export is real");
+    Check(export_sql_executor.GetLastError().find(
+              "SQL database export is not implemented") != std::string::npos,
+          "ExportSQL should use central fail-closed runtime support: " +
+              export_sql_executor.GetLastError());
+
     const std::string dangling_link_json =
         R"({"nodes":[)"
         R"({"id":39,"type":"DataInput","name":"Input","parameters":{)"

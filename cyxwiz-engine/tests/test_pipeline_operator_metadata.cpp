@@ -1348,6 +1348,12 @@ int main() {
               cyxwiz::PipelineRuntimeSupportMode::FailClosed,
           "ExcelFile enum support should resolve to fail-closed");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::ExportSQL)) == "ExportSQL",
+          "fail-closed runtime enum lookup for ExportSQL is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ExportSQL).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+          "ExportSQL enum support should resolve to fail-closed");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::StandardScaler)) == "StandardScaler",
           "operator runtime enum lookup for StandardScaler is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::StandardScaler).mode ==

@@ -142,6 +142,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::ValueNetwork},
         {"TableSplitter", "legacy TableSplitter needs pin-aware multi-output routing; PipelineExecutor can only carry one dataset per node",
          gui::NodeType::TableSplitter},
+        {"ExportSQL", "SQL database export is not implemented in PipelineExecutor; fake success is disabled",
+         gui::NodeType::ExportSQL},
         {"ExportExcel", "legacy ExportExcel graph execution is not implemented; fake success is disabled",
          gui::NodeType::ExportExcel},
         {"ExcelInput", "Excel input loading is not implemented; use DataInput with csv, parquet, feather, arrow, or ipc until a real Excel Arrow loader exists",

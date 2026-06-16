@@ -2168,7 +2168,7 @@ void NodeMetadataRegistry::InitializeExportNodes() {
         {"export", "sql", "database"}, 0, false, "Export to SQL DB", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"connection", "string", "", "Connection string", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::ExportExcel, NodeCategory::DataSources, "Excel Writer", ICON_FA_FILE_EXCEL,
         {"export", "excel", "xlsx", "spreadsheet"}, 0, false, "Export to Excel (.xlsx)", "", "",
