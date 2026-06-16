@@ -3304,6 +3304,24 @@ int main() {
                     3.28084) < 0.001,
           "UnitConverter should convert meters to feet");
 
+    const std::string calculator_json =
+        R"({"nodes":[)"
+        R"({"id":646,"type":"CalculatorNode","name":"Calc","parameters":{)"
+        R"("expression":"2 + 3 * 4","precision":"2"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor calculator_executor;
+    Check(calculator_executor.ExecutePipeline(calculator_json),
+          "CalculatorNode should evaluate arithmetic expressions: " +
+              calculator_executor.GetLastError());
+    auto calculator_result = registry.GetArrowDataset("ds_calculator_646");
+    Check(calculator_result != nullptr,
+          "CalculatorNode output dataset is registered");
+    auto calculator_table = calculator_result->GetArrowTable();
+    Check(calculator_table != nullptr, "CalculatorNode output table exists");
+    Check(ReadNumericValue(calculator_table, "result", 0) == 14.0,
+          "CalculatorNode should respect arithmetic precedence");
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

@@ -1288,6 +1288,88 @@ bool BuildMathFormulaExpression(const std::shared_ptr<arrow::Table>& table,
     return true;
 }
 
+bool BuildCalculatorExpression(const std::string& formula,
+                               std::string& expression,
+                               std::string& error) {
+    expression.clear();
+    bool saw_token = false;
+    size_t index = 0;
+    while (index < formula.size()) {
+        const unsigned char c = static_cast<unsigned char>(formula[index]);
+        if (std::isspace(c)) {
+            expression.push_back(' ');
+            ++index;
+            continue;
+        }
+
+        if (std::isdigit(c) ||
+            (formula[index] == '.' && index + 1 < formula.size() &&
+             std::isdigit(static_cast<unsigned char>(formula[index + 1])))) {
+            const size_t start = index;
+            bool saw_digit = false;
+            bool saw_dot = false;
+            while (index < formula.size()) {
+                const unsigned char number_char =
+                    static_cast<unsigned char>(formula[index]);
+                if (std::isdigit(number_char)) {
+                    saw_digit = true;
+                    ++index;
+                    continue;
+                }
+                if (formula[index] == '.' && !saw_dot) {
+                    saw_dot = true;
+                    ++index;
+                    continue;
+                }
+                break;
+            }
+            if (index < formula.size() &&
+                (formula[index] == 'e' || formula[index] == 'E')) {
+                const size_t exponent = index;
+                ++index;
+                if (index < formula.size() &&
+                    (formula[index] == '+' || formula[index] == '-')) {
+                    ++index;
+                }
+                const size_t exponent_digits = index;
+                while (index < formula.size() &&
+                       std::isdigit(static_cast<unsigned char>(formula[index]))) {
+                    ++index;
+                }
+                if (exponent_digits == index) {
+                    index = exponent;
+                }
+            }
+            if (!saw_digit) {
+                error = "CalculatorNode: invalid numeric literal";
+                return false;
+            }
+            expression += formula.substr(start, index - start);
+            saw_token = true;
+            continue;
+        }
+
+        if (formula[index] == '+' || formula[index] == '-' ||
+            formula[index] == '*' || formula[index] == '/' ||
+            formula[index] == '(' || formula[index] == ')') {
+            expression.push_back(formula[index]);
+            ++index;
+            saw_token = true;
+            continue;
+        }
+
+        error = "CalculatorNode: expression contains unsupported token '" +
+                std::string(1, formula[index]) + "'";
+        return false;
+    }
+
+    if (!saw_token) {
+        error = "CalculatorNode: expression is required";
+        return false;
+    }
+    return true;
+}
+
 bool TryParseInteger(const std::string& value, int64_t& parsed) {
     if (value.empty()) {
         return false;
@@ -2881,6 +2963,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteRuleEngine(node, ctx);
     case gui::NodeType::UnitConverter:
         return ExecuteUnitConverter(node, ctx);
+    case gui::NodeType::CalculatorNode:
+        return ExecuteCalculatorNode(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -5503,6 +5587,40 @@ bool PipelineExecutor::ExecuteUnitConverter(const Node& node, ExecutionContext& 
         return true;
     } catch (const std::exception& e) {
         ReportError("UnitConverter error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteCalculatorNode(const Node& node, ExecutionContext& ctx) {
+    const std::string expression =
+        ParameterOrDefault(node.parameters, "expression", "2 + 2");
+    const int64_t precision =
+        OptionalIntegerParameterOrDefault(node.parameters, "precision", 6);
+    std::string calculator_expression;
+    std::string calculator_error;
+    if (!BuildCalculatorExpression(expression, calculator_expression,
+                                   calculator_error)) {
+        ReportError(calculator_error);
+        return false;
+    }
+
+    const std::string sql = "SELECT ROUND((" + calculator_expression + "), " +
+                            std::to_string(precision) + ") AS result";
+    try {
+        auto output_table = duckdb_->Query(sql);
+        if (!output_table) {
+            ReportError("CalculatorNode: Query failed");
+            return false;
+        }
+
+        const std::string output_dataset_name =
+            "ds_calculator_" + std::to_string(node.id);
+        DataRegistry::Instance().RegisterArrowTable(output_table,
+                                                    output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("CalculatorNode error: " + std::string(e.what()));
         return false;
     }
 }

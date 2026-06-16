@@ -1295,6 +1295,16 @@ int main() {
     Check(unit_converter_type.has_value() &&
               *unit_converter_type == gui::NodeType::UnitConverter,
           "UnitConverter runtime name should resolve typed metadata");
+    const auto calculator_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::CalculatorNode);
+    Check(calculator_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "CalculatorNode enum support should resolve to legacy executor");
+    const auto calculator_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("CalculatorNode");
+    Check(calculator_type.has_value() &&
+              *calculator_type == gui::NodeType::CalculatorNode,
+          "CalculatorNode runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

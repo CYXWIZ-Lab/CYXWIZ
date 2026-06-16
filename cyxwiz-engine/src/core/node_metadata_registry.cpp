@@ -2400,7 +2400,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"Result", PinType::Dataset, true, "Computed result"}},
         {{"expression", "string", "2 + 2", "Math expression", {}, ""},
          {"precision", "int", "6", "Decimal precision", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::UnitConverter, NodeCategory::Utility, "Unit Converter", ICON_FA_SCALE_BALANCED,
         {"unit", "convert", "conversion"}, 0, false, "Unit conversion utility",

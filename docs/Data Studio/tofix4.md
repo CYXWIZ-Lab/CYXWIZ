@@ -1766,6 +1766,22 @@ Updated coverage:
 - Unsupported units fail clearly instead of falling back to a silent no-op.
 - Executor routing tests cover meter-to-foot conversion.
 
+### Progress note: Calculator runtime implementation
+
+`CalculatorNode` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `CalculatorNode` metadata is now marked implemented.
+- The runtime capability map resolves `CalculatorNode` to the legacy executor.
+- `PipelineExecutor` evaluates arithmetic-only expressions into a one-row
+  `result` dataset.
+- Supported syntax is intentionally narrow: numeric literals, `+`, `-`, `*`,
+  `/`, and parentheses.
+- Unsupported identifier or SQL-like tokens fail before query construction.
+- Executor routing tests cover arithmetic precedence and output registration.
+
 At the moment, some nodes are:
 
 - over-exposed
