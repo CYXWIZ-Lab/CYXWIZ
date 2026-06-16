@@ -293,14 +293,31 @@ Current strengths:
   - text
   - time series
 - the engine can load into `DataRegistry`
+- `DataInput` supports real tabular file loading for CSV, TSV, Parquet,
+  Feather, Arrow, and IPC-backed table sources
 
 Current gaps / misleading parts:
 
 - video is visibly present in the UI but not actually supported
-- some built-in dataset sources and cloud/dataset nodes still lead to
-  placeholder execution paths
+- several built-in, cloud, and specialized dataset-source nodes are UI/metadata
+  concepts or fail-closed graph nodes, not real `PipelineExecutor` loaders
 - Data Studio and training graph input flows still feel like separate
   systems
+
+Current backend truth:
+
+- use `DataInput` for supported tabular graph loading today
+- image, audio, text, and time-series training can use domain batchers or
+  training-specific dataset entries, but that is not the same as general
+  `PipelineExecutor` source execution
+- unsupported source nodes should stay fail-closed until they have real loaders
+  and tests
+
+Progress note:
+
+Stage 2 has been updated to distinguish real `DataInput` table loading from
+visible-but-not-implemented dataset-source vocabulary. The remaining product
+gap is input-flow convergence, not restoring placeholder source execution.
 
 ---
 
@@ -346,8 +363,11 @@ Current CyxWiz nodes:
 Current strengths:
 
 - these nodes match the shape of a real ML preprocessing pipeline
-- several preprocessing nodes already have operator-backed
-  implementations
+- several preprocessing nodes already have real operator-backed
+  implementations, including `StandardScaler`, `MinMaxScaler`,
+  `RobustScaler`, `LabelEncoder`, `OrdinalEncoder`, `TargetEncoder`,
+  `FillMissing`, text cleaning/tokenization/vectorization, binning, and
+  polynomial features
 
 Current gaps / misleading parts:
 
@@ -356,7 +376,25 @@ Current gaps / misleading parts:
   - newer `PipelineOperatorFactory`
 - not all preprocessing nodes are guaranteed to run through the newer
   path
-- unsupported or placeholder behavior is still too easy to reach
+- `Normalize` and `OneHotEncode` are training preprocessing contract nodes,
+  not general-purpose `PipelineExecutor` tensor operators
+- unsupported preprocessing graph nodes should fail closed rather than appear
+  executable
+
+Current backend truth:
+
+- Arrow-table preprocessing is strongest where `PipelineOperatorFactory` owns
+  the operator
+- training preprocessing is a separate compiler/batcher contract extracted by
+  `GraphCompiler`
+- the product still needs clearer UI/runtime labeling so users can tell
+  "table transform" from "training preprocessing contract"
+
+Progress note:
+
+Stage 4 has been updated to reflect the stronger operator-backed preprocessing
+slice. The remaining work is convergence and truthful labeling, not a blanket
+claim that preprocessing is placeholder-backed.
 
 ---
 
@@ -371,6 +409,9 @@ Current strengths:
 
 - the idea is correct
 - time-series split exists as a distinct concept
+- `DataSplit` is consumed by the training graph compiler for train/validation/
+  test ratios and seed
+- invalid split ratios are validated before training proceeds
 
 Current gaps / misleading parts:
 
@@ -378,6 +419,26 @@ Current gaps / misleading parts:
 - Arrow and Parquet training flows still have parity risks
 - split semantics are not clearly surfaced enough for users who need
   leakage-safe pipelines
+- legacy `TrainTestSplit` graph execution is not implemented
+- `TableSplitter` remains fail-closed because current `PipelineExecutor`
+  routing carries one dataset per node rather than pin-aware multi-output
+  tables
+
+Current backend truth:
+
+- training split configuration exists through `DataSplit` and defaults to an
+  80/10/10 train/validation/test split when absent
+- `TimeSeriesSplit` has explicit metadata and validation, but should not be
+  treated as complete leakage-safe graph orchestration until runtime behavior
+  is audited end-to-end
+- multi-output split nodes need a real graph data-routing design before being
+  marked executable
+
+Progress note:
+
+Stage 5 has been updated to separate training-compiler split support from
+general Data Studio table-splitting execution. The lean path is to keep
+multi-output table split nodes fail-closed until pin-aware routing is designed.
 
 ---
 
@@ -408,6 +469,22 @@ Current gaps / misleading parts:
 - multi-path execution makes support truth unclear
 - some advanced nodes exist in UI/metadata before their runtime story is
   fully converged
+
+Current backend truth:
+
+- table-oriented feature engineering is strongest where runtime support maps
+  to an operator-backed or tested legacy executor path
+- text feature operators such as cleaning, tokenization, and count
+  vectorization have real table-path coverage
+- advanced model/domain feature nodes should remain fail-closed or clearly
+  labeled UI-only until their graph runtime contract is real
+
+Progress note:
+
+Stage 6 has been updated to focus the gap on runtime ownership and labeling.
+The next implementation decision is not to add another broad abstraction, but
+to choose which feature nodes belong in the Arrow table path, which belong in
+training batchers, and which should remain tools/panels.
 
 ---
 
