@@ -2113,6 +2113,23 @@ Implemented:
 - extended representative executor routing coverage so Data Studio graph
   execution reports the central tensor-activation backend-gap reason.
 
+### Progress note: training loss and optimizer PipelineExecutor truth correction
+
+Loss and optimizer nodes are training graph contract nodes. They are valid in
+the compiler/training path, but they are not Data Studio runtime operators.
+
+Implemented:
+
+- added central fail-closed PipelineExecutor capability entries for
+  `MSELoss`, `CrossEntropyLoss`, `BCELoss`, `BCEWithLogits`, `L1Loss`,
+  `SmoothL1Loss`, `HuberLoss`, `NLLLoss`, `SGD`, `Adam`, and `AdamW`;
+- preserved their global `Implemented` metadata because training owns their
+  actual execution contract;
+- extended metadata drift tests to prove PipelineExecutor support is
+  fail-closed without demoting training metadata;
+- extended representative executor routing coverage so Data Studio graph
+  execution reports the central training-control backend-gap reason.
+
 At the moment, some nodes are:
 
 - over-exposed
