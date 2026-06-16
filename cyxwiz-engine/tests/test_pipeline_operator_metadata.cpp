@@ -1352,6 +1352,23 @@ int main() {
     Check(regression_metrics_meta->status ==
               cyxwiz::NodeImplementationStatus::Implemented,
           "RegressionMetricsNode metadata should be implemented");
+    const auto confusion_matrix_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ConfusionMatrixNode);
+    Check(confusion_matrix_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "ConfusionMatrixNode enum support should resolve to legacy executor");
+    const auto confusion_matrix_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("ConfusionMatrixNode");
+    Check(confusion_matrix_type.has_value() &&
+              *confusion_matrix_type == gui::NodeType::ConfusionMatrixNode,
+          "ConfusionMatrixNode runtime name should resolve typed metadata");
+    const auto* confusion_matrix_meta =
+        metadata.GetMetadata(gui::NodeType::ConfusionMatrixNode);
+    Check(confusion_matrix_meta != nullptr,
+          "ConfusionMatrixNode metadata should exist");
+    Check(confusion_matrix_meta->status ==
+              cyxwiz::NodeImplementationStatus::Implemented,
+          "ConfusionMatrixNode metadata should be implemented");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

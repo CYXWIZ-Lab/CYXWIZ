@@ -3529,6 +3529,53 @@ int main() {
           "RegressionMetricsNode non-numeric error should be specific: " +
               bad_regression_metrics_executor.GetLastError());
 
+    const std::string confusion_matrix_json =
+        R"({"nodes":[)"
+        R"({"id":860,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":861,"type":"ConfusionMatrixNode","name":"Matrix","parameters":{)"
+        R"("actual_col":"x","predicted_col":"y","normalize":"all"}})"
+        R"(],"links":[{"start_node":860,"end_node":861}]})";
+
+    cyxwiz::PipelineExecutor confusion_matrix_executor;
+    Check(confusion_matrix_executor.ExecutePipeline(confusion_matrix_json),
+          "ConfusionMatrixNode should compute real label counts: " +
+              confusion_matrix_executor.GetLastError());
+    auto confusion_matrix =
+        registry.GetArrowDataset("ds_confusion_matrix_861");
+    Check(confusion_matrix != nullptr,
+          "ConfusionMatrixNode output dataset is registered");
+    auto confusion_matrix_table = confusion_matrix->GetArrowTable();
+    Check(confusion_matrix_table != nullptr,
+          "ConfusionMatrixNode output table exists");
+    Check(confusion_matrix_table->num_rows() == 3,
+          "ConfusionMatrixNode should emit one row per observed pair");
+    Check(ReadNumericValue(confusion_matrix_table, "count", 0) == 1.0,
+          "ConfusionMatrixNode should count observed label pairs");
+    Check(std::fabs(ReadNumericValue(confusion_matrix_table, "value", 0) -
+                    (1.0 / 3.0)) < 0.001,
+          "ConfusionMatrixNode should normalize by all valid pairs");
+
+    const std::string bad_confusion_matrix_json =
+        R"({"nodes":[)"
+        R"({"id":862,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":863,"type":"ConfusionMatrixNode","name":"BadMatrix","parameters":{)"
+        R"("actual_col":"missing","predicted_col":"y"}})"
+        R"(],"links":[{"start_node":862,"end_node":863}]})";
+
+    cyxwiz::PipelineExecutor bad_confusion_matrix_executor;
+    Check(!bad_confusion_matrix_executor.ExecutePipeline(
+              bad_confusion_matrix_json),
+          "ConfusionMatrixNode should reject missing label columns");
+    Check(bad_confusion_matrix_executor.GetLastError().find(
+              "ConfusionMatrixNode: column 'missing' not found") !=
+              std::string::npos,
+          "ConfusionMatrixNode missing-column error should be specific: " +
+              bad_confusion_matrix_executor.GetLastError());
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

@@ -1207,12 +1207,14 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
 
     // Model Evaluation
     RegisterNode({NodeType::ConfusionMatrixNode, NodeCategory::Analytics, "Confusion Matrix", ICON_FA_TABLE_CELLS,
-        {"confusion", "matrix", "evaluation"}, 0, false, "Confusion Matrix visualization",
-        "Visualize classification performance with true/false positives/negatives.", "",
-        {{"y_true", PinType::Labels, true, "True labels"}, {"y_pred", PinType::Labels, true, "Predictions"}},
+        {"confusion", "matrix", "evaluation"}, 0, false, "Confusion Matrix",
+        "Computes a confusion matrix from actual and predicted label columns.", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
         {{"Matrix", PinType::Dataset, true, "Confusion matrix"}},
-        {{"normalize", "enum", "none", "Normalization", {"none", "true", "pred", "all"}, ""}},
-        NodeImplementationStatus::Template, 0, "UI-only"});
+        {{"actual_col", "string", "", "Actual label column", {}, ""},
+         {"predicted_col", "string", "", "Predicted label column", {}, ""},
+         {"normalize", "enum", "none", "Normalization", {"none", "true", "pred", "all"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ROCCurveNode, NodeCategory::Analytics, "ROC Curve", ICON_FA_CHART_AREA,
         {"roc", "auc", "curve"}, 0, false, "ROC curve and AUC",

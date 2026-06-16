@@ -1849,6 +1849,25 @@ Updated coverage:
 - Executor routing tests cover successful metric output and non-numeric column
   rejection.
 
+### Progress note: Confusion Matrix runtime implementation
+
+`ConfusionMatrixNode` has been moved from UI-only/fail-closed evaluation
+coverage to a real PipelineExecutor implementation.
+
+Updated coverage:
+
+- `ConfusionMatrixNode` metadata is now marked implemented with a dataset-based
+  actual/predicted column contract.
+- The runtime capability map resolves `ConfusionMatrixNode` to the legacy
+  executor.
+- `PipelineExecutor` emits observed actual/predicted label-pair counts plus a
+  normalized `value` column for `none`, `true`, `pred`, and `all`
+  normalization modes.
+- Null label pairs are skipped; execution fails clearly when no valid pairs
+  remain or when requested columns are missing.
+- Executor routing tests cover successful matrix output and missing-column
+  rejection.
+
 ### Progress note: Export SQL metadata truth correction
 
 `ExportSQL` was marked implemented in metadata even though PipelineExecutor has
