@@ -3822,6 +3822,37 @@ int main() {
           "ValueCounts missing-column error should be specific: " +
               bad_value_counts_executor.GetLastError());
 
+    const std::string describe_stats_json =
+        R"({"nodes":[)"
+        R"({"id":884,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":885,"type":"DescribeStats","name":"Describe","parameters":{}})"
+        R"(],"links":[{"start_node":884,"end_node":885}]})";
+
+    cyxwiz::PipelineExecutor describe_stats_executor;
+    Check(describe_stats_executor.ExecutePipeline(describe_stats_json),
+          "DescribeStats should compute numeric summaries: " +
+              describe_stats_executor.GetLastError());
+    auto describe_stats =
+        registry.GetArrowDataset("ds_describestats_885");
+    Check(describe_stats != nullptr,
+          "DescribeStats output dataset is registered");
+    auto describe_stats_table = describe_stats->GetArrowTable();
+    Check(describe_stats_table != nullptr, "DescribeStats output table exists");
+    Check(describe_stats_table->num_rows() == 2,
+          "DescribeStats should emit one row per numeric column");
+    Check(ReadStringValue(describe_stats_table, "column", 0) == "x",
+          "DescribeStats should preserve source column names");
+    Check(ReadNumericValue(describe_stats_table, "count", 0) == 3.0,
+          "DescribeStats should count non-null numeric rows");
+    Check(ReadNumericValue(describe_stats_table, "mean", 0) == 2.0,
+          "DescribeStats should compute mean");
+    Check(ReadNumericValue(describe_stats_table, "min", 0) == 1.0,
+          "DescribeStats should compute min");
+    Check(ReadNumericValue(describe_stats_table, "max", 0) == 3.0,
+          "DescribeStats should compute max");
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

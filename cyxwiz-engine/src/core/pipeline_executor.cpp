@@ -3064,6 +3064,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteSampleRows(node, ctx);
     case gui::NodeType::ValueCounts:
         return ExecuteValueCounts(node, ctx);
+    case gui::NodeType::DescribeStats:
+        return ExecuteDescribeStats(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -7244,6 +7246,160 @@ bool PipelineExecutor::ExecuteValueCounts(const Node& node, ExecutionContext& ct
         return true;
     } catch (const std::exception& e) {
         ReportError("ValueCounts error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDescribeStats(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("DescribeStats: No input dataset");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("DescribeStats: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("DescribeStats: Input table is null");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        arrow::StringBuilder column_builder;
+        arrow::Int64Builder count_builder;
+        arrow::DoubleBuilder mean_builder;
+        arrow::DoubleBuilder min_builder;
+        arrow::DoubleBuilder max_builder;
+
+        for (int column_index = 0; column_index < input_table->num_columns(); ++column_index) {
+            const auto field = input_table->schema()->field(column_index);
+            if (!field || !field->type() || !IsNumericArrowType(field->type())) {
+                continue;
+            }
+
+            auto column = input_table->column(column_index);
+            if (!column) {
+                continue;
+            }
+
+            int64_t count = 0;
+            double sum = 0.0;
+            double min_value = 0.0;
+            double max_value = 0.0;
+            bool have_value = false;
+            for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+                auto scalar_result = column->GetScalar(row);
+                if (!scalar_result.ok()) {
+                    ReportError("DescribeStats: Failed to read numeric value");
+                    return false;
+                }
+                double value = 0.0;
+                if (!scalar_to_double(*scalar_result, value)) {
+                    continue;
+                }
+                if (!have_value) {
+                    min_value = value;
+                    max_value = value;
+                    have_value = true;
+                } else {
+                    min_value = std::min(min_value, value);
+                    max_value = std::max(max_value, value);
+                }
+                sum += value;
+                ++count;
+            }
+
+            if (!have_value) {
+                continue;
+            }
+
+            if (!column_builder.Append(field->name()).ok() ||
+                !count_builder.Append(count).ok() ||
+                !mean_builder.Append(sum / static_cast<double>(count)).ok() ||
+                !min_builder.Append(min_value).ok() ||
+                !max_builder.Append(max_value).ok()) {
+                ReportError("DescribeStats: Failed to append summary row");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> column_array;
+        std::shared_ptr<arrow::Array> count_array;
+        std::shared_ptr<arrow::Array> mean_array;
+        std::shared_ptr<arrow::Array> min_array;
+        std::shared_ptr<arrow::Array> max_array;
+        if (!column_builder.Finish(&column_array).ok() ||
+            !count_builder.Finish(&count_array).ok() ||
+            !mean_builder.Finish(&mean_array).ok() ||
+            !min_builder.Finish(&min_array).ok() ||
+            !max_builder.Finish(&max_array).ok()) {
+            ReportError("DescribeStats: Failed to build summary table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("column", arrow::utf8()),
+                           arrow::field("count", arrow::int64()),
+                           arrow::field("mean", arrow::float64()),
+                           arrow::field("min", arrow::float64()),
+                           arrow::field("max", arrow::float64())}),
+            {column_array, count_array, mean_array, min_array, max_array});
+        const std::string output_dataset_name =
+            "ds_describestats_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("DescribeStats error: " + std::string(e.what()));
         return false;
     }
 }

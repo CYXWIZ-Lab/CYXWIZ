@@ -1440,6 +1440,16 @@ int main() {
     Check(value_counts_type.has_value() &&
               *value_counts_type == gui::NodeType::ValueCounts,
           "ValueCounts runtime name should resolve typed metadata");
+    const auto describe_stats_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::DescribeStats);
+    Check(describe_stats_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "DescribeStats enum support should resolve to legacy executor");
+    const auto describe_stats_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("DescribeStats");
+    Check(describe_stats_type.has_value() &&
+              *describe_stats_type == gui::NodeType::DescribeStats,
+          "DescribeStats runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

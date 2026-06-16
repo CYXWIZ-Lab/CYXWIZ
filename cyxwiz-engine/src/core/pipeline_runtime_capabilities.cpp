@@ -198,6 +198,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"DataValidator", gui::NodeType::DataValidator},
         {"SampleRows", gui::NodeType::SampleRows},
         {"ValueCounts", gui::NodeType::ValueCounts},
+        {"DescribeStats", gui::NodeType::DescribeStats},
         {"RowToColumnNames", gui::NodeType::RowToColumnNames},
         {"TableCropper", gui::NodeType::TableCropper},
         {"StringManipulation", gui::NodeType::StringManipulation},

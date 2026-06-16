@@ -1947,6 +1947,19 @@ Updated coverage:
   `value`/`count` table ordered by count descending then value ascending.
 - Executor routing tests cover duplicate counting and missing-column rejection.
 
+### Progress note: Descriptive Stats runtime implementation
+
+`DescribeStats` metadata already claimed implementation, but the node was
+missing a PipelineExecutor runtime path.
+
+Updated coverage:
+
+- The runtime capability map resolves `DescribeStats` to the legacy executor.
+- `PipelineExecutor` summarizes numeric columns into a dataset containing
+  `column`, `count`, `mean`, `min`, and `max`.
+- Non-numeric columns are skipped instead of being coerced.
+- Executor routing tests cover summary shape and numeric values.
+
 ### Progress note: remaining hard-gap fail-closed coverage
 
 The remaining high-risk nodes that still need larger backend contracts now have
