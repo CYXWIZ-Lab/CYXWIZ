@@ -582,14 +582,38 @@ Current CyxWiz nodes and panels:
 Current strengths:
 
 - the UI has the right analytics vocabulary
+- training metrics track train, validation, and held-out test loss/accuracy,
+  with token metrics for sequence flows
+- `RegressionMetricsNode`, `ConfusionMatrixNode`, `ROCCurveNode`, and
+  `PRCurveNode` now have real legacy `PipelineExecutor` runtimes
 
 Current gaps / misleading parts:
 
-- several evaluation nodes are still placeholder-success paths in
-  `PipelineExecutor`
+- legacy placeholder-success evaluation paths have been removed/fixed in the
+  audited `PipelineExecutor` slice, but evaluation is still split across
+  runtime nodes, panels/tools, and training metrics
 - some evaluation capability lives more in panels/tools than in truthful
   graph execution
+- `LearningCurvesNode`, `FeatureImportanceNode`, and `CrossValidationNode`
+  remain fail-closed/UI-only until model-coupled orchestration exists
 - cross-validation is not yet a trustworthy graph-level training stage
+
+Current backend truth:
+
+- tabular metric nodes can now compute regression metrics, confusion matrices,
+  ROC curves, and precision-recall curves from table columns
+- model-dependent evaluation/control nodes intentionally fail closed rather
+  than report fake completion
+- training evaluation exists in `TrainingExecutor` metrics, not as a unified
+  graph-level evaluation and tuning pipeline
+
+Progress note:
+
+Stage 11 has been updated to match the post-`done4` runtime state. The
+remaining work is no longer "remove placeholder success" for the audited metric
+nodes; it is to decide whether model-coupled analytics such as learning curves,
+feature importance, and cross-validation belong in the training graph executor
+or should remain panel/tool workflows.
 
 ---
 
