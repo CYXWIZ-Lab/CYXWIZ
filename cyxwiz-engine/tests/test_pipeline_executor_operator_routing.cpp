@@ -3684,6 +3684,55 @@ int main() {
           "PRCurveNode missing-score error should be specific: " +
               bad_pr_curve_executor.GetLastError());
 
+    const std::string data_validator_json =
+        R"({"nodes":[)"
+        R"({"id":872,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(duplicates_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":873,"type":"DataValidator","name":"Validate","parameters":{)"
+        R"("required_columns":"x,y,missing","unique_columns":"x"}})"
+        R"(],"links":[{"start_node":872,"end_node":873}]})";
+
+    cyxwiz::PipelineExecutor data_validator_executor;
+    Check(data_validator_executor.ExecutePipeline(data_validator_json),
+          "DataValidator should emit a real validation issue report: " +
+              data_validator_executor.GetLastError());
+    auto validation_issues =
+        registry.GetArrowDataset("ds_datavalidator_873");
+    Check(validation_issues != nullptr,
+          "DataValidator output dataset is registered");
+    auto validation_issues_table = validation_issues->GetArrowTable();
+    Check(validation_issues_table != nullptr,
+          "DataValidator output table exists");
+    Check(validation_issues_table->num_rows() == 2,
+          "DataValidator should report missing required and duplicate issues");
+    Check(ReadStringValue(validation_issues_table, "rule", 0) ==
+              "required_column",
+          "DataValidator should report missing required column rule");
+    Check(ReadStringValue(validation_issues_table, "column", 0) == "missing",
+          "DataValidator should report missing required column name");
+    Check(ReadStringValue(validation_issues_table, "rule", 1) == "unique",
+          "DataValidator should report duplicate uniqueness rule");
+
+    const std::string unsupported_data_validator_json =
+        R"({"nodes":[)"
+        R"({"id":874,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":875,"type":"DataValidator","name":"UnsupportedValidate","parameters":{)"
+        R"("column_types":"{\"x\":\"number\"}"}})"
+        R"(],"links":[{"start_node":874,"end_node":875}]})";
+
+    cyxwiz::PipelineExecutor unsupported_data_validator_executor;
+    Check(!unsupported_data_validator_executor.ExecutePipeline(
+              unsupported_data_validator_json),
+          "DataValidator should reject unsupported rule families");
+    Check(unsupported_data_validator_executor.GetLastError().find(
+              "DataValidator: parameter 'column_types' is not supported") !=
+              std::string::npos,
+          "DataValidator unsupported parameter error should be specific: " +
+              unsupported_data_validator_executor.GetLastError());
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

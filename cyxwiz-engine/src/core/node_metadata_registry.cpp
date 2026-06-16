@@ -1358,6 +1358,16 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Report", PinType::Dataset, true, "Profiling report"}},
         {{"minimal", "bool", "false", "Minimal mode (faster)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::DataValidator, NodeCategory::Analytics, "Data Validator", ICON_FA_CHECK_DOUBLE,
+        {"validate", "schema", "quality", "rules"}, 0, false, "Data validation report",
+        "Validates required, not-null, and unique column constraints and emits an issue report.", "",
+        {{"Data", PinType::Dataset, true, "Input dataset"}},
+        {{"Issues", PinType::Dataset, true, "Validation issues"}},
+        {{"required_columns", "string", "", "Comma-separated required columns", {}, ""},
+         {"not_null_columns", "string", "", "Columns that cannot contain nulls", {}, ""},
+         {"unique_columns", "string", "", "Columns that must be unique", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

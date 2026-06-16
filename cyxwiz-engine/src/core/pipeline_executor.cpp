@@ -3058,6 +3058,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteROCCurve(node, ctx);
     case gui::NodeType::PRCurveNode:
         return ExecutePRCurve(node, ctx);
+    case gui::NodeType::DataValidator:
+        return ExecuteDataValidator(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -6960,6 +6962,159 @@ bool PipelineExecutor::ExecutePRCurve(const Node& node, ExecutionContext& ctx) {
         return true;
     } catch (const std::exception& e) {
         ReportError("PRCurveNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataValidator(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("DataValidator: No input dataset");
+        return false;
+    }
+
+    for (const char* unsupported_param : {"column_types", "value_ranges", "regex_patterns"}) {
+        auto it = node.parameters.find(unsupported_param);
+        if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+            ReportError("DataValidator: parameter '" + std::string(unsupported_param) +
+                        "' is not supported by PipelineExecutor yet");
+            return false;
+        }
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("DataValidator: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("DataValidator: Input table is null");
+            return false;
+        }
+
+        struct ValidationIssue {
+            std::string rule;
+            std::string column;
+            int64_t row_index = -1;
+            std::string message;
+        };
+        std::vector<ValidationIssue> issues;
+
+        const auto parse_columns = [&](const char* parameter_name) {
+            std::vector<std::string> columns;
+            auto it = node.parameters.find(parameter_name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                ParseCommaList(it->second, columns);
+            }
+            return columns;
+        };
+
+        const auto required_columns = parse_columns("required_columns");
+        for (const auto& column : required_columns) {
+            if (input_table->schema()->GetFieldIndex(column) < 0) {
+                issues.push_back({"required_column", column, -1,
+                                  "required column '" + column + "' is missing"});
+            }
+        }
+
+        const auto not_null_columns = parse_columns("not_null_columns");
+        for (const auto& column : not_null_columns) {
+            const int column_index = input_table->schema()->GetFieldIndex(column);
+            if (column_index < 0) {
+                issues.push_back({"not_null", column, -1,
+                                  "not-null column '" + column + "' is missing"});
+                continue;
+            }
+            auto chunked = input_table->column(column_index);
+            if (!chunked) {
+                issues.push_back({"not_null", column, -1,
+                                  "not-null column '" + column + "' is unavailable"});
+                continue;
+            }
+            for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+                auto scalar_result = chunked->GetScalar(row);
+                if (!scalar_result.ok() || !*scalar_result ||
+                    !(*scalar_result)->is_valid) {
+                    issues.push_back({"not_null", column, row,
+                                      "column '" + column + "' contains null"});
+                }
+            }
+        }
+
+        const auto unique_columns = parse_columns("unique_columns");
+        for (const auto& column : unique_columns) {
+            const int column_index = input_table->schema()->GetFieldIndex(column);
+            if (column_index < 0) {
+                issues.push_back({"unique", column, -1,
+                                  "unique column '" + column + "' is missing"});
+                continue;
+            }
+            auto chunked = input_table->column(column_index);
+            if (!chunked) {
+                issues.push_back({"unique", column, -1,
+                                  "unique column '" + column + "' is unavailable"});
+                continue;
+            }
+            std::map<std::string, int64_t> first_seen_row_by_value;
+            for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+                auto scalar_result = chunked->GetScalar(row);
+                if (!scalar_result.ok() || !*scalar_result ||
+                    !(*scalar_result)->is_valid) {
+                    continue;
+                }
+                const std::string value = (*scalar_result)->ToString();
+                auto [it, inserted] = first_seen_row_by_value.emplace(value, row);
+                if (!inserted) {
+                    issues.push_back({"unique", column, row,
+                                      "column '" + column + "' duplicates row " +
+                                          std::to_string(it->second)});
+                }
+            }
+        }
+
+        arrow::StringBuilder rule_builder;
+        arrow::StringBuilder column_builder;
+        arrow::Int64Builder row_index_builder;
+        arrow::StringBuilder message_builder;
+        for (const auto& issue : issues) {
+            if (!rule_builder.Append(issue.rule).ok() ||
+                !column_builder.Append(issue.column).ok() ||
+                !row_index_builder.Append(issue.row_index).ok() ||
+                !message_builder.Append(issue.message).ok()) {
+                ReportError("DataValidator: Failed to append validation issue");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> rule_array;
+        std::shared_ptr<arrow::Array> column_array;
+        std::shared_ptr<arrow::Array> row_index_array;
+        std::shared_ptr<arrow::Array> message_array;
+        if (!rule_builder.Finish(&rule_array).ok() ||
+            !column_builder.Finish(&column_array).ok() ||
+            !row_index_builder.Finish(&row_index_array).ok() ||
+            !message_builder.Finish(&message_array).ok()) {
+            ReportError("DataValidator: Failed to build issue table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("rule", arrow::utf8()),
+                           arrow::field("column", arrow::utf8()),
+                           arrow::field("row_index", arrow::int64()),
+                           arrow::field("message", arrow::utf8())}),
+            {rule_array, column_array, row_index_array, message_array});
+        const std::string output_dataset_name =
+            "ds_datavalidator_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("DataValidator error: " + std::string(e.what()));
         return false;
     }
 }

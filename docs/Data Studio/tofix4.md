@@ -1902,6 +1902,24 @@ Updated coverage:
 - Executor routing tests cover successful precision-recall output and
   missing-score rejection.
 
+### Progress note: Data Validator runtime implementation
+
+`DataValidator` has been moved from fail-closed coverage to a real
+PipelineExecutor implementation for the dataset validation subset that fits the
+current single-output executor model.
+
+Updated coverage:
+
+- `DataValidator` metadata is now registered and marked implemented.
+- The runtime capability map resolves `DataValidator` to the legacy executor.
+- `PipelineExecutor` emits a validation issue report dataset with rule, column,
+  row index, and message fields.
+- Supported rules cover required columns, not-null columns, and unique columns.
+- Unsupported JSON rule families (`column_types`, `value_ranges`,
+  `regex_patterns`) fail clearly instead of being silently ignored.
+- Executor routing tests cover missing-column and duplicate detection plus
+  unsupported-rule rejection.
+
 ### Progress note: Export SQL metadata truth correction
 
 `ExportSQL` was marked implemented in metadata even though PipelineExecutor has

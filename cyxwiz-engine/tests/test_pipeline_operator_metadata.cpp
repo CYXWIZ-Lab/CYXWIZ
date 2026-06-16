@@ -1403,6 +1403,23 @@ int main() {
     Check(pr_curve_meta->status ==
               cyxwiz::NodeImplementationStatus::Implemented,
           "PRCurveNode metadata should be implemented");
+    const auto data_validator_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::DataValidator);
+    Check(data_validator_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "DataValidator enum support should resolve to legacy executor");
+    const auto data_validator_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("DataValidator");
+    Check(data_validator_type.has_value() &&
+              *data_validator_type == gui::NodeType::DataValidator,
+          "DataValidator runtime name should resolve typed metadata");
+    const auto* data_validator_meta =
+        metadata.GetMetadata(gui::NodeType::DataValidator);
+    Check(data_validator_meta != nullptr,
+          "DataValidator metadata should exist");
+    Check(data_validator_meta->status ==
+              cyxwiz::NodeImplementationStatus::Implemented,
+          "DataValidator metadata should be implemented");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
