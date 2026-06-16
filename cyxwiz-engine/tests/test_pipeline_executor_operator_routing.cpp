@@ -559,6 +559,8 @@ int main() {
         {"FeatureImportanceNode", false},
         {"CrossValidationNode", false},
         {"VisualizeData", false},
+        {"Normalize", false},
+        {"OneHotEncode", false},
         {"QualityAnalyzer", false},
         {"TableSplitter", false},
         {"ExportExcel", false},

@@ -1546,6 +1546,8 @@ int main() {
         gui::NodeType::FeatureImportanceNode,
         gui::NodeType::CrossValidationNode,
         gui::NodeType::VisualizeData,
+        gui::NodeType::Normalize,
+        gui::NodeType::OneHotEncode,
         gui::NodeType::QualityAnalyzer,
         gui::NodeType::TableSplitter,
         gui::NodeType::ExportExcel,
@@ -1585,6 +1587,24 @@ int main() {
               "blocked fail-closed metadata should exist: " + TypeId(type));
         Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
               "blocked fail-closed metadata should remain template: " +
+                  TypeId(type));
+    }
+
+    const gui::NodeType training_contract_fail_closed_cases[] = {
+        gui::NodeType::Normalize,
+        gui::NodeType::OneHotEncode,
+    };
+    for (const auto type : training_contract_fail_closed_cases) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "training contract fail-closed metadata should exist: " +
+                  TypeId(type));
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "training contract metadata should remain implemented while PipelineExecutor fail-closes: " +
+                  TypeId(type));
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(type).mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+              "training contract node should still fail closed in PipelineExecutor: " +
                   TypeId(type));
     }
 

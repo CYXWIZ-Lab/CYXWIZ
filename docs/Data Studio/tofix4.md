@@ -2061,6 +2061,23 @@ Updated coverage:
 - Source-node validation routes these nodes to the fail-closed runtime path.
 - Metadata and executor routing tests lock their blocked runtime contracts.
 
+### Progress note: training preprocessing PipelineExecutor truth correction
+
+`Normalize` and `OneHotEncode` are training preprocessing contract nodes, not
+Data Studio tabular runtime operators.
+
+Implemented:
+
+- added central fail-closed PipelineExecutor capability entries for
+  `Normalize` and `OneHotEncode`;
+- left their global metadata `Implemented` because `GraphCompiler` consumes
+  them as training preprocessing configuration;
+- added runtime metadata tests proving these nodes fail closed in
+  PipelineExecutor without downgrading their training metadata;
+- added representative executor routing coverage so graph execution reports
+  the central backend-gap reason instead of falling through as an ambiguous
+  unsupported node.
+
 At the moment, some nodes are:
 
 - over-exposed
