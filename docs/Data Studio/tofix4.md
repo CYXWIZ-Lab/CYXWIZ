@@ -2147,6 +2147,27 @@ Implemented:
 - extended representative executor routing coverage so Data Studio graph
   execution reports the central tensor-utility backend-gap reason.
 
+### Progress note: tensor math/reduction PipelineExecutor truth correction
+
+Tensor math, reduction, and tensor-indexing nodes are valid tensor graph
+operators, but they are not Data Studio Arrow-table runtime operators.
+
+Implemented:
+
+- added central fail-closed PipelineExecutor capability entries for tensor
+  math nodes (`TensorAbs`, `TensorClip`, `TensorExp`, `TensorLog`,
+  `TensorPow`, `TensorSign`, `TensorSqrt`);
+- added central fail-closed entries for tensor reductions (`TensorMean`,
+  `TensorSum`, `TensorMax`, `TensorMin`, `TensorProd`, `TensorStd`,
+  `TensorVar`);
+- added central fail-closed entries for tensor operation/indexing nodes
+  (`TensorDot`, `TensorBatchMatMul`, `TensorBroadcastTo`, `TensorExpand`,
+  `TensorIndexSelect`, `TensorLogicalMask`);
+- preserved their global `Implemented` metadata because tensor graph execution
+  owns their actual contract;
+- extended metadata and representative executor routing coverage so Data
+  Studio graph execution reports the central tensor backend-gap reason.
+
 At the moment, some nodes are:
 
 - over-exposed
