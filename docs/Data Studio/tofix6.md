@@ -514,22 +514,29 @@ Current CyxWiz nodes and UI:
 - `Adam`
 - `AdamW`
 - `RMSprop`
+- `Adagrad`
 - `NAdam`
 - dedicated optimizer settings panel
 
 Current strengths:
 
 - the UI presents a modern optimizer story
+- `GraphCompiler` maps `SGD`, `Adam`, `AdamW`, `RMSprop`, `Adagrad`,
+  and `NAdam` into backend optimizer types
+- `BuildSequentialFromConfig` constructs the optimizer through
+  `CreateOptimizer(config.GetOptimizerType(), config.learning_rate)`, so
+  optimizer execution belongs to the training path, not `PipelineExecutor`
 
 Current gaps / misleading parts:
 
-- compile/runtime support still trails the UI
-- current training path is strongest for:
-  - `SGD`
-  - `Adam`
-  - `AdamW`
-- `RMSprop`, `Adagrad`, and `NAdam` have known support mismatches across
-  UI, compiler, and model-execution wiring
+- the central supported-training-backend capability table currently names
+  supported model layers, not loss/optimizer/control nodes, so it should not
+  be treated as a complete training-node support matrix
+- learning-rate schedulers and regularization control nodes are still blocked
+  as unsupported training controls until they are connected to execution
+- the optimizer settings panel exposes richer optimizer-specific parameters
+  than the current graph compiler forwards into model construction; the
+  training path currently preserves the selected optimizer and learning rate
 
 ---
 
