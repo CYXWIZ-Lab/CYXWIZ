@@ -1920,6 +1920,26 @@ Updated coverage:
 - Executor routing tests cover missing-column and duplicate detection plus
   unsupported-rule rejection.
 
+### Progress note: remaining hard-gap fail-closed coverage
+
+The remaining high-risk nodes that still need larger backend contracts now have
+expanded fail-closed regression coverage instead of being promoted with fake
+runtime behavior.
+
+Locked fail-closed coverage now includes:
+
+- model-dependent evaluation/control nodes: `LearningCurvesNode`,
+  `FeatureImportanceNode`, and `CrossValidationNode`
+- image-quality/preprocessing nodes that need real image dataset semantics:
+  `ImagePreprocessor` and `QualityAnalyzer`
+- multi-output/runtime-structure gaps: `TableSplitter`
+- unavailable file/backend integrations: `ExportExcel`
+- signal tensor transforms that do not fit the current Arrow dataset contract:
+  `IFFTNode` and `WaveletTransform`
+
+This deliberately keeps these nodes blocked until their real execution
+contracts exist rather than adding dataset-shaped approximations.
+
 ### Progress note: Export SQL metadata truth correction
 
 `ExportSQL` was marked implemented in metadata even though PipelineExecutor has
