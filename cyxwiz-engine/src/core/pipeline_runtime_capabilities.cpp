@@ -270,6 +270,20 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::ArrowIPCFile},
         {"NumPyFile", "NumPy array loading is not implemented in PipelineExecutor; use supported DataInput tabular formats until a real tensor source exists",
          gui::NodeType::NumPyFile},
+        {"ImageCSVDataset", "Image+CSV dataset loading is not implemented in PipelineExecutor; use image dataset batchers until a real graph source exists",
+         gui::NodeType::ImageCSVDataset},
+        {"StreamingDataset", "streaming dataset loading is not implemented in PipelineExecutor; use supported eager DataInput sources until a real streaming graph source exists",
+         gui::NodeType::StreamingDataset},
+        {"FashionMNISTDataset", "Fashion-MNIST loading is not implemented in PipelineExecutor; use dataset/batcher training paths until a real graph source exists",
+         gui::NodeType::FashionMNISTDataset},
+        {"CIFAR100Dataset", "CIFAR-100 loading is not implemented in PipelineExecutor; use dataset/batcher training paths until a real graph source exists",
+         gui::NodeType::CIFAR100Dataset},
+        {"AudioFolderDataset", "audio folder dataset loading is not implemented in PipelineExecutor; use audio dataset batchers until a real graph source exists",
+         gui::NodeType::AudioFolderDataset},
+        {"TimeSeriesCSV", "dedicated TimeSeriesCSV source execution is not implemented in PipelineExecutor; use DataInput plus time-series operators",
+         gui::NodeType::TimeSeriesCSV},
+        {"TextCorpusDataset", "text corpus dataset loading is not implemented in PipelineExecutor; use supported text operators until a real corpus graph source exists",
+         gui::NodeType::TextCorpusDataset},
     };
     return capabilities;
 }

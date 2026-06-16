@@ -2199,6 +2199,24 @@ Implemented:
 - extended metadata and representative source-node routing coverage so graph
   execution reports the central source backend-gap reason.
 
+### Progress note: specialized dataset source truth correction
+
+Specialized dataset source nodes were marked implemented, but they do not have
+dedicated Data Studio `PipelineExecutor` source runtimes.
+
+Implemented:
+
+- added central fail-closed PipelineExecutor capability entries for
+  `ImageCSVDataset`, `StreamingDataset`, `FashionMNISTDataset`,
+  `CIFAR100Dataset`, `AudioFolderDataset`, `TimeSeriesCSV`, and
+  `TextCorpusDataset`;
+- demoted their metadata to blocked/template through the central capability
+  table until real graph source loaders exist;
+- kept the intended alternatives explicit: use dataset/batcher training paths,
+  `DataInput`, or existing text/time-series operators depending on domain;
+- extended metadata and representative source-node routing coverage so graph
+  execution reports the central dataset-source backend-gap reason.
+
 At the moment, some nodes are:
 
 - over-exposed

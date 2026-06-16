@@ -1617,6 +1617,13 @@ int main() {
         gui::NodeType::FeatherFile,
         gui::NodeType::ArrowIPCFile,
         gui::NodeType::NumPyFile,
+        gui::NodeType::ImageCSVDataset,
+        gui::NodeType::StreamingDataset,
+        gui::NodeType::FashionMNISTDataset,
+        gui::NodeType::CIFAR100Dataset,
+        gui::NodeType::AudioFolderDataset,
+        gui::NodeType::TimeSeriesCSV,
+        gui::NodeType::TextCorpusDataset,
     };
     for (const auto type : additional_fail_closed_enum_cases) {
         Check(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(type) != nullptr,
@@ -1645,6 +1652,13 @@ int main() {
         gui::NodeType::FeatherFile,
         gui::NodeType::ArrowIPCFile,
         gui::NodeType::NumPyFile,
+        gui::NodeType::ImageCSVDataset,
+        gui::NodeType::StreamingDataset,
+        gui::NodeType::FashionMNISTDataset,
+        gui::NodeType::CIFAR100Dataset,
+        gui::NodeType::AudioFolderDataset,
+        gui::NodeType::TimeSeriesCSV,
+        gui::NodeType::TextCorpusDataset,
     };
     for (const auto type : blocked_metadata_cases) {
         const auto* meta = metadata.GetMetadata(type);

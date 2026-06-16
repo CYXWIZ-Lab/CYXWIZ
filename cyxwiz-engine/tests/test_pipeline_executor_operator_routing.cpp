@@ -630,6 +630,13 @@ int main() {
         {"FeatherFile", true},
         {"ArrowIPCFile", true},
         {"NumPyFile", true},
+        {"ImageCSVDataset", true},
+        {"StreamingDataset", true},
+        {"FashionMNISTDataset", true},
+        {"CIFAR100Dataset", true},
+        {"AudioFolderDataset", true},
+        {"TimeSeriesCSV", true},
+        {"TextCorpusDataset", true},
     };
 
     int fail_closed_id = 900;
