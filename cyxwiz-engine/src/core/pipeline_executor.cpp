@@ -3054,6 +3054,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteRegressionMetrics(node, ctx);
     case gui::NodeType::ConfusionMatrixNode:
         return ExecuteConfusionMatrix(node, ctx);
+    case gui::NodeType::ROCCurveNode:
+        return ExecuteROCCurve(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -6471,6 +6473,248 @@ bool PipelineExecutor::ExecuteConfusionMatrix(const Node& node, ExecutionContext
         return true;
     } catch (const std::exception& e) {
         ReportError("ConfusionMatrixNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteROCCurve(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ROCCurveNode: No input dataset");
+        return false;
+    }
+
+    const auto get_parameter = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            auto it = node.parameters.find(name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                return TrimString(it->second);
+            }
+        }
+        return std::string{};
+    };
+
+    const std::string actual_col = get_parameter(
+        {"actual_col", "y_true_col", "truth_col", "target_col", "label_col"});
+    const std::string score_col = get_parameter(
+        {"score_col", "y_score_col", "probability_col", "prediction_score_col"});
+    const std::string positive_label =
+        get_parameter({"positive_label", "positive_class"}).empty()
+            ? "1"
+            : get_parameter({"positive_label", "positive_class"});
+    if (actual_col.empty()) {
+        ReportError("ROCCurveNode: actual_col is required");
+        return false;
+    }
+    if (score_col.empty()) {
+        ReportError("ROCCurveNode: score_col is required");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("ROCCurveNode: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("ROCCurveNode: Input table is null");
+            return false;
+        }
+
+        const int actual_index = input_table->schema()->GetFieldIndex(actual_col);
+        if (actual_index < 0) {
+            ReportError("ROCCurveNode: column '" + actual_col + "' not found");
+            return false;
+        }
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "ROCCurveNode", score_col,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+
+        auto actual_column = input_table->column(actual_index);
+        auto score_column = input_table->column(
+            input_table->schema()->GetFieldIndex(score_col));
+        if (!actual_column || !score_column) {
+            ReportError("ROCCurveNode: ROC columns are missing");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        struct RocPointInput {
+            std::string label;
+            double score = 0.0;
+            bool positive = false;
+        };
+        std::vector<RocPointInput> samples;
+        int64_t positive_count = 0;
+        int64_t negative_count = 0;
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto actual_scalar_result = actual_column->GetScalar(row);
+            auto score_scalar_result = score_column->GetScalar(row);
+            if (!actual_scalar_result.ok() || !score_scalar_result.ok()) {
+                ReportError("ROCCurveNode: Failed to read ROC column value");
+                return false;
+            }
+
+            auto actual_scalar = *actual_scalar_result;
+            if (!actual_scalar || !actual_scalar->is_valid) {
+                continue;
+            }
+            double score = 0.0;
+            if (!scalar_to_double(*score_scalar_result, score)) {
+                continue;
+            }
+
+            RocPointInput sample;
+            sample.label = actual_scalar->ToString();
+            sample.score = score;
+            sample.positive = sample.label == positive_label;
+            if (sample.positive) {
+                ++positive_count;
+            } else {
+                ++negative_count;
+            }
+            samples.push_back(sample);
+        }
+
+        if (samples.empty()) {
+            ReportError("ROCCurveNode: no non-null label/score pairs");
+            return false;
+        }
+        if (positive_count == 0 || negative_count == 0) {
+            ReportError("ROCCurveNode: ROC requires at least one positive and one negative sample");
+            return false;
+        }
+
+        std::sort(samples.begin(), samples.end(),
+                  [](const RocPointInput& a, const RocPointInput& b) {
+                      return a.score > b.score;
+                  });
+
+        struct RocPoint {
+            double threshold = 0.0;
+            double fpr = 0.0;
+            double tpr = 0.0;
+        };
+        std::vector<RocPoint> points;
+        int64_t tp = 0;
+        int64_t fp = 0;
+        size_t index = 0;
+        while (index < samples.size()) {
+            const double threshold = samples[index].score;
+            while (index < samples.size() && samples[index].score == threshold) {
+                if (samples[index].positive) {
+                    ++tp;
+                } else {
+                    ++fp;
+                }
+                ++index;
+            }
+            points.push_back(
+                {threshold,
+                 static_cast<double>(fp) / static_cast<double>(negative_count),
+                 static_cast<double>(tp) / static_cast<double>(positive_count)});
+        }
+
+        double auc = 0.0;
+        double prev_fpr = 0.0;
+        double prev_tpr = 0.0;
+        for (const auto& point : points) {
+            auc += (point.fpr - prev_fpr) * (point.tpr + prev_tpr) / 2.0;
+            prev_fpr = point.fpr;
+            prev_tpr = point.tpr;
+        }
+        if (prev_fpr < 1.0 || prev_tpr < 1.0) {
+            auc += (1.0 - prev_fpr) * (1.0 + prev_tpr) / 2.0;
+        }
+
+        arrow::DoubleBuilder threshold_builder;
+        arrow::DoubleBuilder fpr_builder;
+        arrow::DoubleBuilder tpr_builder;
+        arrow::DoubleBuilder auc_builder;
+        for (const auto& point : points) {
+            if (!threshold_builder.Append(point.threshold).ok() ||
+                !fpr_builder.Append(point.fpr).ok() ||
+                !tpr_builder.Append(point.tpr).ok() ||
+                !auc_builder.Append(auc).ok()) {
+                ReportError("ROCCurveNode: Failed to append ROC point");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> threshold_array;
+        std::shared_ptr<arrow::Array> fpr_array;
+        std::shared_ptr<arrow::Array> tpr_array;
+        std::shared_ptr<arrow::Array> auc_array;
+        if (!threshold_builder.Finish(&threshold_array).ok() ||
+            !fpr_builder.Finish(&fpr_array).ok() ||
+            !tpr_builder.Finish(&tpr_array).ok() ||
+            !auc_builder.Finish(&auc_array).ok()) {
+            ReportError("ROCCurveNode: Failed to build ROC table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("threshold", arrow::float64()),
+                           arrow::field("fpr", arrow::float64()),
+                           arrow::field("tpr", arrow::float64()),
+                           arrow::field("auc", arrow::float64())}),
+            {threshold_array, fpr_array, tpr_array, auc_array});
+        const std::string output_dataset_name =
+            "ds_roc_curve_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ROCCurveNode error: " + std::string(e.what()));
         return false;
     }
 }

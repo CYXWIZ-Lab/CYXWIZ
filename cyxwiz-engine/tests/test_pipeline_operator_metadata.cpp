@@ -1369,6 +1369,23 @@ int main() {
     Check(confusion_matrix_meta->status ==
               cyxwiz::NodeImplementationStatus::Implemented,
           "ConfusionMatrixNode metadata should be implemented");
+    const auto roc_curve_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ROCCurveNode);
+    Check(roc_curve_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "ROCCurveNode enum support should resolve to legacy executor");
+    const auto roc_curve_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("ROCCurveNode");
+    Check(roc_curve_type.has_value() &&
+              *roc_curve_type == gui::NodeType::ROCCurveNode,
+          "ROCCurveNode runtime name should resolve typed metadata");
+    const auto* roc_curve_meta =
+        metadata.GetMetadata(gui::NodeType::ROCCurveNode);
+    Check(roc_curve_meta != nullptr,
+          "ROCCurveNode metadata should exist");
+    Check(roc_curve_meta->status ==
+              cyxwiz::NodeImplementationStatus::Implemented,
+          "ROCCurveNode metadata should be implemented");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

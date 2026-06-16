@@ -1218,10 +1218,13 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
 
     RegisterNode({NodeType::ROCCurveNode, NodeCategory::Analytics, "ROC Curve", ICON_FA_CHART_AREA,
         {"roc", "auc", "curve"}, 0, false, "ROC curve and AUC",
-        "Receiver Operating Characteristic curve for binary classification.", "",
-        {{"y_true", PinType::Labels, true, "True labels"}, {"y_score", PinType::Dataset, true, "Prediction scores"}},
-        {{"FPR", PinType::Dataset, true, "False positive rates"}, {"TPR", PinType::Dataset, true, "True positive rates"}, {"AUC", PinType::Dataset, true, "Area under curve"}},
-        {}, NodeImplementationStatus::Template, 0, "UI-only"});
+        "Computes ROC curve points and AUC from binary labels and prediction scores.", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Curve", PinType::Dataset, true, "ROC points and AUC"}},
+        {{"actual_col", "string", "", "Binary actual label column", {}, ""},
+         {"score_col", "string", "", "Positive-class score column", {}, ""},
+         {"positive_label", "string", "1", "Positive class label", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LearningCurvesNode, NodeCategory::Analytics, "Learning Curves", ICON_FA_CHART_LINE,
         {"learning", "curves", "training"}, 0, false, "Training/validation learning curves",

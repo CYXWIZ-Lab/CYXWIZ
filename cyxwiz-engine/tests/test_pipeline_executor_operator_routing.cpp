@@ -162,6 +162,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_duplicates.csv";
     const fs::path json_payload_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_json_payload.csv";
+    const fs::path roc_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_roc.csv";
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
@@ -179,6 +181,7 @@ int main() {
     fs::remove(missing_string_csv_path);
     fs::remove(duplicates_csv_path);
     fs::remove(json_payload_csv_path);
+    fs::remove(roc_csv_path);
     {
         std::ofstream csv(csv_path);
         csv << "x,y\n";
@@ -191,6 +194,14 @@ int main() {
         csv << "payload\n";
         csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Ada\"\"}}\"\n";
         csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Grace\"\"}}\"\n";
+    }
+    {
+        std::ofstream csv(roc_csv_path);
+        csv << "actual,score\n";
+        csv << "0,0.10\n";
+        csv << "1,0.40\n";
+        csv << "0,0.35\n";
+        csv << "1,0.80\n";
     }
     {
         std::ofstream csv(missing_csv_path);
@@ -3575,6 +3586,55 @@ int main() {
               std::string::npos,
           "ConfusionMatrixNode missing-column error should be specific: " +
               bad_confusion_matrix_executor.GetLastError());
+
+    const std::string roc_curve_json =
+        R"({"nodes":[)"
+        R"({"id":864,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(roc_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":865,"type":"ROCCurveNode","name":"ROC","parameters":{)"
+        R"("actual_col":"actual","score_col":"score","positive_label":"1"}})"
+        R"(],"links":[{"start_node":864,"end_node":865}]})";
+
+    cyxwiz::PipelineExecutor roc_curve_executor;
+    Check(roc_curve_executor.ExecutePipeline(roc_curve_json),
+          "ROCCurveNode should compute real ROC points: " +
+              roc_curve_executor.GetLastError());
+    auto roc_curve = registry.GetArrowDataset("ds_roc_curve_865");
+    Check(roc_curve != nullptr, "ROCCurveNode output dataset is registered");
+    auto roc_curve_table = roc_curve->GetArrowTable();
+    Check(roc_curve_table != nullptr, "ROCCurveNode output table exists");
+    Check(roc_curve_table->num_rows() == 4,
+          "ROCCurveNode should emit one row per distinct threshold");
+    Check(std::fabs(ReadNumericValue(roc_curve_table, "threshold", 0) - 0.8) <
+              0.001,
+          "ROCCurveNode should process thresholds from high to low");
+    Check(std::fabs(ReadNumericValue(roc_curve_table, "tpr", 0) - 0.5) <
+              0.001,
+          "ROCCurveNode should compute true-positive rate");
+    Check(std::fabs(ReadNumericValue(roc_curve_table, "fpr", 0) - 0.0) <
+              0.001,
+          "ROCCurveNode should compute false-positive rate");
+    Check(std::fabs(ReadNumericValue(roc_curve_table, "auc", 0) - 1.0) <
+              0.001,
+          "ROCCurveNode should compute AUC");
+
+    const std::string bad_roc_curve_json =
+        R"({"nodes":[)"
+        R"({"id":866,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(roc_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":867,"type":"ROCCurveNode","name":"BadROC","parameters":{)"
+        R"("actual_col":"actual","score_col":"missing"}})"
+        R"(],"links":[{"start_node":866,"end_node":867}]})";
+
+    cyxwiz::PipelineExecutor bad_roc_curve_executor;
+    Check(!bad_roc_curve_executor.ExecutePipeline(bad_roc_curve_json),
+          "ROCCurveNode should reject missing score columns");
+    Check(bad_roc_curve_executor.GetLastError().find(
+              "ROCCurveNode: column 'missing' not found") != std::string::npos,
+          "ROCCurveNode missing-score error should be specific: " +
+              bad_roc_curve_executor.GetLastError());
 
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"

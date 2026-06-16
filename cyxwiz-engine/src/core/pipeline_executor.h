@@ -225,6 +225,7 @@ private:
     bool ExecuteDataProfiler(const Node& node, ExecutionContext& ctx);
     bool ExecuteRegressionMetrics(const Node& node, ExecutionContext& ctx);
     bool ExecuteConfusionMatrix(const Node& node, ExecutionContext& ctx);
+    bool ExecuteROCCurve(const Node& node, ExecutionContext& ctx);
     // Helper methods
     void UpdateProgress(float progress, const std::string& status = "");  // Phase 8: Added status parameter
     void ReportError(const std::string& error);

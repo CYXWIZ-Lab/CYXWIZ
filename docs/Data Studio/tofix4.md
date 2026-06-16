@@ -1868,6 +1868,23 @@ Updated coverage:
 - Executor routing tests cover successful matrix output and missing-column
   rejection.
 
+### Progress note: ROC Curve runtime implementation
+
+`ROCCurveNode` has been moved from UI-only/fail-closed evaluation coverage to
+a real PipelineExecutor implementation.
+
+Updated coverage:
+
+- `ROCCurveNode` metadata is now marked implemented with a dataset-based binary
+  label/score column contract.
+- The runtime capability map resolves `ROCCurveNode` to the legacy executor.
+- `PipelineExecutor` emits ROC threshold rows with `fpr`, `tpr`, and repeated
+  `auc` values from configured actual and score columns.
+- Execution fails clearly when score columns are missing/non-numeric, no valid
+  pairs remain, or labels do not contain both positive and negative samples.
+- Executor routing tests cover successful ROC/AUC output and missing-score
+  rejection.
+
 ### Progress note: Export SQL metadata truth correction
 
 `ExportSQL` was marked implemented in metadata even though PipelineExecutor has
