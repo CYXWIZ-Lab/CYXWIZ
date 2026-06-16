@@ -1335,6 +1335,23 @@ int main() {
     Check(data_profiler_type.has_value() &&
               *data_profiler_type == gui::NodeType::DataProfiler,
           "DataProfiler runtime name should resolve typed metadata");
+    const auto regression_metrics_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::RegressionMetricsNode);
+    Check(regression_metrics_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "RegressionMetricsNode enum support should resolve to legacy executor");
+    const auto regression_metrics_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("RegressionMetricsNode");
+    Check(regression_metrics_type.has_value() &&
+              *regression_metrics_type == gui::NodeType::RegressionMetricsNode,
+          "RegressionMetricsNode runtime name should resolve typed metadata");
+    const auto* regression_metrics_meta =
+        metadata.GetMetadata(gui::NodeType::RegressionMetricsNode);
+    Check(regression_metrics_meta != nullptr,
+          "RegressionMetricsNode metadata should exist");
+    Check(regression_metrics_meta->status ==
+              cyxwiz::NodeImplementationStatus::Implemented,
+          "RegressionMetricsNode metadata should be implemented");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
@@ -1418,7 +1435,6 @@ int main() {
         gui::NodeType::UMAPNode,
         gui::NodeType::SVMRegressor,
         gui::NodeType::PRCurveNode,
-        gui::NodeType::RegressionMetricsNode,
         gui::NodeType::WordEmbeddings,
         gui::NodeType::NamedEntityRecognizer,
         gui::NodeType::ImagePreprocessor,

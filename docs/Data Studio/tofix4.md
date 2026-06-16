@@ -1832,6 +1832,23 @@ Updated coverage:
   panel/report workflow.
 - Executor routing tests cover profile output shape and row/null counts.
 
+### Progress note: Regression Metrics runtime implementation
+
+`RegressionMetricsNode` has been moved from fail-closed enum-only coverage to
+a real PipelineExecutor implementation.
+
+Updated coverage:
+
+- `RegressionMetricsNode` metadata is now registered and marked implemented.
+- The runtime capability map resolves `RegressionMetricsNode` to the legacy
+  executor.
+- `PipelineExecutor` computes MAE, MSE, RMSE, R2, and valid-pair count from
+  configured numeric actual/predicted columns.
+- Null actual/predicted pairs are skipped; execution fails clearly if no valid
+  pairs remain or if requested columns are not numeric.
+- Executor routing tests cover successful metric output and non-numeric column
+  rejection.
+
 ### Progress note: Export SQL metadata truth correction
 
 `ExportSQL` was marked implemented in metadata even though PipelineExecutor has

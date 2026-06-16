@@ -544,7 +544,6 @@ int main() {
         {"UMAPNode", false},
         {"SVMRegressor", false},
         {"PRCurveNode", false},
-        {"RegressionMetricsNode", false},
         {"WordEmbeddings", false},
         {"NamedEntityRecognizer", false},
         {"ImagePreprocessor", false},
@@ -3476,6 +3475,59 @@ int main() {
           "DataProfiler should report input row count");
     Check(ReadNumericValue(profile_table, "null_count", 0) == 0.0,
           "DataProfiler should report null counts");
+
+    const std::string regression_metrics_json =
+        R"({"nodes":[)"
+        R"({"id":856,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":857,"type":"RegressionMetricsNode","name":"Metrics","parameters":{)"
+        R"("actual_col":"y","predicted_col":"x","metrics":"mae,mse,rmse,r2,count"}})"
+        R"(],"links":[{"start_node":856,"end_node":857}]})";
+
+    cyxwiz::PipelineExecutor regression_metrics_executor;
+    Check(regression_metrics_executor.ExecutePipeline(regression_metrics_json),
+          "RegressionMetricsNode should compute real numeric metrics: " +
+              regression_metrics_executor.GetLastError());
+    auto regression_metrics =
+        registry.GetArrowDataset("ds_regression_metrics_857");
+    Check(regression_metrics != nullptr,
+          "RegressionMetricsNode output dataset is registered");
+    auto regression_metrics_table = regression_metrics->GetArrowTable();
+    Check(regression_metrics_table != nullptr,
+          "RegressionMetricsNode output table exists");
+    Check(regression_metrics_table->num_rows() == 5,
+          "RegressionMetricsNode should emit requested metric rows");
+    Check(ReadStringValue(regression_metrics_table, "metric", 0) == "mae",
+          "RegressionMetricsNode should preserve requested metric order");
+    Check(std::fabs(ReadNumericValue(regression_metrics_table, "value", 0) - 18.0) <
+              0.001,
+          "RegressionMetricsNode should compute MAE");
+    Check(std::fabs(ReadNumericValue(regression_metrics_table, "value", 1) - 378.0) <
+              0.001,
+          "RegressionMetricsNode should compute MSE");
+    Check(std::fabs(ReadNumericValue(regression_metrics_table, "value", 4) - 3.0) <
+              0.001,
+          "RegressionMetricsNode should report valid pair count");
+
+    const std::string bad_regression_metrics_json =
+        R"({"nodes":[)"
+        R"({"id":858,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":859,"type":"RegressionMetricsNode","name":"BadMetrics","parameters":{)"
+        R"("actual_col":"phrase","predicted_col":"phrase"}})"
+        R"(],"links":[{"start_node":858,"end_node":859}]})";
+
+    cyxwiz::PipelineExecutor bad_regression_metrics_executor;
+    Check(!bad_regression_metrics_executor.ExecutePipeline(
+              bad_regression_metrics_json),
+          "RegressionMetricsNode should reject non-numeric metric columns");
+    Check(bad_regression_metrics_executor.GetLastError().find(
+              "RegressionMetricsNode: column 'phrase' must be numeric") !=
+              std::string::npos,
+          "RegressionMetricsNode non-numeric error should be specific: " +
+              bad_regression_metrics_executor.GetLastError());
 
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"

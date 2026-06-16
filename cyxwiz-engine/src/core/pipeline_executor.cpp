@@ -3050,6 +3050,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteRegexTester(node, ctx);
     case gui::NodeType::DataProfiler:
         return ExecuteDataProfiler(node, ctx);
+    case gui::NodeType::RegressionMetricsNode:
+        return ExecuteRegressionMetrics(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -6087,6 +6089,217 @@ bool PipelineExecutor::ExecuteDataProfiler(const Node& node, ExecutionContext& c
         return true;
     } catch (const std::exception& e) {
         ReportError("DataProfiler error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteRegressionMetrics(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("RegressionMetricsNode: No input dataset");
+        return false;
+    }
+
+    const auto get_parameter = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            auto it = node.parameters.find(name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                return TrimString(it->second);
+            }
+        }
+        return std::string{};
+    };
+
+    const std::string actual_col = get_parameter(
+        {"actual_col", "y_true_col", "truth_col", "target_col", "ground_truth_col"});
+    const std::string predicted_col = get_parameter(
+        {"predicted_col", "y_pred_col", "prediction_col"});
+    if (actual_col.empty()) {
+        ReportError("RegressionMetricsNode: actual_col is required");
+        return false;
+    }
+    if (predicted_col.empty()) {
+        ReportError("RegressionMetricsNode: predicted_col is required");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("RegressionMetricsNode: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("RegressionMetricsNode: Input table is null");
+            return false;
+        }
+
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "RegressionMetricsNode", actual_col,
+                               "numeric", IsNumericArrowType, schema_error) ||
+            !RequireColumnKind(input_table, "RegressionMetricsNode", predicted_col,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+
+        const int actual_index = input_table->schema()->GetFieldIndex(actual_col);
+        const int predicted_index = input_table->schema()->GetFieldIndex(predicted_col);
+        auto actual_column = input_table->column(actual_index);
+        auto predicted_column = input_table->column(predicted_index);
+        if (!actual_column || !predicted_column) {
+            ReportError("RegressionMetricsNode: metric columns are missing");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        int64_t count = 0;
+        double sum_abs_error = 0.0;
+        double sum_squared_error = 0.0;
+        double sum_actual = 0.0;
+        double sum_actual_squared = 0.0;
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto actual_scalar_result = actual_column->GetScalar(row);
+            auto predicted_scalar_result = predicted_column->GetScalar(row);
+            if (!actual_scalar_result.ok() || !predicted_scalar_result.ok()) {
+                ReportError("RegressionMetricsNode: Failed to read metric column value");
+                return false;
+            }
+
+            double actual = 0.0;
+            double predicted = 0.0;
+            if (!scalar_to_double(*actual_scalar_result, actual) ||
+                !scalar_to_double(*predicted_scalar_result, predicted)) {
+                continue;
+            }
+
+            const double error = actual - predicted;
+            sum_abs_error += std::fabs(error);
+            sum_squared_error += error * error;
+            sum_actual += actual;
+            sum_actual_squared += actual * actual;
+            ++count;
+        }
+
+        if (count == 0) {
+            ReportError("RegressionMetricsNode: no non-null actual/predicted pairs");
+            return false;
+        }
+
+        const double mse = sum_squared_error / static_cast<double>(count);
+        const double rmse = std::sqrt(mse);
+        const double mae = sum_abs_error / static_cast<double>(count);
+        const double actual_mean = sum_actual / static_cast<double>(count);
+        const double ss_total =
+            sum_actual_squared - static_cast<double>(count) * actual_mean * actual_mean;
+        const double r2 =
+            (std::fabs(ss_total) <= 1e-12)
+                ? (std::fabs(sum_squared_error) <= 1e-12 ? 1.0 : 0.0)
+                : (1.0 - (sum_squared_error / ss_total));
+
+        std::vector<std::string> metrics;
+        auto metrics_it = node.parameters.find("metrics");
+        if (metrics_it != node.parameters.end() &&
+            !TrimString(metrics_it->second).empty()) {
+            ParseCommaList(metrics_it->second, metrics);
+        }
+        if (metrics.empty()) {
+            metrics = {"mse", "rmse", "mae", "r2"};
+        }
+
+        arrow::StringBuilder metric_builder;
+        arrow::DoubleBuilder value_builder;
+        for (std::string metric : metrics) {
+            metric = ToLowerAscii(TrimString(metric));
+            double value = 0.0;
+            if (metric == "mse") {
+                value = mse;
+            } else if (metric == "rmse") {
+                value = rmse;
+            } else if (metric == "mae") {
+                value = mae;
+            } else if (metric == "r2" || metric == "r_squared") {
+                metric = "r2";
+                value = r2;
+            } else if (metric == "count" || metric == "n") {
+                metric = "count";
+                value = static_cast<double>(count);
+            } else {
+                ReportError("RegressionMetricsNode: unsupported metric '" + metric + "'");
+                return false;
+            }
+
+            if (!metric_builder.Append(metric).ok() ||
+                !value_builder.Append(value).ok()) {
+                ReportError("RegressionMetricsNode: Failed to append metric row");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> metric_array;
+        std::shared_ptr<arrow::Array> value_array;
+        if (!metric_builder.Finish(&metric_array).ok() ||
+            !value_builder.Finish(&value_array).ok()) {
+            ReportError("RegressionMetricsNode: Failed to build metrics table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("metric", arrow::utf8()),
+                           arrow::field("value", arrow::float64())}),
+            {metric_array, value_array});
+        const std::string output_dataset_name =
+            "ds_regression_metrics_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("RegressionMetricsNode error: " + std::string(e.what()));
         return false;
     }
 }

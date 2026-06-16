@@ -1247,6 +1247,16 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"method", "enum", "impurity", "Importance method", {"impurity", "permutation"}, ""}},
         NodeImplementationStatus::Template, 0, "UI-only"});
 
+    RegisterNode({NodeType::RegressionMetricsNode, NodeCategory::Analytics, "Regression Metrics", ICON_FA_CHART_SIMPLE,
+        {"regression", "metrics", "mse", "rmse", "mae", "r2"}, 0, false, "Regression metrics",
+        "Computes regression metrics from numeric actual and predicted columns.", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Metrics", PinType::Dataset, true, "Metric/value table"}},
+        {{"actual_col", "string", "", "Actual value column", {}, ""},
+         {"predicted_col", "string", "", "Predicted value column", {}, ""},
+         {"metrics", "string", "mse,rmse,mae,r2", "Comma-separated metrics", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     // Preprocessing (Phase 4)
     RegisterNode({NodeType::StandardScaler, NodeCategory::Preprocessing, "Standard Scaler", ICON_FA_SCALE_BALANCED,
         {"standardize", "zscore", "scaler"}, 0, false, "Z-score standardization",
