@@ -2130,6 +2130,23 @@ Implemented:
 - extended representative executor routing coverage so Data Studio graph
   execution reports the central training-control backend-gap reason.
 
+### Progress note: tensor utility PipelineExecutor truth correction
+
+Tensor utility nodes are valid in tensor graph contexts, but they are not
+Data Studio Arrow-table runtime operators.
+
+Implemented:
+
+- added central fail-closed PipelineExecutor capability entries for
+  `Add`, `Multiply`, `Average`, `Constant`, `Lambda`, `Reshape`, `View`,
+  `Permute`, `Split`, `Squeeze`, and `Unsqueeze`;
+- preserved their global `Implemented` metadata because tensor/model graph
+  execution owns their actual contract;
+- extended metadata drift tests to prove PipelineExecutor support is
+  fail-closed without demoting tensor graph metadata;
+- extended representative executor routing coverage so Data Studio graph
+  execution reports the central tensor-utility backend-gap reason.
+
 At the moment, some nodes are:
 
 - over-exposed
