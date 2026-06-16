@@ -1946,6 +1946,10 @@ Additional metadata drift coverage now asserts active registrations for
 `WordEmbeddings`, and `NamedEntityRecognizer` remain `Template` while their
 PipelineExecutor runtime stays fail-closed.
 
+Legacy `TrainTestSplit` is also covered as a string-only fail-closed canvas
+alias. It has no one-to-one active metadata node and must not be silently routed
+to `DataSplit` until `PipelineExecutor` has a real DataSplit runtime contract.
+
 ### Progress note: Export SQL metadata truth correction
 
 `ExportSQL` was marked implemented in metadata even though PipelineExecutor has

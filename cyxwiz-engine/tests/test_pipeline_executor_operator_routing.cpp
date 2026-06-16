@@ -554,6 +554,7 @@ int main() {
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
         {"UMAPNode", false},
         {"SVMRegressor", false},
+        {"TrainTestSplit", false},
         {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},
         {"CrossValidationNode", false},
