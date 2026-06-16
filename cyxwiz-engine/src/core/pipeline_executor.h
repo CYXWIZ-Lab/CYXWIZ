@@ -229,6 +229,7 @@ private:
     bool ExecutePRCurve(const Node& node, ExecutionContext& ctx);
     bool ExecuteDataValidator(const Node& node, ExecutionContext& ctx);
     bool ExecuteSampleRows(const Node& node, ExecutionContext& ctx);
+    bool ExecuteValueCounts(const Node& node, ExecutionContext& ctx);
     // Helper methods
     void UpdateProgress(float progress, const std::string& status = "");  // Phase 8: Added status parameter
     void ReportError(const std::string& error);

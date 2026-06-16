@@ -3781,6 +3781,47 @@ int main() {
           "SampleRows count validation error should be specific: " +
               bad_sample_rows_executor.GetLastError());
 
+    const std::string value_counts_json =
+        R"({"nodes":[)"
+        R"({"id":880,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(duplicates_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":881,"type":"ValueCounts","name":"Counts","parameters":{)"
+        R"("column":"x"}})"
+        R"(],"links":[{"start_node":880,"end_node":881}]})";
+
+    cyxwiz::PipelineExecutor value_counts_executor;
+    Check(value_counts_executor.ExecutePipeline(value_counts_json),
+          "ValueCounts should compute grouped counts: " +
+              value_counts_executor.GetLastError());
+    auto value_counts = registry.GetArrowDataset("ds_valuecounts_881");
+    Check(value_counts != nullptr, "ValueCounts output dataset is registered");
+    auto value_counts_table = value_counts->GetArrowTable();
+    Check(value_counts_table != nullptr, "ValueCounts output table exists");
+    Check(value_counts_table->num_rows() == 2,
+          "ValueCounts should emit one row per distinct value");
+    Check(ReadNumericValue(value_counts_table, "value", 0) == 1.0,
+          "ValueCounts should order by count then value");
+    Check(ReadNumericValue(value_counts_table, "count", 0) == 2.0,
+          "ValueCounts should count duplicate values");
+
+    const std::string bad_value_counts_json =
+        R"({"nodes":[)"
+        R"({"id":882,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":883,"type":"ValueCounts","name":"BadCounts","parameters":{)"
+        R"("column":"missing"}})"
+        R"(],"links":[{"start_node":882,"end_node":883}]})";
+
+    cyxwiz::PipelineExecutor bad_value_counts_executor;
+    Check(!bad_value_counts_executor.ExecutePipeline(bad_value_counts_json),
+          "ValueCounts should reject missing columns");
+    Check(bad_value_counts_executor.GetLastError().find(
+              "ValueCounts: column 'missing' not found") != std::string::npos,
+          "ValueCounts missing-column error should be specific: " +
+              bad_value_counts_executor.GetLastError());
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

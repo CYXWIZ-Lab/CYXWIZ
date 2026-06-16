@@ -1935,6 +1935,18 @@ Updated coverage:
 - Executor routing tests cover sampled row count/order and invalid count
   rejection.
 
+### Progress note: Value Counts runtime implementation
+
+`ValueCounts` metadata already claimed implementation, but the node was missing
+a PipelineExecutor runtime path.
+
+Updated coverage:
+
+- The runtime capability map resolves `ValueCounts` to the legacy executor.
+- `PipelineExecutor` validates the requested column and emits a grouped
+  `value`/`count` table ordered by count descending then value ascending.
+- Executor routing tests cover duplicate counting and missing-column rejection.
+
 ### Progress note: remaining hard-gap fail-closed coverage
 
 The remaining high-risk nodes that still need larger backend contracts now have

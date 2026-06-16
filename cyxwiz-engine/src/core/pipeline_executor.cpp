@@ -3062,6 +3062,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteDataValidator(node, ctx);
     case gui::NodeType::SampleRows:
         return ExecuteSampleRows(node, ctx);
+    case gui::NodeType::ValueCounts:
+        return ExecuteValueCounts(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -7182,6 +7184,66 @@ bool PipelineExecutor::ExecuteSampleRows(const Node& node, ExecutionContext& ctx
         return true;
     } catch (const std::exception& e) {
         ReportError("SampleRows error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteValueCounts(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ValueCounts: No input dataset");
+        return false;
+    }
+
+    auto column_it = node.parameters.find("column");
+    if (column_it == node.parameters.end() || TrimString(column_it->second).empty()) {
+        ReportError("ValueCounts: column is required");
+        return false;
+    }
+    const std::string column = TrimString(column_it->second);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("ValueCounts: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::string schema_error;
+        if (!RequireColumnExists(input_table, "ValueCounts", column,
+                                 "input", schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+
+        const std::string temp_table = "temp_valuecounts_" + std::to_string(node.id);
+        if (!duckdb_->RegisterTable(temp_table, input_table)) {
+            ReportError("ValueCounts: Failed to register table with DuckDB");
+            return false;
+        }
+
+        const std::string quoted_column = QuoteSqlIdentifier(column);
+        const std::string sql =
+            "SELECT " + quoted_column + " AS value, COUNT(*) AS count FROM " +
+            temp_table + " GROUP BY " + quoted_column +
+            " ORDER BY count DESC, value ASC";
+        auto result_table = duckdb_->Query(sql);
+        duckdb_->UnregisterTable(temp_table);
+
+        if (!result_table) {
+            ReportError("ValueCounts: Query execution failed");
+            return false;
+        }
+
+        const std::string output_dataset_name =
+            "ds_valuecounts_" + std::to_string(node.id);
+        registry.RegisterArrowTable(result_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ValueCounts error: " + std::string(e.what()));
         return false;
     }
 }
