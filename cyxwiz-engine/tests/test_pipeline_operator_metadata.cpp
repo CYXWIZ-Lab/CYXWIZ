@@ -1315,6 +1315,16 @@ int main() {
     Check(json_path_type.has_value() &&
               *json_path_type == gui::NodeType::JSONPathExtractor,
           "JSONPathExtractor runtime name should resolve typed metadata");
+    const auto regex_tester_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::RegexTester);
+    Check(regex_tester_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "RegexTester enum support should resolve to legacy executor");
+    const auto regex_tester_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("RegexTester");
+    Check(regex_tester_type.has_value() &&
+              *regex_tester_type == gui::NodeType::RegexTester,
+          "RegexTester runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

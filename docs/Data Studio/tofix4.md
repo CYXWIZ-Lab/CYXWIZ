@@ -1800,6 +1800,22 @@ Updated coverage:
   being silently ignored.
 - Executor routing tests cover simple object-field extraction.
 
+### Progress note: Regex Tester runtime implementation
+
+`RegexTester` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `RegexTester` metadata is now marked implemented.
+- The runtime capability map resolves `RegexTester` to the legacy executor.
+- `PipelineExecutor` evaluates regex matches over a string column.
+- Output is one result dataset containing the source text, match status,
+  matched text, and capture groups serialized as JSON.
+- This intentionally avoids pretending the legacy executor can route the
+  metadata's separate `Matches` and `Groups` output pins.
+- Executor routing tests cover match text and capture-group output.
+
 At the moment, some nodes are:
 
 - over-exposed

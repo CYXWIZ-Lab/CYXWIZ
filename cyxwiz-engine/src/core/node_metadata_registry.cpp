@@ -2419,7 +2419,7 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"Matches", PinType::Dataset, true, "Match results"}, {"Groups", PinType::Dataset, true, "Capture groups"}},
         {{"pattern", "string", ".*", "Regex pattern", {}, ""},
          {"flags", "string", "", "Flags (i=ignorecase, m=multiline)", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::JSONPathExtractor, NodeCategory::Utility, "JSONPath", ICON_FA_CODE_BRANCH,
         {"json", "jsonpath", "extract"}, 0, false, "Extract data using JSONPath",

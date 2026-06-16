@@ -3354,6 +3354,29 @@ int main() {
     Check(ReadStringValue(json_path_table, "value", 1) == "Grace",
           "JSONPathExtractor should extract second row value");
 
+    const std::string regex_tester_json =
+        R"({"nodes":[)"
+        R"({"id":661,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":662,"type":"RegexTester","name":"Regex","parameters":{)"
+        R"("pattern":"(tea) (cup)","text_column":"phrase"}})"
+        R"(],"links":[{"start_node":661,"end_node":662}]})";
+
+    cyxwiz::PipelineExecutor regex_tester_executor;
+    Check(regex_tester_executor.ExecutePipeline(regex_tester_json),
+          "RegexTester should evaluate regex matches: " +
+              regex_tester_executor.GetLastError());
+    auto regex_result = registry.GetArrowDataset("ds_regextester_662");
+    Check(regex_result != nullptr, "RegexTester output dataset is registered");
+    auto regex_table = regex_result->GetArrowTable();
+    Check(regex_table != nullptr, "RegexTester output table exists");
+    Check(ReadStringValue(regex_table, "match", 0) == "tea cup",
+          "RegexTester should emit matched text");
+    Check(ReadStringValue(regex_table, "groups", 0).find("tea") !=
+              std::string::npos,
+          "RegexTester should serialize capture groups");
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

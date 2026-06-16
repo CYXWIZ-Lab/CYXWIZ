@@ -17,6 +17,7 @@
 #include <cmath>
 #include <fstream>
 #include <queue>
+#include <regex>
 #include <sstream>
 #include <future>
 #include <thread>
@@ -1425,6 +1426,27 @@ std::string JsonValueToDatasetString(const nlohmann::json& value) {
         return value.get<std::string>();
     }
     return value.dump();
+}
+
+bool BuildRegexOptions(const std::string& flags,
+                       std::regex::flag_type& options,
+                       std::string& error) {
+    options = std::regex::ECMAScript;
+    for (char flag : flags) {
+        if (std::isspace(static_cast<unsigned char>(flag))) {
+            continue;
+        }
+        if (flag == 'i' || flag == 'I') {
+            options |= std::regex::icase;
+            continue;
+        }
+        if (flag == 'm' || flag == 'M') {
+            continue;
+        }
+        error = "RegexTester: unsupported regex flag '" + std::string(1, flag) + "'";
+        return false;
+    }
+    return true;
 }
 
 bool TryParseInteger(const std::string& value, int64_t& parsed) {
@@ -3024,6 +3046,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteCalculatorNode(node, ctx);
     case gui::NodeType::JSONPathExtractor:
         return ExecuteJSONPathExtractor(node, ctx);
+    case gui::NodeType::RegexTester:
+        return ExecuteRegexTester(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -5815,6 +5839,169 @@ bool PipelineExecutor::ExecuteJSONPathExtractor(const Node& node, ExecutionConte
         return true;
     } catch (const std::exception& e) {
         ReportError("JSONPathExtractor error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteRegexTester(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("RegexTester: No input dataset");
+        return false;
+    }
+
+    const std::string pattern = ParameterOrDefault(node.parameters, "pattern", ".*");
+    if (pattern.empty()) {
+        ReportError("RegexTester: pattern is required");
+        return false;
+    }
+
+    std::regex::flag_type regex_options;
+    std::string flags_error;
+    if (!BuildRegexOptions(ParameterOrDefault(node.parameters, "flags", ""),
+                           regex_options, flags_error)) {
+        ReportError(flags_error);
+        return false;
+    }
+
+    try {
+        const std::regex regex_pattern(pattern, regex_options);
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("RegexTester: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("RegexTester: Input table is null");
+            return false;
+        }
+
+        std::string text_column =
+            ParameterOrDefault(node.parameters, "text_column", "");
+        if (text_column.empty()) {
+            text_column = ParameterOrDefault(node.parameters, "column", "");
+        }
+        int column_index = text_column.empty()
+                               ? -1
+                               : input_table->schema()->GetFieldIndex(text_column);
+        if (column_index < 0 && !text_column.empty()) {
+            ReportError("RegexTester: text column '" + text_column + "' not found");
+            return false;
+        }
+        if (column_index < 0) {
+            for (int i = 0; i < input_table->num_columns(); ++i) {
+                const auto field = input_table->schema()->field(i);
+                if (field && IsStringArrowType(field->type())) {
+                    column_index = i;
+                    text_column = field->name();
+                    break;
+                }
+            }
+        }
+        if (column_index < 0) {
+            ReportError("RegexTester: input table has no string column");
+            return false;
+        }
+
+        const auto field = input_table->schema()->field(column_index);
+        if (!field || !IsStringArrowType(field->type())) {
+            ReportError("RegexTester: selected column must be string");
+            return false;
+        }
+
+        arrow::StringBuilder text_builder;
+        arrow::BooleanBuilder matched_builder;
+        arrow::StringBuilder match_builder;
+        arrow::StringBuilder groups_builder;
+        const auto column = input_table->column(column_index);
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto scalar_result = column->GetScalar(row);
+            if (!scalar_result.ok()) {
+                ReportError("RegexTester: Failed to read text scalar");
+                return false;
+            }
+            const auto scalar = *scalar_result;
+            if (!scalar || !scalar->is_valid) {
+                if (!text_builder.AppendNull().ok() ||
+                    !matched_builder.Append(false).ok() ||
+                    !match_builder.AppendNull().ok() ||
+                    !groups_builder.Append("[]").ok()) {
+                    ReportError("RegexTester: Failed to append null result");
+                    return false;
+                }
+                continue;
+            }
+
+            std::string text;
+            if (scalar->type->id() == arrow::Type::STRING) {
+                text = std::static_pointer_cast<arrow::StringScalar>(scalar)->value;
+            } else if (scalar->type->id() == arrow::Type::LARGE_STRING) {
+                text = std::static_pointer_cast<arrow::LargeStringScalar>(scalar)->value;
+            } else {
+                ReportError("RegexTester: selected column must be string");
+                return false;
+            }
+
+            std::smatch match;
+            const bool matched = std::regex_search(text, match, regex_pattern);
+            nlohmann::json groups = nlohmann::json::array();
+            if (matched) {
+                for (size_t i = 1; i < match.size(); ++i) {
+                    groups.push_back(match[i].matched ? match[i].str() : "");
+                }
+            }
+
+            if (!text_builder.Append(text).ok() ||
+                !matched_builder.Append(matched).ok()) {
+                ReportError("RegexTester: Failed to append match result");
+                return false;
+            }
+            if (matched) {
+                if (!match_builder.Append(match.str()).ok()) {
+                    ReportError("RegexTester: Failed to append match text");
+                    return false;
+                }
+            } else if (!match_builder.AppendNull().ok()) {
+                ReportError("RegexTester: Failed to append missing match");
+                return false;
+            }
+            if (!groups_builder.Append(groups.dump()).ok()) {
+                ReportError("RegexTester: Failed to append capture groups");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> text_array;
+        std::shared_ptr<arrow::Array> matched_array;
+        std::shared_ptr<arrow::Array> match_array;
+        std::shared_ptr<arrow::Array> groups_array;
+        if (!text_builder.Finish(&text_array).ok() ||
+            !matched_builder.Finish(&matched_array).ok() ||
+            !match_builder.Finish(&match_array).ok() ||
+            !groups_builder.Finish(&groups_array).ok()) {
+            ReportError("RegexTester: Failed to build output arrays");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("text", arrow::utf8()),
+                           arrow::field("matched", arrow::boolean()),
+                           arrow::field("match", arrow::utf8()),
+                           arrow::field("groups", arrow::utf8())}),
+            {text_array, matched_array, match_array, groups_array});
+        const std::string output_dataset_name =
+            "ds_regextester_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::regex_error& e) {
+        ReportError("RegexTester: invalid regex pattern: " + std::string(e.what()));
+        return false;
+    } catch (const std::exception& e) {
+        ReportError("RegexTester error: " + std::string(e.what()));
         return false;
     }
 }
