@@ -1859,6 +1859,21 @@ Updated coverage:
   instead of reporting a generic graph/input-shape error.
 - Metadata and executor routing tests lock the blocked runtime contract.
 
+### Progress note: SQL, HDF5, and REST source truth correction
+
+`SQLQuery`, `HDF5Dataset`, and `RESTAPISource` were marked implemented in
+metadata even though PipelineExecutor has no SQL connector, HDF5 loader, or
+HTTP source loader.
+
+Updated coverage:
+
+- `SQLQuery`, `HDF5Dataset`, and `RESTAPISource` metadata are now marked
+  blocked/template.
+- The runtime capability map now fails each source closed with a central
+  reason.
+- Source-node validation routes these nodes to the fail-closed runtime path.
+- Metadata and executor routing tests lock their blocked runtime contracts.
+
 At the moment, some nodes are:
 
 - over-exposed

@@ -817,20 +817,20 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {{"Source", PinType::Dataset, false, "Input table"}},
         {{"Result", PinType::Dataset, true, "Query result"}},
         {{"query", "string", "SELECT * FROM data", "SQL query", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::HDF5Dataset, NodeCategory::DataSources, "HDF5 Reader", ICON_FA_HARD_DRIVE,
         {"hdf5", "h5", "scientific"}, 0, false, "Read HDF5 dataset", "", "",
         {}, {{"Table", PinType::Dataset, true, "Arrow table"}},
         {{"file_path", "file", "", "HDF5 file", {}, "*.h5;*.hdf5"}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::RESTAPISource, NodeCategory::DataSources, "REST API", ICON_FA_GLOBE,
         {"rest", "api", "http"}, 0, false, "Fetch from REST API", "", "",
         {}, {{"Response", PinType::Dataset, true, "API response"}},
         {{"url", "string", "", "API URL", {}, ""},
          {"method", "enum", "GET", "HTTP method", {"GET", "POST"}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::DatasetInput, NodeCategory::DataSources, "Dataset Input", ICON_FA_DATABASE,
         {"dataset", "input", "load"}, 0, false, "Load from Data Registry", "", "",

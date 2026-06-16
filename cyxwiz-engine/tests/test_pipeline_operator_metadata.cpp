@@ -1364,6 +1364,39 @@ int main() {
     Check(json_file_meta->status == cyxwiz::NodeImplementationStatus::Template,
           "JSONFile metadata should be blocked until JSON loading is real");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::SQLQuery)) == "SQLQuery",
+          "fail-closed runtime enum lookup for SQLQuery is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::SQLQuery).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+          "SQLQuery enum support should resolve to fail-closed");
+    const auto* sql_query_meta = metadata.GetMetadata(gui::NodeType::SQLQuery);
+    Check(sql_query_meta != nullptr,
+          "SQLQuery metadata should exist");
+    Check(sql_query_meta->status == cyxwiz::NodeImplementationStatus::Template,
+          "SQLQuery metadata should be blocked until SQL loading is real");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::HDF5Dataset)) == "HDF5Dataset",
+          "fail-closed runtime enum lookup for HDF5Dataset is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::HDF5Dataset).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+          "HDF5Dataset enum support should resolve to fail-closed");
+    const auto* hdf5_meta = metadata.GetMetadata(gui::NodeType::HDF5Dataset);
+    Check(hdf5_meta != nullptr,
+          "HDF5Dataset metadata should exist");
+    Check(hdf5_meta->status == cyxwiz::NodeImplementationStatus::Template,
+          "HDF5Dataset metadata should be blocked until HDF5 loading is real");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::RESTAPISource)) == "RESTAPISource",
+          "fail-closed runtime enum lookup for RESTAPISource is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::RESTAPISource).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+          "RESTAPISource enum support should resolve to fail-closed");
+    const auto* rest_api_meta = metadata.GetMetadata(gui::NodeType::RESTAPISource);
+    Check(rest_api_meta != nullptr,
+          "RESTAPISource metadata should exist");
+    Check(rest_api_meta->status == cyxwiz::NodeImplementationStatus::Template,
+          "RESTAPISource metadata should be blocked until REST loading is real");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::ExportSQL)) == "ExportSQL",
           "fail-closed runtime enum lookup for ExportSQL is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ExportSQL).mode ==

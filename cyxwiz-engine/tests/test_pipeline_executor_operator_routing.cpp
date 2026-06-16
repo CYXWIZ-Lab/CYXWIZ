@@ -475,6 +475,49 @@ int main() {
           "JSONFile fail-closed error should be specific: " +
               json_file_executor.GetLastError());
 
+    const std::string sql_query_json =
+        R"({"nodes":[)"
+        R"({"id":429,"type":"SQLQuery","name":"SQL","parameters":{)"
+        R"("query":"SELECT 1"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor sql_query_executor;
+    Check(!sql_query_executor.ExecutePipeline(sql_query_json),
+          "SQLQuery should fail closed until SQL source loading is real");
+    Check(sql_query_executor.GetLastError().find(
+              "SQL query source execution is not implemented") !=
+              std::string::npos,
+          "SQLQuery fail-closed error should be specific: " +
+              sql_query_executor.GetLastError());
+
+    const std::string hdf5_json =
+        R"({"nodes":[)"
+        R"({"id":430,"type":"HDF5Dataset","name":"HDF5","parameters":{)"
+        R"("file_path":"ignored.h5"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor hdf5_executor;
+    Check(!hdf5_executor.ExecutePipeline(hdf5_json),
+          "HDF5Dataset should fail closed until HDF5 loading is real");
+    Check(hdf5_executor.GetLastError().find(
+              "HDF5 loading is not implemented") != std::string::npos,
+          "HDF5Dataset fail-closed error should be specific: " +
+              hdf5_executor.GetLastError());
+
+    const std::string rest_api_json =
+        R"({"nodes":[)"
+        R"({"id":431,"type":"RESTAPISource","name":"REST","parameters":{)"
+        R"("url":"https://example.invalid/data.json","method":"GET"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor rest_api_executor;
+    Check(!rest_api_executor.ExecutePipeline(rest_api_json),
+          "RESTAPISource should fail closed until REST loading is real");
+    Check(rest_api_executor.GetLastError().find(
+              "REST API loading is not implemented") != std::string::npos,
+          "RESTAPISource fail-closed error should be specific: " +
+              rest_api_executor.GetLastError());
+
     const std::string unsupported_json =
         R"({"nodes":[)"
         R"({"id":3,"type":"DataInput","name":"Input","parameters":{)"

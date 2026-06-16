@@ -150,6 +150,12 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::ExcelFile},
         {"JSONFile", "JSON file loading is not implemented in PipelineExecutor; use a supported tabular file type until a real JSON Arrow loader exists",
          gui::NodeType::JSONFile},
+        {"SQLQuery", "SQL query source execution is not implemented in PipelineExecutor; use supported DataInput sources until a real SQL connector exists",
+         gui::NodeType::SQLQuery},
+        {"HDF5Dataset", "HDF5 loading is not implemented in PipelineExecutor; use supported tabular file types until a real HDF5 Arrow loader exists",
+         gui::NodeType::HDF5Dataset},
+        {"RESTAPISource", "REST API loading is not implemented in PipelineExecutor; use imported files until a real HTTP source loader exists",
+         gui::NodeType::RESTAPISource},
     };
     return capabilities;
 }
@@ -217,6 +223,9 @@ GetPipelineSourceRuntimeCapabilities() {
         {"DataConvert"},
         {"ExcelInput"},
         {"JSONFile"},
+        {"SQLQuery"},
+        {"HDF5Dataset"},
+        {"RESTAPISource"},
         {"ImageFolderDataset"},
         {"MNISTDataset"},
         {"CIFAR10Dataset"},
@@ -243,6 +252,9 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"FileInput", {"path"}},
         {"ExcelInput", {"path"}},
         {"JSONFile", {"file_path"}},
+        {"SQLQuery", {"query"}},
+        {"HDF5Dataset", {"file_path"}},
+        {"RESTAPISource", {"url"}},
         {"DataOutput", {"file_path"}},
         {"DataConvert", {"input_path", "output_path"}},
         {"ParquetInput", {"file_path"}},
