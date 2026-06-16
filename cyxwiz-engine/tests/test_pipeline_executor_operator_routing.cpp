@@ -3742,6 +3742,45 @@ int main() {
           "DataValidator unsupported parameter error should be specific: " +
               unsupported_data_validator_executor.GetLastError());
 
+    const std::string sample_rows_json =
+        R"({"nodes":[)"
+        R"({"id":876,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":877,"type":"SampleRows","name":"Sample","parameters":{)"
+        R"("n":"2","random_state":"42"}})"
+        R"(],"links":[{"start_node":876,"end_node":877}]})";
+
+    cyxwiz::PipelineExecutor sample_rows_executor;
+    Check(sample_rows_executor.ExecutePipeline(sample_rows_json),
+          "SampleRows should emit a deterministic head sample: " +
+              sample_rows_executor.GetLastError());
+    auto sampled_rows = registry.GetArrowDataset("ds_samplerows_877");
+    Check(sampled_rows != nullptr, "SampleRows output dataset is registered");
+    auto sampled_rows_table = sampled_rows->GetArrowTable();
+    Check(sampled_rows_table != nullptr, "SampleRows output table exists");
+    Check(sampled_rows_table->num_rows() == 2,
+          "SampleRows should limit output row count");
+    Check(ReadNumericValue(sampled_rows_table, "x", 0) == 1.0,
+          "SampleRows should preserve deterministic input order");
+
+    const std::string bad_sample_rows_json =
+        R"({"nodes":[)"
+        R"({"id":878,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":879,"type":"SampleRows","name":"BadSample","parameters":{)"
+        R"("count":"two"}})"
+        R"(],"links":[{"start_node":878,"end_node":879}]})";
+
+    cyxwiz::PipelineExecutor bad_sample_rows_executor;
+    Check(!bad_sample_rows_executor.ExecutePipeline(bad_sample_rows_json),
+          "SampleRows should reject non-integer count");
+    Check(bad_sample_rows_executor.GetLastError().find(
+              "SampleRows: count must be an integer >= 0") != std::string::npos,
+          "SampleRows count validation error should be specific: " +
+              bad_sample_rows_executor.GetLastError());
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

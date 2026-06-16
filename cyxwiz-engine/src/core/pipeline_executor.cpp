@@ -3060,6 +3060,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecutePRCurve(node, ctx);
     case gui::NodeType::DataValidator:
         return ExecuteDataValidator(node, ctx);
+    case gui::NodeType::SampleRows:
+        return ExecuteSampleRows(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -7115,6 +7117,71 @@ bool PipelineExecutor::ExecuteDataValidator(const Node& node, ExecutionContext& 
         return true;
     } catch (const std::exception& e) {
         ReportError("DataValidator error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteSampleRows(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("SampleRows: No input dataset");
+        return false;
+    }
+
+    int64_t count = 100;
+    auto count_it = node.parameters.find("count");
+    auto n_it = node.parameters.find("n");
+    const std::string count_value =
+        (count_it != node.parameters.end() && !TrimString(count_it->second).empty())
+            ? TrimString(count_it->second)
+            : ((n_it != node.parameters.end()) ? TrimString(n_it->second) : "");
+    if (!count_value.empty()) {
+        try {
+            size_t parsed = 0;
+            count = std::stoll(count_value, &parsed);
+            if (parsed != count_value.size()) {
+                ReportError("SampleRows: count must be an integer >= 0");
+                return false;
+            }
+        } catch (...) {
+            ReportError("SampleRows: count must be an integer >= 0");
+            return false;
+        }
+    }
+    if (count < 0) {
+        ReportError("SampleRows: count must be an integer >= 0");
+        return false;
+    }
+
+    auto random_state_it = node.parameters.find("random_state");
+    if (random_state_it != node.parameters.end() &&
+        !TrimString(random_state_it->second).empty()) {
+        spdlog::warn("SampleRows: random_state is accepted for UI compatibility but deterministic head sampling is used");
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("SampleRows: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table) {
+            ReportError("SampleRows: Input table is null");
+            return false;
+        }
+
+        const int64_t sample_count = std::min<int64_t>(count, input_table->num_rows());
+        auto output_table = input_table->Slice(0, sample_count);
+        const std::string output_dataset_name =
+            "ds_samplerows_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("SampleRows error: " + std::string(e.what()));
         return false;
     }
 }

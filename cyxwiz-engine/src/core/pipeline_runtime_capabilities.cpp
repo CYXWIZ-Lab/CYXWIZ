@@ -196,6 +196,7 @@ GetPipelineLegacyRuntimeCapabilities() {
         {"ROCCurveNode", gui::NodeType::ROCCurveNode},
         {"PRCurveNode", gui::NodeType::PRCurveNode},
         {"DataValidator", gui::NodeType::DataValidator},
+        {"SampleRows", gui::NodeType::SampleRows},
         {"RowToColumnNames", gui::NodeType::RowToColumnNames},
         {"TableCropper", gui::NodeType::TableCropper},
         {"StringManipulation", gui::NodeType::StringManipulation},

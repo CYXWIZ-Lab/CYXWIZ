@@ -1920,6 +1920,21 @@ Updated coverage:
 - Executor routing tests cover missing-column and duplicate detection plus
   unsupported-rule rejection.
 
+### Progress note: Sample Rows runtime implementation
+
+`SampleRows` metadata already claimed implementation, but the node was missing
+a PipelineExecutor runtime path.
+
+Updated coverage:
+
+- The runtime capability map resolves `SampleRows` to the legacy executor.
+- `PipelineExecutor` emits a deterministic head sample using `count` or the
+  legacy UI alias `n`.
+- `random_state` is accepted only for UI compatibility; true seeded random
+  sampling remains deferred until the sampling contract is explicit.
+- Executor routing tests cover sampled row count/order and invalid count
+  rejection.
+
 ### Progress note: remaining hard-gap fail-closed coverage
 
 The remaining high-risk nodes that still need larger backend contracts now have

@@ -1420,6 +1420,16 @@ int main() {
     Check(data_validator_meta->status ==
               cyxwiz::NodeImplementationStatus::Implemented,
           "DataValidator metadata should be implemented");
+    const auto sample_rows_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::SampleRows);
+    Check(sample_rows_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "SampleRows enum support should resolve to legacy executor");
+    const auto sample_rows_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("SampleRows");
+    Check(sample_rows_type.has_value() &&
+              *sample_rows_type == gui::NodeType::SampleRows,
+          "SampleRows runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
