@@ -3056,6 +3056,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteConfusionMatrix(node, ctx);
     case gui::NodeType::ROCCurveNode:
         return ExecuteROCCurve(node, ctx);
+    case gui::NodeType::PRCurveNode:
+        return ExecutePRCurve(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -6715,6 +6717,249 @@ bool PipelineExecutor::ExecuteROCCurve(const Node& node, ExecutionContext& ctx) 
         return true;
     } catch (const std::exception& e) {
         ReportError("ROCCurveNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecutePRCurve(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("PRCurveNode: No input dataset");
+        return false;
+    }
+
+    const auto get_parameter = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            auto it = node.parameters.find(name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                return TrimString(it->second);
+            }
+        }
+        return std::string{};
+    };
+
+    const std::string actual_col = get_parameter(
+        {"actual_col", "y_true_col", "truth_col", "target_col", "label_col"});
+    const std::string score_col = get_parameter(
+        {"score_col", "y_score_col", "probability_col", "prediction_score_col"});
+    const std::string positive_label =
+        get_parameter({"positive_label", "positive_class"}).empty()
+            ? "1"
+            : get_parameter({"positive_label", "positive_class"});
+    if (actual_col.empty()) {
+        ReportError("PRCurveNode: actual_col is required");
+        return false;
+    }
+    if (score_col.empty()) {
+        ReportError("PRCurveNode: score_col is required");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("PRCurveNode: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("PRCurveNode: Input table is null");
+            return false;
+        }
+
+        const int actual_index = input_table->schema()->GetFieldIndex(actual_col);
+        if (actual_index < 0) {
+            ReportError("PRCurveNode: column '" + actual_col + "' not found");
+            return false;
+        }
+        std::string schema_error;
+        if (!RequireColumnKind(input_table, "PRCurveNode", score_col,
+                               "numeric", IsNumericArrowType, schema_error)) {
+            ReportError(schema_error);
+            return false;
+        }
+
+        auto actual_column = input_table->column(actual_index);
+        auto score_column = input_table->column(
+            input_table->schema()->GetFieldIndex(score_col));
+        if (!actual_column || !score_column) {
+            ReportError("PRCurveNode: PR columns are missing");
+            return false;
+        }
+
+        const auto scalar_to_double = [](const std::shared_ptr<arrow::Scalar>& scalar,
+                                         double& value) {
+            if (!scalar || !scalar->is_valid || !scalar->type) {
+                return false;
+            }
+            switch (scalar->type->id()) {
+                case arrow::Type::INT8:
+                    value = std::static_pointer_cast<arrow::Int8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT16:
+                    value = std::static_pointer_cast<arrow::Int16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT32:
+                    value = std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::INT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::UINT8:
+                    value = std::static_pointer_cast<arrow::UInt8Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT16:
+                    value = std::static_pointer_cast<arrow::UInt16Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT32:
+                    value = std::static_pointer_cast<arrow::UInt32Scalar>(scalar)->value;
+                    return true;
+                case arrow::Type::UINT64:
+                    value = static_cast<double>(
+                        std::static_pointer_cast<arrow::UInt64Scalar>(scalar)->value);
+                    return true;
+                case arrow::Type::FLOAT:
+                    value = std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+                    return true;
+                case arrow::Type::DOUBLE:
+                    value = std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        struct PRPointInput {
+            std::string label;
+            double score = 0.0;
+            bool positive = false;
+        };
+        std::vector<PRPointInput> samples;
+        int64_t positive_count = 0;
+        int64_t negative_count = 0;
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto actual_scalar_result = actual_column->GetScalar(row);
+            auto score_scalar_result = score_column->GetScalar(row);
+            if (!actual_scalar_result.ok() || !score_scalar_result.ok()) {
+                ReportError("PRCurveNode: Failed to read PR column value");
+                return false;
+            }
+
+            auto actual_scalar = *actual_scalar_result;
+            if (!actual_scalar || !actual_scalar->is_valid) {
+                continue;
+            }
+            double score = 0.0;
+            if (!scalar_to_double(*score_scalar_result, score)) {
+                continue;
+            }
+
+            PRPointInput sample;
+            sample.label = actual_scalar->ToString();
+            sample.score = score;
+            sample.positive = sample.label == positive_label;
+            if (sample.positive) {
+                ++positive_count;
+            } else {
+                ++negative_count;
+            }
+            samples.push_back(sample);
+        }
+
+        if (samples.empty()) {
+            ReportError("PRCurveNode: no non-null label/score pairs");
+            return false;
+        }
+        if (positive_count == 0 || negative_count == 0) {
+            ReportError("PRCurveNode: precision-recall requires at least one positive and one negative sample");
+            return false;
+        }
+
+        std::sort(samples.begin(), samples.end(),
+                  [](const PRPointInput& a, const PRPointInput& b) {
+                      return a.score > b.score;
+                  });
+
+        struct PRPoint {
+            double threshold = 0.0;
+            double precision = 0.0;
+            double recall = 0.0;
+        };
+        std::vector<PRPoint> points;
+        int64_t tp = 0;
+        int64_t fp = 0;
+        size_t index = 0;
+        while (index < samples.size()) {
+            const double threshold = samples[index].score;
+            while (index < samples.size() && samples[index].score == threshold) {
+                if (samples[index].positive) {
+                    ++tp;
+                } else {
+                    ++fp;
+                }
+                ++index;
+            }
+            const double predicted_positive = static_cast<double>(tp + fp);
+            points.push_back(
+                {threshold,
+                 predicted_positive > 0.0
+                     ? static_cast<double>(tp) / predicted_positive
+                     : 1.0,
+                 static_cast<double>(tp) / static_cast<double>(positive_count)});
+        }
+
+        double average_precision = 0.0;
+        double previous_recall = 0.0;
+        for (const auto& point : points) {
+            if (point.recall > previous_recall) {
+                average_precision +=
+                    (point.recall - previous_recall) * point.precision;
+                previous_recall = point.recall;
+            }
+        }
+
+        arrow::DoubleBuilder threshold_builder;
+        arrow::DoubleBuilder precision_builder;
+        arrow::DoubleBuilder recall_builder;
+        arrow::DoubleBuilder ap_builder;
+        for (const auto& point : points) {
+            if (!threshold_builder.Append(point.threshold).ok() ||
+                !precision_builder.Append(point.precision).ok() ||
+                !recall_builder.Append(point.recall).ok() ||
+                !ap_builder.Append(average_precision).ok()) {
+                ReportError("PRCurveNode: Failed to append PR point");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> threshold_array;
+        std::shared_ptr<arrow::Array> precision_array;
+        std::shared_ptr<arrow::Array> recall_array;
+        std::shared_ptr<arrow::Array> ap_array;
+        if (!threshold_builder.Finish(&threshold_array).ok() ||
+            !precision_builder.Finish(&precision_array).ok() ||
+            !recall_builder.Finish(&recall_array).ok() ||
+            !ap_builder.Finish(&ap_array).ok()) {
+            ReportError("PRCurveNode: Failed to build PR table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("threshold", arrow::float64()),
+                           arrow::field("precision", arrow::float64()),
+                           arrow::field("recall", arrow::float64()),
+                           arrow::field("average_precision", arrow::float64())}),
+            {threshold_array, precision_array, recall_array, ap_array});
+        const std::string output_dataset_name =
+            "ds_pr_curve_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("PRCurveNode error: " + std::string(e.what()));
         return false;
     }
 }

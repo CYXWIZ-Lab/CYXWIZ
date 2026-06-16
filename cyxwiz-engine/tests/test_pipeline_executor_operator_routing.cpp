@@ -554,7 +554,6 @@ int main() {
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
         {"UMAPNode", false},
         {"SVMRegressor", false},
-        {"PRCurveNode", false},
         {"WordEmbeddings", false},
         {"NamedEntityRecognizer", false},
         {"ImagePreprocessor", false},
@@ -3635,6 +3634,55 @@ int main() {
               "ROCCurveNode: column 'missing' not found") != std::string::npos,
           "ROCCurveNode missing-score error should be specific: " +
               bad_roc_curve_executor.GetLastError());
+
+    const std::string pr_curve_json =
+        R"({"nodes":[)"
+        R"({"id":868,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(roc_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":869,"type":"PRCurveNode","name":"PR","parameters":{)"
+        R"("actual_col":"actual","score_col":"score","positive_label":"1"}})"
+        R"(],"links":[{"start_node":868,"end_node":869}]})";
+
+    cyxwiz::PipelineExecutor pr_curve_executor;
+    Check(pr_curve_executor.ExecutePipeline(pr_curve_json),
+          "PRCurveNode should compute real precision-recall points: " +
+              pr_curve_executor.GetLastError());
+    auto pr_curve = registry.GetArrowDataset("ds_pr_curve_869");
+    Check(pr_curve != nullptr, "PRCurveNode output dataset is registered");
+    auto pr_curve_table = pr_curve->GetArrowTable();
+    Check(pr_curve_table != nullptr, "PRCurveNode output table exists");
+    Check(pr_curve_table->num_rows() == 4,
+          "PRCurveNode should emit one row per distinct threshold");
+    Check(std::fabs(ReadNumericValue(pr_curve_table, "threshold", 0) - 0.8) <
+              0.001,
+          "PRCurveNode should process thresholds from high to low");
+    Check(std::fabs(ReadNumericValue(pr_curve_table, "precision", 0) - 1.0) <
+              0.001,
+          "PRCurveNode should compute precision");
+    Check(std::fabs(ReadNumericValue(pr_curve_table, "recall", 0) - 0.5) <
+              0.001,
+          "PRCurveNode should compute recall");
+    Check(std::fabs(ReadNumericValue(pr_curve_table, "average_precision", 0) - 1.0) <
+              0.001,
+          "PRCurveNode should compute average precision");
+
+    const std::string bad_pr_curve_json =
+        R"({"nodes":[)"
+        R"({"id":870,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(roc_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":871,"type":"PRCurveNode","name":"BadPR","parameters":{)"
+        R"("actual_col":"actual","score_col":"missing"}})"
+        R"(],"links":[{"start_node":870,"end_node":871}]})";
+
+    cyxwiz::PipelineExecutor bad_pr_curve_executor;
+    Check(!bad_pr_curve_executor.ExecutePipeline(bad_pr_curve_json),
+          "PRCurveNode should reject missing score columns");
+    Check(bad_pr_curve_executor.GetLastError().find(
+              "PRCurveNode: column 'missing' not found") != std::string::npos,
+          "PRCurveNode missing-score error should be specific: " +
+              bad_pr_curve_executor.GetLastError());
 
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"

@@ -1226,6 +1226,16 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"positive_label", "string", "1", "Positive class label", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::PRCurveNode, NodeCategory::Analytics, "Precision-Recall Curve", ICON_FA_CHART_AREA,
+        {"precision", "recall", "pr", "average precision"}, 0, false, "Precision-recall curve",
+        "Computes precision-recall curve points and average precision from binary labels and prediction scores.", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Curve", PinType::Dataset, true, "Precision-recall points and AP"}},
+        {{"actual_col", "string", "", "Binary actual label column", {}, ""},
+         {"score_col", "string", "", "Positive-class score column", {}, ""},
+         {"positive_label", "string", "1", "Positive class label", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::LearningCurvesNode, NodeCategory::Analytics, "Learning Curves", ICON_FA_CHART_LINE,
         {"learning", "curves", "training"}, 0, false, "Training/validation learning curves",
         "Plot train and validation scores vs training set size.", "",

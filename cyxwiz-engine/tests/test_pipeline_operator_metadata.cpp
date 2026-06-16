@@ -1386,6 +1386,23 @@ int main() {
     Check(roc_curve_meta->status ==
               cyxwiz::NodeImplementationStatus::Implemented,
           "ROCCurveNode metadata should be implemented");
+    const auto pr_curve_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::PRCurveNode);
+    Check(pr_curve_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "PRCurveNode enum support should resolve to legacy executor");
+    const auto pr_curve_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("PRCurveNode");
+    Check(pr_curve_type.has_value() &&
+              *pr_curve_type == gui::NodeType::PRCurveNode,
+          "PRCurveNode runtime name should resolve typed metadata");
+    const auto* pr_curve_meta =
+        metadata.GetMetadata(gui::NodeType::PRCurveNode);
+    Check(pr_curve_meta != nullptr,
+          "PRCurveNode metadata should exist");
+    Check(pr_curve_meta->status ==
+              cyxwiz::NodeImplementationStatus::Implemented,
+          "PRCurveNode metadata should be implemented");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");
@@ -1468,7 +1485,6 @@ int main() {
     const gui::NodeType additional_fail_closed_enum_cases[] = {
         gui::NodeType::UMAPNode,
         gui::NodeType::SVMRegressor,
-        gui::NodeType::PRCurveNode,
         gui::NodeType::WordEmbeddings,
         gui::NodeType::NamedEntityRecognizer,
         gui::NodeType::ImagePreprocessor,
