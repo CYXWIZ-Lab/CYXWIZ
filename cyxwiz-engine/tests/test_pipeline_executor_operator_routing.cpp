@@ -624,6 +624,12 @@ int main() {
         {"ImagePreprocessor", false},
         {"ImageFolderDataset", true},
         {"AugmentationPreset", false},
+        {"TSVFile", true},
+        {"TXTFile", true},
+        {"ARFFFile", true},
+        {"FeatherFile", true},
+        {"ArrowIPCFile", true},
+        {"NumPyFile", true},
     };
 
     int fail_closed_id = 900;

@@ -1611,6 +1611,12 @@ int main() {
         gui::NodeType::ImagePreprocessor,
         gui::NodeType::ImageFolderDataset,
         gui::NodeType::AugmentationPreset,
+        gui::NodeType::TSVFile,
+        gui::NodeType::TXTFile,
+        gui::NodeType::ARFFFile,
+        gui::NodeType::FeatherFile,
+        gui::NodeType::ArrowIPCFile,
+        gui::NodeType::NumPyFile,
     };
     for (const auto type : additional_fail_closed_enum_cases) {
         Check(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(type) != nullptr,
@@ -1633,6 +1639,12 @@ int main() {
         gui::NodeType::WaveletTransform,
         gui::NodeType::WordEmbeddings,
         gui::NodeType::NamedEntityRecognizer,
+        gui::NodeType::TSVFile,
+        gui::NodeType::TXTFile,
+        gui::NodeType::ARFFFile,
+        gui::NodeType::FeatherFile,
+        gui::NodeType::ArrowIPCFile,
+        gui::NodeType::NumPyFile,
     };
     for (const auto type : blocked_metadata_cases) {
         const auto* meta = metadata.GetMetadata(type);

@@ -2182,6 +2182,23 @@ Implemented:
 - extended metadata and representative executor routing coverage so Data
   Studio graph execution reports the central embedding backend-gap reason.
 
+### Progress note: specialized source reader truth correction
+
+Dedicated reader nodes for tabular/text/tensor formats were marked implemented,
+but the Data Studio runtime path is consolidated through `DataInput` for the
+supported tabular formats.
+
+Implemented:
+
+- added central fail-closed PipelineExecutor capability entries for `TSVFile`,
+  `TXTFile`, `ARFFFile`, `FeatherFile`, `ArrowIPCFile`, and `NumPyFile`;
+- demoted their metadata to blocked/template through the central capability
+  table because there is no dedicated source executor for those node types;
+- kept the recommended path explicit for supported formats: use `DataInput`
+  with `type=tsv`, `type=feather`, `type=arrow`, or `type=ipc`;
+- extended metadata and representative source-node routing coverage so graph
+  execution reports the central source backend-gap reason.
+
 At the moment, some nodes are:
 
 - over-exposed

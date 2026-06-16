@@ -258,6 +258,18 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::HDF5Dataset},
         {"RESTAPISource", "REST API loading is not implemented in PipelineExecutor; use imported files until a real HTTP source loader exists",
          gui::NodeType::RESTAPISource},
+        {"TSVFile", "dedicated TSVFile source execution is not implemented in PipelineExecutor; use DataInput with type=tsv",
+         gui::NodeType::TSVFile},
+        {"TXTFile", "dedicated TXTFile source execution is not implemented in PipelineExecutor; import text through supported text operators until a real text file source exists",
+         gui::NodeType::TXTFile},
+        {"ARFFFile", "ARFF loading is not implemented in PipelineExecutor; use supported DataInput tabular formats until a real ARFF loader exists",
+         gui::NodeType::ARFFFile},
+        {"FeatherFile", "dedicated FeatherFile source execution is not implemented in PipelineExecutor; use DataInput with type=feather",
+         gui::NodeType::FeatherFile},
+        {"ArrowIPCFile", "dedicated ArrowIPCFile source execution is not implemented in PipelineExecutor; use DataInput with type=arrow or ipc",
+         gui::NodeType::ArrowIPCFile},
+        {"NumPyFile", "NumPy array loading is not implemented in PipelineExecutor; use supported DataInput tabular formats until a real tensor source exists",
+         gui::NodeType::NumPyFile},
     };
     return capabilities;
 }
