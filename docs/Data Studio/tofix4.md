@@ -2217,6 +2217,20 @@ Implemented:
 - extended metadata and representative source-node routing coverage so graph
   execution reports the central dataset-source backend-gap reason.
 
+### Progress note: interactive signal PipelineExecutor truth correction
+
+`SignalSlider` and `SignalScope` are interactive signal graph/widget nodes, not
+Data Studio Arrow-table runtime operators.
+
+Implemented:
+
+- added central fail-closed PipelineExecutor capability entries for
+  `SignalSlider` and `SignalScope`;
+- preserved their global `Implemented` metadata because the interactive signal
+  graph path owns their real execution contract;
+- extended metadata and representative executor routing coverage so Data
+  Studio graph execution reports the central signal-widget backend-gap reason.
+
 At the moment, some nodes are:
 
 - over-exposed

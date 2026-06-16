@@ -614,6 +614,8 @@ int main() {
         {"TensorIndexSelect", false},
         {"TensorLogicalMask", false},
         {"Embedding", false},
+        {"SignalSlider", false},
+        {"SignalScope", false},
         {"QualityAnalyzer", false},
         {"TableSplitter", false},
         {"ExportExcel", false},

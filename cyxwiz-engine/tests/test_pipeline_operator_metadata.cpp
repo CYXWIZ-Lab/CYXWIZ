@@ -1601,6 +1601,8 @@ int main() {
         gui::NodeType::TensorIndexSelect,
         gui::NodeType::TensorLogicalMask,
         gui::NodeType::Embedding,
+        gui::NodeType::SignalSlider,
+        gui::NodeType::SignalScope,
         gui::NodeType::QualityAnalyzer,
         gui::NodeType::TableSplitter,
         gui::NodeType::ExportExcel,
@@ -1725,6 +1727,8 @@ int main() {
         gui::NodeType::TensorIndexSelect,
         gui::NodeType::TensorLogicalMask,
         gui::NodeType::Embedding,
+        gui::NodeType::SignalSlider,
+        gui::NodeType::SignalScope,
     };
     for (const auto type : training_contract_fail_closed_cases) {
         const auto* meta = metadata.GetMetadata(type);
