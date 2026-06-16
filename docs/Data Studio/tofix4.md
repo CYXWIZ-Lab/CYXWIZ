@@ -2078,6 +2078,24 @@ Implemented:
   the central backend-gap reason instead of falling through as an ambiguous
   unsupported node.
 
+### Progress note: audio preprocessing PipelineExecutor truth correction
+
+`AudioInput`, `Spectrogram`, `MelSpectrogram`, and `MFCC` are training audio
+dataset/preprocessing contract nodes. They feed `GraphCompiler` and the audio
+dataset batcher path, but the Data Studio `PipelineExecutor` has no audio
+tensor graph runtime for them.
+
+Implemented:
+
+- added central fail-closed PipelineExecutor capability entries for the audio
+  input and feature-extraction nodes;
+- preserved their global `Implemented` metadata because the training/audio
+  compiler path still consumes them;
+- extended metadata drift tests to prove their PipelineExecutor support is
+  fail-closed without demoting the training contract;
+- extended representative executor routing coverage so graph execution returns
+  the central audio backend-gap reason.
+
 At the moment, some nodes are:
 
 - over-exposed

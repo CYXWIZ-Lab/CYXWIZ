@@ -1548,6 +1548,10 @@ int main() {
         gui::NodeType::VisualizeData,
         gui::NodeType::Normalize,
         gui::NodeType::OneHotEncode,
+        gui::NodeType::AudioInput,
+        gui::NodeType::Spectrogram,
+        gui::NodeType::MelSpectrogram,
+        gui::NodeType::MFCC,
         gui::NodeType::QualityAnalyzer,
         gui::NodeType::TableSplitter,
         gui::NodeType::ExportExcel,
@@ -1593,6 +1597,10 @@ int main() {
     const gui::NodeType training_contract_fail_closed_cases[] = {
         gui::NodeType::Normalize,
         gui::NodeType::OneHotEncode,
+        gui::NodeType::AudioInput,
+        gui::NodeType::Spectrogram,
+        gui::NodeType::MelSpectrogram,
+        gui::NodeType::MFCC,
     };
     for (const auto type : training_contract_fail_closed_cases) {
         const auto* meta = metadata.GetMetadata(type);
