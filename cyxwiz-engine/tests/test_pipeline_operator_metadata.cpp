@@ -1552,6 +1552,12 @@ int main() {
         gui::NodeType::Spectrogram,
         gui::NodeType::MelSpectrogram,
         gui::NodeType::MFCC,
+        gui::NodeType::ReLU,
+        gui::NodeType::Sigmoid,
+        gui::NodeType::Tanh,
+        gui::NodeType::Softmax,
+        gui::NodeType::GELU,
+        gui::NodeType::LeakyReLU,
         gui::NodeType::QualityAnalyzer,
         gui::NodeType::TableSplitter,
         gui::NodeType::ExportExcel,
@@ -1601,6 +1607,12 @@ int main() {
         gui::NodeType::Spectrogram,
         gui::NodeType::MelSpectrogram,
         gui::NodeType::MFCC,
+        gui::NodeType::ReLU,
+        gui::NodeType::Sigmoid,
+        gui::NodeType::Tanh,
+        gui::NodeType::Softmax,
+        gui::NodeType::GELU,
+        gui::NodeType::LeakyReLU,
     };
     for (const auto type : training_contract_fail_closed_cases) {
         const auto* meta = metadata.GetMetadata(type);

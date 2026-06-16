@@ -2096,6 +2096,23 @@ Implemented:
 - extended representative executor routing coverage so graph execution returns
   the central audio backend-gap reason.
 
+### Progress note: model activation PipelineExecutor truth correction
+
+`ReLU`, `Sigmoid`, `Tanh`, `Softmax`, `GELU`, and `LeakyReLU` are training
+model activation nodes. They are valid in model construction, but they are not
+Data Studio tabular runtime operators.
+
+Implemented:
+
+- added central fail-closed PipelineExecutor capability entries for the model
+  activation nodes;
+- preserved their global `Implemented` metadata because the training/model
+  builder path owns their actual execution;
+- extended metadata drift tests to prove PipelineExecutor support is
+  fail-closed without demoting model metadata;
+- extended representative executor routing coverage so Data Studio graph
+  execution reports the central tensor-activation backend-gap reason.
+
 At the moment, some nodes are:
 
 - over-exposed
