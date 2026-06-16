@@ -2231,6 +2231,24 @@ Implemented:
 - extended metadata and representative executor routing coverage so Data
   Studio graph execution reports the central signal-widget backend-gap reason.
 
+### Progress note: active implemented metadata coverage closure
+
+A clean metadata/runtime cross-check found no remaining active
+`NodeImplementationStatus::Implemented` registrations without central
+PipelineExecutor coverage.
+
+Current state:
+
+- active Data Studio runtime nodes resolve through legacy executor,
+  operator-backed, source, or fail-closed runtime capability tables;
+- training/model/tensor/audio/interactive nodes that are implemented outside
+  Data Studio now fail closed explicitly when routed through
+  `PipelineExecutor`;
+- source nodes without dedicated Data Studio graph loaders are blocked through
+  central fail-closed metadata/runtime capability entries;
+- remaining template/deprecated nodes are not counted as implemented runtime
+  coverage gaps.
+
 At the moment, some nodes are:
 
 - over-exposed
