@@ -148,6 +148,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::ExportExcel},
         {"ExcelInput", "Excel input loading is not implemented; use DataInput with csv, parquet, feather, arrow, or ipc until a real Excel Arrow loader exists",
          gui::NodeType::ExcelFile},
+        {"JSONFile", "JSON file loading is not implemented in PipelineExecutor; use a supported tabular file type until a real JSON Arrow loader exists",
+         gui::NodeType::JSONFile},
     };
     return capabilities;
 }
@@ -214,6 +216,7 @@ GetPipelineSourceRuntimeCapabilities() {
         {"DataInput"},
         {"DataConvert"},
         {"ExcelInput"},
+        {"JSONFile"},
         {"ImageFolderDataset"},
         {"MNISTDataset"},
         {"CIFAR10Dataset"},
@@ -239,6 +242,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
     static const std::vector<PipelineRequiredParameterRuntimeCapability> capabilities = {
         {"FileInput", {"path"}},
         {"ExcelInput", {"path"}},
+        {"JSONFile", {"file_path"}},
         {"DataOutput", {"file_path"}},
         {"DataConvert", {"input_path", "output_path"}},
         {"ParquetInput", {"file_path"}},

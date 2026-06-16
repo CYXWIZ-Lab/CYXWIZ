@@ -1347,6 +1347,22 @@ int main() {
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ExcelFile).mode ==
               cyxwiz::PipelineRuntimeSupportMode::FailClosed,
           "ExcelFile enum support should resolve to fail-closed");
+    const auto* excel_file_meta = metadata.GetMetadata(gui::NodeType::ExcelFile);
+    Check(excel_file_meta != nullptr,
+          "ExcelFile metadata should exist");
+    Check(excel_file_meta->status == cyxwiz::NodeImplementationStatus::Template,
+          "ExcelFile metadata should be blocked until Excel loading is real");
+    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+              gui::NodeType::JSONFile)) == "JSONFile",
+          "fail-closed runtime enum lookup for JSONFile is stable");
+    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::JSONFile).mode ==
+              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+          "JSONFile enum support should resolve to fail-closed");
+    const auto* json_file_meta = metadata.GetMetadata(gui::NodeType::JSONFile);
+    Check(json_file_meta != nullptr,
+          "JSONFile metadata should exist");
+    Check(json_file_meta->status == cyxwiz::NodeImplementationStatus::Template,
+          "JSONFile metadata should be blocked until JSON loading is real");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::ExportSQL)) == "ExportSQL",
           "fail-closed runtime enum lookup for ExportSQL is stable");

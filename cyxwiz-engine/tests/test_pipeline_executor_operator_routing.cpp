@@ -461,6 +461,20 @@ int main() {
           "ExcelInput fail-closed error should be specific: " +
               excel_input_executor.GetLastError());
 
+    const std::string json_file_json =
+        R"({"nodes":[)"
+        R"({"id":428,"type":"JSONFile","name":"JSON","parameters":{)"
+        R"("file_path":"ignored.json"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor json_file_executor;
+    Check(!json_file_executor.ExecutePipeline(json_file_json),
+          "JSONFile should fail closed until JSON loading is real");
+    Check(json_file_executor.GetLastError().find(
+              "JSON file loading is not implemented") != std::string::npos,
+          "JSONFile fail-closed error should be specific: " +
+              json_file_executor.GetLastError());
+
     const std::string unsupported_json =
         R"({"nodes":[)"
         R"({"id":3,"type":"DataInput","name":"Input","parameters":{)"

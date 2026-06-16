@@ -1845,6 +1845,20 @@ Updated coverage:
 - Metadata tests verify the typed `ExportSQL` runtime resolves to fail-closed
   support.
 
+### Progress note: Excel and JSON file source truth correction
+
+`ExcelFile` and `JSONFile` were marked implemented in metadata even though
+Data Studio runtime loading does not support Excel or JSON files.
+
+Updated coverage:
+
+- `ExcelFile` metadata is now marked blocked/template.
+- `JSONFile` metadata is now marked blocked/template.
+- `JSONFile` now has a central fail-closed PipelineExecutor runtime reason.
+- `JSONFile` source-node validation routes to the fail-closed runtime path
+  instead of reporting a generic graph/input-shape error.
+- Metadata and executor routing tests lock the blocked runtime contract.
+
 At the moment, some nodes are:
 
 - over-exposed

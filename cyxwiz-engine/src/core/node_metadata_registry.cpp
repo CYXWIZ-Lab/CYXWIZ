@@ -798,7 +798,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {"excel", "xlsx", "spreadsheet"}, 0, false, "Read Excel file", "", "",
         {}, {{"Table", PinType::Dataset, true, "Arrow table"}},
         {{"file_path", "file", "", "Excel file", {}, "*.xlsx;*.xls"}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::ParquetFile, NodeCategory::DataSources, "Parquet Reader", ICON_FA_DATABASE,
         {"parquet", "columnar"}, 0, false, "Read Parquet file", "", "",
@@ -810,7 +810,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {"json", "javascript"}, 0, false, "Read JSON file", "", "",
         {}, {{"Table", PinType::Dataset, true, "Arrow table"}},
         {{"file_path", "file", "", "JSON file", {}, "*.json"}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::SQLQuery, NodeCategory::DataSources, "SQL Query", ICON_FA_DATABASE,
         {"sql", "query", "database"}, 0, false, "Execute SQL query", "", "",
