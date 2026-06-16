@@ -1332,7 +1332,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Data", PinType::Dataset, true, "Input dataset"}},
         {{"Report", PinType::Dataset, true, "Profiling report"}},
         {{"minimal", "bool", "false", "Minimal mode (faster)", {}, ""}},
-        NodeImplementationStatus::Template, 0, "UI-only"});
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

@@ -1325,6 +1325,16 @@ int main() {
     Check(regex_tester_type.has_value() &&
               *regex_tester_type == gui::NodeType::RegexTester,
           "RegexTester runtime name should resolve typed metadata");
+    const auto data_profiler_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::DataProfiler);
+    Check(data_profiler_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "DataProfiler enum support should resolve to legacy executor");
+    const auto data_profiler_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("DataProfiler");
+    Check(data_profiler_type.has_value() &&
+              *data_profiler_type == gui::NodeType::DataProfiler,
+          "DataProfiler runtime name should resolve typed metadata");
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::CSVFile)) == "FileInput",
           "legacy runtime enum lookup for CSVFile is stable");

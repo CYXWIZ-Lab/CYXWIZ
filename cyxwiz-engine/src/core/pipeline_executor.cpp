@@ -3048,6 +3048,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteJSONPathExtractor(node, ctx);
     case gui::NodeType::RegexTester:
         return ExecuteRegexTester(node, ctx);
+    case gui::NodeType::DataProfiler:
+        return ExecuteDataProfiler(node, ctx);
     case gui::NodeType::RowToColumnNames:
         return ExecuteRowToColumnNames(node, ctx);
     case gui::NodeType::TableCropper:
@@ -6002,6 +6004,89 @@ bool PipelineExecutor::ExecuteRegexTester(const Node& node, ExecutionContext& ct
         return false;
     } catch (const std::exception& e) {
         ReportError("RegexTester error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteDataProfiler(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("DataProfiler: No input dataset");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("DataProfiler: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("DataProfiler: Input table is null");
+            return false;
+        }
+
+        arrow::StringBuilder column_builder;
+        arrow::StringBuilder type_builder;
+        arrow::BooleanBuilder nullable_builder;
+        arrow::Int64Builder row_count_builder;
+        arrow::Int64Builder null_count_builder;
+        arrow::Int64Builder non_null_count_builder;
+        const int64_t row_count = input_table->num_rows();
+
+        for (int i = 0; i < input_table->num_columns(); ++i) {
+            const auto field = input_table->schema()->field(i);
+            const auto column = input_table->column(i);
+            const int64_t null_count = column ? column->null_count() : row_count;
+            const std::string type_name =
+                field && field->type() ? field->type()->ToString() : "unknown";
+
+            if (!column_builder.Append(field ? field->name() : "").ok() ||
+                !type_builder.Append(type_name).ok() ||
+                !nullable_builder.Append(field ? field->nullable() : true).ok() ||
+                !row_count_builder.Append(row_count).ok() ||
+                !null_count_builder.Append(null_count).ok() ||
+                !non_null_count_builder.Append(row_count - null_count).ok()) {
+                ReportError("DataProfiler: Failed to append profile row");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> column_array;
+        std::shared_ptr<arrow::Array> type_array;
+        std::shared_ptr<arrow::Array> nullable_array;
+        std::shared_ptr<arrow::Array> row_count_array;
+        std::shared_ptr<arrow::Array> null_count_array;
+        std::shared_ptr<arrow::Array> non_null_count_array;
+        if (!column_builder.Finish(&column_array).ok() ||
+            !type_builder.Finish(&type_array).ok() ||
+            !nullable_builder.Finish(&nullable_array).ok() ||
+            !row_count_builder.Finish(&row_count_array).ok() ||
+            !null_count_builder.Finish(&null_count_array).ok() ||
+            !non_null_count_builder.Finish(&non_null_count_array).ok()) {
+            ReportError("DataProfiler: Failed to build profile table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("column", arrow::utf8()),
+                           arrow::field("type", arrow::utf8()),
+                           arrow::field("nullable", arrow::boolean()),
+                           arrow::field("row_count", arrow::int64()),
+                           arrow::field("null_count", arrow::int64()),
+                           arrow::field("non_null_count", arrow::int64())}),
+            {column_array, type_array, nullable_array, row_count_array,
+             null_count_array, non_null_count_array});
+        const std::string output_dataset_name =
+            "ds_dataprofiler_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("DataProfiler error: " + std::string(e.what()));
         return false;
     }
 }

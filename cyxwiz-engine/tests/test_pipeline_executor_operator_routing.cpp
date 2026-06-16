@@ -3377,6 +3377,32 @@ int main() {
               std::string::npos,
           "RegexTester should serialize capture groups");
 
+    const std::string data_profiler_json =
+        R"({"nodes":[)"
+        R"({"id":671,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":672,"type":"DataProfiler","name":"Profile","parameters":{}})"
+        R"(],"links":[{"start_node":671,"end_node":672}]})";
+
+    cyxwiz::PipelineExecutor data_profiler_executor;
+    Check(data_profiler_executor.ExecutePipeline(data_profiler_json),
+          "DataProfiler should emit a profile dataset: " +
+              data_profiler_executor.GetLastError());
+    auto profile_result = registry.GetArrowDataset("ds_dataprofiler_672");
+    Check(profile_result != nullptr,
+          "DataProfiler output dataset is registered");
+    auto profile_table = profile_result->GetArrowTable();
+    Check(profile_table != nullptr, "DataProfiler output table exists");
+    Check(profile_table->num_rows() == 2,
+          "DataProfiler should emit one row per input column");
+    Check(ReadStringValue(profile_table, "column", 0) == "x",
+          "DataProfiler should report source column names");
+    Check(ReadNumericValue(profile_table, "row_count", 0) == 3.0,
+          "DataProfiler should report input row count");
+    Check(ReadNumericValue(profile_table, "null_count", 0) == 0.0,
+          "DataProfiler should report null counts");
+
     const std::string fill_missing_mean_json =
         R"({"nodes":[)"
         R"({"id":63,"type":"DataInput","name":"Input","parameters":{)"

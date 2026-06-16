@@ -1816,6 +1816,22 @@ Updated coverage:
   metadata's separate `Matches` and `Groups` output pins.
 - Executor routing tests cover match text and capture-group output.
 
+### Progress note: Data Profiler runtime implementation
+
+`DataProfiler` has been moved from fail-closed template metadata to a real
+PipelineExecutor implementation.
+
+Updated coverage:
+
+- `DataProfiler` metadata is now marked implemented.
+- The runtime capability map resolves `DataProfiler` to the legacy executor.
+- `PipelineExecutor` emits a profile dataset with one row per input column.
+- The first implementation reports column name, Arrow type, nullable flag,
+  row count, null count, and non-null count.
+- This keeps the runtime contract dataset-based instead of depending on a UI
+  panel/report workflow.
+- Executor routing tests cover profile output shape and row/null counts.
+
 At the moment, some nodes are:
 
 - over-exposed
