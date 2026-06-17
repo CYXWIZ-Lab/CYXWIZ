@@ -123,6 +123,7 @@ Design rule:
 | `GRU` | Yes | Yes | Yes | `Partial` | Sequential text/time-series path exists; metadata now correctly marks it implemented. Broader sequence-output tasks are not complete. | Keep visible with task limits. |
 | `RNN` | Yes | Blocked with error | No | `Blocked` | Compiler now fails closed because the sequential builder path is not ready. | Implement or keep hidden. |
 | `Bidirectional` | Yes | Blocked with error | No | `Blocked` | Compiler now fails closed; NER-style bidirectional tagging still needs first-class contracts. | Implement under `tofix14.md` / `tofix19.md`. |
+| `TimeDistributed` | Yes | Yes, shape-guarded | Yes | `Partial` | Builds as `TimeDistributedDenseModule` for sequence-shaped inputs and rejects non-sequence tensors. Full NER still needs sequence-batch executor wiring and token metrics. | Keep visible with task limits. |
 
 ---
 
