@@ -29,7 +29,7 @@ public:
     void Render() override;
 
     // Dialog control
-    void Open();
+    void Open(ModelFormat initial_format = ModelFormat::CyxModel);
     void Close();
     bool IsOpen() const { return is_open_; }
 

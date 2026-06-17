@@ -756,6 +756,11 @@ MainWindow::MainWindow()
     // Set up Export Model callback
     toolbar_->SetExportModelCallback([this](int format_index) {
         if (export_dialog_) {
+            cyxwiz::ModelFormat requested_format = cyxwiz::ModelFormat::CyxModel;
+            if (format_index >= 0 && format_index <= 3) {
+                requested_format = static_cast<cyxwiz::ModelFormat>(format_index);
+            }
+
             // Get trained model from TrainingManager
             auto& tm = cyxwiz::TrainingManager::Instance();
             if (tm.HasTrainedModel()) {
@@ -775,7 +780,7 @@ MainWindow::MainWindow()
                 spdlog::warn("No trained model available for export");
             }
 
-            export_dialog_->Open();
+            export_dialog_->Open(requested_format);
             spdlog::info("Opened Export Model dialog (format index: {})", format_index);
         }
     });

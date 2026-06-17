@@ -20,7 +20,7 @@ ExportDialog::~ExportDialog() {
     }
 }
 
-void ExportDialog::Open() {
+void ExportDialog::Open(ModelFormat initial_format) {
     is_open_ = true;
     show_result_ = false;
 
@@ -30,7 +30,7 @@ void ExportDialog::Open() {
     export_total_ = 0;
 
     // Default values
-    selected_format_ = ModelFormat::CyxModel;
+    selected_format_ = initial_format;
     include_optimizer_state_ = true;
     include_training_history_ = true;
     include_graph_ = true;
@@ -144,17 +144,17 @@ void ExportDialog::RenderFormatSelection() {
 
     // Format radio buttons
     const char* format_names[] = {
-        "CyxWiz Model (.cyxmodel)",
-        "Safetensors (.safetensors)",
-        "ONNX (.onnx)",
-        "GGUF (.gguf)"
+        "CyxWiz native package (.cyxmodel)",
+        "Weights only (.safetensors)",
+        "ONNX deployable model (.onnx)",
+        "GGUF LLM package (.gguf)"
     };
 
     const char* format_descriptions[] = {
-        "Native format with graph, weights, config, and training history",
-        "Safe tensor serialization (HuggingFace compatible)",
-        "Industry standard for cross-platform inference",
-        "GGML format for LLM inference (quantization support)"
+        "Native CyxWiz package with weights plus optional graph, config, optimizer state, and training history.",
+        "Portable parameter tensor file. This is weights-only; it does not preserve the graph or full training package.",
+        "Cross-platform inference export. Available only when CyxWiz is built with ONNX export support.",
+        "Planned GGML/GGUF-style LLM export. Not implemented in this build."
     };
 
     bool format_supported[] = {

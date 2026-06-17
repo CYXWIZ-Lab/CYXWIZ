@@ -320,26 +320,26 @@ void ToolbarPanel::RenderDeployMenu() {
         ImGui::Separator();
 
         if (ImGui::BeginMenu("Export Model")) {
-            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " CyxWiz Model (.cyxmodel)")) {
+            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " CyxWiz native package (.cyxmodel)")) {
                 if (export_model_callback_) {
                     export_model_callback_(0);  // 0 = CyxModel
                 }
             }
-            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Safetensors (.safetensors)")) {
+            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Weights only (.safetensors)")) {
                 if (export_model_callback_) {
                     export_model_callback_(1);  // 1 = Safetensors
                 }
             }
-            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " ONNX Format (.onnx)")) {
+#ifdef CYXWIZ_HAS_ONNX_EXPORT
+            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " ONNX deployable model (.onnx)")) {
                 if (export_model_callback_) {
                     export_model_callback_(2);  // 2 = ONNX
                 }
             }
-            if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " GGUF Format (.gguf)")) {
-                if (export_model_callback_) {
-                    export_model_callback_(3);  // 3 = GGUF
-                }
-            }
+#else
+            RenderPlannedMenuItem(ICON_FA_FILE_EXPORT " ONNX deployable model (.onnx) - export not compiled");
+#endif
+            RenderPlannedMenuItem(ICON_FA_FILE_EXPORT " GGUF LLM package (.gguf) - planned");
             ImGui::EndMenu();
         }
 
