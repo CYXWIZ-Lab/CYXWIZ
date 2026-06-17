@@ -1014,7 +1014,11 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
             ImGui::SameLine();
             ImGui::TextDisabled("%s", axis.value.c_str());
 
-            if (!axis.supported && !axis.reason.empty()) {
+            const bool show_supported_reason =
+                axis.name == "Task Type" ||
+                axis.name == "Implementation Owner";
+            if (!axis.reason.empty() &&
+                (!axis.supported || show_supported_reason)) {
                 ImGui::Indent(16.0f);
                 ImGui::TextWrapped("%s", axis.reason.c_str());
                 ImGui::Unindent(16.0f);
