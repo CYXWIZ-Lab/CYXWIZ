@@ -283,9 +283,12 @@ Design rule:
    - training compile support
    - model-builder layer support (`Model Builder` axis now separates supported
      model layers from blocked sequential-model concepts)
-   - activation support
-   - loss support
-   - optimizer support
+   - activation support (`Activation=supported` is projected from central
+     training-role capabilities)
+   - loss support (`Loss=supported` is projected from central training-role
+     capabilities)
+   - optimizer support (`Optimizer=supported` is projected from central
+     training-role capabilities)
    - training-control support (`training_control` role now marks unsupported
      scheduler/regularization controls without claiming execution support)
 

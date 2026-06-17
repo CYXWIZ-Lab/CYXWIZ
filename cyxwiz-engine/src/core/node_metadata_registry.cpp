@@ -567,6 +567,27 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 "supported",
                 true,
                 reason);
+        } else if (capability.role == PipelineTrainingSupportRole::Activation) {
+            UpsertSupportAxis(
+                metadata,
+                "Activation",
+                "supported",
+                true,
+                reason);
+        } else if (capability.role == PipelineTrainingSupportRole::Loss) {
+            UpsertSupportAxis(
+                metadata,
+                "Loss",
+                "supported",
+                true,
+                reason);
+        } else if (capability.role == PipelineTrainingSupportRole::Optimizer) {
+            UpsertSupportAxis(
+                metadata,
+                "Optimizer",
+                "supported",
+                true,
+                reason);
         }
         UpsertSupportAxis(metadata, "Compile", "supported", true, reason);
         UpsertSupportAxis(metadata, "Training", "supported", true, reason);

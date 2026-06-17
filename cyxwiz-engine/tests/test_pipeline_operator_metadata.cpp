@@ -2086,6 +2086,27 @@ int main() {
                 "supported",
                 true,
                 TypeId(role_case.node_type));
+        } else if (std::string(role_case.role) == "activation") {
+            CheckSupportAxis(
+                meta,
+                "Activation",
+                "supported",
+                true,
+                TypeId(role_case.node_type));
+        } else if (std::string(role_case.role) == "loss") {
+            CheckSupportAxis(
+                meta,
+                "Loss",
+                "supported",
+                true,
+                TypeId(role_case.node_type));
+        } else if (std::string(role_case.role) == "optimizer") {
+            CheckSupportAxis(
+                meta,
+                "Optimizer",
+                "supported",
+                true,
+                TypeId(role_case.node_type));
         }
         CheckSupportAxis(
             meta,
