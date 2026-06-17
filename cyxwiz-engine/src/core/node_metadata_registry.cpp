@@ -423,6 +423,12 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 support.training_supported ? "supported" : "unsupported",
                 support.training_supported,
                 reason);
+            UpsertSupportAxis(
+                metadata,
+                "Implementation Owner",
+                "training_backend",
+                true,
+                reason);
 
             std::string summary = "Training backend support: mode=";
             summary += PipelineTrainingBackendSupportModeName(support.mode);
@@ -430,6 +436,7 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             summary += support.compile_supported ? "supported" : "unsupported";
             summary += "; training=";
             summary += support.training_supported ? "supported" : "unsupported";
+            summary += "; owner=training_backend";
             if (support.reason != nullptr) {
                 summary += "; reason=";
                 summary += support.reason;
@@ -482,6 +489,12 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             support.training_supported ? "supported" : "unsupported",
             support.training_supported,
             reason);
+        UpsertSupportAxis(
+            metadata,
+            "Implementation Owner",
+            "training_backend",
+            true,
+            reason);
 
         std::string summary = "Training backend support: mode=";
         summary += PipelineTrainingBackendSupportModeName(support.mode);
@@ -489,6 +502,7 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         summary += support.compile_supported ? "supported" : "unsupported";
         summary += "; training=";
         summary += support.training_supported ? "supported" : "unsupported";
+        summary += "; owner=training_backend";
         if (support.reason != nullptr) {
             summary += "; reason=";
             summary += support.reason;

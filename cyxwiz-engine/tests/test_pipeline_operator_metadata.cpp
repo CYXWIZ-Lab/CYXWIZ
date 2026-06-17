@@ -2012,6 +2012,7 @@ int main() {
             TypeId(type));
         CheckSupportAxis(meta, "Compile", "supported", true, TypeId(type));
         CheckSupportAxis(meta, "Training", "supported", true, TypeId(type));
+        CheckSupportAxis(meta, "Implementation Owner", "training_backend", true, TypeId(type));
         CheckSupportAxis(meta, "Support State", "real", true, TypeId(type));
     }
 
@@ -2105,6 +2106,7 @@ int main() {
             TypeId(type));
         CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
         CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
+        CheckSupportAxis(meta, "Implementation Owner", "training_backend", true, TypeId(type));
         CheckSupportAxis(meta, "Support State", "blocked", false, TypeId(type));
         const auto* training_axis = FindSupportAxis(meta, "Training Backend");
         Check(training_axis != nullptr &&
@@ -2155,6 +2157,12 @@ int main() {
             "Training",
             "unsupported",
             false,
+            TypeId(capability.node_type));
+        CheckSupportAxis(
+            meta,
+            "Implementation Owner",
+            "training_backend",
+            true,
             TypeId(capability.node_type));
         CheckSupportAxis(
             meta,
