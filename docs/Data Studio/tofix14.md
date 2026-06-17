@@ -357,6 +357,24 @@ Why needed:
 A normal `Dense` layer may collapse or assume a 2D input. NER needs a
 per-timestep classifier.
 
+Current engine truth:
+
+- `TimeDistributed` is already visible and implemented as a graph node.
+- `GraphCompiler` recognizes it as a model layer and requires sequence-shaped
+  input.
+- `ModelBuilder` builds it as `TimeDistributedDenseModule`.
+- Backend placement still classifies it as unknown/unclassified.
+- Full NER support still needs token-label batching, mask-aware loss, token
+  metrics, and sequence-tagging inference output.
+
+Follow-up work:
+
+- keep `TimeDistributed` marked partial, not real, in the support matrix
+- classify backend placement for the supported `TimeDistributedDense` path
+- validate output/label shapes for token classification graphs
+- connect it to `TokenCrossEntropyLoss` and padding ignore behavior
+- add NER/token-classification regression tests before marking it complete
+
 ### 9. `TokenCrossEntropyLoss`
 
 Purpose:
