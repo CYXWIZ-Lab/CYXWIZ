@@ -285,7 +285,8 @@ Design rule:
    - activation support
    - loss support
    - optimizer support
-   - training-control support
+   - training-control support (`training_control` role now marks unsupported
+     scheduler/regularization controls without claiming execution support)
 
 3. Hide, label, or keep hard-blocked every node in this document marked
    `Blocked`, unless there is a real reason to keep it visible as

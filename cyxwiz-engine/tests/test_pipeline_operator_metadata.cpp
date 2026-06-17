@@ -2029,6 +2029,10 @@ int main() {
     Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
               cyxwiz::PipelineTrainingSupportRole::Optimizer)) == "optimizer",
           "training role name for optimizer is stable");
+    Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
+              cyxwiz::PipelineTrainingSupportRole::TrainingControl)) ==
+              "training_control",
+          "training role name for training control is stable");
 
     struct TrainingRoleCase {
         gui::NodeType node_type;
@@ -2277,6 +2281,13 @@ int main() {
             cyxwiz::PipelineTrainingBackendSupportModeName(
                 cyxwiz::PipelineTrainingBackendSupportMode::
                     UnsupportedTrainingControl),
+            false,
+            TypeId(capability.node_type));
+        CheckSupportAxis(
+            meta,
+            "Training Role",
+            cyxwiz::PipelineTrainingSupportRoleName(
+                cyxwiz::PipelineTrainingSupportRole::TrainingControl),
             false,
             TypeId(capability.node_type));
         CheckSupportAxis(

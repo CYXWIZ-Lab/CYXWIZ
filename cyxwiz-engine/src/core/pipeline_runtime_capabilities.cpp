@@ -937,6 +937,8 @@ const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role) {
         return "loss";
     case PipelineTrainingSupportRole::Optimizer:
         return "optimizer";
+    case PipelineTrainingSupportRole::TrainingControl:
+        return "training_control";
     }
     return "unknown";
 }

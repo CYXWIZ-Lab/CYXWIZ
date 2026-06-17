@@ -98,6 +98,7 @@ enum class PipelineTrainingSupportRole {
     Activation,
     Loss,
     Optimizer,
+    TrainingControl,
 };
 
 struct PipelineSupportedTrainingRoleCapability {

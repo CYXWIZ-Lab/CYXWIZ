@@ -429,6 +429,16 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 PipelineTrainingBackendSupportModeName(support.mode),
                 false,
                 reason);
+            if (support.mode ==
+                PipelineTrainingBackendSupportMode::UnsupportedTrainingControl) {
+                UpsertSupportAxis(
+                    metadata,
+                    "Training Role",
+                    PipelineTrainingSupportRoleName(
+                        PipelineTrainingSupportRole::TrainingControl),
+                    false,
+                    reason);
+            }
             UpsertSupportAxis(
                 metadata,
                 "Compile",
