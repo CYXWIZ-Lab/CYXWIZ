@@ -2960,17 +2960,17 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return FailUnsupportedNode(node, support.fail_closed_reason);
     }
 
+    if (support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
+        support.operator_type.has_value()) {
+        return ExecutePipelineOperatorNode(node, ctx, *support.operator_type);
+    }
+
     bool typed_legacy_handled = false;
     if (ExecuteTypedLegacyNode(node, ctx, typed_legacy_handled)) {
         return true;
     }
     if (typed_legacy_handled) {
         return false;
-    }
-
-    if (support.mode == PipelineRuntimeSupportMode::OperatorBacked &&
-        support.operator_type.has_value()) {
-        return ExecutePipelineOperatorNode(node, ctx, *support.operator_type);
     }
 
     if (support.mode == PipelineRuntimeSupportMode::LegacyExecutor &&
