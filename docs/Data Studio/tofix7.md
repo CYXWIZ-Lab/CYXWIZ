@@ -294,7 +294,10 @@ Design rule:
 
 3. Hide, label, or keep hard-blocked every node in this document marked
    `Blocked`, unless there is a real reason to keep it visible as
-   experimental or UI-only.
+   experimental or UI-only. Fail-closed capabilities now assert blocked
+   metadata status/badge when the central capability marks them as blocking,
+   and partial support state when they are intentionally visible but not
+   PipelineExecutor-backed.
 
 4. Route operator-backed nodes through the operator path first, then
    remove legacy placeholder branches.

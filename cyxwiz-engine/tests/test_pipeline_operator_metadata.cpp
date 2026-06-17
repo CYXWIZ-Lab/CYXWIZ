@@ -838,6 +838,27 @@ int main() {
             if (meta != nullptr) {
                 const std::string reason =
                     capability.reason != nullptr ? capability.reason : "";
+                if (capability.blocks_metadata_status) {
+                    Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
+                          std::string("blocked fail-closed metadata should not be implemented: ") +
+                              capability.legacy_type_name);
+                    Check(meta->badge == "Blocked",
+                          std::string("blocked fail-closed metadata should carry blocked badge: ") +
+                              capability.legacy_type_name);
+                    CheckSupportAxis(
+                        meta,
+                        "Support State",
+                        "blocked",
+                        false,
+                        capability.legacy_type_name);
+                } else {
+                    CheckSupportAxis(
+                        meta,
+                        "Support State",
+                        "partial",
+                        true,
+                        capability.legacy_type_name);
+                }
                 CheckSupportAxis(
                     meta,
                     "Runtime",
