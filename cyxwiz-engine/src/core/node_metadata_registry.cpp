@@ -430,6 +430,15 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 false,
                 reason);
             if (support.mode ==
+                PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer) {
+                UpsertSupportAxis(
+                    metadata,
+                    "Model Builder",
+                    "unsupported",
+                    false,
+                    reason);
+            }
+            if (support.mode ==
                 PipelineTrainingBackendSupportMode::UnsupportedTrainingControl) {
                 UpsertSupportAxis(
                     metadata,
@@ -551,6 +560,14 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         const char* reason =
             capability.reason != nullptr ? capability.reason : "";
         UpsertSupportAxis(metadata, "Training Role", role, true, reason);
+        if (capability.role == PipelineTrainingSupportRole::ModelLayer) {
+            UpsertSupportAxis(
+                metadata,
+                "Model Builder",
+                "supported",
+                true,
+                reason);
+        }
         UpsertSupportAxis(metadata, "Compile", "supported", true, reason);
         UpsertSupportAxis(metadata, "Training", "supported", true, reason);
         UpsertSupportAxis(

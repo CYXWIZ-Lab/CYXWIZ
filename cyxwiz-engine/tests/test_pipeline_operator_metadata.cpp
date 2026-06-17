@@ -2079,6 +2079,14 @@ int main() {
             role_case.role,
             true,
             TypeId(role_case.node_type));
+        if (std::string(role_case.role) == "model_layer") {
+            CheckSupportAxis(
+                meta,
+                "Model Builder",
+                "supported",
+                true,
+                TypeId(role_case.node_type));
+        }
         CheckSupportAxis(
             meta,
             "Implementation Owner",
@@ -2241,6 +2249,7 @@ int main() {
                     UnsupportedSequentialModelLayer),
             false,
             TypeId(type));
+        CheckSupportAxis(meta, "Model Builder", "unsupported", false, TypeId(type));
         CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
         CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
         CheckSupportAxis(meta, "Implementation Owner", "training_backend", true, TypeId(type));

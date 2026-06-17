@@ -281,7 +281,8 @@ Design rule:
 2. Add explicit training support axes instead of treating the current
    supported-training-backend table as a complete training-node matrix:
    - training compile support
-   - model-builder layer support
+   - model-builder layer support (`Model Builder` axis now separates supported
+     model layers from blocked sequential-model concepts)
    - activation support
    - loss support
    - optimizer support
