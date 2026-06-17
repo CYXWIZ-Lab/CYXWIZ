@@ -581,6 +581,47 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "binary_classification",
         "Use for binary targets when the model outputs logits.");
 
+    const auto apply_workflow_lane_guidance =
+        [this](NodeType node_type, const char* lane, const char* guidance) {
+            auto it = metadata_.find(node_type);
+            if (it == metadata_.end()) {
+                return;
+            }
+            UpsertSupportAxis(
+                it->second,
+                "Workflow Lane",
+                lane,
+                true,
+                guidance);
+            std::string summary = "Workflow lane: ";
+            summary += lane;
+            summary += "; ";
+            summary += guidance;
+            AppendHelpTextSection(it->second, summary);
+        };
+
+    apply_workflow_lane_guidance(
+        NodeType::LinearRegressionNode,
+        "classic_ml",
+        "Table-path classical ML baseline for numeric regression.");
+    apply_workflow_lane_guidance(
+        NodeType::PolynomialRegressionNode,
+        "classic_ml",
+        "Table-path classical ML baseline for polynomial regression.");
+
+    for (NodeType node_type : {
+             NodeType::Dense,
+             NodeType::Dropout,
+             NodeType::BatchNorm,
+             NodeType::LSTM,
+             NodeType::GRU,
+         }) {
+        apply_workflow_lane_guidance(
+            node_type,
+            "deep_learning",
+            "Training-backend deep learning architecture node.");
+    }
+
     const std::string ui_only_reason =
         "No graph runtime or training backend owner is registered; this node "
         "is currently a UI/panel workflow surface.";

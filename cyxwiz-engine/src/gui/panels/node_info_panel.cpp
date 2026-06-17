@@ -48,6 +48,8 @@ std::string SupportStateLabel(const std::string& state) {
 std::string SupportAxisValueLabel(const std::string& value) {
     if (value == "training_backend") return "Training backend";
     if (value == "ui_only") return "UI-only";
+    if (value == "classic_ml") return "Classic ML";
+    if (value == "deep_learning") return "Deep learning";
     if (value == "multiclass_classification") return "Multiclass classification";
     if (value == "binary_classification") return "Binary classification";
     if (value == "fail_closed") return "Fail closed";

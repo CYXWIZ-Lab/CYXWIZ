@@ -2014,7 +2014,32 @@ int main() {
         CheckSupportAxis(meta, "Training", "supported", true, TypeId(type));
         CheckSupportAxis(meta, "Implementation Owner", "training_backend", true, TypeId(type));
         CheckSupportAxis(meta, "Support State", "real", true, TypeId(type));
+        CheckSupportAxis(meta, "Workflow Lane", "deep_learning", true, TypeId(type));
     }
+
+    const auto* linear_regression_meta =
+        metadata.GetMetadata(gui::NodeType::LinearRegressionNode);
+    Check(linear_regression_meta != nullptr, "LinearRegression metadata should exist");
+    CheckSupportAxis(
+        linear_regression_meta,
+        "Workflow Lane",
+        "classic_ml",
+        true,
+        "LinearRegression");
+    Check(linear_regression_meta->help_text.find("classical ML") != std::string::npos,
+          "LinearRegression workflow lane guidance should name the classical ML lane");
+
+    const auto* polynomial_regression_meta =
+        metadata.GetMetadata(gui::NodeType::PolynomialRegressionNode);
+    Check(polynomial_regression_meta != nullptr, "PolynomialRegression metadata should exist");
+    CheckSupportAxis(
+        polynomial_regression_meta,
+        "Workflow Lane",
+        "classic_ml",
+        true,
+        "PolynomialRegression");
+    Check(polynomial_regression_meta->help_text.find("classical ML") != std::string::npos,
+          "PolynomialRegression workflow lane guidance should name the classical ML lane");
 
     const auto* mse_loss_meta = metadata.GetMetadata(gui::NodeType::MSELoss);
     Check(mse_loss_meta != nullptr, "MSELoss metadata should exist");
