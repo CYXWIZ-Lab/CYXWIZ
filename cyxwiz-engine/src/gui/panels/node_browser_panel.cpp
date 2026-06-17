@@ -44,6 +44,38 @@ bool HasAxis(const cyxwiz::NodeMetadata* metadata, const char* axis_name) {
         });
 }
 
+const cyxwiz::SupportAxisDefinition* FindAxis(
+    const cyxwiz::NodeMetadata* metadata,
+    const char* axis_name) {
+    if (!metadata) return nullptr;
+    auto it = std::find_if(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [axis_name](const cyxwiz::SupportAxisDefinition& axis) {
+            return axis.name == axis_name;
+        });
+    return it != metadata->support_axes.end() ? &*it : nullptr;
+}
+
+const cyxwiz::SupportAxisDefinition* FindSupportState(
+    const cyxwiz::NodeMetadata* metadata) {
+    return FindAxis(metadata, "Support State");
+}
+
+ImU32 SupportStateBadgeColor(const std::string& state) {
+    if (state == "real") return IM_COL32(45, 140, 80, 235);
+    if (state == "partial") return IM_COL32(185, 125, 35, 235);
+    if (state == "blocked") return IM_COL32(170, 65, 55, 235);
+    return IM_COL32(85, 95, 115, 235);
+}
+
+std::string SupportStateLabel(const std::string& state) {
+    if (state == "real") return "Real";
+    if (state == "partial") return "Partial";
+    if (state == "blocked") return "Blocked";
+    return state.empty() ? "Unknown" : state;
+}
+
 bool IsTrainingCategory(cyxwiz::NodeCategory category) {
     switch (category) {
     case cyxwiz::NodeCategory::Layers:
@@ -770,6 +802,26 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     // Draw node icon with color
     RenderNodeIcon(metadata, icon_pos, icon_size);
 
+    if (const auto* support_state = FindSupportState(metadata)) {
+        const std::string state_label = SupportStateLabel(support_state->value);
+        const float badge_padding = 3.0f;
+        const ImVec2 badge_text_size = ImGui::CalcTextSize(state_label.c_str());
+        const float badge_width = badge_text_size.x + badge_padding * 2.0f;
+        const float badge_height = badge_text_size.y + badge_padding;
+        const float badge_x = cursor_start.x + 2.0f;
+        const float badge_y = cursor_start.y + 2.0f;
+
+        draw_list->AddRectFilled(
+            ImVec2(badge_x, badge_y),
+            ImVec2(badge_x + badge_width, badge_y + badge_height),
+            SupportStateBadgeColor(support_state->value),
+            3.0f);
+        draw_list->AddText(
+            ImVec2(badge_x + badge_padding, badge_y + badge_padding * 0.5f),
+            IM_COL32(255, 255, 255, 255),
+            state_label.c_str());
+    }
+
     // Draw port indicators
     RenderPortIndicators(metadata, icon_pos, icon_size);
 
@@ -935,7 +987,19 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
 
     if (!metadata->support_axes.empty()) {
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Support:");
+        if (const auto* support_state = FindSupportState(metadata)) {
+            const ImVec4 state_color = support_state->supported
+                ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
+                : ImVec4(1.0f, 0.55f, 0.35f, 1.0f);
+            ImGui::TextColored(
+                state_color,
+                "Support state: %s",
+                SupportStateLabel(support_state->value).c_str());
+            if (!support_state->reason.empty()) {
+                ImGui::TextWrapped("%s", support_state->reason.c_str());
+            }
+        }
+        ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Support details:");
         for (const auto& axis : metadata->support_axes) {
             const ImVec4 axis_color = axis.supported
                 ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)

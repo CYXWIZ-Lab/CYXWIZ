@@ -2,8 +2,38 @@
 #include "../icons.h"
 #include "../../core/node_metadata_registry.h"
 #include <imgui.h>
+#include <algorithm>
 
 namespace cyxwiz {
+
+namespace {
+
+const SupportAxisDefinition* FindSupportState(const NodeMetadata* metadata) {
+    if (!metadata) return nullptr;
+    auto it = std::find_if(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [](const SupportAxisDefinition& axis) {
+            return axis.name == "Support State";
+        });
+    return it != metadata->support_axes.end() ? &*it : nullptr;
+}
+
+ImVec4 SupportStateColor(const std::string& state) {
+    if (state == "real") return ImVec4(0.45f, 0.85f, 0.55f, 1.0f);
+    if (state == "partial") return ImVec4(1.0f, 0.72f, 0.32f, 1.0f);
+    if (state == "blocked") return ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
+    return ImVec4(0.65f, 0.68f, 0.75f, 1.0f);
+}
+
+std::string SupportStateLabel(const std::string& state) {
+    if (state == "real") return "Real";
+    if (state == "partial") return "Partial";
+    if (state == "blocked") return "Blocked";
+    return state.empty() ? "Unknown" : state;
+}
+
+} // namespace
 
 NodeInfoPanel::NodeInfoPanel() : Panel("Info") {
     visible_ = true;
@@ -82,6 +112,22 @@ void NodeInfoPanel::RenderHeader() {
 
     // Category badge
     ImGui::TextDisabled("%s", GetCategoryDisplayName(metadata_->category).c_str());
+
+    if (const auto* support_state = FindSupportState(metadata_)) {
+        ImGui::SameLine();
+        ImGui::PushStyleColor(
+            ImGuiCol_Text,
+            SupportStateColor(support_state->value));
+        ImGui::Text("%s %s",
+                    support_state->supported
+                        ? ICON_FA_CIRCLE_CHECK
+                        : ICON_FA_TRIANGLE_EXCLAMATION,
+                    SupportStateLabel(support_state->value).c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && !support_state->reason.empty()) {
+            ImGui::SetTooltip("%s", support_state->reason.c_str());
+        }
+    }
 
     // Status badge (if template or deprecated)
     if (metadata_->IsTemplate()) {
