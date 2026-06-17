@@ -1032,6 +1032,7 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
 
             const bool show_supported_reason =
                 axis.name == "Task Type" ||
+                axis.name == "Workflow Lane" ||
                 axis.name == "Implementation Owner";
             if (!axis.reason.empty() &&
                 (!axis.supported || show_supported_reason)) {

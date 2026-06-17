@@ -140,6 +140,17 @@ void NodeInfoPanel::RenderHeader() {
     // Category badge
     ImGui::TextDisabled("%s", GetCategoryDisplayName(metadata_->category).c_str());
 
+    if (const auto* workflow_lane = FindSupportAxis(metadata_, "Workflow Lane")) {
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.75f, 0.62f, 1.0f, 1.0f));
+        const std::string label = SupportAxisValueLabel(workflow_lane->value);
+        ImGui::Text("%s %s", ICON_FA_ROUTE, label.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && !workflow_lane->reason.empty()) {
+            ImGui::SetTooltip("%s", workflow_lane->reason.c_str());
+        }
+    }
+
     if (const auto* task_type = FindSupportAxis(metadata_, "Task Type")) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
