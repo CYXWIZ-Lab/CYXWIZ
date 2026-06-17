@@ -77,6 +77,10 @@ std::string SupportStateLabel(const std::string& state) {
 }
 
 std::string SupportAxisValueLabel(const std::string& value) {
+    if (value == "real") return "Real";
+    if (value == "partial") return "Partial";
+    if (value == "blocked") return "Blocked";
+    if (value == "none") return "None";
     if (value == "training_backend") return "Training backend";
     if (value == "pipeline_executor") return "Pipeline executor";
     if (value == "pipeline_operator_factory") return "Pipeline operator factory";
