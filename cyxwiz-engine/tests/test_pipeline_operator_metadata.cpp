@@ -696,6 +696,12 @@ int main() {
         Check(meta != nullptr,
               std::string("operator-backed runtime metadata missing: ") +
                   capability.legacy_type_name);
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              std::string("operator-backed real runtime metadata should be implemented: ") +
+                  capability.legacy_type_name);
+        Check(meta->badge != "Blocked",
+              std::string("operator-backed real runtime metadata should not be blocked: ") +
+                  capability.legacy_type_name);
         Check(meta->help_text.find(cyxwiz::PipelineRuntimeSupportModeName(
                   support.mode)) != std::string::npos,
               std::string("operator-backed metadata should expose runtime support mode: ") +

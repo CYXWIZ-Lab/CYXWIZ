@@ -306,7 +306,9 @@ Design rule:
      covers operator-backed analytics, preprocessing, time-series, and text
      nodes that are not already assigned to Classic ML or Deep Learning)
 
-6. Add automated capability tests for any node labeled `Real`.
+6. Add automated capability tests for any node labeled `Real` (operator-backed
+   real capabilities now assert implemented metadata, non-blocked badge,
+   `Support State=real`, owner, runtime, and materializer axes).
 
 ---
 
