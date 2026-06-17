@@ -93,6 +93,21 @@ void UpsertSupportAxis(NodeMetadata& metadata,
     });
 }
 
+void ApplySupportState(NodeMetadata& metadata,
+                       std::string state,
+                       bool supported,
+                       std::string reason = {}) {
+    UpsertSupportAxis(metadata, "Support State", state, supported, reason);
+
+    std::string summary = "Product support: state=";
+    summary += state;
+    if (!reason.empty()) {
+        summary += "; reason=";
+        summary += reason;
+    }
+    AppendHelpTextSection(metadata, summary);
+}
+
 void ApplyRuntimeSupportAxes(NodeMetadata& metadata,
                              const PipelineRuntimeSupport& support,
                              std::string reason = {}) {
@@ -146,6 +161,11 @@ void ApplyRuntimeSupportAxes(NodeMetadata& metadata,
         summary += reason;
     }
     AppendHelpTextSection(metadata, summary);
+
+    if (support.fail_mode == PipelineRuntimeFailMode::Real &&
+        support.pipeline_executor_supported) {
+        ApplySupportState(metadata, "real", true, reason);
+    }
 }
 
 } // namespace
@@ -360,6 +380,11 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         const auto support =
             ResolvePipelineRuntimeSupport(capability.legacy_type_name);
         ApplyRuntimeSupportAxes(metadata, support, reason);
+        ApplySupportState(
+            metadata,
+            capability.blocks_metadata_status ? "blocked" : "partial",
+            !capability.blocks_metadata_status,
+            reason);
     }
 
     const auto apply_training_backend_status =
@@ -410,6 +435,7 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 summary += support.reason;
             }
             AppendHelpTextSection(metadata, summary);
+            ApplySupportState(metadata, "blocked", false, reason);
         };
 
     for (const auto& capability :
@@ -468,6 +494,7 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             summary += support.reason;
         }
         AppendHelpTextSection(metadata, summary);
+        ApplySupportState(metadata, "real", true, reason);
     }
 }
 
