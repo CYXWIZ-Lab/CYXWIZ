@@ -164,6 +164,17 @@ void NodeInfoPanel::RenderHeader() {
         }
     }
 
+    if (const auto* training_role = FindSupportAxis(metadata_, "Training Role")) {
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.48f, 0.82f, 0.72f, 1.0f));
+        const std::string label = SupportAxisValueLabel(training_role->value);
+        ImGui::Text("%s %s", ICON_FA_MICROCHIP, label.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && !training_role->reason.empty()) {
+            ImGui::SetTooltip("%s", training_role->reason.c_str());
+        }
+    }
+
     if (const auto* task_type = FindSupportAxis(metadata_, "Task Type")) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
