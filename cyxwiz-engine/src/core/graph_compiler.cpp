@@ -47,6 +47,32 @@ bool IsDatasetSourceType(gui::NodeType type) {
            type == gui::NodeType::DatasetInput;
 }
 
+bool IsPreTrainInspectionNode(gui::NodeType type) {
+    switch (type) {
+        case gui::NodeType::DataProfiler:
+        case gui::NodeType::DescribeStats:
+        case gui::NodeType::CorrelationMatrix:
+        case gui::NodeType::SampleRows:
+        case gui::NodeType::ValueCounts:
+        case gui::NodeType::DataValidator:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool HasReachablePreTrainInspectionNode(
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& dataset_reachable) {
+    for (const auto& node : nodes) {
+        if (dataset_reachable.count(node.id) > 0 &&
+            IsPreTrainInspectionNode(node.type)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool IsLossNodeType(gui::NodeType type) {
     return type == gui::NodeType::MSELoss ||
            type == gui::NodeType::CrossEntropyLoss ||
@@ -2092,6 +2118,15 @@ TrainingConfiguration GraphCompiler::Compile(
         ValidateSingleDatasetReachableLossNode(nodes, dataset_reachable, config);
         ValidateSingleDatasetSourceForSelectedLoss(nodes, loss_node, links, config);
         ValidateUnsupportedTrainingControlNodes(nodes, config);
+
+        if (dataset_node && !HasReachablePreTrainInspectionNode(nodes, dataset_reachable)) {
+            AddIssue(config, IssueLevel::Warning,
+                     "No pre-train data inspection node found - consider adding "
+                     "DataProfiler, DescribeStats, ValueCounts, SampleRows, "
+                     "CorrelationMatrix, or DataValidator before training to check "
+                     "missing values, class balance, column types, and label suitability",
+                     dataset_node->id, dataset_node->name);
+        }
     }
 
     // Extract dataset configuration

@@ -1314,6 +1314,31 @@ int main() {
     Check(!HasIssueText(config, "exactly one dataset source"),
           "side dataset source should not report multi-input training contract");
 
+    config = compiler.Compile({data, dense, loss, optimizer},
+                              {Link(1, 1, 101, 2, 201),
+                               Link(2, 2, 202, 4, 401),
+                               Link(3, 1, 102, 4, 402),
+                               Link(4, 4, 403, 5, 501)},
+                              true);
+    Check(HasIssueText(config, "No pre-train data inspection node found"),
+          "training graph without reachable inspection should warn before training");
+
+    auto profiler = Node(26,
+                         gui::NodeType::DataProfiler,
+                         "Data Profiler",
+                         {Pin(2601, gui::PinType::Tensor, "Data", true)},
+                         {});
+
+    config = compiler.Compile({data, dense, loss, optimizer, profiler},
+                              {Link(1, 1, 101, 2, 201),
+                               Link(2, 2, 202, 4, 401),
+                               Link(3, 1, 102, 4, 402),
+                               Link(4, 4, 403, 5, 501),
+                               Link(5, 1, 101, 26, 2601)},
+                              true);
+    Check(!HasIssueText(config, "No pre-train data inspection node found"),
+          "reachable DataProfiler should satisfy the pre-train inspection warning");
+
     auto class_loss = Node(15,
                            gui::NodeType::CrossEntropyLoss,
                            "Class Loss",
