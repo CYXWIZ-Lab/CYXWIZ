@@ -133,11 +133,11 @@ void StartPage::LoadStarterGraphs() {
     };
 
     static constexpr std::array<StarterDefinition, 5> starters = {{
-        {"MNIST classifier", "Compact image-classification graph for handwritten digits.", "Vision", ICON_FA_IMAGE, "mnist_mlp.cyxgraph"},
-        {"Cats vs dogs", "Image pipeline starter for binary classification.", "Vision", ICON_FA_IMAGES, "cats_dogs_classifier.cyxgraph"},
-        {"Call-center sentiment", "Text workflow starter for customer conversation sentiment.", "NLP", ICON_FA_COMMENTS, "call_center_sentiment.cyxgraph"},
-        {"Speech commands", "Audio classification starter using command utterances.", "Audio", ICON_FA_WAVE_SQUARE, "speech_command_classifier.cyxgraph"},
-        {"Drone sound detector", "Signal classification starter for acoustic detection.", "Audio", ICON_FA_WAVE_SINE, "drone_sound_detector.cyxgraph"}
+        {"Binary image classification", "Cats-vs-dogs training graph for a two-class image dataset.", "Binary classification", ICON_FA_IMAGES, "cats_dogs_classifier.cyxgraph"},
+        {"Multiclass image classification", "MNIST MLP graph for a tabular digit dataset with ten classes.", "Multiclass classification", ICON_FA_IMAGE, "mnist_mlp.cyxgraph"},
+        {"Text classification", "Call-center sentiment graph for customer conversation labels.", "Text classification", ICON_FA_COMMENTS, "call_center_sentiment.cyxgraph"},
+        {"Audio classification", "Speech-command graph for labeled command utterances.", "Audio classification", ICON_FA_WAVE_SQUARE, "speech_command_classifier.cyxgraph"},
+        {"Time-series forecasting", "Airline-passengers dense forecaster using a real time-series training graph.", "Forecasting / regression", ICON_FA_CHART_LINE, "timeseries/airline_passengers_dense.cyxgraph"}
     }};
 
     starter_graphs_.clear();
@@ -311,9 +311,9 @@ void StartPage::RenderStarterGraphs() {
         return;
     }
 
-    ImGui::Text("Starter graphs");
+    ImGui::Text("Task starter graphs");
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.58f, 0.58f, 0.58f, 1.0f));
-    ImGui::TextWrapped("Open a real example graph in CyxWiz Studio.");
+    ImGui::TextWrapped("Open a real example graph by prediction task.");
     ImGui::PopStyleColor();
 
     ImGui::BeginChild("##StarterGraphs", ImVec2(0, 185), false);
