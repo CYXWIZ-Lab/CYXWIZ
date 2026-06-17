@@ -36,8 +36,18 @@ engine paths:
 
 ## Executive Summary
 
-The main problem is not lack of nodes. It is lack of a single truthful
-support contract.
+The main problem is not lack of nodes. It is keeping the existing support
+contract complete across every execution path.
+
+Current engine truth:
+
+- `PipelineRuntimeCapabilities` already acts as the central support contract
+  for Data Studio / `PipelineExecutor` runtime support.
+- `NodeMetadataRegistry`, Data Studio `NodeRegistry`, `PipelineExecutor`,
+  `PipelineMaterializer`, and `GraphCompiler` already consume that capability
+  layer.
+- The lean path is to extend that existing capability layer with clearer
+  training axes, not to create a second support matrix.
 
 Current recurring patterns:
 
@@ -45,11 +55,18 @@ Current recurring patterns:
 2. Several previously compiler-accepted nodes are now hard-blocked before
    `ModelBuilder`, which is truthful but still leaves UI/product labeling
    work.
-3. Nodes have a real `Operator` implementation, but the active runtime
-   does not yet route every operator-backed family through one canonical
-   execution path.
-4. Some nodes only make sense in `Classic ML` workflows, some only in
+3. Nodes have a real `Operator` implementation, but the active runtime still
+   carries both operator-backed and legacy-executor ownership.
+4. Training truth is split between compiler support, model-builder support,
+   loss/optimizer config support, and unsupported training controls.
+5. Some nodes only make sense in `Classic ML` workflows, some only in
    `Deep Learning`, but the current UI does not enforce that clearly.
+
+Design rule:
+
+- Do not build a duplicate matrix object.
+- Extend `PipelineRuntimeCapabilities` and metadata support axes so UI,
+  compiler, runtime, and docs read from the same source of truth.
 
 ---
 
@@ -76,9 +93,9 @@ Current recurring patterns:
 
 | Node | Visible | Compiler | Builder | Truth | Notes | Recommended action |
 |---|---|---:|---:|---|---|---|
-| `RMSprop` | Yes | Yes | Yes | `Real` | Added to optimizer discovery, config mapping, and regression coverage. | Keep visible. |
-| `Adagrad` | Yes | Yes | Yes | `Real` | Added to optimizer discovery, config mapping, and regression coverage. | Keep visible. |
-| `NAdam` | Yes | Yes | Yes | `Real` | Added to optimizer discovery, config mapping, and regression coverage. | Keep visible. |
+| `RMSprop` | Yes | Yes | Yes | `Real` | Optimizer node is recognized by `GraphCompiler`, maps to `OptimizerType::RMSprop`, and is covered by compiler regression tests. | Keep visible. |
+| `Adagrad` | Yes | Yes | Yes | `Real` | Optimizer node is recognized by `GraphCompiler`, maps to `OptimizerType::AdaGrad`, and is covered by compiler regression tests. | Keep visible. |
+| `NAdam` | Yes | Yes | Yes | `Real` | Optimizer node is recognized by `GraphCompiler`, maps to `OptimizerType::NAdam`, and is covered by compiler regression tests. | Keep visible. |
 
 ### Deep-learning architecture nodes that overstate support
 
@@ -240,7 +257,6 @@ Current recurring patterns:
   `GlobalAvgPool`, `ConvTranspose2D`, `Upsample`, `PixelShuffle`
 - `MultiHeadAttention`
 - `LayerNorm`, `GroupNorm`, `InstanceNorm`
-- `RMSprop`, `Adagrad`, `NAdam` until compile/runtime support matches
 - classical ML nodes that are still placeholder-only
 - evaluation nodes that are still placeholder-only
 - placeholder dataset and augmentation sources
@@ -254,25 +270,35 @@ Current recurring patterns:
 
 ## Best First Fixes
 
-1. Build one authoritative support registry used by:
+1. Extend the existing `PipelineRuntimeCapabilities` contract so it can
+   describe all required support axes used by:
    - frontend node menus
    - `GraphCompiler`
    - runtime execution entry points
    - docs/help panels
 
-2. Hide, label, or keep hard-blocked every node in this document marked
+2. Add explicit training support axes instead of treating the current
+   supported-training-backend table as a complete training-node matrix:
+   - training compile support
+   - model-builder layer support
+   - activation support
+   - loss support
+   - optimizer support
+   - training-control support
+
+3. Hide, label, or keep hard-blocked every node in this document marked
    `Blocked`, unless there is a real reason to keep it visible as
    experimental or UI-only.
 
-3. Route operator-backed nodes through the operator path first, then
+4. Route operator-backed nodes through the operator path first, then
    remove legacy placeholder branches.
 
-4. Split product lanes explicitly into:
+5. Split product lanes explicitly into:
    - `Classic ML`
    - `Deep Learning`
    - `Data Studio / Analytics`
 
-5. Add automated capability tests for any node labeled `Real`.
+6. Add automated capability tests for any node labeled `Real`.
 
 ---
 
