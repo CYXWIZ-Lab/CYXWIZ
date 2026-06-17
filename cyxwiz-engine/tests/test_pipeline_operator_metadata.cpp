@@ -248,6 +248,37 @@ int main() {
         Check(!ContainsString(file_type->enum_values, "json") &&
                   !ContainsString(file_type->enum_values, "excel"),
               "DataOutput file_type enum should not advertise unsupported exporters");
+
+        const auto* export_csv = metadata.GetMetadata(gui::NodeType::ExportCSV);
+        Check(export_csv != nullptr, "ExportCSV metadata should exist");
+        Check(export_csv->brief_description.find("Arrow table") != std::string::npos,
+              "ExportCSV metadata should describe the real Arrow-table export path");
+
+        const auto* export_json = metadata.GetMetadata(gui::NodeType::ExportJSON);
+        Check(export_json != nullptr, "ExportJSON metadata should exist");
+        Check(export_json->brief_description.find("Arrow table") != std::string::npos,
+              "ExportJSON metadata should describe the real Arrow-table export path");
+
+        const auto* export_parquet = metadata.GetMetadata(gui::NodeType::ExportParquet);
+        Check(export_parquet != nullptr, "ExportParquet metadata should exist");
+        Check(export_parquet->brief_description.find("Arrow table") != std::string::npos,
+              "ExportParquet metadata should describe the real Arrow-table export path");
+
+        const auto* export_sql = metadata.GetMetadata(gui::NodeType::ExportSQL);
+        Check(export_sql != nullptr, "ExportSQL metadata should exist");
+        Check(export_sql->status == cyxwiz::NodeImplementationStatus::Template,
+              "ExportSQL metadata should remain blocked until SQL export is real");
+        Check(export_sql->name.find("planned") != std::string::npos &&
+                  export_sql->brief_description.find("not implemented") != std::string::npos,
+              "ExportSQL metadata should visibly say the export is planned/not implemented");
+
+        const auto* export_excel = metadata.GetMetadata(gui::NodeType::ExportExcel);
+        Check(export_excel != nullptr, "ExportExcel metadata should exist");
+        Check(export_excel->status == cyxwiz::NodeImplementationStatus::Template,
+              "ExportExcel metadata should remain blocked until Excel export is real");
+        Check(export_excel->name.find("planned") != std::string::npos &&
+                  export_excel->brief_description.find("not implemented") != std::string::npos,
+              "ExportExcel metadata should visibly say the export is planned/not implemented");
     }
 
     auto& factory = cyxwiz::PipelineOperatorFactory::Instance();

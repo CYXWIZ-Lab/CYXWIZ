@@ -2209,31 +2209,31 @@ void NodeMetadataRegistry::InitializeRLNodes() {
 // =============================================================================
 void NodeMetadataRegistry::InitializeExportNodes() {
     RegisterNode({NodeType::ExportCSV, NodeCategory::DataSources, "Export CSV", ICON_FA_FILE_EXPORT,
-        {"export", "csv", "save"}, 0, false, "Export to CSV", "", "",
+        {"export", "csv", "save"}, 0, false, "Export Arrow table to CSV file", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.csv"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ExportParquet, NodeCategory::DataSources, "Export Parquet", ICON_FA_FILE_EXPORT,
-        {"export", "parquet"}, 0, false, "Export to Parquet", "", "",
+        {"export", "parquet"}, 0, false, "Export Arrow table to Parquet file", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.parquet"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ExportJSON, NodeCategory::DataSources, "Export JSON", ICON_FA_FILE_EXPORT,
-        {"export", "json"}, 0, false, "Export to JSON", "", "",
+        {"export", "json"}, 0, false, "Export Arrow table to JSON file", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.json"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::ExportSQL, NodeCategory::DataSources, "Export SQL", ICON_FA_DATABASE,
-        {"export", "sql", "database"}, 0, false, "Export to SQL DB", "", "",
+    RegisterNode({NodeType::ExportSQL, NodeCategory::DataSources, "Export SQL (planned)", ICON_FA_DATABASE,
+        {"export", "sql", "database"}, 0, false, "SQL database export is not implemented in PipelineExecutor", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"connection", "string", "", "Connection string", {}, ""}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
-    RegisterNode({NodeType::ExportExcel, NodeCategory::DataSources, "Excel Writer", ICON_FA_FILE_EXCEL,
-        {"export", "excel", "xlsx", "spreadsheet"}, 0, false, "Export to Excel (.xlsx)", "", "",
+    RegisterNode({NodeType::ExportExcel, NodeCategory::DataSources, "Export Excel (planned)", ICON_FA_FILE_EXCEL,
+        {"export", "excel", "xlsx", "spreadsheet"}, 0, false, "Excel export is not implemented in PipelineExecutor", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.xlsx"},
          {"sheet_name", "string", "Sheet1", "Sheet name", {}, ""}},
