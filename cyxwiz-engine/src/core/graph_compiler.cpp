@@ -923,6 +923,18 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                          layer.node_id, layer.name);
                 continue;
             }
+            case backend_placement::LayerCapabilityKind::TimeDistributedSequenceWrapper:
+            {
+                auto placement =
+                    backend_placement::BuildTimeDistributedSequenceWrapperPlacement(
+                        layer);
+                config.backend_placements.push_back(placement);
+                AddIssue(config, IssueLevel::Warning,
+                         placement.explanation + " Reason code: " +
+                             placement.reason_code + ".",
+                         layer.node_id, layer.name);
+                continue;
+            }
             case backend_placement::LayerCapabilityKind::Recurrent:
                 break;
         }

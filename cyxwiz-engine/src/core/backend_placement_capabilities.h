@@ -10,6 +10,7 @@ namespace cyxwiz::backend_placement {
 enum class LayerCapabilityKind {
     ArrayFireTensor,
     Recurrent,
+    TimeDistributedSequenceWrapper,
     UnsupportedSequentialModelLayer,
     Unclassified
 };
@@ -83,6 +84,10 @@ inline bool IsRecurrentLayer(gui::NodeType type) {
            type == gui::NodeType::LSTM;
 }
 
+inline bool IsTimeDistributedSequenceWrapper(gui::NodeType type) {
+    return type == gui::NodeType::TimeDistributed;
+}
+
 inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Dense:
@@ -146,6 +151,8 @@ inline LayerCapability ClassifyLayer(gui::NodeType type) {
         capability.kind = LayerCapabilityKind::ArrayFireTensor;
     } else if (IsRecurrentLayer(type)) {
         capability.kind = LayerCapabilityKind::Recurrent;
+    } else if (IsTimeDistributedSequenceWrapper(type)) {
+        capability.kind = LayerCapabilityKind::TimeDistributedSequenceWrapper;
     } else {
         capability.kind = LayerCapabilityKind::Unclassified;
     }
@@ -214,6 +221,29 @@ inline BackendPlacementEntry BuildUnclassifiedPlacement(
     placement.suggested_action =
         "No action needed unless training is slow; this node type should be "
         "classified in the backend capability registry.";
+    return placement;
+}
+
+inline BackendPlacementEntry BuildTimeDistributedSequenceWrapperPlacement(
+    const CompiledLayer& layer) {
+    BackendPlacementEntry placement;
+    placement.node_id = layer.node_id;
+    placement.node_name = layer.name;
+    placement.node_type = LayerTypeName(layer.type);
+    placement.requested_backend = "auto";
+    placement.expected_backend = BackendPlacementStatus::Unknown;
+    placement.fallback_backend = "CPU";
+    placement.status = BackendPlacementStatus::Unknown;
+    placement.reason_code = BackendPlacementReason::TimeDistributedSequenceWrapper;
+    placement.explanation =
+        "TimeDistributed is a recognized sequence wrapper that applies a dense "
+        "projection across time steps. Backend placement is intentionally "
+        "reported as unknown until the compiler can classify the wrapper and "
+        "its inner projection as one precise device contract.";
+    placement.suggested_action =
+        "No action needed for compile support. For performance-sensitive "
+        "sequence models, validate runtime placement and add a dedicated "
+        "TimeDistributed backend contract before relying on GPU residency.";
     return placement;
 }
 

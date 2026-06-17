@@ -232,7 +232,7 @@ int main() {
           "Embedding should be classified as ArrayFire tensor-capable");
     Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
               gui::NodeType::TimeDistributed),
-          "TimeDistributed should remain unclassified until capability rules exist");
+          "TimeDistributed should not be classified as direct ArrayFire tensor-capable");
     Check(cyxwiz::backend_placement::IsRecurrentLayer(gui::NodeType::GRU),
           "GRU should be classified as recurrent placement layer");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::Embedding).kind ==
@@ -243,8 +243,8 @@ int main() {
           "GRU capability kind should be Recurrent");
     Check(cyxwiz::backend_placement::ClassifyLayer(
               gui::NodeType::TimeDistributed).kind ==
-              cyxwiz::backend_placement::LayerCapabilityKind::Unclassified,
-          "TimeDistributed capability kind should be Unclassified");
+              cyxwiz::backend_placement::LayerCapabilityKind::TimeDistributedSequenceWrapper,
+          "TimeDistributed capability kind should be an explicit sequence wrapper");
 
     auto gru_config = CompileRecurrentGraph(gui::NodeType::GRU, 32, false);
     Check(gru_config.is_valid, "GRU placement graph should compile");
@@ -344,16 +344,16 @@ int main() {
     Check(unclassified_placement->node_type == "TimeDistributed",
           "unclassified placement should name the layer");
     Check(unclassified_placement->status == cyxwiz::BackendPlacementStatus::Unknown,
-          "unclassified placement should be unknown");
+          "TimeDistributed wrapper placement should be unknown");
     Check(unclassified_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::BackendCapabilityUnclassified,
-          "unclassified placement should use the unclassified reason code");
+              cyxwiz::BackendPlacementReason::TimeDistributedSequenceWrapper,
+          "TimeDistributed wrapper placement should use the wrapper reason code");
     Check(unclassified_placement->NeedsUserAttention(),
-          "unclassified placement should require user attention");
+          "TimeDistributed wrapper placement should require user attention");
     Check(HasWarningText(
               unclassified_config,
-              cyxwiz::BackendPlacementReason::BackendCapabilityUnclassified),
-          "unclassified placement should surface as a compiler warning");
+              cyxwiz::BackendPlacementReason::TimeDistributedSequenceWrapper),
+          "TimeDistributed wrapper placement should surface as a compiler warning");
     const auto unclassified_summary =
         unclassified_config.SummarizeBackendPlacements();
     Check(unclassified_summary.unknown == 1,
