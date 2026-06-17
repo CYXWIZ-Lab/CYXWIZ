@@ -6,6 +6,9 @@ Current relationship to `tofix19.md`: keep this file as the focused
 LLM/text-generation note. Use `tofix19.md` as the broader source of
 truth for unsupported model families.
 
+Implementation progress is tracked in `tracker8.md`. Keep this file as the
+problem statement and use the tracker for phased reference-tested execution.
+
 The short version:
 
 - CyxWiz can already train small supervised text models.
