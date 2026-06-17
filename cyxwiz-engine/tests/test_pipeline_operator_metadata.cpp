@@ -2155,6 +2155,27 @@ int main() {
     Check(polynomial_regression_meta->help_text.find("classical ML") != std::string::npos,
           "PolynomialRegression workflow lane guidance should name the classical ML lane");
 
+    for (auto type : {
+             gui::NodeType::StandardScaler,
+             gui::NodeType::TimeSeriesWindow,
+             gui::NodeType::TextTokenizer,
+             gui::NodeType::KMeansCluster,
+         }) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "Data Studio analytics lane metadata should exist for type " +
+                  TypeId(type));
+        CheckSupportAxis(
+            meta,
+            "Workflow Lane",
+            "data_studio_analytics",
+            true,
+            TypeId(type));
+        Check(meta->help_text.find("Data Studio analytics") != std::string::npos,
+              "Data Studio analytics workflow lane guidance should explain type " +
+                  TypeId(type));
+    }
+
     const auto* mse_loss_meta = metadata.GetMetadata(gui::NodeType::MSELoss);
     Check(mse_loss_meta != nullptr, "MSELoss metadata should exist");
     CheckSupportAxis(mse_loss_meta, "Task Type", "regression", true, "MSELoss");

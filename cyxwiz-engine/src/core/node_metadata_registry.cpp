@@ -701,6 +701,26 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             "Training-backend deep learning architecture node.");
     }
 
+    const auto has_workflow_lane = [](const NodeMetadata& metadata) {
+        return std::any_of(
+            metadata.support_axes.begin(),
+            metadata.support_axes.end(),
+            [](const SupportAxisDefinition& axis) {
+                return axis.name == "Workflow Lane";
+            });
+    };
+
+    for (const auto& capability : GetPipelineOperatorRuntimeCapabilities()) {
+        auto it = metadata_.find(capability.node_type);
+        if (it == metadata_.end() || has_workflow_lane(it->second)) {
+            continue;
+        }
+        apply_workflow_lane_guidance(
+            capability.node_type,
+            "data_studio_analytics",
+            "PipelineExecutor-backed Data Studio analytics or preprocessing node.");
+    }
+
     const std::string ui_only_reason =
         "No graph runtime or training backend owner is registered; this node "
         "is currently a UI/panel workflow surface.";

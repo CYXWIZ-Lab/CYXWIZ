@@ -302,7 +302,9 @@ Design rule:
 5. Split product lanes explicitly into:
    - `Classic ML`
    - `Deep Learning`
-   - `Data Studio / Analytics`
+   - `Data Studio / Analytics` (`data_studio_analytics` workflow lane now
+     covers operator-backed analytics, preprocessing, time-series, and text
+     nodes that are not already assigned to Classic ML or Deep Learning)
 
 6. Add automated capability tests for any node labeled `Real`.
 
