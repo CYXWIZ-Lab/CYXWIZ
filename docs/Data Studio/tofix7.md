@@ -321,7 +321,32 @@ Design rule:
 
 CyxWiz already has many of the right node concepts.
 
-What it does not yet have is one truthful support layer that tells the
-user, the compiler, and the runtime the same story.
+The support-contract pass in this document is now implemented for the
+current cleanup scope:
 
-That is the main job for the next cleanup pass.
+- training roles and role-specific support axes are centralized through
+  `PipelineRuntimeCapabilities`
+- unsupported training layers and controls fail closed with structured
+  metadata
+- `TimeDistributed` has an explicit backend-placement reason instead of
+  being treated as unclassified
+- operator-backed canonical execution is prioritized before typed legacy
+  dispatch
+- workflow lanes now distinguish Classic ML, Deep Learning, and Data
+  Studio / Analytics
+- automated metadata tests guard real, blocked, partial, and operator-backed
+  routing claims
+
+Remaining `Partial` and `Placeholder` rows are intentionally follow-up work:
+
+- recurrent/NER sequence-output completion belongs with the sequence work in
+  `tofix14.md` / `tofix19.md`
+- materializer/data-mode parity for time-series and text pipelines should be
+  handled as a runtime parity follow-up
+- placeholder dataset and augmentation sources should be hidden, marked
+  experimental, or implemented in a dedicated dataset-source cleanup
+- model export wording should be clarified in an export/deployment-focused
+  follow-up
+
+This file can be closed once those follow-ups are tracked outside this
+support-contract pass.
