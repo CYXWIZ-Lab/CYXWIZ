@@ -19,6 +19,18 @@ const SupportAxisDefinition* FindSupportState(const NodeMetadata* metadata) {
     return it != metadata->support_axes.end() ? &*it : nullptr;
 }
 
+const SupportAxisDefinition* FindSupportAxis(const NodeMetadata* metadata,
+                                             const char* axis_name) {
+    if (!metadata) return nullptr;
+    auto it = std::find_if(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [axis_name](const SupportAxisDefinition& axis) {
+            return axis.name == axis_name;
+        });
+    return it != metadata->support_axes.end() ? &*it : nullptr;
+}
+
 ImVec4 SupportStateColor(const std::string& state) {
     if (state == "real") return ImVec4(0.45f, 0.85f, 0.55f, 1.0f);
     if (state == "partial") return ImVec4(1.0f, 0.72f, 0.32f, 1.0f);
@@ -112,6 +124,26 @@ void NodeInfoPanel::RenderHeader() {
 
     // Category badge
     ImGui::TextDisabled("%s", GetCategoryDisplayName(metadata_->category).c_str());
+
+    if (const auto* task_type = FindSupportAxis(metadata_, "Task Type")) {
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
+        ImGui::Text("%s %s", ICON_FA_BULLSEYE, task_type->value.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && !task_type->reason.empty()) {
+            ImGui::SetTooltip("%s", task_type->reason.c_str());
+        }
+    }
+
+    if (const auto* owner = FindSupportAxis(metadata_, "Implementation Owner")) {
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.68f, 0.75f, 1.0f));
+        ImGui::Text("%s %s", ICON_FA_CODE_BRANCH, owner->value.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && !owner->reason.empty()) {
+            ImGui::SetTooltip("%s", owner->reason.c_str());
+        }
+    }
 
     if (const auto* support_state = FindSupportState(metadata_)) {
         ImGui::SameLine();
