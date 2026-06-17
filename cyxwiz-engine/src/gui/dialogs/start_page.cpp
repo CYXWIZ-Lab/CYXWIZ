@@ -24,8 +24,10 @@ struct ProjectTemplateDefinition {
     const char* default_project_name;
 };
 
-static constexpr std::array<ProjectTemplateDefinition, 4> kProjectTemplates = {{
+static constexpr std::array<ProjectTemplateDefinition, 6> kProjectTemplates = {{
     {"Blank project", "General CyxWiz workspace.", "New CyxWiz Project"},
+    {"Classic ML workflow", "Tabular-first workflow for data inspection, preprocessing, feature engineering, classical baselines, and evaluation.", "Classic ML Project"},
+    {"Deep Learning workflow", "Neural-network workflow for dataset setup, shape-safe batching, model layers, loss, optimizer, training, and export.", "Deep Learning Project"},
     {"Tabular project", "Tables, preprocessing, classical ML, and evaluation.", "Tabular ML Project"},
     {"Vision project", "Image datasets, augmentation, model training, and evaluation.", "Vision ML Project"},
     {"NLP project", "Text datasets, tokenization, vectorization, and language workflows.", "NLP Project"}
@@ -501,10 +503,16 @@ void StartPage::RenderActionCards() {
 
     ImGui::Spacing();
 
-    ImGui::TextDisabled("New from template");
-    RenderProjectTemplateButton(ICON_FA_TABLE " Tabular project", 1);
-    RenderProjectTemplateButton(ICON_FA_IMAGE " Vision project", 2);
-    RenderProjectTemplateButton(ICON_FA_COMMENTS " NLP project", 3);
+    ImGui::TextDisabled("Workflow lanes");
+    RenderProjectTemplateButton(ICON_FA_CHART_LINE " Classic ML workflow", 1);
+    RenderProjectTemplateButton(ICON_FA_NETWORK_WIRED " Deep Learning workflow", 2);
+
+    ImGui::Spacing();
+
+    ImGui::TextDisabled("Domain starters");
+    RenderProjectTemplateButton(ICON_FA_TABLE " Tabular project", 3);
+    RenderProjectTemplateButton(ICON_FA_IMAGE " Vision project", 4);
+    RenderProjectTemplateButton(ICON_FA_COMMENTS " NLP project", 5);
 
     ImGui::Spacing();
 
