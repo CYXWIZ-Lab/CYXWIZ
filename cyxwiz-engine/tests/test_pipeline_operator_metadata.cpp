@@ -2034,6 +2034,15 @@ int main() {
     Check(cross_entropy_meta->help_text.find("class labels") != std::string::npos,
           "CrossEntropyLoss task guidance should point users to class-label classification");
 
+    const auto* bar_chart_meta = metadata.GetMetadata(gui::NodeType::BarChart);
+    Check(bar_chart_meta != nullptr, "BarChart metadata should exist");
+    Check(bar_chart_meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+          "BarChart should remain an implemented UI workflow node");
+    CheckSupportAxis(bar_chart_meta, "Implementation Owner", "ui_only", true, "BarChart");
+    CheckSupportAxis(bar_chart_meta, "Support State", "partial", true, "BarChart");
+    Check(bar_chart_meta->help_text.find("UI/panel workflow surface") != std::string::npos,
+          "UI-only metadata should explain the current ownership boundary");
+
     for (const auto& capability :
          cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
         auto expected_metadata_type = capability.metadata_node_type;

@@ -168,6 +168,24 @@ void ApplyRuntimeSupportAxes(NodeMetadata& metadata,
     }
 }
 
+bool IsTrainingMetadataCategory(NodeCategory category) {
+    switch (category) {
+        case NodeCategory::Layers:
+        case NodeCategory::Activation:
+        case NodeCategory::Pooling:
+        case NodeCategory::Normalization:
+        case NodeCategory::Attention:
+        case NodeCategory::Recurrent:
+        case NodeCategory::ShapeOps:
+        case NodeCategory::MergeOps:
+        case NodeCategory::Training:
+        case NodeCategory::Regularization:
+            return true;
+        default:
+            return false;
+    }
+}
+
 } // namespace
 
 // Category display order
@@ -562,6 +580,25 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::BCEWithLogits,
         "binary_classification",
         "Use for binary targets when the model outputs logits.");
+
+    const std::string ui_only_reason =
+        "No graph runtime or training backend owner is registered; this node "
+        "is currently a UI/panel workflow surface.";
+    for (auto& [node_type, metadata] : metadata_) {
+        if (!metadata.IsImplemented() ||
+            !metadata.support_axes.empty() ||
+            IsTrainingMetadataCategory(metadata.category)) {
+            continue;
+        }
+
+        UpsertSupportAxis(
+            metadata,
+            "Implementation Owner",
+            "ui_only",
+            true,
+            ui_only_reason);
+        ApplySupportState(metadata, "partial", true, ui_only_reason);
+    }
 }
 
 void NodeMetadataRegistry::RegisterNode(NodeMetadata metadata) {
