@@ -76,6 +76,18 @@ std::string SupportStateLabel(const std::string& state) {
     return state.empty() ? "Unknown" : state;
 }
 
+std::string SupportAxisValueLabel(const std::string& value) {
+    if (value == "training_backend") return "Training backend";
+    if (value == "multiclass_classification") return "Multiclass classification";
+    if (value == "binary_classification") return "Binary classification";
+    if (value == "fail_closed") return "Fail closed";
+    if (value == "hard_fail") return "Hard fail";
+
+    std::string label = value.empty() ? std::string("Unknown") : value;
+    std::replace(label.begin(), label.end(), '_', ' ');
+    return label;
+}
+
 bool IsTrainingCategory(cyxwiz::NodeCategory category) {
     switch (category) {
     case cyxwiz::NodeCategory::Layers:
@@ -1012,7 +1024,8 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
             ImGui::SameLine();
             ImGui::Text("%s:", axis.name.c_str());
             ImGui::SameLine();
-            ImGui::TextDisabled("%s", axis.value.c_str());
+            const std::string axis_value = SupportAxisValueLabel(axis.value);
+            ImGui::TextDisabled("%s", axis_value.c_str());
 
             const bool show_supported_reason =
                 axis.name == "Task Type" ||

@@ -45,6 +45,18 @@ std::string SupportStateLabel(const std::string& state) {
     return state.empty() ? "Unknown" : state;
 }
 
+std::string SupportAxisValueLabel(const std::string& value) {
+    if (value == "training_backend") return "Training backend";
+    if (value == "multiclass_classification") return "Multiclass classification";
+    if (value == "binary_classification") return "Binary classification";
+    if (value == "fail_closed") return "Fail closed";
+    if (value == "hard_fail") return "Hard fail";
+
+    std::string label = value.empty() ? std::string("Unknown") : value;
+    std::replace(label.begin(), label.end(), '_', ' ');
+    return label;
+}
+
 } // namespace
 
 NodeInfoPanel::NodeInfoPanel() : Panel("Info") {
@@ -128,7 +140,8 @@ void NodeInfoPanel::RenderHeader() {
     if (const auto* task_type = FindSupportAxis(metadata_, "Task Type")) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
-        ImGui::Text("%s %s", ICON_FA_BULLSEYE, task_type->value.c_str());
+        const std::string label = SupportAxisValueLabel(task_type->value);
+        ImGui::Text("%s %s", ICON_FA_BULLSEYE, label.c_str());
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered() && !task_type->reason.empty()) {
             ImGui::SetTooltip("%s", task_type->reason.c_str());
@@ -138,7 +151,8 @@ void NodeInfoPanel::RenderHeader() {
     if (const auto* owner = FindSupportAxis(metadata_, "Implementation Owner")) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.68f, 0.75f, 1.0f));
-        ImGui::Text("%s %s", ICON_FA_CODE_BRANCH, owner->value.c_str());
+        const std::string label = SupportAxisValueLabel(owner->value);
+        ImGui::Text("%s %s", ICON_FA_CODE_BRANCH, label.c_str());
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered() && !owner->reason.empty()) {
             ImGui::SetTooltip("%s", owner->reason.c_str());
@@ -217,7 +231,8 @@ void NodeInfoPanel::RenderSupport() {
         ImGui::SameLine();
         ImGui::Text("%s", axis.name.c_str());
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", axis.value.c_str());
+        const std::string axis_value = SupportAxisValueLabel(axis.value);
+        ImGui::TextDisabled("%s", axis_value.c_str());
 
         if (!axis.reason.empty()) {
             ImGui::Indent(18.0f);
