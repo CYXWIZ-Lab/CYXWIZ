@@ -133,8 +133,8 @@ Design rule:
 
 | Node | Visible | Pipeline | Operator | Truth | Notes | Recommended action |
 |---|---|---:|---:|---|---|---|
-| `LinearRegressionNode` | Yes | Yes | Yes | `Partial` | Real operator exists, but legacy executor also has its own path. | Route canonical execution through operator path. |
-| `PolynomialRegressionNode` | Yes | Yes | Yes | `Partial` | Same as above. | Route through operator path. |
+| `LinearRegressionNode` | Yes | Yes | Yes | `Real` | Real operator exists and canonical execution now routes through the operator-backed path before typed legacy dispatch. | Keep visible. |
+| `PolynomialRegressionNode` | Yes | Yes | Yes | `Real` | Real operator exists and canonical execution now routes through the operator-backed path before typed legacy dispatch. | Keep visible. |
 
 ### Nodes that are still unsupported, but now fail closed in the legacy executor
 
@@ -162,27 +162,27 @@ Design rule:
 | `LogTransform` | Yes | Yes | Yes | `Partial` | Real operator exists. | Same as above. |
 | `Differencing` | Yes | Yes | Yes | `Partial` | Real operator exists. | Same as above. |
 | `TextTokenizer` | Yes | Yes | Yes | `Partial` | Real operator exists, but text flow still depends on data mode. | Keep visible with capability messaging. |
-| `TFIDFVectorizer` | Yes | Fails closed in legacy / Yes in operator path | Yes | `Partial` | Real operator exists; legacy fake success is blocked, but canonical routing is not unified. | Route through operator path. |
-| `CountVectorizer` | Yes | Fails closed in legacy / Yes in operator path | Yes | `Partial` | Same split support issue. | Route through operator path. |
-| `SentimentAnalyzer` | Yes | Fails closed in legacy / Yes in operator path | Yes | `Partial` | Real operator exists; legacy fake success is blocked. | Route through operator path. |
-| `PCANode` | Yes | Fails closed in legacy / Yes in operator path | Yes | `Partial` | Real operator exists; legacy fake success is blocked. | Route through operator path. |
-| `KMeansCluster` | Yes | Yes | Yes | `Partial` | Operator exists. | Keep visible; prefer operator path. |
-| `DBSCANCluster` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
-| `HierarchicalCluster` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
-| `GMMCluster` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
-| `FFTNode` | Yes | Yes | Yes | `Partial` | Operator exists, legacy executor also exists. | Converge to operator path. |
-| `Convolution1D` | Yes | Yes | Yes | `Partial` | Operator exists. | Converge to operator path. |
-| `FilterDesigner` | Yes | Yes | Yes | `Partial` | Operator exists. | Converge to operator path. |
-| `StandardScaler` | Yes | Fails closed in legacy / Yes in operator path | Yes | `Partial` | Operator exists; legacy fake success is blocked. | Route through operator path and remove dead placeholder branch. |
-| `MinMaxScaler` | Yes | Fails closed in legacy / Yes in operator path | Yes | `Partial` | Same split support issue. | Same. |
-| `RobustScaler` | Yes | Fails closed in legacy / Yes in operator path | Yes | `Partial` | Same split support issue. | Same. |
-| `LabelEncoder` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
-| `OrdinalEncoder` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
-| `TargetEncoder` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
-| `OutlierDetector` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
-| `TimeSeriesDecomposition` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
-| `ARIMAForecaster` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
-| `ExponentialSmoothing` | Yes | Yes | Yes | `Partial` | Operator exists. | Same. |
+| `TFIDFVectorizer` | Yes | Yes | Yes | `Real` | Real operator exists and canonical execution now routes through the operator-backed path before typed legacy dispatch. | Keep visible. |
+| `CountVectorizer` | Yes | Yes | Yes | `Real` | Real operator exists and canonical execution now routes through the operator-backed path before typed legacy dispatch. | Keep visible. |
+| `SentimentAnalyzer` | Yes | Yes | Yes | `Real` | Real operator exists and canonical execution now routes through the operator-backed path before typed legacy dispatch. | Keep visible. |
+| `PCANode` | Yes | Yes | Yes | `Real` | Real operator exists and canonical execution now routes through the operator-backed path before typed legacy dispatch. | Keep visible. |
+| `KMeansCluster` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `DBSCANCluster` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `HierarchicalCluster` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `GMMCluster` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `FFTNode` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `Convolution1D` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `FilterDesigner` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `StandardScaler` | Yes | Yes | Yes | `Real` | Real operator exists and canonical execution now routes through the operator-backed path before typed legacy dispatch. | Keep visible. |
+| `MinMaxScaler` | Yes | Yes | Yes | `Real` | Real operator exists and canonical execution now routes through the operator-backed path before typed legacy dispatch. | Keep visible. |
+| `RobustScaler` | Yes | Yes | Yes | `Real` | Real operator exists and canonical execution now routes through the operator-backed path before typed legacy dispatch. | Keep visible. |
+| `LabelEncoder` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `OrdinalEncoder` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `TargetEncoder` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `OutlierDetector` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `TimeSeriesDecomposition` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `ARIMAForecaster` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
+| `ExponentialSmoothing` | Yes | Yes | Yes | `Real` | Operator-backed canonical execution is active. | Keep visible. |
 
 ### Nodes that are still unsupported in graph execution
 
@@ -249,8 +249,7 @@ Design rule:
 - `SGD`, `Adam`, `AdamW`
 - `DataInput`
 - `SaveDataset`, `ExportCSV`
-- operator-backed preprocessing and time-series nodes, provided runtime
-  routing is corrected
+- operator-backed preprocessing, analytics, text, and time-series nodes
 
 ### Hide or hard-block now
 
