@@ -510,6 +510,58 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         AppendHelpTextSection(metadata, summary);
         ApplySupportState(metadata, "real", true, reason);
     }
+
+    const auto apply_task_type_guidance =
+        [this](NodeType node_type, const char* task_type, const char* guidance) {
+            auto it = metadata_.find(node_type);
+            if (it == metadata_.end()) {
+                return;
+            }
+            UpsertSupportAxis(
+                it->second,
+                "Task Type",
+                task_type,
+                true,
+                guidance);
+            std::string summary = "Task guidance: ";
+            summary += task_type;
+            summary += "; ";
+            summary += guidance;
+            AppendHelpTextSection(it->second, summary);
+        };
+
+    apply_task_type_guidance(
+        NodeType::MSELoss,
+        "regression",
+        "Use for numeric targets and continuous-value prediction.");
+    apply_task_type_guidance(
+        NodeType::L1Loss,
+        "regression",
+        "Use for robust numeric-target regression.");
+    apply_task_type_guidance(
+        NodeType::SmoothL1Loss,
+        "regression",
+        "Use for robust numeric-target regression with smoother gradients.");
+    apply_task_type_guidance(
+        NodeType::HuberLoss,
+        "regression",
+        "Use for numeric-target regression when outliers should have limited influence.");
+    apply_task_type_guidance(
+        NodeType::CrossEntropyLoss,
+        "multiclass_classification",
+        "Use for mutually exclusive class labels with logits.");
+    apply_task_type_guidance(
+        NodeType::NLLLoss,
+        "multiclass_classification",
+        "Use for class labels when the model outputs log probabilities.");
+    apply_task_type_guidance(
+        NodeType::BCELoss,
+        "binary_classification",
+        "Use for binary targets when predictions are probabilities.");
+    apply_task_type_guidance(
+        NodeType::BCEWithLogits,
+        "binary_classification",
+        "Use for binary targets when the model outputs logits.");
 }
 
 void NodeMetadataRegistry::RegisterNode(NodeMetadata metadata) {

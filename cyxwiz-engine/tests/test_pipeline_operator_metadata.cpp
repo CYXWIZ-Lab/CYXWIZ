@@ -2016,6 +2016,24 @@ int main() {
         CheckSupportAxis(meta, "Support State", "real", true, TypeId(type));
     }
 
+    const auto* mse_loss_meta = metadata.GetMetadata(gui::NodeType::MSELoss);
+    Check(mse_loss_meta != nullptr, "MSELoss metadata should exist");
+    CheckSupportAxis(mse_loss_meta, "Task Type", "regression", true, "MSELoss");
+    Check(mse_loss_meta->help_text.find("numeric targets") != std::string::npos,
+          "MSELoss task guidance should point users to numeric regression targets");
+
+    const auto* cross_entropy_meta =
+        metadata.GetMetadata(gui::NodeType::CrossEntropyLoss);
+    Check(cross_entropy_meta != nullptr, "CrossEntropyLoss metadata should exist");
+    CheckSupportAxis(
+        cross_entropy_meta,
+        "Task Type",
+        "multiclass_classification",
+        true,
+        "CrossEntropyLoss");
+    Check(cross_entropy_meta->help_text.find("class labels") != std::string::npos,
+          "CrossEntropyLoss task guidance should point users to class-label classification");
+
     for (const auto& capability :
          cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
         auto expected_metadata_type = capability.metadata_node_type;
