@@ -300,7 +300,9 @@ Design rule:
    PipelineExecutor-backed.
 
 4. Route operator-backed nodes through the operator path first, then
-   remove legacy placeholder branches.
+   remove legacy placeholder branches. Operator-backed canonical capability
+   names now assert they are not also registered as legacy-dispatched or
+   fail-closed runtime names.
 
 5. Split product lanes explicitly into:
    - `Classic ML`

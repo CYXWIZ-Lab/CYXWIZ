@@ -638,6 +638,12 @@ int main() {
     }
 
     for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {
+        Check(!cyxwiz::IsPipelineLegacyRuntimeNode(capability.legacy_type_name),
+              std::string("operator-backed runtime name is also legacy-dispatched: ") +
+                  capability.legacy_type_name);
+        Check(!cyxwiz::IsPipelineFailClosedRuntimeNode(capability.legacy_type_name),
+              std::string("operator-backed runtime name is also fail-closed: ") +
+                  capability.legacy_type_name);
         Check(factory.HasOperator(capability.node_type),
               std::string("runtime capability has no factory operator: ") +
                   capability.legacy_type_name);
