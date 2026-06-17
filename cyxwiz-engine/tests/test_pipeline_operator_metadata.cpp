@@ -2017,6 +2017,87 @@ int main() {
         CheckSupportAxis(meta, "Workflow Lane", "deep_learning", true, TypeId(type));
     }
 
+    Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
+              cyxwiz::PipelineTrainingSupportRole::ModelLayer)) == "model_layer",
+          "training role name for model layer is stable");
+    Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
+              cyxwiz::PipelineTrainingSupportRole::Activation)) == "activation",
+          "training role name for activation is stable");
+    Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
+              cyxwiz::PipelineTrainingSupportRole::Loss)) == "loss",
+          "training role name for loss is stable");
+    Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
+              cyxwiz::PipelineTrainingSupportRole::Optimizer)) == "optimizer",
+          "training role name for optimizer is stable");
+
+    struct TrainingRoleCase {
+        gui::NodeType node_type;
+        const char* role;
+    };
+    const std::vector<TrainingRoleCase> training_role_cases = {
+        {gui::NodeType::Dense, "model_layer"},
+        {gui::NodeType::Dropout, "model_layer"},
+        {gui::NodeType::BatchNorm, "model_layer"},
+        {gui::NodeType::LSTM, "model_layer"},
+        {gui::NodeType::GRU, "model_layer"},
+        {gui::NodeType::Flatten, "model_layer"},
+        {gui::NodeType::TimeDistributed, "model_layer"},
+        {gui::NodeType::ReLU, "activation"},
+        {gui::NodeType::Sigmoid, "activation"},
+        {gui::NodeType::Tanh, "activation"},
+        {gui::NodeType::Softmax, "activation"},
+        {gui::NodeType::MSELoss, "loss"},
+        {gui::NodeType::CrossEntropyLoss, "loss"},
+        {gui::NodeType::BCELoss, "loss"},
+        {gui::NodeType::BCEWithLogits, "loss"},
+        {gui::NodeType::L1Loss, "loss"},
+        {gui::NodeType::SmoothL1Loss, "loss"},
+        {gui::NodeType::HuberLoss, "loss"},
+        {gui::NodeType::NLLLoss, "loss"},
+        {gui::NodeType::SGD, "optimizer"},
+        {gui::NodeType::Adam, "optimizer"},
+        {gui::NodeType::AdamW, "optimizer"},
+        {gui::NodeType::RMSprop, "optimizer"},
+        {gui::NodeType::Adagrad, "optimizer"},
+        {gui::NodeType::NAdam, "optimizer"},
+    };
+    for (const auto& role_case : training_role_cases) {
+        const auto* meta = metadata.GetMetadata(role_case.node_type);
+        Check(meta != nullptr,
+              "training role metadata should exist for type " +
+                  TypeId(role_case.node_type));
+        Check(cyxwiz::IsPipelineSupportedTrainingRoleNode(role_case.node_type),
+              "training role should be centralized for type " +
+                  TypeId(role_case.node_type));
+        CheckSupportAxis(
+            meta,
+            "Training Role",
+            role_case.role,
+            true,
+            TypeId(role_case.node_type));
+        CheckSupportAxis(
+            meta,
+            "Implementation Owner",
+            "training_backend",
+            true,
+            TypeId(role_case.node_type));
+        CheckSupportAxis(
+            meta,
+            "Compile",
+            "supported",
+            true,
+            TypeId(role_case.node_type));
+        CheckSupportAxis(
+            meta,
+            "Training",
+            "supported",
+            true,
+            TypeId(role_case.node_type));
+        Check(meta->help_text.find("Training role: role=") != std::string::npos,
+              "training role metadata should explain role ownership for type " +
+                  TypeId(role_case.node_type));
+    }
+
     const auto* linear_regression_meta =
         metadata.GetMetadata(gui::NodeType::LinearRegressionNode);
     Check(linear_regression_meta != nullptr, "LinearRegression metadata should exist");

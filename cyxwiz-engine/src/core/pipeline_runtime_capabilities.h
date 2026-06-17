@@ -93,6 +93,19 @@ struct PipelineSupportedTrainingNodeCapability {
     const char* reason;
 };
 
+enum class PipelineTrainingSupportRole {
+    ModelLayer,
+    Activation,
+    Loss,
+    Optimizer,
+};
+
+struct PipelineSupportedTrainingRoleCapability {
+    gui::NodeType node_type;
+    PipelineTrainingSupportRole role = PipelineTrainingSupportRole::ModelLayer;
+    const char* reason;
+};
+
 enum class PipelineTrainingBackendSupportMode {
     Allowed,
     UnsupportedSequentialModelLayer,
@@ -211,6 +224,9 @@ GetPipelineUnsupportedTrainingControlCapabilities();
 const std::vector<PipelineSupportedTrainingNodeCapability>&
 GetPipelineSupportedTrainingBackendCapabilities();
 
+const std::vector<PipelineSupportedTrainingRoleCapability>&
+GetPipelineSupportedTrainingRoleCapabilities();
+
 const std::vector<PipelineMaterializerStorageBackendCapability>&
 GetPipelineMaterializerStorageBackendCapabilities();
 
@@ -232,6 +248,8 @@ const char* PipelineMaterializerStorageSupportName(
 
 const char* PipelineTrainingBackendSupportModeName(
     PipelineTrainingBackendSupportMode mode);
+
+const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role);
 
 PipelineMaterializerStorageBackendCapability
 ResolvePipelineMaterializerStorageBackendSupport(PipelineStorageBackend backend);
@@ -277,6 +295,8 @@ bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type);
 bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type);
 
 bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type);
+
+bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type);
 
 PipelineTrainingBackendSupport
 ResolvePipelineTrainingBackendSupport(gui::NodeType node_type);

@@ -529,6 +529,37 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         ApplySupportState(metadata, "real", true, reason);
     }
 
+    for (const auto& capability :
+         GetPipelineSupportedTrainingRoleCapabilities()) {
+        auto it = metadata_.find(capability.node_type);
+        if (it == metadata_.end()) {
+            continue;
+        }
+
+        auto& metadata = it->second;
+        const char* role = PipelineTrainingSupportRoleName(capability.role);
+        const char* reason =
+            capability.reason != nullptr ? capability.reason : "";
+        UpsertSupportAxis(metadata, "Training Role", role, true, reason);
+        UpsertSupportAxis(metadata, "Compile", "supported", true, reason);
+        UpsertSupportAxis(metadata, "Training", "supported", true, reason);
+        UpsertSupportAxis(
+            metadata,
+            "Implementation Owner",
+            "training_backend",
+            true,
+            reason);
+
+        std::string summary = "Training role: role=";
+        summary += role;
+        summary += "; compile=supported; training=supported; owner=training_backend";
+        if (capability.reason != nullptr) {
+            summary += "; reason=";
+            summary += capability.reason;
+        }
+        AppendHelpTextSection(metadata, summary);
+    }
+
     const auto apply_task_type_guidance =
         [this](NodeType node_type, const char* task_type, const char* guidance) {
             auto it = metadata_.find(node_type);

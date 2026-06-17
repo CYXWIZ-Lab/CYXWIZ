@@ -87,6 +87,10 @@ std::string SupportAxisValueLabel(const std::string& value) {
     if (value == "ui_only") return "UI-only";
     if (value == "classic_ml") return "Classic ML";
     if (value == "deep_learning") return "Deep learning";
+    if (value == "model_layer") return "Model layer";
+    if (value == "activation") return "Activation";
+    if (value == "loss") return "Loss";
+    if (value == "optimizer") return "Optimizer";
     if (value == "regression") return "Regression";
     if (value == "multiclass_classification") return "Multiclass classification";
     if (value == "binary_classification") return "Binary classification";

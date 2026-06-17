@@ -659,6 +659,66 @@ GetPipelineSupportedTrainingBackendCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineSupportedTrainingRoleCapability>&
+GetPipelineSupportedTrainingRoleCapabilities() {
+    static const std::vector<PipelineSupportedTrainingRoleCapability> capabilities = {
+        {gui::NodeType::Dense, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable model layer"},
+        {gui::NodeType::Dropout, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable model layer"},
+        {gui::NodeType::BatchNorm, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable model layer"},
+        {gui::NodeType::LSTM, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable recurrent model layer"},
+        {gui::NodeType::GRU, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable recurrent model layer"},
+        {gui::NodeType::Flatten, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a shape-preserving model layer"},
+        {gui::NodeType::TimeDistributed, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a per-timestep dense projection"},
+
+        {gui::NodeType::ReLU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Sigmoid, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Tanh, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Softmax, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+
+        {gui::NodeType::MSELoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::CrossEntropyLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::BCELoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::BCEWithLogits, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::L1Loss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::SmoothL1Loss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::HuberLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+        {gui::NodeType::NLLLoss, PipelineTrainingSupportRole::Loss,
+         "compiled into training loss configuration"},
+
+        {gui::NodeType::SGD, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::Adam, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::AdamW, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::RMSprop, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::Adagrad, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+        {gui::NodeType::NAdam, PipelineTrainingSupportRole::Optimizer,
+         "compiled into training optimizer configuration"},
+    };
+    return capabilities;
+}
+
 const std::vector<PipelineMaterializerStorageBackendCapability>&
 GetPipelineMaterializerStorageBackendCapabilities() {
     static const std::vector<PipelineMaterializerStorageBackendCapability> capabilities = {
@@ -863,6 +923,20 @@ const char* PipelineTrainingBackendSupportModeName(
         return "unsupported_sequential_model_layer";
     case PipelineTrainingBackendSupportMode::UnsupportedTrainingControl:
         return "unsupported_training_control";
+    }
+    return "unknown";
+}
+
+const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role) {
+    switch (role) {
+    case PipelineTrainingSupportRole::ModelLayer:
+        return "model_layer";
+    case PipelineTrainingSupportRole::Activation:
+        return "activation";
+    case PipelineTrainingSupportRole::Loss:
+        return "loss";
+    case PipelineTrainingSupportRole::Optimizer:
+        return "optimizer";
     }
     return "unknown";
 }
@@ -1099,6 +1173,17 @@ bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type) {
         capabilities.begin(),
         capabilities.end(),
         [node_type](const PipelineSupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    return it != capabilities.end();
+}
+
+bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type) {
+    const auto& capabilities = GetPipelineSupportedTrainingRoleCapabilities();
+    auto it = std::find_if(
+        capabilities.begin(),
+        capabilities.end(),
+        [node_type](const PipelineSupportedTrainingRoleCapability& capability) {
             return capability.node_type == node_type;
         });
     return it != capabilities.end();
