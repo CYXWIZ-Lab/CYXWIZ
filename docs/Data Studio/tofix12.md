@@ -288,6 +288,10 @@ Target batches:
 - Exposed checkpoint policy in the Training Dashboard comparison table by
   showing whether best-checkpoint saving was enabled and the configured early
   stopping patience beside the resolved checkpoint path.
+- Extended the compiler contract test for selected DataLoader nodes so runtime
+  training-loop fields are proven to flow into `TrainingConfiguration`:
+  `epochs`, `batch_size`, `num_workers`, `prefetch_factor`,
+  `save_best_checkpoint`, `early_stopping_patience`, and `checkpoint_dir`.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

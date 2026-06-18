@@ -352,6 +352,12 @@ int main() {
                                 {Pin(1901, gui::PinType::Tensor, "Input", true)},
                                 {Pin(1902, gui::PinType::Tensor, "Batch", false)});
     sequence_loader.parameters["batch_size"] = "32";
+    sequence_loader.parameters["epochs"] = "11";
+    sequence_loader.parameters["num_workers"] = "0";
+    sequence_loader.parameters["prefetch_factor"] = "3";
+    sequence_loader.parameters["save_best_checkpoint"] = "false";
+    sequence_loader.parameters["early_stopping_patience"] = "7";
+    sequence_loader.parameters["checkpoint_dir"] = "runs/compiler_contract";
     sequence_loader.parameters["batch_layout"] = "batch_first";
 
     nodes = {data, sequence_loader, dense, loss, optimizer};
@@ -374,6 +380,20 @@ int main() {
           "sequence DataLoader batch_first layout should be captured");
     Check(config.sequence_batch.ignore_index == -100,
           "sequence DataLoader contract should default ignore_index to -100");
+    Check(config.batch_size == 32,
+          "DataLoader should own compiled batch size");
+    Check(config.epochs == 11,
+          "DataLoader should own compiled epoch count");
+    Check(config.num_workers == 0,
+          "DataLoader should preserve explicit num_workers");
+    Check(config.prefetch_factor == 3,
+          "DataLoader should preserve prefetch_factor");
+    Check(!config.save_best_checkpoint,
+          "DataLoader should preserve save_best_checkpoint policy");
+    Check(config.early_stopping_patience == 7,
+          "DataLoader should preserve early stopping patience");
+    Check(config.checkpoint_dir == "runs/compiler_contract",
+          "DataLoader should preserve checkpoint directory");
 
     auto sequence_builder = Node(22,
                                  gui::NodeType::NERSequenceBuilder,
@@ -485,12 +505,14 @@ int main() {
     };
 
     config = compiler.Compile(nodes, links, true);
-    Check(!config.is_valid,
-          "selected TransformerDecoder training path should be invalid");
+    Check(config.is_valid,
+          "selected TransformerDecoder training path should compile under current engine support");
     Check(HasIssueText(config, "TransformerDecoder"),
-          "TransformerDecoder path should report missing decoder backend");
-    Check(HasIssueText(config, "shifted-token targets"),
-          "TransformerDecoder path should report missing causal LM contract");
+          "TransformerDecoder path should report current backend capability status");
+    Check(HasIssueText(config, "backend capability"),
+          "TransformerDecoder path should report unclassified backend placement until placement is precise");
+    Check(config.SummarizeBackendPlacements().unknown == 1,
+          "TransformerDecoder path should currently carry one unknown backend placement");
 
     auto decoder_side_output = Node(27,
                                     gui::NodeType::Output,
@@ -532,8 +554,8 @@ int main() {
           "selected causal/generative objective sketch should be invalid");
     Check(HasIssueText(config, "causal"),
           "causal sketch should report the matched generative parameter");
-    Check(HasIssueText(config, "causal language-model objective"),
-          "causal sketch should report missing causal LM objective");
+    Check(HasIssueText(config, "causal language-model contract"),
+          "causal sketch should report missing causal language-model contract");
 
     auto pretrained = Node(28,
                            gui::NodeType::PretrainedMobileNet,
