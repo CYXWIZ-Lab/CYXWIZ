@@ -110,6 +110,18 @@ inline std::string BuildTrainingRunArchitectureSummary(
     return out.str();
 }
 
+inline std::string ResolveTrainingRunCheckpointDisplay(
+    const TrainingConfiguration& config,
+    const std::string& checkpoint_used) {
+    if (!checkpoint_used.empty()) {
+        return checkpoint_used;
+    }
+    if (!config.checkpoint_dir.empty()) {
+        return config.checkpoint_dir;
+    }
+    return "default .cyxwiz/checkpoints run folder";
+}
+
 inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
     const std::string& run_id,
     const TrainingConfiguration& config,
@@ -133,7 +145,8 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
     record.save_best_checkpoint = config.save_best_checkpoint;
     record.early_stopping_patience = config.early_stopping_patience;
     record.checkpoint_dir = config.checkpoint_dir;
-    record.checkpoint_used = checkpoint_used;
+    record.checkpoint_used =
+        ResolveTrainingRunCheckpointDisplay(config, checkpoint_used);
     record.final_train_loss = metrics.train_loss;
     record.final_train_accuracy = metrics.train_accuracy;
     record.final_test_loss = metrics.test_loss;

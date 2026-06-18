@@ -273,6 +273,12 @@ Target batches:
   recorded in-session, ranked, shown in a table, and exportable as CSV. This
   keeps comparison visible without introducing a separate experiment-manager
   subsystem.
+- Polished the run-comparison table so the visible UX separates model family
+  from architecture summary and shows elapsed training time.
+- Made checkpoint visibility explicit in run-comparison records: explicit
+  checkpoint paths are shown when known, explicit checkpoint roots are shown
+  when configured, and otherwise the default `.cyxwiz/checkpoints` run folder
+  is labeled instead of appearing empty.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

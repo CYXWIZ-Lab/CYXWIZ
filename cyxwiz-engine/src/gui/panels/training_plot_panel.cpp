@@ -884,7 +884,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
     if (ImGui::BeginTable(
             "TrainingRunComparisonTable",
-            12,
+            14,
             ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_Resizable |
@@ -892,6 +892,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("Run");
         ImGui::TableSetupColumn("Status");
         ImGui::TableSetupColumn("Dataset");
+        ImGui::TableSetupColumn("Model");
         ImGui::TableSetupColumn("Architecture");
         ImGui::TableSetupColumn("Epochs");
         ImGui::TableSetupColumn("Batch");
@@ -900,6 +901,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("Best Val Acc");
         ImGui::TableSetupColumn("Test Loss");
         ImGui::TableSetupColumn("Test Acc");
+        ImGui::TableSetupColumn("Elapsed");
         ImGui::TableSetupColumn("Checkpoint");
         ImGui::TableHeadersRow();
 
@@ -914,6 +916,9 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(record.dataset_name.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(record.model_family.c_str());
 
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(record.architecture_summary.c_str());
@@ -956,11 +961,11 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
             }
 
             ImGui::TableNextColumn();
-            const std::string& checkpoint = record.checkpoint_used.empty()
-                ? record.checkpoint_dir
-                : record.checkpoint_used;
-            if (!checkpoint.empty()) {
-                ImGui::TextUnformatted(checkpoint.c_str());
+            ImGui::Text("%.1fs", record.elapsed_seconds);
+
+            ImGui::TableNextColumn();
+            if (!record.checkpoint_used.empty()) {
+                ImGui::TextUnformatted(record.checkpoint_used.c_str());
             } else {
                 ImGui::TextDisabled("-");
             }

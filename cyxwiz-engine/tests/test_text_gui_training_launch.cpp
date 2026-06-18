@@ -296,6 +296,14 @@ void TestTrainingRunComparisonRecord() {
           "run comparison sort should keep all records");
     Check(sorted.front().run_id == "run-001",
           "run comparison sort should prefer higher test accuracy");
+
+    config.checkpoint_dir.clear();
+    const auto default_checkpoint_record =
+        cyxwiz::MakeTrainingRunComparisonRecord(
+            "run-default-checkpoint", config, metrics, 1.0f);
+    Check(default_checkpoint_record.checkpoint_used ==
+              "default .cyxwiz/checkpoints run folder",
+          "run comparison should make default checkpoint root explicit");
 }
 
 } // namespace
