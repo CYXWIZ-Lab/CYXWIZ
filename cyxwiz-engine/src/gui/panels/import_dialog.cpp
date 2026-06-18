@@ -407,6 +407,7 @@ void ImportDialog::RenderButtons() {
 
 std::string ImportDialog::OpenFileDialog(const char* filter, const char* title) {
     (void)filter;  // Using FileDialogs which has a different filter format
+    (void)title;
     auto result = FileDialogs::OpenModel();
     return result.value_or("");
 }

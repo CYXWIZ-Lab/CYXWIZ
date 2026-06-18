@@ -430,6 +430,7 @@ ImVec2 ArchitectureDiagram::GetBlockPosition(int layer_index) const {
 }
 
 ImVec2 ArchitectureDiagram::GetBlockSize(const LayerAnalysis& layer) const {
+    (void)layer;
     return ImVec2(block_width_, block_height_);
 }
 

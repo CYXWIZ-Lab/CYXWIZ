@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
         // Initialize plugin system
         {
             auto& pm = cyxwiz::plugin::PluginManager::Instance();
-            std::filesystem::path exe_dir = std::filesystem::current_path();
+            std::filesystem::path plugin_base_dir = std::filesystem::current_path();
             std::filesystem::path user_dir;
 #ifdef _WIN32
             if (auto* appdata = std::getenv("APPDATA"))
@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
                 user_dir = std::filesystem::path(home) / ".cyxwiz" / "plugins";
 #endif
             std::vector<std::filesystem::path> search_paths;
-            search_paths.push_back(exe_dir / "plugins");
+            search_paths.push_back(plugin_base_dir / "plugins");
             if (!user_dir.empty()) search_paths.push_back(user_dir);
             pm.SetSearchPaths(search_paths);
             // Plugins are loaded on-demand from the Plugin Manager panel (sidebar)

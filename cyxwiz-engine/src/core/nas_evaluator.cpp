@@ -633,6 +633,8 @@ NASEvaluator::SuggestArchitectures(
     int output_size,
     int num_suggestions)
 {
+    (void)input_shape;
+
     std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>> suggestions;
 
     std::mt19937 rng(42);

@@ -161,6 +161,8 @@ bool GraphExecutor::EvaluateNode(const gui::MLNode& node, float dt) {
 }
 
 bool GraphExecutor::EvaluateSignalNode(const gui::MLNode& node, float dt) {
+    (void)dt;
+
     auto get_param = [&](const std::string& key, const std::string& fallback = "0") -> std::string {
         auto it = node.parameters.find(key);
         return (it != node.parameters.end() && !it->second.empty()) ? it->second : fallback;

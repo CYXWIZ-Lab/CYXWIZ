@@ -46,6 +46,7 @@ bool InferenceServer::Start(int port) {
 
     // Set up routes
     impl_->server.Get("/health", [this](const httplib::Request& req, httplib::Response& res) {
+        (void)req;
         auto start = std::chrono::high_resolution_clock::now();
 
         json response;
@@ -69,6 +70,7 @@ bool InferenceServer::Start(int port) {
     });
 
     impl_->server.Get("/info", [this](const httplib::Request& req, httplib::Response& res) {
+        (void)req;
         auto start = std::chrono::high_resolution_clock::now();
 
         json response;
@@ -205,6 +207,7 @@ bool InferenceServer::Start(int port) {
     });
 
     impl_->server.Get("/metrics", [this](const httplib::Request& req, httplib::Response& res) {
+        (void)req;
         auto start = std::chrono::high_resolution_clock::now();
 
         json response;
@@ -243,6 +246,7 @@ bool InferenceServer::Start(int port) {
 
     // Handle OPTIONS for CORS preflight
     impl_->server.Options(".*", [](const httplib::Request& req, httplib::Response& res) {
+        (void)req;
         res.status = 204;
     });
 

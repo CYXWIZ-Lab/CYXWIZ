@@ -583,6 +583,7 @@ QueryResult Executor::executeReturn(const ASTNodePtr& clause, const std::vector<
 }
 
 void Executor::executeCreate(const ASTNodePtr& clause, QueryResult& result) {
+    (void)clause;
     // For now, just log that we would create nodes
     // Actual implementation would modify the graph
     spdlog::info("CREATE clause execution (not fully implemented)");
@@ -590,11 +591,15 @@ void Executor::executeCreate(const ASTNodePtr& clause, QueryResult& result) {
 }
 
 void Executor::executeDelete(const ASTNodePtr& clause, const std::vector<BindingContext>& contexts, QueryResult& result) {
+    (void)clause;
+    (void)contexts;
     spdlog::info("DELETE clause execution (not fully implemented)");
     result.nodesDeleted = 0;
 }
 
 void Executor::executeSet(const ASTNodePtr& clause, std::vector<BindingContext>& contexts, QueryResult& result) {
+    (void)clause;
+    (void)contexts;
     spdlog::info("SET clause execution (not fully implemented)");
     result.propertiesSet = 0;
 }
@@ -644,6 +649,8 @@ void Executor::executeSkip(const ASTNodePtr& clause, std::vector<BindingContext>
 }
 
 void Executor::executeWith(const ASTNodePtr& clause, std::vector<BindingContext>& contexts) {
+    (void)clause;
+    (void)contexts;
     // WITH acts like RETURN but continues the query
     // For now, we'll keep all bindings
     spdlog::info("WITH clause - passing through bindings");
