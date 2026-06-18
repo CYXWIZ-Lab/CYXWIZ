@@ -204,44 +204,52 @@ What the engine already has:
 - The test results panel already displays test accuracy/loss, confusion
   matrix, per-class metrics, predictions, and export actions.
 
-What is still weak:
-- `DataLoaderDialog` is incomplete compared with the DataLoader node contract.
-  It exposes batching/performance fields, but not all training-loop fields
-  that the compiler/runtime already support.
-- The inline properties editor exposes more DataLoader settings than the
-  dialog, so users can see different control surfaces for the same node.
-- `validation_freq`, `grad_accum_steps`, `seed`, `pin_memory`, and
-  `log_interval` are visible in UI/property params, but they are not all
-  proven runtime-owned by the current training loop. Treat these as explicit
-  partial/future fields until implemented.
-- There is no small first-class run-comparison record for controlled
-  experiments such as GRU vs LSTM, bidirectional on/off, or hidden-size
-  comparisons. Current plots/export help, but they do not yet give a stable
-  experiment ledger.
+Resolved by the 2026-06-18 batches:
+- `DataLoaderDialog` now exposes the runtime-supported training-loop fields
+  targeted here: `epochs`, `save_best_checkpoint`,
+  `early_stopping_patience`, and `checkpoint_dir`.
+- Runtime-owned DataLoader fields are covered by focused compiler/launcher
+  contract tests so training dispatch preserves the intended policy.
+- Partial/future DataLoader fields are labeled truthfully instead of being
+  presented as fully owned runtime behavior.
+- A lightweight first-class run-comparison ledger now exists for completed
+  runs, with CSV export and an in-session Training Dashboard table.
+- The ledger is general-purpose rather than GRU/LSTM-only, and includes
+  dataset/domain identity, split policy and sample counts, architecture,
+  training policy, checkpoint policy, checkpoint used, validation/test metric
+  availability, best validation epochs, final metrics, elapsed time, and
+  deterministic sorting.
+
+Still intentionally out of scope for this note:
+- Pretrained transformer fine tuning, freeze/unfreeze controls, per-layer
+  learning-rate schedules, and automatic hyperparameter search.
+- A persistent experiment database or heavyweight benchmark manager.
+- Making partial/future DataLoader fields such as `validation_freq`,
+  `grad_accum_steps`, `seed`, `pin_memory`, and `log_interval` runtime-owned
+  before their executor semantics are designed and tested.
 
 Lean implementation target:
-1. Do not rebuild the training loop.
-2. Do not add automatic hyperparameter search here.
-3. Do not add pretrained transformer fine tuning here; that belongs to
+1. Done: do not rebuild the training loop.
+2. Done: do not add automatic hyperparameter search here.
+3. Done: do not add pretrained transformer fine tuning here; that belongs to
    `tofix19.md`.
-4. First align the DataLoader dialog with the already-supported runtime
-   contract.
-5. Add validation/tests that prove the dialog/compiler/launcher preserve the
-   same values.
-6. Add the smallest run-comparison artifact needed to compare completed runs
-   by config, best validation metrics, final test metrics, checkpoint used,
-   and elapsed time.
+4. Done: align the DataLoader dialog with the already-supported runtime
+   contract targeted by this note.
+5. Done: add validation/tests that prove compiler/launcher policy preservation.
+6. Done: add the smallest run-comparison artifact needed to compare completed
+   runs by config, split, best validation metrics, final test metrics,
+   checkpoint used, and elapsed time.
 
 Target batches:
-1. DataLoader dialog parity: expose `epochs`, `save_best_checkpoint`,
+1. Done: DataLoader dialog parity: expose `epochs`, `save_best_checkpoint`,
    `early_stopping_patience`, and `checkpoint_dir` in the dialog because those
    are already compiler/runtime-supported.
-2. Runtime truth labeling: clearly mark UI-only/future fields such as
+2. Done: runtime truth labeling: clearly mark UI-only/future fields such as
    `grad_accum_steps`, `validation_freq`, `pin_memory`, and `log_interval` if
    they are not yet consumed by `TrainingExecutor`.
-3. Contract tests: cover DataLoader parameter propagation from node params to
-   `TrainingConfiguration` and from launch result to dispatch.
-4. Run comparison ledger: add a lightweight local record/table/export for
+3. Done: contract tests: cover DataLoader parameter propagation from node
+   params to `TrainingConfiguration` and from launch result to dispatch.
+4. Done: run comparison ledger: add a lightweight local record/table/export for
    completed training runs before building any heavier experiment manager.
    This ledger must be general enough for all model families. GRU/LSTM
    recurrent fields are optional details, not the core schema.
