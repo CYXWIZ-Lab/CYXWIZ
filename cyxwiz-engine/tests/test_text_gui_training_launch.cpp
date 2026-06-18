@@ -233,6 +233,9 @@ void TestTrainingRunComparisonRecord() {
     cyxwiz::TrainingMetrics metrics;
     metrics.train_loss = 0.25f;
     metrics.train_accuracy = 0.91f;
+    metrics.train_sample_count = 700;
+    metrics.val_sample_count = 150;
+    metrics.test_sample_count = 150;
     metrics.val_loss_history = {0.9f, 0.7f, 0.8f};
     metrics.val_accuracy_history = {0.65f, 0.72f, 0.70f};
     metrics.has_validation_metrics = true;
@@ -271,6 +274,12 @@ void TestTrainingRunComparisonRecord() {
           "run comparison should preserve validation split ratio");
     Check(record.test_ratio == 0.15f,
           "run comparison should preserve test split ratio");
+    Check(record.train_sample_count == 700,
+          "run comparison should preserve train sample count");
+    Check(record.val_sample_count == 150,
+          "run comparison should preserve validation sample count");
+    Check(record.test_sample_count == 150,
+          "run comparison should preserve test sample count");
     Check(record.best_val_loss == 0.7f,
           "run comparison should compute best validation loss");
     Check(record.best_val_accuracy == 0.72f,

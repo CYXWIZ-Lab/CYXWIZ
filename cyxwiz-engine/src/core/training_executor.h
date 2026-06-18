@@ -30,6 +30,9 @@ struct TrainingMetrics {
     int total_epochs = 0;
     int current_batch = 0;
     int total_batches = 0;
+    size_t train_sample_count = 0;
+    size_t val_sample_count = 0;
+    size_t test_sample_count = 0;
 
     // Training metrics
     float train_loss = 0.0f;

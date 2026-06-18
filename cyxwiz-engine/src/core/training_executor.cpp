@@ -244,6 +244,8 @@ void TrainingExecutor::Train(
     ISequenceBatcher* active_sequence_batcher = nullptr;
 
     size_t num_train_samples = 0;
+    size_t num_val_samples = 0;
+    size_t num_test_samples = 0;
 
     if (mode_ == DatasetMode::Arrow) {
         modern_batchers = BuildArrowTrainingBatchers(
@@ -361,6 +363,7 @@ void TrainingExecutor::Train(
         legacy_val_batcher->SetFlatten(true);
 
         num_train_samples = legacy_train_batcher->GetNumSamples();
+        num_val_samples = legacy_val_batcher->GetNumSamples();
 #else
         spdlog::error("TrainingExecutor: legacy DatasetHandle mode is disabled "
                       "for this modern-only test build");
@@ -368,6 +371,38 @@ void TrainingExecutor::Train(
         return;
 #endif
     }
+
+    if (mode_ == DatasetMode::SequenceExternal && active_sequence_batcher) {
+        active_sequence_batcher->SetPhase(BatcherPhase::Train);
+        num_train_samples = active_sequence_batcher->GetNumSamples();
+        active_sequence_batcher->SetPhase(BatcherPhase::Val);
+        num_val_samples = active_sequence_batcher->GetNumSamples();
+        active_sequence_batcher->SetPhase(BatcherPhase::Train);
+    } else if (active_train_ibatcher) {
+        active_train_ibatcher->SetPhase(BatcherPhase::Train);
+        num_train_samples = active_train_ibatcher->GetNumSamples();
+
+        if (active_val_ibatcher) {
+            active_val_ibatcher->SetPhase(BatcherPhase::Val);
+            num_val_samples = active_val_ibatcher->GetNumSamples();
+            active_val_ibatcher->SetPhase(BatcherPhase::Train);
+        }
+
+        if (active_test_ibatcher) {
+            active_test_ibatcher->SetPhase(BatcherPhase::Test);
+            num_test_samples = active_test_ibatcher->GetNumSamples();
+            active_test_ibatcher->SetPhase(BatcherPhase::Train);
+        }
+
+        active_train_ibatcher->SetPhase(BatcherPhase::Train);
+    }
+
+    UpdateMetrics([num_train_samples, num_val_samples, num_test_samples](
+                      TrainingMetrics& m) {
+        m.train_sample_count = num_train_samples;
+        m.val_sample_count = num_val_samples;
+        m.test_sample_count = num_test_samples;
+    });
 
     spdlog::info("TrainingExecutor: Starting training for {} epochs, batch_size={}, samples={}",
                  epochs, batch_size, num_train_samples);

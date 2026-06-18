@@ -295,6 +295,9 @@ Target batches:
 - Made metric availability explicit by adding validation/test presence flags
   to `TrainingMetrics` and using those flags in run comparison. This avoids
   treating zero-valued loss or accuracy as "metrics missing."
+- Added actual train/validation/test sample counts to `TrainingMetrics`, the
+  run-comparison record, CSV export, focused comparison test, and Training
+  Dashboard table so split reporting is not limited to configured ratios.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

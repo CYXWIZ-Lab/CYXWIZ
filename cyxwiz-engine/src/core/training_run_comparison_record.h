@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 namespace cyxwiz {
@@ -18,6 +19,9 @@ struct TrainingRunComparisonRecord {
     float train_ratio = 0.0f;
     float val_ratio = 0.0f;
     float test_ratio = 0.0f;
+    size_t train_sample_count = 0;
+    size_t val_sample_count = 0;
+    size_t test_sample_count = 0;
     bool bidirectional = false;
     int hidden_size = 0;
     int num_layers = 0;

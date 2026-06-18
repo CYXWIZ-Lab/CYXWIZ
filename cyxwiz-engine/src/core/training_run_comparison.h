@@ -18,6 +18,7 @@ inline std::string TrainingRunComparisonCsvHeader() {
     return "run_id,run_status,dataset_name,model_family,primary_layer_type,"
            "architecture_summary,model_layer_count,epochs,batch_size,"
            "learning_rate,train_ratio,val_ratio,test_ratio,"
+           "train_sample_count,val_sample_count,test_sample_count,"
            "bidirectional,hidden_size,num_layers,"
            "save_best_checkpoint,early_stopping_patience,checkpoint_dir,"
            "checkpoint_used,has_validation_metrics,has_test_metrics,"
@@ -68,6 +69,9 @@ inline std::string TrainingRunComparisonToCsvRow(
         << record.train_ratio << ','
         << record.val_ratio << ','
         << record.test_ratio << ','
+        << record.train_sample_count << ','
+        << record.val_sample_count << ','
+        << record.test_sample_count << ','
         << (record.bidirectional ? "true" : "false") << ','
         << record.hidden_size << ','
         << record.num_layers << ','
@@ -149,6 +153,9 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
     record.train_ratio = config.train_ratio;
     record.val_ratio = config.val_ratio;
     record.test_ratio = config.test_ratio;
+    record.train_sample_count = metrics.train_sample_count;
+    record.val_sample_count = metrics.val_sample_count;
+    record.test_sample_count = metrics.test_sample_count;
     record.save_best_checkpoint = config.save_best_checkpoint;
     record.early_stopping_patience = config.early_stopping_patience;
     record.checkpoint_dir = config.checkpoint_dir;
