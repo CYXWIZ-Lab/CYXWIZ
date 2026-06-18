@@ -260,9 +260,7 @@ Target batches:
   `TrainingRunComparisonRecord`, stable CSV header/row helpers, best
   validation metric extraction, metric-presence flags, checkpoint-used field,
   run status, generic architecture summary, primary layer type, model layer
-  count, and optional recurrent-family fields for GRU/LSTM comparisons. This
-  is a record/export contract only; a full GUI comparison table is still
-  future work.
+  count, and optional recurrent-family fields for GRU/LSTM comparisons.
 - Added a minimal CSV write helper for the run-comparison ledger so completed
   runs can be persisted without introducing a larger experiment-manager
   subsystem.
