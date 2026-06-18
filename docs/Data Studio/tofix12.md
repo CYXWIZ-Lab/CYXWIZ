@@ -282,6 +282,9 @@ Target batches:
 - Wired the actual restored best-checkpoint path into `TrainingMetrics` so
   run-comparison records can show the checkpoint used for final evaluation
   when `TrainingExecutor` restores one.
+- Added train/validation/test split ratios to the run-comparison record, CSV
+  export, focused contract test, and Training Dashboard table so completed
+  runs show the exact split policy used for the comparison.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

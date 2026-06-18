@@ -216,6 +216,9 @@ void TestTrainingRunComparisonRecord() {
     config.epochs = 8;
     config.batch_size = 32;
     config.learning_rate = 0.0002f;
+    config.train_ratio = 0.70f;
+    config.val_ratio = 0.15f;
+    config.test_ratio = 0.15f;
     config.save_best_checkpoint = true;
     config.early_stopping_patience = 3;
     config.checkpoint_dir = "runs/sentiment";
@@ -260,6 +263,12 @@ void TestTrainingRunComparisonRecord() {
           "run comparison should preserve hidden size");
     Check(record.num_layers == 2,
           "run comparison should preserve recurrent layer count");
+    Check(record.train_ratio == 0.70f,
+          "run comparison should preserve train split ratio");
+    Check(record.val_ratio == 0.15f,
+          "run comparison should preserve validation split ratio");
+    Check(record.test_ratio == 0.15f,
+          "run comparison should preserve test split ratio");
     Check(record.best_val_loss == 0.7f,
           "run comparison should compute best validation loss");
     Check(record.best_val_accuracy == 0.72f,

@@ -884,7 +884,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
     if (ImGui::BeginTable(
             "TrainingRunComparisonTable",
-            14,
+            15,
             ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_Resizable |
@@ -892,6 +892,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("Run");
         ImGui::TableSetupColumn("Status");
         ImGui::TableSetupColumn("Dataset");
+        ImGui::TableSetupColumn("Split");
         ImGui::TableSetupColumn("Model");
         ImGui::TableSetupColumn("Architecture");
         ImGui::TableSetupColumn("Epochs");
@@ -916,6 +917,12 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(record.dataset_name.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%.0f/%.0f/%.0f%%",
+                record.train_ratio * 100.0f,
+                record.val_ratio * 100.0f,
+                record.test_ratio * 100.0f);
 
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(record.model_family.c_str());

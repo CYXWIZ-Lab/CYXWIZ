@@ -15,6 +15,9 @@ struct TrainingRunComparisonRecord {
     int epochs = 0;
     int batch_size = 0;
     float learning_rate = 0.0f;
+    float train_ratio = 0.0f;
+    float val_ratio = 0.0f;
+    float test_ratio = 0.0f;
     bool bidirectional = false;
     int hidden_size = 0;
     int num_layers = 0;

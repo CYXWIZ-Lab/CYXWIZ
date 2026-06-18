@@ -17,7 +17,8 @@ namespace cyxwiz {
 inline std::string TrainingRunComparisonCsvHeader() {
     return "run_id,run_status,dataset_name,model_family,primary_layer_type,"
            "architecture_summary,model_layer_count,epochs,batch_size,"
-           "learning_rate,bidirectional,hidden_size,num_layers,"
+           "learning_rate,train_ratio,val_ratio,test_ratio,"
+           "bidirectional,hidden_size,num_layers,"
            "save_best_checkpoint,early_stopping_patience,checkpoint_dir,"
            "checkpoint_used,has_validation_metrics,has_test_metrics,"
            "best_val_loss,best_val_accuracy,final_train_loss,"
@@ -64,6 +65,9 @@ inline std::string TrainingRunComparisonToCsvRow(
         << record.epochs << ','
         << record.batch_size << ','
         << record.learning_rate << ','
+        << record.train_ratio << ','
+        << record.val_ratio << ','
+        << record.test_ratio << ','
         << (record.bidirectional ? "true" : "false") << ','
         << record.hidden_size << ','
         << record.num_layers << ','
@@ -142,6 +146,9 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
     record.epochs = config.epochs;
     record.batch_size = config.batch_size;
     record.learning_rate = config.learning_rate;
+    record.train_ratio = config.train_ratio;
+    record.val_ratio = config.val_ratio;
+    record.test_ratio = config.test_ratio;
     record.save_best_checkpoint = config.save_best_checkpoint;
     record.early_stopping_patience = config.early_stopping_patience;
     record.checkpoint_dir = config.checkpoint_dir;
