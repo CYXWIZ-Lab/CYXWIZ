@@ -301,6 +301,9 @@ Target batches:
 - Corrected checkpoint display truthfulness: when no checkpoint was restored
   and best-checkpoint saving is disabled, run comparison now reports the final
   epoch model state instead of implying a default checkpoint path was used.
+- Added best-validation epoch reporting to the run-comparison record, CSV
+  export, focused comparison test, and Training Dashboard table so users can
+  see which epoch produced the best validation loss and accuracy.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

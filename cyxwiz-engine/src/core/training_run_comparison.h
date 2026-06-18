@@ -22,7 +22,8 @@ inline std::string TrainingRunComparisonCsvHeader() {
            "bidirectional,hidden_size,num_layers,"
            "save_best_checkpoint,early_stopping_patience,checkpoint_dir,"
            "checkpoint_used,has_validation_metrics,has_test_metrics,"
-           "best_val_loss,best_val_accuracy,final_train_loss,"
+           "best_val_loss,best_val_accuracy,best_val_loss_epoch,"
+           "best_val_accuracy_epoch,final_train_loss,"
            "final_train_accuracy,final_test_loss,final_test_accuracy,"
            "elapsed_seconds";
 }
@@ -83,6 +84,8 @@ inline std::string TrainingRunComparisonToCsvRow(
         << (record.has_test_metrics ? "true" : "false") << ','
         << record.best_val_loss << ','
         << record.best_val_accuracy << ','
+        << record.best_val_loss_epoch << ','
+        << record.best_val_accuracy_epoch << ','
         << record.final_train_loss << ','
         << record.final_train_accuracy << ','
         << record.final_test_loss << ','
@@ -177,24 +180,32 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
 
     if (!metrics.val_loss_history.empty()) {
         record.best_val_loss = metrics.val_loss_history.front();
-        for (float value : metrics.val_loss_history) {
+        record.best_val_loss_epoch = 1;
+        for (size_t i = 0; i < metrics.val_loss_history.size(); ++i) {
+            const float value = metrics.val_loss_history[i];
             if (value < record.best_val_loss) {
                 record.best_val_loss = value;
+                record.best_val_loss_epoch = static_cast<int>(i + 1);
             }
         }
     } else {
         record.best_val_loss = metrics.val_loss;
+        record.best_val_loss_epoch = record.has_validation_metrics ? 1 : 0;
     }
 
     if (!metrics.val_accuracy_history.empty()) {
         record.best_val_accuracy = metrics.val_accuracy_history.front();
-        for (float value : metrics.val_accuracy_history) {
+        record.best_val_accuracy_epoch = 1;
+        for (size_t i = 0; i < metrics.val_accuracy_history.size(); ++i) {
+            const float value = metrics.val_accuracy_history[i];
             if (value > record.best_val_accuracy) {
                 record.best_val_accuracy = value;
+                record.best_val_accuracy_epoch = static_cast<int>(i + 1);
             }
         }
     } else {
         record.best_val_accuracy = metrics.val_accuracy;
+        record.best_val_accuracy_epoch = record.has_validation_metrics ? 1 : 0;
     }
 
     record.model_family = record.primary_layer_type;

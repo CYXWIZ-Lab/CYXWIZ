@@ -284,6 +284,10 @@ void TestTrainingRunComparisonRecord() {
           "run comparison should compute best validation loss");
     Check(record.best_val_accuracy == 0.72f,
           "run comparison should compute best validation accuracy");
+    Check(record.best_val_loss_epoch == 2,
+          "run comparison should report best validation loss epoch");
+    Check(record.best_val_accuracy_epoch == 2,
+          "run comparison should report best validation accuracy epoch");
     Check(record.has_validation_metrics,
           "run comparison should mark validation metrics present");
     Check(record.has_test_metrics,

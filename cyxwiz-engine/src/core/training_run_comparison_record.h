@@ -33,6 +33,8 @@ struct TrainingRunComparisonRecord {
     bool has_test_metrics = false;
     float best_val_loss = 0.0f;
     float best_val_accuracy = 0.0f;
+    int best_val_loss_epoch = 0;
+    int best_val_accuracy_epoch = 0;
     float final_train_loss = 0.0f;
     float final_train_accuracy = 0.0f;
     float final_test_loss = 0.0f;

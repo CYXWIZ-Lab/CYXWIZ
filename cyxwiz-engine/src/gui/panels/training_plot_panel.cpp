@@ -884,7 +884,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
     if (ImGui::BeginTable(
             "TrainingRunComparisonTable",
-            18,
+            19,
             ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_Resizable |
@@ -901,6 +901,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("LR");
         ImGui::TableSetupColumn("Best Val Loss");
         ImGui::TableSetupColumn("Best Val Acc");
+        ImGui::TableSetupColumn("Best Epoch");
         ImGui::TableSetupColumn("Test Loss");
         ImGui::TableSetupColumn("Test Acc");
         ImGui::TableSetupColumn("Elapsed");
@@ -958,6 +959,15 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
             ImGui::TableNextColumn();
             if (record.has_validation_metrics) {
                 ImGui::Text("%.2f%%", record.best_val_accuracy * 100.0f);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableNextColumn();
+            if (record.has_validation_metrics) {
+                ImGui::Text("loss %d / acc %d",
+                    record.best_val_loss_epoch,
+                    record.best_val_accuracy_epoch);
             } else {
                 ImGui::TextDisabled("-");
             }
