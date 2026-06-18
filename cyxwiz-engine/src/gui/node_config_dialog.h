@@ -596,17 +596,21 @@ public:
     DataLoaderDialog(MLNode* node);
     void Apply() override;
     void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(520, 420); }
+    ImVec2 GetDefaultSize() const override { return ImVec2(560, 560); }
 
 protected:
     void RenderContent() override;
 
 private:
+    int epochs_ = 10;
     int batch_size_ = 32;
     bool shuffle_ = true;
     bool drop_last_ = false;
     int num_workers_ = 0;
     int prefetch_factor_ = 2;
+    bool save_best_checkpoint_ = true;
+    int early_stopping_patience_ = 5;
+    char checkpoint_dir_[512] = "";
 };
 
 /**

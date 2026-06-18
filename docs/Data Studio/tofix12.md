@@ -181,3 +181,105 @@ vocabulary workflow note in `tofix11.md`.
 This file exists to keep model-improvement strategy explicit so we can
 compare runs and extend the engine without mixing the training policy
 into unrelated backend changes.
+
+## 2026-06-18 Engine Truth Audit
+
+Status: active target, but the implementation target is narrower than the
+original wording suggests.
+
+What the engine already has:
+- `TrainingConfiguration` already carries train/validation/test split ratios,
+  DataLoader loop settings, optimizer settings, checkpoint policy, early
+  stopping, and final held-out test metrics.
+- `GraphCompiler` already reads DataSplit and DataLoader parameters into the
+  compiled training configuration, including `epochs`, `batch_size`,
+  `num_workers`, `prefetch_factor`, `save_best_checkpoint`,
+  `early_stopping_patience`, and `checkpoint_dir`.
+- `TrainingExecutor` already creates train/validation/test batchers for Arrow
+  and Parquet, runs validation during training, saves the best validation
+  checkpoint when enabled, restores the best checkpoint before final test
+  evaluation, and writes final test loss/accuracy into `TrainingMetrics`.
+- The training plot panel already shows train/validation curves, best
+  validation summary, custom metrics, and CSV export.
+- The test results panel already displays test accuracy/loss, confusion
+  matrix, per-class metrics, predictions, and export actions.
+
+What is still weak:
+- `DataLoaderDialog` is incomplete compared with the DataLoader node contract.
+  It exposes batching/performance fields, but not all training-loop fields
+  that the compiler/runtime already support.
+- The inline properties editor exposes more DataLoader settings than the
+  dialog, so users can see different control surfaces for the same node.
+- `validation_freq`, `grad_accum_steps`, `seed`, `pin_memory`, and
+  `log_interval` are visible in UI/property params, but they are not all
+  proven runtime-owned by the current training loop. Treat these as explicit
+  partial/future fields until implemented.
+- There is no small first-class run-comparison record for controlled
+  experiments such as GRU vs LSTM, bidirectional on/off, or hidden-size
+  comparisons. Current plots/export help, but they do not yet give a stable
+  experiment ledger.
+
+Lean implementation target:
+1. Do not rebuild the training loop.
+2. Do not add automatic hyperparameter search here.
+3. Do not add pretrained transformer fine tuning here; that belongs to
+   `tofix19.md`.
+4. First align the DataLoader dialog with the already-supported runtime
+   contract.
+5. Add validation/tests that prove the dialog/compiler/launcher preserve the
+   same values.
+6. Add the smallest run-comparison artifact needed to compare completed runs
+   by config, best validation metrics, final test metrics, checkpoint used,
+   and elapsed time.
+
+Target batches:
+1. DataLoader dialog parity: expose `epochs`, `save_best_checkpoint`,
+   `early_stopping_patience`, and `checkpoint_dir` in the dialog because those
+   are already compiler/runtime-supported.
+2. Runtime truth labeling: clearly mark UI-only/future fields such as
+   `grad_accum_steps`, `validation_freq`, `pin_memory`, and `log_interval` if
+   they are not yet consumed by `TrainingExecutor`.
+3. Contract tests: cover DataLoader parameter propagation from node params to
+   `TrainingConfiguration` and from launch result to dispatch.
+4. Run comparison ledger: add a lightweight local record/table/export for
+   completed training runs before building any heavier experiment manager.
+   This ledger must be general enough for all model families. GRU/LSTM
+   recurrent fields are optional details, not the core schema.
+
+## 2026-06-18 Progress
+
+- Implemented DataLoader dialog parity for runtime-supported fields:
+  `epochs`, `save_best_checkpoint`, `early_stopping_patience`, and
+  `checkpoint_dir`.
+- Marked partial/future DataLoader property fields truthfully in the inline
+  properties editor: `grad_accum_steps`, DataLoader `seed`, `pin_memory`,
+  `log_interval`, and `validation_freq`.
+- Extended the GUI training launch contract test so checkpoint policy fields
+  are preserved into training dispatch along with epochs and batch size.
+- Added the first lightweight run-comparison contract:
+  `TrainingRunComparisonRecord`, stable CSV header/row helpers, best
+  validation metric extraction, metric-presence flags, checkpoint-used field,
+  run status, generic architecture summary, primary layer type, model layer
+  count, and optional recurrent-family fields for GRU/LSTM comparisons. This
+  is a record/export contract only; a full GUI comparison table is still
+  future work.
+- Added a minimal CSV write helper for the run-comparison ledger so completed
+  runs can be persisted without introducing a larger experiment-manager
+  subsystem.
+- Added deterministic comparison sorting that prefers held-out test accuracy
+  when present, then validation availability/accuracy/loss, then elapsed time.
+  This keeps run ranking explicit and small.
+- Added a minimal Training Dashboard UX for run comparison: completed runs are
+  recorded in-session, ranked, shown in a table, and exportable as CSV. This
+  keeps comparison visible without introducing a separate experiment-manager
+  subsystem.
+
+Generalized run-comparison rule:
+- The comparison record is for every training run, not just sentiment GRU/LSTM
+  experiments.
+- Core fields must describe dataset, architecture summary, training settings,
+  checkpoint policy, checkpoint used, validation/test metric availability,
+  final metrics, run status, and elapsed time.
+- Architecture-specific fields such as recurrent `hidden_size`, `num_layers`,
+  and `bidirectional` are optional detail fields. They must not define the
+  whole schema.

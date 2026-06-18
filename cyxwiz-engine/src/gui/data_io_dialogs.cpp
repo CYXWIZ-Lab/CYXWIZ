@@ -829,6 +829,7 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
     : NodeConfigDialog("Data Loader", node)
 {
     if (node_) {
+        ReadIntParam(node_->parameters, "epochs", epochs_);
         ReadIntParam(node_->parameters, "batch_size", batch_size_);
         ReadBoolParam(node_->parameters, "shuffle", shuffle_);
         ReadBoolParam(node_->parameters, "drop_last", drop_last_);
@@ -836,17 +837,26 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         ReadIntParam(node_->parameters, "num_workers", num_workers_);
         ReadIntParam(node_->parameters, "prefetch_factor", prefetch_factor_);
         if (prefetch_factor_ < 0) prefetch_factor_ = 0;
+        ReadBoolParam(node_->parameters, "save_best_checkpoint", save_best_checkpoint_);
+        ReadIntParam(node_->parameters, "early_stopping_patience", early_stopping_patience_);
+        CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
+                     ReadStringParamValue(node_->parameters, "checkpoint_dir"));
     }
 }
 
 void DataLoaderDialog::Apply() {
     if (!node_) return;
+    node_->parameters["epochs"] = std::to_string(epochs_);
     node_->parameters["batch_size"] = std::to_string(batch_size_);
     node_->parameters["shuffle"] = shuffle_ ? "true" : "false";
     node_->parameters["drop_last"] = drop_last_ ? "true" : "false";
     node_->parameters["num_workers"] = std::to_string(num_workers_);
     node_->parameters["prefetch_factor"] = std::to_string(prefetch_factor_);
-    node_->description = "batch=" + std::to_string(batch_size_) +
+    node_->parameters["save_best_checkpoint"] = save_best_checkpoint_ ? "true" : "false";
+    node_->parameters["early_stopping_patience"] = std::to_string(early_stopping_patience_);
+    node_->parameters["checkpoint_dir"] = checkpoint_dir_;
+    node_->description = "epochs=" + std::to_string(epochs_) +
+                          ", batch=" + std::to_string(batch_size_) +
                           (shuffle_ ? ", shuffled" : ", ordered");
     has_changes_ = false;
 }
@@ -855,23 +865,48 @@ void DataLoaderDialog::Reset() {
     if (!node_) return;
     node_->parameters = original_params_;
     // Re-initialize local UI state from the restored params so sliders match.
+    epochs_ = 10;
     batch_size_ = 32;
     shuffle_ = true;
     drop_last_ = false;
     num_workers_ = cyxwiz::GetDefaultNumWorkers();
     prefetch_factor_ = 2;
+    save_best_checkpoint_ = true;
+    early_stopping_patience_ = 5;
+    checkpoint_dir_[0] = '\0';
+    ReadIntParam(original_params_, "epochs", epochs_);
     ReadIntParam(original_params_, "batch_size", batch_size_);
     ReadBoolParam(original_params_, "shuffle", shuffle_);
     ReadBoolParam(original_params_, "drop_last", drop_last_);
     ReadIntParam(original_params_, "num_workers", num_workers_);
     ReadIntParam(original_params_, "prefetch_factor", prefetch_factor_);
     if (prefetch_factor_ < 0) prefetch_factor_ = 0;
+    ReadBoolParam(original_params_, "save_best_checkpoint", save_best_checkpoint_);
+    ReadIntParam(original_params_, "early_stopping_patience", early_stopping_patience_);
+    CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
+                 ReadStringParamValue(original_params_, "checkpoint_dir"));
     has_changes_ = false;
 }
 
 void DataLoaderDialog::RenderContent() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Training Loop");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Epochs:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##epochs", &epochs_)) {
+        if (epochs_ < 1) epochs_ = 1;
+        if (epochs_ > 100000) epochs_ = 100000;
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(full passes over training split)");
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Batching");
@@ -896,6 +931,34 @@ void DataLoaderDialog::RenderContent() {
     ImGui::Spacing();
     if (ImGui::Checkbox("Drop last incomplete batch", &drop_last_)) has_changes_ = true;
     ImGui::TextDisabled("  Discard the final batch if it has fewer than batch_size samples.");
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Checkpointing");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::Checkbox("Save best validation checkpoint", &save_best_checkpoint_)) {
+        has_changes_ = true;
+    }
+    ImGui::TextDisabled("  Runtime-supported: saves the best validation epoch when validation loss improves.");
+
+    ImGui::Text("Early stop patience:");
+    ImGui::SameLine(150);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##early_stopping_patience", &early_stopping_patience_)) {
+        if (early_stopping_patience_ < 0) early_stopping_patience_ = 0;
+        if (early_stopping_patience_ > 100000) early_stopping_patience_ = 100000;
+        has_changes_ = true;
+    }
+    ImGui::TextDisabled("  Runtime-supported: 0 disables early stopping.");
+
+    ImGui::Text("Checkpoint dir:");
+    ImGui::SameLine(150);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    if (ImGui::InputText("##checkpoint_dir", checkpoint_dir_, sizeof(checkpoint_dir_))) {
+        has_changes_ = true;
+    }
+    ImGui::TextDisabled("  Empty uses the default run-local .cyxwiz/checkpoints path.");
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Performance");

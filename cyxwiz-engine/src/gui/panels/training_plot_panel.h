@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../core/training_run_comparison_record.h"
 #include "../../plotting/plot_manager.h"
 #include <imgui.h>
 #include <vector>
@@ -37,6 +38,7 @@ public:
     // Export
     void ExportToCSV(const std::string& filepath);
     void ExportPlotImage(const std::string& filepath);
+    void ExportRunComparisonCSV(const std::string& filepath);
 
     // Configuration
     void ShowLossPlot(bool show) { show_loss_plot_ = show; }
@@ -56,6 +58,8 @@ public:
     // first batch of that epoch runs (not at epoch end).
     void SetBatchProgress(int current_epoch, int current_batch, int total_batches,
                           float running_loss);
+    void AddRunComparisonRecord(const TrainingRunComparisonRecord& record);
+    void ClearRunComparisonRecords();
 
     // Getters for live metrics (thread-safe)
     bool HasData() const;
@@ -92,6 +96,7 @@ private:
     MetricSeries train_accuracy_;
     MetricSeries val_accuracy_;
     std::vector<MetricSeries> custom_metrics_;
+    std::vector<TrainingRunComparisonRecord> run_comparison_records_;
 
     // UI state
     bool show_loss_plot_ = true;
@@ -128,6 +133,7 @@ private:
     void RenderControls();
     void RenderCurveSummary();
     void RenderSequenceMetricsSummary();
+    void RenderRunComparisonTable();
     void RenderStatistics();
 
     // Internal helpers

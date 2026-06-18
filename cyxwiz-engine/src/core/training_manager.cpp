@@ -4,6 +4,7 @@
 #include "audio_dataset_batcher.h"
 #include "text_dataset_batcher.h"
 #include "training_batcher_setup.h"
+#include "training_run_comparison.h"
 #include "worker_defaults.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
@@ -599,6 +600,12 @@ void TrainingManager::TrainingThreadFunc(
             cached_metrics_.epoch_time_seconds = epoch_time;
             cached_metrics_.loss_history.push_back(train_loss);
             cached_metrics_.accuracy_history.push_back(train_acc);
+            if (val_loss >= 0.0f) {
+                cached_metrics_.val_loss_history.push_back(val_loss);
+            }
+            if (val_acc >= 0.0f) {
+                cached_metrics_.val_accuracy_history.push_back(val_acc);
+            }
 
             // Calculate samples/sec from cached metrics
             if (epoch_time > 0) {
@@ -726,13 +733,37 @@ void TrainingManager::TrainingThreadFunc(
     // Get final metrics
     {
         std::lock_guard<std::mutex> lock(metrics_mutex_);
-        final_metrics = cached_metrics_;
+        if (final_metrics.total_epochs == 0) {
+            final_metrics = cached_metrics_;
+        } else {
+            final_metrics.loss_history = cached_metrics_.loss_history;
+            final_metrics.accuracy_history = cached_metrics_.accuracy_history;
+            final_metrics.val_loss_history = cached_metrics_.val_loss_history;
+            final_metrics.val_accuracy_history = cached_metrics_.val_accuracy_history;
+        }
         cached_metrics_.is_training = false;
         cached_metrics_.is_complete = !stop_requested_.load();
     }
 
     // Update plot panel with completion status
     if (auto panel = plot_panel.lock()) {
+        std::string run_id =
+            "training-task-" + std::to_string(current_task_id_.load());
+        TrainingConfiguration completed_config;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (current_executor_) {
+                completed_config = current_executor_->GetConfig();
+            }
+        }
+        const auto record = MakeTrainingRunComparisonRecord(
+            run_id,
+            completed_config,
+            final_metrics,
+            total_training_time,
+            "",
+            stop_requested_.load() ? "stopped" : "complete");
+        panel->AddRunComparisonRecord(record);
         panel->SetTrainingComplete(total_training_time);
     }
 

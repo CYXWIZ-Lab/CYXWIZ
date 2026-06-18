@@ -7,6 +7,7 @@
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/pipeline_materializer.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
+#include "../src/core/training_run_comparison.h"
 #include "../src/gui/graph_training_launcher.h"
 
 #include <arrow/api.h>
@@ -209,6 +210,94 @@ void CheckUnsupportedMaterializerSource(
           label + " source should expose central materializer skip reason");
 }
 
+void TestTrainingRunComparisonRecord() {
+    cyxwiz::TrainingConfiguration config;
+    config.dataset_name = "sentiment_v1";
+    config.epochs = 8;
+    config.batch_size = 32;
+    config.learning_rate = 0.0002f;
+    config.save_best_checkpoint = true;
+    config.early_stopping_patience = 3;
+    config.checkpoint_dir = "runs/sentiment";
+
+    cyxwiz::CompiledLayer gru;
+    gru.type = gui::NodeType::GRU;
+    gru.parameters["hidden_size"] = "96";
+    gru.parameters["num_layers"] = "2";
+    gru.parameters["bidirectional"] = "true";
+    config.layers.push_back(gru);
+
+    cyxwiz::TrainingMetrics metrics;
+    metrics.train_loss = 0.25f;
+    metrics.train_accuracy = 0.91f;
+    metrics.val_loss_history = {0.9f, 0.7f, 0.8f};
+    metrics.val_accuracy_history = {0.65f, 0.72f, 0.70f};
+    metrics.test_loss = 0.68f;
+    metrics.test_accuracy = 0.71f;
+
+    const auto record = cyxwiz::MakeTrainingRunComparisonRecord(
+        "run-001", config, metrics, 12.5f,
+        "runs/sentiment/best_checkpoint.cyxckpt",
+        "complete");
+
+    Check(record.run_id == "run-001", "run comparison should keep run id");
+    Check(record.run_status == "complete",
+          "run comparison should keep run status");
+    Check(record.dataset_name == "sentiment_v1",
+          "run comparison should keep dataset");
+    Check(record.primary_layer_type == "GRU",
+          "run comparison should keep primary layer type");
+    Check(record.architecture_summary == "GRU",
+          "run comparison should summarize architecture");
+    Check(record.model_layer_count == 1,
+          "run comparison should count model layers");
+    Check(record.model_family == "GRU",
+          "run comparison should detect GRU family");
+    Check(record.bidirectional,
+          "run comparison should preserve bidirectional flag");
+    Check(record.hidden_size == 96,
+          "run comparison should preserve hidden size");
+    Check(record.num_layers == 2,
+          "run comparison should preserve recurrent layer count");
+    Check(record.best_val_loss == 0.7f,
+          "run comparison should compute best validation loss");
+    Check(record.best_val_accuracy == 0.72f,
+          "run comparison should compute best validation accuracy");
+    Check(record.has_validation_metrics,
+          "run comparison should mark validation metrics present");
+    Check(record.has_test_metrics,
+          "run comparison should mark test metrics present");
+    Check(record.checkpoint_used == "runs/sentiment/best_checkpoint.cyxckpt",
+          "run comparison should keep checkpoint used");
+    Check(record.final_test_accuracy == 0.71f,
+          "run comparison should keep final test accuracy");
+
+    const std::string csv = cyxwiz::TrainingRunComparisonTableSummary({record});
+    Check(csv.find("run_id,run_status,dataset_name,model_family") == 0,
+          "run comparison CSV should include stable header");
+    Check(csv.find("run-001,complete,sentiment_v1,GRU") != std::string::npos,
+          "run comparison CSV should include record row");
+
+    const auto output_path =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_training_run_comparison" /
+        "runs.csv";
+    std::string error;
+    Check(cyxwiz::WriteTrainingRunComparisonCsv(output_path, {record}, &error),
+          "run comparison CSV export should succeed: " + error);
+    Check(std::filesystem::exists(output_path),
+          "run comparison CSV export should create output file");
+
+    auto weaker = record;
+    weaker.run_id = "run-002";
+    weaker.final_test_accuracy = 0.60f;
+    auto sorted = cyxwiz::SortTrainingRunComparisonsByBestMetric({weaker, record});
+    Check(sorted.size() == 2,
+          "run comparison sort should keep all records");
+    Check(sorted.front().run_id == "run-001",
+          "run comparison sort should prefer higher test accuracy");
+}
+
 } // namespace
 
 namespace cyxwiz {
@@ -241,6 +330,8 @@ std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
 } // namespace cyxwiz
 
 int main() {
+    TestTrainingRunComparisonRecord();
+
     const auto work_dir =
         std::filesystem::temp_directory_path() /
         "cyxwiz_text_gui_training_launch";
@@ -386,6 +477,13 @@ int main() {
         Check(label_column == "y", "dispatch should receive runtime y label");
         Check(epochs == 1, "epochs should come from compiled config");
         Check(batch_size == 2, "batch size should come from compiled config");
+        Check(!dispatch_config.save_best_checkpoint,
+              "save_best_checkpoint should come from compiled config");
+        Check(dispatch_config.early_stopping_patience == 0,
+              "early stopping patience should come from compiled config");
+        Check(dispatch_config.checkpoint_dir ==
+                  (work_dir / "checkpoints").string(),
+              "checkpoint directory should come from compiled config");
 
         if (callback) {
             callback(true);

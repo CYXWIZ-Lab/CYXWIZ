@@ -128,9 +128,11 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 grad_accum = grad_accum_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Effective batch size = batch_size * grad_accum_steps.\n"
-                                  "Lets you simulate larger batches on small GPUs.");
+                ImGui::SetTooltip("Future field: current TrainingExecutor does not yet accumulate gradients.\n"
+                                  "Effective batch size is still the configured batch_size.");
             }
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                               "  Partial: not consumed by the current training loop.");
 
             ImGui::Spacing();
 
@@ -171,8 +173,11 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 seed = seed_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Random seed for shuffle order. Same seed = same epoch order.");
+                ImGui::SetTooltip("Partial field: DataSplit.seed controls split reproducibility.\n"
+                                  "Current DataLoader training shuffle does not consume this seed directly.");
             }
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                               "  Partial: split seed is runtime-owned; loader shuffle seed is not yet wired.");
 
             ImGui::Spacing();
 
@@ -269,6 +274,8 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Reserved for future pinned host-memory transfers. Current batchers ignore this field.");
             }
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                               "  Future: current batchers ignore this field.");
 
             ImGui::Spacing();
 
@@ -288,8 +295,10 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 log_interval = log_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Print loss/metrics every N batches.");
+                ImGui::SetTooltip("Future field: current TrainingExecutor logging cadence is hardcoded in the loop.");
             }
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                               "  Partial: logging cadence is not runtime-configurable yet.");
 
             std::string& val_freq = node.parameters["validation_freq"];
             if (val_freq.empty()) val_freq = "1";
@@ -304,8 +313,10 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 val_freq = val_freq_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Run validation pass every N epochs (1 = every epoch).");
+                ImGui::SetTooltip("Future field: current TrainingExecutor validates every epoch when validation is available.");
             }
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                               "  Partial: current runtime validates every epoch.");
             break;
         }
 

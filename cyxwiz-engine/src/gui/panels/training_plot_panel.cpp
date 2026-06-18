@@ -3,6 +3,7 @@
 #include "../../core/crash_run_recorder.h"
 #include "../../core/training_manager.h"
 #endif
+#include "../../core/training_run_comparison.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
@@ -151,6 +152,8 @@ void TrainingPlotPanel::Render() {
         ImGui::EndChild();
     }
 
+    RenderRunComparisonTable();
+
     ImGui::End();
 }
 
@@ -216,6 +219,19 @@ void TrainingPlotPanel::AddCustomMetric(const std::string& metric_name, int epoc
     it->epochs.push_back(epoch);
     it->values.push_back(value);
     TrimDataIfNeeded(*it);
+}
+
+void TrainingPlotPanel::AddRunComparisonRecord(
+    const TrainingRunComparisonRecord& record) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    run_comparison_records_.push_back(record);
+    run_comparison_records_ =
+        SortTrainingRunComparisonsByBestMetric(run_comparison_records_);
+}
+
+void TrainingPlotPanel::ClearRunComparisonRecords() {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    run_comparison_records_.clear();
 }
 
 void TrainingPlotPanel::Clear() {
@@ -335,6 +351,14 @@ void TrainingPlotPanel::ExportToCSV(const std::string& filepath) {
 void TrainingPlotPanel::ExportPlotImage(const std::string& /*filepath*/) {
     // TODO: Implement screenshot/export functionality
     // This would require rendering to a framebuffer and saving as image
+}
+
+void TrainingPlotPanel::ExportRunComparisonCSV(const std::string& filepath) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    std::string error;
+    if (!WriteTrainingRunComparisonCsv(filepath, run_comparison_records_, &error)) {
+        RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed", error);
+    }
 }
 
 void TrainingPlotPanel::RenderLossPlot() {
@@ -823,6 +847,127 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
     ImGui::NextColumn();
 
     ImGui::Columns(1);
+}
+
+void TrainingPlotPanel::RenderRunComparisonTable() {
+    ImGui::Separator();
+    if (!ImGui::CollapsingHeader("Run Comparison",
+                                 ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
+
+    if (run_comparison_records_.empty()) {
+        ImGui::TextDisabled(
+            "No completed training runs recorded in this session.");
+        ImGui::TextDisabled(
+            "Completed graph training runs will appear here for comparison.");
+        return;
+    }
+
+    if (ImGui::Button("Export Run CSV")) {
+        std::string error;
+        if (!WriteTrainingRunComparisonCsv(
+                "training_run_comparison.csv",
+                run_comparison_records_,
+                &error)) {
+            RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed",
+                             error);
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear Runs")) {
+        run_comparison_records_.clear();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled(
+        "Sorted by test accuracy, then validation metrics, then elapsed time.");
+
+    if (ImGui::BeginTable(
+            "TrainingRunComparisonTable",
+            12,
+            ImGuiTableFlags_Borders |
+                ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_Resizable |
+                ImGuiTableFlags_ScrollX)) {
+        ImGui::TableSetupColumn("Run");
+        ImGui::TableSetupColumn("Status");
+        ImGui::TableSetupColumn("Dataset");
+        ImGui::TableSetupColumn("Architecture");
+        ImGui::TableSetupColumn("Epochs");
+        ImGui::TableSetupColumn("Batch");
+        ImGui::TableSetupColumn("LR");
+        ImGui::TableSetupColumn("Best Val Loss");
+        ImGui::TableSetupColumn("Best Val Acc");
+        ImGui::TableSetupColumn("Test Loss");
+        ImGui::TableSetupColumn("Test Acc");
+        ImGui::TableSetupColumn("Checkpoint");
+        ImGui::TableHeadersRow();
+
+        for (const auto& record : run_comparison_records_) {
+            ImGui::TableNextRow();
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(record.run_id.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(record.run_status.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(record.dataset_name.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(record.architecture_summary.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", record.epochs);
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", record.batch_size);
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%.6f", record.learning_rate);
+
+            ImGui::TableNextColumn();
+            if (record.has_validation_metrics) {
+                ImGui::Text("%.4f", record.best_val_loss);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableNextColumn();
+            if (record.has_validation_metrics) {
+                ImGui::Text("%.2f%%", record.best_val_accuracy * 100.0f);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableNextColumn();
+            if (record.has_test_metrics) {
+                ImGui::Text("%.4f", record.final_test_loss);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableNextColumn();
+            if (record.has_test_metrics) {
+                ImGui::Text("%.2f%%", record.final_test_accuracy * 100.0f);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableNextColumn();
+            const std::string& checkpoint = record.checkpoint_used.empty()
+                ? record.checkpoint_dir
+                : record.checkpoint_used;
+            if (!checkpoint.empty()) {
+                ImGui::TextUnformatted(checkpoint.c_str());
+            } else {
+                ImGui::TextDisabled("-");
+            }
+        }
+
+        ImGui::EndTable();
+    }
 }
 
 void TrainingPlotPanel::RenderTrainingStatus() {
