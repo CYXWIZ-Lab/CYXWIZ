@@ -279,6 +279,9 @@ Target batches:
   checkpoint paths are shown when known, explicit checkpoint roots are shown
   when configured, and otherwise the default `.cyxwiz/checkpoints` run folder
   is labeled instead of appearing empty.
+- Wired the actual restored best-checkpoint path into `TrainingMetrics` so
+  run-comparison records can show the checkpoint used for final evaluation
+  when `TrainingExecutor` restores one.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

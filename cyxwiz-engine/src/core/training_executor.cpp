@@ -616,6 +616,7 @@ void TrainingExecutor::Train(
                 final_metrics.accuracy_history = restored->accuracy_history;
                 final_metrics.val_loss_history = restored->val_loss_history;
                 final_metrics.val_accuracy_history = restored->val_accuracy_history;
+                final_metrics.checkpoint_used = best_checkpoint;
                 UpdateMetrics([&](TrainingMetrics& m) {
                     m.current_epoch = restored->epoch;
                     m.current_batch = restored->global_step;
@@ -627,6 +628,7 @@ void TrainingExecutor::Train(
                     m.accuracy_history = restored->accuracy_history;
                     m.val_loss_history = restored->val_loss_history;
                     m.val_accuracy_history = restored->val_accuracy_history;
+                    m.checkpoint_used = best_checkpoint;
                     m.status_message = "Restored best validation checkpoint";
                 });
                 spdlog::info("TrainingExecutor: Restored best checkpoint from epoch {} (val_loss={:.4f})",
@@ -1087,6 +1089,80 @@ void TrainingExecutor::PreprocessBatch(Batch& /*batch*/) {
     // Preprocessing is handled by DatasetBatcher
 }
 
+namespace {
+
+int64_t SequenceTargetIdAt(const Tensor& targets, size_t offset) {
+    if (targets.GetDataType() == DataType::Int64) {
+        return targets.Data<int64_t>()[offset];
+    }
+    if (targets.GetDataType() == DataType::Int32) {
+        return static_cast<int64_t>(targets.Data<int32_t>()[offset]);
+    }
+    throw std::runtime_error("language-model target_ids must be Int64 or Int32");
+}
+
+struct NextTokenAccuracyCount {
+    size_t correct = 0;
+    size_t valid = 0;
+};
+
+NextTokenAccuracyCount CountNextTokenAccuracyFromLogits(
+    const Tensor& logits,
+    const Tensor& target_ids,
+    int64_t ignore_index) {
+
+    const auto& logit_shape = logits.Shape();
+    const auto& target_shape = target_ids.Shape();
+    if (logits.GetDataType() != DataType::Float32 ||
+        logit_shape.size() != 3 ||
+        target_shape.size() != 2 ||
+        target_shape[0] != logit_shape[0] ||
+        target_shape[1] != logit_shape[1]) {
+        throw std::runtime_error(
+            "language-model accuracy expects logits [batch, seq, vocab] "
+            "and target_ids [batch, seq]");
+    }
+
+    const size_t batch_size = logit_shape[0];
+    const size_t sequence_length = logit_shape[1];
+    const size_t vocab_size = logit_shape[2];
+    const float* data = logits.Data<float>();
+
+    NextTokenAccuracyCount result;
+    for (size_t row = 0; row < batch_size; ++row) {
+        for (size_t col = 0; col < sequence_length; ++col) {
+            const size_t target_offset = row * sequence_length + col;
+            const int64_t target = SequenceTargetIdAt(target_ids, target_offset);
+            if (target == ignore_index) {
+                continue;
+            }
+            if (target < 0 || static_cast<size_t>(target) >= vocab_size) {
+                throw std::runtime_error(
+                    "language-model target id is outside the vocabulary range");
+            }
+
+            const size_t logit_offset = target_offset * vocab_size;
+            size_t predicted = 0;
+            float best = data[logit_offset];
+            for (size_t vocab = 1; vocab < vocab_size; ++vocab) {
+                const float value = data[logit_offset + vocab];
+                if (value > best) {
+                    best = value;
+                    predicted = vocab;
+                }
+            }
+            if (predicted == static_cast<size_t>(target)) {
+                ++result.correct;
+            }
+            ++result.valid;
+        }
+    }
+
+    return result;
+}
+
+} // namespace
+
 void TrainingExecutor::RunTrainingEpochSequence(
     ISequenceBatcher& batcher,
     int epoch,
@@ -1121,8 +1197,14 @@ void TrainingExecutor::RunTrainingEpochSequence(
         if (!batch.IsValid()) break;
         if (!batch.IsSupervised()) {
             throw std::runtime_error(
-                "TrainingExecutor: sequence batch is missing tag_ids");
+                "TrainingExecutor: sequence batch is missing tag_ids or target_ids");
         }
+        const bool is_language_modeling = batch.HasTargetIds();
+        const Tensor& targets =
+            is_language_modeling ? batch.target_ids : batch.tag_ids;
+        const int64_t ignore_index = is_language_modeling
+            ? config_.sequence_batch.target_ignore_index
+            : config_.sequence_batch.ignore_index;
 
         ++batch_num;
         sample_count += batch.size;
@@ -1141,7 +1223,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::ComputeLoss, epoch, batch_num,
             static_cast<int>(total_batches));
-        const float batch_loss = ComputeLoss(predictions, batch.tag_ids);
+        const float batch_loss = ComputeLoss(predictions, targets);
         const std::string loss_status =
             std::isfinite(batch_loss) ? "ok" : "failed";
         TrainingTraceCollector::Instance().RecordStage(
@@ -1156,17 +1238,27 @@ void TrainingExecutor::RunTrainingEpochSequence(
         }
         epoch_loss += batch_loss;
 
-        const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
-            predictions, batch.tag_ids, sequence_id_to_label_,
-            config_.sequence_batch.ignore_index);
-        AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
-        FinalizeSequenceTagMetricRates(aggregate_metrics);
+        if (is_language_modeling) {
+            const auto accuracy_count = CountNextTokenAccuracyFromLogits(
+                predictions, targets, ignore_index);
+            aggregate_metrics.total_tokens += accuracy_count.valid;
+            aggregate_metrics.correct_tokens += accuracy_count.correct;
+            aggregate_metrics.token_accuracy =
+                aggregate_metrics.total_tokens == 0 ? 0.0 :
+                    static_cast<double>(aggregate_metrics.correct_tokens) /
+                    static_cast<double>(aggregate_metrics.total_tokens);
+        } else {
+            const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
+                predictions, targets, sequence_id_to_label_, ignore_index);
+            AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
+            FinalizeSequenceTagMetricRates(aggregate_metrics);
+        }
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::Backward, epoch, batch_num,
             static_cast<int>(total_batches), batch_loss);
         const auto backward_start = std::chrono::steady_clock::now();
-        Backward(predictions, batch.tag_ids);
+        Backward(predictions, targets);
         const auto backward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - backward_start).count();
         TrainingTraceCollector::Instance().RecordStage(
@@ -1272,22 +1364,38 @@ void TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
         if (!batch.IsValid()) break;
         if (!batch.IsSupervised()) {
             throw std::runtime_error(
-                "TrainingExecutor: sequence validation batch is missing tag_ids");
+                "TrainingExecutor: sequence validation batch is missing tag_ids or target_ids");
         }
+        const bool is_language_modeling = batch.HasTargetIds();
+        const Tensor& targets =
+            is_language_modeling ? batch.target_ids : batch.tag_ids;
+        const int64_t ignore_index = is_language_modeling
+            ? config_.sequence_batch.target_ignore_index
+            : config_.sequence_batch.ignore_index;
 
         ++batch_num;
         Tensor predictions = Forward(batch.word_ids);
-        const float batch_loss = ComputeLoss(predictions, batch.tag_ids);
+        const float batch_loss = ComputeLoss(predictions, targets);
         if (!std::isfinite(batch_loss)) {
             throw std::runtime_error(
                 "TrainingExecutor: sequence validation loss is not finite");
         }
         val_loss += batch_loss;
 
-        const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
-            predictions, batch.tag_ids, sequence_id_to_label_,
-            config_.sequence_batch.ignore_index);
-        AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
+        if (is_language_modeling) {
+            const auto accuracy_count = CountNextTokenAccuracyFromLogits(
+                predictions, targets, ignore_index);
+            aggregate_metrics.total_tokens += accuracy_count.valid;
+            aggregate_metrics.correct_tokens += accuracy_count.correct;
+            aggregate_metrics.token_accuracy =
+                aggregate_metrics.total_tokens == 0 ? 0.0 :
+                    static_cast<double>(aggregate_metrics.correct_tokens) /
+                    static_cast<double>(aggregate_metrics.total_tokens);
+        } else {
+            const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
+                predictions, targets, sequence_id_to_label_, ignore_index);
+            AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
+        }
     }
 
     FinalizeSequenceTagMetricRates(aggregate_metrics);

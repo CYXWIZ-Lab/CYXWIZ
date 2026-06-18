@@ -761,7 +761,7 @@ void TrainingManager::TrainingThreadFunc(
             completed_config,
             final_metrics,
             total_training_time,
-            "",
+            final_metrics.checkpoint_used,
             stop_requested_.load() ? "stopped" : "complete");
         panel->AddRunComparisonRecord(record);
         panel->SetTrainingComplete(total_training_time);

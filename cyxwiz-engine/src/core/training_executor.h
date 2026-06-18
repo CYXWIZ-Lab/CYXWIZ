@@ -43,6 +43,10 @@ struct TrainingMetrics {
     float test_loss = 0.0f;
     float test_accuracy = 0.0f;
 
+    // Checkpoint actually restored/used for final evaluation. Empty means no
+    // concrete checkpoint path was restored by the executor.
+    std::string checkpoint_used;
+
     // Token-level sequence tagging metrics. For sequence training,
     // train_accuracy/val_accuracy also mirror token accuracy so existing
     // dashboards and callbacks keep working.

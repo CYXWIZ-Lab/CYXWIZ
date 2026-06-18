@@ -234,10 +234,11 @@ void TestTrainingRunComparisonRecord() {
     metrics.val_accuracy_history = {0.65f, 0.72f, 0.70f};
     metrics.test_loss = 0.68f;
     metrics.test_accuracy = 0.71f;
+    metrics.checkpoint_used = "runs/sentiment/best_checkpoint.cyxckpt";
 
     const auto record = cyxwiz::MakeTrainingRunComparisonRecord(
         "run-001", config, metrics, 12.5f,
-        "runs/sentiment/best_checkpoint.cyxckpt",
+        metrics.checkpoint_used,
         "complete");
 
     Check(record.run_id == "run-001", "run comparison should keep run id");
