@@ -124,6 +124,9 @@ inline std::string ResolveTrainingRunCheckpointDisplay(
     if (!checkpoint_used.empty()) {
         return checkpoint_used;
     }
+    if (!config.save_best_checkpoint) {
+        return "final epoch model state";
+    }
     if (!config.checkpoint_dir.empty()) {
         return config.checkpoint_dir;
     }

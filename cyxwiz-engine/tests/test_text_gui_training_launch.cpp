@@ -326,6 +326,13 @@ void TestTrainingRunComparisonRecord() {
               "default .cyxwiz/checkpoints run folder",
           "run comparison should make default checkpoint root explicit");
 
+    config.save_best_checkpoint = false;
+    const auto final_state_record =
+        cyxwiz::MakeTrainingRunComparisonRecord(
+            "run-final-state", config, metrics, 1.0f);
+    Check(final_state_record.checkpoint_used == "final epoch model state",
+          "run comparison should not imply checkpoint use when checkpointing is disabled");
+
     cyxwiz::TrainingMetrics zero_metrics;
     zero_metrics.has_validation_metrics = true;
     zero_metrics.has_test_metrics = true;

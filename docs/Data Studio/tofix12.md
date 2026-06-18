@@ -298,6 +298,9 @@ Target batches:
 - Added actual train/validation/test sample counts to `TrainingMetrics`, the
   run-comparison record, CSV export, focused comparison test, and Training
   Dashboard table so split reporting is not limited to configured ratios.
+- Corrected checkpoint display truthfulness: when no checkpoint was restored
+  and best-checkpoint saving is disabled, run comparison now reports the final
+  epoch model state instead of implying a default checkpoint path was used.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM
