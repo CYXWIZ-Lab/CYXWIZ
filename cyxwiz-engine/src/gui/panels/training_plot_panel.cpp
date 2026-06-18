@@ -884,7 +884,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
     if (ImGui::BeginTable(
             "TrainingRunComparisonTable",
-            20,
+            21,
             ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_Resizable |
@@ -893,6 +893,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("Status");
         ImGui::TableSetupColumn("Dataset");
         ImGui::TableSetupColumn("Domain");
+        ImGui::TableSetupColumn("Seq");
         ImGui::TableSetupColumn("Split");
         ImGui::TableSetupColumn("Samples");
         ImGui::TableSetupColumn("Model");
@@ -925,6 +926,9 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(record.preprocessing_domain.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(record.sequence_batch_enabled ? "yes" : "no");
 
             ImGui::TableNextColumn();
             ImGui::Text("%.0f/%.0f/%.0f%%",

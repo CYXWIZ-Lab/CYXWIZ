@@ -307,6 +307,9 @@ Target batches:
 - Added preprocessing-domain visibility to run-comparison records, CSV export,
   focused comparison test, and the Training Dashboard table so comparisons
   distinguish tabular, text, image, audio, time-series, and general runs.
+- Added sequence-batch mode visibility to run-comparison records, CSV export,
+  focused comparison test, and the Training Dashboard table so sequence tasks
+  are not conflated with plain sample-level classification runs.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

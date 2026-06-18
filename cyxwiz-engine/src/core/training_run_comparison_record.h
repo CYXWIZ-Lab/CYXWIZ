@@ -10,6 +10,7 @@ struct TrainingRunComparisonRecord {
     std::string run_status;
     std::string dataset_name;
     std::string preprocessing_domain;
+    bool sequence_batch_enabled = false;
     std::string model_family;
     std::string primary_layer_type;
     std::string architecture_summary;

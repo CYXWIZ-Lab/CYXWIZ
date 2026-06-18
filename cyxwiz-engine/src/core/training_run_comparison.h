@@ -29,7 +29,7 @@ inline std::string TrainingRunComparisonDomainName(
 
 inline std::string TrainingRunComparisonCsvHeader() {
     return "run_id,run_status,dataset_name,preprocessing_domain,"
-           "model_family,primary_layer_type,"
+           "sequence_batch_enabled,model_family,primary_layer_type,"
            "architecture_summary,model_layer_count,epochs,batch_size,"
            "learning_rate,train_ratio,val_ratio,test_ratio,"
            "train_sample_count,val_sample_count,test_sample_count,"
@@ -75,6 +75,7 @@ inline std::string TrainingRunComparisonToCsvRow(
         << EscapeTrainingRunComparisonCsvField(record.run_status) << ','
         << EscapeTrainingRunComparisonCsvField(record.dataset_name) << ','
         << EscapeTrainingRunComparisonCsvField(record.preprocessing_domain) << ','
+        << (record.sequence_batch_enabled ? "true" : "false") << ','
         << EscapeTrainingRunComparisonCsvField(record.model_family) << ','
         << EscapeTrainingRunComparisonCsvField(record.primary_layer_type) << ','
         << EscapeTrainingRunComparisonCsvField(record.architecture_summary) << ','
@@ -165,6 +166,7 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
     record.dataset_name = config.dataset_name;
     record.preprocessing_domain =
         TrainingRunComparisonDomainName(config.preprocessing_domain);
+    record.sequence_batch_enabled = config.sequence_batch.enabled;
     record.model_layer_count = static_cast<int>(config.layers.size());
     record.architecture_summary = BuildTrainingRunArchitectureSummary(config);
     record.primary_layer_type = config.layers.empty()
