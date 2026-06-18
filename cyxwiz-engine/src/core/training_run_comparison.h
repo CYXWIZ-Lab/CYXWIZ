@@ -160,12 +160,10 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
     record.final_test_accuracy = metrics.test_accuracy;
     record.elapsed_seconds = elapsed_seconds;
     record.has_validation_metrics =
+        metrics.has_validation_metrics ||
         !metrics.val_loss_history.empty() ||
-        !metrics.val_accuracy_history.empty() ||
-        metrics.val_loss != 0.0f ||
-        metrics.val_accuracy != 0.0f;
-    record.has_test_metrics =
-        metrics.test_loss != 0.0f || metrics.test_accuracy != 0.0f;
+        !metrics.val_accuracy_history.empty();
+    record.has_test_metrics = metrics.has_test_metrics;
 
     if (!metrics.val_loss_history.empty()) {
         record.best_val_loss = metrics.val_loss_history.front();

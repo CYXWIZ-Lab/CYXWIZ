@@ -292,6 +292,9 @@ Target batches:
   training-loop fields are proven to flow into `TrainingConfiguration`:
   `epochs`, `batch_size`, `num_workers`, `prefetch_factor`,
   `save_best_checkpoint`, `early_stopping_patience`, and `checkpoint_dir`.
+- Made metric availability explicit by adding validation/test presence flags
+  to `TrainingMetrics` and using those flags in run comparison. This avoids
+  treating zero-valued loss or accuracy as "metrics missing."
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

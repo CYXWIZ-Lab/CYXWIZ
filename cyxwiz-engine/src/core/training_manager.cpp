@@ -602,9 +602,11 @@ void TrainingManager::TrainingThreadFunc(
             cached_metrics_.accuracy_history.push_back(train_acc);
             if (val_loss >= 0.0f) {
                 cached_metrics_.val_loss_history.push_back(val_loss);
+                cached_metrics_.has_validation_metrics = true;
             }
             if (val_acc >= 0.0f) {
                 cached_metrics_.val_accuracy_history.push_back(val_acc);
+                cached_metrics_.has_validation_metrics = true;
             }
 
             // Calculate samples/sec from cached metrics

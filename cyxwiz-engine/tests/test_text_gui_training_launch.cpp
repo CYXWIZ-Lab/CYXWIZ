@@ -235,8 +235,10 @@ void TestTrainingRunComparisonRecord() {
     metrics.train_accuracy = 0.91f;
     metrics.val_loss_history = {0.9f, 0.7f, 0.8f};
     metrics.val_accuracy_history = {0.65f, 0.72f, 0.70f};
+    metrics.has_validation_metrics = true;
     metrics.test_loss = 0.68f;
     metrics.test_accuracy = 0.71f;
+    metrics.has_test_metrics = true;
     metrics.checkpoint_used = "runs/sentiment/best_checkpoint.cyxckpt";
 
     const auto record = cyxwiz::MakeTrainingRunComparisonRecord(
@@ -314,6 +316,16 @@ void TestTrainingRunComparisonRecord() {
     Check(default_checkpoint_record.checkpoint_used ==
               "default .cyxwiz/checkpoints run folder",
           "run comparison should make default checkpoint root explicit");
+
+    cyxwiz::TrainingMetrics zero_metrics;
+    zero_metrics.has_validation_metrics = true;
+    zero_metrics.has_test_metrics = true;
+    const auto zero_record = cyxwiz::MakeTrainingRunComparisonRecord(
+        "run-zero", config, zero_metrics, 1.0f);
+    Check(zero_record.has_validation_metrics,
+          "run comparison should not infer validation availability from nonzero values");
+    Check(zero_record.has_test_metrics,
+          "run comparison should not infer test availability from nonzero values");
 }
 
 } // namespace

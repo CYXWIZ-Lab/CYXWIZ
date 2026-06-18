@@ -216,6 +216,8 @@ void TrainingExecutor::Train(
         m.accuracy_history.clear();
         m.val_loss_history.clear();
         m.val_accuracy_history.clear();
+        m.has_validation_metrics = false;
+        m.has_test_metrics = false;
         m.train_token_accuracy = 0.0f;
         m.val_token_accuracy = 0.0f;
         m.train_entity_f1 = 0.0f;
@@ -612,6 +614,7 @@ void TrainingExecutor::Train(
                 final_metrics.train_accuracy = restored->train_accuracy;
                 final_metrics.val_loss = restored->val_loss;
                 final_metrics.val_accuracy = restored->val_accuracy;
+                final_metrics.has_validation_metrics = true;
                 final_metrics.loss_history = restored->loss_history;
                 final_metrics.accuracy_history = restored->accuracy_history;
                 final_metrics.val_loss_history = restored->val_loss_history;
@@ -624,6 +627,7 @@ void TrainingExecutor::Train(
                     m.train_accuracy = restored->train_accuracy;
                     m.val_loss = restored->val_loss;
                     m.val_accuracy = restored->val_accuracy;
+                    m.has_validation_metrics = true;
                     m.loss_history = restored->loss_history;
                     m.accuracy_history = restored->accuracy_history;
                     m.val_loss_history = restored->val_loss_history;
@@ -646,9 +650,11 @@ void TrainingExecutor::Train(
         UpdateMetrics([test_loss, test_acc](TrainingMetrics& m) {
             m.test_loss = test_loss;
             m.test_accuracy = test_acc;
+            m.has_test_metrics = true;
         });
         final_metrics.test_loss = test_loss;
         final_metrics.test_accuracy = test_acc;
+        final_metrics.has_test_metrics = true;
         spdlog::info("TrainingExecutor: Held-out test metrics test_loss={:.4f}, test_acc={:.2f}% ({} samples)",
                      test_loss, test_acc * 100.0f, active_test_ibatcher->GetNumSamples());
     } else if (!stop_requested_.load() && active_test_ibatcher) {
@@ -962,6 +968,7 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
     UpdateMetrics([final_loss, final_acc](TrainingMetrics& m) {
         m.val_loss = final_loss;
         m.val_accuracy = final_acc;
+        m.has_validation_metrics = true;
     });
 }
 #endif
@@ -1412,6 +1419,7 @@ void TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
                   (TrainingMetrics& m) {
         m.val_loss = final_loss;
         m.val_accuracy = final_acc;
+        m.has_validation_metrics = true;
         m.val_token_accuracy = final_acc;
         m.val_entity_f1 = final_f1;
         m.val_token_count = token_count;
@@ -1731,6 +1739,7 @@ void TrainingExecutor::RunValidationArrow(IBatcher& batcher) {
     UpdateMetrics([final_loss, final_acc](TrainingMetrics& m) {
         m.val_loss = final_loss;
         m.val_accuracy = final_acc;
+        m.has_validation_metrics = true;
     });
 }
 

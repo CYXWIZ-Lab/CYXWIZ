@@ -38,10 +38,12 @@ struct TrainingMetrics {
     // Validation metrics
     float val_loss = 0.0f;
     float val_accuracy = 0.0f;
+    bool has_validation_metrics = false;
 
     // Held-out test metrics, populated after training when a test split exists.
     float test_loss = 0.0f;
     float test_accuracy = 0.0f;
+    bool has_test_metrics = false;
 
     // Checkpoint actually restored/used for final evaluation. Empty means no
     // concrete checkpoint path was restored by the executor.
