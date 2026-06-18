@@ -304,6 +304,9 @@ Target batches:
 - Added best-validation epoch reporting to the run-comparison record, CSV
   export, focused comparison test, and Training Dashboard table so users can
   see which epoch produced the best validation loss and accuracy.
+- Added preprocessing-domain visibility to run-comparison records, CSV export,
+  focused comparison test, and the Training Dashboard table so comparisons
+  distinguish tabular, text, image, audio, time-series, and general runs.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

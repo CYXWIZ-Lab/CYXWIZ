@@ -219,6 +219,7 @@ void TestTrainingRunComparisonRecord() {
     config.train_ratio = 0.70f;
     config.val_ratio = 0.15f;
     config.test_ratio = 0.15f;
+    config.preprocessing_domain = cyxwiz::PreprocessingDomain::Text;
     config.save_best_checkpoint = true;
     config.early_stopping_patience = 3;
     config.checkpoint_dir = "runs/sentiment";
@@ -254,6 +255,8 @@ void TestTrainingRunComparisonRecord() {
           "run comparison should keep run status");
     Check(record.dataset_name == "sentiment_v1",
           "run comparison should keep dataset");
+    Check(record.preprocessing_domain == "text",
+          "run comparison should keep preprocessing domain");
     Check(record.primary_layer_type == "GRU",
           "run comparison should keep primary layer type");
     Check(record.architecture_summary == "GRU",
@@ -298,9 +301,9 @@ void TestTrainingRunComparisonRecord() {
           "run comparison should keep final test accuracy");
 
     const std::string csv = cyxwiz::TrainingRunComparisonTableSummary({record});
-    Check(csv.find("run_id,run_status,dataset_name,model_family") == 0,
+    Check(csv.find("run_id,run_status,dataset_name,preprocessing_domain") == 0,
           "run comparison CSV should include stable header");
-    Check(csv.find("run-001,complete,sentiment_v1,GRU") != std::string::npos,
+    Check(csv.find("run-001,complete,sentiment_v1,text,GRU") != std::string::npos,
           "run comparison CSV should include record row");
 
     const auto output_path =
