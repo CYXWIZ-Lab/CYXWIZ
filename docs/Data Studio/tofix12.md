@@ -285,6 +285,9 @@ Target batches:
 - Added train/validation/test split ratios to the run-comparison record, CSV
   export, focused contract test, and Training Dashboard table so completed
   runs show the exact split policy used for the comparison.
+- Exposed checkpoint policy in the Training Dashboard comparison table by
+  showing whether best-checkpoint saving was enabled and the configured early
+  stopping patience beside the resolved checkpoint path.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM

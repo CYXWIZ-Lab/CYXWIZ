@@ -884,7 +884,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
     if (ImGui::BeginTable(
             "TrainingRunComparisonTable",
-            15,
+            17,
             ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_Resizable |
@@ -903,6 +903,8 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("Test Loss");
         ImGui::TableSetupColumn("Test Acc");
         ImGui::TableSetupColumn("Elapsed");
+        ImGui::TableSetupColumn("Best Ckpt");
+        ImGui::TableSetupColumn("Patience");
         ImGui::TableSetupColumn("Checkpoint");
         ImGui::TableHeadersRow();
 
@@ -969,6 +971,17 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
             ImGui::TableNextColumn();
             ImGui::Text("%.1fs", record.elapsed_seconds);
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(
+                record.save_best_checkpoint ? "yes" : "no");
+
+            ImGui::TableNextColumn();
+            if (record.early_stopping_patience > 0) {
+                ImGui::Text("%d", record.early_stopping_patience);
+            } else {
+                ImGui::TextDisabled("-");
+            }
 
             ImGui::TableNextColumn();
             if (!record.checkpoint_used.empty()) {
