@@ -2226,7 +2226,7 @@ void NodeMetadataRegistry::InitializeDNNNodes() {
 // Text Nodes
 // =============================================================================
 void NodeMetadataRegistry::InitializeTextNodes() {
-    RegisterNode({NodeType::TextCleanNode, NodeCategory::TextProcessing, "Text Clean", ICON_FA_BROOM,
+    RegisterNode({NodeType::TextCleanNode, NodeCategory::TextProcessing, "Text Clean", ICON_FA_ERASER,
         {"clean", "text", "normalize", "lowercase", "html"}, 0, false,
         "Clean one text column with lowercase, HTML removal, and special-character normalization", "", "",
         {{"Text", PinType::Dataset, true, "Input text table"}},

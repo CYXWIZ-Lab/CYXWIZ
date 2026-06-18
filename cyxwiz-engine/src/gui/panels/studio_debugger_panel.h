@@ -107,6 +107,7 @@ private:
     void RenderMemoryTrace(const TrainingTraceSummary& trace);
     void RenderLayerTimingBreakdown(const TrainingTraceSummary& trace);
     void RenderTraceTimeline();
+    void RenderTraceFilters();
     void RenderStudioEvents();
     void RenderSelectedTraceDetails();
     void RenderTextPayloadInspector(const DebugTraceRecord& trace);
@@ -114,6 +115,7 @@ private:
     void RenderIssueList();
     void RenderRecommendations();
     bool TraceMatchesActiveLens(const DebugTraceRecord& trace) const;
+    bool TraceMatchesWorkflowFilter(const DebugTraceRecord& trace) const;
     const char* ActiveLensName() const;
     static std::string FormatShape(const std::vector<size_t>& shape);
 
@@ -136,6 +138,8 @@ private:
     StudioDebuggerRunMode run_mode_ = StudioDebuggerRunMode::FullWorkflow;
     int selected_sample_index_ = 0;
     std::string selected_runtime_event_key_;
+    char trace_search_[128] = {};
+    bool trace_attention_only_ = false;
     bool run_in_progress_ = false;
     std::string run_status_message_;
 };

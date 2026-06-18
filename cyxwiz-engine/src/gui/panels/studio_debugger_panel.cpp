@@ -1,6 +1,7 @@
 #include "studio_debugger_panel.h"
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <iomanip>
 #include <map>
@@ -121,6 +122,43 @@ bool IsRuntimeTrace(const DebugTraceRecord& trace) {
         trace.phase.find("Train") != std::string::npos ||
         trace.status == "failed" ||
         trace.status == "warning";
+}
+
+bool ContainsIgnoreCase(const std::string& text, const std::string& query) {
+    if (query.empty()) {
+        return true;
+    }
+    auto it = std::search(
+        text.begin(),
+        text.end(),
+        query.begin(),
+        query.end(),
+        [](char a, char b) {
+            return std::tolower(static_cast<unsigned char>(a)) ==
+                   std::tolower(static_cast<unsigned char>(b));
+        });
+    return it != text.end();
+}
+
+bool IsAttentionTrace(const DebugTraceRecord& trace) {
+    const auto payload_count = [&trace](const char* key) {
+        if (!trace.payload.contains(key) || !trace.payload.at(key).is_number()) {
+            return 0.0;
+        }
+        return trace.payload.at(key).get<double>();
+    };
+
+    return trace.status == "failed" ||
+        trace.status == "warning" ||
+        trace.status == "blocked" ||
+        trace.status == "shape_mismatch" ||
+        trace.status == "zero" ||
+        trace.status == "nan" ||
+        trace.role == DebugTraceRole::Warning ||
+        trace.role == DebugTraceRole::Error ||
+        !trace.issues.empty() ||
+        payload_count("warning_count") > 0.0 ||
+        payload_count("error_count") > 0.0;
 }
 
 std::string FormatBytesCompact(uint64_t bytes) {
@@ -446,6 +484,78 @@ bool StudioDebuggerPanel::TraceMatchesActiveLens(const DebugTraceRecord& trace) 
                 trace.role == DebugTraceRole::Error;
     }
     return true;
+}
+
+bool StudioDebuggerPanel::TraceMatchesWorkflowFilter(
+    const DebugTraceRecord& trace) const {
+    if (!TraceMatchesActiveLens(trace)) {
+        return false;
+    }
+
+    if (trace_attention_only_ && !IsAttentionTrace(trace)) {
+        return false;
+    }
+
+    const std::string query = trace_search_;
+    if (query.empty()) {
+        return true;
+    }
+
+    std::string haystack;
+    haystack.reserve(256);
+    haystack += trace.phase;
+    haystack += ' ';
+    haystack += DebugTraceRoleName(trace.role);
+    haystack += ' ';
+    haystack += trace.node_name;
+    haystack += ' ';
+    haystack += trace.node_type;
+    haystack += ' ';
+    haystack += trace.status;
+    haystack += ' ';
+    haystack += trace.dtype;
+    if (!trace.payload.empty()) {
+        haystack += ' ';
+        haystack += trace.payload.dump();
+    }
+
+    return ContainsIgnoreCase(haystack, query);
+}
+
+void StudioDebuggerPanel::RenderTraceFilters() {
+    if (session_.traces.empty()) {
+        return;
+    }
+
+    int lens_count = 0;
+    int filtered_count = 0;
+    int attention_count = 0;
+    for (const auto& trace : session_.traces) {
+        if (TraceMatchesActiveLens(trace)) {
+            ++lens_count;
+        }
+        if (IsAttentionTrace(trace)) {
+            ++attention_count;
+        }
+        if (TraceMatchesWorkflowFilter(trace)) {
+            ++filtered_count;
+        }
+    }
+
+    ImGui::SetNextItemWidth(260.0f);
+    ImGui::InputText("Search traces", trace_search_, sizeof(trace_search_));
+    ImGui::SameLine();
+    ImGui::Checkbox("Attention only", &trace_attention_only_);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear filters")) {
+        trace_search_[0] = '\0';
+        trace_attention_only_ = false;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d/%d visible, %d attention",
+                        filtered_count,
+                        lens_count,
+                        attention_count);
 }
 
 void StudioDebuggerPanel::RenderTraceSettings() {
@@ -1401,11 +1511,12 @@ void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary&
 void StudioDebuggerPanel::RenderTraceTimeline() {
     if (!session_.traces.empty()) {
         ImGui::Text("Trace timeline - %s lens", ActiveLensName());
+        RenderTraceFilters();
         ImGui::BeginChild("StudioDebuggerUnifiedTraceTimeline", ImVec2(0, 220), true);
         int visible_count = 0;
         for (int i = 0; i < static_cast<int>(session_.traces.size()); ++i) {
             const auto& trace = session_.traces[i];
-            if (!TraceMatchesActiveLens(trace)) {
+            if (!TraceMatchesWorkflowFilter(trace)) {
                 continue;
             }
             ++visible_count;
@@ -1441,7 +1552,7 @@ void StudioDebuggerPanel::RenderTraceTimeline() {
             ImGui::TextDisabled("%s %.2f ms", trace.status.c_str(), trace.duration_ms);
         }
         if (visible_count == 0) {
-            ImGui::TextDisabled("No traces match the active lens.");
+            ImGui::TextDisabled("No traces match the active lens and filters.");
         }
         ImGui::EndChild();
         return;

@@ -30,6 +30,9 @@ namespace cyxwiz {
 
 namespace {
 
+bool TryParseFiniteDouble(const std::string& value, double& out);
+bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type);
+
 bool HasNonEmptyParameter(const std::map<std::string, std::string>& parameters,
                           const std::string& name) {
     auto it = parameters.find(name);
@@ -89,6 +92,17 @@ std::string ToUpperAscii(std::string value) {
                        return static_cast<char>(std::toupper(c));
                    });
     return value;
+}
+
+void ParseCommaList(const std::string& value, std::vector<std::string>& out) {
+    std::stringstream parts(value);
+    std::string part;
+    while (std::getline(parts, part, ',')) {
+        const std::string trimmed = TrimString(part);
+        if (!trimmed.empty()) {
+            out.push_back(trimmed);
+        }
+    }
 }
 
 std::map<std::string, std::string> ParseRenameMapping(const std::string& mapping) {
@@ -203,10 +217,10 @@ std::string ScalarToJsonValue(const std::shared_ptr<arrow::Scalar>& scalar) {
                    : "false";
     case arrow::Type::STRING:
         return QuoteJsonString(
-            std::static_pointer_cast<arrow::StringScalar>(scalar)->value);
+            ScalarToColumnName(scalar));
     case arrow::Type::LARGE_STRING:
         return QuoteJsonString(
-            std::static_pointer_cast<arrow::LargeStringScalar>(scalar)->value);
+            ScalarToColumnName(scalar));
     case arrow::Type::INT8:
     case arrow::Type::INT16:
     case arrow::Type::INT32:
@@ -5805,11 +5819,9 @@ bool PipelineExecutor::ExecuteJSONPathExtractor(const Node& node, ExecutionConte
 
             std::string json_text;
             if (scalar->type->id() == arrow::Type::STRING) {
-                json_text =
-                    std::static_pointer_cast<arrow::StringScalar>(scalar)->value;
+                json_text = ScalarToColumnName(scalar);
             } else if (scalar->type->id() == arrow::Type::LARGE_STRING) {
-                json_text =
-                    std::static_pointer_cast<arrow::LargeStringScalar>(scalar)->value;
+                json_text = ScalarToColumnName(scalar);
             } else {
                 ReportError("JSONPathExtractor: selected column must be string");
                 return false;
@@ -5957,9 +5969,9 @@ bool PipelineExecutor::ExecuteRegexTester(const Node& node, ExecutionContext& ct
 
             std::string text;
             if (scalar->type->id() == arrow::Type::STRING) {
-                text = std::static_pointer_cast<arrow::StringScalar>(scalar)->value;
+                text = ScalarToColumnName(scalar);
             } else if (scalar->type->id() == arrow::Type::LARGE_STRING) {
-                text = std::static_pointer_cast<arrow::LargeStringScalar>(scalar)->value;
+                text = ScalarToColumnName(scalar);
             } else {
                 ReportError("RegexTester: selected column must be string");
                 return false;

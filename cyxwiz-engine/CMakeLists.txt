@@ -190,6 +190,7 @@ set(ENGINE_SOURCES
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/model_analyzer.cpp
+    src/core/language_model_training.cpp
     src/core/model_converter.cpp
     src/core/file_dialogs.cpp
     src/core/formats/cyxmodel_format.cpp
@@ -314,6 +315,7 @@ set(ENGINE_SOURCES
     src/gui/panels/python_settings_panel.cpp
     src/network/deployment_client.cpp
     src/inference/local_inference_server.cpp
+    src/inference/text_inference_input.cpp
     # DNN inference (Phase 3)
     src/inference/dnn_models.cpp
     src/inference/dnn_preprocessor.cpp
@@ -559,6 +561,7 @@ set(ENGINE_HEADERS
     src/gui/panels/python_settings_panel.h
     src/network/deployment_client.h
     src/inference/local_inference_server.h
+    src/inference/text_inference_input.h
     # DNN inference (Phase 3)
     src/inference/dnn_models.h
     src/inference/dnn_preprocessor.h
@@ -1950,6 +1953,51 @@ if(WIN32)
 endif()
 
 set_target_properties(test_text_preflight_nodes PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Studio Debugger Contracts =====
+add_executable(test_debugger_contracts
+    tests/test_debugger_contracts.cpp
+    src/core/debug_export_correlation_tracer.cpp
+    src/core/debug_graph_trace_executor.cpp
+    src/core/debug_memory_ownership_tracer.cpp
+    src/core/debug_node_inspector.cpp
+    src/core/debug_operator_trace_adapter.cpp
+    src/core/debug_runtime_backend_classifier.cpp
+    src/core/debug_smoke_sample_selector.cpp
+    src/core/debug_support_bundle_builder.cpp
+    src/core/debug_windows_crash_importer.cpp
+    src/core/debug_session_manager.cpp
+    src/core/debug_recommendation_engine.cpp
+    src/core/debug_run_store.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/text_preprocessing_tracer.cpp
+    src/core/formats/text_dataset.cpp
+    src/core/dataset_base.cpp
+)
+
+target_include_directories(test_debugger_contracts PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_debugger_contracts PRIVATE
+    Arrow::arrow_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_debugger_contracts PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_debugger_contracts PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

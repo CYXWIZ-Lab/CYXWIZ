@@ -52,23 +52,107 @@ Current flow:
 5. Results are returned to the panel and rendered as trace lists, graph status,
    issues, recommendations, and persisted debug artifacts.
 
+## Code Truth Audit - 2026-06-18
+
+This audit compares the current engine code against the Studio Debugger goal.
+It should guide the next implementation batches and prevent restarting work that
+already exists.
+
+Implemented in code:
+- `DebugTraceRecord` has roles for raw input, preprocessing output, feature
+  tensors, model input, activations, parameters, gradients, predictions,
+  targets, loss, optimizer steps, compile artifacts, generated code, Studio
+  events, warnings, and errors.
+- `DebugSessionManager` captures a frozen graph snapshot with nodes, links,
+  parameters, graph hash, selected sample index, run id, and an initial
+  graph-snapshot trace.
+- `PreflightValidator` performs cheap compile/data-readiness checks, including
+  text vocabulary and padding validation.
+- `TextPreprocessingTracer` can inspect one registered text sample and emit
+  tokenizer, vocabulary, and padding traces with raw preview, token preview,
+  token id preview, unknown-token ratio, pad ratio, and truncation warnings.
+- `SmokeRunExecutor` runs a small real-data text smoke pass, including model
+  build, forward, loss, backward, update, finite-value checks, accuracy, and
+  gradient summaries.
+- `DebugExecutor` still provides the synthetic Local Debug path: model build,
+  forward layer traces, loss, backward, optimizer step, gradient norms, NaN/Inf
+  checks, and shape checks.
+- `DebugRunStore` persists debugger run summaries, traces, Studio events,
+  issues, and recommendations.
+- `CrashRunRecorder` and `TrainingTraceCollector` record long-training stages,
+  runtime warnings, crash heartbeat data, memory counters, and recent timeline
+  events.
+- `StudioDebuggerPanel` has real lenses for overview, preprocessing, shapes,
+  values, gradients, runtime, Studio events, and recommendations. It can render
+  run history, runtime timeline, memory trace, layer timings, trace details,
+  text payloads, issue lists, and recommendation lists.
+- `DebugRecommendationEngine` converts preflight, preprocessing, smoke-run,
+  crash, and training-trace signals into user-facing next-step guidance.
+
+Important limitations in current code:
+- The debugger is not yet a general node-by-node executor. It compiles the
+  graph, traces a text sample where available, optionally runs a text smoke
+  pass, and maps Local Debug layer traces into debugger records.
+- `SmokeRunExecutor` is text-only and explicitly does not support sequence batch
+  mode yet.
+- Text preprocessing tracing is tied to registered `TextDataset` entries. Arrow
+  materialized text can be used by Smoke Run, but the detailed text trace is not
+  yet a canonical operator-by-operator Arrow pipeline trace.
+- Studio events are still sparse. The code records debugger start, compile,
+  preflight, text preprocessing capture, smoke run, and Local Debug events, but
+  not full graph edits, panel state changes, dataset/sample changes, export
+  attempts, or generated-code actions.
+- Runtime tracing captures training stages and warnings, but not per-operation
+  backend placement, CPU/GPU fallback reasons, kernel names, host/device copy
+  causes, or per-node allocation ownership.
+- Memory tracing reports process/backend counters, not per-node tensor
+  allocation summaries or exact peak ownership.
+- `CrashRunSummary` already has Windows crash fields, but robust WER/Event
+  Viewer import and matching is not implemented.
+- The test surface is thin for a feature this central. Current discovered
+  coverage includes a preflight text-node validation test, but the trace store,
+  text preprocessing tracer, smoke-run behavior, recommendation rules, and UI
+  session contracts need deterministic tests.
+
+Lean design conclusion:
+- Keep this as one Studio Debugger, not separate tools for graph tracing,
+  preprocessing tracing, runtime tracing, and crash tracing.
+- Add missing capability through narrow trace producers and deterministic tests,
+  not through broad global telemetry or a second execution framework.
+- The next useful implementation is node-level trace contract work, not UI
+  polish.
+
 Next implementation steps:
-1. Make the Graph Trace View more useful with selected-node details and trace
-   filtering.
-2. Add a Node Inspector lens with inputs, outputs, shape, warnings,
-   recommendations, and related training events for the selected node.
-3. Add Windows crash import from WER/Event Viewer and match it to the most
+1. Add deterministic tests around the existing debugger contracts before adding
+   more UI: session snapshot, trace persistence, text preprocessing trace,
+   smoke-run result shape, and recommendation rules.
+2. Define and implement the node trace contract for canonical graph execution:
+   node id, node type, input summary, output summary, shape, dtype, duration,
+   warnings, errors, backend path, and payload role.
+3. Make the Graph Trace View more useful with selected-node details, trace
+   filtering, and direct focus from trace row to graph node.
+4. Add a Node Inspector lens with inputs, outputs, shape, warnings,
+   recommendations, related training events, and safe tensor/value previews for
+   the selected node.
+5. Extend preprocessing tracing beyond legacy text datasets to canonical
+   operator-backed Arrow pipelines, then add image, audio, tabular, and
+   time-series trace producers one at a time.
+6. Improve sample selection so Smoke Run can choose deterministic and
+   stratified examples from dataset preview/labels.
+7. Deepen CPU/GPU runtime tracing so the debugger can classify backend paths
+   and fallback reasons per operation, not only record warnings.
+8. Deepen memory tracing with per-node tensor allocation summaries, peak
+   markers, and out-of-memory risk signals.
+9. Add generated-code/export correlation so the debugger can explain whether
+   exported framework code matches the graph and trace.
+10. Add Windows crash import from WER/Event Viewer and match it to the most
    recent debug/training run by timestamp, process name, and run id when
    available.
-4. Deepen CPU/GPU runtime tracing so the debugger can classify backend paths
-   and fallback reasons per operation, not only record warnings.
-5. Deepen memory tracing with per-node tensor allocation summaries, peak
-   markers, and out-of-memory risk signals.
-6. Add richer tensor/value previews for activations, gradients, token ids,
-   unknown-token ratios, padding, and truncation.
-7. Improve sample selection so Smoke Run can choose deterministic and
-   stratified examples from dataset preview/labels.
-8. Polish the debugger UI after the workflow is stable: layout, colors,
+11. Add an opt-in debug support bundle that packages engine logs, debugger run
+   traces, crash heartbeat, graph snapshot, and environment summary for HQ
+   analysis. It must be explicit, local-first, and redact or exclude dataset
+   rows by default.
+12. Polish the debugger UI after the workflow is stable: layout, colors,
    search/filter controls, graph interactions, and Comgra-like trace navigation.
 
 Still not complete:
