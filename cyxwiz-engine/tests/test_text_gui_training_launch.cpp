@@ -330,6 +330,15 @@ void TestTrainingRunComparisonRecord() {
     Check(sorted.front().run_id == "run-001",
           "run comparison sort should prefer higher test accuracy");
 
+    auto tie_b = record;
+    tie_b.run_id = "run-tie-b";
+    auto tie_a = record;
+    tie_a.run_id = "run-tie-a";
+    auto tied_sorted =
+        cyxwiz::SortTrainingRunComparisonsByBestMetric({tie_b, tie_a});
+    Check(tied_sorted.front().run_id == "run-tie-a",
+          "run comparison sort should use run id as deterministic final tie-breaker");
+
     config.checkpoint_dir.clear();
     const auto default_checkpoint_record =
         cyxwiz::MakeTrainingRunComparisonRecord(

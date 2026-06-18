@@ -339,7 +339,10 @@ SortTrainingRunComparisonsByBestMetric(
                 lhs.best_val_loss != rhs.best_val_loss) {
                 return lhs.best_val_loss < rhs.best_val_loss;
             }
-            return lhs.elapsed_seconds < rhs.elapsed_seconds;
+            if (lhs.elapsed_seconds != rhs.elapsed_seconds) {
+                return lhs.elapsed_seconds < rhs.elapsed_seconds;
+            }
+            return lhs.run_id < rhs.run_id;
         });
     return records;
 }

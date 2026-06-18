@@ -310,6 +310,9 @@ Target batches:
 - Added sequence-batch mode visibility to run-comparison records, CSV export,
   focused comparison test, and the Training Dashboard table so sequence tasks
   are not conflated with plain sample-level classification runs.
+- Made run-comparison sorting deterministic for identical metrics by using
+  `run_id` as the final tie-breaker after test metrics, validation metrics,
+  and elapsed time.
 
 Generalized run-comparison rule:
 - The comparison record is for every training run, not just sentiment GRU/LSTM
