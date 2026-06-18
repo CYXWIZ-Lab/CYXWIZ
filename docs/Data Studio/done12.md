@@ -172,6 +172,33 @@ Not yet implemented as a first-class engine feature:
 6. Decide later whether the next model family should be transformer-
    based fine tuning rather than more recurrent tuning.
 
+## How To Use The Implemented Workflow
+
+1. Build a graph with a dataset source, preprocessing nodes if needed, model
+   layers, loss, optimizer, and DataLoader.
+2. In the DataLoader dialog, set the runtime-owned training policy:
+   `epochs`, `batch_size`, `num_workers`, `prefetch_factor`,
+   `save_best_checkpoint`, `early_stopping_patience`, and `checkpoint_dir`.
+3. Keep train/validation/test split settings fixed when comparing model
+   changes so each run uses the same evaluation basis.
+4. Start training from Studio and monitor the Training Dashboard.
+5. Use the dashboard curves to inspect train/validation behavior during the
+   run, including best validation points and generalization gap.
+6. After training completes, open the Run Comparison table in the Training
+   Dashboard.
+7. Compare runs by dataset, domain, sequence mode, split ratios, actual split
+   sample counts, architecture, training policy, checkpoint policy, best
+   validation metrics, held-out test metrics, checkpoint used, elapsed time,
+   and run status.
+8. Use Export Run CSV from the Run Comparison table to persist the in-session
+   comparison ledger.
+9. Treat `final epoch model state` as meaning no best checkpoint was restored;
+   explicit checkpoint paths mean the executor restored that checkpoint for
+   final evaluation.
+10. Do not treat partial/future DataLoader fields such as `validation_freq`,
+    `grad_accum_steps`, `seed`, `pin_memory`, and `log_interval` as runtime
+    behavior until they are explicitly implemented and tested.
+
 ## What This Note Is Not
 
 This is not the Studio debugger architecture note in `tofix9.md`.
