@@ -116,6 +116,7 @@ set(BACKEND_SOURCES
     src/algorithms/sequential/recurrent_modules.cpp
     src/algorithms/sequential/regularization_shape_modules.cpp
     src/algorithms/sequential/tensor_modules.cpp
+    src/algorithms/sequential/transformer_modules.cpp
     src/algorithms/sequential/model_io.cpp
     src/algorithms/scheduler.cpp
     src/algorithms/clustering.cpp
@@ -371,6 +372,7 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
+
 
 
 

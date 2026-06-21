@@ -1404,6 +1404,20 @@ wrappers out of `src/algorithms/sequential.cpp`:
 
 This gives recurrent sequence modules a clear backend implementation owner while
 preserving the existing model container and factory behavior.
+### 2026-06-21 - Sequential implementation split slice 6: transformer modules
+
+Continued the backend sequential implementation split by moving transformer
+module wrappers out of `src/algorithms/sequential.cpp`:
+
+- added `src/algorithms/sequential/transformer_modules.cpp` for
+  `TransformerEncoderModule` and `TransformerDecoderModule`,
+- kept the public `include/cyxwiz/sequential.h` API unchanged,
+- kept normalization, `SequentialModel`, and `CreateModule` in
+  `sequential.cpp` for the remaining focused slices,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This gives transformer sequence modules a clear backend implementation owner
+while preserving existing factory and container behavior.
 ## Reopened Status
 
 Status: active.
@@ -1443,6 +1457,7 @@ Guardrails:
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
 `tofix14.md` as a separate runtime adapter concern.
+
 
 
 
