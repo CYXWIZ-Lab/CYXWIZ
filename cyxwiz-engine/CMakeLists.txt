@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)
 
 project(cyxwiz-engine)
 
@@ -455,6 +455,7 @@ set(ENGINE_SOURCES
     # Data Studio (Phase 1 Week 1)
     # src/gui/data_studio/pipeline_canvas.cpp  # Unified Canvas Phase 5: Replaced by Node Editor
     src/gui/data_studio/query_editor.cpp
+    src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/analyzer.cpp
     src/gui/data_studio/visualizer.cpp
     src/gui/data_studio/data_studio_panel.cpp
@@ -2091,6 +2092,7 @@ if(CYXWIZ_ENABLE_ASAN)
 
     message(STATUS "ASan memory test enabled - run test_asan_memory to verify")
 endif()
+
 
 
 

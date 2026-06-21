@@ -1639,3 +1639,12 @@ Moved identity, zeros, ones, diagonal extraction/construction, and low-rank appr
 
 This separates matrix construction and utility ownership from core vector/matrix operations while preserving the
 public `LinearAlgebra` API.
+
+### 2026-06-21 - Data Studio frontend split slice 1: query editor rendering
+
+Moved QueryEditor UI rendering methods from `cyxwiz-engine/src/gui/data_studio/query_editor.cpp` into
+`cyxwiz-engine/src/gui/data_studio/query_editor_render.cpp` and registered the new translation unit in
+`cyxwiz-engine/CMakeLists.txt`.
+
+This separates SQL editor/result-table rendering from DuckDB execution, dataset registration, and query-result
+materialization while preserving the public `QueryEditor` API.
