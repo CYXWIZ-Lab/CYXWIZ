@@ -1602,3 +1602,11 @@ Moved DBSCAN implementation, k-distance helper, and matching non-ArrayFire fallb
 registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates DBSCAN ownership from hierarchical clustering and GMM while preserving the public `Clustering` API.
+
+### 2026-06-21 - Clustering implementation split slice 4: hierarchical
+
+Moved hierarchical clustering, dendrogram cutting, and matching non-ArrayFire fallback stubs from
+`cyxwiz-backend/src/algorithms/clustering.cpp` into `cyxwiz-backend/src/algorithms/clustering_hierarchical.cpp` and
+registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates hierarchical clustering ownership from GMM while preserving the public `Clustering` API.

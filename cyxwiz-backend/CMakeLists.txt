@@ -123,6 +123,7 @@ set(BACKEND_SOURCES
     src/algorithms/clustering.cpp
     src/algorithms/clustering_kmeans.cpp
     src/algorithms/clustering_dbscan.cpp
+    src/algorithms/clustering_hierarchical.cpp
     src/algorithms/clustering_evaluation.cpp
     src/algorithms/data_transform.cpp
     src/algorithms/model_evaluation.cpp
@@ -384,6 +385,7 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
+
 
 
 
