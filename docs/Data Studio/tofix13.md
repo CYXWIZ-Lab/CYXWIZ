@@ -1285,6 +1285,29 @@ Completed the remaining public layer declaration split:
 At this point the monolithic public layer declaration surface has been split by
 family while preserving existing class names and aggregate include compatibility.
 
+### 2026-06-21 - Optimizer header split slice 1: public optimizer declarations
+
+Started the optimizer modularity cleanup by splitting the monolithic
+`include/cyxwiz/optimizer.h` declarations into focused public headers:
+
+- added `include/cyxwiz/optimizers/optimizer_base.h` for `Optimizer`,
+  `OptimizerType`, and `CreateOptimizer`,
+- added `include/cyxwiz/optimizers/sgd.h` for `SGDOptimizer`,
+- added `include/cyxwiz/optimizers/adam.h` for `AdamOptimizer`,
+  `AdamWOptimizer`, and `NAdamOptimizer`,
+- added `include/cyxwiz/optimizers/adaptive.h` for `RMSpropOptimizer`,
+  `AdaGradOptimizer`, and `AdadeltaOptimizer`,
+- added `include/cyxwiz/optimizers/lamb.h` for `LAMBOptimizer`,
+- added `include/cyxwiz/optimizers/lr_warmup.h` for `LRWarmup` and
+  `WarmupType`,
+- kept `include/cyxwiz/optimizer.h` as the compatibility aggregate include,
+- updated the SGD and Adam-family implementations to include their focused
+  owning headers,
+- registered the new headers in the backend CMake header list.
+
+This keeps optimizer behavior unchanged while giving optimizer families clear
+public ownership, matching the completed layer declaration split pattern.
+
 ## Reopened Status
 
 Status: active.

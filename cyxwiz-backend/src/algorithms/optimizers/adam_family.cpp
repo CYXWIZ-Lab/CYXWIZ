@@ -1,4 +1,4 @@
-#include "cyxwiz/optimizer.h"
+#include "cyxwiz/optimizers/adam.h"
 #include "cyxwiz/tensor.h"
 #include "optimizer_utils.h"
 

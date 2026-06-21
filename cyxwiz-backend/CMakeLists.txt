@@ -159,6 +159,12 @@ set(BACKEND_HEADERS
     include/cyxwiz/device.h
     include/cyxwiz/memory_manager.h
     include/cyxwiz/optimizer.h
+    include/cyxwiz/optimizers/adaptive.h
+    include/cyxwiz/optimizers/adam.h
+    include/cyxwiz/optimizers/lamb.h
+    include/cyxwiz/optimizers/lr_warmup.h
+    include/cyxwiz/optimizers/optimizer_base.h
+    include/cyxwiz/optimizers/sgd.h
     include/cyxwiz/loss.h
     include/cyxwiz/activation.h
     include/cyxwiz/layer.h
