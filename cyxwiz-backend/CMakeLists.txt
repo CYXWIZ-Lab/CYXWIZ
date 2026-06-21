@@ -108,6 +108,7 @@ set(BACKEND_SOURCES
     src/algorithms/layers/gru_backward.cpp
     src/algorithms/layers/lstm.cpp
     src/algorithms/layers/lstm_state_parameters.cpp
+    src/algorithms/layers/lstm_initialization.cpp
     src/algorithms/layers/lstm_direction_helpers.cpp
     src/algorithms/layers/layer_utils.cpp
     src/algorithms/activations/relu.cpp

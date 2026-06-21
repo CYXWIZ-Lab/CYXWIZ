@@ -1830,3 +1830,9 @@ This clears the recurring MSVC warning left after the signal-processing modulari
 Moved LSTM state setters and parameter accessors from `cyxwiz-backend/src/algorithms/layers/lstm.cpp` into `cyxwiz-backend/src/algorithms/layers/lstm_state_parameters.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates lightweight state/parameter ownership from LSTM initialization, forward execution, and backward execution while preserving the public `LSTMLayer` API.
+
+### 2026-06-21 - Backend split slice: LSTM initialization
+
+Moved LSTM construction and weight initialization from `cyxwiz-backend/src/algorithms/layers/lstm.cpp` into `cyxwiz-backend/src/algorithms/layers/lstm_initialization.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates LSTM setup/allocation ownership from forward execution, backward execution, and state/parameter access while preserving the public `LSTMLayer` API.
