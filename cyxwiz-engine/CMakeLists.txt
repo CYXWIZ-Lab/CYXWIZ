@@ -464,6 +464,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/data_studio_panel_render.cpp
     # pipeline_executor.cpp moved to src/core/ (Unified Canvas Phase 2)
     src/gui/data_studio/node_registry.cpp
+    src/gui/data_studio/node_registry_builtin.cpp
     # Plotting system
     src/plotting/plot_dataset.cpp
     src/plotting/plot_manager.cpp
@@ -1264,6 +1265,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/gui/data_studio/node_registry.cpp
+    src/gui/data_studio/node_registry_builtin.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp

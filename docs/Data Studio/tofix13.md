@@ -1676,3 +1676,12 @@ Moved DataStudioPanel window, toolbar, dataset selector, tab bar, and status bar
 
 This separates the panel container UI from component construction and active-dataset propagation while preserving the
 public `DataStudioPanel` API.
+
+### 2026-06-21 - Data Studio frontend split slice 5: node registry built-ins
+
+Moved the Data Studio built-in node catalog from `cyxwiz-engine/src/gui/data_studio/node_registry.cpp` into
+`cyxwiz-engine/src/gui/data_studio/node_registry_builtin.cpp` and registered the new translation unit in
+`cyxwiz-engine/CMakeLists.txt`.
+
+This separates registry lookup/runtime-support filtering from built-in node definitions while preserving the public
+`NodeRegistry` API.
