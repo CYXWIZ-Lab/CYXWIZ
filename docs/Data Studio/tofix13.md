@@ -1794,3 +1794,9 @@ This separates zero-padding, resampling, normalization, and DC-removal ownership
 Moved spectrogram computation from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_spectrogram.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates time-frequency analysis ownership from FFT, convolution, filter design, wavelet, window, generation, analysis, utility, and private helper operations while preserving the public `SignalProcessing` API.
+
+### 2026-06-21 - Backend split slice: signal processing wavelet
+
+Moved wavelet transform entry points from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_wavelet.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates DWT/IDWT ownership from FFT, convolution, filter design, spectrogram, window, generation, analysis, utility, and private helper operations while preserving the public `SignalProcessing` API.
