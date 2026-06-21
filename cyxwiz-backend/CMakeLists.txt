@@ -136,6 +136,7 @@ set(BACKEND_SOURCES
     src/algorithms/time_series/statistics.cpp
     src/algorithms/time_series/decomposition.cpp
     src/algorithms/time_series/diagnostics.cpp
+    src/algorithms/time_series/stationarity.cpp
     src/algorithms/text_processing.cpp
     src/algorithms/tokenizer.cpp
     src/algorithms/tokenizer/vocabulary_persistence.cpp
@@ -376,6 +377,7 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
+
 
 
 

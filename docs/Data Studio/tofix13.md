@@ -1474,6 +1474,21 @@ coherent diagnostics section out of `src/algorithms/time_series.cpp`:
 
 This separates diagnostic analysis ownership from decomposition and forecasting
 without changing runtime behavior.
+### 2026-06-21 - Time series implementation split slice 4: stationarity
+
+Continued the backend time-series implementation split by moving stationarity
+logic out of `src/algorithms/time_series.cpp`:
+
+- added `src/algorithms/time_series/stationarity.cpp` for stationarity tests,
+  ADF/KPSS checks, and the regular/seasonal differencing helpers used by those
+  checks and forecasting code,
+- kept the public `include/cyxwiz/time_series.h` API unchanged,
+- left seasonality detection, spectral analysis, forecasting, generators, and
+  windowing in `time_series.cpp` for later focused slices,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates stationarity and differencing ownership from autocorrelation
+ diagnostics and forecasting without changing runtime behavior.
 ## Reopened Status
 
 Status: active.
@@ -1513,6 +1528,7 @@ Guardrails:
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
 `tofix14.md` as a separate runtime adapter concern.
+
 
 
 
