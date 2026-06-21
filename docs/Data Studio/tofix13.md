@@ -1556,3 +1556,12 @@ Moved forecasting implementations from `cyxwiz-backend/src/algorithms/time_serie
 
 This groups exponential smoothing, Holt/Holt-Winters, moving average forecasting, and ARIMA ownership separately
 from synthetic data generation and ML windowing while preserving the public `TimeSeries` API.
+
+### 2026-06-21 - Time series implementation split slice 7: generation
+
+Moved synthetic time-series generators from `cyxwiz-backend/src/algorithms/time_series.cpp` into
+`cyxwiz-backend/src/algorithms/time_series/generation.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This isolates white-noise, random-walk, trend-seasonal, AR, MA, and ARIMA generation helpers from the remaining
+ML windowing code while preserving the public `TimeSeries` API.
