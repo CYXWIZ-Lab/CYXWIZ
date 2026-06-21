@@ -156,6 +156,7 @@ set(BACKEND_SOURCES
     src/algorithms/text_processing_embeddings.cpp
     src/algorithms/text_processing_samples.cpp
     src/algorithms/text_processing_frequency.cpp
+    src/algorithms/text_processing_utilities.cpp
     src/algorithms/tokenizer.cpp
     src/algorithms/tokenizer/vocabulary_persistence.cpp
     src/algorithms/audio_processing.cpp

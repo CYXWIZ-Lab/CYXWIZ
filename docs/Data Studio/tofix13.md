@@ -1754,3 +1754,13 @@ Moved word-frequency and vocabulary-building methods from `cyxwiz-backend/src/al
 
 This separates frequency/vocabulary ownership from tokenization and text utility ownership while preserving the public
 `TextProcessing` API.
+
+### 2026-06-21 - Backend split slice: text processing utilities
+
+Moved text-cleaning, sentence splitting, lowercase, punctuation removal, and whitespace normalization methods from
+`cyxwiz-backend/src/algorithms/text_processing.cpp` into
+`cyxwiz-backend/src/algorithms/text_processing_utilities.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates text utility ownership from tokenization/stopword ownership while preserving the public
+`TextProcessing` API.
