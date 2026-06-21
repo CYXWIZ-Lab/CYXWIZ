@@ -1812,3 +1812,9 @@ This separates 1D/2D convolution ownership from FFT, filter design, spectrogram,
 Moved filter design/application methods from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_filters.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates low/high/band-pass filter design, filter application, and frequency-response ownership from FFT, convolution, spectrogram, wavelet, window, generation, analysis, utility, and private helper operations while preserving the public `SignalProcessing` API.
+
+### 2026-06-21 - Backend split slice: signal processing FFT
+
+Moved FFT/IFFT methods from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_fft.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates Fourier transform ownership from filters, convolution, spectrogram, wavelet, window, generation, analysis, utility, and private helper operations while preserving the public `SignalProcessing` API.
