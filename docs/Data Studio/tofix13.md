@@ -1610,3 +1610,13 @@ Moved hierarchical clustering, dendrogram cutting, and matching non-ArrayFire fa
 registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates hierarchical clustering ownership from GMM while preserving the public `Clustering` API.
+
+### 2026-06-21 - Clustering implementation split slice 5: GMM
+
+Moved Gaussian mixture model execution, EM helper functions, Gaussian PDF/log-likelihood helpers, and matching
+non-ArrayFire fallback stub from `cyxwiz-backend/src/algorithms/clustering.cpp` into
+`cyxwiz-backend/src/algorithms/clustering_gmm.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This leaves `clustering.cpp` focused on shared ArrayFire conversion and distance helpers while preserving the public
+`Clustering` API.
