@@ -1565,3 +1565,13 @@ Moved synthetic time-series generators from `cyxwiz-backend/src/algorithms/time_
 
 This isolates white-noise, random-walk, trend-seasonal, AR, MA, and ARIMA generation helpers from the remaining
 ML windowing code while preserving the public `TimeSeries` API.
+
+### 2026-06-21 - Time series implementation split slice 8: windowing
+
+Moved ML windowing and feature-construction helpers from `cyxwiz-backend/src/algorithms/time_series.cpp` into
+`cyxwiz-backend/src/algorithms/time_series/windowing.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This completes the current `time_series.cpp` implementation split: statistics, decomposition, diagnostics,
+stationarity, seasonality, forecasting, generation, and windowing now each have focused translation-unit ownership
+while preserving the public `TimeSeries` API.
