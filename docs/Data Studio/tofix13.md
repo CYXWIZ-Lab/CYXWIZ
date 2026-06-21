@@ -1735,3 +1735,13 @@ Moved one-hot embedding, random embedding, similar-word lookup, and word-similar
 
 This separates embedding ownership from tokenization, word frequency, TF-IDF, sentiment, text utilities, and sample text
 generation while preserving the public `TextProcessing` API.
+
+### 2026-06-21 - Backend split slice: text processing samples
+
+Moved sample text, sample document, and sample vocabulary generation methods from
+`cyxwiz-backend/src/algorithms/text_processing.cpp` into
+`cyxwiz-backend/src/algorithms/text_processing_samples.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates sample fixture generation from tokenization, word frequency, TF-IDF, sentiment, embeddings, and text
+utility ownership while preserving the public `TextProcessing` API.
