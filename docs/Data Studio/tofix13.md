@@ -1584,3 +1584,13 @@ Moved cluster-evaluation metrics from `cyxwiz-backend/src/algorithms/clustering.
 
 This isolates silhouette, Davies-Bouldin, Calinski-Harabasz, and matching non-ArrayFire fallback ownership from the
 main clustering algorithms without changing the public `Clustering` API.
+
+### 2026-06-21 - Clustering implementation split slice 2: KMeans
+
+Moved KMeans centroid initialization, assignment/update helpers, inertia, main KMeans execution, elbow analysis,
+and matching non-ArrayFire fallback stubs from `cyxwiz-backend/src/algorithms/clustering.cpp` into
+`cyxwiz-backend/src/algorithms/clustering_kmeans.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates KMeans ownership from DBSCAN, hierarchical clustering, and GMM while preserving the public
+`Clustering` API.
