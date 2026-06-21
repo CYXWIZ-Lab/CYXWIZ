@@ -1,4 +1,4 @@
-#include "cyxwiz/loss.h"
+#include "cyxwiz/losses/regression.h"
 #include "loss_utils.h"
 
 #include <spdlog/spdlog.h>

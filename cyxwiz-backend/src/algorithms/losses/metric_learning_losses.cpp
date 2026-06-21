@@ -1,4 +1,4 @@
-#include "cyxwiz/loss.h"
+#include "cyxwiz/losses/metric_learning.h"
 #include "loss_utils.h"
 
 #include <algorithm>

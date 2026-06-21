@@ -1308,6 +1308,29 @@ Started the optimizer modularity cleanup by splitting the monolithic
 This keeps optimizer behavior unchanged while giving optimizer families clear
 public ownership, matching the completed layer declaration split pattern.
 
+### 2026-06-21 - Loss header split slice 1: public loss declarations
+
+Continued the backend declaration split by moving the monolithic
+`include/cyxwiz/loss.h` public declarations into focused loss-family headers:
+
+- added `include/cyxwiz/losses/loss_base.h` for `Loss`, `LossType`,
+  `Reduction`, and `CreateLoss`,
+- added `include/cyxwiz/losses/regression.h` for `MSELoss`, `L1Loss`,
+  `SmoothL1Loss`, and the `HuberLoss` alias,
+- added `include/cyxwiz/losses/classification.h` for `CrossEntropyLoss`,
+  `NLLLoss`, and `FocalLoss`,
+- added `include/cyxwiz/losses/probability.h` for `BCELoss`,
+  `BCEWithLogitsLoss`, and `KLDivLoss`,
+- added `include/cyxwiz/losses/metric_learning.h` for `CosineEmbeddingLoss`,
+  `TripletLoss`, and `ContrastiveLoss`,
+- kept `include/cyxwiz/loss.h` as the compatibility aggregate include,
+- updated split loss implementation files to include their focused owning
+  headers,
+- registered the new headers in the backend CMake header list.
+
+This keeps loss behavior unchanged while making regression, classification,
+probability, and metric-learning loss ownership explicit.
+
 ## Reopened Status
 
 Status: active.

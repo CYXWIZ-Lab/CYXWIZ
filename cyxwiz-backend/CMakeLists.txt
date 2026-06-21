@@ -166,6 +166,11 @@ set(BACKEND_HEADERS
     include/cyxwiz/optimizers/optimizer_base.h
     include/cyxwiz/optimizers/sgd.h
     include/cyxwiz/loss.h
+    include/cyxwiz/losses/classification.h
+    include/cyxwiz/losses/loss_base.h
+    include/cyxwiz/losses/metric_learning.h
+    include/cyxwiz/losses/probability.h
+    include/cyxwiz/losses/regression.h
     include/cyxwiz/activation.h
     include/cyxwiz/layer.h
     include/cyxwiz/model.h
