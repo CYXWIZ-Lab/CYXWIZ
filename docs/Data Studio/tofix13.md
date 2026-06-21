@@ -1594,3 +1594,11 @@ and matching non-ArrayFire fallback stubs from `cyxwiz-backend/src/algorithms/cl
 
 This separates KMeans ownership from DBSCAN, hierarchical clustering, and GMM while preserving the public
 `Clustering` API.
+
+### 2026-06-21 - Clustering implementation split slice 3: DBSCAN
+
+Moved DBSCAN implementation, k-distance helper, and matching non-ArrayFire fallback stubs from
+`cyxwiz-backend/src/algorithms/clustering.cpp` into `cyxwiz-backend/src/algorithms/clustering_dbscan.cpp` and
+registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates DBSCAN ownership from hierarchical clustering and GMM while preserving the public `Clustering` API.
