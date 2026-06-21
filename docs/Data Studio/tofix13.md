@@ -1331,6 +1331,22 @@ Continued the backend declaration split by moving the monolithic
 This keeps loss behavior unchanged while making regression, classification,
 probability, and metric-learning loss ownership explicit.
 
+### 2026-06-21 - Sequential implementation split slice 1: activation modules
+
+Started the backend sequential implementation split by moving the activation
+module wrappers out of the monolithic `src/algorithms/sequential.cpp` file:
+
+- added `src/algorithms/sequential/activation_modules.cpp` for `ReLUModule`,
+  `SigmoidModule`, `TanhModule`, `LeakyReLUModule`, `ELUModule`, `GELUModule`,
+  `SwishModule`, and `MishModule`,
+- kept the public `include/cyxwiz/sequential.h` API unchanged,
+- kept `CreateModule` in `sequential.cpp` so factory behavior remains in the
+  existing model container implementation,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This targets active backend code and uses the existing `src/algorithms/sequential`
+folder instead of adding another abstraction layer.
+
 ## Reopened Status
 
 Status: active.

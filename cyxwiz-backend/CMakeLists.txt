@@ -111,6 +111,7 @@ set(BACKEND_SOURCES
     src/algorithms/activations/sigmoid.cpp
     src/algorithms/activations/tanh.cpp
     src/algorithms/sequential.cpp
+    src/algorithms/sequential/activation_modules.cpp
     src/algorithms/sequential/model_io.cpp
     src/algorithms/scheduler.cpp
     src/algorithms/clustering.cpp
