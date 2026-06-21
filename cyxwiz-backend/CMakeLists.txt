@@ -106,6 +106,7 @@ set(BACKEND_SOURCES
     src/algorithms/layers/transformer_layers.cpp
     src/algorithms/layers/gru.cpp
     src/algorithms/layers/lstm.cpp
+    src/algorithms/layers/lstm_direction_helpers.cpp
     src/algorithms/layers/layer_utils.cpp
     src/algorithms/activations/relu.cpp
     src/algorithms/activations/sigmoid.cpp

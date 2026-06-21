@@ -1685,3 +1685,14 @@ Moved the Data Studio built-in node catalog from `cyxwiz-engine/src/gui/data_stu
 
 This separates registry lookup/runtime-support filtering from built-in node definitions while preserving the public
 `NodeRegistry` API.
+
+### 2026-06-21 - Backend split slice: LSTM direction helpers
+
+Moved LSTM CPU direction forward/backward helpers and the ArrayFire direction forward helper from
+`cyxwiz-backend/src/algorithms/layers/lstm.cpp` into
+`cyxwiz-backend/src/algorithms/layers/lstm_direction_helpers.cpp` with private declarations in
+`cyxwiz-backend/src/algorithms/layers/lstm_direction_helpers.h`, then registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates recurrent direction-kernel helpers from `LSTMLayer` lifecycle, parameter, forward, and backward method
+ownership while preserving the public recurrent layer API.
