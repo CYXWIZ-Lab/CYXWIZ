@@ -1575,3 +1575,12 @@ Moved ML windowing and feature-construction helpers from `cyxwiz-backend/src/alg
 This completes the current `time_series.cpp` implementation split: statistics, decomposition, diagnostics,
 stationarity, seasonality, forecasting, generation, and windowing now each have focused translation-unit ownership
 while preserving the public `TimeSeries` API.
+
+### 2026-06-21 - Clustering implementation split slice 1: evaluation
+
+Moved cluster-evaluation metrics from `cyxwiz-backend/src/algorithms/clustering.cpp` into
+`cyxwiz-backend/src/algorithms/clustering_evaluation.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This isolates silhouette, Davies-Bouldin, Calinski-Harabasz, and matching non-ArrayFire fallback ownership from the
+main clustering algorithms without changing the public `Clustering` API.

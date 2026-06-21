@@ -121,6 +121,7 @@ set(BACKEND_SOURCES
     src/algorithms/sequential/model_io.cpp
     src/algorithms/scheduler.cpp
     src/algorithms/clustering.cpp
+    src/algorithms/clustering_evaluation.cpp
     src/algorithms/data_transform.cpp
     src/algorithms/model_evaluation.cpp
     src/algorithms/evaluation/cross_validation.cpp
@@ -381,6 +382,7 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
+
 
 
 
