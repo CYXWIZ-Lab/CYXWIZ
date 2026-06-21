@@ -1705,3 +1705,13 @@ Moved `GRULayer::Backward` from `cyxwiz-backend/src/algorithms/layers/gru.cpp` i
 
 This separates GRU BPTT/backward-gradient ownership from construction, initialization, state, forward execution, and
 parameter serialization while preserving the public recurrent layer API.
+
+### 2026-06-21 - Backend split slice: text processing TF-IDF
+
+Moved TF-IDF, term-frequency, inverse-document-frequency, cosine similarity, and document-similarity matrix methods from
+`cyxwiz-backend/src/algorithms/text_processing.cpp` into
+`cyxwiz-backend/src/algorithms/text_processing_tfidf.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates document-vectorization and similarity ownership from tokenization, embeddings, sentiment, utilities, and
+sample text generation while preserving the public `TextProcessing` API.

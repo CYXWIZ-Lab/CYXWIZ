@@ -151,6 +151,7 @@ set(BACKEND_SOURCES
     src/algorithms/time_series/generation.cpp
     src/algorithms/time_series/windowing.cpp
     src/algorithms/text_processing.cpp
+    src/algorithms/text_processing_tfidf.cpp
     src/algorithms/tokenizer.cpp
     src/algorithms/tokenizer/vocabulary_persistence.cpp
     src/algorithms/audio_processing.cpp
