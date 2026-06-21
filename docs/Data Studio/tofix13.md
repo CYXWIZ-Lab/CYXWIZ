@@ -1824,3 +1824,9 @@ This separates Fourier transform ownership from filters, convolution, spectrogra
 Removed the unused `filter_len` local from the remaining signal-processing private helper implementation in `cyxwiz-backend/src/algorithms/signal_processing.cpp`.
 
 This clears the recurring MSVC warning left after the signal-processing modularization batches without changing helper behavior or the public `SignalProcessing` API.
+
+### 2026-06-21 - Backend split slice: LSTM state and parameters
+
+Moved LSTM state setters and parameter accessors from `cyxwiz-backend/src/algorithms/layers/lstm.cpp` into `cyxwiz-backend/src/algorithms/layers/lstm_state_parameters.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates lightweight state/parameter ownership from LSTM initialization, forward execution, and backward execution while preserving the public `LSTMLayer` API.
