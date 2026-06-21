@@ -1538,3 +1538,12 @@ is not part of this modularity item. That work has been carried forward into
 
 
 
+
+### 2026-06-21 - Time series implementation split slice 5: seasonality
+
+Moved `DetectSeasonality` and `Periodogram` from `cyxwiz-backend/src/algorithms/time_series.cpp`
+into `cyxwiz-backend/src/algorithms/time_series/seasonality.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates seasonality and spectral detection ownership from the remaining forecasting, synthetic data, and
+windowing helpers without changing the public `TimeSeries` API.
