@@ -1818,3 +1818,9 @@ This separates low/high/band-pass filter design, filter application, and frequen
 Moved FFT/IFFT methods from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_fft.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates Fourier transform ownership from filters, convolution, spectrogram, wavelet, window, generation, analysis, utility, and private helper operations while preserving the public `SignalProcessing` API.
+
+### 2026-06-21 - Backend cleanup slice: signal processing helper warning
+
+Removed the unused `filter_len` local from the remaining signal-processing private helper implementation in `cyxwiz-backend/src/algorithms/signal_processing.cpp`.
+
+This clears the recurring MSVC warning left after the signal-processing modularization batches without changing helper behavior or the public `SignalProcessing` API.

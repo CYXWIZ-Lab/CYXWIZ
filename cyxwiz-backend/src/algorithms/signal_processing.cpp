@@ -116,7 +116,6 @@ std::vector<double> SignalProcessing::DWTReconstruct(
     int original_size) {
 
     int n = static_cast<int>(approx.size());
-    int filter_len = static_cast<int>(low_pass.size());
 
     // Upsample by 2
     std::vector<double> up_approx(n * 2, 0.0);
