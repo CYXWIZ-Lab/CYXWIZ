@@ -105,6 +105,7 @@ set(BACKEND_SOURCES
     src/algorithms/layers/multi_head_attention.cpp
     src/algorithms/layers/transformer_layers.cpp
     src/algorithms/layers/gru.cpp
+    src/algorithms/layers/gru_backward.cpp
     src/algorithms/layers/lstm.cpp
     src/algorithms/layers/lstm_direction_helpers.cpp
     src/algorithms/layers/layer_utils.cpp

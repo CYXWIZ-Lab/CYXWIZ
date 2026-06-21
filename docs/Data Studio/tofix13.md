@@ -1696,3 +1696,12 @@ Moved LSTM CPU direction forward/backward helpers and the ArrayFire direction fo
 
 This separates recurrent direction-kernel helpers from `LSTMLayer` lifecycle, parameter, forward, and backward method
 ownership while preserving the public recurrent layer API.
+
+### 2026-06-21 - Backend split slice: GRU backward
+
+Moved `GRULayer::Backward` from `cyxwiz-backend/src/algorithms/layers/gru.cpp` into
+`cyxwiz-backend/src/algorithms/layers/gru_backward.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates GRU BPTT/backward-gradient ownership from construction, initialization, state, forward execution, and
+parameter serialization while preserving the public recurrent layer API.
