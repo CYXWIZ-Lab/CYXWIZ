@@ -1800,3 +1800,9 @@ This separates time-frequency analysis ownership from FFT, convolution, filter d
 Moved wavelet transform entry points from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_wavelet.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates DWT/IDWT ownership from FFT, convolution, filter design, spectrogram, window, generation, analysis, utility, and private helper operations while preserving the public `SignalProcessing` API.
+
+### 2026-06-21 - Backend split slice: signal processing convolution
+
+Moved convolution methods from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_convolution.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates 1D/2D convolution ownership from FFT, filter design, spectrogram, wavelet, window, generation, analysis, utility, and private helper operations while preserving the public `SignalProcessing` API.

@@ -146,6 +146,7 @@ set(BACKEND_SOURCES
     src/algorithms/signal_processing_utilities.cpp
     src/algorithms/signal_processing_spectrogram.cpp
     src/algorithms/signal_processing_wavelet.cpp
+    src/algorithms/signal_processing_convolution.cpp
     src/algorithms/optimization.cpp
     src/algorithms/time_series.cpp
     src/algorithms/time_series/statistics.cpp
