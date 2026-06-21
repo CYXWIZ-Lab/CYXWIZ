@@ -1666,3 +1666,13 @@ Moved Analyzer UI rendering methods from `cyxwiz-engine/src/gui/data_studio/anal
 
 This separates ImGui analysis/report rendering from dataset registration, analysis execution, and compute helpers
 while preserving the public `Analyzer` API.
+
+### 2026-06-21 - Data Studio frontend split slice 4: panel rendering
+
+Moved DataStudioPanel window, toolbar, dataset selector, tab bar, and status bar rendering from
+`cyxwiz-engine/src/gui/data_studio/data_studio_panel.cpp` into
+`cyxwiz-engine/src/gui/data_studio/data_studio_panel_render.cpp` and registered the new translation unit in
+`cyxwiz-engine/CMakeLists.txt`.
+
+This separates the panel container UI from component construction and active-dataset propagation while preserving the
+public `DataStudioPanel` API.
