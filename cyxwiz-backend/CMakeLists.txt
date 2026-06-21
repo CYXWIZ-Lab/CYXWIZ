@@ -153,6 +153,7 @@ set(BACKEND_SOURCES
     src/algorithms/text_processing.cpp
     src/algorithms/text_processing_tfidf.cpp
     src/algorithms/text_processing_sentiment.cpp
+    src/algorithms/text_processing_embeddings.cpp
     src/algorithms/tokenizer.cpp
     src/algorithms/tokenizer/vocabulary_persistence.cpp
     src/algorithms/audio_processing.cpp

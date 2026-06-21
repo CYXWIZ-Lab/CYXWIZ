@@ -1725,3 +1725,13 @@ Moved sentiment lexicon initialization and sentiment-analysis methods from
 
 This separates sentiment lexicon/data ownership from tokenization, word frequency, embeddings, text utilities, and
 sample text generation while preserving the public `TextProcessing` API.
+
+### 2026-06-21 - Backend split slice: text processing embeddings
+
+Moved one-hot embedding, random embedding, similar-word lookup, and word-similarity methods from
+`cyxwiz-backend/src/algorithms/text_processing.cpp` into
+`cyxwiz-backend/src/algorithms/text_processing_embeddings.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates embedding ownership from tokenization, word frequency, TF-IDF, sentiment, text utilities, and sample text
+generation while preserving the public `TextProcessing` API.
