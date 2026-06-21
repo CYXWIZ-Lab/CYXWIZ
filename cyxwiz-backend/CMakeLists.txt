@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)
 
 project(cyxwiz-backend VERSION 0.1.0)
 
@@ -112,6 +112,7 @@ set(BACKEND_SOURCES
     src/algorithms/activations/tanh.cpp
     src/algorithms/sequential.cpp
     src/algorithms/sequential/activation_modules.cpp
+    src/algorithms/sequential/regularization_shape_modules.cpp
     src/algorithms/sequential/model_io.cpp
     src/algorithms/scheduler.cpp
     src/algorithms/clustering.cpp
@@ -367,6 +368,7 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
+
 
 
 

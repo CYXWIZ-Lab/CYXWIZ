@@ -1,4 +1,4 @@
-ï»¿#include <cyxwiz/sequential.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/debug_hooks.h>
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/activations/relu.h>
@@ -190,7 +190,7 @@ std::string TimeDistributedDenseModule::GetName() const {
 // uniformity with Dense/Conv/etc.). We bridge the type gap here by
 // building an int32 Tensor on every forward pass whose values are the
 // rounded floats from the upstream batch. This is the cost of dropping
-// Embedding into an otherwise float-only graph â€” worth it, since the
+// Embedding into an otherwise float-only graph — worth it, since the
 // alternative (dual-typing the whole batching layer) is much bigger.
 //
 // Shape contract:
@@ -245,7 +245,7 @@ Tensor EmbeddingModule::Forward(const Tensor& input) {
                     "EmbeddingModule: input token ids must be Float32, Int32, or Int64");
         }
         // Clamp to valid range. Out-of-vocab IDs map to 0 (the [PAD]
-        // slot by convention â€” safe fallback).
+        // slot by convention — safe fallback).
         if (idx < 0 || idx > vocab_max) idx = 0;
         dst[i] = idx;
     }
@@ -255,7 +255,7 @@ Tensor EmbeddingModule::Forward(const Tensor& input) {
 
 Tensor EmbeddingModule::Backward(const Tensor& grad_output) {
     // EmbeddingLayer::Backward returns an empty tensor because you
-    // can't differentiate w.r.t. integer indices â€” but it DOES update
+    // can't differentiate w.r.t. integer indices — but it DOES update
     // its own weight gradients internally. Propagating "nothing"
     // upstream is correct: Embedding is almost always the first
     // trainable layer, so there's no upstream tensor gradient anyway.
@@ -349,7 +349,7 @@ std::string PositionalEncodingModule::GetName() const {
 // ============================================================================
 //
 // Wraps cyxwiz::LSTMLayer with two classification-friendly behaviors:
-//   1. Keras-style `return_sequences=false` reduction â€” slices out the
+//   1. Keras-style `return_sequences=false` reduction — slices out the
 //      last timestep of the full LSTM output so a Dense head can sit
 //      directly after the LSTM without an intervening Flatten.
 //   2. Symmetric last-step gradient re-expansion in Backward, zeroing
@@ -357,7 +357,7 @@ std::string PositionalEncodingModule::GetName() const {
 //
 // When `return_sequences=true`, the wrapper is a pure passthrough to
 // LSTMLayer and output retains the `[batch, seq_len, hidden*dirs]`
-// shape â€” needed for stacked LSTMs and seq-to-seq heads.
+// shape — needed for stacked LSTMs and seq-to-seq heads.
 
 LSTMModule::LSTMModule(size_t input_size, size_t hidden_size,
                        size_t num_layers, bool bidirectional,
@@ -394,7 +394,7 @@ Tensor LSTMModule::Forward(const Tensor& input) {
     // rather forward a weird tensor than crash on the slice.
     if (last_full_output_shape_.size() != 3) {
         spdlog::warn("LSTMModule: expected 3D output [batch, seq, hidden_dirs] "
-                     "but got {}D â€” passing full output through",
+                     "but got {}D — passing full output through",
                      last_full_output_shape_.size());
         return full_output;
     }
@@ -418,7 +418,7 @@ Tensor LSTMModule::Forward(const Tensor& input) {
 
 Tensor LSTMModule::Backward(const Tensor& grad_output) {
     if (return_sequences_) {
-        // Full-sequence mode â€” grad_output already has shape
+        // Full-sequence mode — grad_output already has shape
         // [batch, seq_len, hidden*dirs]. Pass straight through.
         return layer_->Backward(grad_output);
     }
@@ -430,7 +430,7 @@ Tensor LSTMModule::Backward(const Tensor& grad_output) {
     // loss, all earlier timesteps have zero contribution.
     if (last_full_output_shape_.size() != 3) {
         spdlog::warn("LSTMModule::Backward called without a 3D shape cache "
-                     "â€” falling back to direct grad passthrough");
+                     "— falling back to direct grad passthrough");
         return layer_->Backward(grad_output);
     }
 
@@ -457,7 +457,7 @@ void LSTMModule::SetParameters(const std::map<std::string, Tensor>& params) {
 }
 
 std::map<std::string, Tensor> LSTMModule::GetGradients() {
-    // LSTMLayer doesn't expose GetGradients() yet â€” it writes gradients
+    // LSTMLayer doesn't expose GetGradients() yet — it writes gradients
     // directly into the parameters map keyed as "grad_W_ih", "grad_W_hh",
     // etc. (the same "grad_X"-named entries the legacy optimizer path
     // looked up). The SequentialModel's training step uses GetParameters
@@ -476,7 +476,7 @@ std::string LSTMModule::GetName() const {
 }
 
 // ============================================================================
-// GRUModule Implementation â€” direct mirror of LSTMModule. The slice and
+// GRUModule Implementation — direct mirror of LSTMModule. The slice and
 // re-expand logic for return_sequences=false is identical because
 // GRULayer matches LSTMLayer's [batch, seq, hidden*dirs] full-output
 // contract.
@@ -663,7 +663,7 @@ Tensor GRUModule::Forward(const Tensor& input) {
 
     if (last_full_output_shape_.size() != 3) {
         spdlog::warn("GRUModule: expected 3D output [batch, seq, hidden_dirs] "
-                     "but got {}D â€” passing full output through",
+                     "but got {}D — passing full output through",
                      last_full_output_shape_.size());
         return full_output;
     }
@@ -1309,234 +1309,6 @@ std::map<std::string, Tensor> BatchNormModule::GetGradients() {
 
 std::string BatchNormModule::GetName() const {
     return "BatchNorm(" + std::to_string(num_features_) + ")";
-}
-
-// ============================================================================
-// SoftmaxModule Implementation (ArrayFire)
-// ============================================================================
-
-SoftmaxModule::SoftmaxModule(int dim) : dim_(dim) {}
-
-Tensor SoftmaxModule::Forward(const Tensor& input) {
-    input_cache_ = input.Clone();
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation
-    af::array x = input.GetArray();
-
-    // Softmax: exp(x - max) / sum(exp(x - max))
-    // Compute along dim 1 (classes dimension) for [batch, classes] input
-    // Note: Use (af::max) to prevent Windows macro conflict
-    af::array max_vals = (af::max)(x, 1);  // [batch, 1]
-    af::array x_shifted = x - af::tile(max_vals, 1, static_cast<unsigned>(x.dims(1)));  // Subtract max for stability
-    af::array exp_x = af::exp(x_shifted);
-    af::array sum_exp = af::sum(exp_x, 1);  // [batch, 1]
-    af::array softmax = exp_x / af::tile(sum_exp, 1, static_cast<unsigned>(x.dims(1)));
-
-    Tensor output(softmax);
-    output_cache_ = output.Clone();
-    return output;
-#else
-    // CPU fallback
-    const auto& shape = input.Shape();
-    size_t batch_size = shape[0];
-    size_t num_classes = shape.size() > 1 ? shape[1] : shape[0];
-
-    Tensor output({batch_size, num_classes}, DataType::Float32);
-    const float* in_data = input.Data<float>();
-    float* out_data = output.Data<float>();
-
-    for (size_t b = 0; b < batch_size; ++b) {
-        float max_val = in_data[b * num_classes];
-        for (size_t c = 1; c < num_classes; ++c) {
-            max_val = std::max(max_val, in_data[b * num_classes + c]);
-        }
-        float sum = 0.0f;
-        for (size_t c = 0; c < num_classes; ++c) {
-            out_data[b * num_classes + c] = std::exp(in_data[b * num_classes + c] - max_val);
-            sum += out_data[b * num_classes + c];
-        }
-        for (size_t c = 0; c < num_classes; ++c) {
-            out_data[b * num_classes + c] /= sum;
-        }
-    }
-    output_cache_ = output.Clone();
-    return output;
-#endif
-}
-
-Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation
-    // Softmax backward: grad_input = softmax * (grad_output - sum(grad_output * softmax))
-    af::array grad = grad_output.GetArray();
-    af::array soft = output_cache_.GetArray();
-
-    // Compute dot product per sample: sum(grad * softmax) along classes dimension
-    af::array dot = af::sum(grad * soft, 1);  // [batch, 1]
-
-    // grad_input = softmax * (grad - dot)
-    af::array grad_input = soft * (grad - af::tile(dot, 1, static_cast<unsigned>(grad.dims(1))));
-
-    return Tensor(grad_input);
-#else
-    // CPU fallback
-    const auto& shape = grad_output.Shape();
-    size_t batch_size = shape[0];
-    size_t num_classes = shape.size() > 1 ? shape[1] : shape[0];
-
-    Tensor grad_input({batch_size, num_classes}, DataType::Float32);
-    const float* grad_data = grad_output.Data<float>();
-    const float* soft_data = output_cache_.Data<float>();
-    float* out_data = grad_input.Data<float>();
-
-    for (size_t b = 0; b < batch_size; ++b) {
-        float dot = 0.0f;
-        for (size_t c = 0; c < num_classes; ++c) {
-            dot += grad_data[b * num_classes + c] * soft_data[b * num_classes + c];
-        }
-        for (size_t c = 0; c < num_classes; ++c) {
-            out_data[b * num_classes + c] = soft_data[b * num_classes + c] *
-                (grad_data[b * num_classes + c] - dot);
-        }
-    }
-    return grad_input;
-#endif
-}
-
-// ============================================================================
-// DropoutModule Implementation (ArrayFire)
-// ============================================================================
-
-DropoutModule::DropoutModule(float p) : p_(p) {
-    if (p < 0.0f || p > 1.0f) {
-        spdlog::warn("DropoutModule: p={} out of range [0,1], clamping", p);
-        p_ = std::clamp(p, 0.0f, 1.0f);
-    }
-}
-
-Tensor DropoutModule::Forward(const Tensor& input) {
-    input_cache_ = input.Clone();
-
-    // During eval, just return input
-    if (!is_training_) {
-        return input.Clone();
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation
-    af::array x = input.GetArray();
-    float scale = 1.0f / (1.0f - p_);
-
-    // Generate random mask: values > p are kept (scaled), values <= p are dropped
-    af::array rand_vals = af::randu(x.dims());
-    af::array keep_mask = (rand_vals > p_).as(af::dtype::f32);  // 1 for keep, 0 for drop
-    af::array scaled_mask = keep_mask * scale;
-
-    // Store mask for backward pass
-    mask_ = Tensor(scaled_mask);
-
-    // Apply dropout
-    af::array output = x * scaled_mask;
-    return Tensor(output);
-#else
-    // CPU fallback
-    const auto& shape = input.Shape();
-    size_t total = input.NumElements();
-
-    Tensor output(shape, input.GetDataType());
-    mask_ = Tensor(shape, DataType::Float32);
-
-    const float* in_data = input.Data<float>();
-    float* out_data = output.Data<float>();
-    float* mask_data = mask_.Data<float>();
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-    float scale = 1.0f / (1.0f - p_);
-
-    for (size_t i = 0; i < total; ++i) {
-        if (dist(gen) > p_) {
-            mask_data[i] = scale;
-            out_data[i] = in_data[i] * scale;
-        } else {
-            mask_data[i] = 0.0f;
-            out_data[i] = 0.0f;
-        }
-    }
-    return output;
-#endif
-}
-
-Tensor DropoutModule::Backward(const Tensor& grad_output) {
-    if (!is_training_) {
-        return grad_output.Clone();
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation
-    af::array grad = grad_output.GetArray();
-    af::array mask = mask_.GetArray();
-
-    // grad_input = grad * mask (mask already has scaling applied)
-    af::array grad_input = grad * mask;
-    return Tensor(grad_input);
-#else
-    // CPU fallback
-    const auto& shape = grad_output.Shape();
-    Tensor grad_input(shape, DataType::Float32);
-
-    const float* grad_data = grad_output.Data<float>();
-    const float* mask_data = mask_.Data<float>();
-    float* out_data = grad_input.Data<float>();
-
-    size_t total = grad_output.NumElements();
-    for (size_t i = 0; i < total; ++i) {
-        out_data[i] = grad_data[i] * mask_data[i];
-    }
-    return grad_input;
-#endif
-}
-
-std::string DropoutModule::GetName() const {
-    return "Dropout(p=" + std::to_string(p_) + ")";
-}
-
-// ============================================================================
-// FlattenModule Implementation (ArrayFire)
-// ============================================================================
-
-FlattenModule::FlattenModule(int start_dim) : start_dim_(start_dim) {}
-
-Tensor FlattenModule::Forward(const Tensor& input) {
-    original_shape_ = input.Shape();
-
-    // Calculate flattened size from start_dim onwards
-    size_t batch_size = 1;
-    size_t flat_size = 1;
-
-    for (size_t i = 0; i < original_shape_.size(); ++i) {
-        if (static_cast<int>(i) < start_dim_) {
-            batch_size *= original_shape_[i];
-        } else {
-            flat_size *= original_shape_[i];
-        }
-    }
-
-    // Pure CPU reshape â€” just copy data with new shape. Flatten has no
-    // computation, and going through ArrayFire's moddims scrambles the
-    // row-major data layout (column-major AF produces transposed output
-    // that LinearLayer can't consume). This approach is both correct
-    // and faster than a GPU round-trip for a zero-compute operation.
-    const float* in_data = input.Data<float>();
-    return Tensor({batch_size, flat_size}, in_data, input.GetDataType());
-}
-
-Tensor FlattenModule::Backward(const Tensor& grad_output) {
-    // Pure CPU reshape back to original shape (same as Forward).
-    const float* grad_data = grad_output.Data<float>();
-    return Tensor(original_shape_, grad_data, grad_output.GetDataType());
 }
 
 // ============================================================================
@@ -2507,5 +2279,6 @@ std::unique_ptr<Module> CreateModule(
 }
 
 } // namespace cyxwiz
+
 
 

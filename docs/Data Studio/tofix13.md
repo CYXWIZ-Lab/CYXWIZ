@@ -1347,6 +1347,20 @@ module wrappers out of the monolithic `src/algorithms/sequential.cpp` file:
 This targets active backend code and uses the existing `src/algorithms/sequential`
 folder instead of adding another abstraction layer.
 
+### 2026-06-21 - Sequential implementation split slice 2: regularization and shape modules
+
+Continued the backend sequential implementation split by moving another
+self-contained module family out of `src/algorithms/sequential.cpp`:
+
+- added `src/algorithms/sequential/regularization_shape_modules.cpp` for
+  `SoftmaxModule`, `DropoutModule`, and `FlattenModule`,
+- kept the public `include/cyxwiz/sequential.h` API unchanged,
+- kept `CreateModule` in `sequential.cpp` so factory behavior remains in the
+  existing model container implementation,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This continues shrinking the active monolithic sequential implementation while
+preserving behavior and keeping each slice easy to validate.
 ## Reopened Status
 
 Status: active.
@@ -1386,3 +1400,4 @@ Guardrails:
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
 `tofix14.md` as a separate runtime adapter concern.
+
