@@ -1547,3 +1547,12 @@ into `cyxwiz-backend/src/algorithms/time_series/seasonality.cpp` and registered 
 
 This separates seasonality and spectral detection ownership from the remaining forecasting, synthetic data, and
 windowing helpers without changing the public `TimeSeries` API.
+
+### 2026-06-21 - Time series implementation split slice 6: forecasting
+
+Moved forecasting implementations from `cyxwiz-backend/src/algorithms/time_series.cpp` into
+`cyxwiz-backend/src/algorithms/time_series/forecasting.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This groups exponential smoothing, Holt/Holt-Winters, moving average forecasting, and ARIMA ownership separately
+from synthetic data generation and ML windowing while preserving the public `TimeSeries` API.
