@@ -1648,3 +1648,12 @@ Moved QueryEditor UI rendering methods from `cyxwiz-engine/src/gui/data_studio/q
 
 This separates SQL editor/result-table rendering from DuckDB execution, dataset registration, and query-result
 materialization while preserving the public `QueryEditor` API.
+
+### 2026-06-21 - Data Studio frontend split slice 2: visualizer rendering
+
+Moved Visualizer UI and plot rendering methods from `cyxwiz-engine/src/gui/data_studio/visualizer.cpp` into
+`cyxwiz-engine/src/gui/data_studio/visualizer_render.cpp` and registered the new translation unit in
+`cyxwiz-engine/CMakeLists.txt`.
+
+This separates ImGui/ImPlot rendering ownership from dataset registration, plot creation, data loading, and plot
+lifecycle operations while preserving the public `Visualizer` API.

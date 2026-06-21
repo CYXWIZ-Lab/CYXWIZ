@@ -458,6 +458,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/analyzer.cpp
     src/gui/data_studio/visualizer.cpp
+    src/gui/data_studio/visualizer_render.cpp
     src/gui/data_studio/data_studio_panel.cpp
     # pipeline_executor.cpp moved to src/core/ (Unified Canvas Phase 2)
     src/gui/data_studio/node_registry.cpp
@@ -2092,6 +2093,7 @@ if(CYXWIZ_ENABLE_ASAN)
 
     message(STATUS "ASan memory test enabled - run test_asan_memory to verify")
 endif()
+
 
 
 
