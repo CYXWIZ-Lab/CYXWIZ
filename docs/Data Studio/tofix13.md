@@ -1,4 +1,4 @@
-# To Fix 13 - CyxWiz Backend Engine Gap Analysis
+﻿# To Fix 13 - CyxWiz Backend Engine Gap Analysis
 
 Status: Reopened.
 
@@ -1361,6 +1361,20 @@ self-contained module family out of `src/algorithms/sequential.cpp`:
 
 This continues shrinking the active monolithic sequential implementation while
 preserving behavior and keeping each slice easy to validate.
+### 2026-06-21 - Sequential implementation split slice 3: tensor modules
+
+Continued the backend sequential implementation split by moving the tensor and
+shape-oriented module wrappers out of `src/algorithms/sequential.cpp`:
+
+- added `src/algorithms/sequential/tensor_modules.cpp` for `ReshapeModule`,
+  `PermuteModule`, `TensorUnaryModule`, `TensorReductionModule`,
+  `TensorShapeModule`, and `TensorMaskModule`,
+- kept the public `include/cyxwiz/sequential.h` API unchanged,
+- kept `SequentialModel` and `CreateModule` in `sequential.cpp`,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This keeps graph-facing tensor module ownership separate from the sequential
+model container implementation without changing runtime behavior.
 ## Reopened Status
 
 Status: active.
@@ -1400,4 +1414,5 @@ Guardrails:
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
 `tofix14.md` as a separate runtime adapter concern.
+
 
