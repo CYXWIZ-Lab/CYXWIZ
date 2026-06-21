@@ -1620,3 +1620,12 @@ non-ArrayFire fallback stub from `cyxwiz-backend/src/algorithms/clustering.cpp` 
 
 This leaves `clustering.cpp` focused on shared ArrayFire conversion and distance helpers while preserving the public
 `Clustering` API.
+
+### 2026-06-21 - Linear algebra implementation split slice 1: tensor operations
+
+Moved tensor-first linear algebra operations from `cyxwiz-backend/src/algorithms/linear_algebra.cpp` into
+`cyxwiz-backend/src/algorithms/linear_algebra_tensor.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates Tensor-backed multiply, transpose, inverse, norm, solve, and least-squares ownership from the
+vector/matrix linear algebra implementation while preserving the public `LinearAlgebra` API.
