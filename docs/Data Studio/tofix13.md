@@ -1715,3 +1715,13 @@ Moved TF-IDF, term-frequency, inverse-document-frequency, cosine similarity, and
 
 This separates document-vectorization and similarity ownership from tokenization, embeddings, sentiment, utilities, and
 sample text generation while preserving the public `TextProcessing` API.
+
+### 2026-06-21 - Backend split slice: text processing sentiment
+
+Moved sentiment lexicon initialization and sentiment-analysis methods from
+`cyxwiz-backend/src/algorithms/text_processing.cpp` into
+`cyxwiz-backend/src/algorithms/text_processing_sentiment.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates sentiment lexicon/data ownership from tokenization, word frequency, embeddings, text utilities, and
+sample text generation while preserving the public `TextProcessing` API.
