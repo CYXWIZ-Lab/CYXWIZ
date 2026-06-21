@@ -1764,3 +1764,9 @@ Moved text-cleaning, sentence splitting, lowercase, punctuation removal, and whi
 
 This separates text utility ownership from tokenization/stopword ownership while preserving the public
 `TextProcessing` API.
+
+### 2026-06-21 - Backend split slice: signal processing generation
+
+Moved signal synthesis/noise generation methods from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_generation.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates synthetic signal/noise generation ownership from FFT, convolution, filter design, spectrogram, wavelet, analysis, and utility operations while preserving the public `SignalProcessing` API.

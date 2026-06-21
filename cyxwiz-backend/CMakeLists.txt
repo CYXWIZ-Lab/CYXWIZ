@@ -140,6 +140,7 @@ set(BACKEND_SOURCES
     src/algorithms/linear_algebra_tensor.cpp
     src/algorithms/linear_algebra_utilities.cpp
     src/algorithms/signal_processing.cpp
+    src/algorithms/signal_processing_generation.cpp
     src/algorithms/optimization.cpp
     src/algorithms/time_series.cpp
     src/algorithms/time_series/statistics.cpp
