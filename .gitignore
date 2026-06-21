@@ -83,6 +83,7 @@ wallet.json
 /models/
 /checkpoints/
 /.cyxwiz/
+examples/data/codefeedback_demo_smoke/codefeedback_lang_multiclass.csv
 *.h5
 *.pt
 *.onnx
