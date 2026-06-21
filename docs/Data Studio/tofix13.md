@@ -1782,3 +1782,9 @@ This separates reusable window generation from FFT, convolution, filter design, 
 Moved signal analysis methods from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_analysis.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates peak detection and power spectral density ownership from FFT, convolution, filter design, spectrogram, wavelet, window, signal generation, and utility operations while preserving the public `SignalProcessing` API.
+
+### 2026-06-21 - Backend split slice: signal processing utilities
+
+Moved signal utility methods from `cyxwiz-backend/src/algorithms/signal_processing.cpp` into `cyxwiz-backend/src/algorithms/signal_processing_utilities.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates zero-padding, resampling, normalization, and DC-removal ownership from FFT, convolution, filter design, spectrogram, wavelet, window, generation, analysis, and private helper operations while preserving the public `SignalProcessing` API.
