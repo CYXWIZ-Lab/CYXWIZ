@@ -1375,6 +1375,21 @@ shape-oriented module wrappers out of `src/algorithms/sequential.cpp`:
 
 This keeps graph-facing tensor module ownership separate from the sequential
 model container implementation without changing runtime behavior.
+### 2026-06-21 - Sequential implementation split slice 4: feedforward modules
+
+Continued the backend sequential implementation split by moving the simple
+feedforward and embedding module wrappers out of `src/algorithms/sequential.cpp`:
+
+- added `src/algorithms/sequential/feedforward_modules.cpp` for `LinearModule`,
+  `TimeDistributedDenseModule`, `EmbeddingModule`, and
+  `PositionalEncodingModule`,
+- kept the public `include/cyxwiz/sequential.h` API unchanged,
+- kept recurrent, transformer, normalization, `SequentialModel`, and
+  `CreateModule` in `sequential.cpp` for later smaller slices,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This removes another self-contained block from the active monolithic sequential
+implementation without changing runtime behavior.
 ## Reopened Status
 
 Status: active.
@@ -1414,5 +1429,6 @@ Guardrails:
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
 `tofix14.md` as a separate runtime adapter concern.
+
 
 
