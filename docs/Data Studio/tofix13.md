@@ -1418,6 +1418,20 @@ module wrappers out of `src/algorithms/sequential.cpp`:
 
 This gives transformer sequence modules a clear backend implementation owner
 while preserving existing factory and container behavior.
+### 2026-06-21 - Sequential implementation split slice 7: normalization modules
+
+Completed the sequential wrapper extraction by moving normalization module logic
+out of `src/algorithms/sequential.cpp`:
+
+- added `src/algorithms/sequential/normalization_modules.cpp` for
+  `BatchNormModule`,
+- kept the public `include/cyxwiz/sequential.h` API unchanged,
+- left `SequentialModel`, debug trace helpers, and `CreateModule` in
+  `sequential.cpp` as the core model-container owner,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+At this point `sequential.cpp` no longer owns the individual module wrapper
+implementations; those live under `src/algorithms/sequential/` by family.
 ## Reopened Status
 
 Status: active.
@@ -1457,6 +1471,7 @@ Guardrails:
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
 `tofix14.md` as a separate runtime adapter concern.
+
 
 
 
