@@ -1657,3 +1657,12 @@ Moved Visualizer UI and plot rendering methods from `cyxwiz-engine/src/gui/data_
 
 This separates ImGui/ImPlot rendering ownership from dataset registration, plot creation, data loading, and plot
 lifecycle operations while preserving the public `Visualizer` API.
+
+### 2026-06-21 - Data Studio frontend split slice 3: analyzer rendering
+
+Moved Analyzer UI rendering methods from `cyxwiz-engine/src/gui/data_studio/analyzer.cpp` into
+`cyxwiz-engine/src/gui/data_studio/analyzer_render.cpp` and registered the new translation unit in
+`cyxwiz-engine/CMakeLists.txt`.
+
+This separates ImGui analysis/report rendering from dataset registration, analysis execution, and compute helpers
+while preserving the public `Analyzer` API.

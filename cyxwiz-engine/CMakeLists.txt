@@ -457,6 +457,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/query_editor.cpp
     src/gui/data_studio/query_editor_render.cpp
     src/gui/data_studio/analyzer.cpp
+    src/gui/data_studio/analyzer_render.cpp
     src/gui/data_studio/visualizer.cpp
     src/gui/data_studio/visualizer_render.cpp
     src/gui/data_studio/data_studio_panel.cpp
