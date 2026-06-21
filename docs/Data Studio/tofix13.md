@@ -1836,3 +1836,9 @@ This separates lightweight state/parameter ownership from LSTM initialization, f
 Moved LSTM construction and weight initialization from `cyxwiz-backend/src/algorithms/layers/lstm.cpp` into `cyxwiz-backend/src/algorithms/layers/lstm_initialization.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates LSTM setup/allocation ownership from forward execution, backward execution, and state/parameter access while preserving the public `LSTMLayer` API.
+
+### 2026-06-21 - Backend split slice: LSTM backward
+
+Moved LSTM backward propagation from `cyxwiz-backend/src/algorithms/layers/lstm.cpp` into `cyxwiz-backend/src/algorithms/layers/lstm_backward.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This separates LSTM gradient computation ownership from forward execution, initialization, and state/parameter access while preserving the public `LSTMLayer` API.
