@@ -1432,6 +1432,20 @@ out of `src/algorithms/sequential.cpp`:
 
 At this point `sequential.cpp` no longer owns the individual module wrapper
 implementations; those live under `src/algorithms/sequential/` by family.
+### 2026-06-21 - Time series implementation split slice 1: statistics utilities
+
+Started the backend time-series implementation split by moving the small
+statistics and rolling-window utility block out of `src/algorithms/time_series.cpp`:
+
+- added `src/algorithms/time_series/statistics.cpp` for `Mean`, `Variance`,
+  `StdDev`, `RollingMean`, `RollingStd`, and `CenteredMovingAverage`,
+- kept the public `include/cyxwiz/time_series.h` API unchanged,
+- left decomposition, forecasting, differencing, spectral analysis, generators,
+  and windowing in `time_series.cpp` for later focused slices,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This starts reducing the active monolithic time-series implementation with a
+self-contained helper family and no runtime behavior changes.
 ## Reopened Status
 
 Status: active.
@@ -1471,6 +1485,7 @@ Guardrails:
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
 `tofix14.md` as a separate runtime adapter concern.
+
 
 
 
