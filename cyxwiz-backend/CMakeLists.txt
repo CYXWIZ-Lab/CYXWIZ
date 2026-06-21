@@ -113,6 +113,7 @@ set(BACKEND_SOURCES
     src/algorithms/sequential.cpp
     src/algorithms/sequential/activation_modules.cpp
     src/algorithms/sequential/feedforward_modules.cpp
+    src/algorithms/sequential/recurrent_modules.cpp
     src/algorithms/sequential/regularization_shape_modules.cpp
     src/algorithms/sequential/tensor_modules.cpp
     src/algorithms/sequential/model_io.cpp
@@ -370,6 +371,7 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
+
 
 
 

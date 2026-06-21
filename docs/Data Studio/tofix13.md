@@ -1390,6 +1390,20 @@ feedforward and embedding module wrappers out of `src/algorithms/sequential.cpp`
 
 This removes another self-contained block from the active monolithic sequential
 implementation without changing runtime behavior.
+### 2026-06-21 - Sequential implementation split slice 5: recurrent modules
+
+Continued the backend sequential implementation split by moving recurrent module
+wrappers out of `src/algorithms/sequential.cpp`:
+
+- added `src/algorithms/sequential/recurrent_modules.cpp` for `LSTMModule` and
+  `GRUModule`,
+- kept the public `include/cyxwiz/sequential.h` API unchanged,
+- kept transformer, normalization, `SequentialModel`, and `CreateModule` in
+  `sequential.cpp` for later focused slices,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This gives recurrent sequence modules a clear backend implementation owner while
+preserving the existing model container and factory behavior.
 ## Reopened Status
 
 Status: active.
@@ -1429,6 +1443,7 @@ Guardrails:
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
 `tofix14.md` as a separate runtime adapter concern.
+
 
 
 
