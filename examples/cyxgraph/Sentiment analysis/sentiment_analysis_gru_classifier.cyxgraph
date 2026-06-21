@@ -1,7 +1,7 @@
 {
   "id": "sentiment_analysis_gru_classifier",
-  "name": "Sentiment Analysis Stacked BiGRU Classifier (v7)",
-  "description": "Train a regularized multi-class sentiment analysis model on D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv. The CSV uses 'statement' as the text column and 'status' as the label column. The graph demonstrates the full CyxWiz text training path: Data Input -> TextTokenizer -> TextVocabulary -> TextPadding -> DataSplit -> DataLoader -> Embedding -> BiGRU -> Dense classifier -> CrossEntropy -> Adam -> Output. Compared with the earlier demo, this v7 profile keeps the vocabulary capped at 10k tokens, raises the minimum token frequency to 5, lowers Adam to 2e-4, increases dropout to 0.35, and restores the stronger single dense classifier head after the GRU.",
+  "name": "Sentiment Analysis GRU Classifier (regularized v9)",
+  "description": "Train a regularized multi-class sentiment analysis model on D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv. The CSV uses 'statement' as the text column and 'status' as the label column. This profile is tuned to reduce overfitting and avoid recurrent CUDA kernel overflow on smaller GPUs: Data Input -> TextTokenizer -> DataSplit -> DataLoader -> Embedding -> GRU -> compact Dense classifier -> CrossEntropy -> Adam -> Output. TextTokenizer owns tokenization, vocabulary, and padding settings. It uses max_length 64, Adam at 1e-4, a single non-bidirectional GRU with hidden size 32, and stronger classifier dropout.",
   "category": "Training Pipeline",
   "tags": ["text", "sentiment", "mental-health", "nlp", "classification", "gru", "training", "demo"],
   "parameters": [
@@ -16,7 +16,7 @@
     {
       "name": "epochs",
       "type": "int",
-      "default_value": "8",
+      "default_value": "5",
       "description": "Number of training epochs",
       "min_value": "1",
       "max_value": "50"
@@ -24,7 +24,7 @@
     {
       "name": "learning_rate",
       "type": "float",
-      "default_value": "0.0002",
+      "default_value": "0.0001",
       "description": "Adam learning rate",
       "min_value": "0.00001",
       "max_value": "0.01"
@@ -32,7 +32,7 @@
     {
       "name": "max_length",
       "type": "int",
-      "default_value": "128",
+      "default_value": "64",
       "description": "Maximum tokens per statement after padding/truncation",
       "min_value": "32",
       "max_value": "512"
@@ -64,7 +64,7 @@
     {
       "name": "hidden_size",
       "type": "int",
-      "default_value": "96",
+      "default_value": "32",
       "description": "GRU hidden state size",
       "min_value": "8",
       "max_value": "512"
@@ -72,7 +72,7 @@
     {
       "name": "dropout_rate",
       "type": "float",
-      "default_value": "0.35",
+      "default_value": "0.5",
       "description": "Dropout rate on the classifier head",
       "min_value": "0.0",
       "max_value": "0.7"
@@ -120,33 +120,11 @@
           "text_col": "statement",
           "label_col": "status",
           "source_csv": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
-          "min_word_freq": "$min_word_freq"
-        }
-      },
-      {
-        "id": "text_vocab",
-        "type": "TextVocabulary",
-        "name": "Vocabulary 10k",
-        "pos": [500, 300],
-        "params": {
-          "source_csv": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
-          "text_col": "statement",
-          "tokenizer_type": "1",
-          "method": "word",
-          "lowercase": "true",
           "min_word_freq": "$min_word_freq",
-          "min_freq": "$min_word_freq",
-          "max_vocab_size": "$vocab_size",
-          "vocab_file": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_analysis_vocab.txt"
-        }
-      },
-      {
-        "id": "text_padding",
-        "type": "TextPadding",
-        "name": "Padding",
-        "pos": [750, 300],
-        "params": {
-          "max_length": "$max_length",
+          "vocab_file": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_analysis_vocab.txt",
+          "vocab_build_if_missing": "true",
+          "padding": "true",
+          "truncation": "true",
           "pad_value": "0"
         }
       },
@@ -198,22 +176,22 @@
       {
         "id": "gru",
         "type": "GRU",
-      "name": "Stacked BiGRU (last state)",
-      "pos": [1750, 300],
-      "params": {
-        "hidden_size": "$hidden_size",
-        "num_layers": "2",
-        "bidirectional": "true",
-        "return_sequences": "false"
-      }
+        "name": "GRU 32 (last state)",
+        "pos": [1750, 300],
+        "params": {
+          "hidden_size": "$hidden_size",
+          "num_layers": "1",
+          "bidirectional": "false",
+          "return_sequences": "false"
+        }
       },
       {
         "id": "fc1",
         "type": "Dense",
-        "name": "Dense 64",
+        "name": "Dense 32",
         "pos": [2000, 300],
         "params": {
-          "units": "64"
+          "units": "32"
         }
       },
       {
@@ -228,7 +206,7 @@
         "name": "Dropout",
         "pos": [2500, 300],
         "params": {
-          "rate": "0.35"
+          "rate": "$dropout_rate"
         }
       },
       {
@@ -267,9 +245,7 @@
     ],
     "links": [
       {"from": "data_input", "to": "text_tokenizer", "from_pin": 0, "to_pin": 0},
-      {"from": "text_tokenizer", "to": "text_vocab", "from_pin": 0, "to_pin": 0},
-      {"from": "text_vocab", "to": "text_padding", "from_pin": 0, "to_pin": 0},
-      {"from": "text_padding", "to": "data_split", "from_pin": 0, "to_pin": 0},
+      {"from": "text_tokenizer", "to": "data_split", "from_pin": 0, "to_pin": 0},
       {"from": "data_input", "to": "data_split", "from_pin": 1, "to_pin": 1},
       {"from": "data_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
       {"from": "data_split", "to": "data_loader", "from_pin": 1, "to_pin": 1},

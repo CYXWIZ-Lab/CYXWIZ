@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 
 project(cyxwiz-engine)
 
@@ -283,6 +283,16 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_files.cpp
     src/gui/panels/script_editor_file_workflow.cpp
     src/gui/panels/table_viewer.cpp
+    src/gui/panels/table_viewer_clipboard.cpp
+    src/gui/panels/table_viewer_dialogs.cpp
+    src/gui/panels/table_viewer_editing.cpp
+    src/gui/panels/table_viewer_visualization.cpp
+    src/gui/panels/table_viewer_stats.cpp
+    src/gui/panels/table_viewer_loading.cpp
+    src/gui/panels/table_viewer_tabs.cpp
+    src/gui/panels/table_viewer_transforms.cpp
+    src/gui/panels/table_viewer_plot.cpp
+    src/gui/panels/table_viewer_context_menus.cpp
     src/gui/panels/data_explorer_panel.cpp
     src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
@@ -1269,6 +1279,7 @@ add_executable(test_pipeline_operator_metadata
 
 target_include_directories(test_pipeline_operator_metadata PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imnodes
 )
 
 target_link_libraries(test_pipeline_operator_metadata PRIVATE
@@ -1520,6 +1531,8 @@ set_target_properties(test_text_loader_csv_preflight PROPERTIES
 add_executable(test_tensor_reshape_runtime_contract
     tests/test_tensor_reshape_runtime_contract.cpp
     src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
 )
 
 target_include_directories(test_tensor_reshape_runtime_contract PRIVATE
@@ -1645,6 +1658,7 @@ set_target_properties(test_text_arrow_materializer PROPERTIES
 add_executable(test_text_arrow_training_launch
     tests/test_text_arrow_training_launch.cpp
     src/core/pipeline_table_materializer.cpp
+    src/core/pipeline_runtime_capabilities.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
@@ -2077,3 +2091,10 @@ if(CYXWIZ_ENABLE_ASAN)
 
     message(STATUS "ASan memory test enabled - run test_asan_memory to verify")
 endif()
+
+
+
+
+
+
+

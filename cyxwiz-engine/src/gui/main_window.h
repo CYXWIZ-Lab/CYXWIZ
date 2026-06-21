@@ -280,6 +280,7 @@ private:
     std::string compile_result_message_;     // legacy single-string fallback
     std::string compile_result_summary_;
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
+    std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
 
     // Local Debug staleness cache. `last_debug_graph_hash_` is a stable
     // fingerprint of the (nodes, links) tuple at the moment of the last

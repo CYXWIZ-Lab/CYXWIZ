@@ -47,7 +47,26 @@ public:
      * Exposed so runtime/metadata tests can verify the UI palette does not
      * regress to unsupported or legacy-only node type strings.
      */
-    static const std::vector<QuickAddNode>& GetQuickAddNodes();
+    static const std::vector<QuickAddNode>& GetQuickAddNodes() {
+        static const std::vector<QuickAddNode> nodes = {
+            {"File Input", "DataInput"},
+            {"Save Dataset", "DataOutput"},
+            {"Filter Rows", "FilterRows"},
+            {"Select Columns", "SelectColumns"},
+            {"Remove Duplicates", "RemoveDuplicateRows"},
+            {"Text Clean", "TextCleanNode"},
+            {"Text Tokenize", "TextTokenizer"},
+            {"Text Vectorize", "CountVectorizer"},
+            {"TS Window", "TimeSeriesWindow"},
+            {"TS Features", "TimeSeriesFeatures"},
+            {"TS Lag", "TimeSeriesLag"},
+            {"TS Diff", "Differencing"},
+            {"PCA", "PCANode"},
+            {"Binning", "BinningNode"},
+            {"Polynomial Features", "PolynomialFeaturesNode"},
+        };
+        return nodes;
+    }
 
     /**
      * Render the pipeline canvas

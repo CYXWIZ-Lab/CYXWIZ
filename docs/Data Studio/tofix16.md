@@ -81,6 +81,34 @@ latency without making shutdown, cancellation, or dataset lifetime unsafe.
 - measured improvement on at least one realistic dataset,
 - `prefetch_factor` UI/logs updated only after behavior is real.
 
+## Priority 1.5 - Runtime Ownership For Deferred DataLoader Fields
+
+`done12.md` intentionally left several DataLoader UI fields as partial/future
+because the current runtime does not yet own their behavior end to end.
+
+**Goal:** make these fields active only after `TrainingExecutor`, compiler
+metadata, launcher summaries, dashboard reporting, and tests all agree on the
+same semantics.
+
+**Fields to design before activation:**
+- `validation_freq`: define whether validation cadence is epoch-based,
+  batch-based, or both, and how it affects best-checkpoint selection.
+- `grad_accum_steps`: define loss scaling, optimizer-step timing, progress
+  reporting, pause/stop behavior, and checkpoint boundaries.
+- `seed`: define deterministic split, shuffle, batch-order, and backend RNG
+  ownership across CPU and ArrayFire paths.
+- `pin_memory`: keep tied to Priority 2; do not expose as active unless there
+  is a real backend transfer behavior.
+- `log_interval`: wire batch/epoch logging cadence without hiding true
+  training progress or flooding the UI.
+
+**Completion criteria:**
+- compiler contract tests prove node values reach the runtime config,
+- executor tests prove each field changes behavior when enabled,
+- dashboard/log summaries show the effective values truthfully,
+- unsupported backend behavior is explicit instead of silent,
+- UI labels stop saying partial/future only after runtime tests pass.
+
 ## Priority 2 - Pinned Host Memory
 
 `pin_memory` is serialized for future compatibility but current training

@@ -35,7 +35,9 @@ enum class ModuleType {
     Swish,
     Mish,
     Embedding,
-    TransformerEncoder
+    PositionalEncoding,
+    TransformerEncoder,
+    TransformerDecoder
 };
 
 enum class TensorUnaryOp {
@@ -243,6 +245,26 @@ private:
 };
 
 /**
+ * @brief Parameter-free sinusoidal positional encoding.
+ *
+ * Consumes and returns `[batch, seq_len, d_model]` tensors. Gradients pass
+ * through unchanged because the encoding is constant.
+ */
+class CYXWIZ_API PositionalEncodingModule : public Module {
+public:
+    explicit PositionalEncodingModule(size_t d_model,
+                                      size_t max_sequence_length = 512);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    size_t d_model_;
+    size_t max_sequence_length_;
+};
+
+/**
  * @brief Wrapper for LSTMLayer — recurrent sequence processor.
  *
  * Consumes `[batch, seq_len, input_size]` float tensors and produces
@@ -359,6 +381,37 @@ public:
 
 private:
     std::unique_ptr<TransformerEncoderLayer> layer_;
+    size_t d_model_;
+    size_t num_heads_;
+    size_t dim_feedforward_;
+    float dropout_;
+    bool norm_first_;
+};
+
+/**
+ * @brief Wrapper around TransformerDecoderLayer.
+ *
+ * Consumes and returns `[batch, seq_len, d_model]` tensors. The wrapped
+ * decoder layer owns causal self-attention masking for single-input forward.
+ */
+class CYXWIZ_API TransformerDecoderModule : public Module {
+public:
+    TransformerDecoderModule(size_t d_model, size_t num_heads,
+                             size_t dim_feedforward = 2048,
+                             float dropout = 0.1f,
+                             bool norm_first = false);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    void SetTraining(bool training) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<TransformerDecoderLayer> layer_;
     size_t d_model_;
     size_t num_heads_;
     size_t dim_feedforward_;

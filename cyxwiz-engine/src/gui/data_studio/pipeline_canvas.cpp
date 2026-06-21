@@ -55,28 +55,6 @@ PipelineCanvas::~PipelineCanvas() {
     // application shutdown if ImGui is already destroyed.
 }
 
-const std::vector<PipelineCanvas::QuickAddNode>&
-PipelineCanvas::GetQuickAddNodes() {
-    static const std::vector<QuickAddNode> nodes = {
-        {"File Input", "DataInput"},
-        {"Save Dataset", "DataOutput"},
-        {"Filter Rows", "FilterRows"},
-        {"Select Columns", "SelectColumns"},
-        {"Remove Duplicates", "RemoveDuplicateRows"},
-        {"Text Clean", "TextCleanNode"},
-        {"Text Tokenize", "TextTokenizer"},
-        {"Text Vectorize", "CountVectorizer"},
-        {"TS Window", "TimeSeriesWindow"},
-        {"TS Features", "TimeSeriesFeatures"},
-        {"TS Lag", "TimeSeriesLag"},
-        {"TS Diff", "Differencing"},
-        {"PCA", "PCANode"},
-        {"Binning", "BinningNode"},
-        {"Polynomial Features", "PolynomialFeaturesNode"},
-    };
-    return nodes;
-}
-
 bool PipelineCanvas::RenderQuickAddItem(const QuickAddNode& item) {
     if (!ImGui::Selectable(item.label)) {
         return false;

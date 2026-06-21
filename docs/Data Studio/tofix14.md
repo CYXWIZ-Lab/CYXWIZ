@@ -34,6 +34,37 @@ surface the completed tensor API first, add smoke tests, then return to
 the larger backend architecture items after Studio can actually use the
 new primitives.
 
+## Backend Modularity Follow-up: Split Layer Translation Units
+
+The backend still has a weak layer boundary: many unrelated neural-network
+layers live in the large monolithic `cyxwiz-backend/src/algorithms/layer.cpp`
+and shared `cyxwiz-backend/include/cyxwiz/layer.h` surface. This makes
+attention, recurrent, normalization, embedding, convolution, and transformer
+work harder to review, test, and evolve independently.
+
+This should stay tracked here as part of the broader backend lane. Do not
+mix a full file-structure rewrite into focused feature work such as
+`tofix8`, but when touching layer families, prefer extracting them into
+focused translation units and headers.
+
+Target direction:
+
+- keep public compatibility through `cyxwiz/layer.h` during migration
+- move implementation by family into `src/algorithms/layers/`
+- examples: `embedding_layer.cpp`, `attention_layers.cpp`,
+  `transformer_layers.cpp`, `recurrent_layers.cpp`,
+  `normalization_layers.cpp`, `convolution_layers.cpp`
+- keep shared private helpers in `src/algorithms/layers/layer_utils.*`
+- avoid adding new layer families to the monolithic `layer.cpp`
+- move tests toward family-specific fixtures as files are split
+
+Done criteria:
+
+- new backend layer work has a clear translation-unit home
+- `layer.cpp` no longer grows for unrelated layer families
+- one family split compiles and passes existing tests before continuing
+  broader migration
+
 ## Shared Root Gap
 
 The current graph/training path is strongest for:

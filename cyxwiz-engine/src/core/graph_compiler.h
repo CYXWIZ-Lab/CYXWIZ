@@ -195,10 +195,13 @@ struct SequenceBatchConfig {
     std::string token_column;
     std::string pos_column;
     std::string tag_column;
+    std::string target_column;
     std::string sentence_id_column;
     bool batch_first = true;
     bool create_attention_mask = false;
+    bool create_causal_lm_targets = false;
     int ignore_index = -100;
+    int target_ignore_index = -100;
 };
 
 inline std::string SequenceBatchRuntimeUnsupportedMessage() {
@@ -207,7 +210,7 @@ inline std::string SequenceBatchRuntimeUnsupportedMessage() {
            "batch contract, and TrainingExecutor can consume a prebuilt "
            "ISequenceBatcher, but the Studio Arrow/runtime path still cannot "
            "materialize named sequence payloads such as word_ids, optional "
-           "pos_ids, attention_mask, and tag_ids.";
+           "pos_ids, attention_mask, tag_ids, and causal target_ids.";
 }
 
 /**

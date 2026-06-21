@@ -5,12 +5,132 @@
 #include <filesystem>
 #include <cstring>
 #include <fstream>
+#include <nlohmann/json.hpp>
 
 #ifdef CYXWIZ_HAS_ONNX_EXPORT
 #include <onnx/onnx_pb.h>
 #endif
 
 namespace cyxwiz {
+
+namespace {
+
+bool LooksLikeTokenizerParams(const nlohmann::json& params) {
+    return params.contains("tokenizer_type") ||
+           params.contains("method") ||
+           params.contains("vocab_file") ||
+           params.contains("text_col") ||
+           params.contains("text_column") ||
+           params.contains("max_length") ||
+           params.contains("min_word_freq") ||
+           params.contains("max_vocab_size");
+}
+
+void CopyParamIfPresent(nlohmann::json& target,
+                        const nlohmann::json& params,
+                        const char* key) {
+    if (!params.contains(key)) {
+        return;
+    }
+    target[key] = params[key];
+}
+
+bool InferTextTokenizerAssetsFromGraph(
+    const std::string& graph_json,
+    std::string& out_config_json,
+    std::string& out_vocab_path
+) {
+    out_config_json.clear();
+    out_vocab_path.clear();
+
+    if (graph_json.empty()) {
+        return false;
+    }
+
+    try {
+        const auto graph = nlohmann::json::parse(graph_json);
+        if (!graph.contains("nodes") || !graph["nodes"].is_array()) {
+            return false;
+        }
+
+        nlohmann::json package_config;
+        package_config["version"] = "1.0";
+        package_config["source"] = "graph";
+        package_config["effective"] = nlohmann::json::object();
+        package_config["nodes"] = nlohmann::json::array();
+
+        bool found = false;
+        std::string candidate_vocab_path;
+
+        for (const auto& node : graph["nodes"]) {
+            if (!node.contains("parameters") || !node["parameters"].is_object()) {
+                continue;
+            }
+
+            const auto& params = node["parameters"];
+            if (!LooksLikeTokenizerParams(params)) {
+                continue;
+            }
+
+            found = true;
+
+            nlohmann::json node_record;
+            if (node.contains("id")) {
+                node_record["id"] = node["id"];
+            }
+            if (node.contains("name")) {
+                node_record["name"] = node["name"];
+            }
+            node_record["parameters"] = params;
+            package_config["nodes"].push_back(std::move(node_record));
+
+            auto& effective = package_config["effective"];
+            CopyParamIfPresent(effective, params, "method");
+            CopyParamIfPresent(effective, params, "tokenizer_type");
+            CopyParamIfPresent(effective, params, "max_length");
+            CopyParamIfPresent(effective, params, "lowercase");
+            CopyParamIfPresent(effective, params, "min_word_freq");
+            CopyParamIfPresent(effective, params, "max_vocab_size");
+            CopyParamIfPresent(effective, params, "pad_value");
+            CopyParamIfPresent(effective, params, "text_col");
+            CopyParamIfPresent(effective, params, "text_column");
+            CopyParamIfPresent(effective, params, "label_col");
+            CopyParamIfPresent(effective, params, "label_column");
+            CopyParamIfPresent(effective, params, "vocab_file");
+
+            if (params.contains("vocab_file") &&
+                params["vocab_file"].is_string() &&
+                !params["vocab_file"].get<std::string>().empty()) {
+                candidate_vocab_path = params["vocab_file"].get<std::string>();
+            }
+        }
+
+        if (!found) {
+            return false;
+        }
+
+        if (!candidate_vocab_path.empty()) {
+            package_config["effective"]["vocab_file_packaged"] =
+                "tokenizer/vocab.txt";
+            if (std::filesystem::exists(candidate_vocab_path)) {
+                out_vocab_path = candidate_vocab_path;
+            } else {
+                package_config["effective"]["vocab_file_packaged"] = nullptr;
+                package_config["effective"]["vocab_file_package_warning"] =
+                    "Original vocab_file path did not exist at export time";
+            }
+        }
+
+        out_config_json = package_config.dump(4);
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::warn("Could not infer text tokenizer assets from graph: {}",
+                     e.what());
+        return false;
+    }
+}
+
+} // namespace
 
 ExportResult ModelExporter::Export(
     SequentialModel& model,
@@ -77,8 +197,30 @@ ExportResult ModelExporter::ExportCyxModel(
     if (progress_cb) progress_cb(0, 6, "Preparing model data...");
 
     try {
+        ExportOptions resolved_options = options;
+        if (resolved_options.include_tokenizer_assets &&
+            resolved_options.text_tokenizer_config_json.empty()) {
+            std::string inferred_config;
+            std::string inferred_vocab_path;
+            if (InferTextTokenizerAssetsFromGraph(graph_json,
+                                                  inferred_config,
+                                                  inferred_vocab_path)) {
+                resolved_options.text_tokenizer_config_json =
+                    std::move(inferred_config);
+                if (resolved_options.text_tokenizer_vocab_path.empty()) {
+                    resolved_options.text_tokenizer_vocab_path =
+                        std::move(inferred_vocab_path);
+                }
+            }
+        }
+
         // 1. Create manifest
-        ModelManifest manifest = CreateManifest(model, training_metrics, options);
+        ModelManifest manifest = CreateManifest(model, training_metrics,
+                                                resolved_options);
+        manifest.has_tokenizer =
+            !resolved_options.text_tokenizer_config_json.empty();
+        manifest.has_vocabulary =
+            !resolved_options.text_tokenizer_vocab_path.empty();
 
         if (progress_cb) progress_cb(1, 6, "Extracting weights...");
 
@@ -139,13 +281,13 @@ ExportResult ModelExporter::ExportCyxModel(
         bool success = cyxmodel.Create(
             output_path,
             manifest,
-            options.include_graph ? graph_json : "",
+            resolved_options.include_graph ? graph_json : "",
             config,
             history_ptr,
             weights,
             weight_shapes,
             optimizer_state_ptr,
-            options
+            resolved_options
         );
 
         if (!success) {
@@ -747,6 +889,14 @@ ModelManifest ModelExporter::CreateManifest(
     manifest.author = options.author;
     manifest.description = options.description;
     manifest.custom_metadata = options.custom_metadata;
+    if (options.include_tokenizer_assets &&
+        !options.text_tokenizer_config_json.empty()) {
+        manifest.custom_metadata["text_tokenizer"] = "packaged";
+    }
+    if (options.include_tokenizer_assets &&
+        !options.text_tokenizer_vocab_path.empty()) {
+        manifest.custom_metadata["text_vocabulary"] = "packaged";
+    }
 
     return manifest;
 }

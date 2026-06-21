@@ -478,6 +478,9 @@ Current implementation slice:
 - Unclassified compiled layers now also create compiler warnings, so unknown
   backend placement is visible before training even if the user does not inspect
   the detailed placement summary.
+- The compile result popup now shows backend placement in a dedicated structured
+  section with status counts and per-node rows instead of appending placement
+  warnings to the plain configuration text.
 - Focused placement tests now cover both direct unknown-summary behavior and a
   real compiled graph whose layer is reported as
   `backend_capability_unclassified`.

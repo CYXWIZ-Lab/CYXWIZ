@@ -40,6 +40,7 @@ struct SequenceBatch {
     Tensor pos_ids;         // [batch, seq] int ids, optional
     Tensor attention_mask;  // [batch, seq] 1 for real tokens, 0 for padding
     Tensor tag_ids;         // [batch, seq] int tag ids, required for training
+    Tensor target_ids;      // [batch, seq] next-token ids for causal LM training
     size_t size = 0;        // Actual batch size
     size_t sequence_length = 0;
 
@@ -56,10 +57,14 @@ struct SequenceBatch {
     bool HasTagIds() const {
         return !tag_ids.Shape().empty() && tag_ids.NumElements() > 0;
     }
+    bool HasTargetIds() const {
+        return !target_ids.Shape().empty() && target_ids.NumElements() > 0;
+    }
     bool IsValid() const {
         return size > 0 && sequence_length > 0 && HasWordIds();
     }
-    bool IsSupervised() const { return IsValid() && HasTagIds(); }
+    bool IsSupervised() const { return IsValid() && (HasTagIds() || HasTargetIds()); }
+    bool IsLanguageModeling() const { return IsValid() && HasTargetIds(); }
 };
 
 /**

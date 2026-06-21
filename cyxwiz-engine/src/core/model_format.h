@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <chrono>
+#include <cctype>
 
 namespace cyxwiz {
 
@@ -60,6 +61,14 @@ struct ExportOptions {
     bool include_optimizer_state = true;
     bool include_training_history = true;
     bool include_graph = true;
+    bool include_tokenizer_assets = true;
+
+    // Optional text tokenizer deployment assets for CyxModel packages.
+    // When empty, ModelExporter may infer these from graph_json for text
+    // graphs. Explicit values are copied into tokenizer/config.json and
+    // tokenizer/vocab.txt inside the .cyxmodel directory package.
+    std::string text_tokenizer_config_json;
+    std::string text_tokenizer_vocab_path;
 
     // Quantization
     Quantization quantization = Quantization::None;
@@ -157,6 +166,8 @@ struct ProbeResult {
     bool has_optimizer_state = false;
     bool has_training_history = false;
     bool has_graph = false;
+    bool has_tokenizer = false;
+    bool has_vocabulary = false;
 
     std::string error_message;
 };
@@ -256,6 +267,8 @@ struct ModelManifest {
     bool has_optimizer_state = false;
     bool has_training_history = false;
     bool has_graph = false;
+    bool has_tokenizer = false;
+    bool has_vocabulary = false;
 };
 
 // Utility functions
@@ -278,7 +291,10 @@ inline std::string GetFormatExtension(ModelFormat format) {
  */
 inline ModelFormat GetFormatFromExtension(const std::string& ext) {
     std::string lower_ext = ext;
-    for (auto& c : lower_ext) c = std::tolower(c);
+    for (auto& c : lower_ext) {
+        c = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(c)));
+    }
 
     if (lower_ext == ".cyxmodel") return ModelFormat::CyxModel;
     if (lower_ext == ".onnx") return ModelFormat::ONNX;

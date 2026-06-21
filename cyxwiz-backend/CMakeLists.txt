@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 
 project(cyxwiz-backend VERSION 0.1.0)
 
@@ -74,19 +74,51 @@ set(BACKEND_SOURCES
     src/core/memory_manager.cpp
     src/core/cyxwiz_c.cpp
     src/algorithms/optimizer.cpp
+    src/algorithms/optimizers/optimizer_utils.cpp
+    src/algorithms/optimizers/sgd.cpp
+    src/algorithms/optimizers/adam_family.cpp
+    src/algorithms/optimizers/adaptive_optimizers.cpp
+    src/algorithms/optimizers/lamb.cpp
+    src/algorithms/optimizers/lr_warmup.cpp
     src/algorithms/loss.cpp
+    src/algorithms/losses/loss_utils.cpp
+    src/algorithms/losses/regression_losses.cpp
+    src/algorithms/losses/probability_losses.cpp
+    src/algorithms/losses/classification_losses.cpp
+    src/algorithms/losses/metric_learning_losses.cpp
     src/algorithms/activation.cpp
     src/algorithms/layer.cpp
+    src/algorithms/layers/layer_arrayfire_utils.cpp
+    src/algorithms/layers/layer_recurrent_utils.cpp
+    src/algorithms/layers/flatten.cpp
+    src/algorithms/layers/dropout.cpp
+    src/algorithms/layers/pooling.cpp
+    src/algorithms/layers/batch_norm.cpp
+    src/algorithms/layers/embedding.cpp
+    src/algorithms/layers/normalization.cpp
+    src/algorithms/layers/conv1d.cpp
+    src/algorithms/layers/conv2d.cpp
+    src/algorithms/layers/conv_transpose2d.cpp
+    src/algorithms/layers/upsampling.cpp
+    src/algorithms/layers/dense.cpp
     src/algorithms/layers/linear.cpp
+    src/algorithms/layers/multi_head_attention.cpp
+    src/algorithms/layers/transformer_layers.cpp
+    src/algorithms/layers/gru.cpp
+    src/algorithms/layers/lstm.cpp
     src/algorithms/layers/layer_utils.cpp
     src/algorithms/activations/relu.cpp
     src/algorithms/activations/sigmoid.cpp
     src/algorithms/activations/tanh.cpp
     src/algorithms/sequential.cpp
+    src/algorithms/sequential/model_io.cpp
     src/algorithms/scheduler.cpp
     src/algorithms/clustering.cpp
     src/algorithms/data_transform.cpp
     src/algorithms/model_evaluation.cpp
+    src/algorithms/evaluation/cross_validation.cpp
+    src/algorithms/evaluation/classification_metrics.cpp
+    src/algorithms/evaluation/roc_pr_curves.cpp
     src/algorithms/dimensionality_reduction.cpp
     src/algorithms/feature_importance.cpp
     src/algorithms/model_interpretability.cpp
@@ -96,17 +128,28 @@ set(BACKEND_SOURCES
     src/algorithms/time_series.cpp
     src/algorithms/text_processing.cpp
     src/algorithms/tokenizer.cpp
+    src/algorithms/tokenizer/vocabulary_persistence.cpp
     src/algorithms/audio_processing.cpp
     src/algorithms/utilities.cpp
     src/algorithms/rl_interface.cpp
     src/algorithms/dataloader.cpp
+    src/algorithms/data/synthetic_dataset.cpp
+    src/algorithms/data/mnist_dataset.cpp
+    src/algorithms/data/training_data_loader.cpp
+    src/algorithms/data/training_data_factories.cpp
     src/core/data_loader.cpp
+    src/core/data_loader_file_loading.cpp
+    src/core/data_loader_queries.cpp
+    src/core/data_loader_schema.cpp
+    src/core/data_loader_conversion.cpp
+    src/core/data_loader_batch_iterator.cpp
     # Distributed training
     src/algorithms/distributed/process_group.cpp
     src/algorithms/distributed/cpu_backend.cpp
     src/algorithms/distributed/ddp.cpp
     src/algorithms/distributed/distributed_sampler.cpp
     src/algorithms/distributed/distributed_trainer.cpp
+    src/algorithms/distributed/distributed_trainer_checkpoint.cpp
 )
 
 # Header files
@@ -122,6 +165,8 @@ set(BACKEND_HEADERS
     include/cyxwiz/model.h
     include/cyxwiz/cyxwiz.h
     include/cyxwiz/cyxwiz_c.h
+    include/cyxwiz/layers/layer_base.h
+    include/cyxwiz/layers/dense.h
     include/cyxwiz/layers/linear.h
     include/cyxwiz/activations/relu.h
     include/cyxwiz/activations/sigmoid.h
@@ -300,3 +345,26 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

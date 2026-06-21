@@ -64,7 +64,8 @@ inline SequenceTrainingEpochResult TrainSequenceTaggerEpoch(
             result.error = "sequence batch config is not enabled";
             return result;
         }
-        if (id_to_label.empty()) {
+        if (!config.sequence_batch.create_causal_lm_targets &&
+            id_to_label.empty()) {
             result.error = "sequence tag label vocabulary is empty";
             return result;
         }
@@ -85,12 +86,15 @@ inline SequenceTrainingEpochResult TrainSequenceTaggerEpoch(
                 break;
             }
             if (!batch.IsSupervised()) {
-                result.error = "sequence batch is missing tag_ids";
+                result.error = "sequence batch is missing tag_ids or target_ids";
                 return result;
             }
+            const bool is_language_modeling = batch.HasTargetIds();
+            const Tensor& targets =
+                is_language_modeling ? batch.target_ids : batch.tag_ids;
 
             Tensor predictions = built.model->Forward(batch.word_ids);
-            Tensor loss_tensor = built.loss->Forward(predictions, batch.tag_ids);
+            Tensor loss_tensor = built.loss->Forward(predictions, targets);
             const float batch_loss = loss_tensor.Data<float>()[0];
             if (!std::isfinite(batch_loss)) {
                 result.error = "sequence tagger loss is not finite";
@@ -98,14 +102,16 @@ inline SequenceTrainingEpochResult TrainSequenceTaggerEpoch(
             }
             loss_sum += static_cast<double>(batch_loss);
 
-            const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
-                predictions,
-                batch.tag_ids,
-                id_to_label,
-                config.sequence_batch.ignore_index);
-            AccumulateSequenceTagMetrics(result.metrics, batch_metrics);
+            if (!is_language_modeling) {
+                const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
+                    predictions,
+                    targets,
+                    id_to_label,
+                    config.sequence_batch.ignore_index);
+                AccumulateSequenceTagMetrics(result.metrics, batch_metrics);
+            }
 
-            Tensor grad = built.loss->Backward(predictions, batch.tag_ids);
+            Tensor grad = built.loss->Backward(predictions, targets);
             built.model->Backward(grad);
             built.model->UpdateParameters(built.optimizer.get());
 

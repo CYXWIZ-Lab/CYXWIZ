@@ -23,9 +23,11 @@ struct SequenceBatcherConfig {
     bool shuffle = false;
     bool drop_last = false;
     bool create_attention_mask = true;
+    bool create_causal_lm_targets = false;
     int64_t word_pad_id = 0;
     int64_t pos_pad_id = 0;
     int64_t tag_ignore_index = -100;
+    int64_t target_ignore_index = -100;
     uint32_t seed = 42;
 };
 
@@ -63,12 +65,19 @@ public:
             actual_size * sequence_length_, 0);
         std::vector<int64_t> tag_data(
             actual_size * sequence_length_, config_.tag_ignore_index);
+        std::vector<int64_t> target_data(
+            actual_size * sequence_length_, config_.target_ignore_index);
 
         bool has_pos = false;
         bool has_tags = false;
         for (size_t row = 0; row < actual_size; ++row) {
             const auto& sample = samples_[indices_[current_index_ + row]];
-            CopySequence(sample.word_ids, word_data, row);
+            if (config_.create_causal_lm_targets) {
+                CopyCausalLmSequence(sample.word_ids, word_data, target_data,
+                                     mask_data, row);
+            } else {
+                CopySequence(sample.word_ids, word_data, row);
+            }
             if (!sample.pos_ids.empty()) {
                 has_pos = true;
                 CopySequence(sample.pos_ids, pos_data, row);
@@ -81,7 +90,9 @@ public:
             const size_t token_count =
                 std::min(sequence_length_, sample.word_ids.size());
             for (size_t col = 0; col < token_count; ++col) {
-                mask_data[row * sequence_length_ + col] = 1;
+                if (!config_.create_causal_lm_targets) {
+                    mask_data[row * sequence_length_ + col] = 1;
+                }
             }
         }
 
@@ -101,6 +112,10 @@ public:
         if (has_tags) {
             batch.tag_ids = Tensor({actual_size, sequence_length_},
                                    tag_data.data(), DataType::Int64);
+        }
+        if (config_.create_causal_lm_targets) {
+            batch.target_ids = Tensor({actual_size, sequence_length_},
+                                      target_data.data(), DataType::Int64);
         }
         batch.size = actual_size;
         batch.sequence_length = sequence_length_;
@@ -149,6 +164,27 @@ private:
         const size_t count = std::min(sequence_length_, source.size());
         for (size_t col = 0; col < count; ++col) {
             dest[row * sequence_length_ + col] = source[col];
+        }
+    }
+
+    void CopyCausalLmSequence(const std::vector<int64_t>& source,
+                              std::vector<int64_t>& word_dest,
+                              std::vector<int64_t>& target_dest,
+                              std::vector<int64_t>& mask_dest,
+                              size_t row) const {
+        const size_t count = std::min(sequence_length_, source.size());
+        for (size_t col = 0; col < count; ++col) {
+            const size_t offset = row * sequence_length_ + col;
+            const int64_t input_id = source[col];
+            word_dest[offset] = input_id;
+            mask_dest[offset] = input_id == config_.word_pad_id ? 0 : 1;
+
+            const size_t target_col = col + 1;
+            if (input_id != config_.word_pad_id &&
+                target_col < source.size() &&
+                source[target_col] != config_.word_pad_id) {
+                target_dest[offset] = source[target_col];
+            }
         }
     }
 

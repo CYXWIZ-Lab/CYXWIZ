@@ -1,0 +1,239 @@
+{
+  "id": "cats_dogs_classifier_v2",
+  "name": "Cats vs Dogs Image Classifier v2",
+  "description": "Improved trainable baseline for the Cats_Dogs demo. Keeps the 64x64 image pipeline, but uses a deeper dense head with BatchNorm and stronger regularization. This is the recommended v2 teaching graph for showing how accuracy can improve over the original baseline.",
+  "category": "Training Pipeline",
+  "tags": ["cats", "dogs", "binary", "classification", "image", "training", "demo", "v2", "batchnorm"],
+  "parameters": [
+    {
+      "name": "batch_size",
+      "type": "int",
+      "default_value": "32",
+      "description": "Training batch size",
+      "min_value": "1",
+      "max_value": "256"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.0005",
+      "description": "Adam learning rate for the improved baseline",
+      "min_value": "0.0001",
+      "max_value": "0.01"
+    },
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "15",
+      "description": "Number of epochs for the improved baseline",
+      "min_value": "1",
+      "max_value": "50"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {
+        "id": "data_input",
+        "type": "DataInput",
+        "name": "Cats_Dogs Data",
+        "pos": [0, 300],
+        "params": {
+          "source_type": "file",
+          "file_category": "image",
+          "folder_path": "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog",
+          "image_layout": "1",
+          "labels_csv": "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog.csv",
+          "target_width": "64",
+          "target_height": "64",
+          "rgb": "true",
+          "normalize": "true"
+        }
+      },
+      {
+        "id": "data_split",
+        "type": "DataSplit",
+        "name": "Train/Val/Test Split",
+        "pos": [250, 300],
+        "params": {
+          "train_ratio": "0.8",
+          "val_ratio": "0.1",
+          "test_ratio": "0.1"
+        }
+      },
+      {
+        "id": "data_loader",
+        "type": "DataLoader",
+        "name": "DataLoader",
+        "pos": [500, 300],
+        "params": {
+          "batch_size": "$batch_size",
+          "shuffle": "true"
+        }
+      },
+      {
+        "id": "resize",
+        "type": "Resize",
+        "name": "Resize 64x64",
+        "pos": [750, 300],
+        "params": {
+          "width": "64",
+          "height": "64"
+        }
+      },
+      {
+        "id": "normalize",
+        "type": "Normalize",
+        "name": "Normalize",
+        "pos": [1000, 300],
+        "params": {
+          "mean": "0.5",
+          "std": "0.5"
+        }
+      },
+      {
+        "id": "flatten",
+        "type": "Flatten",
+        "name": "Flatten",
+        "pos": [1250, 300]
+      },
+      {
+        "id": "fc1",
+        "type": "Dense",
+        "name": "Dense 512",
+        "pos": [1500, 300],
+        "params": {
+          "units": "512"
+        }
+      },
+      {
+        "id": "bn1",
+        "type": "BatchNorm",
+        "name": "BatchNorm",
+        "pos": [1750, 300],
+        "params": {
+          "eps": "0.00001",
+          "momentum": "0.1"
+        }
+      },
+      {
+        "id": "relu1",
+        "type": "ReLU",
+        "name": "ReLU",
+        "pos": [2000, 300]
+      },
+      {
+        "id": "dropout1",
+        "type": "Dropout",
+        "name": "Dropout 0.4",
+        "pos": [2250, 300],
+        "params": {
+          "rate": "0.4"
+        }
+      },
+      {
+        "id": "fc2",
+        "type": "Dense",
+        "name": "Dense 256",
+        "pos": [2500, 300],
+        "params": {
+          "units": "256"
+        }
+      },
+      {
+        "id": "bn2",
+        "type": "BatchNorm",
+        "name": "BatchNorm",
+        "pos": [2750, 300],
+        "params": {
+          "eps": "0.00001",
+          "momentum": "0.1"
+        }
+      },
+      {
+        "id": "relu2",
+        "type": "ReLU",
+        "name": "ReLU",
+        "pos": [3000, 300]
+      },
+      {
+        "id": "dropout2",
+        "type": "Dropout",
+        "name": "Dropout 0.3",
+        "pos": [3250, 300],
+        "params": {
+          "rate": "0.3"
+        }
+      },
+      {
+        "id": "fc3",
+        "type": "Dense",
+        "name": "Dense 64",
+        "pos": [3500, 300],
+        "params": {
+          "units": "64"
+        }
+      },
+      {
+        "id": "relu3",
+        "type": "ReLU",
+        "name": "ReLU",
+        "pos": [3750, 300]
+      },
+      {
+        "id": "fc4",
+        "type": "Dense",
+        "name": "Dense 2",
+        "pos": [4000, 300],
+        "params": {
+          "units": "2"
+        }
+      },
+      {
+        "id": "loss",
+        "type": "CrossEntropyLoss",
+        "name": "CrossEntropy",
+        "pos": [4250, 300]
+      },
+      {
+        "id": "optimizer",
+        "type": "Adam",
+        "name": "Adam",
+        "pos": [4500, 300],
+        "params": {
+          "learning_rate": "$learning_rate",
+          "epochs": "$epochs"
+        }
+      },
+      {
+        "id": "output",
+        "type": "Output",
+        "name": "Output",
+        "pos": [4750, 300],
+        "params": {
+          "classes": "2"
+        }
+      }
+    ],
+    "links": [
+      {"from": "data_input", "to": "data_split"},
+      {"from": "data_split", "to": "data_loader"},
+      {"from": "data_loader", "to": "resize"},
+      {"from": "resize", "to": "normalize"},
+      {"from": "normalize", "to": "flatten"},
+      {"from": "flatten", "to": "fc1"},
+      {"from": "fc1", "to": "bn1"},
+      {"from": "bn1", "to": "relu1"},
+      {"from": "relu1", "to": "dropout1"},
+      {"from": "dropout1", "to": "fc2"},
+      {"from": "fc2", "to": "bn2"},
+      {"from": "bn2", "to": "relu2"},
+      {"from": "relu2", "to": "dropout2"},
+      {"from": "dropout2", "to": "fc3"},
+      {"from": "fc3", "to": "relu3"},
+      {"from": "relu3", "to": "fc4"},
+      {"from": "fc4", "to": "loss"},
+      {"from": "loss", "to": "optimizer"},
+      {"from": "optimizer", "to": "output"}
+    ]
+  }
+}

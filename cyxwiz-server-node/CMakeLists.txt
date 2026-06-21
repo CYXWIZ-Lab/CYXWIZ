@@ -383,7 +383,7 @@ if(CYXWIZ_BUILD_TESTS)
         src/remote_data_loader.cpp
         src/node_client.cpp
         src/auth/p2p_jwt_validator.cpp
-        src/core/device_pool.cpp
+        ${SHARED_CORE_SOURCES}
     )
 
     target_include_directories(test_job_execution_service PRIVATE
@@ -402,6 +402,8 @@ if(CYXWIZ_BUILD_TESTS)
         gRPC::grpc++
         protobuf::libprotobuf
         Threads::Threads
+        yaml-cpp::yaml-cpp
+        unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
     )
 
@@ -468,7 +470,7 @@ if(CYXWIZ_BUILD_TESTS)
         src/remote_data_loader.cpp
         src/node_client.cpp
         src/auth/p2p_jwt_validator.cpp
-        src/core/device_pool.cpp
+        ${SHARED_CORE_SOURCES}
     )
 
     target_include_directories(standalone_p2p_server PRIVATE
@@ -484,6 +486,8 @@ if(CYXWIZ_BUILD_TESTS)
         spdlog::spdlog
         fmt::fmt
         Threads::Threads
+        yaml-cpp::yaml-cpp
+        unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
     )
 

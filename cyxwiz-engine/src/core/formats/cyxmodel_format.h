@@ -95,6 +95,19 @@ public:
     std::string ExtractGraphOnly(const std::string& input_path);
 
     /**
+     * Extract tokenizer deployment assets from a .cyxmodel package.
+     * @param input_path Path to .cyxmodel directory/archive
+     * @param config_json Output tokenizer/config.json contents, if present
+     * @param vocab_text Output tokenizer/vocab.txt contents, if present
+     * @return true when at least one tokenizer asset is present
+     */
+    bool ExtractTextTokenizerAssets(
+        const std::string& input_path,
+        std::string& config_json,
+        std::string& vocab_text
+    );
+
+    /**
      * Get last error message
      */
     const std::string& GetLastError() const { return last_error_; }

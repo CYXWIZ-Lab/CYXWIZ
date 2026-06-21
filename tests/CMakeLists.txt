@@ -17,6 +17,15 @@ add_executable(cyxwiz-tests
     unit/test_sequence_layers.cpp
     unit/test_data_loader.cpp
     unit/test_training_dataloader.cpp
+    unit/test_cyxmodel_format.cpp
+    unit/test_text_inference_input.cpp
+    unit/test_language_model_training.cpp
+    unit/test_sequence_batcher.cpp
+    unit/test_pipeline_runtime_capabilities.cpp
+    ../cyxwiz-engine/src/core/formats/cyxmodel_format.cpp
+    ../cyxwiz-engine/src/core/language_model_training.cpp
+    ../cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp
+    ../cyxwiz-engine/src/inference/text_inference_input.cpp
 )
 
 target_link_libraries(cyxwiz-tests PRIVATE

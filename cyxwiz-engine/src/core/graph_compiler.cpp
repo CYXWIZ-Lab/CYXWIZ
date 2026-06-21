@@ -236,9 +236,14 @@ bool LooksLikeSequenceBatchContract(const gui::MLNode& node,
             "word_ids",
             "pos_ids",
             "tag_ids",
+            "target_ids",
             "attention_mask",
             "sequence_lengths",
-            "ignore_index"
+            "ignore_index",
+            "target_ignore_index",
+            "causal_lm_targets",
+            "create_causal_lm_targets",
+            "shifted_targets"
         };
 
         for (const char* key : sequence_loader_keys) {
@@ -251,6 +256,9 @@ bool LooksLikeSequenceBatchContract(const gui::MLNode& node,
 
     return false;
 }
+
+bool LooksLikeGenerativeTrainingSketch(const gui::MLNode& node,
+                                       std::string& matched_key);
 
 void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
                                           SequenceBatchConfig& sequence) {
@@ -278,8 +286,17 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
         copy_param("tag_column", sequence.tag_column);
         copy_param("tags_column", sequence.tag_column);
         copy_param("tag_sequence_column", sequence.tag_column);
+        copy_param("target_column", sequence.target_column);
+        copy_param("target_ids_column", sequence.target_column);
+        copy_param("decoder_target_column", sequence.target_column);
         copy_param("sentence_id_column", sequence.sentence_id_column);
         copy_param("sequence_id_column", sequence.sentence_id_column);
+
+        std::string generative_key;
+        if (LooksLikeGenerativeTrainingSketch(node, generative_key)) {
+            sequence.enabled = true;
+            sequence.create_causal_lm_targets = true;
+        }
     }
 
     if (node.type == gui::NodeType::NERSequenceBuilder) {
@@ -299,6 +316,9 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
         copy_param("tag_column", sequence.tag_column);
         copy_param("tags_column", sequence.tag_column);
         copy_param("tag_sequence_column", sequence.tag_column);
+        copy_param("target_column", sequence.target_column);
+        copy_param("target_ids_column", sequence.target_column);
+        copy_param("decoder_target_column", sequence.target_column);
         copy_param("sentence_id_column", sequence.sentence_id_column);
         copy_param("sequence_id_column", sequence.sentence_id_column);
 
@@ -315,6 +335,15 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
                 sequence.ignore_index = std::stoi(ignore_it->second);
             } catch (...) {
                 sequence.ignore_index = -100;
+            }
+        }
+
+        auto target_ignore_it = params.find("target_ignore_index");
+        if (target_ignore_it != params.end()) {
+            try {
+                sequence.target_ignore_index = std::stoi(target_ignore_it->second);
+            } catch (...) {
+                sequence.target_ignore_index = -100;
             }
         }
     }
@@ -337,12 +366,34 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
                 value != "false" && value != "0" && value != "off";
         }
 
+        auto causal_it = params.find("create_causal_lm_targets");
+        if (causal_it == params.end()) {
+            causal_it = params.find("causal_lm_targets");
+        }
+        if (causal_it != params.end()) {
+            const std::string value = LowerParamValue(causal_it->second);
+            sequence.create_causal_lm_targets =
+                value != "false" && value != "0" && value != "off";
+        }
+        if (HasParam(params, "target_ids") || HasParam(params, "shifted_targets")) {
+            sequence.create_causal_lm_targets = true;
+        }
+
         auto ignore_it = params.find("ignore_index");
         if (ignore_it != params.end()) {
             try {
                 sequence.ignore_index = std::stoi(ignore_it->second);
             } catch (...) {
                 sequence.ignore_index = -100;
+            }
+        }
+
+        auto target_ignore_it = params.find("target_ignore_index");
+        if (target_ignore_it != params.end()) {
+            try {
+                sequence.target_ignore_index = std::stoi(target_ignore_it->second);
+            } catch (...) {
+                sequence.target_ignore_index = -100;
             }
         }
     }
@@ -366,11 +417,6 @@ void ExtractSequenceBatchContract(
 
 bool LooksLikeGenerativeTrainingSketch(const gui::MLNode& node,
                                        std::string& matched_key) {
-    if (node.type == gui::NodeType::TransformerDecoder) {
-        matched_key = "TransformerDecoder";
-        return true;
-    }
-
     const auto& params = node.parameters;
     const char* enabled_keys[] = {
         "causal",
@@ -1814,11 +1860,11 @@ void ValidateTrainingPathImplementationStatus(
             msg << "Node '" << node.name
                 << "' sketches decoder/generative training via '"
                 << generative_key
-                << "', but Studio training does not have a trainable "
-                   "TransformerDecoder or causal language-model objective. "
-                   "This path needs shifted-token targets, causal masks, "
-                   "token-level loss, and generation packaging before it can "
-                   "compile truthfully.";
+                << "', but this is not the tested causal language-model "
+                   "contract. Use an explicit TransformerDecoder stack with "
+                   "shifted-token targets, token-level CrossEntropy, tokenizer "
+                   "packaging, and the greedy generation path before marking "
+                   "the graph as a supported generation workflow.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
@@ -3269,6 +3315,9 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::PolicyNetwork:
         case gui::NodeType::ValueNetwork:
         case gui::NodeType::Embedding:
+        case gui::NodeType::TransformerEncoder:
+        case gui::NodeType::PositionalEncoding:
+        case gui::NodeType::TransformerDecoder:
         // Recurrent layers — required for text/time-series models.
         // Omitting them here caused the LSTM smoke test to silently
         // drop the LSTM node from `config_.layers`, leaving

@@ -297,7 +297,7 @@ void TestBuildSequentialTextEmbeddingWeights() {
         std::exit(1);
     }
 
-    auto params = built.model->AsSequentialModel()->GetParameters();
+    auto params = built.model->GetParameters();
     ExpectTrue(params.count("layer0.weight") == 0,
                "frozen pretrained embedding should not expose trainable layer0.weight");
 }

@@ -1,3 +1,4 @@
+#include "../../cyxwiz-engine/src/core/language_model_training.h"
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cyxwiz/layer.h>
@@ -522,6 +523,41 @@ TEST_CASE("MultiHeadAttentionLayer computes deterministic self-attention", "[att
     REQUIRE(grad_wq[3] == Catch::Approx(0.3127972f).margin(1e-5f));
 }
 
+TEST_CASE("MultiHeadAttentionLayer applies causal mask to self-attention", "[attention][layer][causal]") {
+    cyxwiz::MultiHeadAttentionLayer attention(1, 1, 0.0f, false);
+
+    float identity_values[] = {1.0f};
+    attention.SetParameters({
+        {"W_q", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_k", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_v", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_o", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+    });
+
+    float input_values[] = {1.0f, 2.0f, 3.0f};
+    cyxwiz::Tensor input({1, 3, 1}, input_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor mask = cyxwiz::TransformerDecoderLayer::GenerateCausalMask(3);
+
+    cyxwiz::Tensor output = attention.Forward(input, input, input, &mask);
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 3, 1});
+    const float* output_data = output.Data<float>();
+    REQUIRE(output_data[0] == Catch::Approx(1.0f).margin(1e-5f));
+    REQUIRE(output_data[1] == Catch::Approx(1.8807971f).margin(1e-5f));
+    REQUIRE(output_data[2] == Catch::Approx(2.9479747f).margin(1e-5f));
+
+    cyxwiz::Tensor weights = attention.GetAttentionWeights();
+    REQUIRE(weights.Shape() == std::vector<size_t>{3, 3, 1, 1});
+    const float* weight_data = weights.Data<float>();
+    REQUIRE(weight_data[1] == Catch::Approx(0.0f).margin(1e-5f));
+    REQUIRE(weight_data[2] == Catch::Approx(0.0f).margin(1e-5f));
+    REQUIRE(weight_data[5] == Catch::Approx(0.0f).margin(1e-5f));
+}
+
+TEST_CASE("TransformerDecoderLayer causal mask validates size", "[transformer][decoder][causal]") {
+    REQUIRE_THROWS_AS(cyxwiz::TransformerDecoderLayer::GenerateCausalMask(0), std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::TransformerDecoderLayer::GenerateCausalMask(-1), std::invalid_argument);
+}
+
 TEST_CASE("MultiHeadAttentionLayer reuses attention dropout mask during backward", "[attention][layer]") {
     cyxwiz::MultiHeadAttentionLayer attention(1, 1, 0.5f, false);
 
@@ -801,4 +837,36 @@ TEST_CASE("PixelShuffleLayer computes forward and backward values", "[pixelshuff
     REQUIRE(grad_input_data[1] == Catch::Approx(20.0f));
     REQUIRE(grad_input_data[2] == Catch::Approx(30.0f));
     REQUIRE(grad_input_data[3] == Catch::Approx(40.0f));
+}
+TEST_CASE("MultiHeadAttentionLayer causal output matches CPU scaled-dot-product reference",
+          "[attention][layer][causal][language_model]") {
+    cyxwiz::MultiHeadAttentionLayer attention(1, 1, 0.0f, false);
+
+    float identity_values[] = {1.0f};
+    attention.SetParameters({
+        {"W_q", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_k", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_v", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+        {"W_o", cyxwiz::Tensor({1, 1}, identity_values, cyxwiz::DataType::Float32)},
+    });
+
+    const std::vector<float> input_values = {1.0f, 2.0f, 3.0f};
+    cyxwiz::Tensor input({1, 3, 1}, input_values.data(), cyxwiz::DataType::Float32);
+    cyxwiz::Tensor mask = cyxwiz::TransformerDecoderLayer::GenerateCausalMask(3);
+
+    cyxwiz::Tensor output = attention.Forward(input, input, input, &mask);
+    const std::vector<float> reference = cyxwiz::ScaledDotProductAttentionCpu(
+        input_values,
+        input_values,
+        input_values,
+        cyxwiz::BuildCausalAttentionMask(3),
+        3,
+        1);
+
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 3, 1});
+    const float* actual = output.Data<float>();
+    REQUIRE(reference.size() == 3);
+    for (size_t i = 0; i < reference.size(); ++i) {
+        REQUIRE(actual[i] == Catch::Approx(reference[i]).margin(1.0e-5f));
+    }
 }

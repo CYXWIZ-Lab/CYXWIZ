@@ -2,69 +2,14 @@
 
 #include "api_export.h"
 #include "tensor.h"
+#include "layers/layer_base.h"
+#include "layers/dense.h"
 #include <string>
 #include <map>
 #include <memory>
 #include <vector>
 
 namespace cyxwiz {
-
-// ============================================================================
-// Base Layer Class
-// ============================================================================
-//
-// Layer classes are low-level neural-network building blocks. The
-// model-facing training/runtime API is SequentialModel + Module in
-// sequential.h; modules may wrap these layer primitives to participate in
-// serialization, freezing, gradient collection, and optimizer updates.
-//
-// Keep new model-facing features on Module/SequentialModel first. Add direct
-// Layer APIs only when a primitive is also useful outside a SequentialModel.
-
-class CYXWIZ_API Layer {
-public:
-    virtual ~Layer() = default;
-    virtual Tensor Forward(const Tensor& input) = 0;
-    virtual Tensor Backward(const Tensor& grad_output) = 0;
-    virtual std::map<std::string, Tensor> GetParameters() = 0;
-    virtual void SetParameters(const std::map<std::string, Tensor>& params) = 0;
-
-    // Training mode (affects BatchNorm, Dropout, etc.)
-    virtual void SetTraining(bool training) { training_ = training; }
-    bool IsTraining() const { return training_; }
-
-    // Layer name for debugging/serialization
-    virtual std::string GetName() const { return "Layer"; }
-
-protected:
-    bool training_ = true;
-    Tensor cached_input_;  // For backward pass
-};
-
-// ============================================================================
-// Dense (Fully Connected) Layer
-// ============================================================================
-
-class CYXWIZ_API DenseLayer : public Layer {
-public:
-    DenseLayer(int in_features, int out_features, bool use_bias = true);
-
-    Tensor Forward(const Tensor& input) override;
-    Tensor Backward(const Tensor& grad_output) override;
-    std::map<std::string, Tensor> GetParameters() override;
-    void SetParameters(const std::map<std::string, Tensor>& params) override;
-    std::string GetName() const override { return "Dense"; }
-
-private:
-    int in_features_;
-    int out_features_;
-    bool use_bias_;
-
-    Tensor weights_;      // [out_features, in_features]
-    Tensor bias_;         // [out_features]
-    Tensor grad_weights_; // Gradient accumulator
-    Tensor grad_bias_;    // Gradient accumulator
-};
 
 // ============================================================================
 // Conv2D Layer - 2D Convolution using ArrayFire
@@ -922,6 +867,7 @@ private:
     Tensor cached_residual1_;
     Tensor cached_residual2_;
     Tensor cached_residual3_;
+    bool cached_has_cross_attention_ = false;
 };
 
 // ============================================================================

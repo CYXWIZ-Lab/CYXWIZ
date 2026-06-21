@@ -1,0 +1,190 @@
+{
+  "id": "cats_dogs_classifier_demo",
+  "name": "Cats vs Dogs Image Classifier Demo",
+  "description": "Video-ready binary image classification pipeline for the Cats_Dogs demo dataset. Preconfigured for FlatWithCSV layout at D:/demo/mrcj/datasets/Cats_Dogs. Includes a required Resize node set to 64x64 for fast training.",
+  "category": "Training Pipeline",
+  "tags": ["cats", "dogs", "binary", "classification", "image", "training", "demo"],
+  "parameters": [
+    {
+      "name": "batch_size",
+      "type": "int",
+      "default_value": "32",
+      "description": "Training batch size",
+      "min_value": "1",
+      "max_value": "256"
+    },
+    {
+      "name": "learning_rate",
+      "type": "float",
+      "default_value": "0.001",
+      "description": "Adam learning rate",
+      "min_value": "0.0001",
+      "max_value": "0.01"
+    },
+    {
+      "name": "epochs",
+      "type": "int",
+      "default_value": "5",
+      "description": "Number of training epochs",
+      "min_value": "1",
+      "max_value": "50"
+    }
+  ],
+  "template": {
+    "nodes": [
+      {
+        "id": "data_input",
+        "type": "DataInput",
+        "name": "Cats_Dogs Data",
+        "pos": [0, 300],
+        "params": {
+          "source_type": "file",
+          "file_category": "image",
+          "folder_path": "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog",
+          "image_layout": "1",
+          "labels_csv": "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog.csv",
+          "target_width": "64",
+          "target_height": "64",
+          "rgb": "true",
+          "normalize": "true"
+        }
+      },
+      {
+        "id": "data_split",
+        "type": "DataSplit",
+        "name": "Train/Val/Test Split",
+        "pos": [250, 300],
+        "params": {
+          "train_ratio": "0.8",
+          "val_ratio": "0.1",
+          "test_ratio": "0.1"
+        }
+      },
+      {
+        "id": "data_loader",
+        "type": "DataLoader",
+        "name": "DataLoader",
+        "pos": [500, 300],
+        "params": {
+          "batch_size": "$batch_size",
+          "shuffle": "true"
+        }
+      },
+      {
+        "id": "resize",
+        "type": "Resize",
+        "name": "Resize 64x64",
+        "pos": [750, 300],
+        "params": {
+          "width": "64",
+          "height": "64"
+        }
+      },
+      {
+        "id": "normalize",
+        "type": "Normalize",
+        "name": "Normalize",
+        "pos": [1000, 300],
+        "params": {
+          "mean": "0.5",
+          "std": "0.5"
+        }
+      },
+      {
+        "id": "flatten",
+        "type": "Flatten",
+        "name": "Flatten",
+        "pos": [1250, 300]
+      },
+      {
+        "id": "fc1",
+        "type": "Dense",
+        "name": "Dense 256",
+        "pos": [1500, 300],
+        "params": {
+          "units": "256"
+        }
+      },
+      {
+        "id": "relu1",
+        "type": "ReLU",
+        "name": "ReLU",
+        "pos": [1750, 300]
+      },
+      {
+        "id": "dropout1",
+        "type": "Dropout",
+        "name": "Dropout 0.3",
+        "pos": [2000, 300],
+        "params": {
+          "rate": "0.3"
+        }
+      },
+      {
+        "id": "fc2",
+        "type": "Dense",
+        "name": "Dense 64",
+        "pos": [2250, 300],
+        "params": {
+          "units": "64"
+        }
+      },
+      {
+        "id": "relu2",
+        "type": "ReLU",
+        "name": "ReLU",
+        "pos": [2500, 300]
+      },
+      {
+        "id": "fc3",
+        "type": "Dense",
+        "name": "Dense 2",
+        "pos": [2750, 300],
+        "params": {
+          "units": "2"
+        }
+      },
+      {
+        "id": "loss",
+        "type": "CrossEntropyLoss",
+        "name": "CrossEntropy",
+        "pos": [3000, 300]
+      },
+      {
+        "id": "optimizer",
+        "type": "Adam",
+        "name": "Adam",
+        "pos": [3250, 300],
+        "params": {
+          "learning_rate": "$learning_rate",
+          "epochs": "$epochs"
+        }
+      },
+      {
+        "id": "output",
+        "type": "Output",
+        "name": "Output",
+        "pos": [3500, 300],
+        "params": {
+          "classes": "2"
+        }
+      }
+    ],
+    "links": [
+      {"from": "data_input", "to": "data_split"},
+      {"from": "data_split", "to": "data_loader"},
+      {"from": "data_loader", "to": "resize"},
+      {"from": "resize", "to": "normalize"},
+      {"from": "normalize", "to": "flatten"},
+      {"from": "flatten", "to": "fc1"},
+      {"from": "fc1", "to": "relu1"},
+      {"from": "relu1", "to": "dropout1"},
+      {"from": "dropout1", "to": "fc2"},
+      {"from": "fc2", "to": "relu2"},
+      {"from": "relu2", "to": "fc3"},
+      {"from": "fc3", "to": "loss"},
+      {"from": "loss", "to": "optimizer"},
+      {"from": "optimizer", "to": "output"}
+    ]
+  }
+}

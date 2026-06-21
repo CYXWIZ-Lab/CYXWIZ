@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../layer.h"
+#include "layer_base.h"
 #include "../tensor.h"
 #include "../api_export.h"
 #include <string>

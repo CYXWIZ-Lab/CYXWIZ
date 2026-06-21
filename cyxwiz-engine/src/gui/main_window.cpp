@@ -158,6 +158,7 @@
 #include <imgui_internal.h>
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
+#include <cfloat>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -3091,6 +3092,7 @@ void MainWindow::CompileGraphAndReport() {
         compile_result_message_ = "Node editor is not available.";
         compile_result_summary_.clear();
         compile_result_issues_.clear();
+        compile_result_backend_placements_.clear();
         show_compile_result_popup_ = true;
         return;
     }
@@ -3109,6 +3111,7 @@ void MainWindow::LocalDebugGraphAndReport() {
         compile_result_message_ = "Node editor is not available.";
         compile_result_summary_.clear();
         compile_result_issues_.clear();
+        compile_result_backend_placements_.clear();
         show_compile_result_popup_ = true;
         return;
     }
@@ -3583,6 +3586,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
     compile_result_issues_.clear();
     compile_result_summary_.clear();
     compile_result_message_.clear();
+    compile_result_backend_placements_.clear();
     compile_result_success_ = false;
 
     try {
@@ -3590,6 +3594,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
 
         compile_result_issues_ = config.issues;
+        compile_result_backend_placements_ = config.backend_placements;
         compile_result_success_ = config.is_valid;
 
         // Build the architecture summary text. Even when the graph has
@@ -3689,34 +3694,6 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
                 << config.preprocessing.num_classes << " classes)\n";
         }
 
-        if (!config.backend_placements.empty()) {
-            const auto placement_summary = config.SummarizeBackendPlacements();
-            out << "\n";
-            out << "Backend placement:\n";
-            out << "  Summary: total=" << placement_summary.total
-                << ", gpu=" << placement_summary.gpu
-                << ", cpu=" << placement_summary.cpu
-                << ", mixed=" << placement_summary.mixed
-                << ", risk=" << placement_summary.risk
-                << ", unsupported=" << placement_summary.unsupported
-                << ", unknown=" << placement_summary.unknown << "\n";
-            for (const auto& placement : config.backend_placements) {
-                out << "  - " << placement.node_type;
-                if (!placement.node_name.empty()) {
-                    out << " '" << placement.node_name << "'";
-                }
-                out << ": " << placement.expected_backend;
-                if (!placement.fallback_backend.empty() &&
-                    placement.fallback_backend != placement.expected_backend) {
-                    out << " (fallback: " << placement.fallback_backend << ")";
-                }
-                if (!placement.reason_code.empty()) {
-                    out << " [" << placement.reason_code << "]";
-                }
-                out << "\n";
-            }
-        }
-
         compile_result_summary_ = out.str();
         compile_result_message_ = config.error_message;  // legacy
 
@@ -3771,9 +3748,10 @@ void MainWindow::RenderCompileResultPopup() {
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(980, 720), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(760, 540), ImVec2(FLT_MAX, FLT_MAX));
 
-    if (ImGui::BeginPopupModal(popup_title, nullptr, ImGuiWindowFlags_NoResize)) {
+    if (ImGui::BeginPopupModal(popup_title, nullptr)) {
         // === Header line: overall status ===
         size_t error_count = 0, warn_count = 0, info_count = 0;
         for (const auto& issue : compile_result_issues_) {
@@ -3820,68 +3798,175 @@ void MainWindow::RenderCompileResultPopup() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // === Issues list ===
-        if (!compile_result_issues_.empty()) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Findings:");
-            ImGui::Spacing();
-
-            // Bounded child so a long issue list scrolls instead of pushing
-            // the summary off-screen.
-            float issues_h = std::min(170.0f,
-                                       ImGui::GetTextLineHeightWithSpacing() *
-                                       (compile_result_issues_.size() + 1.5f));
-            ImGui::BeginChild("CompileIssuesList", ImVec2(0, issues_h), true);
-            ImGui::PushTextWrapPos(0.0f);
-            for (const auto& issue : compile_result_issues_) {
-                // Pre-initialize so an unknown IssueLevel value (future
-                // enum addition, or memory corruption) can't leave `tag`
-                // uninitialized - ImGui::TextUnformatted(nullptr) would
-                // read garbage or crash. C4701/C4703 warning was real.
-                ImVec4 color{0.8f, 0.8f, 0.8f, 1.0f};
-                const char* tag = "[?]    ";
-                switch (issue.level) {
-                    case cyxwiz::IssueLevel::Error:
-                        color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-                        tag = "[ERR]  ";
-                        break;
-                    case cyxwiz::IssueLevel::Warning:
-                        color = ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
-                        tag = "[WARN] ";
-                        break;
-                    case cyxwiz::IssueLevel::Info:
-                        color = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
-                        tag = "[INFO] ";
-                        break;
-                }
-                ImGui::PushStyleColor(ImGuiCol_Text, color);
-                ImGui::TextUnformatted(tag);
-                ImGui::PopStyleColor();
-                ImGui::SameLine(0, 0);
-                if (!issue.node_name.empty()) {
-                    ImGui::TextWrapped("[%s] %s", issue.node_name.c_str(), issue.message.c_str());
-                } else {
-                    ImGui::TextWrapped("%s", issue.message.c_str());
-                }
-                ImGui::Spacing();
+        size_t gpu_count = 0;
+        size_t cpu_count = 0;
+        size_t mixed_count = 0;
+        size_t risk_count = 0;
+        size_t unsupported_count = 0;
+        size_t unknown_count = 0;
+        for (const auto& placement : compile_result_backend_placements_) {
+            if (placement.status == cyxwiz::BackendPlacementStatus::Gpu) {
+                ++gpu_count;
+            } else if (placement.status == cyxwiz::BackendPlacementStatus::Cpu) {
+                ++cpu_count;
+            } else if (placement.status == cyxwiz::BackendPlacementStatus::Mixed) {
+                ++mixed_count;
+            } else if (placement.status == cyxwiz::BackendPlacementStatus::Risk) {
+                ++risk_count;
+            } else if (placement.status == cyxwiz::BackendPlacementStatus::Unsupported) {
+                ++unsupported_count;
+            } else {
+                ++unknown_count;
             }
-            ImGui::PopTextWrapPos();
-            ImGui::EndChild();
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
         }
 
-        // === Architecture summary ===
-        if (!compile_result_summary_.empty()) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Configuration:");
-            ImGui::Spacing();
-            ImGui::BeginChild("CompileSummary",
-                              ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 8),
-                              true);
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextUnformatted(compile_result_summary_.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndChild();
+        auto render_metric = [](const char* label, size_t value, ImVec4 color) {
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+            ImGui::Text("%s %zu", label, value);
+            ImGui::PopStyleColor();
+        };
+
+        render_metric("Errors", error_count, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
+        ImGui::SameLine();
+        render_metric("Warnings", warn_count, ImVec4(1.0f, 0.82f, 0.28f, 1.0f));
+        ImGui::SameLine();
+        render_metric("Info", info_count, ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
+        if (!compile_result_backend_placements_.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            render_metric("GPU", gpu_count, ImVec4(0.45f, 0.9f, 0.5f, 1.0f));
+            ImGui::SameLine();
+            render_metric("CPU", cpu_count, ImVec4(1.0f, 0.82f, 0.28f, 1.0f));
+            ImGui::SameLine();
+            render_metric("Unknown", unknown_count, ImVec4(0.75f, 0.75f, 0.78f, 1.0f));
+        }
+        ImGui::Spacing();
+
+        const float body_h = -ImGui::GetFrameHeightWithSpacing() - 12.0f;
+        if (ImGui::BeginTabBar("CompileReportTabs", ImGuiTabBarFlags_None)) {
+            if (ImGui::BeginTabItem("Findings")) {
+                ImGui::BeginChild("CompileFindingsBody", ImVec2(0, body_h), true);
+                if (compile_result_issues_.empty()) {
+                    ImGui::TextDisabled("No compiler findings.");
+                } else {
+                    ImGui::PushTextWrapPos(0.0f);
+                    for (const auto& issue : compile_result_issues_) {
+                        ImVec4 color{0.8f, 0.8f, 0.8f, 1.0f};
+                        const char* tag = "INFO";
+                        switch (issue.level) {
+                            case cyxwiz::IssueLevel::Error:
+                                color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+                                tag = "ERROR";
+                                break;
+                            case cyxwiz::IssueLevel::Warning:
+                                color = ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+                                tag = "WARNING";
+                                break;
+                            case cyxwiz::IssueLevel::Info:
+                                color = ImVec4(0.55f, 0.75f, 1.0f, 1.0f);
+                                tag = "INFO";
+                                break;
+                        }
+                        ImGui::PushStyleColor(ImGuiCol_Text, color);
+                        ImGui::TextUnformatted(tag);
+                        ImGui::PopStyleColor();
+                        if (!issue.node_name.empty()) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("%s", issue.node_name.c_str());
+                        }
+                        ImGui::TextWrapped("%s", issue.message.c_str());
+                        ImGui::Spacing();
+                        ImGui::Separator();
+                        ImGui::Spacing();
+                    }
+                    ImGui::PopTextWrapPos();
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Backend Placement")) {
+                ImGui::BeginChild("CompileBackendPlacementBody", ImVec2(0, body_h), true);
+                if (compile_result_backend_placements_.empty()) {
+                    ImGui::TextDisabled("No backend placement report was produced.");
+                } else {
+                    ImGui::Text("GPU %zu   CPU %zu   Mixed %zu   Risk %zu   Unsupported %zu   Unknown %zu",
+                                gpu_count, cpu_count, mixed_count, risk_count,
+                                unsupported_count, unknown_count);
+                    ImGui::Spacing();
+
+                    if (ImGui::BeginTable(
+                            "CompileBackendPlacementTable", 4,
+                            ImGuiTableFlags_BordersInnerV |
+                                ImGuiTableFlags_RowBg |
+                                ImGuiTableFlags_Resizable |
+                                ImGuiTableFlags_ScrollY)) {
+                        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 92.0f);
+                        ImGui::TableSetupColumn("Node", ImGuiTableColumnFlags_WidthStretch, 0.25f);
+                        ImGui::TableSetupColumn("Backend", ImGuiTableColumnFlags_WidthStretch, 0.25f);
+                        ImGui::TableSetupColumn("Reason and action", ImGuiTableColumnFlags_WidthStretch, 0.50f);
+                        ImGui::TableHeadersRow();
+
+                        for (const auto& placement : compile_result_backend_placements_) {
+                            ImVec4 status_color(0.75f, 0.75f, 0.75f, 1.0f);
+                            if (placement.status == cyxwiz::BackendPlacementStatus::Gpu) {
+                                status_color = ImVec4(0.45f, 0.9f, 0.5f, 1.0f);
+                            } else if (placement.status == cyxwiz::BackendPlacementStatus::Cpu ||
+                                       placement.status == cyxwiz::BackendPlacementStatus::Mixed ||
+                                       placement.status == cyxwiz::BackendPlacementStatus::Risk) {
+                                status_color = ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+                            } else if (placement.status == cyxwiz::BackendPlacementStatus::Unsupported) {
+                                status_color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+                            }
+
+                            std::string node_label = placement.node_type;
+                            if (!placement.node_name.empty()) {
+                                node_label += " '" + placement.node_name + "'";
+                            }
+
+                            std::string backend_label = placement.expected_backend;
+                            if (!placement.fallback_backend.empty() &&
+                                placement.fallback_backend != placement.expected_backend) {
+                                backend_label += " -> " + placement.fallback_backend;
+                            }
+
+                            std::string reason_label = placement.reason_code;
+                            if (placement.NeedsUserAttention() &&
+                                !placement.suggested_action.empty()) {
+                                reason_label += ": " + placement.suggested_action;
+                            }
+
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextColored(status_color, "%s", placement.status.c_str());
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TextWrapped("%s", node_label.c_str());
+                            ImGui::TableSetColumnIndex(2);
+                            ImGui::TextWrapped("%s", backend_label.c_str());
+                            ImGui::TableSetColumnIndex(3);
+                            ImGui::TextWrapped("%s", reason_label.c_str());
+                        }
+                        ImGui::EndTable();
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Configuration")) {
+                ImGui::BeginChild("CompileSummary", ImVec2(0, body_h), true);
+                if (compile_result_summary_.empty()) {
+                    ImGui::TextDisabled("No configuration summary available.");
+                } else {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextUnformatted(compile_result_summary_.c_str());
+                    ImGui::PopTextWrapPos();
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
         }
 
         ImGui::Spacing();

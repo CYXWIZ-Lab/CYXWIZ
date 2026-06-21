@@ -155,6 +155,30 @@ TEST_CASE("Class-index losses compute backward values", "[loss]") {
     REQUIRE(nll_data[5] == Catch::Approx(0.0f));
 }
 
+TEST_CASE("CrossEntropyLoss supports token-level logits and ignored targets", "[loss][language_model]") {
+    float logit_values[] = {
+        2.0f, 1.0f, 0.0f,
+        0.0f, 1.0f, 2.0f
+    };
+    int64_t target_values[] = {0, -100};
+    cyxwiz::Tensor logits({1, 2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1, 2}, target_values, cyxwiz::DataType::Int64);
+
+    cyxwiz::CrossEntropyLoss cross_entropy(cyxwiz::Reduction::Mean, -100);
+    cyxwiz::Tensor loss = cross_entropy.Forward(logits, targets);
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(0.40760595f).margin(1e-6f));
+
+    cyxwiz::Tensor grad = cross_entropy.Backward(logits, targets);
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 2, 3});
+    const float* grad_data = grad.Data<float>();
+    REQUIRE(grad_data[0] == Catch::Approx(-0.3347590f).margin(1e-5f));
+    REQUIRE(grad_data[1] == Catch::Approx(0.2447285f).margin(1e-5f));
+    REQUIRE(grad_data[2] == Catch::Approx(0.0900306f).margin(1e-5f));
+    REQUIRE(grad_data[3] == Catch::Approx(0.0f));
+    REQUIRE(grad_data[4] == Catch::Approx(0.0f));
+    REQUIRE(grad_data[5] == Catch::Approx(0.0f));
+}
+
 TEST_CASE("KL divergence computes forward reductions", "[loss]") {
     float log_pred_values[] = {std::log(0.2f), std::log(0.5f), std::log(0.3f)};
     float target_values[] = {0.1f, 0.7f, 0.2f};

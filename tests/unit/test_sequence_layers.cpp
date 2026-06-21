@@ -1,7 +1,12 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <cyxwiz/layer.h>
+#include <cyxwiz/loss.h>
+#include <cyxwiz/optimizer.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include <cstring>
@@ -615,6 +620,147 @@ TEST_CASE("Embedding + GRU integration", "[integration]") {
 
     Tensor gru_out = gru.Forward(embedded);
     REQUIRE(ShapesEqual(gru_out.Shape(), {2, 10, 32}));
+}
+
+TEST_CASE("TransformerDecoderModule preserves sequence shape", "[transformer][decoder][module]") {
+    TransformerDecoderModule decoder(2, 1, 4, 0.0f, false);
+
+    float input_values[] = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        1.0f, 1.0f
+    };
+    Tensor input({1, 3, 2}, input_values, DataType::Float32);
+
+    Tensor output = decoder.Forward(input);
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 3, 2});
+
+    float grad_values[] = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        1.0f, 1.0f
+    };
+    Tensor grad_output({1, 3, 2}, grad_values, DataType::Float32);
+    Tensor grad_input = decoder.Backward(grad_output);
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{1, 3, 2});
+
+    REQUIRE_FALSE(decoder.GetParameters().empty());
+    REQUIRE(decoder.GetName().find("TransformerDecoder") != std::string::npos);
+}
+
+TEST_CASE("TransformerDecoderLayer single-input path does not use cross attention",
+          "[transformer][decoder][causal]") {
+    TransformerDecoderLayer baseline(2, 1, 4, 0.0f, false);
+    TransformerDecoderLayer mutated(2, 1, 4, 0.0f, false);
+    auto params = baseline.GetParameters();
+    mutated.SetParameters(params);
+
+    for (auto& [name, tensor] : params) {
+        if (name.find("cross_attn.") != 0) {
+            continue;
+        }
+        float* data = tensor.Data<float>();
+        for (size_t i = 0; i < tensor.NumElements(); ++i) {
+            data[i] = 17.0f;
+        }
+    }
+    mutated.SetParameters(params);
+
+    float input_values[] = {
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        1.0f, 1.0f
+    };
+    Tensor input({1, 3, 2}, input_values, DataType::Float32);
+
+    Tensor baseline_out = baseline.Forward(input);
+    Tensor mutated_out = mutated.Forward(input);
+    REQUIRE(TensorsApproxEqual(baseline_out, mutated_out, 1e-5f));
+}
+
+TEST_CASE("PositionalEncodingModule adds sinusoidal sequence positions",
+          "[language_model][positional_encoding]") {
+    PositionalEncodingModule pos(4, 3);
+    Tensor input = Tensor::Zeros({1, 2, 4});
+
+    Tensor output = pos.Forward(input);
+    REQUIRE(output.Shape() == std::vector<size_t>{1, 2, 4});
+    const float* data = output.Data<float>();
+    REQUIRE(data[0] == Catch::Approx(0.0f).margin(1e-6f));
+    REQUIRE(data[1] == Catch::Approx(1.0f).margin(1e-6f));
+    REQUIRE(data[2] == Catch::Approx(0.0f).margin(1e-6f));
+    REQUIRE(data[3] == Catch::Approx(1.0f).margin(1e-6f));
+    REQUIRE(data[4] == Catch::Approx(std::sin(1.0)).margin(1e-6f));
+    REQUIRE(data[5] == Catch::Approx(std::cos(1.0)).margin(1e-6f));
+    REQUIRE(data[6] == Catch::Approx(std::sin(0.01)).margin(1e-6f));
+    REQUIRE(data[7] == Catch::Approx(std::cos(0.01)).margin(1e-6f));
+
+    Tensor grad = pos.Backward(output);
+    REQUIRE(TensorsApproxEqual(grad, output));
+}
+
+TEST_CASE("Minimal causal LM module stack produces token logits and gradients",
+          "[language_model][transformer][decoder]") {
+    SequentialModel model;
+    model.Add<EmbeddingModule>(5, 2, 0);
+    model.Add<PositionalEncodingModule>(2, 3);
+    model.Add<TransformerDecoderModule>(2, 1, 4, 0.0f, false);
+    model.Add<TimeDistributedDenseModule>(2, 5, true);
+
+    int64_t token_values[] = {1, 2, 3};
+    Tensor input_ids({1, 3}, token_values, DataType::Int64);
+
+    Tensor logits = model.Forward(input_ids);
+    REQUIRE(logits.Shape() == std::vector<size_t>{1, 3, 5});
+
+    int64_t target_values[] = {2, 3, -100};
+    Tensor target_ids({1, 3}, target_values, DataType::Int64);
+    CrossEntropyLoss loss(Reduction::Mean, -100);
+
+    Tensor loss_value = loss.Forward(logits, target_ids);
+    REQUIRE(std::isfinite(loss_value.Data<float>()[0]));
+
+    Tensor grad_logits = loss.Backward(logits, target_ids);
+    REQUIRE(grad_logits.Shape() == std::vector<size_t>{1, 3, 5});
+
+    (void)model.Backward(grad_logits);
+    REQUIRE_FALSE(model.GetParameters().empty());
+    REQUIRE_FALSE(model.GetGradients().empty());
+}
+
+TEST_CASE("Minimal causal LM stack supports toy next-token training step",
+          "[language_model][transformer][decoder][training]") {
+    SequentialModel model;
+    model.Add<EmbeddingModule>(3, 4, 0);
+    model.Add<PositionalEncodingModule>(4, 3);
+    model.Add<TransformerDecoderModule>(4, 1, 8, 0.0f, false);
+    model.Add<TimeDistributedDenseModule>(4, 3, true);
+
+    int64_t token_values[] = {0, 1, 2};
+    Tensor input_ids({1, 3}, token_values, DataType::Int64);
+
+    int64_t target_values[] = {1, 2, 0};
+    Tensor target_ids({1, 3}, target_values, DataType::Int64);
+
+    CrossEntropyLoss loss(Reduction::Mean, -100);
+    SGDOptimizer optimizer(0.05);
+
+    Tensor initial_loss = loss.Forward(model.Forward(input_ids), target_ids);
+    REQUIRE(std::isfinite(initial_loss.Data<float>()[0]));
+
+    for (int step = 0; step < 50; ++step) {
+        Tensor logits = model.Forward(input_ids);
+        Tensor loss_value = loss.Forward(logits, target_ids);
+        REQUIRE(std::isfinite(loss_value.Data<float>()[0]));
+        Tensor grad_logits = loss.Backward(logits, target_ids);
+        (void)model.Backward(grad_logits);
+        model.UpdateParameters(&optimizer);
+    }
+
+    Tensor final_loss = loss.Forward(model.Forward(input_ids), target_ids);
+    REQUIRE(std::isfinite(final_loss.Data<float>()[0]));
+    REQUIRE_FALSE(model.GetParameters().empty());
+    REQUIRE_FALSE(model.GetGradients().empty());
 }
 
 // ============================================================================

@@ -32,6 +32,8 @@ nlohmann::json CyxModelFormat::ManifestToJson(const ModelManifest& manifest) {
     j["content"]["has_optimizer_state"] = manifest.has_optimizer_state;
     j["content"]["has_training_history"] = manifest.has_training_history;
     j["content"]["has_graph"] = manifest.has_graph;
+    j["content"]["has_tokenizer"] = manifest.has_tokenizer;
+    j["content"]["has_vocabulary"] = manifest.has_vocabulary;
 
     return j;
 }
@@ -69,6 +71,8 @@ ModelManifest CyxModelFormat::JsonToManifest(const nlohmann::json& j) {
         manifest.has_optimizer_state = j["content"].value("has_optimizer_state", false);
         manifest.has_training_history = j["content"].value("has_training_history", false);
         manifest.has_graph = j["content"].value("has_graph", false);
+        manifest.has_tokenizer = j["content"].value("has_tokenizer", false);
+        manifest.has_vocabulary = j["content"].value("has_vocabulary", false);
     }
 
     return manifest;
@@ -382,6 +386,32 @@ bool CyxModelFormat::Create(
         }
     }
 
+    // Create tokenizer deployment assets (optional)
+    if (options.include_tokenizer_assets) {
+        if (!options.text_tokenizer_config_json.empty()) {
+            const std::string& tokenizer_config =
+                options.text_tokenizer_config_json;
+            files["tokenizer/config.json"] =
+                std::vector<uint8_t>(tokenizer_config.begin(),
+                                     tokenizer_config.end());
+        }
+
+        if (!options.text_tokenizer_vocab_path.empty()) {
+            std::ifstream vocab_file(options.text_tokenizer_vocab_path,
+                                     std::ios::binary);
+            if (!vocab_file.is_open()) {
+                last_error_ = "Cannot open tokenizer vocabulary file: " +
+                              options.text_tokenizer_vocab_path;
+                return false;
+            }
+
+            std::vector<uint8_t> vocab_bytes(
+                (std::istreambuf_iterator<char>(vocab_file)),
+                std::istreambuf_iterator<char>());
+            files["tokenizer/vocab.txt"] = std::move(vocab_bytes);
+        }
+    }
+
     // Write to archive or directory
     bool use_zip = output_path.size() > 9 &&
                    output_path.substr(output_path.size() - 9) == ".cyxmodel";
@@ -499,7 +529,17 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
         return result;
     }
 
-    result.file_size = std::filesystem::file_size(input_path);
+    if (std::filesystem::is_directory(input_path)) {
+        size_t total_size = 0;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(input_path)) {
+            if (entry.is_regular_file()) {
+                total_size += entry.file_size();
+            }
+        }
+        result.file_size = total_size;
+    } else {
+        result.file_size = std::filesystem::file_size(input_path);
+    }
     result.format = ModelFormat::CyxModel;
 
     // Try to read manifest.json
@@ -532,6 +572,8 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
         result.has_optimizer_state = manifest.has_optimizer_state;
         result.has_training_history = manifest.has_training_history;
         result.has_graph = manifest.has_graph;
+        result.has_tokenizer = manifest.has_tokenizer;
+        result.has_vocabulary = manifest.has_vocabulary;
     } catch (const std::exception& e) {
         result.error_message = "Error parsing manifest: " + std::string(e.what());
     }
@@ -575,6 +617,37 @@ std::string CyxModelFormat::ExtractGraphOnly(const std::string& input_path) {
     std::stringstream buffer;
     buffer << file.rdbuf();
     return buffer.str();
+}
+
+bool CyxModelFormat::ExtractTextTokenizerAssets(
+    const std::string& input_path,
+    std::string& config_json,
+    std::string& vocab_text
+) {
+    std::map<std::string, std::vector<uint8_t>> files;
+    if (!ReadDirectory(input_path, files)) {
+        return false;
+    }
+
+    config_json.clear();
+    vocab_text.clear();
+
+    auto config_it = files.find("tokenizer/config.json");
+    if (config_it != files.end()) {
+        config_json.assign(config_it->second.begin(), config_it->second.end());
+    }
+
+    auto vocab_it = files.find("tokenizer/vocab.txt");
+    if (vocab_it != files.end()) {
+        vocab_text.assign(vocab_it->second.begin(), vocab_it->second.end());
+    }
+
+    if (config_json.empty() && vocab_text.empty()) {
+        last_error_ = "No tokenizer assets found";
+        return false;
+    }
+
+    return true;
 }
 
 // Directory-based storage (simple fallback)

@@ -19,6 +19,7 @@ namespace cyxwiz {
 
 // Forward declare
 class SequentialModel;
+class Tokenizer;
 
 /**
  * LocalInferenceServer - Embedded HTTP server for model inference
@@ -30,6 +31,7 @@ class SequentialModel;
  *   GET  /health       - Health check
  *   GET  /v1/model     - Model info (architecture, layers)
  *   POST /v1/predict   - Run inference
+ *   POST /v1/generate  - Greedy text generation for packaged text models
  */
 class LocalInferenceServer {
 public:
@@ -109,6 +111,7 @@ private:
     void HandleHealth(const httplib::Request& req, httplib::Response& res);
     void HandleModelInfo(const httplib::Request& req, httplib::Response& res);
     void HandlePredict(const httplib::Request& req, httplib::Response& res);
+    void HandleGenerate(const httplib::Request& req, httplib::Response& res);
 
     // Server thread function
     void ServerThread();
@@ -120,6 +123,8 @@ private:
     std::unique_ptr<httplib::Server> server_;
     std::unique_ptr<std::thread> server_thread_;
     std::unique_ptr<SequentialModel> model_;
+    std::unique_ptr<Tokenizer> text_tokenizer_;
+    bool has_text_vocabulary_ = false;
 
     std::string model_path_;
     int port_ = 0;

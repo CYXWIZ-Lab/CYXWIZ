@@ -347,6 +347,15 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
 }
 
 void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
+    const auto has_runtime_axis = [](const NodeMetadata& metadata) {
+        return std::any_of(
+            metadata.support_axes.begin(),
+            metadata.support_axes.end(),
+            [](const SupportAxisDefinition& axis) {
+                return axis.name == "Runtime";
+            });
+    };
+
     for (const auto& capability : GetPipelineOperatorRuntimeCapabilities()) {
         auto it = metadata_.find(capability.node_type);
         if (it == metadata_.end()) {
@@ -365,6 +374,9 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
 
         auto it = metadata_.find(*capability.node_type);
         if (it == metadata_.end()) {
+            continue;
+        }
+        if (has_runtime_axis(it->second)) {
             continue;
         }
 

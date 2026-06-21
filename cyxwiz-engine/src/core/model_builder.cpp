@@ -202,7 +202,9 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                     if (nt == gui::NodeType::LSTM ||
                         nt == gui::NodeType::GRU  ||
                         nt == gui::NodeType::RNN  ||
+                        nt == gui::NodeType::PositionalEncoding ||
                         nt == gui::NodeType::TransformerEncoder ||
+                        nt == gui::NodeType::TransformerDecoder ||
                         nt == gui::NodeType::TimeDistributed) {
                         next_is_recurrent = true;
                     }
@@ -347,11 +349,73 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 if (i + 1 < config.layers.size()) {
                     next_is_transformer =
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
+                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
 
                 const size_t downstream_features = current_sequence_length * d_model;
                 spdlog::info("  [{}] TransformerEncoder(d_model={}, heads={}, "
+                             "ff={}, dropout={}) - output [batch, {}, {}]",
+                             i, d_model, num_heads, dim_feedforward, dropout,
+                             current_sequence_length, d_model);
+                current_input_size = next_is_transformer
+                    ? d_model
+                    : downstream_features;
+                break;
+            }
+
+            case gui::NodeType::PositionalEncoding: {
+                const size_t d_model = current_input_size > 0
+                    ? current_input_size
+                    : ParseSizeParam(layer_cfg, "d_model", 64);
+                const size_t max_sequence_length = ParseSizeParam(
+                    layer_cfg, "max_sequence_length",
+                    ParseSizeParam(layer_cfg, "max_length", current_sequence_length));
+
+                model.Add<PositionalEncodingModule>(d_model, max_sequence_length);
+                spdlog::info("  [{}] PositionalEncoding(d_model={}, max_len={}) - output "
+                             "[batch, {}, {}]",
+                             i, d_model, max_sequence_length,
+                             current_sequence_length, d_model);
+                current_input_size = d_model;
+                break;
+            }
+
+            case gui::NodeType::TransformerDecoder: {
+                const size_t d_model = current_input_size > 0
+                    ? current_input_size
+                    : ParseSizeParam(layer_cfg, "d_model", 64);
+                size_t num_heads = ParseSizeParam(layer_cfg, "num_heads",
+                                                  ParseSizeParam(layer_cfg, "nhead", 1));
+                size_t dim_feedforward = ParseSizeParam(
+                    layer_cfg, "dim_feedforward",
+                    ParseSizeParam(layer_cfg, "ff_dim", d_model * 4));
+                float dropout = ParseFloatParam(layer_cfg, "dropout",
+                                                ParseFloatParam(layer_cfg, "dropout_rate", 0.1f));
+                bool norm_first = ParseBoolParam(layer_cfg, "norm_first", false);
+
+                const size_t requested_d_model =
+                    ParseSizeParam(layer_cfg, "d_model", d_model);
+                if (requested_d_model != d_model) {
+                    spdlog::warn("  [{}] TransformerDecoder d_model={} does "
+                                 "not match incoming feature size {}; using {}",
+                                 i, requested_d_model, d_model, d_model);
+                }
+
+                model.Add<TransformerDecoderModule>(d_model, num_heads,
+                                                    dim_feedforward, dropout,
+                                                    norm_first);
+
+                bool next_is_transformer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_transformer =
+                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
+                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
+                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
+                }
+
+                const size_t downstream_features = current_sequence_length * d_model;
+                spdlog::info("  [{}] TransformerDecoder(d_model={}, heads={}, "
                              "ff={}, dropout={}) - output [batch, {}, {}]",
                              i, d_model, num_heads, dim_feedforward, dropout,
                              current_sequence_length, d_model);
@@ -696,6 +760,10 @@ int ResolveCrossEntropyIgnoreIndex(const TrainingConfiguration& config) {
             spdlog::warn("TrainingExecutor: ignoring invalid CrossEntropy "
                          "ignore_index='{}'", it->second);
         }
+    }
+    if (config.sequence_batch.enabled &&
+        config.sequence_batch.create_causal_lm_targets) {
+        return config.sequence_batch.target_ignore_index;
     }
     if (config.sequence_batch.enabled) {
         return config.sequence_batch.ignore_index;

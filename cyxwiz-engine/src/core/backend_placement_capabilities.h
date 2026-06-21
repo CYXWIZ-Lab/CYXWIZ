@@ -61,6 +61,9 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::PolicyNetwork: return "PolicyNetwork";
         case gui::NodeType::ValueNetwork: return "ValueNetwork";
         case gui::NodeType::Embedding: return "Embedding";
+        case gui::NodeType::TransformerEncoder: return "TransformerEncoder";
+        case gui::NodeType::PositionalEncoding: return "PositionalEncoding";
+        case gui::NodeType::TransformerDecoder: return "TransformerDecoder";
         case gui::NodeType::LSTM: return "LSTM";
         case gui::NodeType::GRU: return "GRU";
         case gui::NodeType::RNN: return "RNN";
