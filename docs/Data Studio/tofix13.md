@@ -1629,3 +1629,13 @@ Moved tensor-first linear algebra operations from `cyxwiz-backend/src/algorithms
 
 This separates Tensor-backed multiply, transpose, inverse, norm, solve, and least-squares ownership from the
 vector/matrix linear algebra implementation while preserving the public `LinearAlgebra` API.
+
+### 2026-06-21 - Linear algebra implementation split slice 2: utility constructors
+
+Moved identity, zeros, ones, diagonal extraction/construction, and low-rank approximation helpers from
+`cyxwiz-backend/src/algorithms/linear_algebra.cpp` into
+`cyxwiz-backend/src/algorithms/linear_algebra_utilities.cpp` and registered the new translation unit in
+`cyxwiz-backend/CMakeLists.txt`.
+
+This separates matrix construction and utility ownership from core vector/matrix operations while preserving the
+public `LinearAlgebra` API.

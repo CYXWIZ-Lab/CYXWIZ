@@ -136,6 +136,7 @@ set(BACKEND_SOURCES
     src/algorithms/model_interpretability.cpp
     src/algorithms/linear_algebra.cpp
     src/algorithms/linear_algebra_tensor.cpp
+    src/algorithms/linear_algebra_utilities.cpp
     src/algorithms/signal_processing.cpp
     src/algorithms/optimization.cpp
     src/algorithms/time_series.cpp
@@ -387,6 +388,7 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
+
 
 
 
