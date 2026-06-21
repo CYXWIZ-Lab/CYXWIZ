@@ -1446,6 +1446,20 @@ statistics and rolling-window utility block out of `src/algorithms/time_series.c
 
 This starts reducing the active monolithic time-series implementation with a
 self-contained helper family and no runtime behavior changes.
+### 2026-06-21 - Time series implementation split slice 2: decomposition
+
+Continued the backend time-series implementation split by moving decomposition
+logic out of `src/algorithms/time_series.cpp`:
+
+- added `src/algorithms/time_series/decomposition.cpp` for the decomposition
+  implementation family,
+- kept the public `include/cyxwiz/time_series.h` API unchanged,
+- left stationarity/autocorrelation, differencing, spectral analysis,
+  forecasting, generators, and windowing in `time_series.cpp` for later slices,
+- registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
+
+This keeps seasonal/trend decomposition ownership separate from the remaining
+forecasting and data-generation code without changing runtime behavior.
 ## Reopened Status
 
 Status: active.
@@ -1485,6 +1499,7 @@ Guardrails:
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
 `tofix14.md` as a separate runtime adapter concern.
+
 
 
 
