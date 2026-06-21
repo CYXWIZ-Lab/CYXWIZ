@@ -1,4 +1,4 @@
-#include "cyxwiz/layer.h"
+#include "cyxwiz/layers/embedding.h"
 #include "layer_arrayfire_utils.h"
 
 #include <cmath>

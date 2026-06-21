@@ -1,4 +1,4 @@
-#include "cyxwiz/layer.h"
+#include "cyxwiz/layers/transformer.h"
 #include "layer_arrayfire_utils.h"
 
 #include <cmath>

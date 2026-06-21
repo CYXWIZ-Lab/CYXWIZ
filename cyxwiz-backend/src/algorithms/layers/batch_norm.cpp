@@ -1,4 +1,4 @@
-#include "cyxwiz/layer.h"
+#include "cyxwiz/layers/normalization.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
 

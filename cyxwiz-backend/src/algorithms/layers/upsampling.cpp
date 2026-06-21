@@ -1,4 +1,4 @@
-#include "cyxwiz/layer.h"
+#include "cyxwiz/layers/upsampling.h"
 #include "layer_utils.h"
 
 #include <algorithm>

@@ -1220,6 +1220,71 @@ slice should move another coherent family, such as pooling or dropout, into
 focused headers before larger recurrent or transformer declarations are
 touched.
 
+### 2026-06-21 - Layer header split slice 2: dropout and pooling headers
+
+Continued the public layer declaration split without changing layer behavior:
+
+- added `include/cyxwiz/layers/dropout.h` as the owner of `DropoutLayer`,
+- added `include/cyxwiz/layers/pooling.h` as the owner of `MaxPool2DLayer`,
+  `AvgPool2DLayer`, and `GlobalAvgPool2DLayer`,
+- kept `include/cyxwiz/layer.h` as the compatibility aggregate include,
+- updated the dropout and pooling implementations to include their focused
+  headers,
+- registered the new headers in the backend CMake header list.
+
+This keeps the split small and coherent: stateless or simple regularization
+and pooling layers moved out first, while larger convolution, recurrent,
+normalization, and transformer declarations remain untouched for later slices.
+
+### 2026-06-21 - Layer header split slice 3: flatten header
+
+Moved the simple shape-only `FlattenLayer` declaration out of the layer
+aggregate:
+
+- added `include/cyxwiz/layers/flatten.h`,
+- kept `include/cyxwiz/layer.h` as the compatibility aggregate include,
+- updated the flatten implementation to include its focused header,
+- registered the new header in the backend CMake header list.
+
+This keeps behavior unchanged and continues reducing `layer.h` before touching
+stateful families such as normalization, convolution, recurrent, or transformer
+layers.
+
+### 2026-06-21 - Layer header split slice 4: upsampling header
+
+Moved the upsampling declaration family out of the layer aggregate:
+
+- added `include/cyxwiz/layers/upsampling.h`,
+- moved `UpsampleMode`, `Upsample2DLayer`, and `PixelShuffleLayer` into the
+  focused header,
+- kept `include/cyxwiz/layer.h` as the compatibility aggregate include,
+- updated the upsampling implementation to include its focused header,
+- registered the new header in the backend CMake header list.
+
+This preserves the existing public names while giving image upsampling and
+sub-pixel shuffle behavior a clear owner separate from the remaining monolithic
+layer declarations.
+
+### 2026-06-21 - Layer header split completion batch
+
+Completed the remaining public layer declaration split:
+
+- added `include/cyxwiz/layers/convolution.h` for `Conv1DLayer`,
+  `Conv2DLayer`, and `ConvTranspose2DLayer`,
+- added `include/cyxwiz/layers/normalization.h` for `BatchNorm2DLayer`,
+  `LayerNormLayer`, `InstanceNorm2DLayer`, and `GroupNormLayer`,
+- added `include/cyxwiz/layers/embedding.h` for `EmbeddingLayer`,
+- added `include/cyxwiz/layers/recurrent.h` for `LSTMLayer` and `GRULayer`,
+- added `include/cyxwiz/layers/attention.h` for `MultiHeadAttentionLayer`,
+- added `include/cyxwiz/layers/transformer.h` for transformer encoder and
+  decoder layers,
+- reduced `include/cyxwiz/layer.h` to a compatibility aggregate include,
+- updated layer implementation files to include their focused owning headers,
+- registered the new headers in the backend CMake header list.
+
+At this point the monolithic public layer declaration surface has been split by
+family while preserving existing class names and aggregate include compatibility.
+
 ## Reopened Status
 
 Status: active.

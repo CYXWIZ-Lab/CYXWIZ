@@ -165,8 +165,18 @@ set(BACKEND_HEADERS
     include/cyxwiz/model.h
     include/cyxwiz/cyxwiz.h
     include/cyxwiz/cyxwiz_c.h
+    include/cyxwiz/layers/attention.h
+    include/cyxwiz/layers/convolution.h
     include/cyxwiz/layers/layer_base.h
     include/cyxwiz/layers/dense.h
+    include/cyxwiz/layers/dropout.h
+    include/cyxwiz/layers/embedding.h
+    include/cyxwiz/layers/flatten.h
+    include/cyxwiz/layers/normalization.h
+    include/cyxwiz/layers/pooling.h
+    include/cyxwiz/layers/recurrent.h
+    include/cyxwiz/layers/transformer.h
+    include/cyxwiz/layers/upsampling.h
     include/cyxwiz/layers/linear.h
     include/cyxwiz/activations/relu.h
     include/cyxwiz/activations/sigmoid.h

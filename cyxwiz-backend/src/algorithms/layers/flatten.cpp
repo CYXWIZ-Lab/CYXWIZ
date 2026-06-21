@@ -1,4 +1,4 @@
-#include "cyxwiz/layer.h"
+#include "cyxwiz/layers/flatten.h"
 
 namespace cyxwiz {
 

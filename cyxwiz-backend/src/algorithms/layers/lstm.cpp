@@ -1,4 +1,4 @@
-#include "cyxwiz/layer.h"
+#include "cyxwiz/layers/recurrent.h"
 #include "cyxwiz/debug_hooks.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "layer_arrayfire_utils.h"
