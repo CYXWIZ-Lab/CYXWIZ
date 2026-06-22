@@ -1,4 +1,4 @@
-# To Fix 17 - GPU Execution And CPU Fallback
+# Done 17 - GPU Execution And CPU Fallback
 
 **Created:** 2026-06-04
 **Source:** Follow-up work split out from `done1.md` while completing
@@ -526,3 +526,23 @@ Local debug-build smoke result on 2026-06-22:
 - Concatenate average: `5.976 ms`; CPU reference average: `15.338 ms`
 
 This is a local sanity measurement only, not a UI or documentation performance promise.
+
+## Closure Audit - 2026-06-22
+
+`tofix17` is complete for its original boundary: GPU execution support and CPU fallback policy for the tensor/graph-runtime work split out from `done1.md`. The completed scope includes actual execution-path inventory, explicit mixed/backend placement wording, ArrayFire-backed tensor primitive slices with CPU fallback, TensorDot forward and graph smoke coverage, graph runtime residency coverage for shared and independent fan-in, non-noisy placement diagnostics, and standalone benchmark hooks for TensorDot and graph fan-in primitives.
+
+Closed here:
+- graph-runtime placement inventory for currently supported mixed graph ops,
+- ArrayFire residency for low-risk tensor primitive groups,
+- TensorDot forward support, benchmark harness, graph smoke coverage, and backward policy decision,
+- graph fan-in, mask, shared-input backward, and independent-input residency smoke coverage,
+- placement wording that avoids unconditional GPU claims and treats CPU fallback as normal behavior,
+- local benchmark hooks and documented debug-build sanity measurements.
+
+Intentionally deferred outside this file:
+- `TensorBatchMatMul`: remains deferred until graph-runtime shape and gradient contracts exist; GPU support should follow correctness work, not precede it.
+- Broader backend placement architecture and recurrent placement policy: tracked by `tofix25.md`.
+- Stable diagnostic/error-code taxonomy for backend warnings and fallbacks: tracked by `tofix26.md`.
+- Full ML algorithm parity and broad CPU/GPU matrix coverage across all implemented algorithms: tracked by `tofix30.md`.
+
+No further `tofix17`-owned implementation remains. Future GPU work should open or continue a narrower tracker instead of reopening this file.
