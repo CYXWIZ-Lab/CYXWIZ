@@ -1064,6 +1064,20 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
         AddIssue(config, IssueLevel::Warning, msg.str(),
                  layer.node_id, issue_name);
     }
+
+    for (const int graph_op_node_id : config.graph_op_node_ids) {
+        auto it = std::find_if(
+            config.graph_plan.nodes.begin(),
+            config.graph_plan.nodes.end(),
+            [graph_op_node_id](const CompiledGraphNode& node) {
+                return node.node_id == graph_op_node_id;
+            });
+        if (it == config.graph_plan.nodes.end()) {
+            continue;
+        }
+        config.backend_placements.push_back(
+            backend_placement::BuildGraphRuntimePlacement(*it));
+    }
 }
 
 bool ParseFloatParam(const std::map<std::string, std::string>& params,

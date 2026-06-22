@@ -113,6 +113,17 @@ bool HasGraphOpId(const cyxwiz::TrainingConfiguration& config, int node_id) {
     return false;
 }
 
+const cyxwiz::BackendPlacementEntry* FindPlacement(
+    const cyxwiz::TrainingConfiguration& config,
+    int node_id) {
+    for (const auto& placement : config.backend_placements) {
+        if (placement.node_id == node_id) {
+            return &placement;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace
 
 int main() {
@@ -1117,6 +1128,14 @@ int main() {
           "graph plan should include Data-to-Add second input edge");
     Check(HasPlanEdge(config.graph_plan, 9, 903, 4, 401),
           "graph plan should include Add-to-loss prediction edge");
+    const auto* add_placement = FindPlacement(config, 9);
+    Check(add_placement != nullptr,
+          "selected Add graph should report graph-op backend placement");
+    Check(add_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
+          "selected Add graph op should be reported as mixed backend");
+    Check(add_placement->reason_code ==
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
+          "selected Add graph op should use mixed graph-runtime reason");
 
     auto concat = Node(10,
                        gui::NodeType::Concatenate,
@@ -1152,6 +1171,14 @@ int main() {
           "graph plan should include Data-to-Concatenate second input edge");
     Check(HasPlanEdge(config.graph_plan, 10, 1003, 4, 401),
           "graph plan should include Concatenate-to-loss prediction edge");
+    const auto* concat_placement = FindPlacement(config, 10);
+    Check(concat_placement != nullptr,
+          "selected Concatenate graph should report graph-op backend placement");
+    Check(concat_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
+          "selected Concatenate graph op should be reported as CPU-backed");
+    Check(concat_placement->reason_code ==
+              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
+          "selected Concatenate graph op should use CPU graph-runtime reason");
 
     auto runtime_dot = Node(13,
                             gui::NodeType::TensorDot,
@@ -1183,6 +1210,14 @@ int main() {
           "selected TensorDot graph should still extract only the unary tensor layer");
     Check(HasPlanNode(config.graph_plan, 13),
           "graph plan should include selected TensorDot node");
+    const auto* dot_placement = FindPlacement(config, 13);
+    Check(dot_placement != nullptr,
+          "selected TensorDot graph should report graph-op backend placement");
+    Check(dot_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
+          "selected TensorDot graph op should be reported as mixed backend");
+    Check(dot_placement->reason_code ==
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
+          "selected TensorDot graph op should use mixed graph-runtime reason");
 
     auto compare = Node(11,
                         gui::NodeType::TensorCompare,
@@ -1215,6 +1250,11 @@ int main() {
           "selected TensorCompare graph should still extract only the unary tensor layer");
     Check(HasPlanNode(config.graph_plan, 11),
           "graph plan should include selected TensorCompare node");
+    const auto* compare_placement = FindPlacement(config, 11);
+    Check(compare_placement != nullptr,
+          "selected TensorCompare graph should report graph-op backend placement");
+    Check(compare_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
+          "selected TensorCompare graph op should be reported as CPU-backed");
 
     auto logical = Node(12,
                         gui::NodeType::TensorLogicalMask,
@@ -1245,6 +1285,11 @@ int main() {
           "selected TensorLogicalMask graph should record the TensorLogicalMask node id");
     Check(config.layers.size() == 1,
           "selected TensorLogicalMask graph should still extract only the unary tensor layer");
+    const auto* logical_placement = FindPlacement(config, 12);
+    Check(logical_placement != nullptr,
+          "selected TensorLogicalMask graph should report graph-op backend placement");
+    Check(logical_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
+          "selected TensorLogicalMask graph op should be reported as CPU-backed");
 
     auto binary_loss = Node(14,
                             gui::NodeType::BCELoss,

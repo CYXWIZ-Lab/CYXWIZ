@@ -78,6 +78,26 @@ behavior instead of simply searching for missing CPU fallback.
 - gaps moved into this file instead of mixed into active correctness
   work.
 
+**Status 2026-06-22:** first graph-runtime placement inventory slice
+landed in code. `GraphCompiler` now adds backend placement entries for
+enabled `graph_op_node_ids` instead of reporting only sequential/model
+layers.
+
+Current graph-runtime placement truth:
+- `Add`, `Multiply`, `Average`: `mixed`; they execute through Tensor
+  elementwise primitives that can use ArrayFire for supported
+  dtype/shape paths and CPU fallback otherwise.
+- `TensorDot`: `mixed`; Float32/Float64 forward uses ArrayFire for 1D
+  and 2D row-wise dot where available, while integer/unsupported paths
+  and graph backward remain CPU/fallback-driven.
+- `Concatenate`: `cpu`; `Tensor::Cat` is currently a row-major host
+  concat loop.
+- `TensorCompare`, `TensorLogicalMask`: `cpu`; current comparison and
+  logical tensor primitives are CPU loops.
+
+This is surfaced through the existing Compile popup/backend placement
+report rather than a new duplicate diagnostic system.
+
 ## Priority 2 - Define Backend Selection Policy
 
 **Goal:** make CPU fallback explicit and predictable.
@@ -102,6 +122,20 @@ already closed in `done2.md`.
 - clear behavior for CPU-only builds,
 - clear behavior for CUDA/OpenCL backend failures,
 - tests for GPU-unavailable fallback that do not require a real GPU.
+
+**Status 2026-06-22:** the first narrow policy hook is the existing
+backend placement capability registry. It now distinguishes graph-runtime
+`mixed` and `cpu` placement with stable reason codes instead of relying
+on node metadata alone:
+- `graph_runtime_arrayfire_mixed`
+- `graph_runtime_cpu_backed`
+
+Remaining policy work:
+- move more operation groups into this registry as they are audited,
+- avoid adding warnings for normal mixed/CPU fallback unless the UI has
+  made a performance promise,
+- add tests for CPU-only fallback behavior at the primitive level where
+  practical.
 
 ## Priority 3 - Add ArrayFire Tensor Primitive Paths
 

@@ -78,6 +78,11 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::Sigmoid: return "Sigmoid";
         case gui::NodeType::Tanh: return "Tanh";
         case gui::NodeType::Softmax: return "Softmax";
+        case gui::NodeType::Add: return "Add";
+        case gui::NodeType::Multiply: return "Multiply";
+        case gui::NodeType::Average: return "Average";
+        case gui::NodeType::Concatenate: return "Concatenate";
+        case gui::NodeType::TensorDot: return "TensorDot";
         default: return "Layer";
     }
 }
@@ -247,6 +252,86 @@ inline BackendPlacementEntry BuildTimeDistributedSequenceWrapperPlacement(
         "No action needed for compile support. For performance-sensitive "
         "sequence models, validate runtime placement and add a dedicated "
         "TimeDistributed backend contract before relying on GPU residency.";
+    return placement;
+}
+
+inline bool IsMixedArrayFireGraphRuntimeOp(gui::NodeType type) {
+    switch (type) {
+        case gui::NodeType::Add:
+        case gui::NodeType::Multiply:
+        case gui::NodeType::Average:
+        case gui::NodeType::TensorDot:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline bool IsCpuBackedGraphRuntimeOp(gui::NodeType type) {
+    switch (type) {
+        case gui::NodeType::Concatenate:
+        case gui::NodeType::TensorCompare:
+        case gui::NodeType::TensorLogicalMask:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline BackendPlacementEntry BuildGraphRuntimePlacement(
+    const CompiledGraphNode& node) {
+    BackendPlacementEntry placement;
+    placement.node_id = node.node_id;
+    placement.node_name = node.name;
+    placement.node_type = LayerTypeName(node.type);
+    placement.requested_backend = "auto";
+    placement.fallback_backend = "CPU";
+
+    if (IsMixedArrayFireGraphRuntimeOp(node.type)) {
+        placement.expected_backend = "ArrayFire tensor primitive when supported";
+        placement.status = BackendPlacementStatus::Mixed;
+        placement.reason_code = BackendPlacementReason::GraphRuntimeArrayFireMixed;
+        placement.explanation =
+            std::string(placement.node_type) +
+            " is a graph-runtime tensor op. It can use ArrayFire-backed "
+            "Tensor primitives for supported dtypes/shapes, but it keeps CPU "
+            "fallback for unsupported dtypes, CPU-only builds, or backend "
+            "failures.";
+        if (node.type == gui::NodeType::TensorDot) {
+            placement.explanation +=
+                " Current TensorDot ArrayFire coverage is Float32/Float64 "
+                "forward for 1D vector dot and 2D row-wise dot; graph backward "
+                "still uses the graph-executable gradient path.";
+        }
+        placement.suggested_action =
+            "Treat this as mixed until focused benchmarks and graph-runtime "
+            "residency tests prove the full hot path stays on device.";
+        return placement;
+    }
+
+    if (IsCpuBackedGraphRuntimeOp(node.type)) {
+        placement.expected_backend = "CPU";
+        placement.status = BackendPlacementStatus::Cpu;
+        placement.reason_code = BackendPlacementReason::GraphRuntimeCpuBacked;
+        placement.explanation =
+            std::string(placement.node_type) +
+            " is executable as a graph-runtime op, but the current primitive "
+            "path is CPU-backed and may materialize host data.";
+        placement.suggested_action =
+            "No correctness action needed. Add a focused ArrayFire primitive "
+            "and residency test before claiming GPU support for this graph op.";
+        return placement;
+    }
+
+    placement.expected_backend = BackendPlacementStatus::Unknown;
+    placement.status = BackendPlacementStatus::Unknown;
+    placement.reason_code = BackendPlacementReason::BackendCapabilityUnclassified;
+    placement.explanation =
+        std::string(placement.node_type) +
+        " is recorded as a graph-runtime op, but no backend placement rule "
+        "exists for it yet.";
+    placement.suggested_action =
+        "Classify this graph op before relying on any GPU/fallback claim.";
     return placement;
 }
 
