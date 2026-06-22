@@ -41,6 +41,14 @@ target_link_libraries(test_tensor_dot_benchmark PRIVATE
     cyxwiz-backend
 )
 
+add_executable(test_tensor_fan_in_benchmark
+    benchmarks/test_tensor_fan_in_benchmark.cpp
+)
+
+target_link_libraries(test_tensor_fan_in_benchmark PRIVATE
+    cyxwiz-backend
+)
+
 # DuckDB compile definition for data loader tests
 if(CYXWIZ_HAS_DUCKDB)
     target_compile_definitions(cyxwiz-tests PRIVATE CYXWIZ_HAS_DUCKDB)

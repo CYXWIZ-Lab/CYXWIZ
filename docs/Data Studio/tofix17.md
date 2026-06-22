@@ -512,3 +512,17 @@ The independent-input graph smoke exposed that Float32/Float64 2D row-major tens
 
 **Status 2026-06-22:** backend placement wording tightened.
 The central backend placement registry now describes sequential tensor/model layers as ArrayFire-capable for supported dtype/shape paths with normal CPU fallback, rather than implying unconditional GPU execution. Graph-runtime mixed placement now includes concrete coverage wording for `Add`, `Multiply`, and `Average`, keeps the TensorDot backward policy visible, and uses a non-noisy suggested action: no correctness action is needed, but performance claims require focused benchmarks. `test_graph_compiler_deferred_nodes` pins these user-facing wording contracts so the Compile popup/backend placement report stays honest.
+
+**Status 2026-06-22:** graph fan-in benchmark harness slice complete.
+`tests/benchmarks/test_tensor_fan_in_benchmark.cpp` adds a standalone benchmark executable for realistic `[1024, 512]` Float32 fan-in workloads: `Add`, `Multiply`, `Average`, and `Concatenate`. The target is intentionally not registered as a unit test because timing depends on hardware and build mode. It prints backend, shape, iterations, per-op total/average time, checksum, and an in-process CPU reference time/checksum for the same workload.
+
+Local debug-build smoke result on 2026-06-22:
+- backend: ArrayFire row-major 2D
+- shape: `[1024, 512]`
+- iterations: `20`
+- Add average: `3.017 ms`; CPU reference average: `13.565 ms`
+- Multiply average: `2.491 ms`; CPU reference average: `14.344 ms`
+- Average average: `3.270 ms`; CPU reference average: `15.945 ms`
+- Concatenate average: `5.976 ms`; CPU reference average: `15.338 ms`
+
+This is a local sanity measurement only, not a UI or documentation performance promise.
