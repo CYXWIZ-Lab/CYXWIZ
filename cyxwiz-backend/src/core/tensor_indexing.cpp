@@ -4,6 +4,11 @@
 #include <cstdint>
 #include <stdexcept>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#include <spdlog/spdlog.h>
+#endif
+
 namespace cyxwiz {
 
 namespace {
@@ -63,6 +68,36 @@ int NormalizeSliceIndex(int index, int dim_size, bool default_end) {
     }
     return index;
 }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool IsArrayFire2DIndexSelectSupported(const Tensor& input,
+                                       const std::vector<int>& indices) {
+    if (indices.empty()) {
+        return false;
+    }
+    if (input.Shape().size() != 2) {
+        return false;
+    }
+    return input.GetDataType() == DataType::Float32 ||
+           input.GetDataType() == DataType::Float64;
+}
+
+std::vector<unsigned> NormalizeIndexSelectIndices(const std::vector<int>& indices,
+                                                  int dim_size) {
+    std::vector<unsigned> normalized;
+    normalized.reserve(indices.size());
+    for (int selected : indices) {
+        if (selected < 0) {
+            selected += dim_size;
+        }
+        if (selected < 0 || selected >= dim_size) {
+            throw std::out_of_range("Tensor::IndexSelect: selected index out of range");
+        }
+        normalized.push_back(static_cast<unsigned>(selected));
+    }
+    return normalized;
+}
+#endif
 
 } // namespace
 
@@ -159,6 +194,25 @@ Tensor Tensor::IndexSelect(int dim, const std::vector<int>& indices) const {
 
     std::vector<size_t> out_shape = shape_;
     out_shape[static_cast<size_t>(axis)] = indices.size();
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFire2DIndexSelectSupported(*this, indices)) {
+        const std::vector<unsigned> normalized_indices =
+            NormalizeIndexSelectIndices(indices, dim_size);
+        try {
+            const af::array index_array(
+                static_cast<dim_t>(normalized_indices.size()),
+                normalized_indices.data());
+            return Tensor::FromArrayRowMajor2D(af::lookup(
+                GetArrayRowMajor2D(),
+                index_array,
+                static_cast<unsigned>(axis)));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::IndexSelect: ArrayFire index select failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
+
     Tensor result(out_shape, dtype_);
 
     const auto src_strides = tensor_utils::RowMajorStrides(shape_, "Tensor indexing: stride overflow");

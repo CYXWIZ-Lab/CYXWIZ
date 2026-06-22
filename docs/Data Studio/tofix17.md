@@ -237,6 +237,12 @@ higher-rank tensors, empty tensors, CPU-only builds, and ArrayFire
 failures continue through the existing CPU row-major materialization
 path.
 
+**Status 2026-06-22:** first index-select primitive slice complete.
+`Tensor::IndexSelect` now routes non-empty 2D Float32/Float64 gathers
+through ArrayFire using the row-major tensor bridge. Integer dtypes,
+empty index lists, higher-rank tensors, CPU-only builds, and ArrayFire
+failures continue through the existing CPU row-major gather path.
+
 ## Priority 4 - TensorDot GPU Slice
 
 **Goal:** make the newly exposed `TensorDot` contract GPU-first without
