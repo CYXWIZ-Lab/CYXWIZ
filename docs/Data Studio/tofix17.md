@@ -97,8 +97,10 @@ Current graph-runtime placement truth:
   comparisons can use ArrayFire where available, while mixed dtype,
   unsupported dtype, CPU-only, and backend failure paths fall back to
   CPU.
-- `TensorLogicalMask`: `cpu`; current logical tensor primitives are CPU
-  loops.
+- `TensorLogicalMask`: `mixed`; Float32/Float64 matching-dtype tensor
+  logical operations and unary logical not can use ArrayFire, while
+  mixed dtype, integer, CPU-only, and backend failure paths fall back to
+  CPU.
 
 This is surfaced through the existing Compile popup/backend placement
 report rather than a new duplicate diagnostic system.
@@ -218,6 +220,14 @@ ArrayFire using the row-major tensor bridge. Integer dtypes, higher-rank
 concat, CPU-only builds, and ArrayFire failures continue through the
 existing CPU row-major copy path. Graph-runtime Concatenate placement is
 now reported as `mixed` instead of CPU-backed.
+
+**Status 2026-06-22:** first logical mask primitive slice complete.
+`TensorLogicalMask` now routes Float32 and Float64 matching-dtype
+logical `and`/`or` plus unary logical-not through ArrayFire using the
+same `value != 0` truthiness contract as the CPU implementation. Mixed
+dtype, integer, broadcast materialization, CPU-only builds, and ArrayFire
+failures continue through the existing CPU path. Graph-runtime
+TensorLogicalMask placement is now reported as `mixed`.
 
 ## Priority 4 - TensorDot GPU Slice
 

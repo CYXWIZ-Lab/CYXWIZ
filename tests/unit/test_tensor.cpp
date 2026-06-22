@@ -905,6 +905,35 @@ TEST_CASE("Tensor logical operators return UInt8 masks", "[tensor]") {
     REQUIRE(inverted.Data<uint8_t>()[1] == 1);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor logical operators keep matching Float32 ArrayFire output device-resident", "[tensor]") {
+    float left_data[] = {1.0f, 0.0f, -2.0f, 0.0f};
+    float right_data[] = {1.0f, 3.0f, 0.0f, 0.0f};
+    cyxwiz::Tensor left(af::array(4, left_data));
+    cyxwiz::Tensor right(af::array(4, right_data));
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor both = left && right;
+    cyxwiz::Tensor either = left || right;
+    cyxwiz::Tensor inverted = !left;
+
+    REQUIRE(both.GetDataType() == cyxwiz::DataType::UInt8);
+    REQUIRE(both.Shape() == std::vector<size_t>{4});
+    REQUIRE(either.GetDataType() == cyxwiz::DataType::UInt8);
+    REQUIRE(inverted.GetDataType() == cyxwiz::DataType::UInt8);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(both.Data<uint8_t>()[0] == 1);
+    REQUIRE(both.Data<uint8_t>()[1] == 0);
+    REQUIRE(both.Data<uint8_t>()[2] == 0);
+    REQUIRE(both.Data<uint8_t>()[3] == 0);
+    REQUIRE(either.Data<uint8_t>()[1] == 1);
+    REQUIRE(either.Data<uint8_t>()[2] == 1);
+    REQUIRE(inverted.Data<uint8_t>()[0] == 0);
+    REQUIRE(inverted.Data<uint8_t>()[1] == 1);
+}
+#endif
+
 TEST_CASE("Tensor logical operators broadcast and support mixed dtypes", "[tensor]") {
     int32_t left_data[] = {
         0, 2, -3,

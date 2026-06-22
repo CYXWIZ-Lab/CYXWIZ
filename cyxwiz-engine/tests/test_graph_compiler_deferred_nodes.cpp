@@ -1291,8 +1291,11 @@ int main() {
     const auto* logical_placement = FindPlacement(config, 12);
     Check(logical_placement != nullptr,
           "selected TensorLogicalMask graph should report graph-op backend placement");
-    Check(logical_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "selected TensorLogicalMask graph op should be reported as CPU-backed");
+    Check(logical_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
+          "selected TensorLogicalMask graph op should be reported as mixed");
+    Check(logical_placement->reason_code ==
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
+          "selected TensorLogicalMask graph op should use mixed graph-runtime reason");
 
     auto binary_loss = Node(14,
                             gui::NodeType::BCELoss,

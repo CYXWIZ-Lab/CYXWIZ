@@ -3,6 +3,11 @@
 #include <cstdint>
 #include <stdexcept>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#include <spdlog/spdlog.h>
+#endif
+
 namespace cyxwiz {
 
 namespace {
@@ -80,10 +85,39 @@ Tensor ApplyLogicalNot(const Tensor& input) {
     throw std::runtime_error("Tensor logical not: unsupported data type");
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool IsArrayFireLogicalSupported(DataType dtype) {
+    return dtype == DataType::Float32 || dtype == DataType::Float64;
+}
+
+Tensor ApplyTensorLogicalArrayFire(const Tensor& left,
+                                   const Tensor& right,
+                                   LogicalOp op) {
+    const af::array lhs = left.GetArray() != 0;
+    const af::array rhs = right.GetArray() != 0;
+    const af::array mask = op == LogicalOp::And ? lhs && rhs : lhs || rhs;
+    return Tensor(mask.as(af::dtype::u8));
+}
+
+Tensor ApplyLogicalNotArrayFire(const Tensor& input) {
+    return Tensor((input.GetArray() == 0).as(af::dtype::u8));
+}
+#endif
+
 Tensor LogicalTensors(const Tensor& left, const Tensor& right, LogicalOp op) {
     const std::vector<size_t> out_shape = Tensor::BroadcastShape(left.Shape(), right.Shape());
     const Tensor left_expanded = left.Shape() == out_shape ? left.Clone() : left.Expand(out_shape);
     const Tensor right_expanded = right.Shape() == out_shape ? right.Clone() : right.Expand(out_shape);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (left_expanded.GetDataType() == right_expanded.GetDataType() &&
+        IsArrayFireLogicalSupported(left_expanded.GetDataType())) {
+        try {
+            return ApplyTensorLogicalArrayFire(left_expanded, right_expanded, op);
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor logical operation: ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyTensorLogical(left_expanded, right_expanded, op);
 }
 
@@ -98,6 +132,15 @@ Tensor Tensor::operator||(const Tensor& other) const {
 }
 
 Tensor Tensor::operator!() const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireLogicalSupported(dtype_)) {
+        try {
+            return ApplyLogicalNotArrayFire(*this);
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor logical not: ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyLogicalNot(*this);
 }
 
