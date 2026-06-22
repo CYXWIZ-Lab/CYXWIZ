@@ -196,6 +196,24 @@ workstation. There is no dedicated `[lstm][arrayfire]` tagged test yet.
 - optimize one measured hotspot at a time,
 - preserve CPU/AF numerical behavior and existing LSTM/GRU smoke tests.
 
+2026-06-22 recurrent AF profiling slice:
+
+- Added `test_recurrent_af_profile_smoke` as an explicit recurrent
+  forward/backward profiling smoke target for the small LSTM shape that the
+  shared placement estimator keeps ArrayFire-CUDA eligible.
+- The smoke target reports active ArrayFire backend, placement reason,
+  estimated CUDA formal-parameter pressure, forward timing, backward timing,
+  and the current hotspot candidates:
+  input projection, per-step gate math, AF-to-Tensor cache materialization,
+  and CPU backward.
+- First local CUDA smoke result for `batch=8, seq_len=8, input_size=16,
+  hidden_size=8`: forward about 128 ms, backward about 510 ms. The next
+  measured optimization should start with the backward/cache boundary rather
+  than changing gate math blindly.
+- No LSTM math was changed in this slice. Optimization remains gated on
+  comparing repeated timings from this smoke target against real recurrent
+  workloads.
+
 ## Priority 4 - TransformerDecoder And Generation
 
 TransformerEncoder text classification is verified. Decoder/generation is

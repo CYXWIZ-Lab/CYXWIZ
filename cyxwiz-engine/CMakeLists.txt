@@ -1479,6 +1479,26 @@ set_target_properties(test_recurrent_backend_placement PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Recurrent ArrayFire Profile Smoke =====
+add_executable(test_recurrent_af_profile_smoke
+    tests/test_recurrent_af_profile_smoke.cpp
+)
+
+target_link_libraries(test_recurrent_af_profile_smoke PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_recurrent_af_profile_smoke PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_recurrent_af_profile_smoke PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Tabular Loader Apply Context Guard =====
 add_executable(test_tabular_loader_apply_context
     tests/test_tabular_loader_apply_context.cpp
