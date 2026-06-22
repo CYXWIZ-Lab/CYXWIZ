@@ -147,6 +147,13 @@ af::array ArrayFireSign(const af::array& values) {
 Tensor Tensor::operator+(float scalar) const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() + scalar);
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::operator+(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(GetArray() + scalar);
         } catch (const af::exception& e) {
@@ -162,6 +169,13 @@ Tensor Tensor::operator+(float scalar) const {
 Tensor Tensor::operator-(float scalar) const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() - scalar);
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::operator-(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(GetArray() - scalar);
         } catch (const af::exception& e) {
@@ -202,6 +216,13 @@ Tensor Tensor::operator/(float scalar) const {
     }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() / scalar);
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::operator/(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(GetArray() / scalar);
         } catch (const af::exception& e) {
@@ -217,6 +238,13 @@ Tensor Tensor::operator/(float scalar) const {
 Tensor Tensor::Pow(float exponent) const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(af::pow(GetArrayRowMajor2D(), exponent));
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::Pow(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(af::pow(GetArray(), exponent));
         } catch (const af::exception& e) {
@@ -240,6 +268,14 @@ Tensor Tensor::Pow(const Tensor& exponent) const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (dtype_ == exponent.GetDataType() &&
         IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(
+                    af::pow(GetArrayRowMajor2D(), exponent.GetArrayRowMajor2D()));
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::Pow(tensor): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(af::pow(GetArray(), exponent.GetArray()));
         } catch (const af::exception& e) {
@@ -261,6 +297,13 @@ Tensor Tensor::Pow(const Tensor& exponent) const {
 Tensor Tensor::Sqrt() const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(af::sqrt(GetArrayRowMajor2D()));
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::Sqrt: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(af::sqrt(GetArray()));
         } catch (const af::exception& e) {
@@ -274,6 +317,13 @@ Tensor Tensor::Sqrt() const {
 Tensor Tensor::Exp() const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(af::exp(GetArrayRowMajor2D()));
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::Exp: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(af::exp(GetArray()));
         } catch (const af::exception& e) {
@@ -287,6 +337,13 @@ Tensor Tensor::Exp() const {
 Tensor Tensor::Log() const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(af::log(GetArrayRowMajor2D()));
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::Log: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(af::log(GetArray()));
         } catch (const af::exception& e) {
@@ -300,6 +357,13 @@ Tensor Tensor::Log() const {
 Tensor Tensor::Abs() const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(af::abs(GetArrayRowMajor2D()));
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::Abs: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(af::abs(GetArray()));
         } catch (const af::exception& e) {
@@ -315,6 +379,13 @@ Tensor Tensor::Abs() const {
 Tensor Tensor::Sign() const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(ArrayFireSign(GetArrayRowMajor2D()));
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::Sign: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(ArrayFireSign(GetArray()));
         } catch (const af::exception& e) {
@@ -340,6 +411,14 @@ Tensor Tensor::Clip(float min_val, float max_val) const {
     }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                const af::array values = GetArrayRowMajor2D();
+                return Tensor::FromArrayRowMajor2D((af::min)((af::max)(values, min_val), max_val));
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::Clip: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             const af::array values = GetArray();
             return Tensor((af::min)((af::max)(values, min_val), max_val));
@@ -359,6 +438,13 @@ Tensor Tensor::Clip(float min_val, float max_val) const {
 Tensor Tensor::operator-() const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(-GetArrayRowMajor2D());
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::operator-(): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(-GetArray());
         } catch (const af::exception& e) {

@@ -165,6 +165,39 @@ cyxwiz::CompiledGraphPlan MergePlan(gui::NodeType merge_type) {
     return plan;
 }
 
+cyxwiz::CompiledGraphPlan IndependentMergePlan(gui::NodeType merge_type) {
+    cyxwiz::CompiledGraphPlan plan;
+    plan.available = true;
+    plan.data_node_id = 1;
+    plan.data_pin_id = 101;
+    plan.label_pin_id = 102;
+    plan.prediction_pin_id = 401;
+    plan.label_target_pin_id = 402;
+    plan.loss_node_id = 4;
+    plan.loss_output_pin_id = 403;
+    plan.optimizer_node_id = 5;
+    plan.nodes = {
+        PlanNode(gui::NodeType::DataInput, 1, "Data"),
+        PlanNode(gui::NodeType::TensorAbs, 2, "Tensor Abs"),
+        PlanNode(gui::NodeType::TensorPow, 3, "Tensor Pow", {{"exponent", "2"}}),
+        merge_type == gui::NodeType::Concatenate
+            ? PlanNode(merge_type, 6, "Merge", {{"dim", "1"}})
+            : PlanNode(merge_type, 6, "Merge"),
+        PlanNode(gui::NodeType::MSELoss, 4, "Loss"),
+        PlanNode(gui::NodeType::SGD, 5, "SGD"),
+    };
+    plan.edges = {
+        PlanEdge(1, 101, 2, 201),
+        PlanEdge(1, 101, 3, 301),
+        PlanEdge(2, 202, 6, 601),
+        PlanEdge(3, 302, 6, 602),
+        PlanEdge(6, 603, 4, 401),
+        PlanEdge(1, 102, 4, 402),
+        PlanEdge(4, 403, 5, 501),
+    };
+    return plan;
+}
+
 cyxwiz::CompiledGraphPlan DotPlan() {
     cyxwiz::CompiledGraphPlan plan;
     plan.available = true;
@@ -216,6 +249,21 @@ cyxwiz::TrainingConfiguration MergeConfig(gui::NodeType merge_type) {
     config.learning_rate = 0.01f;
     config.graph_plan = MergePlan(merge_type);
     config.graph_op_node_ids = {2};
+    return config;
+}
+
+cyxwiz::TrainingConfiguration IndependentMergeConfig(gui::NodeType merge_type) {
+    cyxwiz::TrainingConfiguration config;
+    config.input_size = 3;
+    config.output_size = merge_type == gui::NodeType::Concatenate ? 6 : 3;
+    config.input_shape = {3};
+    config.layers.push_back(TensorAbsLayer());
+    config.layers.push_back(TensorPowLayer());
+    config.loss_type = gui::NodeType::MSELoss;
+    config.optimizer_type = gui::NodeType::SGD;
+    config.learning_rate = 0.01f;
+    config.graph_plan = IndependentMergePlan(merge_type);
+    config.graph_op_node_ids = {6};
     return config;
 }
 
@@ -423,6 +471,103 @@ void CheckGraphFanInBackwardArrayFireResidency() {
                                           1.0f, 1.0f, 1.0f},
                                          {2.0f, 2.0f, 2.0f},
                                          "Concatenate");
+}
+
+void CheckIndependentMergeArrayFireResidency(gui::NodeType merge_type,
+                                             const std::vector<float>& grad_values,
+                                             const std::vector<float>& expected_output,
+                                             const std::vector<float>& expected_grad,
+                                             const std::string& name) {
+    cyxwiz::BuiltExecutableModel built =
+        cyxwiz::BuildExecutableFromConfig(IndependentMergeConfig(merge_type));
+    Check(built.ok(), name + " independent ArrayFire graph executable should build");
+    auto* graph =
+        dynamic_cast<cyxwiz::GraphExecutableModel*>(built.model.get());
+    Check(graph != nullptr,
+          name + " independent ArrayFire builder should return GraphExecutableModel");
+
+    cyxwiz::Tensor host_input = MakeTensor({2.0f, 3.0f, 4.0f});
+    cyxwiz::Tensor device_input =
+        cyxwiz::Tensor::FromArrayRowMajor2D(host_input.GetArrayRowMajor2D());
+    cyxwiz::Tensor host_grad = MakeTensor(grad_values);
+    cyxwiz::Tensor device_grad =
+        cyxwiz::Tensor::FromArrayRowMajor2D(host_grad.GetArrayRowMajor2D());
+
+    const size_t before_forward_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor output = graph->Forward(device_input);
+
+    Check(output.Shape() == std::vector<size_t>({1, expected_output.size()}),
+          name + " independent ArrayFire output shape should match");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_forward_host_bytes,
+          name + " independent ArrayFire forward should not materialize host output");
+
+    af::array output_device = output.GetArrayRowMajor2D();
+    Check(output_device.dims(0) == 1,
+          name + " independent ArrayFire output should preserve device rows");
+    Check(output_device.dims(1) == static_cast<dim_t>(expected_output.size()),
+          name + " independent ArrayFire output should preserve device columns");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_forward_host_bytes,
+          name + " independent ArrayFire device access should not materialize host data");
+
+    const cyxwiz::Tensor* cached = graph->FindCachedTensor(6, 603);
+    Check(cached != nullptr, name + " independent ArrayFire graph should cache output");
+    af::array cached_device = cached->GetArrayRowMajor2D();
+    Check(cached_device.dims(0) == 1,
+          name + " independent ArrayFire cached output should preserve device rows");
+    Check(cached_device.dims(1) == static_cast<dim_t>(expected_output.size()),
+          name + " independent ArrayFire cached output should preserve device columns");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_forward_host_bytes,
+          name + " independent ArrayFire cached access should not materialize host data");
+
+    const size_t before_backward_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor backward = graph->Backward(device_grad);
+
+    Check(backward.Shape() == std::vector<size_t>({1, expected_grad.size()}),
+          name + " independent ArrayFire backward shape should match input shape");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_backward_host_bytes,
+          name + " independent ArrayFire backward should not materialize host output");
+
+    af::array backward_device = backward.GetArrayRowMajor2D();
+    Check(backward_device.dims(0) == 1,
+          name + " independent ArrayFire backward should preserve device rows");
+    Check(backward_device.dims(1) == static_cast<dim_t>(expected_grad.size()),
+          name + " independent ArrayFire backward should preserve device columns");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_backward_host_bytes,
+          name + " independent ArrayFire backward access should not materialize host data");
+
+    for (size_t col = 0; col < expected_output.size(); ++col) {
+        CheckNear(output.At(0, col), expected_output[col], 1e-4f,
+                  name + " independent ArrayFire forward");
+    }
+    for (size_t col = 0; col < expected_grad.size(); ++col) {
+        CheckNear(backward.At(0, col), expected_grad[col], 1e-4f,
+                  name + " independent ArrayFire backward");
+    }
+}
+
+void CheckIndependentGraphFanInArrayFireResidency() {
+    CheckIndependentMergeArrayFireResidency(gui::NodeType::Add,
+                                            {1.0f, 1.0f, 1.0f},
+                                            {6.0f, 12.0f, 20.0f},
+                                            {5.0f, 7.0f, 9.0f},
+                                            "Add");
+    CheckIndependentMergeArrayFireResidency(gui::NodeType::Multiply,
+                                            {1.0f, 1.0f, 1.0f},
+                                            {8.0f, 27.0f, 64.0f},
+                                            {12.0f, 27.0f, 48.0f},
+                                            "Multiply");
+    CheckIndependentMergeArrayFireResidency(gui::NodeType::Average,
+                                            {1.0f, 1.0f, 1.0f},
+                                            {3.0f, 6.0f, 10.0f},
+                                            {2.5f, 3.5f, 4.5f},
+                                            "Average");
+    CheckIndependentMergeArrayFireResidency(gui::NodeType::Concatenate,
+                                            {1.0f, 1.0f, 1.0f,
+                                             1.0f, 1.0f, 1.0f},
+                                            {2.0f, 3.0f, 4.0f,
+                                             4.0f, 9.0f, 16.0f},
+                                            {5.0f, 7.0f, 9.0f},
+                                            "Concatenate");
 }
 
 void CheckMaskOpArrayFireResidency(gui::NodeType mask_type,
@@ -722,6 +867,7 @@ int main() {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     CheckGraphFanInArrayFireResidency();
     CheckGraphFanInBackwardArrayFireResidency();
+    CheckIndependentGraphFanInArrayFireResidency();
     CheckGraphMaskArrayFireResidency();
 #endif
     CheckDotOp();

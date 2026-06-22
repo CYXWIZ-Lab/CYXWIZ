@@ -1857,6 +1857,54 @@ TEST_CASE("Tensor device arithmetic keeps host data unmaterialized", "[tensor][a
     REQUIRE(host[3] == 7.0f);
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() >= before + sum.NumBytes());
 }
+
+TEST_CASE("Tensor row-major unary elementwise keeps host data unmaterialized", "[tensor][arrayfire]") {
+    float values[] = {1.0f, 2.0f, 3.0f,
+                      4.0f, 5.0f, 6.0f};
+    float exponents[] = {1.0f, 2.0f, 1.0f,
+                         2.0f, 1.0f, 2.0f};
+    cyxwiz::Tensor host({2, 3}, values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor host_exponent({2, 3}, exponents, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor device =
+        cyxwiz::Tensor::FromArrayRowMajor2D(host.GetArrayRowMajor2D());
+    cyxwiz::Tensor exponent =
+        cyxwiz::Tensor::FromArrayRowMajor2D(host_exponent.GetArrayRowMajor2D());
+
+    const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor plus = device + 1.0f;
+    cyxwiz::Tensor minus = device - 1.0f;
+    cyxwiz::Tensor div = device / 2.0f;
+    cyxwiz::Tensor pow_scalar = device.Pow(2.0f);
+    cyxwiz::Tensor pow_tensor = device.Pow(exponent);
+    cyxwiz::Tensor sqrt = device.Sqrt();
+    cyxwiz::Tensor exp = device.Exp();
+    cyxwiz::Tensor log = device.Log();
+    cyxwiz::Tensor abs = (-device).Abs();
+    cyxwiz::Tensor sign = (-device).Sign();
+    cyxwiz::Tensor clip = device.Clip(2.5f, 5.0f);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
+
+    std::vector<cyxwiz::Tensor*> outputs = {
+        &plus, &minus, &div, &pow_scalar, &pow_tensor,
+        &sqrt, &exp, &log, &abs, &sign, &clip,
+    };
+    for (cyxwiz::Tensor* output : outputs) {
+        af::array arr = output->GetArrayRowMajor2D();
+        REQUIRE(arr.dims(0) == 2);
+        REQUIRE(arr.dims(1) == 3);
+    }
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
+
+    REQUIRE(plus.At(0, 0) == 2.0f);
+    REQUIRE(minus.At(0, 1) == 1.0f);
+    REQUIRE(div.At(1, 2) == 3.0f);
+    REQUIRE(pow_scalar.At(1, 0) == 16.0f);
+    REQUIRE(pow_tensor.At(1, 2) == 36.0f);
+    REQUIRE(abs.At(0, 2) == 3.0f);
+    REQUIRE(sign.At(1, 1) == -1.0f);
+    REQUIRE(clip.At(0, 0) == 2.5f);
+    REQUIRE(clip.At(1, 2) == 5.0f);
+}
 #endif
 
 TEST_CASE("Tensor host allocations are tracked", "[tensor]") {

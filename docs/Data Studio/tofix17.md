@@ -503,3 +503,9 @@ accelerated or uniformly CPU-primary.
 
 **Status 2026-06-22:** graph fan-in backward residency smoke coverage added.
 `test_graph_executable_model` now runs ArrayFire-backed backward checks for shared-input `Add`, `Multiply`, `Average`, and `Concatenate` graphs. The smoke uses device-current row-major 2D inputs and gradient outputs, then verifies `GraphExecutableModel::Backward` returns device-resident gradients without host materialization before value checks. This covers the shared-input accumulation path for the graph fan-in primitives already upgraded under this file. `TensorDot` 2D backward remains intentionally CPU-backed per the documented benchmark-gated policy.
+
+**Status 2026-06-22:** independent graph fan-in residency coverage complete.
+`test_graph_executable_model` now verifies normal independent graph inputs by feeding separate `TensorAbs` and `TensorPow` producer nodes into `Add`, `Multiply`, `Average`, and `Concatenate`. The smoke checks forward outputs, cached graph-op outputs, and backward gradients remain row-major ArrayFire device-resident before host value reads. This closes the Priority 5 distinction between shared-input accumulation and normal independent fan-in inputs.
+
+**Status 2026-06-22:** row-major unary/scalar elementwise residency gap fix complete.
+The independent-input graph smoke exposed that Float32/Float64 2D row-major tensors could still materialize host data inside unary/scalar elementwise paths that used native `GetArray()`. `tensor_elementwise.cpp` now preserves the row-major ArrayFire bridge for scalar add/subtract/divide, scalar and tensor `Pow`, `Sqrt`, `Exp`, `Log`, `Abs`, `Sign`, `Clip`, and unary negation before falling back to native ArrayFire or CPU. `test_tensor.cpp` adds focused ArrayFire coverage proving these outputs stay device-resident until host reads.
