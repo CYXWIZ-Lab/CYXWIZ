@@ -1647,6 +1647,91 @@ TEST_CASE("Tensor stack keeps 1D ArrayFire output device-resident", "[tensor]") 
     REQUIRE(back.Data<double>()[2] == 2.0);
     REQUIRE(back.Data<double>()[3] == 4.0);
 }
+
+TEST_CASE("Tensor stack keeps 2D ArrayFire output device-resident", "[tensor]") {
+    float a_data[] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f
+    };
+    float b_data[] = {
+        7.0f, 8.0f, 9.0f,
+        10.0f, 11.0f, 12.0f
+    };
+    cyxwiz::Tensor a({2, 3}, a_data, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor b({2, 3}, b_data, cyxwiz::DataType::Float32);
+
+    const size_t before_front_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor front = cyxwiz::Tensor::Stack({a, b}, 0);
+
+    REQUIRE(front.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(front.Shape() == std::vector<size_t>{2, 2, 3});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_front_host_bytes);
+
+    af::array front_device = front.GetArrayRowMajor3D();
+    REQUIRE(front_device.dims(0) == 2);
+    REQUIRE(front_device.dims(1) == 2);
+    REQUIRE(front_device.dims(2) == 3);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_front_host_bytes);
+
+    const float* front_out = front.Data<float>();
+    REQUIRE(front_out[0] == 1.0f);
+    REQUIRE(front_out[5] == 6.0f);
+    REQUIRE(front_out[6] == 7.0f);
+    REQUIRE(front_out[11] == 12.0f);
+
+    const size_t before_middle_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor middle = cyxwiz::Tensor::Stack({a, b}, 1);
+
+    REQUIRE(middle.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(middle.Shape() == std::vector<size_t>{2, 2, 3});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_middle_host_bytes);
+
+    af::array middle_device = middle.GetArrayRowMajor3D();
+    REQUIRE(middle_device.dims(0) == 2);
+    REQUIRE(middle_device.dims(1) == 2);
+    REQUIRE(middle_device.dims(2) == 3);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_middle_host_bytes);
+
+    const float* middle_out = middle.Data<float>();
+    REQUIRE(middle_out[0] == 1.0f);
+    REQUIRE(middle_out[2] == 3.0f);
+    REQUIRE(middle_out[3] == 7.0f);
+    REQUIRE(middle_out[5] == 9.0f);
+    REQUIRE(middle_out[6] == 4.0f);
+    REQUIRE(middle_out[11] == 12.0f);
+
+    double c_data[] = {
+        1.0, 2.0, 3.0,
+        4.0, 5.0, 6.0
+    };
+    double d_data[] = {
+        7.0, 8.0, 9.0,
+        10.0, 11.0, 12.0
+    };
+    cyxwiz::Tensor c({2, 3}, c_data, cyxwiz::DataType::Float64);
+    cyxwiz::Tensor d({2, 3}, d_data, cyxwiz::DataType::Float64);
+
+    const size_t before_back_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor back = cyxwiz::Tensor::Stack({c, d}, -1);
+
+    REQUIRE(back.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(back.Shape() == std::vector<size_t>{2, 3, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_back_host_bytes);
+
+    af::array back_device = back.GetArrayRowMajor3D();
+    REQUIRE(back_device.dims(0) == 2);
+    REQUIRE(back_device.dims(1) == 3);
+    REQUIRE(back_device.dims(2) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_back_host_bytes);
+
+    const double* back_out = back.Data<double>();
+    REQUIRE(back_out[0] == 1.0);
+    REQUIRE(back_out[1] == 7.0);
+    REQUIRE(back_out[2] == 2.0);
+    REQUIRE(back_out[3] == 8.0);
+    REQUIRE(back_out[10] == 6.0);
+    REQUIRE(back_out[11] == 12.0);
+}
 #endif
 
 TEST_CASE("Tensor split and chunk produce row-major slices", "[tensor]") {

@@ -65,6 +65,38 @@ bool IsArrayFire1DStackSupported(const std::vector<Tensor>& tensors,
     }
     return true;
 }
+
+bool IsArrayFire2DStackSupported(const std::vector<Tensor>& tensors,
+                                 DataType dtype,
+                                 int axis) {
+    if (axis < 0 || axis > 2) {
+        return false;
+    }
+    if (dtype != DataType::Float32 && dtype != DataType::Float64) {
+        return false;
+    }
+    for (const Tensor& tensor : tensors) {
+        if (tensor.GetDataType() != dtype ||
+            tensor.Shape().size() != 2 ||
+            tensor.Shape() != tensors.front().Shape()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+af::array ExpandRowMajor2DTo3D(const af::array& input,
+                               size_t dim0,
+                               size_t dim1,
+                               size_t dim2) {
+    const af::array row_major_linear = af::flat(af::transpose(input));
+    const af::dim4 reversed_dims(
+        static_cast<dim_t>(dim2),
+        static_cast<dim_t>(dim1),
+        static_cast<dim_t>(dim0),
+        1);
+    return af::reorder(af::moddims(row_major_linear, reversed_dims), 2, 1, 0);
+}
 #endif
 
 } // namespace
@@ -177,6 +209,35 @@ Tensor Tensor::Stack(const std::vector<Tensor>& tensors, int dim) {
             return Tensor::FromArrayRowMajor2D(joined);
         } catch (const af::exception& e) {
             spdlog::warn("Tensor::Stack: ArrayFire 1D stack failed, falling back to CPU: {}", e.what());
+        }
+    }
+
+    if (IsArrayFire2DStackSupported(tensors, dtype, axis)) {
+        try {
+            const size_t rows = tensors.front().Shape()[0];
+            const size_t cols = tensors.front().Shape()[1];
+            const size_t dim0 = axis == 0 ? 1 : rows;
+            const size_t dim1 = axis == 1 ? 1 : (axis == 0 ? rows : cols);
+            const size_t dim2 = axis == 2 ? 1 : cols;
+
+            af::array joined = ExpandRowMajor2DTo3D(
+                tensors.front().GetArrayRowMajor2D(),
+                dim0,
+                dim1,
+                dim2);
+            for (size_t i = 1; i < tensors.size(); i++) {
+                joined = af::join(
+                    axis,
+                    joined,
+                    ExpandRowMajor2DTo3D(
+                        tensors[i].GetArrayRowMajor2D(),
+                        dim0,
+                        dim1,
+                        dim2));
+            }
+            return Tensor::FromArrayRowMajor3D(joined);
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Stack: ArrayFire 2D stack failed, falling back to CPU: {}", e.what());
         }
     }
 #endif

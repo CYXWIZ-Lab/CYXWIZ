@@ -268,6 +268,15 @@ device-resident result without going through the existing
 shapes/dtypes, higher-rank inputs, CPU-only builds, and ArrayFire
 failures continue through the existing fallback implementation.
 
+**Status 2026-06-22:** 2D stack primitive slice complete.
+`Tensor::Stack` now also routes matching Float32/Float64 2D tensor lists
+through ArrayFire for axis `0`, `1`, and `-1`/`2`, producing a
+row-major 3D device-resident result. The implementation expands each
+input through a row-major linear device view before joining, so the
+output keeps the CPU stack order. Integer dtypes, mismatched inputs,
+higher-rank inputs, CPU-only builds, and ArrayFire failures continue
+through the existing fallback implementation.
+
 **Status 2026-06-22:** first logical mask primitive slice complete.
 `TensorLogicalMask` now routes Float32 and Float64 matching-dtype
 logical `and`/`or` plus unary logical-not through ArrayFire using the
