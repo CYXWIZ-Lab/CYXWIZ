@@ -869,6 +869,27 @@ int CountConnectedSelectedTensorInputs(
     return connected;
 }
 
+bool HasConnectedSelectedInputPinNamed(
+    const gui::MLNode& node,
+    const std::vector<gui::NodeLink>& links,
+    const std::unordered_set<int>& selected_node_ids,
+    const char* pin_name) {
+    for (const auto& pin : node.inputs) {
+        if (!pin.is_input || pin.name != pin_name) {
+            continue;
+        }
+        for (const auto& link : links) {
+            if (link.to_node == node.id &&
+                link.to_pin == pin.id &&
+                selected_node_ids.count(link.from_node) > 0 &&
+                selected_node_ids.count(link.to_node) > 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // Build the legacy single-string error_message from the issues list so
 // existing callers that only look at error_message keep working.
 std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
@@ -1824,6 +1845,7 @@ bool ValidateTensorMaskParams(gui::NodeType type,
 
 void ValidateTrainingPathImplementationStatus(
     const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
     const std::unordered_set<int>& training_path_ids,
     TrainingConfiguration& config) {
 
@@ -1838,6 +1860,25 @@ void ValidateTrainingPathImplementationStatus(
 
     for (const auto& node : nodes) {
         if (training_path_ids.count(node.id) == 0) {
+            continue;
+        }
+
+        if (node.type == gui::NodeType::TransformerDecoder &&
+            HasConnectedSelectedInputPinNamed(
+                node,
+                links,
+                training_path_ids,
+                "Memory")) {
+            std::ostringstream msg;
+            msg << "TransformerDecoder node '" << node.name
+                << "' has a connected Memory input on the selected training "
+                   "path, but Studio currently supports only decoder-only "
+                   "causal self-attention through TransformerDecoderModule. "
+                   "Seq2seq/cross-attention generation needs a graph-level "
+                   "encoder-memory contract, shifted-token targets, causal "
+                   "mask ownership, and inference/generation semantics before "
+                   "it can compile truthfully.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
             continue;
         }
 
@@ -2428,7 +2469,7 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     ExtractSequenceBatchContract(nodes, training_path_ids, config);
-    ValidateTrainingPathImplementationStatus(nodes, training_path_ids, config);
+    ValidateTrainingPathImplementationStatus(nodes, links, training_path_ids, config);
 
     if (dataset_node) {
         config.data_source_node_id = dataset_node->id;

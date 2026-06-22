@@ -517,14 +517,35 @@ int main() {
     };
 
     config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "selected TransformerDecoder path with Memory input should not compile without seq2seq contract");
+    Check(HasIssueText(config, "connected Memory input"),
+          "TransformerDecoder Memory path should report missing seq2seq/cross-attention contract");
+    Check(HasIssueText(config, "decoder-only causal self-attention"),
+          "TransformerDecoder Memory path should name the supported decoder-only contract");
+
+    auto decoder_only = decoder;
+    decoder_only.name = "Decoder Only LM";
+    decoder_only.inputs[1].is_required = false;
+
+    nodes = {data, dense, decoder_only, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 26, 2601),
+        Link(3, 26, 2603, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
-          "selected TransformerDecoder training path should compile under current engine support");
+          "decoder-only TransformerDecoder path should compile under current engine support");
     Check(HasIssueText(config, "TransformerDecoder"),
-          "TransformerDecoder path should report current backend capability status");
+          "decoder-only TransformerDecoder path should still report current backend capability status");
     Check(HasIssueText(config, "backend capability"),
-          "TransformerDecoder path should report unclassified backend placement until placement is precise");
+          "decoder-only TransformerDecoder path should report unclassified backend placement until placement is precise");
     Check(config.SummarizeBackendPlacements().unknown == 1,
-          "TransformerDecoder path should currently carry one unknown backend placement");
+          "decoder-only TransformerDecoder path should currently carry one unknown backend placement");
 
     auto decoder_side_output = Node(27,
                                     gui::NodeType::Output,

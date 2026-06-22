@@ -230,6 +230,22 @@ training or inference contract for sequence generation.
 - explicit documentation that this is generation/seq2seq, not the already
   completed encoder classifier path.
 
+2026-06-22 TransformerDecoder contract slice:
+
+- Current runtime support is explicitly decoder-only causal self-attention:
+  `TransformerDecoderModule::Forward(input)` calls
+  `TransformerDecoderLayer::Forward(input)`, which owns causal-mask creation
+  for `[batch, seq_len, d_model]` input.
+- New TransformerDecoder nodes now mark `Memory` optional because the current
+  selected training path does not consume encoder memory.
+- The compiler now rejects selected training paths where TransformerDecoder
+  has connected `Memory`, because that sketches seq2seq/cross-attention
+  generation while `ModelBuilder` currently builds only the single-input
+  decoder-only module.
+- Focused compiler coverage now proves the `Memory` path is blocked, the
+  decoder-only path still compiles, and side-branch decoder sketches outside
+  the selected training path do not block compile.
+
 ## Priority 5 - Pretrained Transformer Import / Fine-Tuning
 
 No pretrained transformer import, checkpoint conversion, tokenizer

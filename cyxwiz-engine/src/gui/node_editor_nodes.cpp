@@ -1499,10 +1499,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
                 memory_pin.type = PinType::Tensor;
                 memory_pin.name = "Memory";
                 memory_pin.is_input = true;
+                memory_pin.is_required = false;
                 memory_pin.description =
                     "Encoder output [batch, src_len, d_model] used as "
-                    "the cross-attention key/value source. Required "
-                    "for seq2seq models.";
+                    "the cross-attention key/value source. Optional because "
+                    "current Studio runtime supports decoder-only causal "
+                    "self-attention; connected Memory requires a future "
+                    "seq2seq contract.";
                 node.inputs.push_back(memory_pin);
             }
 
