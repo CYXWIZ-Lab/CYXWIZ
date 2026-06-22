@@ -243,6 +243,12 @@ through ArrayFire using the row-major tensor bridge. Integer dtypes,
 empty index lists, higher-rank tensors, CPU-only builds, and ArrayFire
 failures continue through the existing CPU row-major gather path.
 
+**Status 2026-06-22:** first slice primitive slice complete.
+`Tensor::Slice` now routes 2D Float32/Float64 range slicing through
+ArrayFire using the row-major tensor bridge, including stepped slices.
+Integer dtypes, higher-rank tensors, CPU-only builds, and ArrayFire
+failures continue through the existing CPU row-major slice path.
+
 ## Priority 4 - TensorDot GPU Slice
 
 **Goal:** make the newly exposed `TensorDot` contract GPU-first without

@@ -1165,6 +1165,64 @@ TEST_CASE("Tensor slice extracts stepped ranges across dimensions", "[tensor]") 
     REQUIRE_THROWS_AS(t.Slice(1, 0, -1, 0), std::runtime_error);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor 2D slice keeps Float32 row output device-resident", "[tensor]") {
+    float data[] = {
+        0.0f, 1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f, 7.0f,
+        8.0f, 9.0f, 10.0f, 11.0f
+    };
+    cyxwiz::Tensor input({3, 4}, data, cyxwiz::DataType::Float32);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor rows = input.Slice(0, 1);
+
+    REQUIRE(rows.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(rows.Shape() == std::vector<size_t>{2, 4});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = rows.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 2);
+    REQUIRE(device.dims(1) == 4);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const float* out = rows.Data<float>();
+    REQUIRE(out[0] == 4.0f);
+    REQUIRE(out[3] == 7.0f);
+    REQUIRE(out[4] == 8.0f);
+    REQUIRE(out[7] == 11.0f);
+}
+
+TEST_CASE("Tensor 2D slice keeps Float64 stepped column output device-resident", "[tensor]") {
+    double data[] = {
+        0.0, 1.0, 2.0, 3.0,
+        4.0, 5.0, 6.0, 7.0,
+        8.0, 9.0, 10.0, 11.0
+    };
+    cyxwiz::Tensor input({3, 4}, data, cyxwiz::DataType::Float64);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor cols = input.Slice(1, 0, -1, 2);
+
+    REQUIRE(cols.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(cols.Shape() == std::vector<size_t>{3, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = cols.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 3);
+    REQUIRE(device.dims(1) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const double* out = cols.Data<double>();
+    REQUIRE(out[0] == 0.0);
+    REQUIRE(out[1] == 2.0);
+    REQUIRE(out[2] == 4.0);
+    REQUIRE(out[3] == 6.0);
+    REQUIRE(out[4] == 8.0);
+    REQUIRE(out[5] == 10.0);
+}
+#endif
+
 TEST_CASE("Tensor index select gathers requested indices", "[tensor]") {
     auto t = cyxwiz::Tensor::RangeN({3, 4}, cyxwiz::DataType::Int32);
 

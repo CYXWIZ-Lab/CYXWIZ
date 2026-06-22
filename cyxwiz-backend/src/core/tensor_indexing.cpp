@@ -82,6 +82,14 @@ bool IsArrayFire2DIndexSelectSupported(const Tensor& input,
            input.GetDataType() == DataType::Float64;
 }
 
+bool IsArrayFire2DSliceSupported(const Tensor& input) {
+    if (input.Shape().size() != 2) {
+        return false;
+    }
+    return input.GetDataType() == DataType::Float32 ||
+           input.GetDataType() == DataType::Float64;
+}
+
 std::vector<unsigned> NormalizeIndexSelectIndices(const std::vector<int>& indices,
                                                   int dim_size) {
     std::vector<unsigned> normalized;
@@ -160,6 +168,25 @@ Tensor Tensor::Slice(int dim, int start, int end, int step) const {
     const size_t slice_size = static_cast<size_t>((finish - begin + step - 1) / step);
     std::vector<size_t> out_shape = shape_;
     out_shape[static_cast<size_t>(axis)] = slice_size;
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFire2DSliceSupported(*this)) {
+        try {
+            const af::seq selected(
+                static_cast<double>(begin),
+                static_cast<double>(begin + (static_cast<int>(slice_size) - 1) * step),
+                static_cast<double>(step));
+            const af::array source = GetArrayRowMajor2D();
+            if (axis == 0) {
+                return Tensor::FromArrayRowMajor2D(source(selected, af::span));
+            }
+            return Tensor::FromArrayRowMajor2D(source(af::span, selected));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Slice: ArrayFire slice failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
+
     Tensor result(out_shape, dtype_);
 
     const auto src_strides = tensor_utils::RowMajorStrides(shape_, "Tensor indexing: stride overflow");
