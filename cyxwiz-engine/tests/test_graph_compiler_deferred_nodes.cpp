@@ -1114,6 +1114,15 @@ int main() {
           "supported graph-runtime Add should not be reported as deferred");
     Check(config.layers.size() == 1,
           "selected Add graph should still extract the unary tensor layer");
+    const auto* abs_placement = FindPlacement(config, 8);
+    Check(abs_placement != nullptr,
+          "selected Add graph should report unary layer backend placement");
+    Check(abs_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "selected unary tensor layer should remain ArrayFire-capable");
+    Check(abs_placement->explanation.find("supported dtype/shape paths") != std::string::npos,
+          "unary tensor layer placement should avoid blanket GPU wording");
+    Check(abs_placement->explanation.find("CPU fallback") != std::string::npos,
+          "unary tensor layer placement should explain CPU fallback");
     Check(config.graph_op_node_ids.size() == 1,
           "selected Add graph should record one graph runtime op");
     Check(HasGraphOpId(config, 9),
@@ -1136,6 +1145,14 @@ int main() {
     Check(add_placement->reason_code ==
               cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
           "selected Add graph op should use mixed graph-runtime reason");
+    Check(add_placement->fallback_backend == "CPU",
+          "selected Add graph op should report CPU fallback");
+    Check(add_placement->explanation.find("row-major 2D elementwise addition") != std::string::npos,
+          "selected Add graph op should explain concrete ArrayFire coverage");
+    Check(add_placement->explanation.find("CPU fallback") != std::string::npos,
+          "selected Add graph op should describe fallback as normal behavior");
+    Check(add_placement->suggested_action.find("No correctness action needed") != std::string::npos,
+          "selected Add graph op should avoid noisy fallback warnings");
 
     auto concat = Node(10,
                        gui::NodeType::Concatenate,
@@ -1218,6 +1235,10 @@ int main() {
     Check(dot_placement->reason_code ==
               cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
           "selected TensorDot graph op should use mixed graph-runtime reason");
+    Check(dot_placement->explanation.find("graph backward") != std::string::npos,
+          "selected TensorDot graph op should keep backward policy visible");
+    Check(dot_placement->suggested_action.find("focused benchmarks") != std::string::npos,
+          "selected TensorDot graph op should require benchmarks before speed claims");
 
     auto compare = Node(11,
                         gui::NodeType::TensorCompare,

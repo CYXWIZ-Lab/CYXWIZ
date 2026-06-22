@@ -180,9 +180,10 @@ inline BackendPlacementEntry BuildArrayFireTensorPlacement(
     placement.reason_code = BackendPlacementReason::ArrayFireTensorOpCapable;
     placement.explanation =
         std::string(placement.node_type) +
-        " is compiled as a standard tensor/model layer. The runtime will "
-        "execute it on the active ArrayFire backend when that backend is "
-        "available for the selected device and dtype.";
+        " is compiled as a standard tensor/model layer. The runtime can "
+        "execute supported dtype/shape paths on the active ArrayFire backend "
+        "and uses the normal CPU fallback when ArrayFire is unavailable, the "
+        "dtype or shape is unsupported, or a backend operation fails.";
     placement.suggested_action = "No action needed.";
     return placement;
 }
@@ -298,6 +299,21 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
                 " Current TensorDot ArrayFire coverage is Float32/Float64 "
                 "forward for 1D vector dot and 2D row-wise dot; graph backward "
                 "still uses the graph-executable gradient path.";
+        } else if (node.type == gui::NodeType::Add) {
+            placement.explanation +=
+                " Current Add ArrayFire coverage includes Float32/Float64 "
+                "row-major 2D elementwise addition, including shared-input "
+                "and independent graph fan-in residency coverage.";
+        } else if (node.type == gui::NodeType::Multiply) {
+            placement.explanation +=
+                " Current Multiply ArrayFire coverage includes Float32/Float64 "
+                "row-major 2D elementwise multiplication, including shared-input "
+                "and independent graph fan-in residency coverage.";
+        } else if (node.type == gui::NodeType::Average) {
+            placement.explanation +=
+                " Current Average ArrayFire coverage reuses Float32/Float64 "
+                "row-major 2D addition and scalar scaling, including "
+                "shared-input and independent graph fan-in residency coverage.";
         } else if (node.type == gui::NodeType::TensorCompare) {
             placement.explanation +=
                 " Current TensorCompare ArrayFire coverage is Float32/Float64 "
@@ -314,8 +330,8 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
                 "unary logical not.";
         }
         placement.suggested_action =
-            "Treat this as mixed until focused benchmarks and graph-runtime "
-            "residency tests prove the full hot path stays on device.";
+            "No correctness action needed. Treat performance as workload-specific "
+            "and use focused benchmarks before making a GPU speed claim.";
         return placement;
     }
 

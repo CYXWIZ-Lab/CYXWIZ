@@ -509,3 +509,6 @@ accelerated or uniformly CPU-primary.
 
 **Status 2026-06-22:** row-major unary/scalar elementwise residency gap fix complete.
 The independent-input graph smoke exposed that Float32/Float64 2D row-major tensors could still materialize host data inside unary/scalar elementwise paths that used native `GetArray()`. `tensor_elementwise.cpp` now preserves the row-major ArrayFire bridge for scalar add/subtract/divide, scalar and tensor `Pow`, `Sqrt`, `Exp`, `Log`, `Abs`, `Sign`, `Clip`, and unary negation before falling back to native ArrayFire or CPU. `test_tensor.cpp` adds focused ArrayFire coverage proving these outputs stay device-resident until host reads.
+
+**Status 2026-06-22:** backend placement wording tightened.
+The central backend placement registry now describes sequential tensor/model layers as ArrayFire-capable for supported dtype/shape paths with normal CPU fallback, rather than implying unconditional GPU execution. Graph-runtime mixed placement now includes concrete coverage wording for `Add`, `Multiply`, and `Average`, keeps the TensorDot backward policy visible, and uses a non-noisy suggested action: no correctness action is needed, but performance claims require focused benchmarks. `test_graph_compiler_deferred_nodes` pins these user-facing wording contracts so the Compile popup/backend placement report stays honest.
