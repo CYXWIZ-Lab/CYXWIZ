@@ -10,6 +10,66 @@
 
 namespace cyxwiz {
 
+namespace {
+
+void MigrateLegacyTimeSeriesCanvasParams(
+    const std::string& type,
+    std::map<std::string, std::string>& parameters) {
+    if (type == "TSWindow") {
+        if (parameters.count("value_col") == 0) {
+            auto target = parameters.find("target_column");
+            if (target != parameters.end()) {
+                parameters["value_col"] = target->second;
+            }
+        }
+        if (parameters.count("input_width") == 0) {
+            auto window = parameters.find("window_size");
+            if (window != parameters.end()) {
+                parameters["input_width"] = window->second;
+            }
+        }
+        if (parameters.count("shift") == 0) {
+            parameters["shift"] = "1";
+        }
+
+        parameters.erase("target_column");
+        parameters.erase("window_size");
+        parameters.erase("stride");
+    } else if (type == "TSFeatures") {
+        if (parameters.count("value_col") == 0) {
+            auto columns = parameters.find("columns");
+            if (columns != parameters.end()) {
+                parameters["value_col"] = columns->second;
+            }
+        }
+        if (parameters.count("lag_values") == 0) {
+            auto lag = parameters.find("lag_features");
+            if (lag != parameters.end()) {
+                parameters["lag_values"] = lag->second;
+            }
+        }
+        if (parameters.count("rolling_windows") == 0) {
+            auto window = parameters.find("rolling_window");
+            if (window != parameters.end()) {
+                parameters["rolling_windows"] = window->second;
+            }
+        }
+        if (parameters.count("rolling_aggregations") == 0) {
+            auto rolling = parameters.find("rolling_features");
+            if (rolling != parameters.end()) {
+                parameters["rolling_aggregations"] = rolling->second;
+            }
+        }
+
+        parameters.erase("columns");
+        parameters.erase("rolling_window");
+        parameters.erase("lag_features");
+        parameters.erase("rolling_features");
+    }
+}
+
+} // namespace
+
 PipelineCanvas::PipelineCanvas()
     : context_(nullptr)
     , next_node_id_(1)
@@ -291,18 +351,18 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
         node.parameters["input_width"] = "10";
         node.parameters["shift"] = "1";
     } else if (type == "TSWindow") {
-        node.parameters["window_size"] = "10";
-        node.parameters["stride"] = "1";
-        node.parameters["target_column"] = "value";
+        node.parameters["value_col"] = "value";
+        node.parameters["input_width"] = "10";
+        node.parameters["shift"] = "1";
     } else if (type == "TimeSeriesFeatures") {
         node.parameters["value_col"] = "value";
         node.parameters["lag_values"] = "1,7,30";
         node.parameters["rolling_windows"] = "7";
     } else if (type == "TSFeatures") {
-        node.parameters["columns"] = "value";
-        node.parameters["rolling_window"] = "7";
-        node.parameters["lag_features"] = "1,7,30";
-        node.parameters["rolling_features"] = "mean,std,min,max";
+        node.parameters["value_col"] = "value";
+        node.parameters["lag_values"] = "1,7,30";
+        node.parameters["rolling_windows"] = "7";
+        node.parameters["rolling_aggregations"] = "mean,std,min,max";
     } else if (type == "TSLag") {
         node.parameters["columns"] = "value";
         node.parameters["lag_periods"] = "1,7,30";
@@ -491,6 +551,7 @@ bool PipelineCanvas::LoadPipeline(const std::string& json) {
             node.type = node_json["type"];
             node.name = node_json["name"];
             node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+            MigrateLegacyTimeSeriesCanvasParams(node.type, node.parameters);
 
             // Phase 7: Load node position if available
             if (node_json.contains("position")) {

@@ -4623,13 +4623,19 @@ bool PipelineExecutor::ExecuteTSWindow(const Node& node, ExecutionContext& ctx) 
         return false;
     }
 
-    auto window_it = node.parameters.find("window_size");
+    auto window_it = node.parameters.find("input_width");
+    if (window_it == node.parameters.end()) {
+        window_it = node.parameters.find("window_size");
+    }
     int window_size = (window_it != node.parameters.end()) ? std::stoi(window_it->second) : 10;
 
     auto stride_it = node.parameters.find("stride");
     int stride = (stride_it != node.parameters.end()) ? std::stoi(stride_it->second) : 1;
 
-    auto target_it = node.parameters.find("target_column");
+    auto target_it = node.parameters.find("value_col");
+    if (target_it == node.parameters.end()) {
+        target_it = node.parameters.find("target_column");
+    }
     std::string target_column = (target_it != node.parameters.end()) ? target_it->second : "value";
 
     std::string output_dataset_name = "ds_tswindow_" + std::to_string(node.id);
@@ -4699,11 +4705,23 @@ bool PipelineExecutor::ExecuteTSFeatures(const Node& node, ExecutionContext& ctx
         return false;
     }
 
-    auto column_it = node.parameters.find("columns");
+    auto column_it = node.parameters.find("value_col");
+    if (column_it == node.parameters.end()) {
+        column_it = node.parameters.find("columns");
+    }
     std::string columns = (column_it != node.parameters.end()) ? column_it->second : "value";
 
-    auto window_it = node.parameters.find("rolling_window");
-    int rolling_window = (window_it != node.parameters.end()) ? std::stoi(window_it->second) : 7;
+    auto window_it = node.parameters.find("rolling_windows");
+    if (window_it == node.parameters.end()) {
+        window_it = node.parameters.find("rolling_window");
+    }
+    std::string rolling_window_value =
+        (window_it != node.parameters.end()) ? window_it->second : "7";
+    const size_t comma = rolling_window_value.find(',');
+    if (comma != std::string::npos) {
+        rolling_window_value = rolling_window_value.substr(0, comma);
+    }
+    int rolling_window = std::stoi(rolling_window_value);
 
     std::string output_dataset_name = "ds_tsfeatures_" + std::to_string(node.id);
 
