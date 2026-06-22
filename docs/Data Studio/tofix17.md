@@ -348,8 +348,8 @@ Focused coverage was added in `tests/unit/test_tensor.cpp`:
 Remaining TensorDot work:
 - run and record benchmark numbers from the new realistic row-wise dot
   benchmark on representative CPU and ArrayFire backends,
-- add ArrayFire-specific graph/runtime smoke coverage when the test
-  environment has a stable device backend,
+- run the ArrayFire-specific graph/runtime smoke coverage on additional
+  CUDA/OpenCL/device configurations,
 - decide whether graph backward should gain an ArrayFire-specific
   gradient path or stay on the current graph-executable gradient loops.
 
@@ -370,6 +370,16 @@ Local debug-build smoke result on 2026-06-22:
 
 This is a local sanity measurement only, not a UI or documentation
 performance promise.
+
+**Status 2026-06-22:** TensorDot graph-runtime ArrayFire smoke coverage
+complete. `cyxwiz-engine/tests/test_graph_executable_model.cpp` now
+includes an ArrayFire-only graph executable TensorDot smoke check that
+feeds a device-current row-major 2D tensor through `GraphExecutableModel`
+and verifies both the returned output and cached graph-op output remain
+device-resident until host data is explicitly requested. This proves the
+graph runtime can reuse the backend TensorDot ArrayFire primitive for
+the supported forward path. Backward still uses the existing
+graph-executable gradient loop.
 
 **Completion criteria:**
 - direct tensor tests for 1D and 2D dot,

@@ -1,6 +1,7 @@
 #include "../src/core/graph_executable_model.h"
 #include "../src/core/model_builder.h"
 
+#include <cyxwiz/memory_manager.h>
 #include <cyxwiz/tensor.h>
 
 #include <cmath>
@@ -10,6 +11,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
 
 namespace {
 
@@ -382,6 +387,55 @@ void CheckDotOp() {
     }
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+void CheckDotOpArrayFireResidency() {
+    cyxwiz::BuiltExecutableModel built =
+        cyxwiz::BuildExecutableFromConfig(DotConfig());
+    Check(built.ok(), "TensorDot ArrayFire graph executable should build");
+    auto* graph =
+        dynamic_cast<cyxwiz::GraphExecutableModel*>(built.model.get());
+    Check(graph != nullptr, "TensorDot ArrayFire builder should return GraphExecutableModel");
+
+    cyxwiz::Tensor host_input =
+        MakeMatrix(2, 3, {1.0f, 2.0f, 3.0f,
+                          4.0f, 5.0f, 6.0f});
+    cyxwiz::Tensor device_input =
+        cyxwiz::Tensor::FromArrayRowMajor2D(host_input.GetArrayRowMajor2D());
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor output = graph->Forward(device_input);
+
+    Check(output.Shape() == std::vector<size_t>({2, 1}),
+          "TensorDot ArrayFire graph forward should produce row-wise output");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes,
+          "TensorDot ArrayFire graph forward should not materialize host output");
+
+    af::array output_device = output.GetArrayRowMajor2D();
+    Check(output_device.dims(0) == 2,
+          "TensorDot ArrayFire graph output should preserve device rows");
+    Check(output_device.dims(1) == 1,
+          "TensorDot ArrayFire graph output should preserve device columns");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes,
+          "TensorDot ArrayFire graph output device access should not materialize host data");
+
+    const cyxwiz::Tensor* cached = graph->FindCachedTensor(2, 203);
+    Check(cached != nullptr, "TensorDot ArrayFire graph should cache output");
+    af::array cached_device = cached->GetArrayRowMajor2D();
+    Check(cached_device.dims(0) == 2,
+          "TensorDot ArrayFire cached output should preserve device rows");
+    Check(cached_device.dims(1) == 1,
+          "TensorDot ArrayFire cached output should preserve device columns");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes,
+          "TensorDot ArrayFire cached device access should not materialize host data");
+
+    const float* out = output.Data<float>();
+    CheckNear(out[0], 14.0f, 1e-4f,
+              "TensorDot ArrayFire graph forward first row");
+    CheckNear(out[1], 77.0f, 1e-4f,
+              "TensorDot ArrayFire graph forward second row");
+}
+#endif
+
 void CheckTensorNear(const cyxwiz::Tensor& actual,
                      const cyxwiz::Tensor& expected,
                      const std::string& message) {
@@ -481,6 +535,9 @@ int main() {
                       {0.0f, 1.0f, 1.0f},
                       "TensorLogicalMask");
     CheckDotOp();
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    CheckDotOpArrayFireResidency();
+#endif
 
     std::cout << "Graph executable model parity passed\n";
     return 0;
