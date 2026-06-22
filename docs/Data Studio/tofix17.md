@@ -406,6 +406,24 @@ benchmarks include forward-plus-backward graph training timings.
 **Goal:** avoid graph execution bouncing tensors between CPU and GPU at
 each node.
 
+**Status 2026-06-22:** first graph fan-in residency smoke slice
+complete. `cyxwiz-engine/tests/test_graph_executable_model.cpp` now
+verifies that ArrayFire-backed graph fan-in outputs for `Add`,
+`Multiply`, `Average`, and `Concatenate` remain device-resident through
+both the returned `GraphExecutableModel::Forward` tensor and the cached
+graph-op output tensor. This reuses the existing backend tensor
+primitive paths and does not add duplicate graph-specific kernels.
+
+**Status 2026-06-22:** graph fan-in residency gap fix complete.
+The graph residency smoke exposed that 2D row-major `Add`/`Multiply`
+fan-in paths were dropping into native ArrayFire layout through
+`GetArray()`, which could materialize host data before graph output
+caching. `Tensor::operator+`, `Tensor::operator*`, and scalar
+`operator*` now keep supported Float32/Float64 2D row-major arithmetic
+on the row-major ArrayFire bridge. Integer dtypes, higher-rank tensors,
+CPU-only builds, and ArrayFire failures continue through existing
+fallback behavior.
+
 **Questions to answer:**
 - does `GraphExecutableModel` cache host tensors, device tensors, or a
   wrapper that can hold either,

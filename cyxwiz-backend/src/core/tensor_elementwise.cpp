@@ -177,6 +177,13 @@ Tensor Tensor::operator-(float scalar) const {
 Tensor Tensor::operator*(float scalar) const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        if (shape_.size() == 2) {
+            try {
+                return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() * scalar);
+            } catch (const af::exception& e) {
+                spdlog::warn("Tensor::operator*(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+            }
+        }
         try {
             return Tensor(GetArray() * scalar);
         } catch (const af::exception& e) {

@@ -896,6 +896,15 @@ Tensor Tensor::operator+(const Tensor& other) const {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // Use ArrayFire for GPU-accelerated computation
+    if (shape_.size() == 2 &&
+        (dtype_ == DataType::Float32 || dtype_ == DataType::Float64)) {
+        try {
+            return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() + other.GetArrayRowMajor2D());
+        } catch (const af::exception& e) {
+            spdlog::warn("ArrayFire row-major addition failed, falling back to native/CPU: {}", e.what());
+        }
+    }
+
     try {
         af::array a_arr = GetArray();
         af::array b_arr = other.GetArray();
@@ -1051,6 +1060,15 @@ Tensor Tensor::operator*(const Tensor& other) const {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // GPU-accelerated multiplication
+    if (shape_.size() == 2 &&
+        (dtype_ == DataType::Float32 || dtype_ == DataType::Float64)) {
+        try {
+            return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() * other.GetArrayRowMajor2D());
+        } catch (const af::exception& e) {
+            spdlog::warn("ArrayFire row-major multiplication failed, falling back to native/CPU: {}", e.what());
+        }
+    }
+
     try {
         af::array a_arr = GetArray();
         af::array b_arr = other.GetArray();
