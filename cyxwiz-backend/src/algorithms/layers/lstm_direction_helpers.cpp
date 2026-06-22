@@ -176,6 +176,12 @@ LSTMDirectionBackwardResult RunLSTMCpuDirectionBackward(
     for (size_t b = 0; b < batch_size; ++b) {
         std::vector<float> dh_next(hidden_size, 0.0f);
         std::vector<float> dc_next(hidden_size, 0.0f);
+        std::vector<float> dh(hidden_size, 0.0f);
+        std::vector<float> i_g(hidden_size, 0.0f);
+        std::vector<float> f_g(hidden_size, 0.0f);
+        std::vector<float> g_g(hidden_size, 0.0f);
+        std::vector<float> o_g(hidden_size, 0.0f);
+        std::vector<float> dgates(gate_size, 0.0f);
 
         for (int64_t step = static_cast<int64_t>(seq_len) - 1; step >= 0; --step) {
             const size_t src_t = reverse_time ? (seq_len - 1 - static_cast<size_t>(step))
@@ -187,12 +193,10 @@ LSTMDirectionBackwardResult RunLSTMCpuDirectionBackward(
             const size_t in_off = static_cast<size_t>(step) * batch_size * input_size + b * input_size;
             const size_t lg_off = static_cast<size_t>(step) * batch_size * hidden_size + b * hidden_size;
 
-            std::vector<float> dh(hidden_size, 0.0f);
             for (int i = 0; i < hidden_size; ++i) {
                 dh[i] = layer_grad[lg_off + i] + dh_next[i];
             }
 
-            std::vector<float> i_g(hidden_size), f_g(hidden_size), g_g(hidden_size), o_g(hidden_size);
             for (int i = 0; i < hidden_size; ++i) {
                 i_g[i] = sigmoid(g_cache[gate_off + i]);
                 f_g[i] = sigmoid(g_cache[gate_off + hidden_size + i]);
@@ -200,7 +204,6 @@ LSTMDirectionBackwardResult RunLSTMCpuDirectionBackward(
                 o_g[i] = sigmoid(g_cache[gate_off + 3 * hidden_size + i]);
             }
 
-            std::vector<float> dgates(gate_size, 0.0f);
             for (int i = 0; i < hidden_size; ++i) {
                 const float c_t = c_cache[c_t_off + i];
                 const float c_prev = c_cache[c_prev_off + i];

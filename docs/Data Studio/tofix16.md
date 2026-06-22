@@ -210,6 +210,11 @@ workstation. There is no dedicated `[lstm][arrayfire]` tagged test yet.
   hidden_size=8`: forward about 128 ms, backward about 510 ms. The next
   measured optimization should start with the backward/cache boundary rather
   than changing gate math blindly.
+- Follow-up optimization removed repeated per-timestep scratch-vector
+  allocations inside CPU LSTM BPTT. Scratch buffers are now reused per batch,
+  preserving the same gate math while targeting the measured backward hotspot.
+- Post-change local CUDA smoke result for the same shape: forward about
+  118 ms, backward about 74 ms.
 - No LSTM math was changed in this slice. Optimization remains gated on
   comparing repeated timings from this smoke target against real recurrent
   workloads.
