@@ -93,6 +93,12 @@ bool IsArrayFireLogicalSupported(DataType dtype) {
 Tensor ApplyTensorLogicalArrayFire(const Tensor& left,
                                    const Tensor& right,
                                    LogicalOp op) {
+    if (left.Shape().size() == 2 && right.Shape().size() == 2) {
+        const af::array lhs = left.GetArrayRowMajor2D() != 0;
+        const af::array rhs = right.GetArrayRowMajor2D() != 0;
+        const af::array mask = op == LogicalOp::And ? lhs && rhs : lhs || rhs;
+        return Tensor::FromArrayRowMajor2D(mask.as(af::dtype::u8));
+    }
     const af::array lhs = left.GetArray() != 0;
     const af::array rhs = right.GetArray() != 0;
     const af::array mask = op == LogicalOp::And ? lhs && rhs : lhs || rhs;
@@ -100,6 +106,9 @@ Tensor ApplyTensorLogicalArrayFire(const Tensor& left,
 }
 
 Tensor ApplyLogicalNotArrayFire(const Tensor& input) {
+    if (input.Shape().size() == 2) {
+        return Tensor::FromArrayRowMajor2D((input.GetArrayRowMajor2D() == 0).as(af::dtype::u8));
+    }
     return Tensor((input.GetArray() == 0).as(af::dtype::u8));
 }
 #endif

@@ -90,7 +90,9 @@ Tensor ApplyScalarComparison(const Tensor& input, float scalar, CompareOp op) {
     if (input.GetDataType() == DataType::Float32 ||
         input.GetDataType() == DataType::Float64) {
         try {
-            const af::array values = input.GetArray();
+            const af::array values = input.Shape().size() == 2
+                ? input.GetArrayRowMajor2D()
+                : input.GetArray();
             af::array mask;
             switch (op) {
                 case CompareOp::Greater:
@@ -111,6 +113,9 @@ Tensor ApplyScalarComparison(const Tensor& input, float scalar, CompareOp op) {
                 case CompareOp::NotEqual:
                     mask = values != scalar;
                     break;
+            }
+            if (input.Shape().size() == 2) {
+                return Tensor::FromArrayRowMajor2D(mask.as(u8));
             }
             return Tensor(mask.as(u8));
         } catch (const af::exception& e) {
@@ -139,8 +144,13 @@ Tensor CompareTensors(const Tensor& left, const Tensor& right, CompareOp op) {
          left_expanded.GetDataType() == DataType::Float64) &&
         left_expanded.GetDataType() == right_expanded.GetDataType()) {
         try {
-            const af::array lhs = left_expanded.GetArray();
-            const af::array rhs = right_expanded.GetArray();
+            const bool row_major_2d = out_shape.size() == 2;
+            const af::array lhs = row_major_2d
+                ? left_expanded.GetArrayRowMajor2D()
+                : left_expanded.GetArray();
+            const af::array rhs = row_major_2d
+                ? right_expanded.GetArrayRowMajor2D()
+                : right_expanded.GetArray();
             af::array mask;
             switch (op) {
                 case CompareOp::Greater:
@@ -161,6 +171,9 @@ Tensor CompareTensors(const Tensor& left, const Tensor& right, CompareOp op) {
                 case CompareOp::NotEqual:
                     mask = lhs != rhs;
                     break;
+            }
+            if (row_major_2d) {
+                return Tensor::FromArrayRowMajor2D(mask.as(u8));
             }
             return Tensor(mask.as(u8));
         } catch (const af::exception& e) {

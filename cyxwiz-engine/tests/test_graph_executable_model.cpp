@@ -361,6 +361,64 @@ void CheckGraphFanInArrayFireResidency() {
                                     2.0f, 3.0f, 4.0f},
                                    "Concatenate");
 }
+
+void CheckMaskOpArrayFireResidency(gui::NodeType mask_type,
+                                   const std::vector<float>& input_values,
+                                   const std::vector<float>& expected_output,
+                                   const std::string& name) {
+    cyxwiz::BuiltExecutableModel built =
+        cyxwiz::BuildExecutableFromConfig(MergeConfig(mask_type));
+    Check(built.ok(), name + " ArrayFire graph executable should build");
+    auto* graph =
+        dynamic_cast<cyxwiz::GraphExecutableModel*>(built.model.get());
+    Check(graph != nullptr, name + " ArrayFire builder should return GraphExecutableModel");
+
+    cyxwiz::Tensor host_input = MakeTensor(input_values);
+    cyxwiz::Tensor device_input =
+        cyxwiz::Tensor::FromArrayRowMajor2D(host_input.GetArrayRowMajor2D());
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor output = graph->Forward(device_input);
+
+    Check(output.Shape() == std::vector<size_t>({1, expected_output.size()}),
+          name + " ArrayFire graph output shape should match");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes,
+          name + " ArrayFire graph forward should not materialize host output");
+
+    af::array output_device = output.GetArrayRowMajor2D();
+    Check(output_device.dims(0) == 1,
+          name + " ArrayFire graph output should preserve device rows");
+    Check(output_device.dims(1) == static_cast<dim_t>(expected_output.size()),
+          name + " ArrayFire graph output should preserve device columns");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes,
+          name + " ArrayFire graph output device access should not materialize host data");
+
+    const cyxwiz::Tensor* cached = graph->FindCachedTensor(2, 203);
+    Check(cached != nullptr, name + " ArrayFire graph should cache output");
+    af::array cached_device = cached->GetArrayRowMajor2D();
+    Check(cached_device.dims(0) == 1,
+          name + " ArrayFire cached output should preserve device rows");
+    Check(cached_device.dims(1) == static_cast<dim_t>(expected_output.size()),
+          name + " ArrayFire cached output should preserve device columns");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes,
+          name + " ArrayFire cached device access should not materialize host data");
+
+    for (size_t col = 0; col < expected_output.size(); ++col) {
+        CheckNear(output.At(0, col), expected_output[col], 1e-4f,
+                  name + " ArrayFire graph forward");
+    }
+}
+
+void CheckGraphMaskArrayFireResidency() {
+    CheckMaskOpArrayFireResidency(gui::NodeType::TensorCompare,
+                                  {0.0f, 2.0f, -1.0f},
+                                  {1.0f, 1.0f, 1.0f},
+                                  "TensorCompare");
+    CheckMaskOpArrayFireResidency(gui::NodeType::TensorLogicalMask,
+                                  {0.0f, 2.0f, -1.0f},
+                                  {0.0f, 1.0f, 1.0f},
+                                  "TensorLogicalMask");
+}
 #endif
 
 void CheckBinaryMaskOp(gui::NodeType mask_type,
@@ -600,6 +658,7 @@ int main() {
                       "TensorLogicalMask");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     CheckGraphFanInArrayFireResidency();
+    CheckGraphMaskArrayFireResidency();
 #endif
     CheckDotOp();
 #ifdef CYXWIZ_HAS_ARRAYFIRE

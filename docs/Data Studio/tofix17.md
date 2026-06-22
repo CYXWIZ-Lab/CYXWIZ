@@ -424,6 +424,21 @@ on the row-major ArrayFire bridge. Integer dtypes, higher-rank tensors,
 CPU-only builds, and ArrayFire failures continue through existing
 fallback behavior.
 
+**Status 2026-06-22:** graph mask residency smoke slice complete.
+`cyxwiz-engine/tests/test_graph_executable_model.cpp` now also verifies
+that graph-runtime `TensorCompare` and `TensorLogicalMask` outputs remain
+device-resident for supported Float32 2D row-major inputs through both
+returned forward output and cached graph-op output. This covers the
+remaining graph fan-in groups currently reported as `mixed`.
+
+**Status 2026-06-22:** graph mask residency gap fix complete.
+The graph mask smoke exposed that 2D ArrayFire comparison/logical outputs
+were produced as native-layout UInt8 tensors, so row-major device access
+could force host materialization. Tensor comparison and logical mask
+ArrayFire paths now return supported 2D outputs through the row-major
+ArrayFire bridge. Integer, mixed dtype, higher-rank, CPU-only, and
+ArrayFire failure paths keep the existing fallback behavior.
+
 **Questions to answer:**
 - does `GraphExecutableModel` cache host tensors, device tensors, or a
   wrapper that can hold either,
