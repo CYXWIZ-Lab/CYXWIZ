@@ -6,6 +6,11 @@
 #include <stdexcept>
 #include <vector>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#include <spdlog/spdlog.h>
+#endif
+
 namespace cyxwiz {
 
 namespace {
@@ -325,10 +330,25 @@ double VarianceAsDouble(const T* data, size_t count) {
     return variance / static_cast<double>(count);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool IsArrayFireRealReductionSupported(DataType dtype) {
+    return dtype == DataType::Float32 || dtype == DataType::Float64;
+}
+#endif
+
 } // namespace
 
 Tensor Tensor::Sum() const {
     const size_t count = NumElements();
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (count > 0 && IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return Tensor(af::sum(af::flat(GetArray())));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Sum: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     switch (dtype_) {
         case DataType::Float32: return ScalarTensor(DataType::Float32, SumValues(Data<float>(), count));
         case DataType::Float64: return ScalarTensor(DataType::Float64, SumValues(Data<double>(), count));
@@ -355,6 +375,16 @@ Tensor Tensor::Mean() const {
     if (count == 0) {
         throw std::runtime_error("Tensor::Mean: cannot reduce an empty tensor");
     }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return Tensor(af::mean(af::flat(GetArray())));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Mean: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
 
     if (dtype_ == DataType::Float64) {
         const double value = SumValues(Data<double>(), count) / static_cast<double>(count);
@@ -397,6 +427,15 @@ Tensor Tensor::Mean(int dim, bool keepdim) const {
 
 Tensor Tensor::Max() const {
     const size_t count = NumElements();
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (count > 0 && IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return Tensor((af::max)(af::flat(GetArray())));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Max: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     switch (dtype_) {
         case DataType::Float32: return ScalarTensor(DataType::Float32, MaxValues(Data<float>(), count));
         case DataType::Float64: return ScalarTensor(DataType::Float64, MaxValues(Data<double>(), count));
@@ -418,6 +457,15 @@ Tensor Tensor::Max(int dim, bool keepdim) const {
 
 Tensor Tensor::Min() const {
     const size_t count = NumElements();
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (count > 0 && IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return Tensor((af::min)(af::flat(GetArray())));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Min: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     switch (dtype_) {
         case DataType::Float32: return ScalarTensor(DataType::Float32, MinValues(Data<float>(), count));
         case DataType::Float64: return ScalarTensor(DataType::Float64, MinValues(Data<double>(), count));
@@ -439,6 +487,15 @@ Tensor Tensor::Min(int dim, bool keepdim) const {
 
 Tensor Tensor::Prod() const {
     const size_t count = NumElements();
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (count > 0 && IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return Tensor(af::product(af::flat(GetArray())));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Prod: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     switch (dtype_) {
         case DataType::Float32: return ScalarTensor(DataType::Float32, ProdValues(Data<float>(), count));
         case DataType::Float64: return ScalarTensor(DataType::Float64, ProdValues(Data<double>(), count));

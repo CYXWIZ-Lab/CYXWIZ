@@ -220,6 +220,48 @@ TEST_CASE("Tensor scalar variance rejects empty tensors", "[tensor]") {
     REQUIRE_THROWS_AS(t.Std(), std::runtime_error);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor scalar reductions keep Float32 ArrayFire output device-resident", "[tensor]") {
+    float data[] = {1.0f, -2.0f, 3.0f, 4.0f};
+    cyxwiz::Tensor input(af::array(4, data));
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor sum = input.Sum();
+    cyxwiz::Tensor product = input.Prod();
+
+    REQUIRE(sum.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(sum.Shape() == std::vector<size_t>{1});
+    REQUIRE(product.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(product.Shape() == std::vector<size_t>{1});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(sum.Data<float>()[0] == 6.0f);
+    REQUIRE(product.Data<float>()[0] == -24.0f);
+}
+
+TEST_CASE("Tensor scalar reductions keep Float64 ArrayFire output device-resident", "[tensor]") {
+    double data[] = {1.0, -2.0, 3.0, 4.0};
+    cyxwiz::Tensor input(af::array(4, data));
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor mean = input.Mean();
+    cyxwiz::Tensor max = input.Max();
+    cyxwiz::Tensor min = input.Min();
+
+    REQUIRE(mean.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(mean.Shape() == std::vector<size_t>{1});
+    REQUIRE(max.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(max.Shape() == std::vector<size_t>{1});
+    REQUIRE(min.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(min.Shape() == std::vector<size_t>{1});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(mean.Data<double>()[0] == Catch::Approx(1.5));
+    REQUIRE(max.Data<double>()[0] == 4.0);
+    REQUIRE(min.Data<double>()[0] == -2.0);
+}
+#endif
+
 TEST_CASE("Tensor dimension reductions preserve integer dtype and shape", "[tensor]") {
     int32_t data[] = {
         1, 2, 3,

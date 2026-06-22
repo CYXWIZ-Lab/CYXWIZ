@@ -176,6 +176,13 @@ Unsupported dtypes, mixed tensor dtypes, CPU-only builds, and ArrayFire
 exceptions continue through the existing CPU comparison loops. Logical
 masks remain CPU-backed until dtype truthiness semantics are audited.
 
+**Status 2026-06-22:** first scalar reduction primitive slice complete.
+`cyxwiz-backend/src/core/tensor_reductions.cpp` now routes Float32 and
+Float64 scalar `Sum`, `Mean`, `Max`, `Min`, and `Prod` through ArrayFire
+when available. Integer reductions, empty-tensor fallback behavior,
+dimension reductions, `Var`, and `Std` continue through the existing CPU
+paths until shape/layout and numerical parity are audited.
+
 ## Priority 4 - TensorDot GPU Slice
 
 **Goal:** make the newly exposed `TensorDot` contract GPU-first without
