@@ -353,6 +353,51 @@ TEST_CASE("Tensor dot computes row-wise 2D inner products", "[tensor]") {
     REQUIRE(result.Data<float>()[1] == Catch::Approx(30.0f));
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor dot keeps Float32 ArrayFire vector output device-resident", "[tensor][arrayfire]") {
+    const size_t before = cyxwiz::MemoryManager::GetAllocatedBytes();
+
+    float left_data[] = {1.0f, 2.0f, 3.0f};
+    float right_data[] = {4.0f, 5.0f, 6.0f};
+    cyxwiz::Tensor left(af::array(3, left_data));
+    cyxwiz::Tensor right(af::array(3, right_data));
+
+    cyxwiz::Tensor result = left.Dot(right);
+
+    REQUIRE(result.Shape() == std::vector<size_t>{1});
+    REQUIRE(result.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before);
+    REQUIRE(result.Data<float>()[0] == Catch::Approx(32.0f));
+}
+
+TEST_CASE("Tensor dot keeps Float64 row-wise ArrayFire output device-resident", "[tensor][arrayfire]") {
+    double left_data[] = {
+        1.0, 2.0, 3.0,
+        4.0, 5.0, 6.0
+    };
+    double right_data[] = {
+        1.0, 1.0, 1.0,
+        2.0, 2.0, 2.0
+    };
+    cyxwiz::Tensor left_host({2, 3}, left_data, cyxwiz::DataType::Float64);
+    cyxwiz::Tensor right_host({2, 3}, right_data, cyxwiz::DataType::Float64);
+    cyxwiz::Tensor left =
+        cyxwiz::Tensor::FromArrayRowMajor2D(left_host.GetArrayRowMajor2D());
+    cyxwiz::Tensor right =
+        cyxwiz::Tensor::FromArrayRowMajor2D(right_host.GetArrayRowMajor2D());
+
+    const size_t before_dot = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor result = left.Dot(right);
+
+    REQUIRE(result.Shape() == std::vector<size_t>{2, 1});
+    REQUIRE(result.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_dot);
+    const double* out = result.Data<double>();
+    REQUIRE(out[0] == Catch::Approx(6.0));
+    REQUIRE(out[1] == Catch::Approx(30.0));
+}
+#endif
+
 TEST_CASE("Tensor dot validates rank size and dtype", "[tensor]") {
     float left_data[] = {1.0f, 2.0f};
     float right_data[] = {3.0f, 4.0f, 5.0f};

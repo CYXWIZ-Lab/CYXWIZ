@@ -3,6 +3,11 @@
 #include <cstdint>
 #include <stdexcept>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#include <spdlog/spdlog.h>
+#endif
+
 namespace cyxwiz {
 
 namespace {
@@ -63,6 +68,22 @@ Tensor RowWiseDotPreservingType(const Tensor& left, const Tensor& right) {
     throw std::runtime_error("Tensor::Dot: unsupported data type");
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool SupportsArrayFireDot(DataType dtype) {
+    return dtype == DataType::Float32 || dtype == DataType::Float64;
+}
+
+Tensor DotArrayFire(const Tensor& left, const Tensor& right) {
+    af::array products = left.GetArray() * right.GetArray();
+    return Tensor(af::sum(products));
+}
+
+Tensor RowWiseDotArrayFire(const Tensor& left, const Tensor& right) {
+    af::array products = left.GetArrayRowMajor2D() * right.GetArrayRowMajor2D();
+    return Tensor::FromArrayRowMajor2D(af::sum(products, 1));
+}
+#endif
+
 template <typename T>
 Tensor BatchMatMulTyped(const Tensor& left, const Tensor& right) {
     const auto& a_shape = left.Shape();
@@ -122,12 +143,30 @@ Tensor Tensor::Dot(const Tensor& other) const {
         if (shape_[0] != other.Shape()[0]) {
             throw std::runtime_error("Tensor::Dot: vector sizes must match");
         }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        if (NumElements() > 0 && SupportsArrayFireDot(dtype_)) {
+            try {
+                return DotArrayFire(*this, other);
+            } catch (const af::exception& e) {
+                spdlog::warn("ArrayFire Tensor::Dot failed, using CPU fallback: {}", e.what());
+            }
+        }
+#endif
         return DotPreservingType(*this, other);
     }
     if (shape_.size() == 2 && other.Shape().size() == 2) {
         if (shape_ != other.Shape()) {
             throw std::runtime_error("Tensor::Dot: 2D row-wise input shapes must match");
         }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        if (NumElements() > 0 && SupportsArrayFireDot(dtype_)) {
+            try {
+                return RowWiseDotArrayFire(*this, other);
+            } catch (const af::exception& e) {
+                spdlog::warn("ArrayFire row-wise Tensor::Dot failed, using CPU fallback: {}", e.what());
+            }
+        }
+#endif
         return RowWiseDotPreservingType(*this, other);
     }
     throw std::runtime_error("Tensor::Dot: both tensors must be 1D or both 2D");

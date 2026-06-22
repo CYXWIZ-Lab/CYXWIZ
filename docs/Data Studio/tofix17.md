@@ -37,14 +37,18 @@ focused test or benchmark proving the selected path.
   proof, and GPU-first primitive coverage for graph/runtime paths that
   are still CPU-backed or mixed.
 
-`TensorDot` is now graph-runtime computable, but its current primitive
-implementation in `Tensor::Dot` uses host loops over `Tensor::Data<T>()`.
-That makes the operation correct and trainable, but not GPU-first.
+`TensorDot` is now graph-runtime computable. Its primitive
+implementation in `Tensor::Dot` has a narrow ArrayFire-backed forward
+path for Float32/Float64 1D vector dot and 2D row-wise dot, with explicit
+CPU fallback for integer tensors, zero-sized tensors, CPU-only builds,
+and ArrayFire failures. Graph backward still uses the existing
+graph-executable gradient code rather than an ArrayFire-specific gradient
+kernel.
 
-This is likely true for other tensor groups completed under
-`done1.md` Priority 6 as well. Some older backend modules already use
-ArrayFire directly, while newer tensor primitive work may be CPU-backed
-for clarity and contract safety.
+Other tensor groups completed under `done1.md` Priority 6 still need the
+same treatment one group at a time. Some older backend modules already
+use ArrayFire directly, while newer tensor primitive work may be
+CPU-backed for clarity and contract safety.
 
 ## Priority 1 - Inventory Actual Execution Paths
 
@@ -143,6 +147,27 @@ changing its user-facing semantics.
 - keep CPU fallback for integer tensors and unsupported backends,
 - add tests that compare CPU and ArrayFire paths where ArrayFire is
   available, plus fallback tests that run everywhere.
+
+**Status 2026-06-22:** first forward slice complete.
+`cyxwiz-backend/src/core/tensor_linalg.cpp` now routes Float32/Float64
+1D and 2D `Tensor::Dot` through ArrayFire when available. The 2D path
+uses the row-major Tensor/ArrayFire layout bridge and reduces along the
+feature axis so the result stays `[batch, 1]`. Unsupported dtypes,
+zero-sized tensors, CPU-only builds, and ArrayFire exceptions continue
+through the existing CPU implementation.
+
+Focused coverage was added in `tests/unit/test_tensor.cpp`:
+- existing CPU tests still cover integer 1D dot and Float32 2D row-wise
+  dot,
+- new ArrayFire tests prove Float32 vector dot and Float64 row-wise dot
+  keep output device-resident until host data is explicitly requested.
+
+Remaining TensorDot work:
+- add a benchmark with a realistic row-wise dot size,
+- add ArrayFire-specific graph/runtime smoke coverage when the test
+  environment has a stable device backend,
+- decide whether graph backward should gain an ArrayFire-specific
+  gradient path or stay on the current graph-executable gradient loops.
 
 **Completion criteria:**
 - direct tensor tests for 1D and 2D dot,
