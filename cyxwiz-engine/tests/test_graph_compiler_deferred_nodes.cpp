@@ -355,6 +355,8 @@ int main() {
     sequence_loader.parameters["epochs"] = "11";
     sequence_loader.parameters["num_workers"] = "0";
     sequence_loader.parameters["prefetch_factor"] = "3";
+    sequence_loader.parameters["log_interval"] = "4";
+    sequence_loader.parameters["validation_freq"] = "2";
     sequence_loader.parameters["save_best_checkpoint"] = "false";
     sequence_loader.parameters["early_stopping_patience"] = "7";
     sequence_loader.parameters["checkpoint_dir"] = "runs/compiler_contract";
@@ -388,6 +390,10 @@ int main() {
           "DataLoader should preserve explicit num_workers");
     Check(config.prefetch_factor == 3,
           "DataLoader should preserve prefetch_factor");
+    Check(config.log_interval == 4,
+          "DataLoader should preserve log_interval");
+    Check(config.validation_freq == 2,
+          "DataLoader should preserve validation_freq");
     Check(!config.save_best_checkpoint,
           "DataLoader should preserve save_best_checkpoint policy");
     Check(config.early_stopping_patience == 7,

@@ -837,6 +837,10 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         ReadIntParam(node_->parameters, "num_workers", num_workers_);
         ReadIntParam(node_->parameters, "prefetch_factor", prefetch_factor_);
         if (prefetch_factor_ < 0) prefetch_factor_ = 0;
+        ReadIntParam(node_->parameters, "log_interval", log_interval_);
+        if (log_interval_ < 0) log_interval_ = 0;
+        ReadIntParam(node_->parameters, "validation_freq", validation_freq_);
+        if (validation_freq_ < 1) validation_freq_ = 1;
         ReadBoolParam(node_->parameters, "save_best_checkpoint", save_best_checkpoint_);
         ReadIntParam(node_->parameters, "early_stopping_patience", early_stopping_patience_);
         CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
@@ -852,6 +856,8 @@ void DataLoaderDialog::Apply() {
     node_->parameters["drop_last"] = drop_last_ ? "true" : "false";
     node_->parameters["num_workers"] = std::to_string(num_workers_);
     node_->parameters["prefetch_factor"] = std::to_string(prefetch_factor_);
+    node_->parameters["log_interval"] = std::to_string(log_interval_);
+    node_->parameters["validation_freq"] = std::to_string(validation_freq_);
     node_->parameters["save_best_checkpoint"] = save_best_checkpoint_ ? "true" : "false";
     node_->parameters["early_stopping_patience"] = std::to_string(early_stopping_patience_);
     node_->parameters["checkpoint_dir"] = checkpoint_dir_;
@@ -871,6 +877,8 @@ void DataLoaderDialog::Reset() {
     drop_last_ = false;
     num_workers_ = cyxwiz::GetDefaultNumWorkers();
     prefetch_factor_ = 2;
+    log_interval_ = 10;
+    validation_freq_ = 1;
     save_best_checkpoint_ = true;
     early_stopping_patience_ = 5;
     checkpoint_dir_[0] = '\0';
@@ -881,6 +889,10 @@ void DataLoaderDialog::Reset() {
     ReadIntParam(original_params_, "num_workers", num_workers_);
     ReadIntParam(original_params_, "prefetch_factor", prefetch_factor_);
     if (prefetch_factor_ < 0) prefetch_factor_ = 0;
+    ReadIntParam(original_params_, "log_interval", log_interval_);
+    if (log_interval_ < 0) log_interval_ = 0;
+    ReadIntParam(original_params_, "validation_freq", validation_freq_);
+    if (validation_freq_ < 1) validation_freq_ = 1;
     ReadBoolParam(original_params_, "save_best_checkpoint", save_best_checkpoint_);
     ReadIntParam(original_params_, "early_stopping_patience", early_stopping_patience_);
     CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
@@ -931,6 +943,18 @@ void DataLoaderDialog::RenderContent() {
     ImGui::Spacing();
     if (ImGui::Checkbox("Drop last incomplete batch", &drop_last_)) has_changes_ = true;
     ImGui::TextDisabled("  Discard the final batch if it has fewer than batch_size samples.");
+
+    ImGui::Spacing();
+    ImGui::Text("Validate every:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##validation_freq", &validation_freq_)) {
+        if (validation_freq_ < 1) validation_freq_ = 1;
+        if (validation_freq_ > 100000) validation_freq_ = 100000;
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(epochs; final epoch always validates)");
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Checkpointing");
@@ -994,6 +1018,22 @@ void DataLoaderDialog::RenderContent() {
     } else {
         ImGui::TextDisabled("  0 = disable async prefetch.");
     }
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Logging");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Log every:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##log_interval", &log_interval_)) {
+        if (log_interval_ < 0) log_interval_ = 0;
+        if (log_interval_ > 100000) log_interval_ = 100000;
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(batches; 0 logs first batch only)");
 
     ImGui::Spacing();
     ImGui::Separator();

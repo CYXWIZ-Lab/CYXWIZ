@@ -27,6 +27,15 @@ inline std::string TrainingRunComparisonDomainName(
     return "unknown";
 }
 
+inline int TrainingRunComparisonValidationHistoryEpoch(
+    const TrainingConfiguration& config,
+    size_t validation_history_index) {
+    const int validation_freq = std::max(1, config.validation_freq);
+    const int epoch = static_cast<int>(validation_history_index + 1) *
+                      validation_freq;
+    return std::min(std::max(1, config.epochs), epoch);
+}
+
 inline std::string TrainingRunComparisonCsvHeader() {
     return "run_id,run_status,dataset_name,preprocessing_domain,"
            "sequence_batch_enabled,model_family,primary_layer_type,"
@@ -199,12 +208,14 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
 
     if (!metrics.val_loss_history.empty()) {
         record.best_val_loss = metrics.val_loss_history.front();
-        record.best_val_loss_epoch = 1;
+        record.best_val_loss_epoch =
+            TrainingRunComparisonValidationHistoryEpoch(config, 0);
         for (size_t i = 0; i < metrics.val_loss_history.size(); ++i) {
             const float value = metrics.val_loss_history[i];
             if (value < record.best_val_loss) {
                 record.best_val_loss = value;
-                record.best_val_loss_epoch = static_cast<int>(i + 1);
+                record.best_val_loss_epoch =
+                    TrainingRunComparisonValidationHistoryEpoch(config, i);
             }
         }
     } else {
@@ -214,12 +225,14 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
 
     if (!metrics.val_accuracy_history.empty()) {
         record.best_val_accuracy = metrics.val_accuracy_history.front();
-        record.best_val_accuracy_epoch = 1;
+        record.best_val_accuracy_epoch =
+            TrainingRunComparisonValidationHistoryEpoch(config, 0);
         for (size_t i = 0; i < metrics.val_accuracy_history.size(); ++i) {
             const float value = metrics.val_accuracy_history[i];
             if (value > record.best_val_accuracy) {
                 record.best_val_accuracy = value;
-                record.best_val_accuracy_epoch = static_cast<int>(i + 1);
+                record.best_val_accuracy_epoch =
+                    TrainingRunComparisonValidationHistoryEpoch(config, i);
             }
         }
     } else {

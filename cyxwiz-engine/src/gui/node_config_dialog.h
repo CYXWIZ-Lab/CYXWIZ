@@ -608,6 +608,8 @@ private:
     bool drop_last_ = false;
     int num_workers_ = 0;
     int prefetch_factor_ = 2;
+    int log_interval_ = 10;
+    int validation_freq_ = 1;
     bool save_best_checkpoint_ = true;
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";

@@ -109,6 +109,30 @@ same semantics.
 - unsupported backend behavior is explicit instead of silent,
 - UI labels stop saying partial/future only after runtime tests pass.
 
+2026-06-22 runtime policy slice:
+
+- `validation_freq` is now runtime-owned as an epoch-based validation cadence.
+  Values below 1 compile to 1, and the final epoch always validates so final
+  metrics and best-checkpoint selection are not stale.
+- Checkpoint saving and early stopping evaluate only on epochs where validation
+  actually ran.
+- `log_interval` is now runtime-owned for legacy, sequence, Arrow, and Parquet
+  training epoch loops. Batch 1 is always logged; `log_interval=0` disables
+  periodic follow-up batch logs.
+- DataLoader properties, the rich DataLoader dialog, and compile summaries now
+  describe `validation_freq` and `log_interval` as active runtime fields.
+- Focused compiler and TrainingExecutor tests cover DataLoader propagation and
+  scheduled validation history behavior.
+
+Still deferred:
+
+- `grad_accum_steps`: requires optimizer-step/loss-scaling/checkpoint-boundary
+  design before activation.
+- DataLoader `seed`: split seed is active via DataSplit, but loader shuffle RNG
+  ownership is still not end-to-end deterministic.
+- `pin_memory`: remains tied to Priority 2 because current batchers do not own
+  real pinned host-memory transfer behavior.
+
 ## Priority 2 - Pinned Host Memory
 
 `pin_memory` is serialized for future compatibility but current training

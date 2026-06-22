@@ -67,6 +67,21 @@ void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
     }
 }
 
+bool ShouldLogTrainingBatch(const TrainingConfiguration& config, int batch_num) {
+    if (batch_num <= 1) {
+        return true;
+    }
+    return config.log_interval > 0 && batch_num % config.log_interval == 0;
+}
+
+bool ShouldRunValidationEpoch(const TrainingConfiguration& config,
+                              int epoch,
+                              int total_epochs) {
+    const int validation_freq = std::max(1, config.validation_freq);
+    return epoch == total_epochs || validation_freq <= 1 ||
+           epoch % validation_freq == 0;
+}
+
 } // namespace
 
 // ============================================================================
@@ -440,7 +455,10 @@ void TrainingExecutor::Train(
     int epochs_without_improvement = 0;
     const int early_stopping_patience = std::max(0, config_.early_stopping_patience);
     const bool save_best_checkpoint = config_.save_best_checkpoint;
-    bool validation_ran = false;
+    const int validation_freq = std::max(1, config_.validation_freq);
+    const int log_interval = std::max(0, config_.log_interval);
+    spdlog::info("TrainingExecutor: DataLoader runtime policy validation_freq={} epoch(s), log_interval={} batch(es)",
+                 validation_freq, log_interval);
 
     std::filesystem::path checkpoint_root = config_.checkpoint_dir.empty()
         ? (std::filesystem::current_path() / ".cyxwiz" / "checkpoints")
@@ -510,25 +528,36 @@ void TrainingExecutor::Train(
         // metrics (this was the source of the suspicious 100% val acc).
         // For Arrow/Parquet/legacy paths these are separate instances so
         // SetPhase is a no-op on the default IBatcher impl.
-        model_->SetTraining(false);
-        if (mode_ == DatasetMode::Legacy) {
+        const bool should_validate_this_epoch =
+            ShouldRunValidationEpoch(config_, epoch, epochs);
+        bool validation_ran_this_epoch = false;
+        if (should_validate_this_epoch) {
+            model_->SetTraining(false);
+        }
+        if (should_validate_this_epoch && mode_ == DatasetMode::Legacy) {
 #ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
             RunValidation(*legacy_val_batcher);
-            validation_ran = true;
+            validation_ran_this_epoch = true;
 #endif
-        } else if (mode_ == DatasetMode::SequenceExternal &&
+        } else if (should_validate_this_epoch &&
+                   mode_ == DatasetMode::SequenceExternal &&
                    active_sequence_batcher) {
             active_sequence_batcher->SetPhase(BatcherPhase::Val);
             RunValidationSequence(*active_sequence_batcher);
             active_sequence_batcher->SetPhase(BatcherPhase::Train);
-            validation_ran = true;
-        } else if (active_val_ibatcher) {
+            validation_ran_this_epoch = true;
+        } else if (should_validate_this_epoch && active_val_ibatcher) {
             active_val_ibatcher->SetPhase(BatcherPhase::Val);
             RunValidationArrow(*active_val_ibatcher);
             active_val_ibatcher->SetPhase(BatcherPhase::Train);
-            validation_ran = true;
+            validation_ran_this_epoch = true;
+        } else if (!should_validate_this_epoch) {
+            spdlog::debug("TrainingExecutor: Skipping validation at epoch {} (validation_freq={})",
+                          epoch, validation_freq);
         }
-        model_->SetTraining(true);
+        if (should_validate_this_epoch) {
+            model_->SetTraining(true);
+        }
 
         auto epoch_end = std::chrono::steady_clock::now();
         float epoch_time = std::chrono::duration<float>(epoch_end - epoch_start).count();
@@ -545,21 +574,31 @@ void TrainingExecutor::Train(
             m.samples_per_second = samples_per_sec;
             m.loss_history.push_back(m.train_loss);
             m.accuracy_history.push_back(m.train_accuracy);
-            m.val_loss_history.push_back(m.val_loss);
-            m.val_accuracy_history.push_back(m.val_accuracy);
+            if (validation_ran_this_epoch) {
+                m.val_loss_history.push_back(m.val_loss);
+                m.val_accuracy_history.push_back(m.val_accuracy);
+            }
         });
 
         // Epoch callback
         if (epoch_cb) {
             epoch_cb(epoch, current.train_loss, current.train_accuracy,
-                     current.val_loss, current.val_accuracy, epoch_time);
+                     validation_ran_this_epoch ? current.val_loss : -1.0f,
+                     validation_ran_this_epoch ? current.val_accuracy : -1.0f,
+                     epoch_time);
         }
 
-        spdlog::info("Epoch {}/{}: loss={:.4f}, acc={:.2f}%, val_loss={:.4f}, val_acc={:.2f}% ({:.1f}s, {:.0f} samples/sec)",
-                     epoch, epochs, current.train_loss, current.train_accuracy * 100,
-                     current.val_loss, current.val_accuracy * 100, epoch_time, samples_per_sec);
+        if (validation_ran_this_epoch) {
+            spdlog::info("Epoch {}/{}: loss={:.4f}, acc={:.2f}%, val_loss={:.4f}, val_acc={:.2f}% ({:.1f}s, {:.0f} samples/sec)",
+                         epoch, epochs, current.train_loss, current.train_accuracy * 100,
+                         current.val_loss, current.val_accuracy * 100, epoch_time, samples_per_sec);
+        } else {
+            spdlog::info("Epoch {}/{}: loss={:.4f}, acc={:.2f}%, validation skipped (validation_freq={}) ({:.1f}s, {:.0f} samples/sec)",
+                         epoch, epochs, current.train_loss, current.train_accuracy * 100,
+                         validation_freq, epoch_time, samples_per_sec);
+        }
 
-        if (validation_ran && checkpoint_manager && save_best_checkpoint && std::isfinite(current.val_loss)) {
+        if (validation_ran_this_epoch && checkpoint_manager && save_best_checkpoint && std::isfinite(current.val_loss)) {
             if (current.val_loss < best_val_loss) {
                 best_val_loss = current.val_loss;
                 epochs_without_improvement = 0;
@@ -906,7 +945,7 @@ void TrainingExecutor::RunTrainingEpoch(
         // Periodic progress log - mirror of RunTrainingEpochArrow's
         // version so non-Arrow training paths (legacy DatasetBatcher)
         // also get per-50-batch liveness signals.
-        if (batch_num == 1 || batch_num % 50 == 0) {
+        if (ShouldLogTrainingBatch(config_, batch_num)) {
             const auto now = std::chrono::steady_clock::now();
             const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now - epoch_start_time).count();
@@ -1335,7 +1374,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
             m.train_token_count = token_count;
         });
 
-        if (batch_num == 1 || batch_num % 50 == 0) {
+        if (ShouldLogTrainingBatch(config_, batch_num)) {
             const auto now = std::chrono::steady_clock::now();
             const auto elapsed_ms =
                 std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1649,7 +1688,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
         // loop entered) and every 50 batches after. Throughput is
         // computed against epoch_start_time so the "batches/s" reading
         // naturally warms up as the batcher + GPU pools stabilize.
-        if (batch_num == 1 || batch_num % 50 == 0) {
+        if (ShouldLogTrainingBatch(config_, batch_num)) {
             const auto now = std::chrono::steady_clock::now();
             const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now - epoch_start_time).count();

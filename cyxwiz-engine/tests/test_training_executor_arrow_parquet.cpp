@@ -582,13 +582,15 @@ void TestSequenceTrainingExecutor() {
 }
 
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
-                 const std::string& label) {
-    bool saw_epoch = false;
+                 const std::string& label,
+                 int expected_epochs = 1,
+                 int expected_validation_points = 1) {
+    int saw_epochs = 0;
     bool completed = false;
     cyxwiz::TrainingMetrics final_metrics;
 
     executor.Train(
-        1,
+        expected_epochs,
         2,
         nullptr,
         [&](int epoch,
@@ -597,27 +599,30 @@ void RunExecutor(cyxwiz::TrainingExecutor& executor,
             float val_loss,
             float,
             float) {
-            Check(epoch == 1, label + " epoch callback should report epoch 1");
+            Check(epoch >= 1 && epoch <= expected_epochs,
+                  label + " epoch callback should report a valid epoch");
             Check(std::isfinite(train_loss), label + " train loss should be finite");
-            Check(std::isfinite(val_loss), label + " val loss should be finite");
-            saw_epoch = true;
+            if (val_loss >= 0.0f) {
+                Check(std::isfinite(val_loss), label + " val loss should be finite");
+            }
+            ++saw_epochs;
         },
         [&](const cyxwiz::TrainingMetrics& metrics) {
             final_metrics = metrics;
             completed = true;
         });
 
-    Check(saw_epoch, label + " should run an epoch callback");
+    Check(saw_epochs == expected_epochs, label + " should run each epoch callback");
     Check(completed, label + " should run completion callback");
     Check(final_metrics.is_complete, label + " should mark training complete");
     Check(!final_metrics.is_training, label + " should clear training state");
-    Check(final_metrics.current_epoch == 1, label + " should finish epoch 1");
-    Check(final_metrics.total_epochs == 1, label + " should keep total epochs");
+    Check(final_metrics.current_epoch == expected_epochs, label + " should finish expected epoch");
+    Check(final_metrics.total_epochs == expected_epochs, label + " should keep total epochs");
     Check(final_metrics.total_batches == 2, label + " should train two batches");
-    Check(final_metrics.loss_history.size() == 1,
-          label + " should store one train loss history entry");
-    Check(final_metrics.val_loss_history.size() == 1,
-          label + " should store one validation loss history entry");
+    Check(final_metrics.loss_history.size() == static_cast<size_t>(expected_epochs),
+          label + " should store one train loss history entry per epoch");
+    Check(final_metrics.val_loss_history.size() == static_cast<size_t>(expected_validation_points),
+          label + " should store validation history only for validation epochs");
     Check(std::isfinite(final_metrics.train_loss),
           label + " final train loss should be finite");
     Check(std::isfinite(final_metrics.val_loss),
@@ -676,6 +681,19 @@ int main() {
     {
         cyxwiz::TrainingExecutor arrow_executor(config, dataset, "label");
         RunExecutor(arrow_executor, "Arrow TrainingExecutor");
+    }
+
+    {
+        auto scheduled_validation_config = config;
+        scheduled_validation_config.epochs = 3;
+        scheduled_validation_config.validation_freq = 2;
+        scheduled_validation_config.log_interval = 1;
+        cyxwiz::TrainingExecutor scheduled_executor(
+            scheduled_validation_config, dataset, "label");
+        RunExecutor(scheduled_executor,
+                    "Arrow scheduled validation TrainingExecutor",
+                    3,
+                    2);
     }
 
     const fs::path parquet_path = work_dir / "training_executor.parquet";

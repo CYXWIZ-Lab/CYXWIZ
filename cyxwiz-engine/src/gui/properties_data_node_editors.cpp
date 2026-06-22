@@ -295,10 +295,9 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 log_interval = log_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Future field: current TrainingExecutor logging cadence is hardcoded in the loop.");
+                ImGui::SetTooltip("Runtime-supported batch progress cadence.\n"
+                                  "The first batch is always logged; 0 disables periodic follow-up logs.");
             }
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                               "  Partial: logging cadence is not runtime-configurable yet.");
 
             std::string& val_freq = node.parameters["validation_freq"];
             if (val_freq.empty()) val_freq = "1";
@@ -313,10 +312,9 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 val_freq = val_freq_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Future field: current TrainingExecutor validates every epoch when validation is available.");
+                ImGui::SetTooltip("Runtime-supported epoch validation cadence.\n"
+                                  "Values below 1 compile as 1; the final epoch always validates.");
             }
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                               "  Partial: current runtime validates every epoch.");
             break;
         }
 

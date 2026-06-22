@@ -595,16 +595,16 @@ void TrainingManager::TrainingThreadFunc(
             cached_metrics_.current_epoch = epoch;
             cached_metrics_.train_loss = train_loss;
             cached_metrics_.train_accuracy = train_acc;
-            cached_metrics_.val_loss = val_loss;
-            cached_metrics_.val_accuracy = val_acc;
             cached_metrics_.epoch_time_seconds = epoch_time;
             cached_metrics_.loss_history.push_back(train_loss);
             cached_metrics_.accuracy_history.push_back(train_acc);
             if (val_loss >= 0.0f) {
+                cached_metrics_.val_loss = val_loss;
                 cached_metrics_.val_loss_history.push_back(val_loss);
                 cached_metrics_.has_validation_metrics = true;
             }
             if (val_acc >= 0.0f) {
+                cached_metrics_.val_accuracy = val_acc;
                 cached_metrics_.val_accuracy_history.push_back(val_acc);
                 cached_metrics_.has_validation_metrics = true;
             }
@@ -641,12 +641,14 @@ void TrainingManager::TrainingThreadFunc(
             if (sequence_mode) {
                 panel->AddCustomMetric("Train Token Accuracy", epoch,
                     static_cast<double>(seq_metrics.train_token_accuracy) * 100.0);
-                panel->AddCustomMetric("Val Token Accuracy", epoch,
-                    static_cast<double>(seq_metrics.val_token_accuracy) * 100.0);
                 panel->AddCustomMetric("Train Entity F1", epoch,
                     static_cast<double>(seq_metrics.train_entity_f1) * 100.0);
-                panel->AddCustomMetric("Val Entity F1", epoch,
-                    static_cast<double>(seq_metrics.val_entity_f1) * 100.0);
+                if (val_loss >= 0.0f || val_acc >= 0.0f) {
+                    panel->AddCustomMetric("Val Token Accuracy", epoch,
+                        static_cast<double>(seq_metrics.val_token_accuracy) * 100.0);
+                    panel->AddCustomMetric("Val Entity F1", epoch,
+                        static_cast<double>(seq_metrics.val_entity_f1) * 100.0);
+                }
             }
             spdlog::info("TrainingPlotPanel: Updated state - epoch={}/{}, time={:.1f}s, sps={:.0f}",
                          epoch, epochs, epoch_time, samples_per_sec);
