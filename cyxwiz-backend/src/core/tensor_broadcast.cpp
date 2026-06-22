@@ -5,6 +5,11 @@
 #include <cstring>
 #include <stdexcept>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#include <spdlog/spdlog.h>
+#endif
+
 namespace cyxwiz {
 
 namespace {
@@ -21,6 +26,30 @@ std::vector<size_t> LeftPadShape(const std::vector<size_t>& shape, size_t rank) 
     }
     return padded;
 }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool IsArrayFire2DExpandSupported(const Tensor& input,
+                                  const std::vector<size_t>& target_shape,
+                                  const std::vector<size_t>& padded_shape) {
+    if (input.GetDataType() != DataType::Float32 &&
+        input.GetDataType() != DataType::Float64) {
+        return false;
+    }
+    if (input.Shape().size() != 2 || target_shape.size() != 2) {
+        return false;
+    }
+    if (input.NumElements() == 0 || target_shape[0] == 0 || target_shape[1] == 0) {
+        return false;
+    }
+    for (size_t i = 0; i < target_shape.size(); i++) {
+        if (padded_shape[i] != target_shape[i] &&
+            padded_shape[i] != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+#endif
 
 } // namespace
 
@@ -75,6 +104,23 @@ Tensor Tensor::Expand(const std::vector<size_t>& target_shape) const {
     if (padded_shape == target_shape) {
         return padded_shape == shape_ ? Clone() : Reshape(target_shape);
     }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFire2DExpandSupported(*this, target_shape, padded_shape)) {
+        try {
+            const unsigned tile_rows = padded_shape[0] == target_shape[0]
+                ? 1u
+                : static_cast<unsigned>(target_shape[0]);
+            const unsigned tile_cols = padded_shape[1] == target_shape[1]
+                ? 1u
+                : static_cast<unsigned>(target_shape[1]);
+            return Tensor::FromArrayRowMajor2D(
+                af::tile(GetArrayRowMajor2D(), tile_rows, tile_cols));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Expand: ArrayFire expand failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
 
     Tensor result(target_shape, dtype_);
     const size_t element_size = tensor_utils::ElementSize(dtype_);

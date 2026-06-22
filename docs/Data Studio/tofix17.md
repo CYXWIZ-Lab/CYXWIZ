@@ -229,6 +229,14 @@ dtype, integer, broadcast materialization, CPU-only builds, and ArrayFire
 failures continue through the existing CPU path. Graph-runtime
 TensorLogicalMask placement is now reported as `mixed`.
 
+**Status 2026-06-22:** first broadcast/expand primitive slice complete.
+`Tensor::Expand` and `Tensor::BroadcastTo` now route same-rank 2D
+Float32/Float64 expansions through ArrayFire using the row-major tensor
+bridge. Rank-changing left-padding broadcasts, integer dtypes,
+higher-rank tensors, empty tensors, CPU-only builds, and ArrayFire
+failures continue through the existing CPU row-major materialization
+path.
+
 ## Priority 4 - TensorDot GPU Slice
 
 **Goal:** make the newly exposed `TensorDot` contract GPU-first without

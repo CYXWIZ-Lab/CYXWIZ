@@ -1008,6 +1008,63 @@ TEST_CASE("Tensor expand materializes broadcasted float data", "[tensor]") {
     REQUIRE(out[5] == 30.0f);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor 2D expand keeps Float32 ArrayFire output device-resident", "[tensor]") {
+    float data[] = {
+        10.0f, 20.0f, 30.0f
+    };
+    cyxwiz::Tensor input({1, 3}, data, cyxwiz::DataType::Float32);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor expanded = input.Expand({2, 3});
+
+    REQUIRE(expanded.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(expanded.Shape() == std::vector<size_t>{2, 3});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = expanded.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 2);
+    REQUIRE(device.dims(1) == 3);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const float* out = expanded.Data<float>();
+    REQUIRE(out[0] == 10.0f);
+    REQUIRE(out[1] == 20.0f);
+    REQUIRE(out[2] == 30.0f);
+    REQUIRE(out[3] == 10.0f);
+    REQUIRE(out[4] == 20.0f);
+    REQUIRE(out[5] == 30.0f);
+}
+
+TEST_CASE("Tensor 2D broadcast to keeps Float64 ArrayFire output device-resident", "[tensor]") {
+    double data[] = {
+        1.0,
+        2.0
+    };
+    cyxwiz::Tensor input({2, 1}, data, cyxwiz::DataType::Float64);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor expanded = input.BroadcastTo({2, 3});
+
+    REQUIRE(expanded.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(expanded.Shape() == std::vector<size_t>{2, 3});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = expanded.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 2);
+    REQUIRE(device.dims(1) == 3);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const double* out = expanded.Data<double>();
+    REQUIRE(out[0] == 1.0);
+    REQUIRE(out[1] == 1.0);
+    REQUIRE(out[2] == 1.0);
+    REQUIRE(out[3] == 2.0);
+    REQUIRE(out[4] == 2.0);
+    REQUIRE(out[5] == 2.0);
+}
+#endif
+
 TEST_CASE("Tensor broadcast to repeats singleton dimensions for integer tensors", "[tensor]") {
     int32_t data[] = {1, 2};
     cyxwiz::Tensor t({2, 1}, data, cyxwiz::DataType::Int32);
