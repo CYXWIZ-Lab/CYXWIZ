@@ -1,4 +1,6 @@
 #include "training_manager.h"
+
+#include <cstdint>
 #include "crash_run_recorder.h"
 #include "image_dataset_batcher.h"
 #include "audio_dataset_batcher.h"
@@ -329,7 +331,8 @@ bool TrainingManager::StartTrainingImage(
     // extracted from the graph's Resize / Normalize / Augmentation nodes.
     auto batcher = std::make_unique<ImageDatasetBatcher>(
         image_entry, config.image_preprocessing,
-        batch_size, config.train_ratio, config.shuffle, config.num_workers);
+        batch_size, config.train_ratio, config.shuffle, config.num_workers,
+        static_cast<uint32_t>(config.dataloader_seed));
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Image dataset has 0 samples");
@@ -345,8 +348,9 @@ bool TrainingManager::StartTrainingImage(
     int ch = config.image_preprocessing.convert_to_grayscale ? 1 : 3;
     config.input_size = static_cast<size_t>(tw * th * ch);
 
-    spdlog::info("TrainingManager: Image dataset {} samples, input_size={} ({}x{}x{}), num_workers={}",
-                 batcher->GetNumSamples(), config.input_size, tw, th, ch, config.num_workers);
+    spdlog::info("TrainingManager: Image dataset {} samples, input_size={} ({}x{}x{}), num_workers={}, seed={}",
+                 batcher->GetNumSamples(), config.input_size, tw, th, ch,
+                 config.num_workers, config.dataloader_seed);
 
     // Set up normalization / one-hot from the compiled graph config
     if (config.preprocessing.has_normalization) {
@@ -390,7 +394,8 @@ bool TrainingManager::StartTrainingAudio(
     auto batcher = std::make_unique<AudioDatasetBatcher>(
         audio_entry,
         config.audio_preprocessing,
-        batch_size, config.train_ratio, config.shuffle, config.num_workers);
+        batch_size, config.train_ratio, config.shuffle, config.num_workers,
+        static_cast<uint32_t>(config.dataloader_seed));
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Audio dataset has 0 samples");
@@ -407,9 +412,10 @@ bool TrainingManager::StartTrainingAudio(
         static_cast<size_t>(batcher->GetFeatureCols())
     };
 
-    spdlog::info("TrainingManager: Audio dataset {} samples, input_size={} ({}x{}), num_workers={}",
+    spdlog::info("TrainingManager: Audio dataset {} samples, input_size={} ({}x{}), num_workers={}, seed={}",
                  batcher->GetNumSamples(), config.input_size,
-                 batcher->GetFeatureRows(), batcher->GetFeatureCols(), config.num_workers);
+                 batcher->GetFeatureRows(), batcher->GetFeatureCols(),
+                 config.num_workers, config.dataloader_seed);
 
     // Mirror image path: hand normalization / one-hot through to the batcher.
     if (config.preprocessing.has_normalization) {
@@ -459,7 +465,8 @@ bool TrainingManager::StartTrainingText(
         config.val_ratio,
         config.test_ratio,
         config.shuffle,
-        config.num_workers);
+        config.num_workers,
+        static_cast<uint32_t>(config.dataloader_seed));
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Text dataset has 0 samples");
@@ -475,9 +482,10 @@ bool TrainingManager::StartTrainingText(
     config.input_shape = { static_cast<size_t>(batcher->GetMaxLength()) };
 
     spdlog::info("TrainingManager: Text dataset {} samples, input_size={} "
-                 "(max_length), vocab_size={}, num_workers={}",
+                 "(max_length), vocab_size={}, num_workers={}, seed={}",
                  batcher->GetNumSamples(), config.input_size,
-                 batcher->GetVocabSize(), config.num_workers);
+                 batcher->GetVocabSize(), config.num_workers,
+                 config.dataloader_seed);
 
     // Hand preprocessing / one-hot hints through to the batcher —
     // same pattern as the image/audio paths.

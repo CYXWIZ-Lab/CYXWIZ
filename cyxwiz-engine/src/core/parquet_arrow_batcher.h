@@ -4,6 +4,7 @@
 #include "dataset_batcher.h"  // for the shared Batch struct
 
 #include <cyxwiz/tensor.h>
+#include <cstdint>
 #include <memory>
 #include <random>
 #include <string>
@@ -58,7 +59,8 @@ public:
                         int partition_value = 0,
                         int num_workers = 0,
                         BatcherPhase split_phase = BatcherPhase::Train,
-                        float val_split = 0.0f);
+                        float val_split = 0.0f,
+                        uint32_t seed = 42);
 
     // IBatcher interface
     Batch GetNextBatch() override;

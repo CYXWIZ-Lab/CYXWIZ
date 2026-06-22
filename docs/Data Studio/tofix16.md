@@ -124,12 +124,21 @@ same semantics.
 - Focused compiler and TrainingExecutor tests cover DataLoader propagation and
   scheduled validation history behavior.
 
+2026-06-22 deterministic DataLoader seed slice:
+
+- DataLoader `seed` is now compiled into `TrainingConfiguration` as
+  `dataloader_seed`.
+- Legacy, Arrow, Parquet, image, audio, and text DataLoader batchers now receive
+  the compiled seed for deterministic shuffle/split order.
+- Text DataLoader uses the same seed for tokenized train/validation/test
+  partition assignment and delegated Arrow training-batch shuffling.
+- Compile summaries and DataLoader property help now describe `seed` as an
+  active DataLoader runtime field.
+
 Still deferred:
 
 - `grad_accum_steps`: requires optimizer-step/loss-scaling/checkpoint-boundary
   design before activation.
-- DataLoader `seed`: split seed is active via DataSplit, but loader shuffle RNG
-  ownership is still not end-to-end deterministic.
 - `pin_memory`: remains tied to Priority 2 because current batchers do not own
   real pinned host-memory transfer behavior.
 

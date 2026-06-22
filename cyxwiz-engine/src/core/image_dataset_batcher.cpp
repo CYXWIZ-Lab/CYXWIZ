@@ -13,9 +13,10 @@ ImageDatasetBatcher::ImageDatasetBatcher(
     int batch_size,
     float train_split,
     bool shuffle,
-    int num_workers)
+    int num_workers,
+    uint32_t seed)
     : batch_size_(batch_size), shuffle_(shuffle),
-      num_workers_(std::max(0, num_workers)), rng_(42)
+      num_workers_(std::max(0, num_workers)), rng_(seed)
 {
     // Extract target dimensions from the Resize config. If no Resize node
     // was in the graph, fall back to 224x224 which is the most common

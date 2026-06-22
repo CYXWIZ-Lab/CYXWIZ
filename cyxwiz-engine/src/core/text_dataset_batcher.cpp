@@ -91,7 +91,8 @@ arrow::Result<std::shared_ptr<arrow::Table>> AddSplitPartitionColumn(
     float train_split,
     float val_split,
     float test_split,
-    bool shuffle) {
+    bool shuffle,
+    uint32_t seed) {
 
     if (!table) {
         return arrow::Status::Invalid("TextDatasetBatcher: tokenized table is null");
@@ -121,7 +122,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> AddSplitPartitionColumn(
     std::vector<size_t> order(total);
     std::iota(order.begin(), order.end(), 0);
     if (shuffle) {
-        std::mt19937 rng(42);
+        std::mt19937 rng(seed);
         std::shuffle(order.begin(), order.end(), rng);
     }
 
@@ -168,7 +169,8 @@ TextDatasetBatcher::TextDatasetBatcher(
     float val_split,
     float test_split,
     bool shuffle,
-    int num_workers)
+    int num_workers,
+    uint32_t seed)
     : batch_size_(batch_size),
       num_workers_(std::max(0, num_workers))
 {
@@ -236,7 +238,7 @@ TextDatasetBatcher::TextDatasetBatcher(
     vocab_size_ = tokenizer.GetLastVocabSize();
 
     auto partitioned_result = AddSplitPartitionColumn(
-        tokenized_table, train_split, val_split, test_split, shuffle);
+        tokenized_table, train_split, val_split, test_split, shuffle, seed);
     if (!partitioned_result.ok()) {
         spdlog::error("TextDatasetBatcher: partitioning tokenized table failed: {}",
                       partitioned_result.status().ToString());
@@ -249,13 +251,16 @@ TextDatasetBatcher::TextDatasetBatcher(
         static_cast<size_t>(std::max(1, batch_size_));
     train_batcher_ = std::make_unique<ArrowDatasetBatcher>(
         tokenized_dataset_, "y", normalized_batch_size,
-        shuffle, 1.0f, true, "__partition__", 0, num_workers_);
+        shuffle, 1.0f, true, "__partition__", 0, num_workers_,
+        BatcherPhase::Train, 0.0f, seed);
     val_batcher_ = std::make_unique<ArrowDatasetBatcher>(
         tokenized_dataset_, "y", normalized_batch_size,
-        false, 1.0f, false, "__partition__", 1, num_workers_);
+        false, 1.0f, false, "__partition__", 1, num_workers_,
+        BatcherPhase::Val, 0.0f, seed);
     test_batcher_ = std::make_unique<ArrowDatasetBatcher>(
         tokenized_dataset_, "y", normalized_batch_size,
-        false, 1.0f, false, "__partition__", 2, num_workers_);
+        false, 1.0f, false, "__partition__", 2, num_workers_,
+        BatcherPhase::Test, 0.0f, seed);
 
     if (num_classes_ > 0) {
         train_batcher_->SetOneHotEncoding(num_classes_);

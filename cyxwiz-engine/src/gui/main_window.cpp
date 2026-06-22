@@ -3682,6 +3682,8 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         out << "                 log_interval=" << config.log_interval
             << " batches, validation_freq=" << config.validation_freq
             << " epochs (final epoch always validates)\n";
+        out << "                 seed=" << config.dataloader_seed
+            << " (DataLoader split/shuffle order)\n";
 
         out << "\n";
         out << "Loss:            " << config.GetLossName() << "\n";

@@ -6,6 +6,7 @@
 #include "datasets/image_csv_dataset.h"
 #include "../preprocessing/image_transform.h"
 #include "../preprocessing/preprocessing_config.h"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -20,7 +21,8 @@ public:
                         int batch_size,
                         float train_split = 0.8f,
                         bool shuffle = true,
-                        int num_workers = 0);
+                        int num_workers = 0,
+                        uint32_t seed = 42);
 
     Batch GetNextBatch() override;
     void Reset() override;

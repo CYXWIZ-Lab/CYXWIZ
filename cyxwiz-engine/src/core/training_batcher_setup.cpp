@@ -1,4 +1,6 @@
 #include "training_batcher_setup.h"
+
+#include <cstdint>
 #include "prefetch_batcher.h"
 #include "worker_defaults.h"
 
@@ -70,9 +72,10 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
     }
 
     spdlog::info("TrainingExecutor: Using Arrow dataset for training "
-                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={}, prefetch_factor={})",
+                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={}, prefetch_factor={}, seed={})",
                  batch_size, config.shuffle, config.train_ratio,
-                 config.is_time_series, num_workers, config.prefetch_factor);
+                 config.is_time_series, num_workers, config.prefetch_factor,
+                 config.dataloader_seed);
 
     const std::string partition_col = config.is_time_series
         ? "__partition__" : "";
@@ -85,17 +88,20 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
         dataset, effective_label, batch_size,
         config.shuffle, config.train_ratio, true,
         partition_col, /*partition_value=*/0, num_workers,
-        BatcherPhase::Train, effective_val_ratio);
+        BatcherPhase::Train, effective_val_ratio,
+        static_cast<uint32_t>(config.dataloader_seed));
     result.arrow_val = std::make_unique<ArrowDatasetBatcher>(
         dataset, effective_label, batch_size,
         false, config.train_ratio, false,
         partition_col, /*partition_value=*/1, num_workers,
-        BatcherPhase::Val, effective_val_ratio);
+        BatcherPhase::Val, effective_val_ratio,
+        static_cast<uint32_t>(config.dataloader_seed));
     result.arrow_test = std::make_unique<ArrowDatasetBatcher>(
         dataset, effective_label, batch_size,
         false, config.train_ratio, false,
         partition_col, /*partition_value=*/2, num_workers,
-        BatcherPhase::Test, effective_val_ratio);
+        BatcherPhase::Test, effective_val_ratio,
+        static_cast<uint32_t>(config.dataloader_seed));
 
     if (config.drop_last) {
         spdlog::warn("TrainingExecutor: drop_last=true requested but ArrowDatasetBatcher "
@@ -150,9 +156,10 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     }
 
     spdlog::info("TrainingExecutor: Using Parquet-backed dataset for training "
-                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={}, prefetch_factor={})",
+                 "(batch_size={}, shuffle={}, train_ratio={:.2f}, time_series={}, num_workers={}, prefetch_factor={}, seed={})",
                  batch_size, config.shuffle, config.train_ratio,
-                 config.is_time_series, num_workers, config.prefetch_factor);
+                 config.is_time_series, num_workers, config.prefetch_factor,
+                 config.dataloader_seed);
 
     const std::string partition_col = config.is_time_series
         ? "__partition__" : "";
@@ -165,17 +172,20 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         dataset, effective_label, batch_size,
         config.shuffle, config.train_ratio, true,
         partition_col, /*partition_value=*/0, num_workers,
-        BatcherPhase::Train, effective_val_ratio);
+        BatcherPhase::Train, effective_val_ratio,
+        static_cast<uint32_t>(config.dataloader_seed));
     result.parquet_val = std::make_unique<ParquetArrowBatcher>(
         dataset, effective_label, batch_size,
         false, config.train_ratio, false,
         partition_col, /*partition_value=*/1, num_workers,
-        BatcherPhase::Val, effective_val_ratio);
+        BatcherPhase::Val, effective_val_ratio,
+        static_cast<uint32_t>(config.dataloader_seed));
     result.parquet_test = std::make_unique<ParquetArrowBatcher>(
         dataset, effective_label, batch_size,
         false, config.train_ratio, false,
         partition_col, /*partition_value=*/2, num_workers,
-        BatcherPhase::Test, effective_val_ratio);
+        BatcherPhase::Test, effective_val_ratio,
+        static_cast<uint32_t>(config.dataloader_seed));
 
     if (config.drop_last) {
         spdlog::warn("TrainingExecutor: drop_last=true requested but ParquetArrowBatcher "

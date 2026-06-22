@@ -4,6 +4,7 @@
 #include "dataset_batcher.h"
 #include "graph_compiler.h"
 
+#include <cstdint>
 #include <memory>
 
 namespace cyxwiz {
@@ -30,7 +31,8 @@ public:
                        float val_split = 0.1f,
                        float test_split = 0.1f,
                        bool shuffle = true,
-                       int num_workers = 0);
+                       int num_workers = 0,
+                       uint32_t seed = 42);
 
     Batch GetNextBatch() override;
     void Reset() override;

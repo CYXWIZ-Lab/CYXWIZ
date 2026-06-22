@@ -24,7 +24,8 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     int partition_value,
     int num_workers,
     BatcherPhase split_phase,
-    float val_split)
+    float val_split,
+    uint32_t seed)
     : dataset_(dataset)
     , label_column_(label_column)
     , batch_size_(batch_size)
@@ -35,7 +36,7 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     , partition_value_(partition_value)
     , split_phase_(split_phase)
     , val_split_(val_split)
-    , rng_(std::random_device{}())
+    , rng_(seed)
 {
     if (!dataset_) {
         spdlog::error("ArrowDatasetBatcher: Invalid dataset");

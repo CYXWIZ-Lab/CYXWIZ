@@ -173,11 +173,9 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 seed = seed_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Partial field: DataSplit.seed controls split reproducibility.\n"
-                                  "Current DataLoader training shuffle does not consume this seed directly.");
+                ImGui::SetTooltip("Runtime-supported DataLoader seed for deterministic batcher split/shuffle order.\n"
+                                  "DataSplit.seed separately controls DataSplit node partitioning.");
             }
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                               "  Partial: split seed is runtime-owned; loader shuffle seed is not yet wired.");
 
             ImGui::Spacing();
 

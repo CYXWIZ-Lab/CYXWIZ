@@ -1,5 +1,7 @@
 #include "smoke_run_executor.h"
 
+#include <cstdint>
+
 #include "data_registry.h"
 #include "label_column_resolver.h"
 #include "model_builder.h"
@@ -213,7 +215,13 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
                 static_cast<size_t>(batch_size),
                 /*shuffle=*/false,
                 config.train_ratio,
-                /*is_training=*/true);
+                /*is_training=*/true,
+                "",
+                0,
+                config.num_workers,
+                BatcherPhase::Train,
+                0.0f,
+                static_cast<uint32_t>(config.dataloader_seed));
             batcher_source = "materialized Arrow text";
 
             if (arrow_dataset->GetNumColumns() > 1) {
@@ -237,8 +245,11 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             config.text_preprocessing,
             batch_size,
             config.train_ratio,
-            false,
-            0);
+            0.0f,
+            0.0f,
+            config.shuffle,
+            config.num_workers,
+            static_cast<uint32_t>(config.dataloader_seed));
 
         config.input_size = static_cast<size_t>(text_batcher->GetMaxLength());
         config.input_shape = {static_cast<size_t>(text_batcher->GetMaxLength())};

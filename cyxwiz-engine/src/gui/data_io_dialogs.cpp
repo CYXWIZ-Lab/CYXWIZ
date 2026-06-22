@@ -841,6 +841,8 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         if (log_interval_ < 0) log_interval_ = 0;
         ReadIntParam(node_->parameters, "validation_freq", validation_freq_);
         if (validation_freq_ < 1) validation_freq_ = 1;
+        ReadIntParam(node_->parameters, "seed", seed_);
+        if (seed_ < 0) seed_ = 0;
         ReadBoolParam(node_->parameters, "save_best_checkpoint", save_best_checkpoint_);
         ReadIntParam(node_->parameters, "early_stopping_patience", early_stopping_patience_);
         CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
@@ -858,6 +860,7 @@ void DataLoaderDialog::Apply() {
     node_->parameters["prefetch_factor"] = std::to_string(prefetch_factor_);
     node_->parameters["log_interval"] = std::to_string(log_interval_);
     node_->parameters["validation_freq"] = std::to_string(validation_freq_);
+    node_->parameters["seed"] = std::to_string(seed_);
     node_->parameters["save_best_checkpoint"] = save_best_checkpoint_ ? "true" : "false";
     node_->parameters["early_stopping_patience"] = std::to_string(early_stopping_patience_);
     node_->parameters["checkpoint_dir"] = checkpoint_dir_;
@@ -879,6 +882,7 @@ void DataLoaderDialog::Reset() {
     prefetch_factor_ = 2;
     log_interval_ = 10;
     validation_freq_ = 1;
+    seed_ = 42;
     save_best_checkpoint_ = true;
     early_stopping_patience_ = 5;
     checkpoint_dir_[0] = '\0';
@@ -893,6 +897,8 @@ void DataLoaderDialog::Reset() {
     if (log_interval_ < 0) log_interval_ = 0;
     ReadIntParam(original_params_, "validation_freq", validation_freq_);
     if (validation_freq_ < 1) validation_freq_ = 1;
+    ReadIntParam(original_params_, "seed", seed_);
+    if (seed_ < 0) seed_ = 0;
     ReadBoolParam(original_params_, "save_best_checkpoint", save_best_checkpoint_);
     ReadIntParam(original_params_, "early_stopping_patience", early_stopping_patience_);
     CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
@@ -955,6 +961,17 @@ void DataLoaderDialog::RenderContent() {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(epochs; final epoch always validates)");
+
+    ImGui::Spacing();
+    ImGui::Text("Seed:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##dataloader_seed", &seed_)) {
+        if (seed_ < 0) seed_ = 0;
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(split/shuffle order)");
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Checkpointing");

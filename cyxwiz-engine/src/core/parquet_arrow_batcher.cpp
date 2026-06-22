@@ -28,7 +28,8 @@ ParquetArrowBatcher::ParquetArrowBatcher(
     int partition_value,
     int num_workers,
     BatcherPhase split_phase,
-    float val_split)
+    float val_split,
+    uint32_t seed)
     : dataset_(std::move(dataset)),
       label_column_(label_column),
       batch_size_(batch_size),
@@ -40,7 +41,7 @@ ParquetArrowBatcher::ParquetArrowBatcher(
       split_phase_(split_phase),
       partition_column_(partition_column),
       partition_value_(partition_value),
-      rng_(std::random_device{}()) {
+      rng_(seed) {
 
     if (!dataset_) {
         spdlog::error("ParquetArrowBatcher: null dataset");

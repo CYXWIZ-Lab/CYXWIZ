@@ -581,6 +581,67 @@ void TestSequenceTrainingExecutor() {
     std::filesystem::remove_all(checkpoint_dir);
 }
 
+void TestArrowDataLoaderSeedDeterminism(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset) {
+    cyxwiz::ArrowDatasetBatcher first(
+        dataset,
+        "label",
+        2,
+        true,
+        1.0f,
+        true,
+        "",
+        0,
+        0,
+        cyxwiz::BatcherPhase::Train,
+        0.0f,
+        1234);
+    cyxwiz::ArrowDatasetBatcher second(
+        dataset,
+        "label",
+        2,
+        true,
+        1.0f,
+        true,
+        "",
+        0,
+        0,
+        cyxwiz::BatcherPhase::Train,
+        0.0f,
+        1234);
+    first.SetOneHotEncoding(2);
+    second.SetOneHotEncoding(2);
+
+    const cyxwiz::Batch first_batch = first.GetNextBatch();
+    const cyxwiz::Batch second_batch = second.GetNextBatch();
+    Check(first_batch.IsValid(),
+          "seeded Arrow batcher should produce a first batch");
+    Check(second_batch.IsValid(),
+          "matching seeded Arrow batcher should produce a first batch");
+    Check(first_batch.data.NumElements() == second_batch.data.NumElements(),
+          "matching seeds should produce same-sized data batches");
+    Check(first_batch.labels.NumElements() == second_batch.labels.NumElements(),
+          "matching seeds should produce same-sized label batches");
+
+    const float* first_data = first_batch.data.Data<float>();
+    const float* second_data = second_batch.data.Data<float>();
+    for (size_t i = 0; i < first_batch.data.NumElements(); ++i) {
+        CheckNear(first_data[i],
+                  second_data[i],
+                  0.0,
+                  "matching seeds should produce identical data order");
+    }
+
+    const float* first_labels = first_batch.labels.Data<float>();
+    const float* second_labels = second_batch.labels.Data<float>();
+    for (size_t i = 0; i < first_batch.labels.NumElements(); ++i) {
+        CheckNear(first_labels[i],
+                  second_labels[i],
+                  0.0,
+                  "matching seeds should produce identical label order");
+    }
+}
+
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  const std::string& label,
                  int expected_epochs = 1,
@@ -651,6 +712,7 @@ int main() {
     const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
         MakeTrainingTable(), "training_executor_arrow");
     const auto config = MakeConfig(work_dir / "checkpoints");
+    TestArrowDataLoaderSeedDeterminism(dataset);
 
     {
         auto sequence_config = config;

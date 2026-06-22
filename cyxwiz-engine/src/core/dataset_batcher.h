@@ -3,6 +3,7 @@
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include <cyxwiz/tensor.h>
+#include <cstdint>
 #include <vector>
 #include <random>
 #include <memory>
@@ -171,7 +172,8 @@ public:
         DatasetSplit split = DatasetSplit::Train,
         bool shuffle = true,
         bool drop_last = false,
-        int num_workers = 0
+        int num_workers = 0,
+        uint32_t seed = 42
     );
 
     /**
@@ -398,7 +400,8 @@ public:
         int partition_value = 0,
         int num_workers = 0,
         BatcherPhase split_phase = BatcherPhase::Train,
-        float val_split = 0.0f
+        float val_split = 0.0f,
+        uint32_t seed = 42
     );
 
     // IBatcher interface

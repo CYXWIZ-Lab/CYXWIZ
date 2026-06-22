@@ -1,4 +1,6 @@
 #include "test_executor.h"
+
+#include <cstdint>
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <algorithm>
@@ -597,7 +599,8 @@ void TestExecutor::Test(
             config_.val_ratio,
             config_.test_ratio,
             false,
-            config_.num_workers);
+            config_.num_workers,
+            static_cast<uint32_t>(config_.dataloader_seed));
         text_test_batcher->SetPhase(BatcherPhase::Test);
         text_test_batcher->Reset();
 
@@ -608,7 +611,8 @@ void TestExecutor::Test(
         }
     } else {
         legacy_test_batcher = std::make_unique<DatasetBatcher>(
-            dataset_, batch_size, DatasetSplit::Test, false, false, config_.num_workers);
+            dataset_, batch_size, DatasetSplit::Test, false, false, config_.num_workers,
+            static_cast<uint32_t>(config_.dataloader_seed));
 
         if (config_.preprocessing.has_normalization) {
             legacy_test_batcher->SetLegacyNormalization(config_.preprocessing.norm_mean,

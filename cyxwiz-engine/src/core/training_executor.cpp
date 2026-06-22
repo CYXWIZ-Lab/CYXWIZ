@@ -16,6 +16,7 @@
 #include <spdlog/fmt/fmt.h>
 #include <cmath>
 #include <chrono>
+#include <cstdint>
 #include <algorithm>
 #include <filesystem>
 #include <limits>
@@ -317,9 +318,11 @@ void TrainingExecutor::Train(
         // Validation batcher never shuffles and never drops the last batch.
         legacy_train_batcher = std::make_unique<DatasetBatcher>(
             dataset_, batch_size, DatasetSplit::Train,
-            config_.shuffle, config_.drop_last, config_.num_workers);
+            config_.shuffle, config_.drop_last, config_.num_workers,
+            static_cast<uint32_t>(config_.dataloader_seed));
         legacy_val_batcher = std::make_unique<DatasetBatcher>(
-            dataset_, batch_size, DatasetSplit::Validation, false, false, config_.num_workers);
+            dataset_, batch_size, DatasetSplit::Validation, false, false, config_.num_workers,
+            static_cast<uint32_t>(config_.dataloader_seed));
 
         // Apply NEW preprocessing pipeline (if configured)
         const std::string dataset_name = !config_.dataset_name.empty()
@@ -457,8 +460,8 @@ void TrainingExecutor::Train(
     const bool save_best_checkpoint = config_.save_best_checkpoint;
     const int validation_freq = std::max(1, config_.validation_freq);
     const int log_interval = std::max(0, config_.log_interval);
-    spdlog::info("TrainingExecutor: DataLoader runtime policy validation_freq={} epoch(s), log_interval={} batch(es)",
-                 validation_freq, log_interval);
+    spdlog::info("TrainingExecutor: DataLoader runtime policy validation_freq={} epoch(s), log_interval={} batch(es), seed={}",
+                 validation_freq, log_interval, config_.dataloader_seed);
 
     std::filesystem::path checkpoint_root = config_.checkpoint_dir.empty()
         ? (std::filesystem::current_path() / ".cyxwiz" / "checkpoints")

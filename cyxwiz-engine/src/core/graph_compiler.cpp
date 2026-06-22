@@ -2379,6 +2379,8 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.log_interval = std::max(0, std::stoi(loader_node->parameters.at("log_interval")));
             if (loader_node->parameters.count("validation_freq"))
                 config.validation_freq = std::max(1, std::stoi(loader_node->parameters.at("validation_freq")));
+            if (loader_node->parameters.count("seed"))
+                config.dataloader_seed = std::max(0, std::stoi(loader_node->parameters.at("seed")));
             if (loader_node->parameters.count("pin_memory") &&
                 loader_node->parameters.at("pin_memory") == "true") {
                 spdlog::warn("GraphCompiler: DataLoader pin_memory=true is currently ignored");
@@ -2394,16 +2396,16 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     if (config.has_data_loader) {
-        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}, prefetch_factor={}, log_interval={}, validation_freq={}, save_best_checkpoint={}, early_stopping_patience={}, checkpoint_dir='{}'",
+        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}, prefetch_factor={}, log_interval={}, validation_freq={}, seed={}, save_best_checkpoint={}, early_stopping_patience={}, checkpoint_dir='{}'",
                      config.batch_size, config.epochs, config.shuffle, config.drop_last, config.num_workers, config.prefetch_factor,
-                     config.log_interval, config.validation_freq, config.save_best_checkpoint,
+                     config.log_interval, config.validation_freq, config.dataloader_seed, config.save_best_checkpoint,
                      config.early_stopping_patience, config.checkpoint_dir);
         if (config.num_workers > 0) {
             spdlog::info("GraphCompiler: num_workers={} will be forwarded to supported batchers",
                          config.num_workers);
         }
     } else {
-        spdlog::info("GraphCompiler: No DataLoader node - using defaults (batch_size=32, epochs=10, shuffle=true, drop_last=false, log_interval=10, validation_freq=1)");
+        spdlog::info("GraphCompiler: No DataLoader node - using defaults (batch_size=32, epochs=10, shuffle=true, drop_last=false, log_interval=10, validation_freq=1, seed=42)");
     }
 
     std::unordered_set<int> training_path_ids;

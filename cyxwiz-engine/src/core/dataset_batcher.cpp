@@ -21,14 +21,15 @@ DatasetBatcher::DatasetBatcher(
     DatasetSplit split,
     bool shuffle,
     bool drop_last,
-    int num_workers)
+    int num_workers,
+    uint32_t seed)
     : dataset_(dataset)
     , batch_size_(batch_size)
     , split_(split)
     , shuffle_(shuffle)
     , drop_last_(drop_last)
     , num_workers_(std::max(0, num_workers))
-    , rng_(std::random_device{}())
+    , rng_(seed)
 {
     if (!dataset_.IsValid()) {
         spdlog::error("DatasetBatcher: Invalid dataset handle");

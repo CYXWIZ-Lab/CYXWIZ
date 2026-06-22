@@ -4,6 +4,7 @@
 #include "data_registry.h"
 #include "graph_compiler.h"
 #include "formats/audio_dataset.h"
+#include <cstdint>
 #include <memory>
 #include <random>
 #include <vector>
@@ -41,7 +42,8 @@ public:
                         int batch_size,
                         float train_split = 0.8f,
                         bool shuffle = true,
-                        int num_workers = 0);
+                        int num_workers = 0,
+                        uint32_t seed = 42);
 
     // IBatcher interface
     Batch GetNextBatch() override;
