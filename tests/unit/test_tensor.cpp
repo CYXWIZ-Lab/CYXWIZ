@@ -305,6 +305,34 @@ TEST_CASE("Tensor reshape preserves row-major 2D ArrayFire device residency", "[
         REQUIRE(out[i] == data[i]);
     }
 }
+
+TEST_CASE("Tensor reshape preserves row-major 3D ArrayFire device residency", "[tensor]") {
+    float data[24];
+    for (size_t i = 0; i < 24; i++) {
+        data[i] = static_cast<float>(i + 1);
+    }
+
+    cyxwiz::Tensor input({2, 3, 4}, data, cyxwiz::DataType::Float32);
+    input.GetArrayRowMajor3D();
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor reshaped = input.Reshape({4, 3, 2});
+
+    REQUIRE(reshaped.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(reshaped.Shape() == std::vector<size_t>{4, 3, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = reshaped.GetArrayRowMajor3D();
+    REQUIRE(device.dims(0) == 4);
+    REQUIRE(device.dims(1) == 3);
+    REQUIRE(device.dims(2) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const float* out = reshaped.Data<float>();
+    for (size_t i = 0; i < 24; i++) {
+        REQUIRE(out[i] == data[i]);
+    }
+}
 #endif
 
 TEST_CASE("Tensor scalar reductions work for float tensors", "[tensor]") {

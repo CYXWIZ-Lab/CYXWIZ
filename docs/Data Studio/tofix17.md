@@ -197,17 +197,26 @@ reductions, `Var`, and `Std` remain CPU-backed.
 `Tensor::Reshape` now preserves native ArrayFire device data without
 materializing host storage when the source tensor is already device
 current, and it updates the native ArrayFire dimensions with `moddims`.
-Row-major 3D device layouts and shapes with rank above ArrayFire's
-four-dimensional limit still fall back through the existing host path
-until reshape semantics for those layout bridges are audited.
+Shapes with rank above ArrayFire's four-dimensional limit still fall
+back through the existing host path until reshape semantics for those
+layout bridges are audited.
 
 **Status 2026-06-22:** row-major 2D reshape residency slice complete.
 `Tensor::Reshape` now preserves device residency for already
 device-current row-major 2D tensors reshaped into another 2D shape. The
 path reshapes the row-major linear view on device so CPU and ArrayFire
 outputs keep the same row-major flatten order. Empty tensors,
-rank-changing reshapes, row-major 3D layouts, CPU-only builds, and
-ArrayFire failures continue through the existing CPU fallback.
+rank-changing reshapes, CPU-only builds, and ArrayFire failures continue
+through the existing CPU fallback.
+
+**Status 2026-06-22:** row-major 3D reshape residency slice complete.
+`Tensor::Reshape` now also preserves device residency for already
+device-current row-major 3D tensors reshaped into another 3D shape. It
+uses the same row-major linear view strategy as the 2D path, with
+ArrayFire dimension order reversed before restoring the semantic
+row-major 3D view. Empty tensors, rank-changing reshapes, CPU-only
+builds, and ArrayFire failures continue through the existing CPU
+fallback.
 
 **Status 2026-06-22:** first 2D transpose residency slice complete.
 `Tensor::Transpose()` now routes Float32 and Float64 2D tensors through
