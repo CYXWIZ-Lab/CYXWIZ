@@ -1,0 +1,21 @@
+Sentence #,Word,POS,Tag
+Sentence: 1,British,JJ,B-gpe
+,troops,NNS,O
+,marched,VBD,O
+,through,IN,O
+,London,NNP,B-geo
+,.,.,O
+Sentence: 2,John,NNP,B-per
+,Smith,NNP,I-per
+,visited,VBD,O
+,Paris,NNP,B-geo
+,on,IN,O
+,Monday,NNP,B-tim
+,.,.,O
+Sentence: 3,OpenAI,NNP,B-org
+,released,VBD,O
+,a,DT,O
+,model,NN,O
+,in,IN,O
+,California,NNP,B-geo
+,.,.,O

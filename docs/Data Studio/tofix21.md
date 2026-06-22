@@ -15,6 +15,23 @@ slice. These items are future work, not regressions in `done19`.
 
 ## Remaining Work
 
+## Status 2026-06-22
+
+Started example-asset portability work for item 2:
+
+- added a tiny checked-in CoNLL-style `sample_ner.csv` for smoke/demo use,
+- changed the NER prep and inference helpers to default to paths inside
+  `examples/cyxgraph/NER`,
+- changed generated metadata to store paths relative to the metadata file so
+  generated files can move with the example directory,
+- changed the saved graph's dataset and vocabulary references from local
+  absolute Windows paths to repository-relative example paths,
+- updated the README commands and proof-run notes to avoid machine-specific
+  paths.
+
+The example remains a target design until the full Studio graph launch path can
+materialize sequence batches from saved graph data.
+
 ### 1. Executable Vocabulary Nodes
 
 `TokenVocabulary`, `POSVocabulary`, and `NERTagVocabulary` are currently

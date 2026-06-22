@@ -26,7 +26,8 @@ import urllib.request
 from pathlib import Path
 
 
-DEFAULT_METADATA = r"D:\Dev\DataSet_List\NER\cyxwiz_ner\ner_metadata.json"
+EXAMPLE_DIR = Path(__file__).resolve().parent
+DEFAULT_METADATA = EXAMPLE_DIR / "generated" / "ner_metadata.json"
 DEFAULT_ENDPOINT = "http://localhost:8080/v1/predict"
 DEFAULT_HEALTH_URL = "http://localhost:8080/health"
 
@@ -94,6 +95,11 @@ def load_vocab(path: Path) -> dict[str, int]:
             if token:
                 vocab[token] = idx
     return vocab
+
+
+def resolve_metadata_path(metadata_path: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else metadata_path.parent / path
 
 
 def invert_vocab(vocab: dict[str, int]) -> list[str]:
@@ -292,9 +298,9 @@ def main() -> int:
         return 1
 
     metadata = load_json(metadata_path)
-    word_vocab = load_vocab(Path(metadata["word_vocab_file"]))
-    pos_vocab = load_vocab(Path(metadata["pos_vocab_file"]))
-    tag_vocab = load_vocab(Path(metadata["tag_vocab_file"]))
+    word_vocab = load_vocab(resolve_metadata_path(metadata_path, metadata["word_vocab_file"]))
+    pos_vocab = load_vocab(resolve_metadata_path(metadata_path, metadata["pos_vocab_file"]))
+    tag_vocab = load_vocab(resolve_metadata_path(metadata_path, metadata["tag_vocab_file"]))
     tag_labels = invert_vocab(tag_vocab)
     max_length = int(metadata.get("configured_max_length", 96))
 

@@ -17,14 +17,16 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 from collections import Counter
 from pathlib import Path
 
 
 SPECIAL_TOKENS = ["[PAD]", "[UNK]"]
-DEFAULT_SOURCE = r"D:\Dev\DataSet_List\NER\NER dataset.csv"
-DEFAULT_OUT_DIR = r"D:\Dev\DataSet_List\NER\cyxwiz_ner"
+EXAMPLE_DIR = Path(__file__).resolve().parent
+DEFAULT_SOURCE = EXAMPLE_DIR / "sample_ner.csv"
+DEFAULT_OUT_DIR = EXAMPLE_DIR / "generated"
 
 
 def parse_args() -> argparse.Namespace:
@@ -131,6 +133,13 @@ def write_vocab(tokens: list[str], path: Path) -> None:
             handle.write(token + "\n")
 
 
+def metadata_relative_path(path: Path, base_dir: Path) -> str:
+    try:
+        return Path(os.path.relpath(path.resolve(), base_dir.resolve())).as_posix()
+    except ValueError:
+        return str(path.resolve())
+
+
 def build_word_vocab(
     sentences: list[dict[str, list[str] | str]],
     min_freq: int,
@@ -205,11 +214,11 @@ def main() -> int:
 
     lengths = [len(sentence["tokens"]) for sentence in sentences]
     metadata = {
-        "source_csv": str(source.resolve()),
-        "sentence_csv": str(sentence_csv.resolve()),
-        "word_vocab_file": str(word_vocab_path.resolve()),
-        "pos_vocab_file": str(pos_vocab_path.resolve()),
-        "tag_vocab_file": str(tag_vocab_path.resolve()),
+        "source_csv": metadata_relative_path(source, out_dir),
+        "sentence_csv": metadata_relative_path(sentence_csv, out_dir),
+        "word_vocab_file": metadata_relative_path(word_vocab_path, out_dir),
+        "pos_vocab_file": metadata_relative_path(pos_vocab_path, out_dir),
+        "tag_vocab_file": metadata_relative_path(tag_vocab_path, out_dir),
         "num_sentences": len(sentences),
         "num_tokens": sum(lengths),
         "max_sentence_length_in_source": max(lengths),

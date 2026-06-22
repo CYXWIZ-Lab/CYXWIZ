@@ -219,14 +219,14 @@
                 "enable_streaming": "false",
                 "feature_columns": "*",
                 "file_category": "sequence_text",
-                "file_path": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_sentences.csv",
+                "file_path": "examples/cyxgraph/NER/generated/ner_sentences.csv",
                 "file_type": "auto",
                 "hdf5_key": "",
                 "header": "true",
                 "label_column": "",
                 "max_rows": "",
                 "pos_sequence_column": "pos_tags",
-                "raw_source_path": "D:/Dev/DataSet_List/NER/NER dataset.csv",
+                "raw_source_path": "examples/cyxgraph/NER/sample_ner.csv",
                 "sequence_id_column": "sentence_id",
                 "sheet_name": "",
                 "skip_rows": "0",
@@ -267,7 +267,7 @@
                 "pad_token": "[PAD]",
                 "units": "128",
                 "unk_token": "[UNK]",
-                "vocab_file": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_word_vocab.txt"
+                "vocab_file": "examples/cyxgraph/NER/generated/ner_word_vocab.txt"
             },
             "pos_x": 464.0000305175781,
             "pos_y": 179.0,
@@ -284,7 +284,7 @@
                 "pad_token": "[PAD]",
                 "units": "128",
                 "unk_token": "[UNK]",
-                "vocab_file": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_pos_vocab.txt"
+                "vocab_file": "examples/cyxgraph/NER/generated/ner_pos_vocab.txt"
             },
             "pos_x": 478.0000305175781,
             "pos_y": 431.0,
@@ -299,7 +299,7 @@
                 "outside_tag": "O",
                 "pad_tag": "[PAD]",
                 "units": "128",
-                "vocab_file": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_tag_vocab.txt"
+                "vocab_file": "examples/cyxgraph/NER/generated/ner_tag_vocab.txt"
             },
             "pos_x": 463.0000305175781,
             "pos_y": 302.0,
@@ -501,7 +501,7 @@
             "parameters": {
                 "decode_scheme": "BIO",
                 "num_tags": "19",
-                "tag_vocab_file": "D:/Dev/DataSet_List/NER/cyxwiz_ner/ner_tag_vocab.txt",
+                "tag_vocab_file": "examples/cyxgraph/NER/generated/ner_tag_vocab.txt",
                 "units": "128"
             },
             "pos_x": 1293.0,

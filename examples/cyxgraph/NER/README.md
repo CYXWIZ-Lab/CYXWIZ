@@ -1,11 +1,13 @@
 # NER Sequence Tagging CyxGraph
 
-This folder contains a CyxGraph design for training a named entity
-recognition model on:
+This folder contains a CyxGraph design for named entity recognition. The
+checked-in default uses a tiny repo-safe sample dataset:
 
 ```text
-D:\Dev\DataSet_List\NER\NER dataset.csv
+examples/cyxgraph/NER/sample_ner.csv
 ```
+
+You can pass a larger CoNLL-style CSV with `--csv-file`.
 
 The source dataset is CoNLL-style CSV:
 
@@ -57,19 +59,19 @@ This is the format the graph expects.
 Run:
 
 ```powershell
-python "D:\Dev\CyxWiz_Claude\examples\cyxgraph\NER\prepare_ner_demo.py"
+python examples\cyxgraph\NER\prepare_ner_demo.py
 ```
 
 Default input:
 
 ```text
-D:\Dev\DataSet_List\NER\NER dataset.csv
+examples/cyxgraph/NER/sample_ner.csv
 ```
 
 Default output directory:
 
 ```text
-D:\Dev\DataSet_List\NER\cyxwiz_ner
+examples/cyxgraph/NER/generated
 ```
 
 Generated files:
@@ -82,7 +84,9 @@ ner_tag_vocab.txt
 ner_metadata.json
 ```
 
-Validation run against the provided dataset produced:
+The committed sample is intentionally small and exists only to make the
+example portable. A validation run against the larger external CoNLL-style
+dataset previously used by this example produced:
 
 ```text
 sentences: 47,959
@@ -197,8 +201,10 @@ After the sequence-tagging path is implemented, a proof run should:
 
 1. Generate `ner_sentences.csv` and vocab files.
 2. Open `ner_bilstm_sequence_tagger.cyxgraph`.
-3. Confirm the `DataInput` path points to `ner_sentences.csv`.
-4. Confirm the vocabulary paths point to generated vocab files.
+3. Confirm the `DataInput` path points to
+   `examples/cyxgraph/NER/generated/ner_sentences.csv`.
+4. Confirm the vocabulary paths point to files in
+   `examples/cyxgraph/NER/generated`.
 5. Train for a small number of epochs.
 6. Track:
    - token-level loss
@@ -218,7 +224,7 @@ After the sequence-tagging path is implemented, a proof run should:
 After preparing the dataset, inspect the encoded inference payload:
 
 ```powershell
-python "D:\Dev\CyxWiz_Claude\examples\cyxgraph\NER\ner_inference.py" `
+python examples\cyxgraph\NER\ner_inference.py `
   --dry-run `
   --sentence "British troops marched through London ."
 ```
@@ -226,15 +232,15 @@ python "D:\Dev\CyxWiz_Claude\examples\cyxgraph\NER\ner_inference.py" `
 With a deployed sequence-tagging model loaded in the embedded server:
 
 ```powershell
-python "D:\Dev\CyxWiz_Claude\examples\cyxgraph\NER\ner_inference.py" `
+python examples\cyxgraph\NER\ner_inference.py `
   --sentence "British troops marched through London ."
 ```
 
 Batch mode against prepared sentence rows:
 
 ```powershell
-python "D:\Dev\CyxWiz_Claude\examples\cyxgraph\NER\ner_inference.py" `
-  --csv-file "D:\Dev\DataSet_List\NER\cyxwiz_ner\ner_sentences.csv" `
+python examples\cyxgraph\NER\ner_inference.py `
+  --csv-file examples\cyxgraph\NER\generated\ner_sentences.csv `
   --num-samples 10
 ```
 
