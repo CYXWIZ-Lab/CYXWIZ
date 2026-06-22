@@ -349,9 +349,7 @@ Remaining TensorDot work:
 - run and record benchmark numbers from the new realistic row-wise dot
   benchmark on representative CPU and ArrayFire backends,
 - run the ArrayFire-specific graph/runtime smoke coverage on additional
-  CUDA/OpenCL/device configurations,
-- decide whether graph backward should gain an ArrayFire-specific
-  gradient path or stay on the current graph-executable gradient loops.
+  CUDA/OpenCL/device configurations.
 
 **Status 2026-06-22:** first TensorDot benchmark harness slice
 complete. `tests/benchmarks/test_tensor_dot_benchmark.cpp` adds a
@@ -380,6 +378,15 @@ device-resident until host data is explicitly requested. This proves the
 graph runtime can reuse the backend TensorDot ArrayFire primitive for
 the supported forward path. Backward still uses the existing
 graph-executable gradient loop.
+
+**Status 2026-06-22:** TensorDot backward policy decision complete.
+Graph TensorDot backward should stay on the existing graph-executable
+gradient loop until a measured training workload shows it is the
+bottleneck. The current backward path already handles shared-input
+accumulation and Float32/Float64 shape contracts; adding a separate
+ArrayFire-specific gradient path now would duplicate that correctness
+logic without a proven performance need. Revisit this only after
+benchmarks include forward-plus-backward graph training timings.
 
 **Completion criteria:**
 - direct tensor tests for 1D and 2D dot,
