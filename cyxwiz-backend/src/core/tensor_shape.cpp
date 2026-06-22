@@ -5,6 +5,11 @@
 #include <cstring>
 #include <stdexcept>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#include <spdlog/spdlog.h>
+#endif
+
 namespace cyxwiz {
 
 Tensor Tensor::View(const std::vector<size_t>& new_shape) const {
@@ -105,6 +110,17 @@ Tensor Tensor::Transpose(int dim0, int dim1) const {
 
     std::vector<size_t> new_shape = shape_;
     std::swap(new_shape[static_cast<size_t>(first)], new_shape[static_cast<size_t>(second)]);
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (shape_.size() == 2 &&
+        (dtype_ == DataType::Float32 || dtype_ == DataType::Float64)) {
+        try {
+            return Tensor::FromArrayRowMajor2D(af::transpose(GetArrayRowMajor2D()));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Transpose(dim0, dim1): ArrayFire transpose failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
 
     Tensor result(new_shape, dtype_);
     const size_t element_size = tensor_utils::ElementSize(dtype_);

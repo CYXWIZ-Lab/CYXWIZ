@@ -207,6 +207,12 @@ the row-major ArrayFire bridge and preserves device-resident output.
 Integer dtypes, ArrayFire failures, and arbitrary-rank
 `Transpose(dim0, dim1)` continue through the existing CPU path.
 
+**Status 2026-06-22:** 2D dim-transpose residency slice complete.
+`Tensor::Transpose(dim0, dim1)` now also routes 2D Float32/Float64 axis
+swaps through the row-major ArrayFire bridge. Integer dtypes,
+higher-rank transposes, CPU-only builds, and ArrayFire failures continue
+through the existing CPU path.
+
 **Status 2026-06-22:** first unary/scalar elementwise primitive slice
 complete. Float32 and Float64 scalar arithmetic, scalar `Pow`, matching
 dtype tensor `Pow`, `Sqrt`, `Exp`, `Log`, `Abs`, `Sign`, `Clip`, and

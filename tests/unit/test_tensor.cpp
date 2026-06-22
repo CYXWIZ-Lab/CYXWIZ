@@ -106,6 +106,34 @@ TEST_CASE("Tensor transpose keeps Float32 ArrayFire output device-resident", "[t
     REQUIRE(out[4] == 3.0f);
     REQUIRE(out[5] == 6.0f);
 }
+
+TEST_CASE("Tensor dim transpose keeps Float64 ArrayFire output device-resident", "[tensor]") {
+    double data[] = {
+        1.0, 2.0, 3.0,
+        4.0, 5.0, 6.0
+    };
+    cyxwiz::Tensor input({2, 3}, data, cyxwiz::DataType::Float64);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor transposed = input.Transpose(0, 1);
+
+    REQUIRE(transposed.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(transposed.Shape() == std::vector<size_t>{3, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = transposed.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 3);
+    REQUIRE(device.dims(1) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const double* out = transposed.Data<double>();
+    REQUIRE(out[0] == 1.0);
+    REQUIRE(out[1] == 4.0);
+    REQUIRE(out[2] == 2.0);
+    REQUIRE(out[3] == 5.0);
+    REQUIRE(out[4] == 3.0);
+    REQUIRE(out[5] == 6.0);
+}
 #endif
 
 TEST_CASE("Tensor view aliases reshape semantics", "[tensor]") {
