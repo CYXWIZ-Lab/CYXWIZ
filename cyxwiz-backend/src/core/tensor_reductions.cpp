@@ -335,6 +335,18 @@ bool IsArrayFireRealReductionSupported(DataType dtype) {
     return dtype == DataType::Float32 || dtype == DataType::Float64;
 }
 
+af::array ArrayFireVariance(const af::array& values) {
+    const af::array mean = af::mean(values);
+    const af::array centered = values - mean;
+    return af::mean(centered * centered);
+}
+
+af::array ArrayFireVariance(const af::array& values, int axis) {
+    const af::array mean = af::mean(values, axis);
+    const af::array centered = values - mean;
+    return af::mean(centered * centered, axis);
+}
+
 Tensor FinishArrayFire2DReduction(const af::array& reduced, bool keepdim) {
     if (keepdim) {
         return Tensor::FromArrayRowMajor2D(reduced);
@@ -607,6 +619,20 @@ Tensor Tensor::Prod(int dim, bool keepdim) const {
 
 Tensor Tensor::Var() const {
     const size_t count = NumElements();
+    if (count == 0) {
+        throw std::runtime_error("Tensor::Var: cannot reduce an empty tensor");
+    }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return Tensor(ArrayFireVariance(af::flat(GetArray())));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Var: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
+
     if (dtype_ == DataType::Float64) {
         const double value = VarianceAsDouble(Data<double>(), count);
         return ScalarTensor(DataType::Float64, value);
@@ -626,10 +652,38 @@ Tensor Tensor::Var() const {
 }
 
 Tensor Tensor::Var(int dim, bool keepdim) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const int axis = tensor_utils::NormalizeDim(dim, NumDimensions());
+    if (shape_.size() == 2 &&
+        shape_[static_cast<size_t>(axis)] > 0 &&
+        IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return ReduceDimArrayFire2D(*this, dim, keepdim, [](const af::array& arr, int axis) {
+                return ArrayFireVariance(arr, axis);
+            });
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Var(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return VarDimAsReal(*this, dim, keepdim);
 }
 
 Tensor Tensor::Std() const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const size_t count = NumElements();
+    if (count == 0) {
+        throw std::runtime_error("Tensor::Var: cannot reduce an empty tensor");
+    }
+    if (IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return Tensor(af::sqrt(ArrayFireVariance(af::flat(GetArray()))));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Std: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
+
     Tensor variance = Var();
     if (variance.GetDataType() == DataType::Float64) {
         const double value = std::sqrt(variance.Data<double>()[0]);

@@ -183,15 +183,25 @@ masks remain CPU-backed until dtype truthiness semantics are audited.
 `cyxwiz-backend/src/core/tensor_reductions.cpp` now routes Float32 and
 Float64 scalar `Sum`, `Mean`, `Max`, `Min`, and `Prod` through ArrayFire
 when available. Integer reductions, empty-tensor fallback behavior,
-dimension reductions, `Var`, and `Std` continue through the existing CPU
-paths until shape/layout and numerical parity are audited.
+dimension reductions, `Var`, and `Std` originally continued through the
+existing CPU paths until shape/layout and numerical parity were audited.
 
 **Status 2026-06-22:** first 2D dimension reduction primitive slice
 complete. Float32 and Float64 2D `Sum`, `Mean`, `Max`, `Min`, and `Prod`
 now use the row-major ArrayFire bridge for non-empty reduced axes and
 preserve device residency for both keepdim and non-keepdim outputs.
 Integer reductions, empty-axis identity fallback, higher-rank dimension
-reductions, `Var`, and `Std` remain CPU-backed.
+reductions, `Var`, and `Std` originally remained CPU-backed.
+
+**Status 2026-06-22:** variance reduction primitive slice complete.
+Float32 and Float64 scalar `Var`/`Std` now use ArrayFire where
+available, and Float32/Float64 2D dimension `Var` plus `Std` through
+`Var(...).Sqrt()` preserve device residency for supported row-major 2D
+paths. The implementation computes population variance explicitly as
+`mean((x - mean(x))^2)` so it matches the existing CPU contract instead
+of relying on backend-specific variance defaults. Integer variance,
+empty reductions, higher-rank dimension variance, CPU-only builds, and
+ArrayFire failures continue through the existing CPU fallback.
 
 **Status 2026-06-22:** first shape residency slice complete.
 `Tensor::Reshape` now preserves native ArrayFire device data without

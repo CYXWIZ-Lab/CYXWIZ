@@ -424,6 +424,40 @@ TEST_CASE("Tensor scalar reductions keep Float64 ArrayFire output device-residen
     REQUIRE(min.Data<double>()[0] == -2.0);
 }
 
+TEST_CASE("Tensor scalar variance reductions keep ArrayFire output device-resident", "[tensor]") {
+    float float_data[] = {1.0f, -2.0f, 3.0f, 4.0f};
+    cyxwiz::Tensor float_input(af::array(4, float_data));
+
+    const size_t before_float_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor float_var = float_input.Var();
+    cyxwiz::Tensor float_std = float_input.Std();
+
+    REQUIRE(float_var.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(float_var.Shape() == std::vector<size_t>{1});
+    REQUIRE(float_std.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(float_std.Shape() == std::vector<size_t>{1});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_float_host_bytes);
+
+    REQUIRE(float_var.Data<float>()[0] == Catch::Approx(5.25f));
+    REQUIRE(float_std.Data<float>()[0] == Catch::Approx(std::sqrt(5.25f)));
+
+    double double_data[] = {1.0, 2.0, 3.0};
+    cyxwiz::Tensor double_input(af::array(3, double_data));
+
+    const size_t before_double_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor double_var = double_input.Var();
+    cyxwiz::Tensor double_std = double_input.Std();
+
+    REQUIRE(double_var.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(double_var.Shape() == std::vector<size_t>{1});
+    REQUIRE(double_std.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(double_std.Shape() == std::vector<size_t>{1});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_double_host_bytes);
+
+    REQUIRE(double_var.Data<double>()[0] == Catch::Approx(2.0 / 3.0));
+    REQUIRE(double_std.Data<double>()[0] == Catch::Approx(std::sqrt(2.0 / 3.0)));
+}
+
 TEST_CASE("Tensor 2D dimension reductions keep Float32 ArrayFire output device-resident", "[tensor]") {
     float data[] = {
         1.0f, 2.0f, 3.0f,
@@ -481,6 +515,30 @@ TEST_CASE("Tensor 2D dimension reductions keep Float64 ArrayFire output device-r
     REQUIRE(col_min.Data<double>()[2] == 3.0);
     REQUIRE(row_prod.Data<double>()[0] == 6.0);
     REQUIRE(row_prod.Data<double>()[1] == 120.0);
+}
+
+TEST_CASE("Tensor 2D variance reductions keep Float64 ArrayFire output device-resident", "[tensor]") {
+    double data[] = {
+        1.0, 2.0, 3.0,
+        4.0, 5.0, 6.0
+    };
+    cyxwiz::Tensor input({2, 3}, data, cyxwiz::DataType::Float64);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor row_var = input.Var(1);
+    cyxwiz::Tensor col_std = input.Std(0, true);
+
+    REQUIRE(row_var.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(row_var.Shape() == std::vector<size_t>{2});
+    REQUIRE(col_std.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(col_std.Shape() == std::vector<size_t>{1, 3});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(row_var.Data<double>()[0] == Catch::Approx(2.0 / 3.0));
+    REQUIRE(row_var.Data<double>()[1] == Catch::Approx(2.0 / 3.0));
+    REQUIRE(col_std.Data<double>()[0] == Catch::Approx(1.5));
+    REQUIRE(col_std.Data<double>()[1] == Catch::Approx(1.5));
+    REQUIRE(col_std.Data<double>()[2] == Catch::Approx(1.5));
 }
 #endif
 
