@@ -749,6 +749,33 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
         result.device_layout_ = TensorDeviceLayout::ArrayFireNative;
         return result;
     }
+
+    if (device_current_ && af_array_ &&
+        new_shape.size() == 2 &&
+        new_elements > 0 &&
+        device_layout_ == TensorDeviceLayout::RowMajor2D) {
+        try {
+            const af::array row_major_linear = af::flat(af::transpose(*af_array_));
+            const af::dim4 swapped_dims(
+                static_cast<dim_t>(new_shape[1]),
+                static_cast<dim_t>(new_shape[0]),
+                1,
+                1);
+
+            Tensor result;
+            result.shape_ = new_shape;
+            result.dtype_ = dtype_;
+            result.device_ = device_;
+            result.af_array_ = std::make_unique<af::array>(
+                af::transpose(af::moddims(row_major_linear, swapped_dims)));
+            result.host_current_ = false;
+            result.device_current_ = true;
+            result.device_layout_ = TensorDeviceLayout::RowMajor2D;
+            return result;
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Reshape: row-major 2D ArrayFire reshape failed, falling back to CPU: {}", e.what());
+        }
+    }
 #endif
 
     return Tensor(new_shape, Data(), dtype_);

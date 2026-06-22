@@ -282,6 +282,29 @@ TEST_CASE("Tensor reshape preserves native ArrayFire device residency", "[tensor
     REQUIRE(out[1] == 2.0f);
     REQUIRE(out[5] == 6.0f);
 }
+
+TEST_CASE("Tensor reshape preserves row-major 2D ArrayFire device residency", "[tensor]") {
+    float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    cyxwiz::Tensor input({2, 3}, data, cyxwiz::DataType::Float32);
+    input.GetArrayRowMajor2D();
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor reshaped = input.Reshape({3, 2});
+
+    REQUIRE(reshaped.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(reshaped.Shape() == std::vector<size_t>{3, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = reshaped.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 3);
+    REQUIRE(device.dims(1) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const float* out = reshaped.Data<float>();
+    for (size_t i = 0; i < 6; i++) {
+        REQUIRE(out[i] == data[i]);
+    }
+}
 #endif
 
 TEST_CASE("Tensor scalar reductions work for float tensors", "[tensor]") {
