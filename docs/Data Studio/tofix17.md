@@ -183,6 +183,13 @@ when available. Integer reductions, empty-tensor fallback behavior,
 dimension reductions, `Var`, and `Std` continue through the existing CPU
 paths until shape/layout and numerical parity are audited.
 
+**Status 2026-06-22:** first 2D dimension reduction primitive slice
+complete. Float32 and Float64 2D `Sum`, `Mean`, `Max`, `Min`, and `Prod`
+now use the row-major ArrayFire bridge for non-empty reduced axes and
+preserve device residency for both keepdim and non-keepdim outputs.
+Integer reductions, empty-axis identity fallback, higher-rank dimension
+reductions, `Var`, and `Std` remain CPU-backed.
+
 ## Priority 4 - TensorDot GPU Slice
 
 **Goal:** make the newly exposed `TensorDot` contract GPU-first without

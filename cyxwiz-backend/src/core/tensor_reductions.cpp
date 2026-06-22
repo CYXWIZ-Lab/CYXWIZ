@@ -334,6 +334,24 @@ double VarianceAsDouble(const T* data, size_t count) {
 bool IsArrayFireRealReductionSupported(DataType dtype) {
     return dtype == DataType::Float32 || dtype == DataType::Float64;
 }
+
+Tensor FinishArrayFire2DReduction(const af::array& reduced, bool keepdim) {
+    if (keepdim) {
+        return Tensor::FromArrayRowMajor2D(reduced);
+    }
+    return Tensor(af::flat(reduced));
+}
+
+template <typename ReduceFn>
+Tensor ReduceDimArrayFire2D(const Tensor& input,
+                            int dim,
+                            bool keepdim,
+                            ReduceFn reduce) {
+    const int axis = tensor_utils::NormalizeDim(dim, input.NumDimensions());
+    return FinishArrayFire2DReduction(
+        reduce(input.GetArrayRowMajor2D(), axis),
+        keepdim);
+}
 #endif
 
 } // namespace
@@ -360,6 +378,20 @@ Tensor Tensor::Sum() const {
 }
 
 Tensor Tensor::Sum(int dim, bool keepdim) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const int axis = tensor_utils::NormalizeDim(dim, NumDimensions());
+    if (shape_.size() == 2 &&
+        shape_[static_cast<size_t>(axis)] > 0 &&
+        IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return ReduceDimArrayFire2D(*this, dim, keepdim, [](const af::array& arr, int axis) {
+                return af::sum(arr, axis);
+            });
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Sum(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ReduceDimPreservingType(
         *this,
         dim,
@@ -422,6 +454,20 @@ Tensor Tensor::Mean() const {
 }
 
 Tensor Tensor::Mean(int dim, bool keepdim) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const int axis = tensor_utils::NormalizeDim(dim, NumDimensions());
+    if (shape_.size() == 2 &&
+        shape_[static_cast<size_t>(axis)] > 0 &&
+        IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return ReduceDimArrayFire2D(*this, dim, keepdim, [](const af::array& arr, int axis) {
+                return af::mean(arr, axis);
+            });
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Mean(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return MeanDimAsReal(*this, dim, keepdim);
 }
 
@@ -447,6 +493,20 @@ Tensor Tensor::Max() const {
 }
 
 Tensor Tensor::Max(int dim, bool keepdim) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const int axis = tensor_utils::NormalizeDim(dim, NumDimensions());
+    if (shape_.size() == 2 &&
+        shape_[static_cast<size_t>(axis)] > 0 &&
+        IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return ReduceDimArrayFire2D(*this, dim, keepdim, [](const af::array& arr, int axis) {
+                return (af::max)(arr, axis);
+            });
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Max(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ReduceDimFromFirstValue(
         *this,
         dim,
@@ -477,6 +537,20 @@ Tensor Tensor::Min() const {
 }
 
 Tensor Tensor::Min(int dim, bool keepdim) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const int axis = tensor_utils::NormalizeDim(dim, NumDimensions());
+    if (shape_.size() == 2 &&
+        shape_[static_cast<size_t>(axis)] > 0 &&
+        IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return ReduceDimArrayFire2D(*this, dim, keepdim, [](const af::array& arr, int axis) {
+                return (af::min)(arr, axis);
+            });
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Min(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ReduceDimFromFirstValue(
         *this,
         dim,
@@ -507,6 +581,20 @@ Tensor Tensor::Prod() const {
 }
 
 Tensor Tensor::Prod(int dim, bool keepdim) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const int axis = tensor_utils::NormalizeDim(dim, NumDimensions());
+    if (shape_.size() == 2 &&
+        shape_[static_cast<size_t>(axis)] > 0 &&
+        IsArrayFireRealReductionSupported(dtype_)) {
+        try {
+            return ReduceDimArrayFire2D(*this, dim, keepdim, [](const af::array& arr, int axis) {
+                return af::product(arr, axis);
+            });
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Prod(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ReduceDimPreservingType(
         *this,
         dim,

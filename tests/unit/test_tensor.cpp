@@ -260,6 +260,65 @@ TEST_CASE("Tensor scalar reductions keep Float64 ArrayFire output device-residen
     REQUIRE(max.Data<double>()[0] == 4.0);
     REQUIRE(min.Data<double>()[0] == -2.0);
 }
+
+TEST_CASE("Tensor 2D dimension reductions keep Float32 ArrayFire output device-resident", "[tensor]") {
+    float data[] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f
+    };
+    cyxwiz::Tensor input({2, 3}, data, cyxwiz::DataType::Float32);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor col_sum = input.Sum(0);
+    cyxwiz::Tensor row_sum = input.Sum(1, true);
+
+    REQUIRE(col_sum.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(col_sum.Shape() == std::vector<size_t>{3});
+    REQUIRE(row_sum.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(row_sum.Shape() == std::vector<size_t>{2, 1});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(col_sum.Data<float>()[0] == 5.0f);
+    REQUIRE(col_sum.Data<float>()[1] == 7.0f);
+    REQUIRE(col_sum.Data<float>()[2] == 9.0f);
+    REQUIRE(row_sum.Data<float>()[0] == 6.0f);
+    REQUIRE(row_sum.Data<float>()[1] == 15.0f);
+}
+
+TEST_CASE("Tensor 2D dimension reductions keep Float64 ArrayFire output device-resident", "[tensor]") {
+    double data[] = {
+        1.0, 2.0, 3.0,
+        4.0, 5.0, 6.0
+    };
+    cyxwiz::Tensor input({2, 3}, data, cyxwiz::DataType::Float64);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor col_mean = input.Mean(0);
+    cyxwiz::Tensor row_max = input.Max(1, true);
+    cyxwiz::Tensor col_min = input.Min(0);
+    cyxwiz::Tensor row_prod = input.Prod(1);
+
+    REQUIRE(col_mean.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(col_mean.Shape() == std::vector<size_t>{3});
+    REQUIRE(row_max.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(row_max.Shape() == std::vector<size_t>{2, 1});
+    REQUIRE(col_min.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(col_min.Shape() == std::vector<size_t>{3});
+    REQUIRE(row_prod.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(row_prod.Shape() == std::vector<size_t>{2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(col_mean.Data<double>()[0] == Catch::Approx(2.5));
+    REQUIRE(col_mean.Data<double>()[1] == Catch::Approx(3.5));
+    REQUIRE(col_mean.Data<double>()[2] == Catch::Approx(4.5));
+    REQUIRE(row_max.Data<double>()[0] == 3.0);
+    REQUIRE(row_max.Data<double>()[1] == 6.0);
+    REQUIRE(col_min.Data<double>()[0] == 1.0);
+    REQUIRE(col_min.Data<double>()[1] == 2.0);
+    REQUIRE(col_min.Data<double>()[2] == 3.0);
+    REQUIRE(row_prod.Data<double>()[0] == 6.0);
+    REQUIRE(row_prod.Data<double>()[1] == 120.0);
+}
 #endif
 
 TEST_CASE("Tensor dimension reductions preserve integer dtype and shape", "[tensor]") {
