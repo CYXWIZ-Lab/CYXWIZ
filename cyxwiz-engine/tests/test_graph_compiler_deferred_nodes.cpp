@@ -1253,8 +1253,11 @@ int main() {
     const auto* compare_placement = FindPlacement(config, 11);
     Check(compare_placement != nullptr,
           "selected TensorCompare graph should report graph-op backend placement");
-    Check(compare_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "selected TensorCompare graph op should be reported as CPU-backed");
+    Check(compare_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
+          "selected TensorCompare graph op should be reported as mixed");
+    Check(compare_placement->reason_code ==
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
+          "selected TensorCompare graph op should use mixed graph reason");
 
     auto logical = Node(12,
                         gui::NodeType::TensorLogicalMask,

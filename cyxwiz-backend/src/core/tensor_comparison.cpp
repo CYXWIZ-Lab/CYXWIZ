@@ -3,6 +3,11 @@
 #include <cstdint>
 #include <stdexcept>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#include <spdlog/spdlog.h>
+#endif
+
 namespace cyxwiz {
 
 namespace {
@@ -81,6 +86,40 @@ Tensor ApplyScalarComparison(const Tensor& input, float scalar, CompareOp op) {
 }
 
 Tensor ApplyScalarComparison(const Tensor& input, float scalar, CompareOp op) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (input.GetDataType() == DataType::Float32 ||
+        input.GetDataType() == DataType::Float64) {
+        try {
+            const af::array values = input.GetArray();
+            af::array mask;
+            switch (op) {
+                case CompareOp::Greater:
+                    mask = values > scalar;
+                    break;
+                case CompareOp::GreaterEqual:
+                    mask = values >= scalar;
+                    break;
+                case CompareOp::Less:
+                    mask = values < scalar;
+                    break;
+                case CompareOp::LessEqual:
+                    mask = values <= scalar;
+                    break;
+                case CompareOp::Equal:
+                    mask = values == scalar;
+                    break;
+                case CompareOp::NotEqual:
+                    mask = values != scalar;
+                    break;
+            }
+            return Tensor(mask.as(u8));
+        } catch (const af::exception& e) {
+            spdlog::warn(
+                "ArrayFire tensor scalar comparison failed, using CPU fallback: {}",
+                e.what());
+        }
+    }
+#endif
     switch (input.GetDataType()) {
         case DataType::Float32: return ApplyScalarComparison<float>(input, scalar, op);
         case DataType::Float64: return ApplyScalarComparison<double>(input, scalar, op);
@@ -95,6 +134,42 @@ Tensor CompareTensors(const Tensor& left, const Tensor& right, CompareOp op) {
     const std::vector<size_t> out_shape = Tensor::BroadcastShape(left.Shape(), right.Shape());
     const Tensor left_expanded = left.Shape() == out_shape ? left.Clone() : left.Expand(out_shape);
     const Tensor right_expanded = right.Shape() == out_shape ? right.Clone() : right.Expand(out_shape);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if ((left_expanded.GetDataType() == DataType::Float32 ||
+         left_expanded.GetDataType() == DataType::Float64) &&
+        left_expanded.GetDataType() == right_expanded.GetDataType()) {
+        try {
+            const af::array lhs = left_expanded.GetArray();
+            const af::array rhs = right_expanded.GetArray();
+            af::array mask;
+            switch (op) {
+                case CompareOp::Greater:
+                    mask = lhs > rhs;
+                    break;
+                case CompareOp::GreaterEqual:
+                    mask = lhs >= rhs;
+                    break;
+                case CompareOp::Less:
+                    mask = lhs < rhs;
+                    break;
+                case CompareOp::LessEqual:
+                    mask = lhs <= rhs;
+                    break;
+                case CompareOp::Equal:
+                    mask = lhs == rhs;
+                    break;
+                case CompareOp::NotEqual:
+                    mask = lhs != rhs;
+                    break;
+            }
+            return Tensor(mask.as(u8));
+        } catch (const af::exception& e) {
+            spdlog::warn(
+                "ArrayFire tensor comparison failed, using CPU fallback: {}",
+                e.what());
+        }
+    }
+#endif
     return ApplyTensorComparison(left_expanded, right_expanded, op);
 }
 

@@ -92,8 +92,12 @@ Current graph-runtime placement truth:
   and graph backward remain CPU/fallback-driven.
 - `Concatenate`: `cpu`; `Tensor::Cat` is currently a row-major host
   concat loop.
-- `TensorCompare`, `TensorLogicalMask`: `cpu`; current comparison and
-  logical tensor primitives are CPU loops.
+- `TensorCompare`: `mixed`; Float32/Float64 tensor and scalar
+  comparisons can use ArrayFire where available, while mixed dtype,
+  unsupported dtype, CPU-only, and backend failure paths fall back to
+  CPU.
+- `TensorLogicalMask`: `cpu`; current logical tensor primitives are CPU
+  loops.
 
 This is surfaced through the existing Compile popup/backend placement
 report rather than a new duplicate diagnostic system.
@@ -164,6 +168,13 @@ primitive hot paths that remain CPU-backed after correctness landed.
 - no host/device round-trip inside the hot loop except at API
   boundaries,
 - unsupported dtypes have explicit fallback or error behavior.
+
+**Status 2026-06-22:** first comparison primitive slice complete.
+`cyxwiz-backend/src/core/tensor_comparison.cpp` now routes Float32 and
+Float64 tensor/scalar comparisons through ArrayFire when available.
+Unsupported dtypes, mixed tensor dtypes, CPU-only builds, and ArrayFire
+exceptions continue through the existing CPU comparison loops. Logical
+masks remain CPU-backed until dtype truthiness semantics are audited.
 
 ## Priority 4 - TensorDot GPU Slice
 

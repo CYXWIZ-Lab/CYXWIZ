@@ -587,6 +587,45 @@ TEST_CASE("Tensor scalar comparisons preserve shape", "[tensor]") {
     REQUIRE(eq.Data<uint8_t>()[1] == 1);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor comparison keeps Float32 ArrayFire output device-resident", "[tensor]") {
+    float left_data[] = {1.0f, 4.0f, 3.0f, 8.0f};
+    float right_data[] = {2.0f, 3.0f, 3.0f, 1.0f};
+    cyxwiz::Tensor left(af::array(4, left_data));
+    cyxwiz::Tensor right(af::array(4, right_data));
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor gt = left > right;
+
+    REQUIRE(gt.GetDataType() == cyxwiz::DataType::UInt8);
+    REQUIRE(gt.Shape() == std::vector<size_t>{4});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const uint8_t* out = gt.Data<uint8_t>();
+    REQUIRE(out[0] == 0);
+    REQUIRE(out[1] == 1);
+    REQUIRE(out[2] == 0);
+    REQUIRE(out[3] == 1);
+}
+
+TEST_CASE("Tensor scalar comparison keeps Float64 ArrayFire output device-resident", "[tensor]") {
+    double data[] = {1.0, 2.5, 4.0};
+    cyxwiz::Tensor input(af::array(3, data));
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor lt = input < 2.5f;
+
+    REQUIRE(lt.GetDataType() == cyxwiz::DataType::UInt8);
+    REQUIRE(lt.Shape() == std::vector<size_t>{3});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const uint8_t* out = lt.Data<uint8_t>();
+    REQUIRE(out[0] == 1);
+    REQUIRE(out[1] == 0);
+    REQUIRE(out[2] == 0);
+}
+#endif
+
 TEST_CASE("Tensor comparisons broadcast and support mixed dtypes", "[tensor]") {
     int32_t left_data[] = {
         1, 2, 3,
