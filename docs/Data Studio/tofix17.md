@@ -190,6 +190,13 @@ preserve device residency for both keepdim and non-keepdim outputs.
 Integer reductions, empty-axis identity fallback, higher-rank dimension
 reductions, `Var`, and `Std` remain CPU-backed.
 
+**Status 2026-06-22:** first shape residency slice complete.
+`Tensor::Reshape` now preserves native ArrayFire device data without
+materializing host storage when the source tensor is already device
+current. Row-major 2D/3D device layouts still fall back through the
+existing host path until reshape semantics for those layout bridges are
+audited.
+
 ## Priority 4 - TensorDot GPU Slice
 
 **Goal:** make the newly exposed `TensorDot` contract GPU-first without

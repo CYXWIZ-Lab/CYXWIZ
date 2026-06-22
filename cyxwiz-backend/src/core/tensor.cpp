@@ -730,6 +730,21 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
         throw std::runtime_error("Tensor::Reshape: new shape must have same number of elements");
     }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (device_current_ && af_array_ &&
+        device_layout_ == TensorDeviceLayout::ArrayFireNative) {
+        Tensor result;
+        result.shape_ = new_shape;
+        result.dtype_ = dtype_;
+        result.device_ = device_;
+        result.af_array_ = std::make_unique<af::array>(*af_array_);
+        result.host_current_ = false;
+        result.device_current_ = true;
+        result.device_layout_ = TensorDeviceLayout::ArrayFireNative;
+        return result;
+    }
+#endif
+
     return Tensor(new_shape, Data(), dtype_);
 }
 

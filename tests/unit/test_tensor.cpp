@@ -172,6 +172,25 @@ TEST_CASE("Tensor permute validates dimensions and preserves dtype", "[tensor]")
     REQUIRE_THROWS_AS(t.Permute({0, 1, 3}), std::runtime_error);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor reshape preserves native ArrayFire device residency", "[tensor]") {
+    float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    cyxwiz::Tensor input(af::array(6, data));
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor reshaped = input.Reshape({2, 3});
+
+    REQUIRE(reshaped.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(reshaped.Shape() == std::vector<size_t>{2, 3});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const float* out = reshaped.Data<float>();
+    REQUIRE(out[0] == 1.0f);
+    REQUIRE(out[1] == 2.0f);
+    REQUIRE(out[5] == 6.0f);
+}
+#endif
+
 TEST_CASE("Tensor scalar reductions work for float tensors", "[tensor]") {
     float data[] = {1.0f, -2.0f, 3.0f, 4.0f};
     cyxwiz::Tensor t({2, 2}, data, cyxwiz::DataType::Float32);
