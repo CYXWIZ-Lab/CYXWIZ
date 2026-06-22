@@ -260,6 +260,14 @@ concat, CPU-only builds, and ArrayFire failures continue through the
 existing CPU row-major copy path. Graph-runtime Concatenate placement is
 now reported as `mixed` instead of CPU-backed.
 
+**Status 2026-06-22:** first stack primitive slice complete.
+`Tensor::Stack` now routes matching Float32/Float64 1D tensor lists
+through ArrayFire for axis `0` and `-1`/`1`, producing a row-major 2D
+device-resident result without going through the existing
+`Unsqueeze`/`Cat` fallback path. Integer dtypes, mismatched input
+shapes/dtypes, higher-rank inputs, CPU-only builds, and ArrayFire
+failures continue through the existing fallback implementation.
+
 **Status 2026-06-22:** first logical mask primitive slice complete.
 `TensorLogicalMask` now routes Float32 and Float64 matching-dtype
 logical `and`/`or` plus unary logical-not through ArrayFire using the

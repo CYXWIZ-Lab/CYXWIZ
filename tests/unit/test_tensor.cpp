@@ -1601,6 +1601,54 @@ TEST_CASE("Tensor stack inserts a new dimension", "[tensor]") {
     REQUIRE(back.Data<float>()[3] == 4.0f);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor stack keeps 1D ArrayFire output device-resident", "[tensor]") {
+    float a_data[] = {1.0f, 2.0f};
+    float b_data[] = {3.0f, 4.0f};
+    cyxwiz::Tensor a(af::array(2, a_data));
+    cyxwiz::Tensor b(af::array(2, b_data));
+
+    const size_t before_float_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor front = cyxwiz::Tensor::Stack({a, b}, 0);
+
+    REQUIRE(front.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(front.Shape() == std::vector<size_t>{2, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_float_host_bytes);
+
+    af::array front_device = front.GetArrayRowMajor2D();
+    REQUIRE(front_device.dims(0) == 2);
+    REQUIRE(front_device.dims(1) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_float_host_bytes);
+
+    REQUIRE(front.Data<float>()[0] == 1.0f);
+    REQUIRE(front.Data<float>()[1] == 2.0f);
+    REQUIRE(front.Data<float>()[2] == 3.0f);
+    REQUIRE(front.Data<float>()[3] == 4.0f);
+
+    double c_data[] = {1.0, 2.0};
+    double d_data[] = {3.0, 4.0};
+    cyxwiz::Tensor c(af::array(2, c_data));
+    cyxwiz::Tensor d(af::array(2, d_data));
+
+    const size_t before_double_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor back = cyxwiz::Tensor::Stack({c, d}, -1);
+
+    REQUIRE(back.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(back.Shape() == std::vector<size_t>{2, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_double_host_bytes);
+
+    af::array back_device = back.GetArrayRowMajor2D();
+    REQUIRE(back_device.dims(0) == 2);
+    REQUIRE(back_device.dims(1) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_double_host_bytes);
+
+    REQUIRE(back.Data<double>()[0] == 1.0);
+    REQUIRE(back.Data<double>()[1] == 3.0);
+    REQUIRE(back.Data<double>()[2] == 2.0);
+    REQUIRE(back.Data<double>()[3] == 4.0);
+}
+#endif
+
 TEST_CASE("Tensor split and chunk produce row-major slices", "[tensor]") {
     auto t = cyxwiz::Tensor::RangeN({3, 4}, cyxwiz::DataType::Int32);
 

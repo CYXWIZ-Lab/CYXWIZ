@@ -46,6 +46,25 @@ bool IsArrayFire2DConcatSupported(const std::vector<Tensor>& tensors,
     }
     return true;
 }
+
+bool IsArrayFire1DStackSupported(const std::vector<Tensor>& tensors,
+                                 DataType dtype,
+                                 int axis) {
+    if (axis < 0 || axis > 1) {
+        return false;
+    }
+    if (dtype != DataType::Float32 && dtype != DataType::Float64) {
+        return false;
+    }
+    for (const Tensor& tensor : tensors) {
+        if (tensor.GetDataType() != dtype ||
+            tensor.Shape().size() != 1 ||
+            tensor.Shape() != tensors.front().Shape()) {
+            return false;
+        }
+    }
+    return true;
+}
 #endif
 
 } // namespace
@@ -136,6 +155,32 @@ Tensor Tensor::Stack(const std::vector<Tensor>& tensors, int dim) {
     }
 
     const int axis = tensor_utils::NormalizeDim(dim, static_cast<int>(tensors.front().Shape().size()), true);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const DataType dtype = tensors.front().GetDataType();
+    if (IsArrayFire1DStackSupported(tensors, dtype, axis)) {
+        try {
+            const size_t length = tensors.front().Shape()[0];
+            const af::dim4 first_dims(
+                axis == 0 ? 1 : static_cast<dim_t>(length),
+                axis == 0 ? static_cast<dim_t>(length) : 1,
+                1,
+                1);
+            af::array joined = af::moddims(tensors.front().GetArray(), first_dims);
+            for (size_t i = 1; i < tensors.size(); i++) {
+                const af::dim4 dims(
+                    axis == 0 ? 1 : static_cast<dim_t>(length),
+                    axis == 0 ? static_cast<dim_t>(length) : 1,
+                    1,
+                    1);
+                joined = af::join(axis, joined, af::moddims(tensors[i].GetArray(), dims));
+            }
+            return Tensor::FromArrayRowMajor2D(joined);
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Stack: ArrayFire 1D stack failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
+
     std::vector<Tensor> expanded;
     expanded.reserve(tensors.size());
     for (const Tensor& tensor : tensors) {
