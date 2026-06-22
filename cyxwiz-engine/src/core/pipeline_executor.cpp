@@ -5,6 +5,7 @@
 #include "data_convert_service.h"
 #include "node_executors/pipeline_operator_factory.h"
 #include "pipeline_runtime_capabilities.h"
+#include "sequence_vocabulary.h"
 #include <arrow/api.h>
 #include <arrow/csv/api.h>
 #include <arrow/scalar.h>
@@ -1008,6 +1009,98 @@ bool RequireColumnKind(const std::shared_ptr<arrow::Table>& table,
         return false;
     }
     return true;
+}
+
+std::vector<std::string> SplitSequenceTokens(const std::string& value) {
+    std::vector<std::string> tokens;
+    std::istringstream stream(value);
+    std::string token;
+    while (stream >> token) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+bool ExtractStringSequencesFromColumn(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::string& column_name,
+    std::vector<std::vector<std::string>>& sequences,
+    std::string& error) {
+    std::string schema_error;
+    if (!RequireColumnKind(table, node_type, column_name,
+                           "string/large_string", IsStringArrowType,
+                           schema_error)) {
+        error = schema_error;
+        return false;
+    }
+
+    const int column_index = table->schema()->GetFieldIndex(column_name);
+    auto column = table->column(column_index);
+    if (!column) {
+        error = node_type + ": column '" + column_name + "' is not readable";
+        return false;
+    }
+
+    sequences.clear();
+    sequences.reserve(static_cast<size_t>(table->num_rows()));
+    for (const auto& chunk : column->chunks()) {
+        for (int64_t i = 0; i < chunk->length(); ++i) {
+            if (chunk->IsNull(i)) {
+                continue;
+            }
+            if (chunk->type_id() == arrow::Type::STRING) {
+                sequences.push_back(SplitSequenceTokens(
+                    std::static_pointer_cast<arrow::StringArray>(chunk)->GetString(i)));
+            } else if (chunk->type_id() == arrow::Type::LARGE_STRING) {
+                sequences.push_back(SplitSequenceTokens(
+                    std::static_pointer_cast<arrow::LargeStringArray>(chunk)->GetString(i)));
+            }
+        }
+    }
+
+    if (sequences.empty()) {
+        error = node_type + ": column '" + column_name +
+                "' did not contain any vocabulary tokens";
+        return false;
+    }
+    return true;
+}
+
+std::shared_ptr<arrow::Table> MakeSequenceVocabularyTable(
+    const SequenceVocabulary& vocabulary) {
+    arrow::StringBuilder value_builder;
+    arrow::Int64Builder id_builder;
+
+    const auto& values = vocabulary.Values();
+    for (size_t i = 0; i < values.size(); ++i) {
+        auto value_status = value_builder.Append(values[i]);
+        if (!value_status.ok()) {
+            throw std::runtime_error(value_status.ToString());
+        }
+        auto id_status = id_builder.Append(static_cast<int64_t>(i));
+        if (!id_status.ok()) {
+            throw std::runtime_error(id_status.ToString());
+        }
+    }
+
+    std::shared_ptr<arrow::Array> value_array;
+    std::shared_ptr<arrow::Array> id_array;
+    auto value_finish = value_builder.Finish(&value_array);
+    if (!value_finish.ok()) {
+        throw std::runtime_error(value_finish.ToString());
+    }
+    auto id_finish = id_builder.Finish(&id_array);
+    if (!id_finish.ok()) {
+        throw std::runtime_error(id_finish.ToString());
+    }
+
+    return arrow::Table::Make(
+        arrow::schema({
+            arrow::field("value", arrow::utf8()),
+            arrow::field("id", arrow::int64()),
+        }),
+        {value_array, id_array});
 }
 
 bool RequireRoleColumnKind(
@@ -3108,6 +3201,10 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteTextTokenize(node, ctx);
     case gui::NodeType::TextCleanNode:
         return ExecuteTextClean(node, ctx);
+    case gui::NodeType::TokenVocabulary:
+    case gui::NodeType::POSVocabulary:
+    case gui::NodeType::NERTagVocabulary:
+        return ExecuteSequenceVocabulary(node, ctx);
     default:
         handled = false;
         return false;
@@ -4608,6 +4705,67 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
 
     } catch (const std::exception& e) {
         ReportError("TextVectorize error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteSequenceVocabulary(const Node& node, ExecutionContext& ctx) {
+    const std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError(node.type + ": No input connection or dataset not found");
+        return false;
+    }
+
+    const bool is_token = node.runtime_type == gui::NodeType::TokenVocabulary;
+    const bool is_pos = node.runtime_type == gui::NodeType::POSVocabulary;
+    const bool is_tag = node.runtime_type == gui::NodeType::NERTagVocabulary;
+    const char* default_column =
+        is_token ? "tokens" : (is_pos ? "pos_tags" : "ner_tags");
+    const std::string column =
+        ParameterOrDefault(node.parameters, "column", default_column);
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError(node.type + ": Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::vector<std::vector<std::string>> sequences;
+        std::string sequence_error;
+        if (!ExtractStringSequencesFromColumn(input_table, node.type, column,
+                                              sequences, sequence_error)) {
+            ReportError(sequence_error);
+            return false;
+        }
+
+        SequenceVocabularyConfig config;
+        config.kind = is_tag ? SequenceVocabularyKind::Tag
+                    : (is_pos ? SequenceVocabularyKind::PartOfSpeech
+                              : SequenceVocabularyKind::Token);
+        config.lowercase =
+            OptionalBooleanParameterIsTrue(node.parameters, "lowercase");
+        config.min_frequency = static_cast<size_t>(
+            OptionalIntegerParameterOrDefault(node.parameters, "min_frequency", 1));
+        config.max_size = static_cast<size_t>(
+            OptionalIntegerParameterOrDefault(node.parameters, "max_size", 0));
+        config.pad_token = ParameterOrDefault(node.parameters, "pad_token", "[PAD]");
+        config.unk_token = ParameterOrDefault(node.parameters, "unk_token", "[UNK]");
+
+        const auto vocabulary = BuildSequenceVocabulary(sequences, config);
+        const auto vocabulary_table = MakeSequenceVocabularyTable(vocabulary);
+        const std::string output_dataset_name =
+            "ds_sequence_vocab_" + std::to_string(node.id);
+
+        registry.RegisterArrowTable(vocabulary_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        spdlog::info("[Data Studio] {} built {} entries from column '{}'",
+                     node.type, vocabulary.Size(), column);
+        return true;
+    } catch (const std::exception& e) {
+        ReportError(node.type + " error: " + std::string(e.what()));
         return false;
     }
 }

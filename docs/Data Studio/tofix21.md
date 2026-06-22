@@ -39,6 +39,19 @@ Started example-asset portability work for item 2:
 The example remains a target design until the full Studio graph launch path can
 materialize sequence batches from saved graph data.
 
+Runtime progress:
+
+- `TokenVocabulary`, `POSVocabulary`, and `NERTagVocabulary` now execute as
+  narrow `PipelineExecutor` table transforms over prepared sentence-level
+  string columns.
+- The vocabulary nodes reuse the existing deterministic `SequenceVocabulary`
+  helper and output `value,id` Arrow tables for downstream graph/runtime use.
+- Focused routing coverage now proves deterministic token/POS/tag vocabulary
+  output and schema failure on a missing vocabulary source column.
+- This does not complete full NER graph launch yet: `NERSequenceBuilder` still
+  owns sequence batch materialization and remains separate from these
+  vocabulary-table transforms.
+
 ### 1. Executable Vocabulary Nodes
 
 `TokenVocabulary`, `POSVocabulary`, and `NERTagVocabulary` are currently

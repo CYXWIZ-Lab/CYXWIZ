@@ -192,6 +192,7 @@ private:
     bool ExecuteTextClean(const Node& node, ExecutionContext& ctx);
     bool ExecuteTextTokenize(const Node& node, ExecutionContext& ctx);
     bool ExecuteTextVectorize(const Node& node, ExecutionContext& ctx);
+    bool ExecuteSequenceVocabulary(const Node& node, ExecutionContext& ctx);
 
     // Phase 6 Week 8-9 - Time-Series Nodes
     bool ExecuteTSWindow(const Node& node, ExecutionContext& ctx);

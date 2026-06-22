@@ -692,20 +692,28 @@ int main() {
         fail_closed_id += 2;
     }
 
-    struct SequenceVocabularyFailClosedCase {
+    struct SequenceVocabularyExecutableCase {
         const char* node_type;
         const char* name;
-        const char* expected_reason;
+        const char* column;
+        const char* expected_first_value;
     };
 
-    const SequenceVocabularyFailClosedCase sequence_vocabulary_cases[] = {
-        {"TokenVocabulary", "Token Vocabulary",
-         "token vocabulary node is a sequence-training contract node"},
-        {"POSVocabulary", "POS Vocabulary",
-         "POS vocabulary node is a sequence-training contract node"},
-        {"NERTagVocabulary", "NER Tag Vocabulary",
-         "NER tag vocabulary node is a sequence-training contract node"},
+    const SequenceVocabularyExecutableCase sequence_vocabulary_cases[] = {
+        {"TokenVocabulary", "Token Vocabulary", "tokens", "[PAD]"},
+        {"POSVocabulary", "POS Vocabulary", "pos_tags", "[PAD]"},
+        {"NERTagVocabulary", "NER Tag Vocabulary", "ner_tags", "O"},
     };
+
+    const fs::path sequence_vocab_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_sequence_vocab.csv";
+    fs::remove(sequence_vocab_csv_path);
+    {
+        std::ofstream csv(sequence_vocab_csv_path);
+        csv << "tokens,pos_tags,ner_tags\n";
+        csv << "\"John Smith\",\"NNP NNP\",\"B-PER I-PER\"\n";
+        csv << "\"London Monday\",\"NNP NNP\",\"B-LOC O\"\n";
+    }
 
     int sequence_vocab_id = 430;
     for (const auto& sequence_vocab_case : sequence_vocabulary_cases) {
@@ -713,26 +721,54 @@ int main() {
             R"({"nodes":[)"
             R"({"id":)" + std::to_string(sequence_vocab_id) +
             R"(,"type":"DataInput","name":"Input","parameters":{)"
-            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"("source_type":"file","file_path":")" + JsonEscapePath(sequence_vocab_csv_path.string()) +
             R"(","type":"csv","has_header":"true"}},)"
             R"({"id":)" + std::to_string(sequence_vocab_id + 1) +
             R"(,"type":")" + sequence_vocab_case.node_type +
             R"(","name":")" + sequence_vocab_case.name +
-            R"(","parameters":{}})"
+            R"(","parameters":{)"
+            R"("column":")" + sequence_vocab_case.column +
+            R"(","min_frequency":"1","max_size":"0"}})"
             R"(],"links":[{"start_node":)" + std::to_string(sequence_vocab_id) +
             R"(,"end_node":)" + std::to_string(sequence_vocab_id + 1) + R"(}]})";
 
         cyxwiz::PipelineExecutor sequence_vocab_executor;
-        Check(!sequence_vocab_executor.ExecutePipeline(sequence_vocab_json),
+        Check(sequence_vocab_executor.ExecutePipeline(sequence_vocab_json),
               std::string(sequence_vocab_case.node_type) +
-                  " should fail closed in PipelineExecutor");
-        Check(sequence_vocab_executor.GetLastError().find(
-                  sequence_vocab_case.expected_reason) != std::string::npos,
-              std::string(sequence_vocab_case.node_type) +
-                  " fail-closed error should come from runtime capabilities: " +
+                  " should build a sequence vocabulary table: " +
                   sequence_vocab_executor.GetLastError());
+        auto vocab_output = registry.GetArrowDataset(
+            "ds_sequence_vocab_" + std::to_string(sequence_vocab_id + 1));
+        Check(vocab_output != nullptr,
+              std::string(sequence_vocab_case.node_type) +
+                  " output dataset is registered");
+        auto vocab_table = vocab_output->GetArrowTable();
+        Check(vocab_table != nullptr && vocab_table->num_columns() == 2,
+              std::string(sequence_vocab_case.node_type) +
+                  " output vocabulary table exists");
+        Check(ReadStringValue(vocab_table, "value", 0) ==
+                  sequence_vocab_case.expected_first_value,
+              std::string(sequence_vocab_case.node_type) +
+                  " output should use deterministic vocabulary ordering");
         sequence_vocab_id += 2;
     }
+
+    const std::string sequence_vocab_missing_column_json =
+        R"({"nodes":[)"
+        R"({"id":438,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(sequence_vocab_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":439,"type":"TokenVocabulary","name":"Bad Vocabulary","parameters":{)"
+        R"("column":"missing"}})"
+        R"(],"links":[{"start_node":438,"end_node":439}]})";
+    cyxwiz::PipelineExecutor sequence_vocab_missing_column_executor;
+    Check(!sequence_vocab_missing_column_executor.ExecutePipeline(
+              sequence_vocab_missing_column_json),
+          "TokenVocabulary missing input column should fail schema validation");
+    Check(sequence_vocab_missing_column_executor.GetLastError().find(
+              "TokenVocabulary: column 'missing' not found") != std::string::npos,
+          "TokenVocabulary missing column error should be specific: " +
+              sequence_vocab_missing_column_executor.GetLastError());
 
     const std::string missing_parameter_json =
         R"({"nodes":[)"
@@ -5191,6 +5227,7 @@ int main() {
     fs::remove(missing_csv_path);
     fs::remove(string_csv_path);
     fs::remove(missing_string_csv_path);
+    fs::remove(sequence_vocab_csv_path);
 
     return 0;
 }
