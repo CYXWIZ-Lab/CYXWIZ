@@ -346,8 +346,6 @@ Focused coverage was added in `tests/unit/test_tensor.cpp`:
   keep output device-resident until host data is explicitly requested.
 
 Remaining TensorDot work:
-- run and record benchmark numbers from the new realistic row-wise dot
-  benchmark on representative CPU and ArrayFire backends,
 - run the ArrayFire-specific graph/runtime smoke coverage on additional
   CUDA/OpenCL/device configurations.
 
@@ -360,11 +358,20 @@ prints backend, shape, iteration count, total time, average time, and a
 checksum. This provides a repeatable local measurement hook without
 adding Google Benchmark or a new benchmark framework.
 
+**Status 2026-06-22:** TensorDot benchmark CPU reference slice complete.
+The benchmark executable now also runs an in-process CPU reference loop
+for the same `[1024, 512]` row-wise Float32 dot contract and prints
+CPU-reference total time, average time, and checksum. This gives each
+local benchmark run a same-machine CPU baseline without forcing the
+backend Tensor path away from ArrayFire or adding a second benchmark
+target.
+
 Local debug-build smoke result on 2026-06-22:
 - backend: ArrayFire row-major 2D
 - shape: `[1024, 512]`
 - iterations: `20`
 - observed average range across smoke runs: `0.173 ms` to `0.205 ms`
+- CPU reference average from the updated harness: `4.578 ms`
 
 This is a local sanity measurement only, not a UI or documentation
 performance promise.

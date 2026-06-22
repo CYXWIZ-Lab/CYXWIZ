@@ -48,6 +48,31 @@ double RunRowWiseDotBenchmark(const cyxwiz::Tensor& left,
     return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
+double RunCpuReferenceBenchmark(const std::vector<float>& left,
+                                const std::vector<float>& right,
+                                int iterations,
+                                float& checksum) {
+    std::vector<float> output(kBatch);
+    const auto start = std::chrono::steady_clock::now();
+    checksum = 0.0f;
+
+    for (int iteration = 0; iteration < iterations; iteration++) {
+        for (size_t row = 0; row < kBatch; row++) {
+            float total = 0.0f;
+            for (size_t col = 0; col < kFeatures; col++) {
+                const size_t idx = row * kFeatures + col;
+                total += left[idx] * right[idx];
+            }
+            output[row] = total;
+        }
+        checksum += output[0];
+        checksum += output[kBatch - 1];
+    }
+
+    const auto end = std::chrono::steady_clock::now();
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
 } // namespace
 
 int main() {
@@ -75,8 +100,11 @@ int main() {
     float checksum = 0.0f;
     const double elapsed_ms =
         RunRowWiseDotBenchmark(left, right, kMeasuredIterations, checksum);
+    float cpu_checksum = 0.0f;
+    const double cpu_elapsed_ms =
+        RunCpuReferenceBenchmark(left_data, right_data, kMeasuredIterations, cpu_checksum);
 
-    if (!std::isfinite(checksum)) {
+    if (!std::isfinite(checksum) || !std::isfinite(cpu_checksum)) {
         throw std::runtime_error("TensorDot benchmark: checksum is not finite");
     }
 
@@ -88,6 +116,10 @@ int main() {
     std::cout << "total_ms=" << elapsed_ms << "\n";
     std::cout << "avg_ms=" << (elapsed_ms / static_cast<double>(kMeasuredIterations)) << "\n";
     std::cout << "checksum=" << checksum << "\n";
+    std::cout << "cpu_reference_total_ms=" << cpu_elapsed_ms << "\n";
+    std::cout << "cpu_reference_avg_ms="
+              << (cpu_elapsed_ms / static_cast<double>(kMeasuredIterations)) << "\n";
+    std::cout << "cpu_reference_checksum=" << cpu_checksum << "\n";
 
     return 0;
 }
