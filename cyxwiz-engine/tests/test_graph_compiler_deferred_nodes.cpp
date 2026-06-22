@@ -1174,11 +1174,11 @@ int main() {
     const auto* concat_placement = FindPlacement(config, 10);
     Check(concat_placement != nullptr,
           "selected Concatenate graph should report graph-op backend placement");
-    Check(concat_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "selected Concatenate graph op should be reported as CPU-backed");
+    Check(concat_placement->status == cyxwiz::BackendPlacementStatus::Mixed,
+          "selected Concatenate graph op should be reported as mixed");
     Check(concat_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
-          "selected Concatenate graph op should use CPU graph-runtime reason");
+              cyxwiz::BackendPlacementReason::GraphRuntimeArrayFireMixed,
+          "selected Concatenate graph op should use mixed graph-runtime reason");
 
     auto runtime_dot = Node(13,
                             gui::NodeType::TensorDot,

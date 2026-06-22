@@ -6,6 +6,11 @@
 #include <limits>
 #include <stdexcept>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#include <spdlog/spdlog.h>
+#endif
+
 namespace cyxwiz {
 
 namespace {
@@ -23,6 +28,25 @@ void ValidateSplitSize(int value, const char* name) {
         throw std::runtime_error(name);
     }
 }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool IsArrayFire2DConcatSupported(const std::vector<Tensor>& tensors,
+                                  DataType dtype,
+                                  int axis) {
+    if (axis < 0 || axis > 1) {
+        return false;
+    }
+    if (dtype != DataType::Float32 && dtype != DataType::Float64) {
+        return false;
+    }
+    for (const Tensor& tensor : tensors) {
+        if (tensor.Shape().size() != 2) {
+            return false;
+        }
+    }
+    return true;
+}
+#endif
 
 } // namespace
 
@@ -61,6 +85,20 @@ Tensor Tensor::Cat(const std::vector<Tensor>& tensors, int dim) {
         }
         out_shape[static_cast<size_t>(axis)] = total;
     }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFire2DConcatSupported(tensors, dtype, axis)) {
+        try {
+            af::array joined = tensors.front().GetArrayRowMajor2D();
+            for (size_t i = 1; i < tensors.size(); i++) {
+                joined = af::join(axis, joined, tensors[i].GetArrayRowMajor2D());
+            }
+            return Tensor::FromArrayRowMajor2D(joined);
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Cat: ArrayFire concat failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
 
     Tensor result(out_shape, dtype);
     const auto dst_strides = tensor_utils::RowMajorStrides(out_shape, "Tensor concat: stride overflow");

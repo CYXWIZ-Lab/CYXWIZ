@@ -1133,6 +1133,72 @@ TEST_CASE("Tensor cat concatenates along selected dimensions", "[tensor]") {
     REQUIRE(cols.Data<int32_t>()[7] == 8);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor cat keeps Float32 row concat output device-resident", "[tensor]") {
+    float a_data[] = {
+        1.0f, 2.0f,
+        3.0f, 4.0f
+    };
+    float b_data[] = {
+        5.0f, 6.0f,
+        7.0f, 8.0f
+    };
+    cyxwiz::Tensor a({2, 2}, a_data, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor b({2, 2}, b_data, cyxwiz::DataType::Float32);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor rows = cyxwiz::Tensor::Cat({a, b}, 0);
+
+    REQUIRE(rows.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(rows.Shape() == std::vector<size_t>{4, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = rows.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 4);
+    REQUIRE(device.dims(1) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const float* out = rows.Data<float>();
+    REQUIRE(out[0] == 1.0f);
+    REQUIRE(out[3] == 4.0f);
+    REQUIRE(out[4] == 5.0f);
+    REQUIRE(out[7] == 8.0f);
+}
+
+TEST_CASE("Tensor cat keeps Float64 column concat output device-resident", "[tensor]") {
+    double a_data[] = {
+        1.0, 2.0,
+        3.0, 4.0
+    };
+    double b_data[] = {
+        5.0, 6.0,
+        7.0, 8.0
+    };
+    cyxwiz::Tensor a({2, 2}, a_data, cyxwiz::DataType::Float64);
+    cyxwiz::Tensor b({2, 2}, b_data, cyxwiz::DataType::Float64);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor cols = cyxwiz::Tensor::Cat({a, b}, 1);
+
+    REQUIRE(cols.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(cols.Shape() == std::vector<size_t>{2, 4});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = cols.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 2);
+    REQUIRE(device.dims(1) == 4);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const double* out = cols.Data<double>();
+    REQUIRE(out[0] == 1.0);
+    REQUIRE(out[1] == 2.0);
+    REQUIRE(out[2] == 5.0);
+    REQUIRE(out[3] == 6.0);
+    REQUIRE(out[4] == 3.0);
+    REQUIRE(out[7] == 8.0);
+}
+#endif
+
 TEST_CASE("Tensor cat rejects incompatible tensors", "[tensor]") {
     cyxwiz::Tensor a = cyxwiz::Tensor::Ones({2, 2}, cyxwiz::DataType::Float32);
     cyxwiz::Tensor bad_shape = cyxwiz::Tensor::Ones({3, 3}, cyxwiz::DataType::Float32);

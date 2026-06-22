@@ -90,8 +90,9 @@ Current graph-runtime placement truth:
 - `TensorDot`: `mixed`; Float32/Float64 forward uses ArrayFire for 1D
   and 2D row-wise dot where available, while integer/unsupported paths
   and graph backward remain CPU/fallback-driven.
-- `Concatenate`: `cpu`; `Tensor::Cat` is currently a row-major host
-  concat loop.
+- `Concatenate`: `mixed`; Float32/Float64 2D concat can use ArrayFire
+  through the row-major tensor bridge, while integer, higher-rank,
+  CPU-only, and backend failure paths fall back to CPU.
 - `TensorCompare`: `mixed`; Float32/Float64 tensor and scalar
   comparisons can use ArrayFire where available, while mixed dtype,
   unsupported dtype, CPU-only, and backend failure paths fall back to
@@ -210,6 +211,13 @@ dtype tensor `Pow`, `Sqrt`, `Exp`, `Log`, `Abs`, `Sign`, `Clip`, and
 unary negate now use ArrayFire where available and preserve
 device-resident outputs. Integer paths, mixed-dtype tensor `Pow`, and
 ArrayFire failures continue through the existing CPU implementation.
+
+**Status 2026-06-22:** first concat primitive slice complete.
+`Tensor::Cat` now routes Float32 and Float64 2D concatenation through
+ArrayFire using the row-major tensor bridge. Integer dtypes, higher-rank
+concat, CPU-only builds, and ArrayFire failures continue through the
+existing CPU row-major copy path. Graph-runtime Concatenate placement is
+now reported as `mixed` instead of CPU-backed.
 
 ## Priority 4 - TensorDot GPU Slice
 

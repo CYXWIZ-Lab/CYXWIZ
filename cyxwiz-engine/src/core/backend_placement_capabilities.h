@@ -260,6 +260,7 @@ inline bool IsMixedArrayFireGraphRuntimeOp(gui::NodeType type) {
         case gui::NodeType::Add:
         case gui::NodeType::Multiply:
         case gui::NodeType::Average:
+        case gui::NodeType::Concatenate:
         case gui::NodeType::TensorDot:
         case gui::NodeType::TensorCompare:
             return true;
@@ -270,7 +271,6 @@ inline bool IsMixedArrayFireGraphRuntimeOp(gui::NodeType type) {
 
 inline bool IsCpuBackedGraphRuntimeOp(gui::NodeType type) {
     switch (type) {
-        case gui::NodeType::Concatenate:
         case gui::NodeType::TensorLogicalMask:
             return true;
         default:
@@ -307,6 +307,10 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
                 " Current TensorCompare ArrayFire coverage is Float32/Float64 "
                 "forward for tensor and scalar comparisons with matching "
                 "tensor dtypes.";
+        } else if (node.type == gui::NodeType::Concatenate) {
+            placement.explanation +=
+                " Current Concatenate ArrayFire coverage is Float32/Float64 "
+                "2D concatenation through the row-major tensor bridge.";
         }
         placement.suggested_action =
             "Treat this as mixed until focused benchmarks and graph-runtime "
