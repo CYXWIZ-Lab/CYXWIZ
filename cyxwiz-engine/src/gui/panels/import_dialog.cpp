@@ -65,13 +65,17 @@ void ImportDialog::Render() {
             // Show import result
             if (last_result_.success) {
                 ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f),
-                    ICON_FA_CHECK " Import Successful!");
+                    ICON_FA_CHECK " Inspection Complete");
                 ImGui::Separator();
 
                 ImGui::Text("Model: %s", last_result_.model_name.c_str());
                 ImGui::Text("Parameters: %d", last_result_.num_parameters);
                 ImGui::Text("Layers: %d", last_result_.num_layers);
-                ImGui::Text("Load Time: %lld ms", last_result_.load_time_ms);
+                ImGui::Text("Inspect Time: %lld ms", last_result_.load_time_ms);
+                ImGui::TextWrapped(
+                    "Weights were not loaded into a trainable Studio model. "
+                    "Only metadata was inspected and .cyxmodel graph JSON was "
+                    "extracted when present.");
 
                 if (!last_result_.warnings.empty()) {
                     ImGui::Separator();
@@ -290,86 +294,15 @@ void ImportDialog::RenderOptions() {
         ImGui::Text("Transfer Learning");
         ImGui::Spacing();
 
-        ImGui::Checkbox("Enable Transfer Learning", &enable_transfer_learning_);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Freeze some layers to fine-tune the model on new data");
-        }
-
-        if (enable_transfer_learning_) {
-            ImGui::Indent();
-
-            ImGui::RadioButton("No Freezing", &freeze_mode_, 0);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("All layers remain trainable");
-            }
-
-            ImGui::RadioButton("Freeze All Except Last N", &freeze_mode_, 1);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Freeze early feature extraction layers, train only classifier");
-            }
-
-            if (freeze_mode_ == 1) {
-                ImGui::Indent();
-                int max_layers = static_cast<int>(probe_result_.num_layers);
-                ImGui::SliderInt("Trainable Layers", &unfreeze_last_n_, 1,
-                                 std::max(1, max_layers), "%d");
-                if (unfreeze_last_n_ > max_layers) {
-                    unfreeze_last_n_ = max_layers;
-                }
-                ImGui::Unindent();
-            }
-
-            ImGui::RadioButton("Custom (Per-Layer)", &freeze_mode_, 2);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Choose which layers to freeze individually");
-            }
-
-            if (freeze_mode_ == 2) {
-                // Initialize layer_trainable_ if needed
-                if (layer_trainable_.size() != static_cast<size_t>(probe_result_.num_layers)) {
-                    layer_trainable_.resize(probe_result_.num_layers, true);
-                }
-
-                ImGui::Indent();
-                if (ImGui::TreeNode("Layer Settings")) {
-                    // Quick actions
-                    if (ImGui::Button("Freeze All")) {
-                        std::fill(layer_trainable_.begin(), layer_trainable_.end(), false);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Unfreeze All")) {
-                        std::fill(layer_trainable_.begin(), layer_trainable_.end(), true);
-                    }
-
-                    ImGui::Spacing();
-
-                    // Per-layer checkboxes
-                    for (size_t i = 0; i < layer_trainable_.size(); ++i) {
-                        std::string label;
-                        if (i < probe_result_.layer_names.size()) {
-                            label = std::to_string(i) + ": " + probe_result_.layer_names[i];
-                        } else {
-                            label = "Layer " + std::to_string(i);
-                        }
-
-                        // Show "Trainable" checkbox (unchecked = frozen)
-                        // Use temporary bool because std::vector<bool> uses proxy reference
-                        bool trainable = layer_trainable_[i];
-                        if (ImGui::Checkbox(label.c_str(), &trainable)) {
-                            layer_trainable_[i] = trainable;
-                        }
-                        if (!layer_trainable_[i]) {
-                            ImGui::SameLine();
-                            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.8f, 1.0f), "(frozen)");
-                        }
-                    }
-                    ImGui::TreePop();
-                }
-                ImGui::Unindent();
-            }
-
-            ImGui::Unindent();
-        }
+        enable_transfer_learning_ = false;
+        freeze_mode_ = 0;
+        layer_trainable_.clear();
+        ImGui::TextDisabled(
+            "Fine-tuning import is not implemented in this dialog.");
+        ImGui::TextWrapped(
+            "Studio can inspect model metadata and extract .cyxmodel graphs, "
+            "but it does not yet map imported checkpoint tensors into a "
+            "trainable graph or own freeze/unfreeze optimizer behavior.");
     }
 }
 
@@ -393,7 +326,7 @@ void ImportDialog::RenderButtons() {
     bool can_import = file_probed_ && probe_result_.valid && !is_importing_;
 
     ImGui::BeginDisabled(!can_import);
-    if (ImGui::Button(ICON_FA_FILE_IMPORT " Import", ImVec2(120, 30))) {
+    if (ImGui::Button(ICON_FA_FILE_IMPORT " Inspect", ImVec2(120, 30))) {
         StartImport();
     }
     ImGui::EndDisabled();
@@ -430,7 +363,7 @@ void ImportDialog::StartImport() {
     is_importing_ = true;
     show_result_ = false;
     import_progress_ = 0;
-    import_total_ = 4;
+    import_total_ = 2;
     imported_graph_json_.clear();
 
     // Build import options
@@ -457,26 +390,33 @@ void ImportDialog::StartImport() {
             }
         };
 
+        progress_callback(1, 2, "Inspecting model metadata...");
+
         // For .cyxmodel, also extract the graph
         if (probe_result_.format == ModelFormat::CyxModel && probe_result_.has_graph) {
+            progress_callback(2, 2, "Extracting .cyxmodel graph JSON...");
             auto graph = importer.ExtractGraph(input_path_);
             if (graph.has_value()) {
                 imported_graph_json_ = graph.value();
             }
         }
 
-        // Note: We don't actually have a model to import into here
-        // In a real implementation, this would be handled by the caller
-        // who has access to the model being built/trained
-
-        // For now, just report success based on probe
+        // This dialog intentionally does not load weights into a trainable
+        // SequentialModel. That requires a separate import-to-training
+        // contract for parameter mapping, tokenizer/preprocessor packaging,
+        // shape validation, and freeze/unfreeze optimizer ownership.
         last_result_.success = probe_result_.valid;
         last_result_.model_name = probe_result_.model_name;
         last_result_.format_version = probe_result_.format_version;
         last_result_.num_parameters = probe_result_.num_parameters;
         last_result_.num_layers = probe_result_.num_layers;
         last_result_.layer_names = probe_result_.layer_names;
-        last_result_.load_time_ms = 100;  // Placeholder
+        last_result_.warnings.clear();
+        last_result_.warnings.push_back(
+            "No weights were loaded into a trainable Studio model.");
+        last_result_.warnings.push_back(
+            "Fine-tuning/freeze controls require a future import-to-training contract.");
+        last_result_.load_time_ms = 0;
 
         is_importing_ = false;
         show_result_ = true;
@@ -487,9 +427,9 @@ void ImportDialog::StartImport() {
         }
 
         if (last_result_.success) {
-            spdlog::info("Model imported successfully from {}", std::string(input_path_));
+            spdlog::info("Model inspection completed for {}", std::string(input_path_));
         } else {
-            spdlog::error("Model import failed: {}", last_result_.error_message);
+            spdlog::error("Model inspection failed: {}", last_result_.error_message);
         }
     });
 }

@@ -798,20 +798,20 @@ MainWindow::MainWindow()
     import_dialog_->SetImportCompleteCallback(
         [this](const cyxwiz::ImportResult& result, const std::string& graph_json) {
             if (result.success) {
-                spdlog::info("Model imported successfully: {} ({} layers, {} params)",
+                spdlog::info("Model inspection completed: {} ({} layers, {} params)",
                              result.model_name, result.num_layers, result.num_parameters);
 
                 // Load graph into node editor if available
                 if (!graph_json.empty() && node_editor_) {
                     if (node_editor_->LoadGraphFromString(graph_json)) {
                         node_editor_->Show();
-                        spdlog::info("Loaded imported model graph into Node Editor");
+                        spdlog::info("Loaded inspected model graph into Node Editor");
                     } else {
-                        spdlog::warn("Failed to load imported graph into Node Editor");
+                        spdlog::warn("Failed to load inspected graph into Node Editor");
                     }
                 }
             } else {
-                spdlog::error("Model import failed: {}", result.error_message);
+                spdlog::error("Model inspection failed: {}", result.error_message);
             }
         }
     );

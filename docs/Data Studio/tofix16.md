@@ -260,3 +260,17 @@ as a small extension of the current TransformerEncoder classifier.
 - parameter mapping and shape validation,
 - memory/runtime constraints documented,
 - one minimal import smoke test before any UI claims.
+
+2026-06-22 import/fine-tuning truthfulness slice:
+
+- The selected training-path compiler already rejects imported/pretrained
+  fine-tuning sketches, including pretrained model nodes and parameters such
+  as `fine_tune`, `pretrained_model_path`, `freeze`, and related import keys.
+- The Import Model dialog now presents the current capability as model
+  inspection plus `.cyxmodel` graph extraction only. It no longer exposes
+  active transfer-learning/freeze controls or reports that weights were loaded
+  into a trainable Studio model.
+- Import callbacks/logs were renamed to inspection language so the UI does not
+  claim a model-import-to-training contract before parameter mapping,
+  tokenizer/preprocessor packaging, shape validation, and optimizer/freeze
+  ownership exist.
