@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -104,6 +105,41 @@ std::string ReadFile(const std::filesystem::path& path) {
     return ss.str();
 }
 
+bool LooksLikeLocalAbsolutePath(const std::string& value) {
+    if (value.size() >= 3 &&
+        std::isalpha(static_cast<unsigned char>(value[0])) &&
+        value[1] == ':' &&
+        (value[2] == '\\' || value[2] == '/')) {
+        return true;
+    }
+
+    return value.rfind("/home/", 0) == 0 ||
+           value.rfind("/Users/", 0) == 0 ||
+           value.rfind("/mnt/", 0) == 0;
+}
+
+void CheckNoLocalAbsolutePaths(const nlohmann::json& value, const std::string& context) {
+    if (value.is_string()) {
+        const auto text = value.get<std::string>();
+        Check(!LooksLikeLocalAbsolutePath(text),
+              context + " should not contain local absolute path '" + text + "'");
+        return;
+    }
+
+    if (value.is_array()) {
+        for (size_t i = 0; i < value.size(); ++i) {
+            CheckNoLocalAbsolutePaths(value[i], context + "[" + std::to_string(i) + "]");
+        }
+        return;
+    }
+
+    if (value.is_object()) {
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            CheckNoLocalAbsolutePaths(it.value(), context + "." + it.key());
+        }
+    }
+}
+
 void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
     const auto path = FindRepoRoot() /
         "examples" / "cyxgraph" / "NER" / "ner_bilstm_sequence_tagger.cyxgraph";
@@ -111,6 +147,7 @@ void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
 
     Check(graph.contains("nodes") && graph["nodes"].is_array(),
           "NER graph should contain saved nodes");
+    CheckNoLocalAbsolutePaths(graph, "NER graph");
 
     const std::unordered_map<int, gui::NodeType> expected_types = {
         {1, gui::NodeType::DataInput},
@@ -152,6 +189,31 @@ void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
         if (node_json.contains("parameters") && node_json["parameters"].is_object()) {
             node.parameters =
                 node_json["parameters"].get<std::map<std::string, std::string>>();
+        }
+
+        if (id == 1) {
+            Check(node.parameters["file_path"] ==
+                      "examples/cyxgraph/NER/generated/ner_sentences.csv",
+                  "NER graph DataInput should use repo-relative generated sentence CSV");
+            Check(node.parameters["raw_source_path"] ==
+                      "examples/cyxgraph/NER/sample_ner.csv",
+                  "NER graph DataInput should use repo-relative sample CSV");
+        } else if (id == 3) {
+            Check(node.parameters["vocab_file"] ==
+                      "examples/cyxgraph/NER/generated/ner_word_vocab.txt",
+                  "NER graph TokenVocabulary should use repo-relative word vocab path");
+        } else if (id == 4) {
+            Check(node.parameters["vocab_file"] ==
+                      "examples/cyxgraph/NER/generated/ner_pos_vocab.txt",
+                  "NER graph POSVocabulary should use repo-relative POS vocab path");
+        } else if (id == 5) {
+            Check(node.parameters["vocab_file"] ==
+                      "examples/cyxgraph/NER/generated/ner_tag_vocab.txt",
+                  "NER graph NERTagVocabulary should use repo-relative tag vocab path");
+        } else if (id == 18) {
+            Check(node.parameters["tag_vocab_file"] ==
+                      "examples/cyxgraph/NER/generated/ner_tag_vocab.txt",
+                  "NER graph output should use repo-relative tag vocab path");
         }
 
         std::string marker;

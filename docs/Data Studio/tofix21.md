@@ -28,6 +28,13 @@ Started example-asset portability work for item 2:
   absolute Windows paths to repository-relative example paths,
 - updated the README commands and proof-run notes to avoid machine-specific
   paths.
+- added a saved-graph regression guard in `test_pattern_template_guard` so the
+  shipped NER graph keeps first-class sequence nodes and repository-relative
+  dataset/vocabulary paths instead of regressing to local absolute paths.
+- corrected stale serialized node type ids in the shipped NER graph for the
+  data input, sequence builder, vocabulary nodes, and token padding node.
+- ignored generated NER demo outputs locally so smoke runs do not create
+  accidental untracked example artifacts.
 
 The example remains a target design until the full Studio graph launch path can
 materialize sequence batches from saved graph data.
