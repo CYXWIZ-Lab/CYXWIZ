@@ -30,6 +30,7 @@ struct TrainingMetrics {
     int total_epochs = 0;
     int current_batch = 0;
     int total_batches = 0;
+    int optimizer_step_count = 0;
     size_t train_sample_count = 0;
     size_t val_sample_count = 0;
     size_t test_sample_count = 0;
@@ -324,6 +325,20 @@ private:
     void Backward(const Tensor& predictions, const Tensor& targets);
 
     /**
+     * Accumulate current model gradients and step optimizer at the configured
+     * grad_accum_steps boundary, or when force_step is true for a final partial
+     * accumulation window.
+     */
+    bool AccumulateGradientsAndMaybeStep(
+        int epoch,
+        int batch_num,
+        int total_batches,
+        float batch_loss,
+        float current_acc,
+        bool force_step
+    );
+
+    /**
      * Apply preprocessing to batch data
      */
     void PreprocessBatch(Batch& batch);
@@ -346,6 +361,8 @@ private:
     // Cached tensors for backward pass
     Tensor last_predictions_;
     Tensor loss_gradient_;
+    std::map<std::string, Tensor> gradient_accumulator_;
+    int gradient_accumulated_batches_ = 0;
 };
 
 } // namespace cyxwiz

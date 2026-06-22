@@ -128,11 +128,9 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 grad_accum = grad_accum_buffer;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Future field: current TrainingExecutor does not yet accumulate gradients.\n"
-                                  "Effective batch size is still the configured batch_size.");
+                ImGui::SetTooltip("Runtime-supported optimizer cadence.\n"
+                                  "Gradients are averaged over N backward passes before one optimizer step.");
             }
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                               "  Partial: not consumed by the current training loop.");
 
             ImGui::Spacing();
 

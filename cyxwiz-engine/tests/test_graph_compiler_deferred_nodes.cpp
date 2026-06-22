@@ -358,6 +358,7 @@ int main() {
     sequence_loader.parameters["log_interval"] = "4";
     sequence_loader.parameters["validation_freq"] = "2";
     sequence_loader.parameters["seed"] = "1234";
+    sequence_loader.parameters["grad_accum_steps"] = "5";
     sequence_loader.parameters["save_best_checkpoint"] = "false";
     sequence_loader.parameters["early_stopping_patience"] = "7";
     sequence_loader.parameters["checkpoint_dir"] = "runs/compiler_contract";
@@ -397,6 +398,8 @@ int main() {
           "DataLoader should preserve validation_freq");
     Check(config.dataloader_seed == 1234,
           "DataLoader should preserve seed");
+    Check(config.grad_accum_steps == 5,
+          "DataLoader should preserve grad_accum_steps");
     Check(!config.save_best_checkpoint,
           "DataLoader should preserve save_best_checkpoint policy");
     Check(config.early_stopping_patience == 7,

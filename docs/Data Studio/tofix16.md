@@ -135,10 +135,20 @@ same semantics.
 - Compile summaries and DataLoader property help now describe `seed` as an
   active DataLoader runtime field.
 
+2026-06-22 gradient accumulation slice:
+
+- `grad_accum_steps` is now compiled into `TrainingConfiguration`.
+- `TrainingExecutor` accumulates model gradients across backward passes, averages
+  them at the configured accumulation boundary, and applies one optimizer step.
+- Final partial accumulation windows are stepped at epoch end so no completed
+  batch is silently dropped.
+- Runtime metrics now report `optimizer_step_count`, and focused executor
+  coverage proves `grad_accum_steps=2` changes optimizer-step cadence.
+- DataLoader properties, the rich DataLoader dialog, runtime logs, and compile
+  summaries now describe `grad_accum_steps` as active.
+
 Still deferred:
 
-- `grad_accum_steps`: requires optimizer-step/loss-scaling/checkpoint-boundary
-  design before activation.
 - `pin_memory`: remains tied to Priority 2 because current batchers do not own
   real pinned host-memory transfer behavior.
 

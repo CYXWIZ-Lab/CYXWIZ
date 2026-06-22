@@ -233,6 +233,7 @@ void TrainingExecutor::Train(
         m.val_loss_history.clear();
         m.val_accuracy_history.clear();
         m.has_validation_metrics = false;
+        m.optimizer_step_count = 0;
         m.has_test_metrics = false;
         m.train_token_accuracy = 0.0f;
         m.val_token_accuracy = 0.0f;
@@ -452,6 +453,8 @@ void TrainingExecutor::Train(
     const auto last_run = CrashRunRecorder::LoadLastRun();
     TrainingTraceCollector::Instance().StartRun(
         last_run ? last_run->run_id : "training-run");
+    gradient_accumulator_.clear();
+    gradient_accumulated_batches_ = 0;
 
     std::unique_ptr<CheckpointManager> checkpoint_manager;
     float best_val_loss = std::numeric_limits<float>::infinity();
@@ -460,8 +463,9 @@ void TrainingExecutor::Train(
     const bool save_best_checkpoint = config_.save_best_checkpoint;
     const int validation_freq = std::max(1, config_.validation_freq);
     const int log_interval = std::max(0, config_.log_interval);
-    spdlog::info("TrainingExecutor: DataLoader runtime policy validation_freq={} epoch(s), log_interval={} batch(es), seed={}",
-                 validation_freq, log_interval, config_.dataloader_seed);
+    spdlog::info("TrainingExecutor: DataLoader runtime policy validation_freq={} epoch(s), log_interval={} batch(es), seed={}, grad_accum_steps={}",
+                 validation_freq, log_interval, config_.dataloader_seed,
+                 std::max(1, config_.grad_accum_steps));
 
     std::filesystem::path checkpoint_root = config_.checkpoint_dir.empty()
         ? (std::filesystem::current_path() / ".cyxwiz" / "checkpoints")
@@ -926,18 +930,13 @@ void TrainingExecutor::RunTrainingEpoch(
             TrainingTraceStage::Backward, epoch, batch_num,
             static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
 
-        // Update weights using optimizer
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::UpdateParameters, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss);
-        model_->UpdateParameters(optimizer_.get());
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::UpdateParameters, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss);
-
         // Update metrics
         float current_loss = epoch_loss / batch_num;
         float current_acc = static_cast<float>(correct) / total;
+
+        AccumulateGradientsAndMaybeStep(
+            epoch, batch_num, static_cast<int>(total_batches),
+            batch_loss, current_acc, batcher.IsEpochComplete());
 
         UpdateMetrics([batch_num, current_loss, current_acc](TrainingMetrics& m) {
             m.current_batch = batch_num;
@@ -1130,6 +1129,87 @@ void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets
 
     // Backward through model
     model_->Backward(grad);
+}
+
+bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
+    int epoch,
+    int batch_num,
+    int total_batches,
+    float batch_loss,
+    float current_acc,
+    bool force_step) {
+    if (!model_ || !optimizer_) {
+        return false;
+    }
+
+    const auto grads = model_->GetGradients();
+    if (grads.empty()) {
+        return false;
+    }
+
+    for (const auto& [name, grad] : grads) {
+        if (grad.GetDataType() != DataType::Float32) {
+            throw std::runtime_error(
+                "TrainingExecutor: gradient accumulation requires Float32 gradients for '" +
+                name + "'");
+        }
+
+        auto found = gradient_accumulator_.find(name);
+        if (found == gradient_accumulator_.end()) {
+            gradient_accumulator_[name] = grad.Clone();
+            continue;
+        }
+
+        Tensor& accumulated = found->second;
+        if (accumulated.Shape() != grad.Shape()) {
+            throw std::runtime_error(
+                "TrainingExecutor: gradient accumulation shape mismatch for '" +
+                name + "'");
+        }
+
+        float* dst = accumulated.Data<float>();
+        const float* src = grad.Data<float>();
+        for (size_t i = 0; i < accumulated.NumElements(); ++i) {
+            dst[i] += src[i];
+        }
+    }
+
+    ++gradient_accumulated_batches_;
+    const int grad_accum_steps = std::max(1, config_.grad_accum_steps);
+    if (!force_step && gradient_accumulated_batches_ < grad_accum_steps) {
+        return false;
+    }
+
+    std::map<std::string, Tensor> averaged_grads;
+    const float scale = 1.0f / static_cast<float>(gradient_accumulated_batches_);
+    for (const auto& [name, accumulated] : gradient_accumulator_) {
+        Tensor averaged = accumulated.Clone();
+        float* values = averaged.Data<float>();
+        for (size_t i = 0; i < averaged.NumElements(); ++i) {
+            values[i] *= scale;
+        }
+        averaged_grads[name] = std::move(averaged);
+    }
+
+    CrashRunRecorder::Instance().MarkStage(
+        TrainingTraceStage::UpdateParameters, epoch, batch_num,
+        total_batches, batch_loss, current_acc);
+
+    auto params = model_->GetParameters();
+    optimizer_->Step(params, averaged_grads);
+    model_->SetParameters(params);
+
+    TrainingTraceCollector::Instance().RecordStage(
+        TrainingTraceStage::UpdateParameters, epoch, batch_num,
+        total_batches, batch_loss, current_acc);
+
+    UpdateMetrics([](TrainingMetrics& m) {
+        ++m.optimizer_step_count;
+    });
+
+    gradient_accumulator_.clear();
+    gradient_accumulated_batches_ = 0;
+    return true;
 }
 
 void TrainingExecutor::Stop() {
@@ -1349,19 +1429,15 @@ void TrainingExecutor::RunTrainingEpochSequence(
             TrainingTraceStage::Backward, epoch, batch_num,
             static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
 
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::UpdateParameters, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss);
-        model_->UpdateParameters(optimizer_.get());
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::UpdateParameters, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss);
-
         const float current_loss = epoch_loss / batch_num;
         const float current_acc =
             static_cast<float>(aggregate_metrics.token_accuracy);
         const float current_f1 =
             static_cast<float>(aggregate_metrics.entity_f1);
+
+        AccumulateGradientsAndMaybeStep(
+            epoch, batch_num, static_cast<int>(total_batches),
+            batch_loss, current_acc, batcher.IsEpochComplete());
 
         UpdateMetrics([batch_num,
                        current_loss,
@@ -1667,18 +1743,13 @@ void TrainingExecutor::RunTrainingEpochArrow(
             TrainingTraceStage::Backward, epoch, batch_num,
             static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
 
-        // Update weights using optimizer
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::UpdateParameters, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss);
-        model_->UpdateParameters(optimizer_.get());
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::UpdateParameters, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss);
-
         // Update metrics
         float current_loss = epoch_loss / batch_num;
         float current_acc = static_cast<float>(correct) / total;
+
+        AccumulateGradientsAndMaybeStep(
+            epoch, batch_num, static_cast<int>(total_batches),
+            batch_loss, current_acc, batcher.IsEpochComplete());
 
         UpdateMetrics([batch_num, current_loss, current_acc](TrainingMetrics& m) {
             m.current_batch = batch_num;

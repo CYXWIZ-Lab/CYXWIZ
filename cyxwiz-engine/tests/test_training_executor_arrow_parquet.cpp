@@ -645,7 +645,8 @@ void TestArrowDataLoaderSeedDeterminism(
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  const std::string& label,
                  int expected_epochs = 1,
-                 int expected_validation_points = 1) {
+                 int expected_validation_points = 1,
+                 int expected_optimizer_steps = -1) {
     int saw_epochs = 0;
     bool completed = false;
     cyxwiz::TrainingMetrics final_metrics;
@@ -680,6 +681,11 @@ void RunExecutor(cyxwiz::TrainingExecutor& executor,
     Check(final_metrics.current_epoch == expected_epochs, label + " should finish expected epoch");
     Check(final_metrics.total_epochs == expected_epochs, label + " should keep total epochs");
     Check(final_metrics.total_batches == 2, label + " should train two batches");
+    const int expected_steps = expected_optimizer_steps >= 0
+        ? expected_optimizer_steps
+        : expected_epochs * 2;
+    Check(final_metrics.optimizer_step_count == expected_steps,
+          label + " should report expected optimizer step count");
     Check(final_metrics.loss_history.size() == static_cast<size_t>(expected_epochs),
           label + " should store one train loss history entry per epoch");
     Check(final_metrics.val_loss_history.size() == static_cast<size_t>(expected_validation_points),
@@ -756,6 +762,19 @@ int main() {
                     "Arrow scheduled validation TrainingExecutor",
                     3,
                     2);
+    }
+
+    {
+        auto grad_accum_config = config;
+        grad_accum_config.epochs = 3;
+        grad_accum_config.grad_accum_steps = 2;
+        cyxwiz::TrainingExecutor grad_accum_executor(
+            grad_accum_config, dataset, "label");
+        RunExecutor(grad_accum_executor,
+                    "Arrow gradient accumulation TrainingExecutor",
+                    3,
+                    3,
+                    3);
     }
 
     const fs::path parquet_path = work_dir / "training_executor.parquet";

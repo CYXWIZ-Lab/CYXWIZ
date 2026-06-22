@@ -3684,6 +3684,8 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
             << " epochs (final epoch always validates)\n";
         out << "                 seed=" << config.dataloader_seed
             << " (DataLoader split/shuffle order)\n";
+        out << "                 grad_accum_steps=" << config.grad_accum_steps
+            << " (optimizer step every N backward passes)\n";
 
         out << "\n";
         out << "Loss:            " << config.GetLossName() << "\n";
