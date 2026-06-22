@@ -362,6 +362,69 @@ void CheckGraphFanInArrayFireResidency() {
                                    "Concatenate");
 }
 
+void CheckMergeBackwardArrayFireResidency(gui::NodeType merge_type,
+                                          const std::vector<float>& grad_values,
+                                          const std::vector<float>& expected_grad,
+                                          const std::string& name) {
+    cyxwiz::BuiltExecutableModel built =
+        cyxwiz::BuildExecutableFromConfig(MergeConfig(merge_type));
+    Check(built.ok(), name + " ArrayFire backward graph executable should build");
+    auto* graph =
+        dynamic_cast<cyxwiz::GraphExecutableModel*>(built.model.get());
+    Check(graph != nullptr,
+          name + " ArrayFire backward builder should return GraphExecutableModel");
+
+    cyxwiz::Tensor host_input = MakeTensor({2.0f, 3.0f, 4.0f});
+    cyxwiz::Tensor device_input =
+        cyxwiz::Tensor::FromArrayRowMajor2D(host_input.GetArrayRowMajor2D());
+    cyxwiz::Tensor host_grad = MakeTensor(grad_values);
+    cyxwiz::Tensor device_grad =
+        cyxwiz::Tensor::FromArrayRowMajor2D(host_grad.GetArrayRowMajor2D());
+
+    (void)graph->Forward(device_input);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor backward = graph->Backward(device_grad);
+
+    Check(backward.Shape() == std::vector<size_t>({1, expected_grad.size()}),
+          name + " ArrayFire backward output shape should match input shape");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes,
+          name + " ArrayFire backward should not materialize host output");
+
+    af::array backward_device = backward.GetArrayRowMajor2D();
+    Check(backward_device.dims(0) == 1,
+          name + " ArrayFire backward output should preserve device rows");
+    Check(backward_device.dims(1) == static_cast<dim_t>(expected_grad.size()),
+          name + " ArrayFire backward output should preserve device columns");
+    Check(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes,
+          name + " ArrayFire backward device access should not materialize host data");
+
+    for (size_t col = 0; col < expected_grad.size(); ++col) {
+        CheckNear(backward.At(0, col), expected_grad[col], 1e-4f,
+                  name + " ArrayFire backward");
+    }
+}
+
+void CheckGraphFanInBackwardArrayFireResidency() {
+    CheckMergeBackwardArrayFireResidency(gui::NodeType::Add,
+                                         {1.0f, 1.0f, 1.0f},
+                                         {2.0f, 2.0f, 2.0f},
+                                         "Add");
+    CheckMergeBackwardArrayFireResidency(gui::NodeType::Multiply,
+                                         {1.0f, 1.0f, 1.0f},
+                                         {4.0f, 6.0f, 8.0f},
+                                         "Multiply");
+    CheckMergeBackwardArrayFireResidency(gui::NodeType::Average,
+                                         {1.0f, 1.0f, 1.0f},
+                                         {1.0f, 1.0f, 1.0f},
+                                         "Average");
+    CheckMergeBackwardArrayFireResidency(gui::NodeType::Concatenate,
+                                         {1.0f, 1.0f, 1.0f,
+                                          1.0f, 1.0f, 1.0f},
+                                         {2.0f, 2.0f, 2.0f},
+                                         "Concatenate");
+}
+
 void CheckMaskOpArrayFireResidency(gui::NodeType mask_type,
                                    const std::vector<float>& input_values,
                                    const std::vector<float>& expected_output,
@@ -658,6 +721,7 @@ int main() {
                       "TensorLogicalMask");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     CheckGraphFanInArrayFireResidency();
+    CheckGraphFanInBackwardArrayFireResidency();
     CheckGraphMaskArrayFireResidency();
 #endif
     CheckDotOp();

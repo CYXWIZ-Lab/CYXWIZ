@@ -500,3 +500,6 @@ accelerated or uniformly CPU-primary.
 - Advanced linalg, broadcasting gradients, and mixed precision should be
   handled only after the simpler TensorDot/elementwise/reduction paths
   are proven.
+
+**Status 2026-06-22:** graph fan-in backward residency smoke coverage added.
+`test_graph_executable_model` now runs ArrayFire-backed backward checks for shared-input `Add`, `Multiply`, `Average`, and `Concatenate` graphs. The smoke uses device-current row-major 2D inputs and gradient outputs, then verifies `GraphExecutableModel::Backward` returns device-resident gradients without host materialization before value checks. This covers the shared-input accumulation path for the graph fan-in primitives already upgraded under this file. `TensorDot` 2D backward remains intentionally CPU-backed per the documented benchmark-gated policy.
