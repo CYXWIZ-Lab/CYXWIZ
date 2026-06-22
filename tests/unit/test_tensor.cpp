@@ -184,6 +184,11 @@ TEST_CASE("Tensor reshape preserves native ArrayFire device residency", "[tensor
     REQUIRE(reshaped.Shape() == std::vector<size_t>{2, 3});
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
 
+    af::array device = reshaped.GetArray();
+    REQUIRE(device.dims(0) == 2);
+    REQUIRE(device.dims(1) == 3);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
     const float* out = reshaped.Data<float>();
     REQUIRE(out[0] == 1.0f);
     REQUIRE(out[1] == 2.0f);

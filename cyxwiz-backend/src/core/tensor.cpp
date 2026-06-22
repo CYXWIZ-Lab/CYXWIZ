@@ -732,12 +732,18 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (device_current_ && af_array_ &&
+        new_shape.size() <= 4 &&
         device_layout_ == TensorDeviceLayout::ArrayFireNative) {
+        af::dim4 dims(1, 1, 1, 1);
+        for (size_t i = 0; i < new_shape.size(); i++) {
+            dims[static_cast<unsigned int>(i)] = static_cast<dim_t>(new_shape[i]);
+        }
+
         Tensor result;
         result.shape_ = new_shape;
         result.dtype_ = dtype_;
         result.device_ = device_;
-        result.af_array_ = std::make_unique<af::array>(*af_array_);
+        result.af_array_ = std::make_unique<af::array>(af::moddims(*af_array_, dims));
         result.host_current_ = false;
         result.device_current_ = true;
         result.device_layout_ = TensorDeviceLayout::ArrayFireNative;
