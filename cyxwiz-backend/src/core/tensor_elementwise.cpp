@@ -5,6 +5,11 @@
 #include <cstdint>
 #include <stdexcept>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#include <spdlog/spdlog.h>
+#endif
+
 namespace cyxwiz {
 
 namespace {
@@ -122,21 +127,63 @@ Tensor DispatchTensorPowExponent(const Tensor& base, const Tensor& exponent, Dat
     throw std::runtime_error("Tensor::Pow: unsupported exponent data type");
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool IsArrayFireRealElementwiseSupported(DataType dtype) {
+    return dtype == DataType::Float32 || dtype == DataType::Float64;
+}
+
+af::array ArrayFireSign(const af::array& values) {
+    const af::dim4 dims = values.dims();
+    const af::dtype dtype = values.type();
+    const af::array one = af::constant(1, dims, dtype);
+    const af::array zero = af::constant(0, dims, dtype);
+    const af::array negative_one = af::constant(-1, dims, dtype);
+    return af::select(values > 0, one, af::select(values < 0, negative_one, zero));
+}
+#endif
+
 } // namespace
 
 Tensor Tensor::operator+(float scalar) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(GetArray() + scalar);
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::operator+(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyPreservingType(*this, [scalar](auto value) {
         return value + scalar;
     });
 }
 
 Tensor Tensor::operator-(float scalar) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(GetArray() - scalar);
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::operator-(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyPreservingType(*this, [scalar](auto value) {
         return value - scalar;
     });
 }
 
 Tensor Tensor::operator*(float scalar) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(GetArray() * scalar);
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::operator*(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyPreservingType(*this, [scalar](auto value) {
         return value * scalar;
     });
@@ -146,12 +193,30 @@ Tensor Tensor::operator/(float scalar) const {
     if (scalar == 0.0f) {
         throw std::runtime_error("Tensor::operator/: division by zero");
     }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(GetArray() / scalar);
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::operator/(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyPreservingType(*this, [scalar](auto value) {
         return value / scalar;
     });
 }
 
 Tensor Tensor::Pow(float exponent) const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(af::pow(GetArray(), exponent));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Pow(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyRealMath(*this, UnaryRealOp::Pow, exponent);
 }
 
@@ -165,6 +230,17 @@ Tensor Tensor::Pow(const Tensor& exponent) const {
             ? DataType::Float64
             : DataType::Float32;
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (dtype_ == exponent.GetDataType() &&
+        IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(af::pow(GetArray(), exponent.GetArray()));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Pow(tensor): ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
+
     switch (dtype_) {
         case DataType::Float32: return DispatchTensorPowExponent<float>(*this, exponent, result_dtype);
         case DataType::Float64: return DispatchTensorPowExponent<double>(*this, exponent, result_dtype);
@@ -176,24 +252,69 @@ Tensor Tensor::Pow(const Tensor& exponent) const {
 }
 
 Tensor Tensor::Sqrt() const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(af::sqrt(GetArray()));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Sqrt: ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyRealMath(*this, UnaryRealOp::Sqrt);
 }
 
 Tensor Tensor::Exp() const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(af::exp(GetArray()));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Exp: ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyRealMath(*this, UnaryRealOp::Exp);
 }
 
 Tensor Tensor::Log() const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(af::log(GetArray()));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Log: ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyRealMath(*this, UnaryRealOp::Log);
 }
 
 Tensor Tensor::Abs() const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(af::abs(GetArray()));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Abs: ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyPreservingType(*this, [](auto value) {
         return value < 0 ? -value : value;
     });
 }
 
 Tensor Tensor::Sign() const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(ArrayFireSign(GetArray()));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Sign: ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyPreservingType(*this, [](auto value) {
         using T = decltype(value);
         if (value > static_cast<T>(0)) {
@@ -210,6 +331,16 @@ Tensor Tensor::Clip(float min_val, float max_val) const {
     if (min_val > max_val) {
         throw std::runtime_error("Tensor::Clip: min_val must be <= max_val");
     }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            const af::array values = GetArray();
+            return Tensor((af::min)((af::max)(values, min_val), max_val));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Clip: ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyPreservingType(*this, [min_val, max_val](auto value) {
         using T = decltype(value);
         const T lo = static_cast<T>(min_val);
@@ -219,6 +350,15 @@ Tensor Tensor::Clip(float min_val, float max_val) const {
 }
 
 Tensor Tensor::operator-() const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsArrayFireRealElementwiseSupported(dtype_)) {
+        try {
+            return Tensor(-GetArray());
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::operator-(): ArrayFire path failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
     return ApplyPreservingType(*this, [](auto value) {
         return -value;
     });

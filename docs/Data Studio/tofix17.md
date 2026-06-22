@@ -204,6 +204,13 @@ the row-major ArrayFire bridge and preserves device-resident output.
 Integer dtypes, ArrayFire failures, and arbitrary-rank
 `Transpose(dim0, dim1)` continue through the existing CPU path.
 
+**Status 2026-06-22:** first unary/scalar elementwise primitive slice
+complete. Float32 and Float64 scalar arithmetic, scalar `Pow`, matching
+dtype tensor `Pow`, `Sqrt`, `Exp`, `Log`, `Abs`, `Sign`, `Clip`, and
+unary negate now use ArrayFire where available and preserve
+device-resident outputs. Integer paths, mixed-dtype tensor `Pow`, and
+ArrayFire failures continue through the existing CPU implementation.
+
 ## Priority 4 - TensorDot GPU Slice
 
 **Goal:** make the newly exposed `TensorDot` contract GPU-first without

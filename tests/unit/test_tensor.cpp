@@ -698,6 +698,82 @@ TEST_CASE("Tensor elementwise abs sign clip and negate work", "[tensor]") {
     REQUIRE_THROWS_AS(t.Clip(2.0f, 1.0f), std::runtime_error);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor unary real math keeps Float32 ArrayFire output device-resident", "[tensor]") {
+    float data[] = {1.0f, 4.0f, 9.0f};
+    cyxwiz::Tensor input(af::array(3, data));
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor sqrt = input.Sqrt();
+    cyxwiz::Tensor exp = input.Exp();
+    cyxwiz::Tensor log = input.Log();
+    cyxwiz::Tensor pow = input.Pow(2.0f);
+
+    REQUIRE(sqrt.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(sqrt.Shape() == std::vector<size_t>{3});
+    REQUIRE(exp.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(log.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(pow.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(sqrt.Data<float>()[0] == Catch::Approx(1.0f));
+    REQUIRE(sqrt.Data<float>()[1] == Catch::Approx(2.0f));
+    REQUIRE(sqrt.Data<float>()[2] == Catch::Approx(3.0f));
+    REQUIRE(exp.Data<float>()[0] == Catch::Approx(std::exp(1.0f)));
+    REQUIRE(log.Data<float>()[1] == Catch::Approx(std::log(4.0f)));
+    REQUIRE(pow.Data<float>()[2] == Catch::Approx(81.0f));
+}
+
+TEST_CASE("Tensor preserving unary and scalar ops keep Float64 ArrayFire output device-resident", "[tensor]") {
+    double data[] = {-2.0, 0.0, 3.0};
+    cyxwiz::Tensor input(af::array(3, data));
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor abs = input.Abs();
+    cyxwiz::Tensor sign = input.Sign();
+    cyxwiz::Tensor clipped = input.Clip(-1.0f, 2.0f);
+    cyxwiz::Tensor negated = -input;
+    cyxwiz::Tensor shifted = input + 2.0f;
+    cyxwiz::Tensor scaled = input * 3.0f;
+
+    REQUIRE(abs.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(sign.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(clipped.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(negated.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(shifted.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(scaled.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(abs.Data<double>()[0] == 2.0);
+    REQUIRE(sign.Data<double>()[0] == -1.0);
+    REQUIRE(sign.Data<double>()[1] == 0.0);
+    REQUIRE(sign.Data<double>()[2] == 1.0);
+    REQUIRE(clipped.Data<double>()[0] == -1.0);
+    REQUIRE(clipped.Data<double>()[2] == 2.0);
+    REQUIRE(negated.Data<double>()[0] == 2.0);
+    REQUIRE(shifted.Data<double>()[0] == 0.0);
+    REQUIRE(scaled.Data<double>()[2] == 9.0);
+}
+
+TEST_CASE("Tensor tensor pow keeps matching Float64 ArrayFire output device-resident", "[tensor]") {
+    double base_data[] = {2.0, 3.0, 4.0};
+    double exponent_data[] = {3.0, 2.0, 0.5};
+    cyxwiz::Tensor base(af::array(3, base_data));
+    cyxwiz::Tensor exponent(af::array(3, exponent_data));
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor result = base.Pow(exponent);
+
+    REQUIRE(result.GetDataType() == cyxwiz::DataType::Float64);
+    REQUIRE(result.Shape() == std::vector<size_t>{3});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(result.Data<double>()[0] == Catch::Approx(8.0));
+    REQUIRE(result.Data<double>()[1] == Catch::Approx(9.0));
+    REQUIRE(result.Data<double>()[2] == Catch::Approx(2.0));
+}
+#endif
+
 TEST_CASE("Tensor comparison operators return UInt8 masks", "[tensor]") {
     int32_t left_data[] = {1, 2, 3, 4};
     int32_t right_data[] = {1, 3, 2, 4};
