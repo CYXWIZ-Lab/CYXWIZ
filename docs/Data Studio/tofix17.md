@@ -305,6 +305,15 @@ ArrayFire using the row-major tensor bridge, including stepped slices.
 Integer dtypes, higher-rank tensors, CPU-only builds, and ArrayFire
 failures continue through the existing CPU row-major slice path.
 
+**Status 2026-06-22:** split/chunk residency audit complete.
+`Tensor::Split` and `Tensor::Chunk` already delegate to `Tensor::Slice`,
+so 2D Float32/Float64 split and chunk outputs reuse the existing
+ArrayFire slice path without adding duplicate split-specific kernels.
+Focused coverage now verifies that supported split/chunk outputs remain
+device-resident until host data is explicitly requested. Integer dtypes,
+empty splits/chunks, higher-rank tensors, CPU-only builds, and ArrayFire
+failures continue through the existing slice/fallback behavior.
+
 ## Priority 4 - TensorDot GPU Slice
 
 **Goal:** make the newly exposed `TensorDot` contract GPU-first without

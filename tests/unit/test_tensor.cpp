@@ -1766,6 +1766,47 @@ TEST_CASE("Tensor split and chunk produce row-major slices", "[tensor]") {
     REQUIRE_THROWS_AS(t.Chunk(0, 0), std::runtime_error);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor split and chunk reuse ArrayFire slice residency", "[tensor]") {
+    float data[] = {
+        0.0f, 1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f, 7.0f,
+        8.0f, 9.0f, 10.0f, 11.0f
+    };
+    cyxwiz::Tensor input({3, 4}, data, cyxwiz::DataType::Float32);
+    input.GetArrayRowMajor2D();
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    std::vector<cyxwiz::Tensor> split_size = input.Split(2, 1);
+    std::vector<cyxwiz::Tensor> chunks = input.Chunk(2, 0);
+
+    REQUIRE(split_size.size() == 2);
+    REQUIRE(split_size[0].Shape() == std::vector<size_t>{3, 2});
+    REQUIRE(split_size[1].Shape() == std::vector<size_t>{3, 2});
+    REQUIRE(chunks.size() == 2);
+    REQUIRE(chunks[0].Shape() == std::vector<size_t>{2, 4});
+    REQUIRE(chunks[1].Shape() == std::vector<size_t>{1, 4});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array split_device = split_size[0].GetArrayRowMajor2D();
+    af::array chunk_device = chunks[1].GetArrayRowMajor2D();
+    REQUIRE(split_device.dims(0) == 3);
+    REQUIRE(split_device.dims(1) == 2);
+    REQUIRE(chunk_device.dims(0) == 1);
+    REQUIRE(chunk_device.dims(1) == 4);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    REQUIRE(split_size[0].Data<float>()[0] == 0.0f);
+    REQUIRE(split_size[0].Data<float>()[1] == 1.0f);
+    REQUIRE(split_size[0].Data<float>()[5] == 9.0f);
+    REQUIRE(split_size[1].Data<float>()[0] == 2.0f);
+    REQUIRE(split_size[1].Data<float>()[5] == 11.0f);
+    REQUIRE(chunks[0].Data<float>()[7] == 7.0f);
+    REQUIRE(chunks[1].Data<float>()[0] == 8.0f);
+    REQUIRE(chunks[1].Data<float>()[3] == 11.0f);
+}
+#endif
+
 TEST_CASE("Tensor split and chunk handle empty dimensions", "[tensor]") {
     cyxwiz::Tensor t({0, 3}, cyxwiz::DataType::Float32);
 
