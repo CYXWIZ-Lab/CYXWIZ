@@ -346,11 +346,30 @@ Focused coverage was added in `tests/unit/test_tensor.cpp`:
   keep output device-resident until host data is explicitly requested.
 
 Remaining TensorDot work:
-- add a benchmark with a realistic row-wise dot size,
+- run and record benchmark numbers from the new realistic row-wise dot
+  benchmark on representative CPU and ArrayFire backends,
 - add ArrayFire-specific graph/runtime smoke coverage when the test
   environment has a stable device backend,
 - decide whether graph backward should gain an ArrayFire-specific
   gradient path or stay on the current graph-executable gradient loops.
+
+**Status 2026-06-22:** first TensorDot benchmark harness slice
+complete. `tests/benchmarks/test_tensor_dot_benchmark.cpp` adds a
+standalone row-wise TensorDot benchmark executable for a realistic
+`[1024, 512]` Float32 workload. The target is intentionally not
+registered as a unit test because timing is environment-dependent; it
+prints backend, shape, iteration count, total time, average time, and a
+checksum. This provides a repeatable local measurement hook without
+adding Google Benchmark or a new benchmark framework.
+
+Local debug-build smoke result on 2026-06-22:
+- backend: ArrayFire row-major 2D
+- shape: `[1024, 512]`
+- iterations: `20`
+- observed average range across smoke runs: `0.173 ms` to `0.205 ms`
+
+This is a local sanity measurement only, not a UI or documentation
+performance promise.
 
 **Completion criteria:**
 - direct tensor tests for 1D and 2D dot,
