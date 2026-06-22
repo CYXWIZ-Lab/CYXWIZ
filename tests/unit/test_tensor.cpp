@@ -78,6 +78,36 @@ TEST_CASE("Tensor transpose swaps 2D row-major axes", "[tensor]") {
     REQUIRE(out[5] == 6);
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor transpose keeps Float32 ArrayFire output device-resident", "[tensor]") {
+    float data[] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f
+    };
+    cyxwiz::Tensor input({2, 3}, data, cyxwiz::DataType::Float32);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor transposed = input.Transpose();
+
+    REQUIRE(transposed.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(transposed.Shape() == std::vector<size_t>{3, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = transposed.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 3);
+    REQUIRE(device.dims(1) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const float* out = transposed.Data<float>();
+    REQUIRE(out[0] == 1.0f);
+    REQUIRE(out[1] == 4.0f);
+    REQUIRE(out[2] == 2.0f);
+    REQUIRE(out[3] == 5.0f);
+    REQUIRE(out[4] == 3.0f);
+    REQUIRE(out[5] == 6.0f);
+}
+#endif
+
 TEST_CASE("Tensor view aliases reshape semantics", "[tensor]") {
     auto t = cyxwiz::Tensor::RangeN({2, 3}, cyxwiz::DataType::Float32);
 

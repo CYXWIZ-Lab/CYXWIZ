@@ -198,6 +198,12 @@ Row-major 2D/3D device layouts and shapes with rank above ArrayFire's
 four-dimensional limit still fall back through the existing host path
 until reshape semantics for those layout bridges are audited.
 
+**Status 2026-06-22:** first 2D transpose residency slice complete.
+`Tensor::Transpose()` now routes Float32 and Float64 2D tensors through
+the row-major ArrayFire bridge and preserves device-resident output.
+Integer dtypes, ArrayFire failures, and arbitrary-rank
+`Transpose(dim0, dim1)` continue through the existing CPU path.
+
 ## Priority 4 - TensorDot GPU Slice
 
 **Goal:** make the newly exposed `TensorDot` contract GPU-first without

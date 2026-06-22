@@ -759,6 +759,16 @@ Tensor Tensor::Transpose() const {
         throw std::runtime_error("Tensor::Transpose currently only supports 2D tensors");
     }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (dtype_ == DataType::Float32 || dtype_ == DataType::Float64) {
+        try {
+            return Tensor::FromArrayRowMajor2D(af::transpose(GetArrayRowMajor2D()));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Transpose: ArrayFire transpose failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
+
     const size_t rows = shape_[0];
     const size_t cols = shape_[1];
     Tensor result({cols, rows}, dtype_);
