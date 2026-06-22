@@ -263,15 +263,19 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
 
             std::string& pin_memory = node.parameters["pin_memory"];
             if (pin_memory.empty()) pin_memory = "false";
-            bool pin_memory_val = (pin_memory == "true");
-            if (ImGui::Checkbox("Pin Memory (CUDA)", &pin_memory_val)) {
-                pin_memory = pin_memory_val ? "true" : "false";
-            }
+            const bool pin_memory_val = (pin_memory == "true");
+            ImGui::Text("Pin Memory:");
+            ImGui::SameLine(140.0f);
+            ImGui::TextDisabled(pin_memory_val ? "unsupported (saved true)" : "unsupported");
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Reserved for future pinned host-memory transfers. Current batchers ignore this field.");
+                ImGui::SetTooltip("Serialized for graph compatibility only. Current batchers do not own pinned host-memory transfers.");
             }
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                               "  Future: current batchers ignore this field.");
+            if (pin_memory_val) {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                                   "  This loaded graph requests pin_memory=true, but runtime ignores it.");
+            } else {
+                ImGui::TextDisabled("  Reserved until a real pinned host-memory transfer backend exists.");
+            }
 
             ImGui::Spacing();
 

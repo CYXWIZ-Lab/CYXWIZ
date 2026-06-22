@@ -147,15 +147,29 @@ same semantics.
 - DataLoader properties, the rich DataLoader dialog, runtime logs, and compile
   summaries now describe `grad_accum_steps` as active.
 
+2026-06-22 pin-memory decision slice:
+
+- `pin_memory` remains serialized for graph compatibility, but is not presented
+  as an active runtime feature because there is no current pinned host-memory
+  allocator or owned async CPU-to-device transfer boundary in the training
+  batchers.
+- Inline DataLoader properties and the rich DataLoader dialog now show
+  `pin_memory` as unsupported/read-only. Loaded graphs with
+  `pin_memory=true` keep the saved value but receive an explicit unsupported
+  warning instead of a normal toggle.
+- The compiler warning now says `pin_memory=true` is unsupported by current
+  batchers and will be ignored.
+
 Still deferred:
 
-- `pin_memory`: remains tied to Priority 2 because current batchers do not own
-  real pinned host-memory transfer behavior.
+- Real pinned host-memory transfers remain a separate Priority 2 backend
+  project; implementing them requires an owned pinned allocator, explicit
+  CPU-to-device transfer points, and before/after profiling.
 
 ## Priority 2 - Pinned Host Memory
 
-`pin_memory` is serialized for future compatibility but current training
-batchers ignore it.
+`pin_memory` is serialized for graph compatibility but current training
+batchers ignore it and the UI marks it unsupported.
 
 **Goal:** decide whether pinned host-memory transfers are useful in the
 current ArrayFire/Tensor flow and implement only if the backend can make

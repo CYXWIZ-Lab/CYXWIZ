@@ -612,6 +612,7 @@ private:
     int validation_freq_ = 1;
     int seed_ = 42;
     int grad_accum_steps_ = 1;
+    bool pin_memory_requested_ = false;
     bool save_best_checkpoint_ = true;
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";

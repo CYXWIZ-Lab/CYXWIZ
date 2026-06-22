@@ -2385,7 +2385,7 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.grad_accum_steps = std::max(1, std::stoi(loader_node->parameters.at("grad_accum_steps")));
             if (loader_node->parameters.count("pin_memory") &&
                 loader_node->parameters.at("pin_memory") == "true") {
-                spdlog::warn("GraphCompiler: DataLoader pin_memory=true is currently ignored");
+                spdlog::warn("GraphCompiler: DataLoader pin_memory=true is unsupported by current batchers and will be ignored");
             }
             if (loader_node->parameters.count("save_best_checkpoint"))
                 config.save_best_checkpoint = (loader_node->parameters.at("save_best_checkpoint") == "true");

@@ -845,6 +845,7 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         if (seed_ < 0) seed_ = 0;
         ReadIntParam(node_->parameters, "grad_accum_steps", grad_accum_steps_);
         if (grad_accum_steps_ < 1) grad_accum_steps_ = 1;
+        ReadBoolParam(node_->parameters, "pin_memory", pin_memory_requested_);
         ReadBoolParam(node_->parameters, "save_best_checkpoint", save_best_checkpoint_);
         ReadIntParam(node_->parameters, "early_stopping_patience", early_stopping_patience_);
         CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
@@ -887,6 +888,7 @@ void DataLoaderDialog::Reset() {
     validation_freq_ = 1;
     seed_ = 42;
     grad_accum_steps_ = 1;
+    pin_memory_requested_ = false;
     save_best_checkpoint_ = true;
     early_stopping_patience_ = 5;
     checkpoint_dir_[0] = '\0';
@@ -905,6 +907,7 @@ void DataLoaderDialog::Reset() {
     if (seed_ < 0) seed_ = 0;
     ReadIntParam(original_params_, "grad_accum_steps", grad_accum_steps_);
     if (grad_accum_steps_ < 1) grad_accum_steps_ = 1;
+    ReadBoolParam(original_params_, "pin_memory", pin_memory_requested_);
     ReadBoolParam(original_params_, "save_best_checkpoint", save_best_checkpoint_);
     ReadIntParam(original_params_, "early_stopping_patience", early_stopping_patience_);
     CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
@@ -1052,6 +1055,17 @@ void DataLoaderDialog::RenderContent() {
         ImGui::TextDisabled("  Bounded async queue depth for Arrow/Parquet batchers.");
     } else {
         ImGui::TextDisabled("  0 = disable async prefetch.");
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("Pin memory:");
+    ImGui::SameLine(130);
+    ImGui::TextDisabled(pin_memory_requested_ ? "unsupported (saved true)" : "unsupported");
+    if (pin_memory_requested_) {
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                           "  This loaded graph requests pin_memory=true, but current batchers ignore it.");
+    } else {
+        ImGui::TextDisabled("  Serialized for compatibility only; no pinned host-memory transfer backend exists yet.");
     }
 
     ImGui::Spacing();
