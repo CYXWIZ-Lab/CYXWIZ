@@ -178,6 +178,20 @@ Tensor Tensor::Permute(const std::vector<int>& dims) const {
         new_shape.push_back(shape_[axis]);
     }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (shape_.size() == 2 &&
+        normalized_dims.size() == 2 &&
+        normalized_dims[0] == 1 &&
+        normalized_dims[1] == 0 &&
+        (dtype_ == DataType::Float32 || dtype_ == DataType::Float64)) {
+        try {
+            return Tensor::FromArrayRowMajor2D(af::transpose(GetArrayRowMajor2D()));
+        } catch (const af::exception& e) {
+            spdlog::warn("Tensor::Permute: ArrayFire 2D transpose failed, falling back to CPU: {}", e.what());
+        }
+    }
+#endif
+
     Tensor result(new_shape, dtype_);
     const size_t element_size = tensor_utils::ElementSize(dtype_);
     const auto src_strides = tensor_utils::RowMajorStrides(shape_, "Tensor stride calculation overflow");

@@ -231,6 +231,36 @@ TEST_CASE("Tensor permute validates dimensions and preserves dtype", "[tensor]")
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor 2D permute keeps Float32 ArrayFire output device-resident", "[tensor]") {
+    float data[] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f
+    };
+    cyxwiz::Tensor input({2, 3}, data, cyxwiz::DataType::Float32);
+
+    const size_t before_host_bytes = cyxwiz::MemoryManager::GetAllocatedBytes();
+    cyxwiz::Tensor permuted = input.Permute({1, 0});
+
+    REQUIRE(permuted.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(permuted.Shape() == std::vector<size_t>{3, 2});
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    af::array device = permuted.GetArrayRowMajor2D();
+    REQUIRE(device.dims(0) == 3);
+    REQUIRE(device.dims(1) == 2);
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
+
+    const float* out = permuted.Data<float>();
+    REQUIRE(out[0] == 1.0f);
+    REQUIRE(out[1] == 4.0f);
+    REQUIRE(out[2] == 2.0f);
+    REQUIRE(out[3] == 5.0f);
+    REQUIRE(out[4] == 3.0f);
+    REQUIRE(out[5] == 6.0f);
+}
+#endif
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Tensor reshape preserves native ArrayFire device residency", "[tensor]") {
     float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
     cyxwiz::Tensor input(af::array(6, data));

@@ -213,6 +213,12 @@ swaps through the row-major ArrayFire bridge. Integer dtypes,
 higher-rank transposes, CPU-only builds, and ArrayFire failures continue
 through the existing CPU path.
 
+**Status 2026-06-22:** first 2D permute residency slice complete.
+`Tensor::Permute({1, 0})` now routes 2D Float32/Float64 axis swaps
+through the row-major ArrayFire bridge. Identity, integer, higher-rank,
+CPU-only, and ArrayFire failure paths continue through the existing CPU
+implementation.
+
 **Status 2026-06-22:** first unary/scalar elementwise primitive slice
 complete. Float32 and Float64 scalar arithmetic, scalar `Pow`, matching
 dtype tensor `Pow`, `Sqrt`, `Exp`, `Log`, `Abs`, `Sign`, `Clip`, and
