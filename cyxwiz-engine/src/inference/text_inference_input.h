@@ -29,6 +29,8 @@ bool LoadTextTokenizerPackage(
     TextTokenizerPackage& out,
     std::string& error);
 
+std::vector<std::string> ParseVocabularyWords(const std::string& vocab_text);
+
 std::vector<float> EncodeTextForInference(
     const Tokenizer& tokenizer,
     const std::string& text);

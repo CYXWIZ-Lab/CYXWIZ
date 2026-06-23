@@ -125,6 +125,21 @@ private:
     std::unique_ptr<SequentialModel> model_;
     std::unique_ptr<Tokenizer> text_tokenizer_;
     bool has_text_vocabulary_ = false;
+    bool has_sequence_model_ = false;
+    bool has_sequence_token_vocabulary_ = false;
+    bool has_sequence_pos_vocabulary_ = false;
+    bool has_sequence_tag_vocabulary_ = false;
+    bool sequence_batch_first_ = true;
+    bool sequence_create_attention_mask_ = true;
+    bool sequence_create_causal_lm_targets_ = false;
+    size_t sequence_max_sequence_length_ = 0;
+    int64_t sequence_word_pad_id_ = 0;
+    int64_t sequence_pos_pad_id_ = 0;
+    int64_t sequence_tag_ignore_index_ = -100;
+    int64_t sequence_target_ignore_index_ = -100;
+    std::vector<std::string> sequence_token_vocabulary_;
+    std::vector<std::string> sequence_pos_vocabulary_;
+    std::vector<std::string> sequence_tag_vocabulary_;
 
     std::string model_path_;
     int port_ = 0;

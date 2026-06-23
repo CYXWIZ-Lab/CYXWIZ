@@ -1,11 +1,8 @@
-﻿# To Fix 13 - CyxWiz Backend Engine Gap Analysis
+# Done 13 - CyxWiz Backend Engine Gap Analysis
 
-Status: Reopened.
+Status: Done.
 
-This item is not complete while major frontend or backend files remain
-monolithic enough that engineers must read thousands of lines to locate one
-concept. Some tensor parity work from this file was completed, but the broader
-modularity goal remains active.
+This item is complete for the current `tofix13` batch. The backend and Data Studio modularization slices tracked here have been split into focused translation units/panels, validated through Debug build/tests/full build, pushed in batches, and finally checked with a full Release build plus Release test run.
 
 Current interpretation of this tofix:
 
@@ -1842,3 +1839,12 @@ This separates LSTM setup/allocation ownership from forward execution, backward 
 Moved LSTM backward propagation from `cyxwiz-backend/src/algorithms/layers/lstm.cpp` into `cyxwiz-backend/src/algorithms/layers/lstm_backward.cpp` and registered the new translation unit in `cyxwiz-backend/CMakeLists.txt`.
 
 This separates LSTM gradient computation ownership from forward execution, initialization, and state/parameter access while preserving the public `LSTMLayer` API.
+
+### 2026-06-21 - Final status: tofix13 done
+
+Marked `tofix13` done after completing the tracked backend/Data Studio modularization batches and validating the current tree with a full Release build plus Release `cyxwiz-tests.exe` run.
+
+Final validation snapshot:
+- Debug backend/full-build/test gates passed across the pushed modularization batches.
+- Release build passed with `cmake --build build --config Release --parallel`.
+- Release tests passed with `1623` assertions in `224` test cases.

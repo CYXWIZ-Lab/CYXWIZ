@@ -74,7 +74,8 @@ bool ReadBoolConfig(const json& effective, const char* key, bool fallback) {
     return fallback;
 }
 
-std::vector<std::string> ParseVocabularyWords(const std::string& vocab_text) {
+std::vector<std::string> ParseVocabularyWordsImpl(const std::string& vocab_text) {
+    // Parse one vocabulary token per line, trimming CRLF line endings.
     std::vector<std::string> words;
     std::istringstream stream(vocab_text);
     std::string line;
@@ -90,6 +91,10 @@ std::vector<std::string> ParseVocabularyWords(const std::string& vocab_text) {
 }
 
 } // namespace
+
+std::vector<std::string> ParseVocabularyWords(const std::string& vocab_text) {
+    return ParseVocabularyWordsImpl(vocab_text);
+}
 
 TextTokenizerPackage::TextTokenizerPackage() = default;
 TextTokenizerPackage::~TextTokenizerPackage() = default;

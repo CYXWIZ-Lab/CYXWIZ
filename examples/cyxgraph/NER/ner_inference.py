@@ -150,16 +150,21 @@ def encode_sequence(
     )
 
 
-def build_payload(word_ids: list[int], pos_ids: list[int], attention_mask: list[int]) -> dict:
-    # Keep this explicit for future backend support. Some current endpoints may
-    # only accept "input"; sequence-tagging should accept named tensors.
+def build_payload(
+    word_ids: list[int],
+    pos_ids: list[int],
+    attention_mask: list[int],
+    sequence_length: int,
+) -> dict:
+    # Sequence-based NER inference expects named tensors in `input`.
     return {
-        "inputs": {
+        "input": {
             "word_ids": word_ids,
             "pos_ids": pos_ids,
             "attention_mask": attention_mask,
-        },
-        "input": word_ids,
+            # Optional length metadata helps confirm batch/sequence framing.
+            "sequence_lengths": [sequence_length],
+        }
     }
 
 
@@ -204,6 +209,29 @@ def decode_predictions(
     max_length: int,
     top_k: int,
 ) -> list[dict[str, object]]:
+    sequence_payload = result.get("sequence")
+    if isinstance(sequence_payload, dict) and "tag_labels" in sequence_payload:
+        tag_labels = sequence_payload["tag_labels"]
+        if isinstance(tag_labels, list) and tag_labels:
+            if all(isinstance(row, list) for row in tag_labels):
+                # Sequence responses are [batch, seq]. Prefer first decoded row.
+                if isinstance(tag_labels[0], list) and len(tag_labels[0]) > 0:
+                    tag_labels = tag_labels[0]
+            decoded: list[dict[str, object]] = []
+            for i, token in enumerate(tokens):
+                if i >= len(tag_labels) or i >= max_length:
+                    break
+                decoded.append(
+                    {
+                        "token": token,
+                        "tag": tag_labels[i] or tag_name(0, labels),
+                        "confidence": 1.0,
+                        "top": [],
+                    }
+                )
+            if decoded:
+                return decoded
+
     output = result.get("output", result.get("logits", []))
     logits_by_token = normalize_logits(output, max_length=max_length, num_tags=len(labels))
 
@@ -258,7 +286,12 @@ def run_one(
         pos_vocab=pos_vocab,
         max_length=max_length,
     )
-    payload = build_payload(word_ids, pos_ids, attention_mask)
+    payload = build_payload(
+        word_ids=word_ids,
+        pos_ids=pos_ids,
+        attention_mask=attention_mask,
+        sequence_length=len(visible_tokens),
+    )
 
     if dry_run:
         print(json.dumps({"tokens": visible_tokens, "payload": payload}, indent=2))

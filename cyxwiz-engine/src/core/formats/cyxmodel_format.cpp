@@ -34,6 +34,32 @@ nlohmann::json CyxModelFormat::ManifestToJson(const ModelManifest& manifest) {
     j["content"]["has_graph"] = manifest.has_graph;
     j["content"]["has_tokenizer"] = manifest.has_tokenizer;
     j["content"]["has_vocabulary"] = manifest.has_vocabulary;
+    j["content"]["has_sequence"] = manifest.has_sequence;
+    j["content"]["has_sequence_token_vocabulary"] =
+        manifest.has_sequence_token_vocabulary;
+    j["content"]["has_sequence_pos_vocabulary"] =
+        manifest.has_sequence_pos_vocabulary;
+    j["content"]["has_sequence_tag_vocabulary"] =
+        manifest.has_sequence_tag_vocabulary;
+    j["content"]["sequence_batch_first"] = manifest.sequence_batch_first;
+    j["content"]["sequence_create_attention_mask"] =
+        manifest.sequence_create_attention_mask;
+    j["content"]["sequence_create_causal_lm_targets"] =
+        manifest.sequence_create_causal_lm_targets;
+    j["content"]["sequence_max_sequence_length"] =
+        manifest.sequence_max_sequence_length;
+    j["content"]["sequence_word_pad_id"] = manifest.sequence_word_pad_id;
+    j["content"]["sequence_pos_pad_id"] = manifest.sequence_pos_pad_id;
+    j["content"]["sequence_tag_ignore_index"] =
+        manifest.sequence_tag_ignore_index;
+    j["content"]["sequence_target_ignore_index"] =
+        manifest.sequence_target_ignore_index;
+    j["content"]["sequence_token_vocabulary_path"] =
+        manifest.sequence_token_vocabulary_path;
+    j["content"]["sequence_pos_vocabulary_path"] =
+        manifest.sequence_pos_vocabulary_path;
+    j["content"]["sequence_tag_vocabulary_path"] =
+        manifest.sequence_tag_vocabulary_path;
 
     return j;
 }
@@ -73,6 +99,35 @@ ModelManifest CyxModelFormat::JsonToManifest(const nlohmann::json& j) {
         manifest.has_graph = j["content"].value("has_graph", false);
         manifest.has_tokenizer = j["content"].value("has_tokenizer", false);
         manifest.has_vocabulary = j["content"].value("has_vocabulary", false);
+        manifest.has_sequence = j["content"].value("has_sequence", false);
+        manifest.has_sequence_token_vocabulary =
+            j["content"].value("has_sequence_token_vocabulary", false);
+        manifest.has_sequence_pos_vocabulary =
+            j["content"].value("has_sequence_pos_vocabulary", false);
+        manifest.has_sequence_tag_vocabulary =
+            j["content"].value("has_sequence_tag_vocabulary", false);
+        manifest.sequence_batch_first =
+            j["content"].value("sequence_batch_first", true);
+        manifest.sequence_create_attention_mask =
+            j["content"].value("sequence_create_attention_mask", true);
+        manifest.sequence_create_causal_lm_targets =
+            j["content"].value("sequence_create_causal_lm_targets", false);
+        manifest.sequence_max_sequence_length =
+            j["content"].value("sequence_max_sequence_length", size_t{0});
+        manifest.sequence_word_pad_id =
+            j["content"].value("sequence_word_pad_id", int64_t{0});
+        manifest.sequence_pos_pad_id =
+            j["content"].value("sequence_pos_pad_id", int64_t{0});
+        manifest.sequence_tag_ignore_index =
+            j["content"].value("sequence_tag_ignore_index", int64_t{-100});
+        manifest.sequence_target_ignore_index =
+            j["content"].value("sequence_target_ignore_index", int64_t{-100});
+        manifest.sequence_token_vocabulary_path =
+            j["content"].value("sequence_token_vocabulary_path", "");
+        manifest.sequence_pos_vocabulary_path =
+            j["content"].value("sequence_pos_vocabulary_path", "");
+        manifest.sequence_tag_vocabulary_path =
+            j["content"].value("sequence_tag_vocabulary_path", "");
     }
 
     return manifest;
@@ -412,6 +467,57 @@ bool CyxModelFormat::Create(
         }
     }
 
+    // Create sequence vocabulary assets (optional)
+    if (options.include_sequence_assets) {
+        if (!options.sequence_token_vocabulary_path.empty()) {
+            std::ifstream token_vocab_file(
+                options.sequence_token_vocabulary_path,
+                std::ios::binary);
+            if (!token_vocab_file.is_open()) {
+                last_error_ = "Cannot open sequence token vocabulary file: " +
+                              options.sequence_token_vocabulary_path;
+                return false;
+            }
+
+            std::vector<uint8_t> vocab_bytes(
+                (std::istreambuf_iterator<char>(token_vocab_file)),
+                std::istreambuf_iterator<char>());
+            files["sequence/token_vocab.txt"] = std::move(vocab_bytes);
+        }
+
+        if (!options.sequence_pos_vocabulary_path.empty()) {
+            std::ifstream pos_vocab_file(
+                options.sequence_pos_vocabulary_path,
+                std::ios::binary);
+            if (!pos_vocab_file.is_open()) {
+                last_error_ = "Cannot open sequence POS vocabulary file: " +
+                              options.sequence_pos_vocabulary_path;
+                return false;
+            }
+
+            std::vector<uint8_t> vocab_bytes(
+                (std::istreambuf_iterator<char>(pos_vocab_file)),
+                std::istreambuf_iterator<char>());
+            files["sequence/pos_vocab.txt"] = std::move(vocab_bytes);
+        }
+
+        if (!options.sequence_tag_vocabulary_path.empty()) {
+            std::ifstream tag_vocab_file(
+                options.sequence_tag_vocabulary_path,
+                std::ios::binary);
+            if (!tag_vocab_file.is_open()) {
+                last_error_ = "Cannot open sequence tag vocabulary file: " +
+                              options.sequence_tag_vocabulary_path;
+                return false;
+            }
+
+            std::vector<uint8_t> vocab_bytes(
+                (std::istreambuf_iterator<char>(tag_vocab_file)),
+                std::istreambuf_iterator<char>());
+            files["sequence/tag_vocab.txt"] = std::move(vocab_bytes);
+        }
+    }
+
     // Write to archive or directory
     bool use_zip = output_path.size() > 9 &&
                    output_path.substr(output_path.size() - 9) == ".cyxmodel";
@@ -574,6 +680,31 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
         result.has_graph = manifest.has_graph;
         result.has_tokenizer = manifest.has_tokenizer;
         result.has_vocabulary = manifest.has_vocabulary;
+        result.has_sequence = manifest.has_sequence;
+        result.has_sequence_token_vocabulary =
+            manifest.has_sequence_token_vocabulary;
+        result.has_sequence_pos_vocabulary =
+            manifest.has_sequence_pos_vocabulary;
+        result.has_sequence_tag_vocabulary =
+            manifest.has_sequence_tag_vocabulary;
+        result.sequence_batch_first = manifest.sequence_batch_first;
+        result.sequence_create_attention_mask =
+            manifest.sequence_create_attention_mask;
+        result.sequence_create_causal_lm_targets =
+            manifest.sequence_create_causal_lm_targets;
+        result.sequence_max_sequence_length =
+            manifest.sequence_max_sequence_length;
+        result.sequence_word_pad_id = manifest.sequence_word_pad_id;
+        result.sequence_pos_pad_id = manifest.sequence_pos_pad_id;
+        result.sequence_tag_ignore_index = manifest.sequence_tag_ignore_index;
+        result.sequence_target_ignore_index =
+            manifest.sequence_target_ignore_index;
+        result.sequence_token_vocabulary_path =
+            manifest.sequence_token_vocabulary_path;
+        result.sequence_pos_vocabulary_path =
+            manifest.sequence_pos_vocabulary_path;
+        result.sequence_tag_vocabulary_path =
+            manifest.sequence_tag_vocabulary_path;
     } catch (const std::exception& e) {
         result.error_message = "Error parsing manifest: " + std::string(e.what());
     }
@@ -644,6 +775,46 @@ bool CyxModelFormat::ExtractTextTokenizerAssets(
 
     if (config_json.empty() && vocab_text.empty()) {
         last_error_ = "No tokenizer assets found";
+        return false;
+    }
+
+    return true;
+}
+
+bool CyxModelFormat::ExtractSequenceVocabularyAssets(
+    const std::string& input_path,
+    std::string& token_vocab_text,
+    std::string& pos_vocab_text,
+    std::string& tag_vocab_text
+) {
+    std::map<std::string, std::vector<uint8_t>> files;
+    if (!ReadDirectory(input_path, files)) {
+        return false;
+    }
+
+    token_vocab_text.clear();
+    pos_vocab_text.clear();
+    tag_vocab_text.clear();
+
+    auto token_it = files.find("sequence/token_vocab.txt");
+    if (token_it != files.end()) {
+        token_vocab_text.assign(token_it->second.begin(),
+                               token_it->second.end());
+    }
+
+    auto pos_it = files.find("sequence/pos_vocab.txt");
+    if (pos_it != files.end()) {
+        pos_vocab_text.assign(pos_it->second.begin(), pos_it->second.end());
+    }
+
+    auto tag_it = files.find("sequence/tag_vocab.txt");
+    if (tag_it != files.end()) {
+        tag_vocab_text.assign(tag_it->second.begin(), tag_it->second.end());
+    }
+
+    if (token_vocab_text.empty() && pos_vocab_text.empty() &&
+        tag_vocab_text.empty()) {
+        last_error_ = "No sequence vocabulary assets found";
         return false;
     }
 

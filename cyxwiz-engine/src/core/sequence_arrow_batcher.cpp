@@ -6,8 +6,10 @@
 #include <arrow/api.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <sstream>
+#include <unordered_map>
 
 namespace cyxwiz {
 namespace {
@@ -66,6 +68,33 @@ bool ReadStringCell(const std::shared_ptr<arrow::Table>& table,
     return true;
 }
 
+bool ReadAnyCell(const std::shared_ptr<arrow::Table>& table,
+                int column_index,
+                int64_t row_index,
+                std::string& value,
+                std::string& error) {
+    auto column = table->column(column_index);
+    if (!column) {
+        error = "column is not readable";
+        return false;
+    }
+
+    auto scalar_result = column->GetScalar(row_index);
+    if (!scalar_result.ok()) {
+        error = scalar_result.status().ToString();
+        return false;
+    }
+
+    auto scalar = *scalar_result;
+    if (!scalar || !scalar->is_valid) {
+        value.clear();
+        return true;
+    }
+
+    value = Trim(scalar->ToString());
+    return true;
+}
+
 bool ValidateStringColumn(const std::shared_ptr<arrow::Table>& table,
                           const std::string& column_name,
                           const char* role,
@@ -93,6 +122,51 @@ bool ValidateStringColumn(const std::shared_ptr<arrow::Table>& table,
 std::string DefaultColumn(const std::string& value,
                           const char* fallback) {
     return value.empty() ? std::string(fallback) : value;
+}
+
+void SplitByRatios(size_t total_units,
+                   float train_ratio,
+                   float val_ratio,
+                   std::vector<size_t>& train_units,
+                   std::vector<size_t>& val_units,
+                   std::vector<size_t>& test_units) {
+    size_t train_count = static_cast<size_t>(std::floor(total_units * train_ratio));
+    size_t val_count = static_cast<size_t>(std::floor(total_units * val_ratio));
+    if (train_count > total_units) {
+        train_count = total_units;
+    }
+    if (train_count + val_count > total_units) {
+        val_count = (train_count >= total_units) ? 0 : (total_units - train_count);
+    }
+    const size_t test_count = total_units - train_count - val_count;
+
+    train_units.clear();
+    val_units.clear();
+    test_units.clear();
+    train_units.reserve(train_count);
+    val_units.reserve(val_count);
+    test_units.reserve(test_count);
+
+    for (size_t i = 0; i < train_count; ++i) {
+        train_units.push_back(i);
+    }
+    for (size_t i = train_count; i < train_count + val_count; ++i) {
+        val_units.push_back(i);
+    }
+    for (size_t i = train_count + val_count; i < total_units; ++i) {
+        test_units.push_back(i);
+    }
+}
+
+void AppendGroupsToFlat(const std::vector<std::vector<size_t>>& groups,
+                       const std::vector<size_t>& units,
+                       std::vector<size_t>& flat) {
+    for (const auto unit : units) {
+        if (unit >= groups.size()) {
+            continue;
+        }
+        flat.insert(flat.end(), groups[unit].begin(), groups[unit].end());
+    }
 }
 
 } // namespace
@@ -137,6 +211,7 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
 
     int token_index = -1;
     int tag_index = -1;
+    int sentence_index = -1;
     std::string error;
     if (!ValidateStringColumn(table, token_column, "token",
                               token_index, error) ||
@@ -152,6 +227,47 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
                               pos_index, error)) {
         result.error_message = error;
         return result;
+    }
+
+    if (config.has_data_split &&
+        !config.sequence_batch.sentence_id_column.empty()) {
+        sentence_index = table->schema()->GetFieldIndex(
+            config.sequence_batch.sentence_id_column);
+        if (sentence_index < 0) {
+            result.error_message =
+                "sequence sentence id column '" +
+                config.sequence_batch.sentence_id_column + "' not found";
+            return result;
+        }
+    }
+
+    std::vector<std::vector<size_t>> sentence_groups;
+    if (sentence_index >= 0) {
+        sentence_groups.reserve(static_cast<size_t>(table->num_rows()));
+        std::unordered_map<std::string, size_t> sentence_id_to_group;
+        for (int64_t row_index = 0; row_index < table->num_rows(); ++row_index) {
+            std::string sentence_id;
+            if (!ReadAnyCell(table, sentence_index, row_index, sentence_id, error)) {
+                result.error_message =
+                    "sequence sentence id row " + std::to_string(row_index) +
+                    ": " + error;
+                return result;
+            }
+            if (sentence_id.empty()) {
+                sentence_id = "__row__" + std::to_string(row_index);
+            }
+
+            auto it = sentence_id_to_group.find(sentence_id);
+            size_t group_index = it != sentence_id_to_group.end()
+                ? it->second
+                : sentence_groups.size();
+            if (it == sentence_id_to_group.end()) {
+                sentence_id_to_group[sentence_id] = group_index;
+                sentence_groups.push_back({});
+            }
+            sentence_groups[group_index].push_back(
+                static_cast<size_t>(row_index));
+        }
     }
 
     std::vector<NERSequenceRow> rows;
@@ -204,6 +320,38 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
             config.sequence_batch.target_ignore_index;
         builder_config.batcher.seed =
             static_cast<uint32_t>(std::max(0, config.dataloader_seed));
+        if (config.has_data_split) {
+            std::vector<size_t> train_units;
+            std::vector<size_t> val_units;
+            std::vector<size_t> test_units;
+
+            if (sentence_index >= 0 && !sentence_groups.empty()) {
+                SplitByRatios(sentence_groups.size(),
+                              config.train_ratio,
+                              config.val_ratio,
+                              train_units,
+                              val_units,
+                              test_units);
+
+                AppendGroupsToFlat(sentence_groups, train_units,
+                                   builder_config.batcher.train_indices);
+                AppendGroupsToFlat(sentence_groups, val_units,
+                                   builder_config.batcher.val_indices);
+                AppendGroupsToFlat(sentence_groups, test_units,
+                                   builder_config.batcher.test_indices);
+            } else {
+                SplitByRatios(static_cast<size_t>(rows.size()),
+                              config.train_ratio,
+                              config.val_ratio,
+                              train_units,
+                              val_units,
+                              test_units);
+
+                builder_config.batcher.train_indices = std::move(train_units);
+                builder_config.batcher.val_indices = std::move(val_units);
+                builder_config.batcher.test_indices = std::move(test_units);
+            }
+        }
 
         auto build = BuildNERSequenceData(rows, builder_config);
         result.id_to_label = build.tag_vocabulary.Values();

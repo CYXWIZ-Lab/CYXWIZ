@@ -66,6 +66,32 @@ Runtime progress:
 - This does not complete full NER graph launch yet: Studio still needs the
   higher-level model launch/inference packaging that consumes these prepared
   sequence artifacts.
+- Added `validate_ner_graph_assets.py` for a repo-portable smoke check that
+  verifies saved-graph path references and generated asset existence.
+- Added a dedicated saved-graph launch regression in
+  `test_text_gui_training_launch.cpp` that exercises Studio launch against the
+  checked-in NER sequence fixture table, including materializer path, batcher
+  config passthrough, and callback lifecycle checks.
+
+Status 2026-06-23:
+
+- Portable NER smoke validation now passes:
+  `python examples\cyxgraph\NER\validate_ner_graph_assets.py`
+- Duplicate path-prefix regression fixed in the validator (graph-reported
+  `examples/cyxgraph/NER/...` paths now resolve correctly without duplicating
+  the example directory).
+- Item 3 end-to-end label/vocab consistency now has decode-level assertions in
+  the saved-NER launch regression test: sentence split behavior, tag vocab size,
+  and sequence prediction decode all flow from materialized data through batcher
+  and model logits.
+- Item 4 sequence inference packaging is partially wired: CyxModel manifests
+  now carry sequence metadata/vocabulary paths, local model load probes and
+  extracts sequence vocabularies, `/v1/model` exposes sequence decode
+  capabilities, `/v1/predict` accepts named sequence tensors with
+  `sequence_lengths`, and the NER helper prefers decoded `sequence.tag_labels`
+  before falling back to logits.
+- The portable NER smoke validator now builds a tokenized inference payload
+  from generated metadata and checks the sequence tensor contract locally.
 
 ### 1. Executable Vocabulary Nodes
 

@@ -26,6 +26,7 @@ has its own BIO tag, so the model must predict one label per token.
 
 ```text
 prepare_ner_demo.py
+validate_ner_graph_assets.py
 ner_inference.py
 ner_bilstm_sequence_tagger.cyxgraph
 README.md
@@ -205,12 +206,17 @@ After the sequence-tagging path is implemented, a proof run should:
    `examples/cyxgraph/NER/generated/ner_sentences.csv`.
 4. Confirm the vocabulary paths point to files in
    `examples/cyxgraph/NER/generated`.
-5. Train for a small number of epochs.
-6. Track:
+5. Run the local smoke check:
+
+```powershell
+python examples\cyxgraph\NER\validate_ner_graph_assets.py
+```
+6. Train for a small number of epochs.
+7. Track:
    - token-level loss
    - token accuracy ignoring padding
    - entity-level precision/recall/F1
-7. Save a `.cyxmodel` containing:
+8. Save a `.cyxmodel` containing:
    - graph
    - weights
    - word vocabulary
@@ -244,16 +250,29 @@ python examples\cyxgraph\NER\ner_inference.py `
   --num-samples 10
 ```
 
-The helper expects sequence-tagging output shaped as either:
+The helper sends the sequence input as named tensors:
 
 ```text
-[max_length, num_tags]
+{
+  "input": {
+    "word_ids": [max_length],
+    "pos_ids": [max_length],
+    "attention_mask": [max_length],
+    "sequence_lengths": [visible_token_count]
+  }
+}
 ```
 
-or a flat vector that can be reshaped to:
+For packaged sequence models, the embedded server can return decoded BIO labels:
 
 ```text
-max_length * num_tags
+"sequence": {
+  "tag_ids": [[...]],
+  "tag_labels": [["O", "B-geo", "..."]],
+  "tag_vocab": [...]
+}
 ```
 
-It then decodes one BIO tag per visible token.
+If decoded labels are not available, the helper falls back to logits shaped as
+`[max_length, num_tags]` or a flat vector that can be reshaped to
+`max_length * num_tags`.

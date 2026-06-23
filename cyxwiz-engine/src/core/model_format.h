@@ -6,6 +6,7 @@
 #include <optional>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 
 namespace cyxwiz {
 
@@ -69,6 +70,24 @@ struct ExportOptions {
     // tokenizer/vocab.txt inside the .cyxmodel directory package.
     std::string text_tokenizer_config_json;
     std::string text_tokenizer_vocab_path;
+
+    // Optional sequence deployment assets for CyxModel packages.
+    // When empty, ModelExporter may infer these from graph_json for
+    // sequence-tagging / NER graphs. Explicit values are copied into
+    // sequence/token_vocab.txt, sequence/pos_vocab.txt and
+    // sequence/tag_vocab.txt.
+    bool include_sequence_assets = true;
+    size_t sequence_max_sequence_length = 0;
+    bool sequence_batch_first = true;
+    bool sequence_create_attention_mask = true;
+    bool sequence_create_causal_lm_targets = false;
+    int64_t sequence_word_pad_id = 0;
+    int64_t sequence_pos_pad_id = 0;
+    int64_t sequence_tag_ignore_index = -100;
+    int64_t sequence_target_ignore_index = -100;
+    std::string sequence_token_vocabulary_path;
+    std::string sequence_pos_vocabulary_path;
+    std::string sequence_tag_vocabulary_path;
 
     // Quantization
     Quantization quantization = Quantization::None;
@@ -168,6 +187,21 @@ struct ProbeResult {
     bool has_graph = false;
     bool has_tokenizer = false;
     bool has_vocabulary = false;
+    bool has_sequence = false;
+    bool has_sequence_token_vocabulary = false;
+    bool has_sequence_pos_vocabulary = false;
+    bool has_sequence_tag_vocabulary = false;
+    bool sequence_batch_first = true;
+    bool sequence_create_attention_mask = true;
+    bool sequence_create_causal_lm_targets = false;
+    size_t sequence_max_sequence_length = 0;
+    int64_t sequence_word_pad_id = 0;
+    int64_t sequence_pos_pad_id = 0;
+    int64_t sequence_tag_ignore_index = -100;
+    int64_t sequence_target_ignore_index = -100;
+    std::string sequence_token_vocabulary_path;
+    std::string sequence_pos_vocabulary_path;
+    std::string sequence_tag_vocabulary_path;
 
     std::string error_message;
 };
@@ -269,6 +303,21 @@ struct ModelManifest {
     bool has_graph = false;
     bool has_tokenizer = false;
     bool has_vocabulary = false;
+    bool has_sequence = false;
+    bool has_sequence_token_vocabulary = false;
+    bool has_sequence_pos_vocabulary = false;
+    bool has_sequence_tag_vocabulary = false;
+    bool sequence_batch_first = true;
+    bool sequence_create_attention_mask = true;
+    bool sequence_create_causal_lm_targets = false;
+    size_t sequence_max_sequence_length = 0;
+    int64_t sequence_word_pad_id = 0;
+    int64_t sequence_pos_pad_id = 0;
+    int64_t sequence_tag_ignore_index = -100;
+    int64_t sequence_target_ignore_index = -100;
+    std::string sequence_token_vocabulary_path;
+    std::string sequence_pos_vocabulary_path;
+    std::string sequence_tag_vocabulary_path;
 };
 
 // Utility functions

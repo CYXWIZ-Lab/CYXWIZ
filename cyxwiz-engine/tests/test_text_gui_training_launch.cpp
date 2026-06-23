@@ -8,18 +8,25 @@
 #include "../src/core/pipeline_materializer.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/sequence_arrow_batcher.h"
+#include "../src/core/sequence_tag_metrics.h"
 #include "../src/core/training_run_comparison.h"
 #include "../src/gui/graph_training_launcher.h"
 
 #include <arrow/api.h>
 
 #include <cmath>
+#include <cctype>
+#include <algorithm>
 #include <cstdlib>
+#include <fstream>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
+#include <nlohmann/json.hpp>
 
 namespace {
 
@@ -31,6 +38,7 @@ constexpr const char* kScopeParquetDatasetName = "gui_text_runtime_scope_parquet
 constexpr const char* kScopeImageDatasetName = "gui_text_runtime_scope_image";
 constexpr const char* kScopeAudioDatasetName = "gui_text_runtime_scope_audio";
 constexpr const char* kScopeTextDatasetName = "gui_text_runtime_scope_legacy_text";
+constexpr const char* kSavedNerDatasetName = "gui_text_runtime_scope_ner";
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -39,8 +47,299 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
+using json = nlohmann::json;
+
+std::filesystem::path FindRepoRoot() {
+    auto dir = std::filesystem::current_path();
+    while (!dir.empty()) {
+        if (std::filesystem::exists(dir / "cyxwiz-engine" / "CMakeLists.txt") &&
+            std::filesystem::exists(dir / "examples" / "cyxgraph")) {
+            return dir;
+        }
+        const auto parent = dir.parent_path();
+        if (parent == dir) {
+            break;
+        }
+        dir = parent;
+    }
+    return std::filesystem::current_path();
+}
+
+std::string ReadFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    Check(in.is_open(), "could not open " + path.string());
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
 void CheckFinite(float value, const std::string& message) {
     Check(std::isfinite(value), message);
+}
+
+bool ParseBoolValue(const std::string& value, bool fallback) {
+    std::string normalized = value;
+    for (auto& ch : normalized) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+
+    if (normalized == "true" || normalized == "1" || normalized == "yes" ||
+        normalized == "on") {
+        return true;
+    }
+    if (normalized == "false" || normalized == "0" || normalized == "off" ||
+        normalized == "no") {
+        return false;
+    }
+    return fallback;
+}
+
+std::string JsonToString(const json& value) {
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<long long>());
+    }
+    if (value.is_number_float()) {
+        std::ostringstream out;
+        out << value.get<double>();
+        return out.str();
+    }
+    if (value.is_boolean()) {
+        return value.get<bool>() ? "true" : "false";
+    }
+    return value.dump();
+}
+
+std::map<std::string, std::string> ReadParametersFromJson(
+    const json& params_json) {
+    std::map<std::string, std::string> params;
+    if (!params_json.is_object()) {
+        return params;
+    }
+    for (auto it = params_json.begin(); it != params_json.end(); ++it) {
+        params[it.key()] = JsonToString(it.value());
+    }
+    return params;
+}
+
+std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>
+LoadCyxGraphForTest(const std::filesystem::path& path) {
+    const auto root = json::parse(ReadFile(path));
+    Check(root.contains("nodes") && root["nodes"].is_array(),
+          "saved graph should include nodes");
+    Check(root.contains("links") && root["links"].is_array(),
+          "saved graph should include links");
+
+    std::vector<gui::MLNode> nodes;
+    nodes.reserve(root["nodes"].size());
+    for (const auto& node_json : root["nodes"]) {
+        gui::MLNode node;
+        node.id = node_json.value("id", 0);
+        node.type = static_cast<gui::NodeType>(node_json.value("type", 0));
+        node.name = node_json.value("name", std::string("node"));
+        node.category = static_cast<gui::NodeCategory>(
+            node_json.value("category", static_cast<int>(node.category)));
+        if (node_json.contains("parameters")) {
+            node.parameters = ReadParametersFromJson(node_json["parameters"]);
+        }
+        nodes.push_back(std::move(node));
+    }
+
+    std::vector<gui::NodeLink> links;
+    links.reserve(root["links"].size());
+    for (const auto& link_json : root["links"]) {
+        gui::NodeLink link;
+        link.id = link_json.value("id", 0);
+        link.from_node = link_json.value("from_node", 0);
+        link.to_node = link_json.value("to_node", 0);
+        link.from_pin = link_json.value("from_pin", 0);
+        link.to_pin = link_json.value("to_pin", 0);
+        links.push_back(std::move(link));
+    }
+
+    return {nodes, links};
+}
+
+bool ParseBoolParam(const std::map<std::string, std::string>& params,
+                   const std::string& key,
+                   bool fallback) {
+    auto it = params.find(key);
+    if (it == params.end()) {
+        return fallback;
+    }
+    return ParseBoolValue(it->second, fallback);
+}
+
+int ParseIntParam(const std::map<std::string, std::string>& params,
+                 const std::string& key,
+                 int fallback) {
+    auto it = params.find(key);
+    if (it == params.end()) {
+        return fallback;
+    }
+    try {
+        return std::stoi(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+float ParseFloatParam(const std::map<std::string, std::string>& params,
+                     const std::string& key,
+                     float fallback) {
+    auto it = params.find(key);
+    if (it == params.end()) {
+        return fallback;
+    }
+    try {
+        return std::stof(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+void AddLayerIfSequenceNode(const gui::MLNode& node,
+                           cyxwiz::TrainingConfiguration& config) {
+    if (node.type == gui::NodeType::Embedding ||
+        node.type == gui::NodeType::Concatenate ||
+        node.type == gui::NodeType::LSTM ||
+        node.type == gui::NodeType::Dropout ||
+        node.type == gui::NodeType::TimeDistributed) {
+        cyxwiz::CompiledLayer layer;
+        layer.type = node.type;
+        layer.parameters = node.parameters;
+        const auto it = node.parameters.find("units");
+        if (it != node.parameters.end()) {
+            try {
+                layer.units = std::stoi(it->second);
+            } catch (...) {
+                layer.units = 0;
+            }
+        }
+        config.layers.push_back(std::move(layer));
+    }
+}
+
+cyxwiz::TrainingConfiguration MakeSavedNerGraphConfig(
+    const std::vector<gui::MLNode>& nodes,
+    const std::string& dataset_name,
+    const std::filesystem::path& checkpoint_dir) {
+    cyxwiz::TrainingConfiguration config;
+    config.is_valid = true;
+    config.dataset_name = dataset_name;
+    config.preprocessing_domain = cyxwiz::PreprocessingDomain::Text;
+    config.loss_type = gui::NodeType::CrossEntropyLoss;
+    config.optimizer_type = gui::NodeType::Adam;
+    config.learning_rate = 0.001f;
+    config.train_ratio = 0.8f;
+    config.val_ratio = 0.1f;
+    config.test_ratio = 0.1f;
+    config.split_seed = 42;
+    config.batch_size = 32;
+    config.epochs = 8;
+    config.shuffle = true;
+    config.drop_last = false;
+    config.num_workers = 4;
+    config.prefetch_factor = 2;
+    config.log_interval = 10;
+    config.validation_freq = 1;
+    config.dataloader_seed = 42;
+    config.grad_accum_steps = 1;
+    config.save_best_checkpoint = true;
+    config.early_stopping_patience = 5;
+    config.checkpoint_dir = checkpoint_dir.string();
+    config.sequence_batch.enabled = true;
+    config.sequence_batch.token_column = "tokens";
+    config.sequence_batch.pos_column = "pos_tags";
+    config.sequence_batch.tag_column = "ner_tags";
+    config.sequence_batch.sentence_id_column = "sentence_id";
+    config.sequence_batch.create_attention_mask = true;
+    config.sequence_batch.ignore_index = 0;
+    config.sequence_batch.target_ignore_index = 0;
+    config.sequence_batch.max_sequence_length = 96;
+
+    for (const auto& node : nodes) {
+        if (node.type == gui::NodeType::DataInput) {
+            config.data_source_node_id = node.id;
+        } else if (node.type == gui::NodeType::DataSplit) {
+            config.has_data_split = true;
+            config.train_ratio =
+                ParseFloatParam(node.parameters, "train_ratio", 0.80f);
+            config.val_ratio = ParseFloatParam(node.parameters, "val_ratio", 0.10f);
+            config.test_ratio = ParseFloatParam(node.parameters, "test_ratio", 0.10f);
+            config.split_seed = ParseIntParam(node.parameters, "seed", 42);
+        } else if (node.type == gui::NodeType::DataLoader) {
+            config.has_data_loader = true;
+            config.batch_size = ParseIntParam(node.parameters, "batch_size", 32);
+            config.epochs = ParseIntParam(node.parameters, "epochs", 8);
+            config.shuffle = ParseBoolParam(node.parameters, "shuffle", true);
+            config.drop_last = ParseBoolParam(node.parameters, "drop_last", false);
+            config.num_workers = ParseIntParam(node.parameters, "num_workers", 4);
+            config.prefetch_factor =
+                ParseIntParam(node.parameters, "prefetch_factor", 2);
+            config.log_interval = ParseIntParam(node.parameters, "log_interval", 10);
+            config.validation_freq =
+                ParseIntParam(node.parameters, "validation_freq", 1);
+            config.dataloader_seed = ParseIntParam(node.parameters, "seed", 42);
+            config.grad_accum_steps =
+                ParseIntParam(node.parameters, "grad_accum_steps", 1);
+            config.save_best_checkpoint =
+                ParseBoolParam(node.parameters, "save_best_checkpoint", true);
+            config.early_stopping_patience =
+                ParseIntParam(node.parameters, "early_stopping_patience", 5);
+        } else if (node.type == gui::NodeType::NERSequenceBuilder) {
+            if (node.parameters.count("token_column") > 0) {
+                config.sequence_batch.token_column = node.parameters.at("token_column");
+            }
+            if (node.parameters.count("pos_column") > 0) {
+                config.sequence_batch.pos_column = node.parameters.at("pos_column");
+            }
+            if (node.parameters.count("tag_column") > 0) {
+                config.sequence_batch.tag_column = node.parameters.at("tag_column");
+            }
+            if (node.parameters.count("sentence_id_column") > 0) {
+                config.sequence_batch.sentence_id_column =
+                    node.parameters.at("sentence_id_column");
+            }
+            config.sequence_batch.create_attention_mask =
+                ParseBoolParam(node.parameters, "create_attention_mask",
+                               config.sequence_batch.create_attention_mask);
+            config.sequence_batch.ignore_index =
+                ParseIntParam(node.parameters, "ignore_index",
+                              config.sequence_batch.ignore_index);
+            config.sequence_batch.target_ignore_index =
+                ParseIntParam(node.parameters, "target_ignore_index",
+                              config.sequence_batch.target_ignore_index);
+            config.sequence_batch.max_sequence_length =
+                ParseIntParam(node.parameters, "max_sequence_length",
+                              config.sequence_batch.max_sequence_length);
+        } else if (node.type == gui::NodeType::TextPadding) {
+            config.sequence_batch.create_attention_mask =
+                ParseBoolParam(node.parameters, "create_attention_mask",
+                               config.sequence_batch.create_attention_mask);
+            config.sequence_batch.max_sequence_length =
+                ParseIntParam(node.parameters, "max_length",
+                              config.sequence_batch.max_sequence_length);
+        } else if (node.type == gui::NodeType::CrossEntropyLoss) {
+            config.sequence_batch.ignore_index =
+                ParseIntParam(node.parameters, "ignore_index",
+                              config.sequence_batch.ignore_index);
+            config.sequence_batch.target_ignore_index =
+                ParseIntParam(node.parameters, "target_ignore_index",
+                              config.sequence_batch.target_ignore_index);
+        } else if (node.type == gui::NodeType::Adam) {
+            config.optimizer_node_id = node.id;
+            config.learning_rate = ParseFloatParam(
+                node.parameters, "learning_rate",
+                ParseFloatParam(node.parameters, "lr", config.learning_rate));
+        } else {
+            AddLayerIfSequenceNode(node, config);
+        }
+    }
+
+    return config;
 }
 
 std::shared_ptr<arrow::Array> FinishStringArray(
@@ -88,6 +387,101 @@ std::shared_ptr<arrow::Table> MakeSequenceTable() {
         arrow::field("ner_tags", arrow::utf8()),
     });
     return arrow::Table::Make(schema, {tokens, ner_tags}, 2);
+}
+
+std::vector<std::string> SplitSimpleCsvRow(const std::string& line) {
+    std::vector<std::string> values;
+    std::string value;
+    bool in_quotes = false;
+
+    for (size_t i = 0; i < line.size(); ++i) {
+        const char ch = line[i];
+        if (ch == '"') {
+            if (in_quotes && i + 1 < line.size() && line[i + 1] == '"') {
+                value.push_back('"');
+                ++i;
+            } else {
+                in_quotes = !in_quotes;
+            }
+            continue;
+        }
+        if (ch == ',' && !in_quotes) {
+            values.push_back(value);
+            value.clear();
+            continue;
+        }
+        value.push_back(ch);
+    }
+
+    values.push_back(value);
+    return values;
+}
+
+std::shared_ptr<arrow::Table> LoadNerSentencesCsvTable(
+    const std::filesystem::path& csv_path) {
+    std::ifstream in(csv_path);
+    Check(in.is_open(), "NER sentence CSV should open: " + csv_path.string());
+
+    std::string line;
+    Check(static_cast<bool>(std::getline(in, line)),
+          "NER sentence CSV should include header");
+    const auto header = SplitSimpleCsvRow(line);
+
+    auto find_index = [&](const std::string& name) {
+        for (int i = 0; i < static_cast<int>(header.size()); ++i) {
+            if (header[i] == name) {
+                return i;
+            }
+        }
+        return -1;
+    };
+
+    const int token_idx = find_index("tokens");
+    const int pos_idx = find_index("pos_tags");
+    const int tag_idx = find_index("ner_tags");
+    const int sentence_idx = find_index("sentence_id");
+
+    Check(token_idx >= 0, "NER sentence CSV must include tokens column");
+    Check(pos_idx >= 0, "NER sentence CSV must include pos_tags column");
+    Check(tag_idx >= 0, "NER sentence CSV must include ner_tags column");
+
+    std::vector<std::string> sentence_values;
+    std::vector<std::string> token_values;
+    std::vector<std::string> pos_values;
+    std::vector<std::string> tag_values;
+    const auto max_index = std::max(
+        {token_idx, pos_idx, tag_idx, sentence_idx >= 0 ? sentence_idx : 0});
+    const bool has_sentence_id = sentence_idx >= 0;
+
+    while (std::getline(in, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        const auto values = SplitSimpleCsvRow(line);
+        Check(static_cast<int>(values.size()) > max_index,
+              "NER sentence CSV row should include required fields");
+        if (has_sentence_id) {
+            sentence_values.push_back(values[sentence_idx]);
+        } else {
+            sentence_values.push_back(std::to_string(sentence_values.size()));
+        }
+        token_values.push_back(values[token_idx]);
+        pos_values.push_back(values[pos_idx]);
+        tag_values.push_back(values[tag_idx]);
+    }
+
+    auto schema = arrow::schema({
+        arrow::field("sentence_id", arrow::utf8()),
+        arrow::field("tokens", arrow::utf8()),
+        arrow::field("pos_tags", arrow::utf8()),
+        arrow::field("ner_tags", arrow::utf8()),
+    });
+    return arrow::Table::Make(schema,
+                              {FinishStringArray(sentence_values),
+                               FinishStringArray(token_values),
+                               FinishStringArray(pos_values),
+                               FinishStringArray(tag_values)},
+                              static_cast<int64_t>(token_values.size()));
 }
 
 gui::MLNode MakeDataInputNode(
@@ -400,6 +794,7 @@ std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
 int main() {
     TestTrainingRunComparisonRecord();
 
+    const auto repo_root = FindRepoRoot();
     const auto work_dir =
         std::filesystem::temp_directory_path() /
         "cyxwiz_text_gui_training_launch";
@@ -729,6 +1124,212 @@ int main() {
           sequence_result.error_message);
     Check(sequence_dispatch_called,
           "sequence batch launch should call dispatch");
+
+    const auto ner_graph_path =
+        repo_root / "examples/cyxgraph/NER/ner_bilstm_sequence_tagger.cyxgraph";
+    const auto ner_csv_path =
+        repo_root / "examples/cyxgraph/NER/generated/ner_sentences.csv";
+
+    registry.UnregisterTabularDataset(kSavedNerDatasetName);
+    auto [saved_ners_nodes, saved_ners_links] =
+        LoadCyxGraphForTest(ner_graph_path);
+    auto ner_dataset = LoadNerSentencesCsvTable(ner_csv_path);
+    Check(registry.RegisterArrowTable(ner_dataset, kSavedNerDatasetName) != nullptr,
+          "saved NER Arrow dataset should register");
+    auto saved_ners_config =
+        MakeSavedNerGraphConfig(saved_ners_nodes, kSavedNerDatasetName,
+                                work_dir / "saved_ner_checkpoints");
+    for (auto& node : saved_ners_nodes) {
+        if (node.type == gui::NodeType::DataInput) {
+            node.parameters["dataset_name"] = kSavedNerDatasetName;
+            break;
+        }
+    }
+
+    bool saved_ners_dispatch_called = false;
+    bool saved_ners_start_callback = false;
+    bool saved_ners_finish_callback = false;
+    auto saved_ners_dispatch = [&](cyxwiz::TrainingConfiguration dispatch_config,
+                                  const std::string& materialized_dataset_name,
+                                  const std::string& label_column,
+                                  int epochs,
+                                  int batch_size,
+                                  std::weak_ptr<cyxwiz::TrainingPlotPanel>,
+                                  std::function<void(bool)> callback) {
+        saved_ners_dispatch_called = true;
+        Check(materialized_dataset_name == kSavedNerDatasetName,
+              "saved NER launch should use registered dataset name");
+        Check(label_column.empty(),
+              "saved NER launch should keep empty label column without "
+              "materializer operator relabeling");
+        Check(dispatch_config.sequence_batch.enabled,
+              "saved NER launch should keep sequence enabled");
+        Check(dispatch_config.sequence_batch.token_column == "tokens",
+              "saved NER launch should use tokens as sequence input");
+        Check(dispatch_config.sequence_batch.pos_column == "pos_tags",
+              "saved NER launch should use pos_tags as POS input");
+        Check(dispatch_config.sequence_batch.tag_column == "ner_tags",
+              "saved NER launch should use ner_tags as target tags");
+        Check(epochs == 8, "saved NER launch should keep DataLoader epochs");
+        Check(batch_size == 32, "saved NER launch should keep DataLoader batch size");
+        Check(dispatch_config.sequence_batch.max_sequence_length == 96,
+              "saved NER launch should keep configured sequence length");
+
+        if (callback) {
+            callback(true);
+            saved_ners_start_callback = true;
+        }
+
+        auto dataset = registry.GetArrowDataset(materialized_dataset_name);
+        Check(dataset != nullptr, "saved NER dispatch should resolve Arrow dataset");
+        auto sequence_build = cyxwiz::BuildSequenceBatcherFromArrowDataset(
+            dataset, dispatch_config, batch_size);
+        Check(sequence_build.success(),
+              "saved NER launch should build sequence batcher: " +
+                  sequence_build.error_message);
+        Check(sequence_build.sample_count == static_cast<size_t>(ner_dataset->num_rows()),
+              "saved NER launch should preserve row count");
+        Check(sequence_build.id_to_label.size() == sequence_build.tag_vocabulary_size,
+              "saved NER launch should expose full tag vocabulary");
+        Check(sequence_build.tag_vocabulary_size > 0,
+              "saved NER launch should infer a non-empty tag vocabulary");
+        sequence_build.batcher->SetPhase(cyxwiz::BatcherPhase::Train);
+        const auto saved_ner_train_samples = sequence_build.batcher->GetNumSamples();
+        const size_t total_ner_samples =
+            static_cast<size_t>(ner_dataset->num_rows());
+        const size_t expected_train_samples = std::min<size_t>(
+            total_ner_samples,
+            static_cast<size_t>(std::floor(
+                total_ner_samples * dispatch_config.train_ratio)));
+        size_t expected_val_samples = std::min<size_t>(
+            total_ner_samples,
+            static_cast<size_t>(std::floor(
+                total_ner_samples * dispatch_config.val_ratio)));
+        if (expected_train_samples + expected_val_samples > total_ner_samples) {
+            expected_val_samples =
+                expected_train_samples >= total_ner_samples
+                    ? 0
+                    : total_ner_samples - expected_train_samples;
+        }
+        const size_t expected_test_samples =
+            total_ner_samples - expected_train_samples - expected_val_samples;
+
+        Check(saved_ner_train_samples == expected_train_samples,
+              "saved NER split should allocate expected train samples");
+        Check(sequence_build.batcher->GetNumBatches() == 1u,
+              "saved NER launch should have one train batch with batch size 32");
+        sequence_build.batcher->SetPhase(cyxwiz::BatcherPhase::Val);
+        const auto saved_ner_val_samples = sequence_build.batcher->GetNumSamples();
+        Check(saved_ner_val_samples == expected_val_samples,
+              "saved NER split should allocate expected val samples");
+        Check(sequence_build.batcher->GetNumBatches() ==
+              (expected_val_samples + batch_size - 1) / batch_size ||
+              expected_val_samples == 0,
+              "saved NER split should report expected val batch count");
+        sequence_build.batcher->SetPhase(cyxwiz::BatcherPhase::Test);
+        const auto saved_ner_test_samples = sequence_build.batcher->GetNumSamples();
+        Check(saved_ner_test_samples == expected_test_samples,
+              "saved NER split should allocate expected test samples");
+        Check(sequence_build.batcher->GetNumBatches() ==
+                  (expected_test_samples + batch_size - 1) / batch_size ||
+              expected_test_samples == 0,
+              "saved NER split should report expected test batch count");
+        Check(saved_ner_train_samples + saved_ner_val_samples +
+                  saved_ner_test_samples ==
+                  total_ner_samples,
+              "saved NER split should partition all rows across phases");
+        auto batch = sequence_build.batcher->GetNextSequenceBatch();
+        Check(batch.IsSupervised(),
+              "saved NER launch should build supervised sequence batches");
+        Check(batch.HasAttentionMask(),
+              "saved NER launch should build attention masks");
+        cyxwiz::ApplySequenceBatcherBuildResultToTrainingConfig(
+            sequence_build, dispatch_config);
+        Check(dispatch_config.output_size ==
+                  static_cast<int>(sequence_build.tag_vocabulary_size),
+              "saved NER launch should align classifier width with sequence tags");
+
+        auto built = cyxwiz::BuildSequentialFromConfig(dispatch_config);
+        Check(built.ok(),
+              "saved NER launch should build sequence classifier: " +
+                  built.error_message);
+        const auto predictions = built.model->Forward(batch.word_ids);
+        Check(predictions.Shape().size() == 3,
+              "saved NER decode should produce sequence logits");
+        Check(predictions.Shape()[0] == batch.word_ids.Shape()[0] &&
+                  predictions.Shape()[1] == batch.word_ids.Shape()[1],
+              "saved NER decode should preserve batch and token dimensions");
+        Check(predictions.Shape()[2] == sequence_build.tag_vocabulary_size,
+              "saved NER decode should produce logits for every BIO tag");
+        const auto predicted_ids = cyxwiz::ArgmaxSequenceTagLogits(predictions);
+        Check(predicted_ids.Shape() == batch.tag_ids.Shape(),
+              "saved NER decode should return per-token predicted ids");
+        const auto metrics =
+            cyxwiz::ComputeSequenceTagMetricsFromLogits(
+                predictions, batch.tag_ids, sequence_build.id_to_label,
+                dispatch_config.sequence_batch.ignore_index);
+        Check(std::isfinite(metrics.token_accuracy),
+              "saved NER decode metrics should be finite");
+        Check(predicted_ids.NumElements() == batch.tag_ids.NumElements(),
+              "saved NER decode ids should match target count");
+        Check(!sequence_build.id_to_label.empty(),
+              "saved NER decode should have label vocabulary available");
+
+        const auto* predicted_data = predicted_ids.Data<int64_t>();
+        const auto* gold_data = batch.tag_ids.Data<int64_t>();
+        bool observed_gold = false;
+        for (size_t i = 0; i < batch.tag_ids.NumElements(); ++i) {
+            const int64_t gold = gold_data[i];
+            if (gold == dispatch_config.sequence_batch.ignore_index) {
+                continue;
+            }
+            Check(predicted_data[i] >= 0 &&
+                      static_cast<size_t>(predicted_data[i]) <
+                          sequence_build.id_to_label.size(),
+                  "saved NER decode should map all predicted ids to vocab");
+            Check(gold >= 0 &&
+                      static_cast<size_t>(gold) < sequence_build.id_to_label.size(),
+                  "saved NER decode should map gold ids to vocab");
+            Check(!sequence_build.id_to_label[static_cast<size_t>(gold)].empty(),
+                  "saved NER decode should map gold ids to a defined label");
+            Check(!sequence_build.id_to_label[static_cast<size_t>(predicted_data[i])].empty(),
+                  "saved NER decode should map predictions to a defined label");
+            observed_gold = true;
+            break;
+        }
+        Check(observed_gold,
+              "saved NER decode should contain at least one non-padding token");
+
+        if (callback) {
+            callback(false);
+            saved_ners_finish_callback = true;
+        }
+        return true;
+    };
+    auto saved_ner_result = gui::StartGraphTrainingFromCompiledConfig(
+        saved_ners_nodes,
+        saved_ners_links,
+        std::move(saved_ners_config),
+        registry,
+        std::weak_ptr<cyxwiz::TrainingPlotPanel>{},
+        [](bool) {},
+        saved_ners_dispatch);
+
+    Check(saved_ner_result.started, saved_ner_result.error_message);
+    Check(saved_ners_dispatch_called,
+          "saved NER launch should call dispatch");
+    Check(saved_ners_start_callback,
+          "saved NER launch should start callback");
+    Check(saved_ners_finish_callback,
+          "saved NER launch should finish callback");
+    Check(saved_ner_result.effective_dataset_name == kSavedNerDatasetName,
+          "saved NER result should use registered dataset name");
+    Check(saved_ner_result.operators_applied == 0,
+          "saved NER result should not apply Arrow operators in test binary");
+    Check(!saved_ner_result.materializer_skipped_unsupported_source,
+          "saved NER result should not skip unsupported Arrow materializer source");
+
+    registry.UnregisterTabularDataset(kSavedNerDatasetName);
 
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(kMaterializedDatasetName);

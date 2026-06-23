@@ -29,6 +29,9 @@ struct SequenceBatcherConfig {
     int64_t tag_ignore_index = -100;
     int64_t target_ignore_index = -100;
     uint32_t seed = 42;
+    std::vector<size_t> train_indices;
+    std::vector<size_t> val_indices;
+    std::vector<size_t> test_indices;
 };
 
 class SequenceBatcher : public ISequenceBatcher {
@@ -37,11 +40,20 @@ public:
                     SequenceBatcherConfig config)
         : samples_(std::move(samples)),
           config_(config),
-          rng_(config_.seed) {
+          rng_(config_.seed),
+          split_mode_(!config_.train_indices.empty() ||
+                      !config_.val_indices.empty() ||
+                      !config_.test_indices.empty()),
+          train_indices_(std::move(config_.train_indices)),
+          val_indices_(std::move(config_.val_indices)),
+          test_indices_(std::move(config_.test_indices)) {
         config_.batch_size = std::max<size_t>(1, config_.batch_size);
         sequence_length_ = ResolveSequenceLength();
+
         indices_.resize(samples_.size());
         std::iota(indices_.begin(), indices_.end(), 0);
+
+        ApplyPhaseIndices(BatcherPhase::Train);
         Reset();
     }
 
@@ -50,9 +62,10 @@ public:
             return {};
         }
 
-        const size_t remaining = indices_.size() - current_index_;
+        auto& active_indices = ActiveIndices();
+        const size_t remaining = active_indices.size() - current_index_;
         if (config_.drop_last && remaining < config_.batch_size) {
-            current_index_ = indices_.size();
+            current_index_ = active_indices.size();
             return {};
         }
 
@@ -71,7 +84,7 @@ public:
         bool has_pos = false;
         bool has_tags = false;
         for (size_t row = 0; row < actual_size; ++row) {
-            const auto& sample = samples_[indices_[current_index_ + row]];
+            const auto& sample = samples_[active_indices[current_index_ + row]];
             if (config_.create_causal_lm_targets) {
                 CopyCausalLmSequence(sample.word_ids, word_data, target_data,
                                      mask_data, row);
@@ -124,27 +137,45 @@ public:
 
     void Reset() override {
         current_index_ = 0;
+        auto& active_indices = ActiveIndices();
+        if (split_mode_) {
+            if (current_phase_ == BatcherPhase::Train && config_.shuffle) {
+                std::shuffle(active_indices.begin(), active_indices.end(), rng_);
+            }
+            return;
+        }
+
         if (config_.shuffle) {
-            std::shuffle(indices_.begin(), indices_.end(), rng_);
+            std::shuffle(active_indices.begin(), active_indices.end(), rng_);
         }
     }
 
     bool IsEpochComplete() const override {
-        return current_index_ >= indices_.size();
+        return current_index_ >= ActiveIndices().size();
     }
 
     size_t GetNumBatches() const override {
-        if (indices_.empty() || sequence_length_ == 0) {
+        const auto& active_indices = ActiveIndices();
+        if (active_indices.empty() || sequence_length_ == 0) {
             return 0;
         }
         if (config_.drop_last) {
-            return indices_.size() / config_.batch_size;
+            return active_indices.size() / config_.batch_size;
         }
-        return (indices_.size() + config_.batch_size - 1) /
+        return (active_indices.size() + config_.batch_size - 1) /
                config_.batch_size;
     }
 
-    size_t GetNumSamples() const override { return indices_.size(); }
+    size_t GetNumSamples() const override { return ActiveIndices().size(); }
+
+    void SetPhase(BatcherPhase phase) override {
+        if (!split_mode_) {
+            current_phase_ = phase;
+            return;
+        }
+        ApplyPhaseIndices(phase);
+        Reset();
+    }
 
 private:
     size_t ResolveSequenceLength() const {
@@ -188,10 +219,60 @@ private:
         }
     }
 
+    std::vector<size_t>& ActiveIndices() {
+        if (!split_mode_) {
+            return indices_;
+        }
+        switch (current_phase_) {
+            case BatcherPhase::Train:
+                return train_indices_;
+            case BatcherPhase::Val:
+                return val_indices_;
+            case BatcherPhase::Test:
+                return test_indices_;
+            default:
+                return indices_;
+        }
+    }
+
+    const std::vector<size_t>& ActiveIndices() const {
+        if (!split_mode_) {
+            return indices_;
+        }
+        switch (current_phase_) {
+            case BatcherPhase::Train:
+                return train_indices_;
+            case BatcherPhase::Val:
+                return val_indices_;
+            case BatcherPhase::Test:
+                return test_indices_;
+            default:
+                return indices_;
+        }
+    }
+
+    void ApplyPhaseIndices(BatcherPhase phase) {
+        if (!split_mode_) {
+            return;
+        }
+        current_phase_ = phase;
+        if (current_phase_ != BatcherPhase::Train) {
+            auto& active_indices = ActiveIndices();
+            if (!active_indices.empty()) {
+                std::sort(active_indices.begin(), active_indices.end());
+            }
+        }
+    }
+
     std::vector<SequenceSample> samples_;
     SequenceBatcherConfig config_;
     size_t sequence_length_ = 0;
+    bool split_mode_ = false;
     std::vector<size_t> indices_;
+    std::vector<size_t> train_indices_;
+    std::vector<size_t> val_indices_;
+    std::vector<size_t> test_indices_;
+    BatcherPhase current_phase_ = BatcherPhase::Train;
     size_t current_index_ = 0;
     std::mt19937 rng_;
 };

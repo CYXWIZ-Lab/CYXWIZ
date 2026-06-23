@@ -108,6 +108,21 @@ public:
     );
 
     /**
+     * Extract sequence vocabulary assets from a .cyxmodel package.
+     * @param input_path Path to .cyxmodel directory/archive
+     * @param token_vocab_text Output sequence/token vocabulary contents, if present
+     * @param pos_vocab_text Output sequence/pos vocabulary contents, if present
+     * @param tag_vocab_text Output sequence/tag vocabulary contents, if present
+     * @return true when any sequence vocabulary asset is present
+     */
+    bool ExtractSequenceVocabularyAssets(
+        const std::string& input_path,
+        std::string& token_vocab_text,
+        std::string& pos_vocab_text,
+        std::string& tag_vocab_text
+    );
+
+    /**
      * Get last error message
      */
     const std::string& GetLastError() const { return last_error_; }

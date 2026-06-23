@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <filesystem>
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -14,6 +15,21 @@
 namespace cyxwiz {
 
 namespace {
+
+struct InferredSequenceConfig {
+    bool enabled = false;
+    bool batch_first = true;
+    bool create_attention_mask = true;
+    bool create_causal_lm_targets = false;
+    size_t max_sequence_length = 0;
+    int64_t word_pad_id = 0;
+    int64_t pos_pad_id = 0;
+    int64_t tag_ignore_index = -100;
+    int64_t target_ignore_index = -100;
+    std::string token_vocab_path;
+    std::string pos_vocab_path;
+    std::string tag_vocab_path;
+};
 
 bool LooksLikeTokenizerParams(const nlohmann::json& params) {
     return params.contains("tokenizer_type") ||
@@ -130,6 +146,274 @@ bool InferTextTokenizerAssetsFromGraph(
     }
 }
 
+std::string ToLowerInvariant(const std::string& value) {
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return lowered;
+}
+
+bool ReadInt64Param(
+    const nlohmann::json& params,
+    const char* key,
+    int64_t& out_value
+) {
+    if (!params.contains(key)) {
+        return false;
+    }
+
+    const auto& value = params[key];
+    if (value.is_number_integer()) {
+        out_value = value.get<int64_t>();
+        return true;
+    }
+    if (value.is_number_unsigned()) {
+        out_value = static_cast<int64_t>(value.get<uint64_t>());
+        return true;
+    }
+    if (value.is_number_float()) {
+        out_value = static_cast<int64_t>(value.get<double>());
+        return true;
+    }
+    if (value.is_string()) {
+        try {
+            out_value = std::stoll(value.get<std::string>());
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool ReadBoolParam(
+    const nlohmann::json& params,
+    const char* key,
+    bool& out_value
+) {
+    if (!params.contains(key)) {
+        return false;
+    }
+
+    const auto& value = params[key];
+    if (value.is_boolean()) {
+        out_value = value.get<bool>();
+        return true;
+    }
+    if (value.is_number_integer()) {
+        out_value = value.get<int64_t>() != 0;
+        return true;
+    }
+    if (value.is_string()) {
+        const auto lowered = ToLowerInvariant(value.get<std::string>());
+        if (lowered == "true" || lowered == "1" || lowered == "yes" ||
+            lowered == "on") {
+            out_value = true;
+            return true;
+        }
+        if (lowered == "false" || lowered == "0" || lowered == "off") {
+            out_value = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool InferSequenceAssetsFromGraph(
+    const std::string& graph_json,
+    InferredSequenceConfig& out_config
+) {
+    out_config = InferredSequenceConfig{};
+    if (graph_json.empty()) {
+        return false;
+    }
+
+    try {
+        const auto graph = nlohmann::json::parse(graph_json);
+        if (!graph.contains("nodes") || !graph["nodes"].is_array()) {
+            return false;
+        }
+
+        const auto is_sequence_like_key = [](const std::string& key) {
+            static const char* keys[] = {
+                "token_column",
+                "tokens_column",
+                "token_sequence_column",
+                "pos_column",
+                "pos_sequence_column",
+                "tag_column",
+                "tags_column",
+                "tag_sequence_column",
+                "sentence_id_column",
+                "sequence_id_column",
+                "max_sequence_length",
+                "sequence_length",
+                "ignore_index",
+                "target_ignore_index",
+                "causal_lm_targets",
+                "create_causal_lm_targets",
+                "shifted_targets",
+                "batch_layout",
+                "attention_mask",
+                "create_attention_mask",
+                "return_sequences",
+                "sequence_payload",
+                "tag_vocab_file",
+                "vocab_file"
+            };
+
+            for (const char* known_key : keys) {
+                if (key == known_key) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        for (const auto& node : graph["nodes"]) {
+            if (!node.contains("parameters") || !node["parameters"].is_object()) {
+                continue;
+            }
+
+            const auto& params = node["parameters"];
+            const std::string node_name =
+                node.contains("name") && node["name"].is_string()
+                    ? node["name"].get<std::string>()
+                    : "";
+            const std::string node_name_lower = ToLowerInvariant(node_name);
+
+            bool looks_sequence_like = false;
+            for (const auto& param : params.items()) {
+                if (is_sequence_like_key(param.key())) {
+                    looks_sequence_like = true;
+                    break;
+                }
+            }
+
+            if (!looks_sequence_like) {
+                // Keep this conservative: only promote to sequence assets if we
+                // clearly see sequence semantics in parameters.
+                const bool has_vocab_like = params.contains("vocab_file") ||
+                                           params.contains("tag_vocab_file") ||
+                                           params.contains("outside_tag") ||
+                                           params.contains("pad_tag") ||
+                                           params.contains("bio_scheme");
+                if (!has_vocab_like) {
+                    continue;
+                }
+                looks_sequence_like = has_vocab_like;
+            }
+
+            if (looks_sequence_like) {
+                out_config.enabled = true;
+            }
+
+            if (params.contains("batch_layout")) {
+                bool batch_first = true;
+                if (ReadBoolParam(params, "batch_layout", batch_first)) {
+                    out_config.batch_first = batch_first;
+                } else {
+                    const auto layout =
+                        ToLowerInvariant(params["batch_layout"].get<std::string>());
+                    out_config.batch_first = layout != "time_first";
+                }
+            }
+
+            bool attention_mask = out_config.create_attention_mask;
+            if (ReadBoolParam(params, "create_attention_mask", attention_mask) ||
+                ReadBoolParam(params, "attention_mask", attention_mask)) {
+                out_config.create_attention_mask = attention_mask;
+            }
+
+            bool causal_lm_targets = out_config.create_causal_lm_targets;
+            if (ReadBoolParam(params, "create_causal_lm_targets", causal_lm_targets) ||
+                ReadBoolParam(params, "causal_lm_targets", causal_lm_targets) ||
+                (params.contains("target_ids") && params["target_ids"].is_array()) ||
+                (params.contains("shifted_targets") && params["shifted_targets"].is_array())) {
+                out_config.create_causal_lm_targets = causal_lm_targets;
+            }
+
+            int64_t max_sequence_length = out_config.max_sequence_length;
+            if (ReadInt64Param(params, "max_sequence_length", max_sequence_length) ||
+                ReadInt64Param(params, "sequence_length", max_sequence_length)) {
+                out_config.max_sequence_length =
+                    max_sequence_length < 0 ? 0 : static_cast<size_t>(max_sequence_length);
+            }
+
+            int64_t tag_ignore_index = out_config.tag_ignore_index;
+            if (ReadInt64Param(params, "ignore_index", tag_ignore_index)) {
+                out_config.tag_ignore_index = tag_ignore_index;
+            }
+
+            int64_t target_ignore_index = out_config.target_ignore_index;
+            if (ReadInt64Param(params, "target_ignore_index", target_ignore_index)) {
+                out_config.target_ignore_index = target_ignore_index;
+            }
+
+            int64_t token_pad_id = out_config.word_pad_id;
+            if (ReadInt64Param(params, "token_pad_value", token_pad_id)) {
+                out_config.word_pad_id = token_pad_id;
+            }
+            int64_t pos_pad_id = out_config.pos_pad_id;
+            if (ReadInt64Param(params, "pos_pad_value", pos_pad_id)) {
+                out_config.pos_pad_id = pos_pad_id;
+            }
+
+            auto infer_vocab_for_node = [&]() {
+                auto resolve_path = [&](const nlohmann::json& path_value) {
+                    if (!path_value.is_string()) {
+                        return std::string{};
+                    }
+                    const auto path = path_value.get<std::string>();
+                    return path;
+                };
+
+                if (params.contains("tag_vocab_file")) {
+                    const auto tag_path = resolve_path(params["tag_vocab_file"]);
+                    if (!tag_path.empty()) {
+                        out_config.tag_vocab_path = tag_path;
+                    }
+                    return;
+                }
+
+                if (!params.contains("vocab_file")) {
+                    return;
+                }
+
+                const auto vocab_path = resolve_path(params["vocab_file"]);
+                if (vocab_path.empty()) {
+                    return;
+                }
+
+                const bool tag_like = params.contains("outside_tag") ||
+                                      params.contains("pad_tag") ||
+                                      params.contains("bio_scheme") ||
+                                      (node_name_lower.find("tag") != std::string::npos);
+                const bool pos_like = params.contains("pad_tag") == false &&
+                                     !tag_like &&
+                                     (node_name_lower.find("pos") != std::string::npos);
+
+                if (tag_like) {
+                    out_config.tag_vocab_path = vocab_path;
+                } else if (pos_like) {
+                    out_config.pos_vocab_path = vocab_path;
+                } else {
+                    out_config.token_vocab_path = vocab_path;
+                }
+            };
+            infer_vocab_for_node();
+        }
+
+        return out_config.enabled;
+    } catch (const std::exception&) {
+        spdlog::warn("Could not infer sequence assets from graph");
+        out_config = InferredSequenceConfig{};
+        return false;
+    }
+}
+
 } // namespace
 
 ExportResult ModelExporter::Export(
@@ -214,6 +498,45 @@ ExportResult ModelExporter::ExportCyxModel(
             }
         }
 
+        InferredSequenceConfig inferred_sequence_config;
+        if (resolved_options.include_sequence_assets &&
+            InferSequenceAssetsFromGraph(graph_json, inferred_sequence_config)) {
+            if (resolved_options.sequence_token_vocabulary_path.empty() &&
+                !inferred_sequence_config.token_vocab_path.empty()) {
+                resolved_options.sequence_token_vocabulary_path =
+                    inferred_sequence_config.token_vocab_path;
+            }
+            if (resolved_options.sequence_pos_vocabulary_path.empty() &&
+                !inferred_sequence_config.pos_vocab_path.empty()) {
+                resolved_options.sequence_pos_vocabulary_path =
+                    inferred_sequence_config.pos_vocab_path;
+            }
+            if (resolved_options.sequence_tag_vocabulary_path.empty() &&
+                !inferred_sequence_config.tag_vocab_path.empty()) {
+                resolved_options.sequence_tag_vocabulary_path =
+                    inferred_sequence_config.tag_vocab_path;
+            }
+
+            resolved_options.sequence_max_sequence_length =
+                inferred_sequence_config.max_sequence_length != 0
+                    ? inferred_sequence_config.max_sequence_length
+                    : resolved_options.sequence_max_sequence_length;
+            resolved_options.sequence_batch_first =
+                inferred_sequence_config.batch_first;
+            resolved_options.sequence_create_attention_mask =
+                inferred_sequence_config.create_attention_mask;
+            resolved_options.sequence_create_causal_lm_targets =
+                inferred_sequence_config.create_causal_lm_targets;
+            resolved_options.sequence_word_pad_id =
+                inferred_sequence_config.word_pad_id;
+            resolved_options.sequence_pos_pad_id =
+                inferred_sequence_config.pos_pad_id;
+            resolved_options.sequence_tag_ignore_index =
+                inferred_sequence_config.tag_ignore_index;
+            resolved_options.sequence_target_ignore_index =
+                inferred_sequence_config.target_ignore_index;
+        }
+
         // 1. Create manifest
         ModelManifest manifest = CreateManifest(model, training_metrics,
                                                 resolved_options);
@@ -221,6 +544,42 @@ ExportResult ModelExporter::ExportCyxModel(
             !resolved_options.text_tokenizer_config_json.empty();
         manifest.has_vocabulary =
             !resolved_options.text_tokenizer_vocab_path.empty();
+        if (resolved_options.include_sequence_assets) {
+            manifest.has_sequence =
+                inferred_sequence_config.enabled ||
+                !resolved_options.sequence_token_vocabulary_path.empty() ||
+                !resolved_options.sequence_pos_vocabulary_path.empty() ||
+                !resolved_options.sequence_tag_vocabulary_path.empty() ||
+                resolved_options.sequence_max_sequence_length != 0;
+            manifest.has_sequence_token_vocabulary =
+                !resolved_options.sequence_token_vocabulary_path.empty();
+            manifest.has_sequence_pos_vocabulary =
+                !resolved_options.sequence_pos_vocabulary_path.empty();
+            manifest.has_sequence_tag_vocabulary =
+                !resolved_options.sequence_tag_vocabulary_path.empty();
+            manifest.sequence_batch_first =
+                resolved_options.sequence_batch_first;
+            manifest.sequence_create_attention_mask =
+                resolved_options.sequence_create_attention_mask;
+            manifest.sequence_create_causal_lm_targets =
+                resolved_options.sequence_create_causal_lm_targets;
+            manifest.sequence_max_sequence_length =
+                resolved_options.sequence_max_sequence_length;
+            manifest.sequence_word_pad_id =
+                resolved_options.sequence_word_pad_id;
+            manifest.sequence_pos_pad_id =
+                resolved_options.sequence_pos_pad_id;
+            manifest.sequence_tag_ignore_index =
+                resolved_options.sequence_tag_ignore_index;
+            manifest.sequence_target_ignore_index =
+                resolved_options.sequence_target_ignore_index;
+            manifest.sequence_token_vocabulary_path =
+                manifest.has_sequence_token_vocabulary ? "sequence/token_vocab.txt" : "";
+            manifest.sequence_pos_vocabulary_path =
+                manifest.has_sequence_pos_vocabulary ? "sequence/pos_vocab.txt" : "";
+            manifest.sequence_tag_vocabulary_path =
+                manifest.has_sequence_tag_vocabulary ? "sequence/tag_vocab.txt" : "";
+        }
 
         if (progress_cb) progress_cb(1, 6, "Extracting weights...");
 
