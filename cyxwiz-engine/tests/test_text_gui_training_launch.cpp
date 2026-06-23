@@ -7,6 +7,7 @@
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/pipeline_materializer.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
+#include "../src/core/sequence_arrow_batcher.h"
 #include "../src/core/training_run_comparison.h"
 #include "../src/gui/graph_training_launcher.h"
 
@@ -631,6 +632,27 @@ int main() {
     sequence_config.sequence_batch.enabled = true;
     sequence_config.sequence_batch.token_column = "tokens";
     sequence_config.sequence_batch.tag_column = "ner_tags";
+    sequence_config.sequence_batch.create_attention_mask = true;
+
+    auto sequence_dataset = std::make_shared<cyxwiz::ArrowDataset>(
+        MakeSequenceTable(), "gui_sequence_runtime");
+    auto sequence_build = cyxwiz::BuildSequenceBatcherFromArrowDataset(
+        sequence_dataset, sequence_config, 2);
+    Check(sequence_build.success(),
+          "sequence Arrow batcher bridge should build: " +
+              sequence_build.error_message);
+    Check(sequence_build.sample_count == 2,
+          "sequence Arrow batcher bridge should preserve sample count");
+    Check(!sequence_build.id_to_label.empty(),
+          "sequence Arrow batcher bridge should expose tag label vocabulary");
+    auto sequence_batch = sequence_build.batcher->GetNextSequenceBatch();
+    Check(sequence_batch.IsSupervised(),
+          "sequence Arrow batcher bridge should produce supervised sequence batches");
+    Check(sequence_batch.sequence_length == 4,
+          "sequence Arrow batcher bridge should infer token sequence length");
+    Check(sequence_batch.HasAttentionMask(),
+          "sequence Arrow batcher bridge should honor attention mask config");
+
     bool sequence_dispatch_called = false;
     auto sequence_dispatch = [&](
         cyxwiz::TrainingConfiguration dispatch_config,

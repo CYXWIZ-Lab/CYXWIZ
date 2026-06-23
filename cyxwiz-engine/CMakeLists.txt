@@ -138,6 +138,7 @@ set(ENGINE_SOURCES
     src/core/debug_run_store.cpp
     src/core/graph_topology_utils.cpp
     src/core/training_batcher_setup.cpp
+    src/core/sequence_arrow_batcher.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/executable_model.cpp
@@ -492,6 +493,7 @@ set(ENGINE_HEADERS
     src/core/graph_compiler.h
     src/core/dataset_batcher.h
     src/core/ner_sequence_builder.h
+    src/core/sequence_arrow_batcher.h
     src/core/sequence_training_step.h
     src/core/model_builder.h
     src/core/debug_executor.h
@@ -1721,6 +1723,7 @@ set_target_properties(test_text_arrow_training_launch PROPERTIES
 add_executable(test_text_gui_training_launch
     tests/test_text_gui_training_launch.cpp
     src/gui/graph_training_launcher.cpp
+    src/core/sequence_arrow_batcher.cpp
     src/core/pipeline_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/pipeline_table_materializer.cpp

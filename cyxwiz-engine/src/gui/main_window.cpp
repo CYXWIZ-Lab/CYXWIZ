@@ -18,6 +18,7 @@
 #include "icons.h"
 #include "theme.h"
 #include "../core/keyboard_shortcuts.h"
+#include "../core/sequence_arrow_batcher.h"
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
@@ -3038,6 +3039,28 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             int batch_size,
             std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
             std::function<void(bool)> callback) {
+
+            if (dispatch_config.sequence_batch.enabled) {
+                auto arrow_dataset = registry.GetArrowDataset(dataset_name);
+                auto sequence = cyxwiz::BuildSequenceBatcherFromArrowDataset(
+                    arrow_dataset, dispatch_config, batch_size);
+                if (!sequence.success()) {
+                    spdlog::error("StartTrainingFromGraph: sequence batcher "
+                                  "materialization failed: {}",
+                                  sequence.error_message);
+                    return false;
+                }
+
+                spdlog::info("StartTrainingFromGraph: starting sequence "
+                             "training from '{}' ({} samples, {} labels)",
+                             dataset_name, sequence.sample_count,
+                             sequence.id_to_label.size());
+                return tm.StartTrainingSequence(
+                    std::move(dispatch_config),
+                    std::move(sequence.batcher),
+                    std::move(sequence.id_to_label),
+                    epochs, batch_size, plot_panel, std::move(callback));
+            }
 
             // Dispatch via loader polymorphism. GetByRegisteredDataset walks
             // registered loaders and picks the one that owns the runtime dataset.

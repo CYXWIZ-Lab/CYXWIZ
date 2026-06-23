@@ -187,9 +187,9 @@ struct TextPreprocessingConfig {
     int pad_value = 0;
 };
 
-// Sequence tagging / NER batch contract. Compile can identify the intended
-// named payloads even while runtime training still fails closed until a real
-// sequence batcher and token-level executor exist.
+// Sequence tagging / NER batch contract. Compile identifies the intended
+// named payloads. Runtime training must enter through StartTrainingSequence
+// with a prebuilt ISequenceBatcher; generic tabular dispatch still fails closed.
 struct SequenceBatchConfig {
     bool enabled = false;
     std::string token_column;
@@ -205,12 +205,10 @@ struct SequenceBatchConfig {
 };
 
 inline std::string SequenceBatchRuntimeUnsupportedMessage() {
-    return "Sequence/NER graph training is blocked before Studio "
-           "materialization: the compiler can capture the intended token/tag "
-           "batch contract, and TrainingExecutor can consume a prebuilt "
-           "ISequenceBatcher, but the Studio Arrow/runtime path still cannot "
-           "materialize named sequence payloads such as word_ids, optional "
-           "pos_ids, attention_mask, tag_ids, and causal target_ids.";
+    return "Sequence/NER graph training requires a prebuilt ISequenceBatcher. "
+           "Use the Studio graph-training launcher or StartTrainingSequence; "
+           "generic tabular TrainingExecutor dispatch cannot consume named "
+           "sequence payloads.";
 }
 
 /**

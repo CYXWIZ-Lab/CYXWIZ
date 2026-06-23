@@ -53,6 +53,10 @@ Runtime progress:
   reuses the existing `NERSequenceBuilder` core helper and emits encoded
   `word_ids`, `pos_ids`, `tag_ids`, `attention_mask`, and `sequence_length`
   columns.
+- Studio graph training can now build a `SequenceBatcher` directly from a
+  registered Arrow sentence table and route sequence/NER graphs through
+  `TrainingManager::StartTrainingSequence`, reusing the same
+  `NERSequenceBuilder` core helper instead of duplicating token/tag encoding.
 - This does not complete full NER graph launch yet: Studio still needs the
   higher-level model launch/inference packaging that consumes these prepared
   sequence artifacts.
