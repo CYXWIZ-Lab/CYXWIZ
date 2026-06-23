@@ -3051,10 +3051,16 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                     return false;
                 }
 
+                cyxwiz::ApplySequenceBatcherBuildResultToTrainingConfig(
+                    sequence, dispatch_config);
+
                 spdlog::info("StartTrainingFromGraph: starting sequence "
-                             "training from '{}' ({} samples, {} labels)",
+                             "training from '{}' ({} samples, {} labels, "
+                             "seq_len={}, token_vocab={})",
                              dataset_name, sequence.sample_count,
-                             sequence.id_to_label.size());
+                             sequence.id_to_label.size(),
+                             sequence.sequence_length,
+                             sequence.token_vocabulary_size);
                 return tm.StartTrainingSequence(
                     std::move(dispatch_config),
                     std::move(sequence.batcher),

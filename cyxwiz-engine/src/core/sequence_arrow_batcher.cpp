@@ -97,6 +97,18 @@ std::string DefaultColumn(const std::string& value,
 
 } // namespace
 
+size_t ResolveSequenceLength(const std::vector<SequenceSample>& samples,
+                             size_t configured_length) {
+    if (configured_length > 0) {
+        return configured_length;
+    }
+    size_t max_length = 0;
+    for (const auto& sample : samples) {
+        max_length = std::max(max_length, sample.word_ids.size());
+    }
+    return max_length;
+}
+
 SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
     const std::shared_ptr<ArrowDataset>& dataset,
     const TrainingConfiguration& config,
@@ -196,6 +208,10 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
         auto build = BuildNERSequenceData(rows, builder_config);
         result.id_to_label = build.tag_vocabulary.Values();
         result.sample_count = build.samples.size();
+        result.sequence_length = ResolveSequenceLength(
+            build.samples, build.batcher_config.max_sequence_length);
+        result.token_vocabulary_size = build.token_vocabulary.Size();
+        result.tag_vocabulary_size = build.tag_vocabulary.Size();
         result.batcher = std::make_unique<SequenceBatcher>(
             std::move(build.samples), build.batcher_config);
     } catch (const std::exception& ex) {
@@ -203,6 +219,40 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
     }
 
     return result;
+}
+
+void ApplySequenceBatcherBuildResultToTrainingConfig(
+    const SequenceArrowBatcherBuildResult& build,
+    TrainingConfiguration& config) {
+    if (build.sequence_length > 0) {
+        config.input_size = build.sequence_length;
+        config.input_shape = {build.sequence_length};
+    }
+    if (build.tag_vocabulary_size > 0) {
+        config.output_size = build.tag_vocabulary_size;
+    }
+
+    bool embedding_vocab_applied = false;
+    int last_time_distributed = -1;
+    for (size_t i = 0; i < config.layers.size(); ++i) {
+        auto& layer = config.layers[i];
+        if (!embedding_vocab_applied &&
+            layer.type == gui::NodeType::Embedding &&
+            build.token_vocabulary_size > 0) {
+            layer.parameters["num_embeddings"] =
+                std::to_string(build.token_vocabulary_size);
+            embedding_vocab_applied = true;
+        }
+        if (layer.type == gui::NodeType::TimeDistributed) {
+            last_time_distributed = static_cast<int>(i);
+        }
+    }
+
+    if (last_time_distributed >= 0 && build.tag_vocabulary_size > 0) {
+        auto& head = config.layers[static_cast<size_t>(last_time_distributed)];
+        head.units = static_cast<int>(build.tag_vocabulary_size);
+        head.parameters["units"] = std::to_string(build.tag_vocabulary_size);
+    }
 }
 
 } // namespace cyxwiz

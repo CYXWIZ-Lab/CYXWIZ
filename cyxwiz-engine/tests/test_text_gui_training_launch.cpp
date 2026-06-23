@@ -644,6 +644,13 @@ int main() {
               sequence_build.error_message);
     Check(sequence_build.sample_count == 2,
           "sequence Arrow batcher bridge should preserve sample count");
+    Check(sequence_build.sequence_length == 5,
+          "sequence Arrow batcher bridge should expose sequence length");
+    Check(sequence_build.token_vocabulary_size > 0,
+          "sequence Arrow batcher bridge should expose token vocabulary size");
+    Check(sequence_build.tag_vocabulary_size ==
+              sequence_build.id_to_label.size(),
+          "sequence Arrow batcher bridge should expose tag vocabulary size");
     Check(!sequence_build.id_to_label.empty(),
           "sequence Arrow batcher bridge should expose tag label vocabulary");
     auto sequence_batch = sequence_build.batcher->GetNextSequenceBatch();
@@ -653,6 +660,43 @@ int main() {
           "sequence Arrow batcher bridge should honor max sequence length");
     Check(sequence_batch.HasAttentionMask(),
           "sequence Arrow batcher bridge should honor attention mask config");
+
+    auto normalized_sequence_config = sequence_config;
+    normalized_sequence_config.input_size = 0;
+    normalized_sequence_config.input_shape.clear();
+    normalized_sequence_config.output_size = 99;
+    normalized_sequence_config.layers.clear();
+
+    cyxwiz::CompiledLayer sequence_embedding;
+    sequence_embedding.type = gui::NodeType::Embedding;
+    sequence_embedding.parameters["num_embeddings"] = "1";
+    sequence_embedding.parameters["embedding_dim"] = "6";
+    normalized_sequence_config.layers.push_back(sequence_embedding);
+
+    cyxwiz::CompiledLayer sequence_head;
+    sequence_head.type = gui::NodeType::TimeDistributed;
+    sequence_head.units = 1;
+    sequence_head.parameters["units"] = "1";
+    normalized_sequence_config.layers.push_back(sequence_head);
+
+    cyxwiz::ApplySequenceBatcherBuildResultToTrainingConfig(
+        sequence_build, normalized_sequence_config);
+    Check(normalized_sequence_config.input_size == 5,
+          "sequence config normalization should set input sequence length");
+    Check(normalized_sequence_config.output_size ==
+              sequence_build.tag_vocabulary_size,
+          "sequence config normalization should set tag output size");
+    Check(normalized_sequence_config.layers[0]
+              .parameters["num_embeddings"] ==
+              std::to_string(sequence_build.token_vocabulary_size),
+          "sequence config normalization should set embedding vocabulary size");
+    Check(normalized_sequence_config.layers[1].units ==
+              static_cast<int>(sequence_build.tag_vocabulary_size),
+          "sequence config normalization should set token head units");
+    Check(normalized_sequence_config.layers[1]
+              .parameters["units"] ==
+              std::to_string(sequence_build.tag_vocabulary_size),
+          "sequence config normalization should set token head units parameter");
 
     bool sequence_dispatch_called = false;
     auto sequence_dispatch = [&](
