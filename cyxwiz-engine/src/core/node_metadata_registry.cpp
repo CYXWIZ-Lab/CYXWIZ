@@ -1712,12 +1712,12 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"merge_mode", "string", "concat", "Merge mode", {}, ""}},
         NodeImplementationStatus::Template, 0});
 
-    RegisterNode({NodeType::TimeDistributed, NodeCategory::Recurrent, "TimeDistributed", ICON_FA_REPEAT,
-        {"time", "distributed", "sequence", "token"}, 0, false,
-        "Apply one Dense projection to every timestep", "", "",
-        {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
-        {{"Output", PinType::Tensor, true, "Output [N,T,units]"}},
-        {{"units", "int", "128", "Per-timestep output units", {}, ""}},
+    RegisterNode({NodeType::TimeDistributed, NodeCategory::Recurrent, "TimeDistributed Dense", ICON_FA_REPEAT,
+        {"time", "distributed", "sequence", "token", "ner", "token classifier"}, 0, false,
+        "Apply one Dense token-classifier projection to every timestep", "", "",
+        {{"Input", PinType::Tensor, true, "Sequence features [N,T,F]"}},
+        {{"Output", PinType::Tensor, true, "Token logits [N,T,units]"}},
+        {{"units", "int", "128", "Per-token output classes", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Dropout, NodeCategory::Regularization, "Dropout", ICON_FA_SHUFFLE,
@@ -2124,11 +2124,15 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::CrossEntropyLoss, NodeCategory::Training, "CrossEntropy", ICON_FA_CHART_PIE,
-        {"crossentropy", "classification"}, 0, false, "Cross-entropy loss", "", "",
-        {{"Logits", PinType::Tensor, true, "Logits"}, {"Labels", PinType::Labels, true, "Labels"}},
+    RegisterNode({NodeType::CrossEntropyLoss, NodeCategory::Training, "CrossEntropy / Token CE", ICON_FA_CHART_PIE,
+        {"crossentropy", "classification", "token loss", "sequence", "ner"}, 0, false,
+        "Class or token-level cross-entropy loss", "", "",
+        {{"Logits", PinType::Tensor, true, "Class logits [N,C] or token logits [N,T,C]"},
+         {"Labels", PinType::Labels, true, "Class labels [N] or token labels [N,T]"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
-        {}, NodeImplementationStatus::Implemented, 0});
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"ignore_index", "int", "-100", "Padding label ignore index", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Adam, NodeCategory::Training, "Adam", ICON_FA_GRADUATION_CAP,
         {"adam", "optimizer"}, 0, false, "Adam optimizer", "", "",

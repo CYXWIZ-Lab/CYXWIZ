@@ -1156,6 +1156,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // Parameters
             if (node.type == NodeType::CrossEntropyLoss) {
                 node.parameters["reduction"] = "mean";  // mean, sum, none
+                node.parameters["ignore_index"] = "-100";
             }
             break;
         }
@@ -1302,6 +1303,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
                 node.parameters["merge_mode"] = "concat";
             } else {
                 node.parameters["units"] = "128";
+                node.name = "TimeDistributed Dense";
             }
             break;
         }

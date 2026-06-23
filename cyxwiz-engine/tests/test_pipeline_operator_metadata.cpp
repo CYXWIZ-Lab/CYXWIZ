@@ -2289,6 +2289,10 @@ int main() {
     const auto* cross_entropy_meta =
         metadata.GetMetadata(gui::NodeType::CrossEntropyLoss);
     Check(cross_entropy_meta != nullptr, "CrossEntropyLoss metadata should exist");
+    Check(cross_entropy_meta->name.find("Token CE") != std::string::npos,
+          "CrossEntropyLoss metadata should advertise token CE use");
+    Check(HasParameter(cross_entropy_meta, "ignore_index"),
+          "CrossEntropyLoss metadata should expose ignore_index for padded token labels");
     CheckSupportAxis(
         cross_entropy_meta,
         "Task Type",
@@ -2297,6 +2301,18 @@ int main() {
         "CrossEntropyLoss");
     Check(cross_entropy_meta->help_text.find("class labels") != std::string::npos,
           "CrossEntropyLoss task guidance should point users to class-label classification");
+
+    const auto* time_distributed_meta =
+        metadata.GetMetadata(gui::NodeType::TimeDistributed);
+    Check(time_distributed_meta != nullptr,
+          "TimeDistributed metadata should exist");
+    Check(time_distributed_meta->name.find("Dense") != std::string::npos,
+          "TimeDistributed metadata should expose the token dense head label");
+    Check(time_distributed_meta->brief_description.find("token-classifier") !=
+              std::string::npos,
+          "TimeDistributed metadata should explain the token classifier role");
+    Check(HasOutputType(time_distributed_meta, "Output", gui::PinType::Tensor),
+          "TimeDistributed metadata should expose tensor logits output");
 
     const auto* bar_chart_meta = metadata.GetMetadata(gui::NodeType::BarChart);
     Check(bar_chart_meta != nullptr, "BarChart metadata should exist");

@@ -103,6 +103,9 @@ Status 2026-06-23:
 - Sequence graph launch now performs a compact pre-dispatch schema check after
   materialization and reports missing token/tag/POS/sentence-id columns with
   the dataset name instead of falling through to a generic launch failure.
+- Token classifier/loss UI labels are now task-aware: TimeDistributed appears
+  as a dense token head, and CrossEntropy metadata exposes token CE usage plus
+  the padding `ignore_index` control.
 
 ### 1. Executable Vocabulary Nodes
 
