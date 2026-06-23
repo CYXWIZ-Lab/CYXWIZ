@@ -1251,8 +1251,7 @@ int main() {
 
         auto built = cyxwiz::BuildSequentialFromConfig(dispatch_config);
         Check(built.ok(),
-              "saved NER launch should build sequence classifier: " +
-                  built.error_message);
+              "saved NER launch should build sequence classifier");
         const auto predictions = built.model->Forward(batch.word_ids);
         Check(predictions.Shape().size() == 3,
               "saved NER decode should produce sequence logits");

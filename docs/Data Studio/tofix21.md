@@ -100,6 +100,9 @@ Status 2026-06-23:
   POS Vocabulary, and NER Tag Vocabulary now marks the nodes as implemented
   runtime nodes instead of stale templates, with descriptions aligned to the
   executable `value,id` vocabulary table output.
+- Sequence graph launch now performs a compact pre-dispatch schema check after
+  materialization and reports missing token/tag/POS/sentence-id columns with
+  the dataset name instead of falling through to a generic launch failure.
 
 ### 1. Executable Vocabulary Nodes
 

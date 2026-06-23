@@ -3,9 +3,13 @@
 #include "../core/arrow_dataset.h"
 #include "../core/data_registry.h"
 #include "../core/label_column_resolver.h"
+#include "../core/parquet_backed_dataset.h"
 #include "../core/pipeline_materializer.h"
 
 #include <spdlog/spdlog.h>
+
+#include <memory>
+#include <vector>
 
 namespace gui {
 
@@ -159,6 +163,82 @@ std::string ResolveRuntimeArrowLabelColumn(
     return resolved;
 }
 
+std::string DefaultSequenceColumn(const std::string& value,
+                                  const char* fallback) {
+    return value.empty() ? std::string(fallback) : value;
+}
+
+std::shared_ptr<arrow::Schema> FindTabularSchema(
+    cyxwiz::DataRegistry& registry,
+    const std::string& dataset_name) {
+    if (auto arrow_ds = registry.GetArrowDataset(dataset_name)) {
+        return arrow_ds->GetSchema();
+    }
+    if (auto parquet_ds = registry.GetParquetBackedDataset(dataset_name)) {
+        return parquet_ds->GetSchema();
+    }
+    return nullptr;
+}
+
+bool ValidateSequenceLaunchColumns(
+    cyxwiz::DataRegistry& registry,
+    const std::string& dataset_name,
+    const cyxwiz::TrainingConfiguration& config,
+    std::string& error_message) {
+    if (!config.sequence_batch.enabled) {
+        return true;
+    }
+
+    auto schema = FindTabularSchema(registry, dataset_name);
+    if (!schema) {
+        error_message =
+            "Sequence training could not inspect tabular schema for dataset '" +
+            dataset_name + "'.";
+        return false;
+    }
+
+    struct RequiredColumn {
+        std::string role;
+        std::string name;
+    };
+
+    std::vector<RequiredColumn> required = {
+        {"token", DefaultSequenceColumn(config.sequence_batch.token_column,
+                                         "tokens")},
+        {"tag", DefaultSequenceColumn(config.sequence_batch.tag_column,
+                                       "ner_tags")},
+    };
+    if (!config.sequence_batch.pos_column.empty()) {
+        required.push_back({"POS", config.sequence_batch.pos_column});
+    }
+    if (config.has_data_split &&
+        !config.sequence_batch.sentence_id_column.empty()) {
+        required.push_back({"sentence id",
+                            config.sequence_batch.sentence_id_column});
+    }
+
+    std::vector<std::string> missing;
+    for (const auto& column : required) {
+        if (schema->GetFieldIndex(column.name) < 0) {
+            missing.push_back(column.role + " column '" + column.name + "'");
+        }
+    }
+
+    if (missing.empty()) {
+        return true;
+    }
+
+    error_message = "Sequence training is missing ";
+    for (size_t i = 0; i < missing.size(); ++i) {
+        if (i > 0) {
+            error_message += (i + 1 == missing.size()) ? " and " : ", ";
+        }
+        error_message += missing[i];
+    }
+    error_message += " in dataset '" + dataset_name + "'.";
+    return false;
+}
+
 } // namespace
 
 GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
@@ -243,6 +323,17 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         dataset_name = materialize_result.effective_dataset_name;
         label_column = ResolveRuntimeArrowLabelColumn(
             registry, dataset_name, label_column);
+    }
+
+    if (config.sequence_batch.enabled) {
+        std::string sequence_column_error;
+        if (!ValidateSequenceLaunchColumns(registry, dataset_name, config,
+                                           sequence_column_error)) {
+            result.error_message = sequence_column_error;
+            spdlog::error("StartTrainingFromGraph: {}",
+                          result.error_message);
+            return result;
+        }
     }
 
     config.dataset_name = dataset_name;
