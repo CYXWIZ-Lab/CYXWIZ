@@ -770,6 +770,61 @@ int main() {
           "TokenVocabulary missing column error should be specific: " +
               sequence_vocab_missing_column_executor.GetLastError());
 
+    const std::string ner_sequence_builder_json =
+        R"({"nodes":[)"
+        R"({"id":1440,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(sequence_vocab_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":1441,"type":"NERSequenceBuilder","name":"NER Sequences","parameters":{)"
+        R"("token_column":"tokens","pos_column":"pos_tags","tag_column":"ner_tags",)"
+        R"("max_sequence_length":"4","ignore_index":"-100","create_attention_mask":"true"}})"
+        R"(],"links":[{"start_node":1440,"end_node":1441}]})";
+    cyxwiz::PipelineExecutor ner_sequence_builder_executor;
+    Check(ner_sequence_builder_executor.ExecutePipeline(
+              ner_sequence_builder_json),
+          "NERSequenceBuilder should materialize encoded sequence rows: " +
+              ner_sequence_builder_executor.GetLastError());
+    auto ner_sequence_output =
+        registry.GetArrowDataset("ds_ner_sequence_1441");
+    Check(ner_sequence_output != nullptr,
+          "NERSequenceBuilder output dataset is registered");
+    auto ner_sequence_table = ner_sequence_output->GetArrowTable();
+    Check(ner_sequence_table != nullptr &&
+              ner_sequence_table->num_columns() == 5,
+          "NERSequenceBuilder output table should expose encoded sequence columns");
+    Check(ReadStringValue(ner_sequence_table, "attention_mask", 0) ==
+              "1 1 0 0",
+          "NERSequenceBuilder should pad attention masks to max_sequence_length");
+    Check(ReadNumericValue(ner_sequence_table, "sequence_length", 0) == 4.0,
+          "NERSequenceBuilder should report padded sequence length");
+
+    const fs::path bad_ner_sequence_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_bad_ner_sequence.csv";
+    fs::remove(bad_ner_sequence_csv_path);
+    {
+        std::ofstream csv(bad_ner_sequence_csv_path);
+        csv << "tokens,pos_tags,ner_tags\n";
+        csv << "\"John Smith\",\"NNP\",\"B-PER I-PER\"\n";
+    }
+    const std::string bad_ner_sequence_builder_json =
+        R"({"nodes":[)"
+        R"({"id":1442,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(bad_ner_sequence_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":1443,"type":"NERSequenceBuilder","name":"Bad NER Sequences","parameters":{)"
+        R"("token_column":"tokens","pos_column":"pos_tags","tag_column":"ner_tags"}})"
+        R"(],"links":[{"start_node":1442,"end_node":1443}]})";
+    cyxwiz::PipelineExecutor bad_ner_sequence_builder_executor;
+    Check(!bad_ner_sequence_builder_executor.ExecutePipeline(
+              bad_ner_sequence_builder_json),
+          "NERSequenceBuilder should reject sequence rows with mismatched POS lengths");
+    Check(bad_ner_sequence_builder_executor.GetLastError().find(
+              "POS tag count must match token count") != std::string::npos,
+          "NERSequenceBuilder mismatch error should be specific: " +
+              bad_ner_sequence_builder_executor.GetLastError());
+    fs::remove(bad_ner_sequence_csv_path);
+    fs::remove(sequence_vocab_csv_path);
+
     const std::string missing_parameter_json =
         R"({"nodes":[)"
         R"({"id":5,"type":"DataInput","name":"MissingPath","parameters":{)"

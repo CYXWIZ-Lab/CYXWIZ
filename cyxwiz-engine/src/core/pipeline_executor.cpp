@@ -3,6 +3,7 @@
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include "data_convert_service.h"
+#include "ner_sequence_builder.h"
 #include "node_executors/pipeline_operator_factory.h"
 #include "pipeline_runtime_capabilities.h"
 #include "sequence_vocabulary.h"
@@ -33,6 +34,19 @@ namespace {
 
 bool TryParseFiniteDouble(const std::string& value, double& out);
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type);
+bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type);
+std::string ParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    const std::string& fallback);
+bool RequireRoleColumnKind(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::string& column,
+    const std::string& role,
+    const std::string& kind,
+    bool (*predicate)(const std::shared_ptr<arrow::DataType>&),
+    std::string& error);
 
 bool HasNonEmptyParameter(const std::map<std::string, std::string>& parameters,
                           const std::string& name) {
@@ -1101,6 +1115,191 @@ std::shared_ptr<arrow::Table> MakeSequenceVocabularyTable(
             arrow::field("id", arrow::int64()),
         }),
         {value_array, id_array});
+}
+
+std::string JoinInt64Sequence(const std::vector<int64_t>& values,
+                              size_t output_length,
+                              int64_t pad_value) {
+    std::ostringstream out;
+    for (size_t i = 0; i < output_length; ++i) {
+        if (i > 0) {
+            out << ' ';
+        }
+        out << (i < values.size() ? values[i] : pad_value);
+    }
+    return out.str();
+}
+
+std::string BuildAttentionMaskString(size_t token_count, size_t output_length) {
+    std::ostringstream out;
+    const size_t visible_count = std::min(token_count, output_length);
+    for (size_t i = 0; i < output_length; ++i) {
+        if (i > 0) {
+            out << ' ';
+        }
+        out << (i < visible_count ? 1 : 0);
+    }
+    return out.str();
+}
+
+bool ReadStringColumnValue(const std::shared_ptr<arrow::Table>& table,
+                           int column_index,
+                           int64_t row_index,
+                           std::string& value,
+                           std::string& error) {
+    auto column = table->column(column_index);
+    if (!column) {
+        error = "string column is not readable";
+        return false;
+    }
+
+    auto scalar_result = column->GetScalar(row_index);
+    if (!scalar_result.ok()) {
+        error = scalar_result.status().ToString();
+        return false;
+    }
+
+    auto scalar = *scalar_result;
+    if (!scalar || !scalar->is_valid) {
+        value.clear();
+        return true;
+    }
+
+    value = ScalarToColumnName(scalar);
+    return true;
+}
+
+bool ExtractNERSequenceRowsFromTable(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::map<std::string, std::string>& parameters,
+    std::vector<NERSequenceRow>& rows,
+    std::string& error) {
+    const std::string token_column =
+        ParameterOrDefault(parameters, "token_column", "tokens");
+    const std::string pos_column =
+        ParameterOrDefault(parameters, "pos_column", "");
+    const std::string tag_column =
+        ParameterOrDefault(parameters, "tag_column", "ner_tags");
+
+    if (!RequireRoleColumnKind(table, "NERSequenceBuilder", token_column,
+                               "token", "string/large_string",
+                               IsStringArrowType, error)) {
+        return false;
+    }
+    if (!pos_column.empty() &&
+        !RequireRoleColumnKind(table, "NERSequenceBuilder", pos_column,
+                               "POS", "string/large_string",
+                               IsStringArrowType, error)) {
+        return false;
+    }
+    if (!RequireRoleColumnKind(table, "NERSequenceBuilder", tag_column,
+                               "tag", "string/large_string",
+                               IsStringArrowType, error)) {
+        return false;
+    }
+
+    const int token_index = table->schema()->GetFieldIndex(token_column);
+    const int pos_index = pos_column.empty()
+        ? -1
+        : table->schema()->GetFieldIndex(pos_column);
+    const int tag_index = table->schema()->GetFieldIndex(tag_column);
+
+    rows.clear();
+    rows.reserve(static_cast<size_t>(table->num_rows()));
+    for (int64_t row_index = 0; row_index < table->num_rows(); ++row_index) {
+        std::string tokens;
+        std::string pos_tags;
+        std::string ner_tags;
+        if (!ReadStringColumnValue(table, token_index, row_index, tokens, error)) {
+            error = "NERSequenceBuilder token row " +
+                    std::to_string(row_index) + ": " + error;
+            return false;
+        }
+        if (pos_index >= 0 &&
+            !ReadStringColumnValue(table, pos_index, row_index, pos_tags, error)) {
+            error = "NERSequenceBuilder POS row " +
+                    std::to_string(row_index) + ": " + error;
+            return false;
+        }
+        if (!ReadStringColumnValue(table, tag_index, row_index, ner_tags, error)) {
+            error = "NERSequenceBuilder tag row " +
+                    std::to_string(row_index) + ": " + error;
+            return false;
+        }
+
+        rows.push_back({
+            SplitSequenceTokens(tokens),
+            SplitSequenceTokens(pos_tags),
+            SplitSequenceTokens(ner_tags),
+        });
+    }
+    return true;
+}
+
+std::shared_ptr<arrow::Table> MakeNERSequenceTable(
+    const NERSequenceBuildResult& result,
+    bool create_attention_mask) {
+    arrow::StringBuilder word_builder;
+    arrow::StringBuilder pos_builder;
+    arrow::StringBuilder tag_builder;
+    arrow::StringBuilder mask_builder;
+    arrow::Int64Builder length_builder;
+
+    const size_t configured_length =
+        result.batcher_config.max_sequence_length;
+    for (const auto& sample : result.samples) {
+        const size_t output_length = configured_length > 0
+            ? configured_length
+            : sample.word_ids.size();
+
+        auto word_status = word_builder.Append(
+            JoinInt64Sequence(sample.word_ids, output_length,
+                              result.batcher_config.word_pad_id));
+        auto pos_status = pos_builder.Append(
+            JoinInt64Sequence(sample.pos_ids, output_length,
+                              result.batcher_config.pos_pad_id));
+        auto tag_status = tag_builder.Append(
+            JoinInt64Sequence(sample.tag_ids, output_length,
+                              result.batcher_config.tag_ignore_index));
+        auto mask_status = mask_builder.Append(
+            create_attention_mask
+                ? BuildAttentionMaskString(sample.word_ids.size(), output_length)
+                : "");
+        auto length_status = length_builder.Append(
+            static_cast<int64_t>(output_length));
+
+        if (!word_status.ok() || !pos_status.ok() ||
+            !tag_status.ok() || !mask_status.ok() ||
+            !length_status.ok()) {
+            throw std::runtime_error("failed to build NER sequence output table");
+        }
+    }
+
+    std::shared_ptr<arrow::Array> word_array;
+    std::shared_ptr<arrow::Array> pos_array;
+    std::shared_ptr<arrow::Array> tag_array;
+    std::shared_ptr<arrow::Array> mask_array;
+    std::shared_ptr<arrow::Array> length_array;
+    auto word_finish = word_builder.Finish(&word_array);
+    auto pos_finish = pos_builder.Finish(&pos_array);
+    auto tag_finish = tag_builder.Finish(&tag_array);
+    auto mask_finish = mask_builder.Finish(&mask_array);
+    auto length_finish = length_builder.Finish(&length_array);
+    if (!word_finish.ok() || !pos_finish.ok() ||
+        !tag_finish.ok() || !mask_finish.ok() ||
+        !length_finish.ok()) {
+        throw std::runtime_error("failed to finish NER sequence output table");
+    }
+
+    return arrow::Table::Make(
+        arrow::schema({
+            arrow::field("word_ids", arrow::utf8()),
+            arrow::field("pos_ids", arrow::utf8()),
+            arrow::field("tag_ids", arrow::utf8()),
+            arrow::field("attention_mask", arrow::utf8()),
+            arrow::field("sequence_length", arrow::int64()),
+        }),
+        {word_array, pos_array, tag_array, mask_array, length_array});
 }
 
 bool RequireRoleColumnKind(
@@ -3201,6 +3400,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteTextTokenize(node, ctx);
     case gui::NodeType::TextCleanNode:
         return ExecuteTextClean(node, ctx);
+    case gui::NodeType::NERSequenceBuilder:
+        return ExecuteNERSequenceBuilder(node, ctx);
     case gui::NodeType::TokenVocabulary:
     case gui::NodeType::POSVocabulary:
     case gui::NodeType::NERTagVocabulary:
@@ -4709,6 +4910,88 @@ bool PipelineExecutor::ExecuteTextVectorize(const Node& node, ExecutionContext& 
     }
 }
 
+bool PipelineExecutor::ExecuteNERSequenceBuilder(const Node& node,
+                                                 ExecutionContext& ctx) {
+    const std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError(
+            "NERSequenceBuilder: No input connection or input dataset not found");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("NERSequenceBuilder: Input dataset not found: " +
+                        input_dataset_name);
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        std::vector<NERSequenceRow> rows;
+        std::string row_error;
+        if (!ExtractNERSequenceRowsFromTable(input_table, node.parameters,
+                                             rows, row_error)) {
+            ReportError(row_error);
+            return false;
+        }
+
+        NERSequenceBuilderConfig config;
+        config.token_vocabulary.lowercase =
+            OptionalBooleanParameterIsTrue(node.parameters, "lowercase");
+
+        const int64_t min_frequency = OptionalIntegerParameterOrDefault(
+            node.parameters, "min_frequency",
+            OptionalIntegerParameterOrDefault(node.parameters, "min_freq", 1));
+        const int64_t max_size = OptionalIntegerParameterOrDefault(
+            node.parameters, "max_size",
+            OptionalIntegerParameterOrDefault(node.parameters, "max_vocab_size",
+                                              0));
+
+        config.token_vocabulary.min_frequency =
+            static_cast<size_t>(std::max<int64_t>(1, min_frequency));
+        config.pos_vocabulary.min_frequency =
+            static_cast<size_t>(std::max<int64_t>(1, min_frequency));
+        config.tag_vocabulary.min_frequency =
+            static_cast<size_t>(std::max<int64_t>(1, min_frequency));
+        config.token_vocabulary.max_size =
+            static_cast<size_t>(std::max<int64_t>(0, max_size));
+        config.pos_vocabulary.max_size =
+            static_cast<size_t>(std::max<int64_t>(0, max_size));
+        config.tag_vocabulary.max_size =
+            static_cast<size_t>(std::max<int64_t>(0, max_size));
+
+        config.batcher.max_sequence_length = static_cast<size_t>(
+            std::max<int64_t>(0, OptionalIntegerParameterOrDefault(
+                                     node.parameters, "max_sequence_length", 0)));
+        config.batcher.tag_ignore_index = OptionalIntegerParameterOrDefault(
+            node.parameters, "ignore_index", -100);
+        config.batcher.create_attention_mask =
+            OptionalBooleanParameterOrDefault(node.parameters,
+                                              "create_attention_mask", true);
+        config.use_pos_tags =
+            !ParameterOrDefault(node.parameters, "pos_column", "").empty();
+        config.require_tags = true;
+
+        const auto result = BuildNERSequenceData(rows, config);
+        auto output_table =
+            MakeNERSequenceTable(result, config.batcher.create_attention_mask);
+        const std::string output_dataset_name =
+            "ds_ner_sequence_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+
+        spdlog::info(
+            "NERSequenceBuilder node {} materialized {} encoded sequence rows",
+            node.id, output_table->num_rows());
+        return true;
+    } catch (const std::exception& ex) {
+        ReportError(std::string("NERSequenceBuilder error: ") + ex.what());
+        return false;
+    }
+}
+
 bool PipelineExecutor::ExecuteSequenceVocabulary(const Node& node, ExecutionContext& ctx) {
     const std::string input_dataset_name = GetInputDatasetName(node, ctx);
     if (input_dataset_name.empty()) {
@@ -4747,10 +5030,12 @@ bool PipelineExecutor::ExecuteSequenceVocabulary(const Node& node, ExecutionCont
                               : SequenceVocabularyKind::Token);
         config.lowercase =
             OptionalBooleanParameterIsTrue(node.parameters, "lowercase");
-        config.min_frequency = static_cast<size_t>(
-            OptionalIntegerParameterOrDefault(node.parameters, "min_frequency", 1));
-        config.max_size = static_cast<size_t>(
-            OptionalIntegerParameterOrDefault(node.parameters, "max_size", 0));
+        config.min_frequency = static_cast<size_t>(OptionalIntegerParameterOrDefault(
+            node.parameters, "min_frequency",
+            OptionalIntegerParameterOrDefault(node.parameters, "min_freq", 1)));
+        config.max_size = static_cast<size_t>(OptionalIntegerParameterOrDefault(
+            node.parameters, "max_size",
+            OptionalIntegerParameterOrDefault(node.parameters, "max_vocab_size", 0)));
         config.pad_token = ParameterOrDefault(node.parameters, "pad_token", "[PAD]");
         config.unk_token = ParameterOrDefault(node.parameters, "unk_token", "[UNK]");
 

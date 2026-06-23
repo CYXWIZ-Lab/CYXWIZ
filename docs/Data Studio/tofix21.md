@@ -48,9 +48,14 @@ Runtime progress:
   helper and output `value,id` Arrow tables for downstream graph/runtime use.
 - Focused routing coverage now proves deterministic token/POS/tag vocabulary
   output and schema failure on a missing vocabulary source column.
-- This does not complete full NER graph launch yet: `NERSequenceBuilder` still
-  owns sequence batch materialization and remains separate from these
-  vocabulary-table transforms.
+- `NERSequenceBuilder` now executes as a narrow `PipelineExecutor`
+  materialization transform over prepared token/POS/tag string columns. It
+  reuses the existing `NERSequenceBuilder` core helper and emits encoded
+  `word_ids`, `pos_ids`, `tag_ids`, `attention_mask`, and `sequence_length`
+  columns.
+- This does not complete full NER graph launch yet: Studio still needs the
+  higher-level model launch/inference packaging that consumes these prepared
+  sequence artifacts.
 
 ### 1. Executable Vocabulary Nodes
 
