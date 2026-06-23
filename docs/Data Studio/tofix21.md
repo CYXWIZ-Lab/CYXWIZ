@@ -57,6 +57,9 @@ Runtime progress:
   registered Arrow sentence table and route sequence/NER graphs through
   `TrainingManager::StartTrainingSequence`, reusing the same
   `NERSequenceBuilder` core helper instead of duplicating token/tag encoding.
+- The compiled sequence contract now carries `max_sequence_length` from
+  first-class NER/DataLoader nodes into the Arrow sequence batcher, so Studio
+  training and runtime materialization agree on sequence padding length.
 - This does not complete full NER graph launch yet: Studio still needs the
   higher-level model launch/inference packaging that consumes these prepared
   sequence artifacts.

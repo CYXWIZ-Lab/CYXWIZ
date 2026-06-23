@@ -338,6 +338,16 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
             }
         }
 
+        auto max_sequence_it = params.find("max_sequence_length");
+        if (max_sequence_it != params.end()) {
+            try {
+                sequence.max_sequence_length =
+                    std::max(0, std::stoi(max_sequence_it->second));
+            } catch (...) {
+                sequence.max_sequence_length = 0;
+            }
+        }
+
         auto target_ignore_it = params.find("target_ignore_index");
         if (target_ignore_it != params.end()) {
             try {
@@ -385,6 +395,19 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
                 sequence.ignore_index = std::stoi(ignore_it->second);
             } catch (...) {
                 sequence.ignore_index = -100;
+            }
+        }
+
+        auto max_sequence_it = params.find("max_sequence_length");
+        if (max_sequence_it == params.end()) {
+            max_sequence_it = params.find("sequence_length");
+        }
+        if (max_sequence_it != params.end()) {
+            try {
+                sequence.max_sequence_length =
+                    std::max(0, std::stoi(max_sequence_it->second));
+            } catch (...) {
+                sequence.max_sequence_length = 0;
             }
         }
 

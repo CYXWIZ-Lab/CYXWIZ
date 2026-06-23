@@ -633,6 +633,7 @@ int main() {
     sequence_config.sequence_batch.token_column = "tokens";
     sequence_config.sequence_batch.tag_column = "ner_tags";
     sequence_config.sequence_batch.create_attention_mask = true;
+    sequence_config.sequence_batch.max_sequence_length = 5;
 
     auto sequence_dataset = std::make_shared<cyxwiz::ArrowDataset>(
         MakeSequenceTable(), "gui_sequence_runtime");
@@ -648,8 +649,8 @@ int main() {
     auto sequence_batch = sequence_build.batcher->GetNextSequenceBatch();
     Check(sequence_batch.IsSupervised(),
           "sequence Arrow batcher bridge should produce supervised sequence batches");
-    Check(sequence_batch.sequence_length == 4,
-          "sequence Arrow batcher bridge should infer token sequence length");
+    Check(sequence_batch.sequence_length == 5,
+          "sequence Arrow batcher bridge should honor max sequence length");
     Check(sequence_batch.HasAttentionMask(),
           "sequence Arrow batcher bridge should honor attention mask config");
 

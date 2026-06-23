@@ -177,6 +177,9 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
         builder_config.require_tags = true;
         builder_config.batcher.batch_size =
             static_cast<size_t>(std::max(1, batch_size));
+        builder_config.batcher.max_sequence_length =
+            static_cast<size_t>(
+                std::max(0, config.sequence_batch.max_sequence_length));
         builder_config.batcher.shuffle = config.shuffle;
         builder_config.batcher.drop_last = config.drop_last;
         builder_config.batcher.create_attention_mask =

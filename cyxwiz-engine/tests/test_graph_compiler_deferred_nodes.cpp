@@ -427,6 +427,7 @@ int main() {
     sequence_builder.parameters["pos_column"] = "pos_tags";
     sequence_builder.parameters["tag_column"] = "ner_tags";
     sequence_builder.parameters["sentence_id_column"] = "sentence_id";
+    sequence_builder.parameters["max_sequence_length"] = "8";
     sequence_builder.parameters["ignore_index"] = "-100";
     sequence_builder.parameters["create_attention_mask"] = "true";
 
@@ -456,6 +457,8 @@ int main() {
           "first-class NERSequenceBuilder should capture sentence id column");
     Check(config.sequence_batch.create_attention_mask,
           "first-class NERSequenceBuilder should capture attention mask setting");
+    Check(config.sequence_batch.max_sequence_length == 8,
+          "first-class NERSequenceBuilder should capture max sequence length");
     Check(config.sequence_batch.ignore_index == -100,
           "first-class NERSequenceBuilder should capture ignore_index");
 
