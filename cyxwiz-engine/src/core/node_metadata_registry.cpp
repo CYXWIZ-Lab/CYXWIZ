@@ -2297,39 +2297,36 @@ void NodeMetadataRegistry::InitializeTextNodes() {
 
     RegisterNode({NodeType::TokenVocabulary, NodeCategory::TextProcessing, "Token Vocabulary", ICON_FA_BOOK,
         {"token", "vocabulary", "ner", "sequence"}, 0, false,
-        "Build token id vocabulary for sequence tagging", "", "",
+        "Build deterministic token id vocabulary for sequence tagging", "", "",
         {{"Tokens", PinType::Dataset, true, "Token sequences"}},
-        {{"Token Vocabulary", PinType::Parameters, true, "Token id mapping"}},
+        {{"Token Vocabulary", PinType::Parameters, true, "value,id vocabulary table"}},
         {{"min_freq", "int", "1", "Minimum frequency", {}, ""},
          {"max_vocab_size", "int", "0", "Max vocab size (0 = unlimited)", {}, ""},
          {"lowercase", "bool", "true", "Lowercase tokens", {}, ""},
          {"pad_token", "string", "[PAD]", "Padding token", {}, ""},
          {"unk_token", "string", "[UNK]", "Unknown token", {}, ""}},
-        NodeImplementationStatus::Template, 0,
-        "Standalone backend vocabulary exists, but Studio node execution is not wired yet"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::POSVocabulary, NodeCategory::TextProcessing, "POS Vocabulary", ICON_FA_BOOK,
         {"pos", "part-of-speech", "vocabulary", "ner"}, 0, false,
-        "Build POS id vocabulary for sequence tagging", "", "",
+        "Build deterministic POS id vocabulary for sequence tagging", "", "",
         {{"POS Tags", PinType::Dataset, true, "POS tag sequences"}},
-        {{"POS Vocabulary", PinType::Parameters, true, "POS id mapping"}},
+        {{"POS Vocabulary", PinType::Parameters, true, "value,id vocabulary table"}},
         {{"min_freq", "int", "1", "Minimum frequency", {}, ""},
          {"max_vocab_size", "int", "0", "Max vocab size (0 = unlimited)", {}, ""},
          {"lowercase", "bool", "false", "Lowercase POS tags", {}, ""},
          {"pad_token", "string", "[PAD]", "Padding token", {}, ""},
          {"unk_token", "string", "[UNK]", "Unknown token", {}, ""}},
-        NodeImplementationStatus::Template, 0,
-        "Standalone backend vocabulary exists, but Studio node execution is not wired yet"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::NERTagVocabulary, NodeCategory::TextProcessing, "NER Tag Vocabulary", ICON_FA_TAG,
         {"ner", "tag", "bio", "vocabulary"}, 0, false,
-        "Build BIO tag vocabulary for sequence tagging", "", "",
+        "Build deterministic BIO tag vocabulary for sequence tagging", "", "",
         {{"NER Tags", PinType::Dataset, true, "NER tag sequences"}},
-        {{"NER Tag Vocabulary", PinType::Parameters, true, "BIO tag id mapping"}},
+        {{"NER Tag Vocabulary", PinType::Parameters, true, "value,id BIO tag vocabulary table"}},
         {{"outside_tag", "string", "O", "Outside tag label", {}, ""},
          {"bio_scheme", "enum", "BIO", "Tag scheme", {"BIO"}, ""}},
-        NodeImplementationStatus::Template, 0,
-        "Standalone backend tag vocabulary exists, but Studio node execution is not wired yet"});
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

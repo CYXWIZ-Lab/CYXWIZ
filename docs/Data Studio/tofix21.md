@@ -96,6 +96,10 @@ Status 2026-06-23:
   `test_cyxmodel_sequence_assets` creates a package with token/POS/tag
   vocabularies, probes sequence metadata, and extracts the vocabulary assets
   back out.
+- Item 5 UI polish started: the node browser metadata for Token Vocabulary,
+  POS Vocabulary, and NER Tag Vocabulary now marks the nodes as implemented
+  runtime nodes instead of stale templates, with descriptions aligned to the
+  executable `value,id` vocabulary table output.
 
 ### 1. Executable Vocabulary Nodes
 

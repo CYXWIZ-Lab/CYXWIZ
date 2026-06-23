@@ -235,6 +235,56 @@ int main() {
     }
 
     {
+        struct SequenceMetadataCase {
+            gui::NodeType type;
+            std::string name;
+            std::string required_parameter;
+        };
+
+        const SequenceMetadataCase cases[] = {
+            {gui::NodeType::NERSequenceBuilder, "NER Sequence Builder",
+             "token_column"},
+            {gui::NodeType::TokenVocabulary, "Token Vocabulary", "min_freq"},
+            {gui::NodeType::POSVocabulary, "POS Vocabulary", "min_freq"},
+            {gui::NodeType::NERTagVocabulary, "NER Tag Vocabulary",
+             "outside_tag"},
+        };
+
+        for (const auto& node_case : cases) {
+            const auto* meta = metadata.GetMetadata(node_case.type);
+            Check(meta != nullptr,
+                  "sequence metadata missing: " + node_case.name);
+            Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+                  "sequence metadata should be implemented: " +
+                      node_case.name);
+            Check(meta->badge != "Blocked",
+                  "sequence metadata should not be blocked: " +
+                      node_case.name);
+            Check(HasParameter(meta, node_case.required_parameter),
+                  "sequence metadata missing required parameter: " +
+                      node_case.name);
+            Check(meta->brief_description.find("sequence") !=
+                      std::string::npos ||
+                      meta->brief_description.find("vocabulary") !=
+                          std::string::npos,
+                  "sequence metadata should describe its task: " +
+                      node_case.name);
+            CheckSupportAxis(meta, "Pipeline Executor", "supported", true,
+                             node_case.name);
+        }
+
+        Check(HasOutputType(metadata.GetMetadata(gui::NodeType::TokenVocabulary),
+                            "Token Vocabulary", gui::PinType::Parameters),
+              "TokenVocabulary should expose a Parameters output");
+        Check(HasOutputType(metadata.GetMetadata(gui::NodeType::POSVocabulary),
+                            "POS Vocabulary", gui::PinType::Parameters),
+              "POSVocabulary should expose a Parameters output");
+        Check(HasOutputType(metadata.GetMetadata(gui::NodeType::NERTagVocabulary),
+                            "NER Tag Vocabulary", gui::PinType::Parameters),
+              "NERTagVocabulary should expose a Parameters output");
+    }
+
+    {
         const auto* data_output = metadata.GetMetadata(gui::NodeType::DataOutput);
         Check(data_output != nullptr, "DataOutput metadata should exist");
         const auto* file_type = FindParameter(data_output, "file_type");
