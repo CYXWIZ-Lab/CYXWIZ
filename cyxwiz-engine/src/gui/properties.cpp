@@ -30,6 +30,18 @@ bool IsDialogOnlyPropertiesNode(NodeType type) {
     }
 }
 
+bool IsCustomSequencePropertiesNode(NodeType type) {
+    switch (type) {
+        case NodeType::NERSequenceBuilder:
+        case NodeType::TokenVocabulary:
+        case NodeType::POSVocabulary:
+        case NodeType::NERTagVocabulary:
+            return true;
+        default:
+            return false;
+    }
+}
+
 } // namespace
 
 Properties::Properties() : show_window_(true) {
@@ -236,6 +248,10 @@ void Properties::RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadat
     ImGui::SetNextItemOpen(section_parameters_open_, ImGuiCond_Once);
     if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
         section_parameters_open_ = true;
+        if (IsCustomSequencePropertiesNode(node.type)) {
+            RenderNodeProperties(node);
+            return;
+        }
         properties_metadata::RenderParametersContent(
             node,
             metadata,

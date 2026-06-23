@@ -106,6 +106,11 @@ Status 2026-06-23:
 - Token classifier/loss UI labels are now task-aware: TimeDistributed appears
   as a dense token head, and CrossEntropy metadata exposes token CE usage plus
   the padding `ignore_index` control.
+- The properties panel now has sequence-specific editors for
+  `NERSequenceBuilder`, `TokenVocabulary`, `POSVocabulary`, and
+  `NERTagVocabulary`, using the runtime parameter keys directly and showing
+  compact guidance for required columns, padding, vocabulary limits, and BIO
+  tag behavior.
 
 ### 1. Executable Vocabulary Nodes
 

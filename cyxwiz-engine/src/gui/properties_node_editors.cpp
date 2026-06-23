@@ -28,6 +28,49 @@ void RenderPathLine(const char* label, const std::string& value) {
     }
 }
 
+bool RenderTextParameter(MLNode& node,
+                         const char* key,
+                         const char* label,
+                         const char* fallback = "",
+                         ImGuiInputTextFlags flags = 0,
+                         bool create_default = true) {
+    auto existing = node.parameters.find(key);
+    if (existing == node.parameters.end() && create_default) {
+        existing = node.parameters.emplace(key, fallback).first;
+    }
+
+    const std::string value =
+        existing != node.parameters.end() ? existing->second : fallback;
+    char buffer[256] = {};
+    strncpy(buffer, value.c_str(), sizeof(buffer) - 1);
+
+    ImGui::Text("%s:", label);
+    ImGui::SameLine(150.0f);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 10.0f);
+    const std::string imgui_id = std::string("##") + key;
+    if (ImGui::InputText(imgui_id.c_str(), buffer, sizeof(buffer), flags)) {
+        node.parameters[key] = buffer;
+        return true;
+    }
+    return false;
+}
+
+bool RenderBoolParameter(MLNode& node,
+                         const char* key,
+                         const char* label,
+                         bool fallback) {
+    std::string& value = node.parameters[key];
+    if (value.empty()) {
+        value = fallback ? "true" : "false";
+    }
+    bool enabled = value == "true";
+    if (ImGui::Checkbox(label, &enabled)) {
+        value = enabled ? "true" : "false";
+        return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 void ScopeBuffer::Push(float t, float v) {
@@ -278,6 +321,85 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
                 context.invalidate_shapes();
             }
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Number of output classes");
+            break;
+        }
+
+        case NodeType::NERSequenceBuilder: {
+            ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.85f, 1.0f),
+                               "NER sequence materializer");
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                               "Consumes sentence-level string-list columns and emits padded id tensors.");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            RenderTextParameter(node, "token_column", "Token column", "tokens");
+            RenderTextParameter(node, "pos_column", "POS column", "");
+            RenderTextParameter(node, "tag_column", "Tag column", "ner_tags");
+            RenderTextParameter(node, "sentence_id_column", "Sentence id", "");
+
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                               "Required at launch: token and tag columns. POS and sentence id are optional.");
+            ImGui::Spacing();
+
+            bool shape_changed = false;
+            shape_changed |= RenderTextParameter(
+                node, "max_sequence_length", "Max sequence length", "0",
+                ImGuiInputTextFlags_CharsDecimal);
+            RenderTextParameter(node, "ignore_index", "Padding label", "-100");
+            RenderBoolParameter(node, "create_attention_mask",
+                                "Create attention mask", true);
+
+            if (shape_changed) {
+                context.invalidate_shapes();
+            }
+
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                               "Outputs: word_ids, pos_ids, tag_ids, attention_mask, sequence_length.");
+            break;
+        }
+
+        case NodeType::TokenVocabulary:
+        case NodeType::POSVocabulary:
+        case NodeType::NERTagVocabulary: {
+            const bool is_token = node.type == NodeType::TokenVocabulary;
+            const bool is_pos = node.type == NodeType::POSVocabulary;
+            const bool is_tag = node.type == NodeType::NERTagVocabulary;
+            const char* title = is_token ? "Token vocabulary"
+                              : (is_pos ? "POS vocabulary"
+                                        : "NER tag vocabulary");
+            const char* default_column = is_token ? "tokens"
+                                       : (is_pos ? "pos_tags" : "ner_tags");
+
+            ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.85f, 1.0f), "%s", title);
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                               "Builds a deterministic value,id table from one sequence column.");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            RenderTextParameter(node, "column", "Source column", default_column);
+            RenderTextParameter(node, "min_freq", "Minimum frequency", "1",
+                                ImGuiInputTextFlags_CharsDecimal);
+            RenderTextParameter(node, "max_vocab_size", "Max vocab size", "0",
+                                ImGuiInputTextFlags_CharsDecimal);
+            RenderTextParameter(node, "vocab_file", "Vocabulary file", "", 0,
+                                false);
+
+            ImGui::Spacing();
+            if (is_tag) {
+                RenderTextParameter(node, "outside_tag", "Outside tag", "O");
+                RenderTextParameter(node, "bio_scheme", "Tag scheme", "BIO");
+                ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                                   "BIO tags are ordered deterministically with the outside tag first.");
+            } else {
+                RenderBoolParameter(node, "lowercase", "Lowercase values",
+                                    is_token);
+                RenderTextParameter(node, "pad_token", "Padding token", "[PAD]");
+                RenderTextParameter(node, "unk_token", "Unknown token", "[UNK]");
+                ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                                   "Padding and unknown tokens are reserved before observed values.");
+            }
             break;
         }
 
