@@ -1765,6 +1765,33 @@ set_target_properties(test_text_gui_training_launch PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: CyxModel Sequence Assets =====
+add_executable(test_cyxmodel_sequence_assets
+    tests/test_cyxmodel_sequence_assets.cpp
+    src/core/formats/cyxmodel_format.cpp
+)
+
+target_include_directories(test_cyxmodel_sequence_assets PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_cyxmodel_sequence_assets PRIVATE
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+)
+
+if(WIN32)
+    target_compile_definitions(test_cyxmodel_sequence_assets PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_cyxmodel_sequence_assets PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Training Batcher Setup Helper =====
 add_executable(test_training_batcher_setup
     tests/test_training_batcher_setup.cpp

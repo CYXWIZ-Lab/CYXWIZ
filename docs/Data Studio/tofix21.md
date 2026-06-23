@@ -92,6 +92,10 @@ Status 2026-06-23:
   before falling back to logits.
 - The portable NER smoke validator now builds a tokenized inference payload
   from generated metadata and checks the sequence tensor contract locally.
+- Added focused C++ coverage for `.cyxmodel` sequence packaging:
+  `test_cyxmodel_sequence_assets` creates a package with token/POS/tag
+  vocabularies, probes sequence metadata, and extracts the vocabulary assets
+  back out.
 
 ### 1. Executable Vocabulary Nodes
 
