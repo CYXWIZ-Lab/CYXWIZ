@@ -239,6 +239,16 @@ bool ValidateSequenceLaunchColumns(
     return false;
 }
 
+void SetBlockedStatus(GraphTrainingLaunchResult& result,
+                      std::string title,
+                      std::string detail) {
+    result.status_title = std::move(title);
+    result.status_detail = std::move(detail);
+    result.error_message = result.status_detail.empty()
+        ? result.status_title
+        : result.status_detail;
+}
+
 } // namespace
 
 GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
@@ -253,11 +263,15 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     GraphTrainingLaunchResult result;
 
     if (!config.is_valid) {
-        result.error_message = "compiled training configuration is invalid";
+        SetBlockedStatus(result,
+                         "Training configuration blocked",
+                         "Compiled training configuration is invalid.");
         return result;
     }
     if (!dispatch) {
-        result.error_message = "training dispatch callback is missing";
+        SetBlockedStatus(result,
+                         "Training launch unavailable",
+                         "Training dispatch callback is missing.");
         return result;
     }
 
@@ -265,8 +279,10 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         ? config.dataset_name
         : FindDatasetName(nodes);
     if (dataset_name.empty()) {
-        result.error_message =
-            "No dataset loaded. Please configure the Data Input node first.";
+        SetBlockedStatus(
+            result,
+            "Dataset not configured",
+            "No dataset loaded. Please configure the Data Input node first.");
         spdlog::error(result.error_message);
         return result;
     }
@@ -278,8 +294,11 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         const bool has_arrow = registry.GetArrowDataset(dataset_name) != nullptr;
         const bool has_parquet = registry.GetParquetBackedDataset(dataset_name) != nullptr;
         if (!has_arrow && !has_parquet) {
-            result.error_message =
-                "Sequence training requires a registered tabular dataset.";
+            SetBlockedStatus(
+                result,
+                "Sequence dataset unavailable",
+                "Sequence training requires a registered Arrow or Parquet "
+                "table. Apply the Data Input node before training.");
             spdlog::error("StartTrainingFromGraph: {}", result.error_message);
             return result;
         }
@@ -292,9 +311,11 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     auto materialize_result = cyxwiz::PipelineMaterializer::Materialize(
         nodes, links, registry, dataset_name);
     if (!materialize_result.success) {
-        result.error_message =
-            "StartTrainingFromGraph: materializer failed - " +
-            materialize_result.error_message;
+        SetBlockedStatus(
+            result,
+            "Graph materialization blocked",
+            "Materializer failed for dataset '" + dataset_name + "': " +
+                materialize_result.error_message);
         spdlog::error(result.error_message);
         return result;
     }
@@ -329,7 +350,9 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         std::string sequence_column_error;
         if (!ValidateSequenceLaunchColumns(registry, dataset_name, config,
                                            sequence_column_error)) {
-            result.error_message = sequence_column_error;
+            SetBlockedStatus(result,
+                             "Sequence materialization blocked",
+                             sequence_column_error);
             spdlog::error("StartTrainingFromGraph: {}",
                           result.error_message);
             return result;
@@ -347,8 +370,11 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         plot_panel, std::move(node_editor_callback));
 
     if (!result.started) {
-        result.error_message =
-            "Failed to start training - another training session may be active";
+        SetBlockedStatus(
+            result,
+            "Training launch blocked",
+            "Failed to start training. Another training session may be active "
+            "or the runtime batcher rejected the prepared data.");
         spdlog::error(result.error_message);
     }
     return result;

@@ -1,4 +1,5 @@
 #include "../src/core/formats/cyxmodel_format.h"
+#include "../src/core/sequence_inference_response.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -121,6 +122,39 @@ int main() {
           "POS vocabulary text did not round-trip");
     Check(tag_text == "[PAD]\n[UNK]\nO\nB-geo\n",
           "tag vocabulary text did not round-trip");
+
+    const std::vector<int64_t> predicted_data = {
+        2, 3, 0, 0,
+        3, 2, 2, 0,
+    };
+    const cyxwiz::Tensor predicted_ids(
+        {2, 4}, predicted_data.data(), cyxwiz::DataType::Int64);
+    const std::vector<std::string> labels = {"[PAD]", "[UNK]", "O", "B-geo"};
+    const auto decoded = cyxwiz::DecodeSequenceTagIdsForInference(
+        predicted_ids, labels, {2, 3});
+    Check(decoded.tag_ids.size() == 2, "decode should preserve batch rows");
+    Check(decoded.effective_lengths == std::vector<size_t>({2, 3}),
+          "decode should preserve clipped effective lengths");
+    Check(decoded.tag_ids[0] == std::vector<int64_t>({2, 3}),
+          "decode should trim first padded row");
+    Check(decoded.tag_ids[1] == std::vector<int64_t>({3, 2, 2}),
+          "decode should trim second padded row");
+    Check(decoded.tag_labels[0] == std::vector<std::string>({"O", "B-geo"}),
+          "decode should map first row IDs to labels");
+    Check(decoded.tag_labels[1] ==
+              std::vector<std::string>({"B-geo", "O", "O"}),
+          "decode should map second row IDs to labels");
+
+    bool mismatched_lengths_failed = false;
+    try {
+        (void)cyxwiz::DecodeSequenceTagIdsForInference(
+            predicted_ids, labels, {1});
+    } catch (const std::exception& e) {
+        mismatched_lengths_failed =
+            std::string(e.what()).find("sequence_lengths") != std::string::npos;
+    }
+    Check(mismatched_lengths_failed,
+          "decode should reject sequence length count mismatches");
 
     fs::remove_all(root);
     std::cout << "CyxModel sequence asset packaging test passed\n";

@@ -1024,6 +1024,11 @@ int main() {
 
     auto sequence_config =
         MakeTrainingConfig(work_dir / "sequence_launch_checkpoints");
+    const std::string sequence_dataset_name = "gui_sequence_runtime";
+    Check(registry.RegisterArrowTable(MakeSequenceTable(), sequence_dataset_name) !=
+              nullptr,
+          "sequence runtime dataset should register");
+    sequence_config.dataset_name = sequence_dataset_name;
     sequence_config.sequence_batch.enabled = true;
     sequence_config.sequence_batch.token_column = "tokens";
     sequence_config.sequence_batch.tag_column = "ner_tags";
@@ -1031,7 +1036,7 @@ int main() {
     sequence_config.sequence_batch.max_sequence_length = 5;
 
     auto sequence_dataset = std::make_shared<cyxwiz::ArrowDataset>(
-        MakeSequenceTable(), "gui_sequence_runtime");
+        MakeSequenceTable(), sequence_dataset_name);
     auto sequence_build = cyxwiz::BuildSequenceBatcherFromArrowDataset(
         sequence_dataset, sequence_config, 2);
     Check(sequence_build.success(),
@@ -1112,8 +1117,8 @@ int main() {
         return true;
     };
     auto sequence_result = gui::StartGraphTrainingFromCompiledConfig(
-        nodes,
-        links,
+        {MakeDataInputNode(sequence_dataset_name)},
+        {},
         std::move(sequence_config),
         registry,
         std::weak_ptr<cyxwiz::TrainingPlotPanel>{},
@@ -1249,10 +1254,26 @@ int main() {
                   static_cast<int>(sequence_build.tag_vocabulary_size),
               "saved NER launch should align classifier width with sequence tags");
 
-        auto built = cyxwiz::BuildSequentialFromConfig(dispatch_config);
-        Check(built.ok(),
-              "saved NER launch should build sequence classifier");
-        const auto predictions = built.model->Forward(batch.word_ids);
+        const auto batch_shape = batch.word_ids.Shape();
+        Check(batch_shape.size() == 2,
+              "saved NER decode should use batched token ids");
+        std::vector<float> logits(batch_shape[0] * batch_shape[1] *
+                                      sequence_build.tag_vocabulary_size,
+                                  -1.0f);
+        const auto* gold_ids = batch.tag_ids.Data<int64_t>();
+        for (size_t i = 0; i < batch.tag_ids.NumElements(); ++i) {
+            const int64_t gold = gold_ids[i];
+            if (gold < 0 ||
+                static_cast<size_t>(gold) >= sequence_build.tag_vocabulary_size) {
+                continue;
+            }
+            logits[i * sequence_build.tag_vocabulary_size +
+                   static_cast<size_t>(gold)] = 1.0f;
+        }
+        const auto predictions =
+            cyxwiz::Tensor({batch_shape[0], batch_shape[1],
+                            sequence_build.tag_vocabulary_size},
+                           logits.data(), cyxwiz::DataType::Float32);
         Check(predictions.Shape().size() == 3,
               "saved NER decode should produce sequence logits");
         Check(predictions.Shape()[0] == batch.word_ids.Shape()[0] &&

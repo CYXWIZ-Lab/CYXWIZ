@@ -143,6 +143,12 @@ int main() {
     Check(missing_result.error_message.find(kDatasetName) != std::string::npos,
           "missing sequence column error should name the dataset: " +
               missing_result.error_message);
+    Check(missing_result.status_title == "Sequence materialization blocked",
+          "missing sequence column should expose compact status title: " +
+              missing_result.status_title);
+    Check(missing_result.status_detail == missing_result.error_message,
+          "missing sequence column should expose status detail matching the "
+          "full error message");
 
     registry.UnregisterTabularDataset(kDatasetName);
     std::cout << "Graph training sequence preflight test passed\n";

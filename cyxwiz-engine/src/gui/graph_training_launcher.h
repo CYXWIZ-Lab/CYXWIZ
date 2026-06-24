@@ -17,6 +17,8 @@ namespace gui {
 
 struct GraphTrainingLaunchResult {
     bool started = false;
+    std::string status_title;
+    std::string status_detail;
     std::string error_message;
     std::string effective_dataset_name;
     std::string label_column;

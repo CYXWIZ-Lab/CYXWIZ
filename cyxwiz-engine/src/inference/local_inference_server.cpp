@@ -4,6 +4,7 @@
 #include "../core/language_model_training.h"
 #include "../core/model_importer.h"
 #include "../core/formats/cyxmodel_format.h"
+#include "../core/sequence_inference_response.h"
 #include "../core/sequence_tag_metrics.h"
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
@@ -170,70 +171,36 @@ void AppendTensorValues(const Tensor& tensor, std::vector<float>& output) {
     throw std::runtime_error("Unsupported tensor type for inference response");
 }
 
-json Int64TensorToNestedRows(const Tensor& tensor, bool transpose_output) {
-    const auto& shape = tensor.Shape();
-    if (shape.size() != 2) {
-        throw std::runtime_error("sequence tag tensor must be 2D");
-    }
-
-    const size_t rows = shape[0];
-    const size_t cols = shape[1];
+json Int64RowsToJson(const std::vector<std::vector<int64_t>>& rows) {
     json rows_json = json::array();
-
-    for (size_t row = 0; row < rows; ++row) {
+    for (const auto& row : rows) {
         json row_json = json::array();
-        for (size_t col = 0; col < cols; ++col) {
-            size_t index = transpose_output ? (col * rows + row) : (row * cols + col);
-            if (tensor.GetDataType() == DataType::Int64) {
-                row_json.push_back(tensor.Data<int64_t>()[index]);
-            } else if (tensor.GetDataType() == DataType::Int32) {
-                row_json.push_back(static_cast<int64_t>(tensor.Data<int32_t>()[index]));
-            } else {
-                throw std::runtime_error("sequence tag IDs must be Int64 or Int32");
-            }
+        for (const int64_t value : row) {
+            row_json.push_back(value);
         }
         rows_json.push_back(std::move(row_json));
     }
     return rows_json;
 }
 
-json DecodeTagIdsToLabels(const Tensor& predicted_tag_ids,
-                         const std::vector<std::string>& label_vocab,
-                         bool transpose_output) {
-    const auto& shape = predicted_tag_ids.Shape();
-    if (shape.size() != 2) {
-        throw std::runtime_error("predicted sequence tag ids must be 2D");
-    }
-    const size_t rows = shape[0];
-    const size_t cols = shape[1];
-    const auto* data_ptr64 = predicted_tag_ids.GetDataType() == DataType::Int64
-                                 ? predicted_tag_ids.Data<int64_t>()
-                                 : nullptr;
-    const auto* data_ptr32 = predicted_tag_ids.GetDataType() == DataType::Int32
-                                 ? predicted_tag_ids.Data<int32_t>()
-                                 : nullptr;
-
-    if (!data_ptr64 && !data_ptr32) {
-        throw std::runtime_error("predicted sequence tag IDs must be Int64 or Int32");
-    }
-
+json StringRowsToJson(const std::vector<std::vector<std::string>>& rows) {
     json rows_json = json::array();
-    for (size_t row = 0; row < rows; ++row) {
+    for (const auto& row : rows) {
         json row_json = json::array();
-        for (size_t col = 0; col < cols; ++col) {
-            size_t index = transpose_output ? (col * rows + row) : (row * cols + col);
-            const int64_t value = data_ptr64 ? data_ptr64[index]
-                                             : static_cast<int64_t>(data_ptr32[index]);
-            if (value >= 0 &&
-                static_cast<size_t>(value) < label_vocab.size()) {
-                row_json.push_back(label_vocab[static_cast<size_t>(value)]);
-            } else {
-                row_json.push_back(std::string{});
-            }
+        for (const auto& value : row) {
+            row_json.push_back(value);
         }
         rows_json.push_back(std::move(row_json));
     }
     return rows_json;
+}
+
+json SizeRowsToJson(const std::vector<size_t>& values) {
+    json values_json = json::array();
+    for (const size_t value : values) {
+        values_json.push_back(value);
+    }
+    return values_json;
 }
 
 Tensor TransposeSequenceLogits(const Tensor& logits) {
@@ -835,10 +802,12 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
                 logits_tensor = TransposeSequenceLogits(output_tensor);
             }
             const Tensor predicted_ids = ArgmaxSequenceTagLogits(logits_tensor);
+            const auto decoded = DecodeSequenceTagIdsForInference(
+                predicted_ids, sequence_tag_vocabulary_, sequence_lengths);
             response["sequence"] = {
-                {"tag_ids", Int64TensorToNestedRows(predicted_ids, false)},
-                {"tag_labels", DecodeTagIdsToLabels(
-                                   predicted_ids, sequence_tag_vocabulary_, false)},
+                {"tag_ids", Int64RowsToJson(decoded.tag_ids)},
+                {"tag_labels", StringRowsToJson(decoded.tag_labels)},
+                {"effective_lengths", SizeRowsToJson(decoded.effective_lengths)},
                 {"tag_vocab", sequence_tag_vocabulary_},
                 {"batch_first", sequence_batch_first_},
                 {"ignore_index", sequence_tag_ignore_index_}

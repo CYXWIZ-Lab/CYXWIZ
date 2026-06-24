@@ -1835,6 +1835,7 @@ target_link_libraries(test_cyxmodel_sequence_assets PRIVATE
     spdlog::spdlog
     fmt::fmt
     nlohmann_json::nlohmann_json
+    cyxwiz-backend
 )
 
 if(WIN32)

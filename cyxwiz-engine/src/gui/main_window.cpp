@@ -3099,6 +3099,23 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             if (training_plot_panel_) {
                 training_plot_panel_->SetVisible(true);
             }
+        } else {
+            compile_result_success_ = false;
+            compile_result_mode_ = CompileResultMode::BlockedTrain;
+            compile_result_message_ = launch_result.status_title.empty()
+                ? "Training launch blocked"
+                : launch_result.status_title;
+            compile_result_summary_ = launch_result.status_detail;
+            compile_result_backend_placements_.clear();
+            compile_result_issues_.clear();
+
+            cyxwiz::ValidationIssue issue;
+            issue.level = cyxwiz::IssueLevel::Error;
+            issue.message = launch_result.status_detail.empty()
+                ? launch_result.error_message
+                : launch_result.status_detail;
+            compile_result_issues_.push_back(std::move(issue));
+            show_compile_result_popup_ = true;
         }
 
     } catch (const std::exception& e) {

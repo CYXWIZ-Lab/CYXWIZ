@@ -1,4 +1,4 @@
-# To Fix 21 - Future NER And Sequence Graph Work
+# Done 21 - NER And Sequence Graph Work
 
 **Created:** 2026-06-10
 **Source:** Follow-up after completing `done19.md`.
@@ -10,10 +10,11 @@
 loss, token accuracy, BIO F1, sequence metrics in Studio, and guards for the
 shipped NER graph.
 
-This file tracks the remaining NER/sequence work that should happen after that
-slice. These items are future work, not regressions in `done19`.
+This file tracks the NER/sequence follow-up work that happened after that
+slice. Items marked complete describe the current supported scope rather than
+an unlimited NER product surface.
 
-## Remaining Work
+## Tracked Work
 
 ## Status 2026-06-22
 
@@ -36,8 +37,8 @@ Started example-asset portability work for item 2:
 - ignored generated NER demo outputs locally so smoke runs do not create
   accidental untracked example artifacts.
 
-The example remains a target design until the full Studio graph launch path can
-materialize sequence batches from saved graph data.
+At this point, the example was still a target design until the full Studio
+graph launch path could materialize sequence batches from saved graph data.
 
 Runtime progress:
 
@@ -63,9 +64,9 @@ Runtime progress:
 - Sequence graph launch now normalizes the training config from the runtime
   vocabularies: input sequence length, embedding vocabulary size, tag output
   size, and final `TimeDistributed` token-head width.
-- This does not complete full NER graph launch yet: Studio still needs the
-  higher-level model launch/inference packaging that consumes these prepared
-  sequence artifacts.
+- At this point, full NER graph launch still needed the higher-level model
+  launch and inference packaging that consumes these prepared sequence
+  artifacts.
 - Added `validate_ner_graph_assets.py` for a repo-portable smoke check that
   verifies saved-graph path references and generated asset existence.
 - Added a dedicated saved-graph launch regression in
@@ -111,12 +112,24 @@ Status 2026-06-23:
   `NERTagVocabulary`, using the runtime parameter keys directly and showing
   compact guidance for required columns, padding, vocabulary limits, and BIO
   tag behavior.
+- Sequence inference responses now decode tag IDs through a shared
+  length-aware helper. When `/v1/predict` receives `sequence_lengths`, the
+  returned `sequence.tag_ids` and `sequence.tag_labels` are clipped to the
+  non-padding token lengths and include `sequence.effective_lengths`.
+- `test_cyxmodel_sequence_assets` now covers `.cyxmodel` sequence asset
+  round-trip plus length-aware BIO decode behavior, including a guard for
+  mismatched `sequence_lengths`.
+- Verified:
+  `cmake --build build --config Debug --target test_cyxmodel_sequence_assets`,
+  `cmake --build build --config Debug --target cyxwiz-engine`,
+  `build\bin\Debug\test_cyxmodel_sequence_assets.exe`, and
+  `python examples\cyxgraph\NER\validate_ner_graph_assets.py`.
 
 ### 1. Executable Vocabulary Nodes
 
-`TokenVocabulary`, `POSVocabulary`, and `NERTagVocabulary` are currently
-first-class contract/documentation nodes, but they are not executable graph
-runtime nodes.
+`TokenVocabulary`, `POSVocabulary`, and `NERTagVocabulary` started as
+first-class contract/documentation nodes without executable graph runtime
+behavior.
 
 Implement:
 
@@ -134,10 +147,22 @@ Status 2026-06-10:
   pins all three nodes as fail-closed through central runtime capability
   reasons, giving future executable vocabulary work a guarded baseline.
 
+Status 2026-06-24:
+
+- Complete for the current graph runtime scope. `TokenVocabulary`,
+  `POSVocabulary`, and `NERTagVocabulary` execute as narrow
+  `PipelineExecutor` transforms over prepared sentence-level string columns.
+- The vocabulary nodes reuse the deterministic `SequenceVocabulary` helper and
+  emit `value,id` Arrow tables for downstream runtime use.
+- Runtime capability metadata and node-browser descriptions now mark the
+  vocabulary nodes as implemented runtime nodes instead of stale templates.
+- Focused routing coverage proves deterministic token/POS/tag vocabulary
+  output and specific schema failure for missing source columns.
+
 ### 2. Full NER Example Assets
 
 The saved NER graph now uses current first-class node IDs and avoids Dense
-placeholders. The surrounding example assets still need to be made complete and
+placeholders. The surrounding example assets needed to be made complete and
 portable.
 
 Implement:
@@ -148,11 +173,23 @@ Implement:
 - import/open smoke test for the saved graph schema,
 - one minimal trainable NER demo with small data.
 
+Status 2026-06-24:
+
+- Complete for the checked-in example asset scope. The NER example includes a
+  tiny `sample_ner.csv`, repo-relative graph/vocabulary/data references,
+  README updates, generated metadata that resolves relative to the example
+  directory, and ignored local generated outputs.
+- `test_pattern_template_guard` protects the shipped graph from regressing to
+  Dense placeholders, stale serialized node IDs, or machine-local absolute
+  paths.
+- `validate_ner_graph_assets.py` provides the portable smoke check for saved
+  graph references, generated asset existence, and tokenized inference payload
+  shape.
+
 ### 3. End-To-End Studio Graph Training
 
 Sequence training works when Studio can provide a prebuilt `ISequenceBatcher`.
-The remaining work is proving the complete saved graph launch path with real
-NER rows.
+The remaining work was proving the saved graph launch path with real NER rows.
 
 Implement:
 
@@ -162,9 +199,24 @@ Implement:
 - compact end-to-end test that runs a tiny NER graph through the public Studio
   launch path.
 
+Status 2026-06-24:
+
+- Complete for the current public Studio launch helper path. Saved-NER launch
+  coverage in `test_text_gui_training_launch` exercises the checked-in NER
+  sequence fixture table through graph launch, materializer/batcher config
+  passthrough, sentence-level train/validation/test split behavior, tag
+  vocabulary sizing, decode/metrics assertions, and callback lifecycle checks.
+- Studio graph launch now builds a `SequenceBatcher` directly from registered
+  Arrow sentence tables, routes sequence/NER configs through
+  `TrainingManager::StartTrainingSequence`, and normalizes model dimensions
+  from runtime vocabularies and sequence length.
+- The GUI launch regression intentionally avoids running a full model forward;
+  model runtime/deployment decode coverage lives in the sequence inference and
+  `.cyxmodel` packaging checks.
+
 ### 4. Sequence Inference And Packaging
 
-Training metrics exist, but deployment still needs sequence-aware assets.
+Training metrics existed, but deployment needed sequence-aware assets.
 
 Implement:
 
@@ -174,10 +226,19 @@ Implement:
   padding IDs, and vocab file paths,
 - inference helper tests for tokenized sequence inputs.
 
+Status 2026-06-23:
+
+- Complete for the current `.cyxmodel` and embedded `/v1/predict` deployment
+  path. Sequence packages carry token/POS/tag vocabularies and sequence
+  metadata, local model loading probes and extracts those assets, model info
+  advertises sequence decode capability, prediction accepts named sequence
+  tensors with `sequence_lengths`, and decoded BIO labels are returned through
+  a length-aware response contract.
+
 ### 5. UI Polish For Sequence Graphs
 
-Sequence metrics are visible in the training plot panel. The graph and node UI
-still needs task-specific polish.
+Sequence metrics were visible in the training plot panel. The graph and node UI
+needed task-specific polish.
 
 Implement:
 
@@ -186,15 +247,29 @@ Implement:
 - task-aware labels for token classifier and token loss nodes,
 - compact status messaging when sequence graph materialization is blocked.
 
+Status 2026-06-24:
+
+- Complete for the current sequence graph launch path. Blocked training
+  launches now carry compact `status_title` and `status_detail` fields, and
+  `MainWindow` surfaces those details through the existing blocked-training
+  popup instead of leaving sequence materialization failures silent.
+- The sequence preflight path reports missing token/tag/POS/sentence columns
+  before dispatch, including the affected dataset name.
+- `test_text_gui_training_launch` keeps the saved-NER launch, split, batcher,
+  vocabulary, decode, and callback regression coverage without running a full
+  sequence model forward inside the GUI launch helper test.
+- Verified:
+  `cmake --build build --config Debug --target test_graph_training_sequence_preflight`,
+  `build\bin\Debug\test_graph_training_sequence_preflight.exe`,
+  `cmake --build build --config Debug --target test_text_gui_training_launch`,
+  and `build\bin\Debug\test_text_gui_training_launch.exe`.
+
 ## Verification Targets
 
-Future work should keep these checks green:
+Keep these checks green:
 
 - `test_pattern_template_guard`
 - `test_graph_compiler_deferred_nodes`
 - `test_text_gui_training_launch`
 - `test_training_executor_arrow_parquet`
 - `cyxwiz-engine` Debug build
-
-Add a tiny NER graph end-to-end test once the full saved graph launch path is
-portable.
