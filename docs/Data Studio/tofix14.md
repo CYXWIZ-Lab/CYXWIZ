@@ -12,6 +12,39 @@ Both are useful because they expose the same underlying limitation: the
 backend has several low-level neural-network pieces, but the Studio graph
 runtime still assumes a mostly single-input sequential training path.
 
+## Current Code Truth 2026-06-25
+
+This document is older than several sequence-tagging implementation slices.
+Before adding work from this file, use this current truth:
+
+- `SequenceBatch`, `ISequenceBatcher`, `SequenceBatcher`,
+  `SequenceVocabulary`, and `NERSequenceBuilder` exist.
+- `BuildSequenceBatcherFromArrowDataset` can bridge Arrow sequence rows into a
+  prebuilt `ISequenceBatcher`.
+- `GraphCompiler` captures first-class `NERSequenceBuilder` nodes into
+  `SequenceBatchConfig`.
+- `TimeDistributed` is implemented as `TimeDistributedDenseModule` and is
+  built by `ModelBuilder`.
+- `TrainingExecutor` has `SequenceExternal` mode and can train token-tagging
+  batches when launched with a prebuilt sequence batcher.
+- `CrossEntropyLoss` uses sequence `ignore_index` for token-level targets; the
+  current implementation does not use a separate first-class
+  `TokenCrossEntropyLoss` node.
+- Sequence tag metrics and sequence inference decode helpers exist.
+- Saved NER graph assets exist under `examples/cyxgraph/NER`.
+- The sequence model currently forwards only `word_ids`; optional `pos_ids`
+  and `attention_mask` are carried by the batch contract but not consumed by
+  the model path.
+- `FeatureConcat` and full POS embedding fusion are still missing.
+- `SequenceTagOutput` exists as inference decode behavior, not as a
+  first-class Studio output node.
+- Siamese support remains backend-loss-only plus compiler guardrails. The
+  visual graph runtime still lacks typed pair/triplet batches, shared encoder
+  ownership, branch-aware backward pass, and metric-learning output contracts.
+
+Use `track14.md` as the active execution plan. The next narrow target is an
+end-to-end saved NER graph smoke, not broad Siamese graph support.
+
 ## Carryover From To Fix 13
 
 `tofix13.md` closed the in-repo C++ tensor-operation parity gap through
@@ -249,6 +282,14 @@ per-token output.
 
 ### 1. `NERSequenceBuilder`
 
+Current status:
+
+- Implemented as `NERSequenceBuilder` / `BuildNERSequenceData`.
+- Also executable through `PipelineExecutor::ExecuteNERSequenceBuilder` for
+  Arrow-table materialization.
+- Still useful to keep in this document because future work must connect it to
+  richer sequence feature fusion and output contracts.
+
 Purpose:
 
 - read sentence-level rows
@@ -264,6 +305,10 @@ NER rows contain multiple labels, one per token.
 
 ### 2. `TokenVocabulary`
 
+Current status:
+
+- Implemented through `SequenceVocabulary` with token vocabulary mode.
+
 Purpose:
 
 - map words to IDs
@@ -277,6 +322,12 @@ NER needs a word vocabulary independent of POS and tag vocabularies.
 
 ### 3. `POSVocabulary`
 
+Current status:
+
+- Implemented through `SequenceVocabulary` with POS vocabulary mode.
+- POS IDs are batchable, but POS embedding fusion is not yet consumed by the
+  sequence model path.
+
 Purpose:
 
 - map POS tags like `NNP`, `VBD`, `IN` to IDs
@@ -287,6 +338,11 @@ Why needed:
 The graph optionally uses POS embeddings as extra token features.
 
 ### 4. `NERTagVocabulary`
+
+Current status:
+
+- Implemented through `SequenceVocabulary` with tag vocabulary mode.
+- Tag vocabulary values are used by sequence metrics and inference decode.
 
 Purpose:
 
@@ -300,6 +356,11 @@ Why needed:
 The loss and output decoder must agree on the exact tag index order.
 
 ### 5. `SequencePadding`
+
+Current status:
+
+- Implemented inside `SequenceBatcher`.
+- It pads/truncates word IDs, optional POS IDs, tag IDs, and attention masks.
 
 Purpose:
 
@@ -324,6 +385,12 @@ labels and masks padded in alignment with tokens.
 
 ### 6. `FeatureConcat`
 
+Current status:
+
+- Still missing as a first-class runtime graph node.
+- This is the main remaining bridge for combining word embeddings and POS
+  embeddings in NER.
+
 Purpose:
 
 - concatenate word embeddings and POS embeddings per token
@@ -346,6 +413,13 @@ Why needed:
 The model should be able to consume multiple token-level feature streams.
 
 ### 7. `LSTM return_sequences=true` Graph Support
+
+Current status:
+
+- Implemented for the supported sequential recurrent wrappers and covered by
+  TimeDistributed sequence-head tests.
+- Future work should keep validating output/label shape compatibility for
+  token classification graphs.
 
 Purpose:
 
@@ -394,19 +468,30 @@ Current engine truth:
 - `GraphCompiler` recognizes it as a model layer and requires sequence-shaped
   input.
 - `ModelBuilder` builds it as `TimeDistributedDenseModule`.
-- Backend placement still classifies it as unknown/unclassified.
-- Full NER support still needs token-label batching, mask-aware loss, token
-  metrics, and sequence-tagging inference output.
+- Backend placement now classifies it as an explicit sequence wrapper rather
+  than direct ArrayFire tensor-capable work.
+- Token-label batching, ignore-index-aware loss, token metrics, and inference
+  decode exist.
+- Full NER support still needs feature fusion for optional POS embeddings and
+  a first-class sequence output/export surface.
 
 Follow-up work:
 
-- keep `TimeDistributed` marked partial, not real, in the support matrix
-- classify backend placement for the supported `TimeDistributedDense` path
-- validate output/label shapes for token classification graphs
-- connect it to `TokenCrossEntropyLoss` and padding ignore behavior
-- add NER/token-classification regression tests before marking it complete
+- keep backend placement honest: it is a sequence wrapper, not direct GPU
+  tensor execution
+- keep validating output/label shapes for token classification graphs
+- add the saved NER graph end-to-end smoke before claiming production NER
+  support
+- connect future POS feature fusion without turning the graph runtime into a
+  broad arbitrary multi-input executor
 
 ### 9. `TokenCrossEntropyLoss`
+
+Current status:
+
+- Implemented as sequence-aware `CrossEntropyLoss` with `ignore_index`, plus
+  `TokenCrossEntropyLossCpu` helper coverage.
+- There is no separate first-class Studio `TokenCrossEntropyLoss` node today.
 
 Purpose:
 
@@ -428,6 +513,11 @@ contribute to the loss.
 
 ### 10. `SequenceTagMetrics`
 
+Current status:
+
+- Implemented by `ComputeSequenceTagMetricsFromLogits` and consumed by
+  sequence training.
+
 Purpose:
 
 - token accuracy ignoring padding
@@ -442,6 +532,12 @@ Token accuracy alone can be misleading because the `O` tag dominates.
 Entity-level F1 is the real NER metric.
 
 ### 11. `SequenceTagOutput`
+
+Current status:
+
+- Implemented as sequence inference decode helpers and local inference response
+  formatting.
+- Still missing as a first-class Studio output node or explicit output mode.
 
 Purpose:
 
@@ -507,61 +603,92 @@ useful in `--dry-run` mode.
 
 ## Implementation Order
 
+Use `track14.md` for active execution. The historical order below is retained
+as design context, but several early items are now implemented.
+
 ### Phase 1 - Data preparation and schema
 
-1. Keep `prepare_ner_demo.py` as the dataset converter.
-2. Generate:
+Status: partially complete.
+
+1. Keep `prepare_ner_demo.py` as the dataset converter. Implemented.
+2. Generate these assets. Implemented under `examples/cyxgraph/NER/generated`:
    - `ner_sentences.csv`
    - `ner_word_vocab.txt`
    - `ner_pos_vocab.txt`
    - `ner_tag_vocab.txt`
    - `ner_metadata.json`
-3. Add graph/runtime support for sentence-level sequence samples.
+3. Add graph/runtime support for sentence-level sequence samples. Implemented
+   for Arrow-backed sequence rows and prebuilt `ISequenceBatcher` launch.
 
 ### Phase 2 - Sequence tensors
 
-1. Implement `NERSequenceBuilder`.
-2. Implement or adapt `TokenVocabulary`.
-3. Implement `NERTagVocabulary`.
-4. Implement `SequencePadding`.
-5. Add `attention_mask` and `loss_mask`.
+Status: mostly complete.
+
+1. Implement `NERSequenceBuilder`. Implemented.
+2. Implement or adapt `TokenVocabulary`. Implemented through
+   `SequenceVocabulary`.
+3. Implement `NERTagVocabulary`. Implemented through `SequenceVocabulary`.
+4. Implement `SequencePadding`. Implemented through `SequenceBatcher`.
+5. Add `attention_mask` and `loss_mask`. Attention masks and tag
+   `ignore_index` are present; model-side attention-mask consumption remains
+   future work.
 
 ### Phase 3 - Sequence model path
 
-1. Verify `Embedding` accepts `[batch, seq_len]`.
-2. Verify LSTM/GRU can return `[batch, seq_len, hidden]`.
-3. Add `FeatureConcat`.
-4. Add `TimeDistributedDense`.
+Status: partially complete.
+
+1. Verify `Embedding` accepts `[batch, seq_len]`. Implemented for the current
+   sequence training path.
+2. Verify LSTM/GRU can return `[batch, seq_len, hidden]`. Implemented for
+   supported `return_sequences=true` wrappers.
+3. Add `FeatureConcat`. Still missing.
+4. Add `TimeDistributedDense`. Implemented.
 
 ### Phase 4 - Token-level training
 
-1. Add `TokenCrossEntropyLoss`.
-2. Add mask-aware reduction.
-3. Add token-level accuracy.
-4. Add entity-level precision/recall/F1.
+Status: mostly complete.
+
+1. Add token-level cross entropy. Implemented through sequence-aware
+   `CrossEntropyLoss` / `ignore_index`.
+2. Add mask-aware reduction. Implemented through ignored tag IDs.
+3. Add token-level accuracy. Implemented.
+4. Add entity-level precision/recall/F1. Implemented.
+5. Add saved NER graph end-to-end smoke. Still missing and should be the next
+   narrow Track 14 slice.
 
 ### Phase 5 - Inference and export
 
-1. Save vocab and metadata with `.cyxmodel`.
-2. Add `SequenceTagOutput`.
-3. Make embedded inference accept named sequence inputs.
-4. Make embedded inference return token logits.
-5. Verify `ner_inference.py` against a deployed model.
+Status: partially complete.
+
+1. Save vocab and metadata with `.cyxmodel`. Implemented at the sequence asset
+   packaging level.
+2. Add `SequenceTagOutput`. Implemented as decode/response behavior, not a
+   first-class Studio node.
+3. Make embedded inference accept named sequence inputs. Partially present;
+   needs end-to-end deployed-model validation.
+4. Make embedded inference return token logits/decode. Decode response exists
+   for sequence logits.
+5. Verify `ner_inference.py` against a deployed model. Still missing.
 
 ## Definition Of Done
 
 NER support is done when:
 
-- `ner_bilstm_sequence_tagger.cyxgraph` loads without unknown-node errors
-- the graph compiles
-- the data prep files are consumed by the graph
-- batches contain aligned word IDs, POS IDs, tag IDs, and masks
-- BiLSTM returns per-token hidden states
-- token classifier outputs `[batch, seq_len, num_tags]`
-- loss ignores padding
-- metrics report token accuracy and entity F1
-- checkpoint includes graph, weights, vocabularies, metadata, and max length
-- `ner_inference.py` returns readable token/tag predictions for a sentence
+- `ner_bilstm_sequence_tagger.cyxgraph` loads without unknown-node errors.
+- the graph compiles and populates `SequenceBatchConfig`.
+- the generated data prep files are consumed through the graph launch path.
+- batches contain aligned word IDs, optional POS IDs, tag IDs, and masks.
+- BiLSTM/GRU sequence models can return per-token hidden states.
+- the token classifier outputs `[batch, seq_len, num_tags]`.
+- loss ignores padding / ignored tag IDs.
+- metrics report token accuracy and entity F1.
+- a focused saved-graph smoke trains a tiny bounded run successfully.
+- checkpoint/export includes graph, weights, vocabularies, metadata, and max
+  length.
+- deployed/local inference returns readable token/tag predictions for a
+  sentence.
+- optional POS IDs are either consumed through an explicit feature-fusion path
+  or clearly reported as unused.
 
 ## Why This Matters
 
@@ -607,6 +734,17 @@ does not yet model:
 - pairwise distance/merge operations in the executable training path
 - contrastive, cosine embedding, or triplet loss nodes in the visual graph
 - pair/triplet metrics and inference output
+
+Current status 2026-06-25:
+
+- Backend `CosineEmbeddingLoss`, `TripletLoss`, and `ContrastiveLoss` exist
+  and have focused unit coverage.
+- The graph compiler deliberately rejects selected-path metric-learning
+  sketches such as `SharedEncoder` instead of pretending the existing
+  single-input runtime can train them.
+- No visual graph node should be marked runtime-supported until typed
+  pair/triplet batches, shared encoder ownership, branch-aware backward pass,
+  and embedding/pair-score output contracts exist.
 
 ## Intended Siamese Pipeline
 
@@ -967,6 +1105,8 @@ This should not be forced through a class-probability output.
 
 ### Phase 1 - Backend smoke path
 
+Status: still the right first Siamese target.
+
 1. Add a small C++ or Python Siamese example using existing backend
    losses.
 2. Build a shared encoder manually in code.
@@ -974,6 +1114,9 @@ This should not be forced through a class-probability output.
 4. Verify similar pairs move closer and dissimilar pairs move apart.
 
 ### Phase 2 - Graph node surface
+
+Status: blocked until Phase 1 proves the backend smoke path and the graph
+runtime design is explicit.
 
 1. Add `ContrastiveLoss`, `CosineEmbeddingLoss`, and `TripletLoss` node
    types.
@@ -983,6 +1126,8 @@ This should not be forced through a class-probability output.
 
 ### Phase 3 - Pair and triplet batching
 
+Status: not started.
+
 1. Add `PairDatasetBuilder`.
 2. Add `PairBatcher`.
 3. Add `TripletDatasetBuilder`.
@@ -991,12 +1136,16 @@ This should not be forced through a class-probability output.
 
 ### Phase 4 - Shared encoder graph execution
 
+Status: not started.
+
 1. Add a minimal `SharedEncoder` compiler/runtime representation.
 2. Execute the same encoder object for every branch.
 3. Accumulate branch gradients into shared parameters.
 4. Update shared parameters once per batch.
 
 ### Phase 5 - Metrics and inference
+
+Status: not started.
 
 1. Add `PairMetrics`.
 2. Add `RetrievalMetrics`.
