@@ -8,8 +8,6 @@
 #include <string>
 #include <vector>
 
-#include <spdlog/spdlog.h>
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #endif
@@ -440,7 +438,8 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
 
         return AfToTensor(loss);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire CrossEntropyLoss::Forward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "CrossEntropyLoss::Forward", e.what(), predictions, "predictions");
     }
 #endif
     return CpuCrossEntropyForward(predictions, targets, reduction_, ignore_index_, &cached_softmax_);
@@ -481,12 +480,16 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
             af::array identity = af::identity(af::dim4(num_classes, num_classes), f32);
             af::array one_hot = identity(af::span, target_int);  // [num_classes, batch]
             one_hot = af::transpose(one_hot);  // [batch, num_classes]
+            one_hot.eval();
 
             // Handle ignore_index with mask (GPU operation)
             if (ignore_index_ >= 0) {
                 af::array mask = (target_int != ignore_index_).as(f32);
+                mask.eval();
                 af::array mask_tiled = af::tile(mask, 1, static_cast<unsigned>(num_classes));
+                mask_tiled.eval();
                 one_hot = one_hot * mask_tiled;
+                one_hot.eval();
             }
 
             grad = softmax_pred - one_hot;
@@ -494,14 +497,17 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
             // Targets are one-hot encoded or soft labels
             grad = softmax_pred - target;
         }
+        grad.eval();
 
         if (reduction_ == Reduction::Mean) {
             grad = grad / static_cast<float>(pred.dims(0));
+            grad.eval();
         }
 
         return AfToTensor(grad);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire CrossEntropyLoss::Backward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "CrossEntropyLoss::Backward", e.what(), predictions, "predictions");
     }
 #endif
     return CpuCrossEntropyBackward(predictions, targets, reduction_, ignore_index_, cached_softmax_);
@@ -548,7 +554,8 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 
         return AfToTensor(loss);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire NLLLoss::Forward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "NLLLoss::Forward", e.what(), predictions, "predictions");
     }
 #endif
     return CpuNLLForward(predictions, targets, reduction_, ignore_index_);
@@ -595,7 +602,8 @@ Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
 
         return AfToTensor(grad);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire NLLLoss::Backward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "NLLLoss::Backward", e.what(), predictions, "predictions");
     }
 #endif
     return CpuNLLBackward(predictions, targets, reduction_, ignore_index_);
@@ -631,7 +639,8 @@ Tensor FocalLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         loss = ApplyReduction(loss, reduction_);
         return AfToTensor(loss);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire FocalLoss::Forward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "FocalLoss::Forward", e.what(), predictions, "predictions");
     }
 #endif
     return CpuFocalForward(predictions, targets, alpha_, gamma_, reduction_, &cached_probs_);
@@ -669,19 +678,25 @@ Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         // d_loss/d_pred = alpha * [(1-pt)^gamma - gamma*pt*(1-pt)^(gamma-1)*log(pt)] * (p - y)
         af::dim4 tile_dims(1, static_cast<unsigned int>(num_classes));
         af::array log_pt = af::log(af::max(pt, 1e-8f));
+        log_pt.eval();
         af::array one_minus_pt = 1.0f - pt;
+        one_minus_pt.eval();
         af::array scale = alpha_ * (af::pow(one_minus_pt, gamma_) -
                                     gamma_ * pt * af::pow(one_minus_pt, gamma_ - 1.0f) * log_pt);
+        scale.eval();
 
         af::array grad = af::tile(scale, tile_dims) * (probs - one_hot);
+        grad.eval();
 
         if (reduction_ == Reduction::Mean) {
             grad = grad / static_cast<float>(batch_size);
+            grad.eval();
         }
 
         return AfToTensor(grad);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire FocalLoss::Backward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "FocalLoss::Backward", e.what(), predictions, "predictions");
     }
 #endif
     return CpuFocalBackward(predictions, targets, alpha_, gamma_, reduction_, cached_probs_);

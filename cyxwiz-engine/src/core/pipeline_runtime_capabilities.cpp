@@ -352,6 +352,68 @@ GetPipelineLegacyRuntimeCapabilities() {
     return capabilities;
 }
 
+const std::vector<PipelineLegacyAliasDecisionCapability>&
+GetPipelineLegacyAliasDecisionCapabilities() {
+    static const std::vector<PipelineLegacyAliasDecisionCapability> capabilities = {
+        {"SaveDataset",
+         "DataOutput",
+         gui::NodeType::DataOutput,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "SaveDataset preserves legacy in-memory dataset publishing and optional export semantics"},
+        {"DeployToNodeEditor",
+         "DeployToNodeEditorNode",
+         gui::NodeType::DeployToNodeEditorNode,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "DeployToNodeEditor remains a legacy workflow alias until deployment parameters are typed"},
+        {"TextClean",
+         "TextCleanNode",
+         gui::NodeType::TextCleanNode,
+         PipelineLegacyAliasDecision::NormalizeToCanonical,
+         "TextClean shares the TextCleanNode executor and parameter contract"},
+        {"TextTokenize",
+         "TextTokenizer",
+         gui::NodeType::TextTokenizer,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TextTokenize has a legacy text_column/token-feature contract that differs from TextTokenizer"},
+        {"TextVectorize",
+         "CountVectorizer",
+         gui::NodeType::CountVectorizer,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TextVectorize has a legacy text_column vectorization contract that differs from CountVectorizer"},
+        {"TSWindow",
+         "TimeSeriesWindow",
+         gui::NodeType::TimeSeriesWindow,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TSWindow keeps legacy target_column/window_size parameters until they are migrated"},
+        {"TSFeatures",
+         "TimeSeriesFeatures",
+         gui::NodeType::TimeSeriesFeatures,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TSFeatures keeps legacy columns/rolling_window parameters until they are migrated"},
+        {"TSLag",
+         "TimeSeriesLag",
+         gui::NodeType::TimeSeriesLag,
+         PipelineLegacyAliasDecision::NormalizeToCanonical,
+         "TSLag shares the TimeSeriesLag executor and parameter contract"},
+        {"TSDiff",
+         "Differencing",
+         gui::NodeType::Differencing,
+         PipelineLegacyAliasDecision::HiddenCompatibilityAlias,
+         "TSDiff keeps legacy columns/order parameters until they are migrated"},
+        {"PolynomialFeatures",
+         "PolynomialFeaturesNode",
+         gui::NodeType::PolynomialFeaturesNode,
+         PipelineLegacyAliasDecision::NormalizeToCanonical,
+         "PolynomialFeatures shares the PolynomialFeaturesNode executor and parameter contract"},
+        {"Binning",
+         "BinningNode",
+         gui::NodeType::BinningNode,
+         PipelineLegacyAliasDecision::NormalizeToCanonical,
+         "Binning shares the BinningNode executor and parameter contract"},
+    };
+    return capabilities;
+}
+
 const std::vector<PipelineSourceRuntimeCapability>&
 GetPipelineSourceRuntimeCapabilities() {
     static const std::vector<PipelineSourceRuntimeCapability> capabilities = {
@@ -856,7 +918,6 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             true});
         support.implementation_owner =
             PipelineRuntimeImplementationOwner::PipelineExecutor;
-        support.legacy_dispatch_kind = legacy_it->dispatch_kind;
         return support;
     }
 
@@ -929,6 +990,19 @@ const char* PipelineRuntimeImplementationOwnerName(
     case PipelineRuntimeImplementationOwner::PipelineOperatorFactory:
         return "pipeline_operator_factory";
     case PipelineRuntimeImplementationOwner::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
+const char* PipelineLegacyAliasDecisionName(
+    PipelineLegacyAliasDecision decision) {
+    switch (decision) {
+    case PipelineLegacyAliasDecision::NormalizeToCanonical:
+        return "normalize_to_canonical";
+    case PipelineLegacyAliasDecision::HiddenCompatibilityAlias:
+        return "hidden_compatibility_alias";
+    case PipelineLegacyAliasDecision::Unknown:
         return "unknown";
     }
     return "unknown";
@@ -1104,6 +1178,20 @@ bool IsPipelineLegacyRuntimeNode(const std::string& legacy_type_name) {
             return legacy_type_name == capability.legacy_type_name;
         });
     return it != capabilities.end();
+}
+
+const PipelineLegacyAliasDecisionCapability*
+ResolvePipelineLegacyAliasDecision(const std::string& alias_type_name) {
+    const auto& capabilities = GetPipelineLegacyAliasDecisionCapabilities();
+    auto it = std::find_if(capabilities.begin(), capabilities.end(),
+        [&alias_type_name](
+            const PipelineLegacyAliasDecisionCapability& capability) {
+            return alias_type_name == capability.alias_type_name;
+        });
+    if (it == capabilities.end()) {
+        return nullptr;
+    }
+    return &*it;
 }
 
 bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name) {

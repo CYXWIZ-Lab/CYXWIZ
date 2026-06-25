@@ -91,6 +91,11 @@ bool ContainsString(const std::vector<std::string>& values,
     return std::find(values.begin(), values.end(), expected) != values.end();
 }
 
+bool ContainsString(const std::set<std::string>& values,
+                    const std::string& expected) {
+    return values.find(expected) != values.end();
+}
+
 const cyxwiz::ParameterDefinition* FindParameter(
     const cyxwiz::NodeMetadata* meta,
     const std::string& name) {
@@ -128,6 +133,115 @@ void CheckSupportAxis(const cyxwiz::NodeMetadata* meta,
     Check(axis->supported == supported,
           "support axis " + name + " has wrong supported flag for " +
               context);
+}
+
+bool HasUnsupportedSupportAxis(const cyxwiz::NodeMetadata* meta,
+                               const std::string& name) {
+    const auto* axis = FindSupportAxis(meta, name);
+    return axis != nullptr && !axis->supported;
+}
+
+bool FrontendGraphAddBlockedBySupportAxes(
+    const cyxwiz::NodeMetadata* meta) {
+    if (!meta) return false;
+    const auto* support_state = FindSupportAxis(meta, "Support State");
+    if (support_state && support_state->value == "blocked") {
+        return true;
+    }
+    return HasUnsupportedSupportAxis(meta, "Runtime") ||
+           HasUnsupportedSupportAxis(meta, "Pipeline Executor") ||
+           HasUnsupportedSupportAxis(meta, "Training Backend") ||
+           HasUnsupportedSupportAxis(meta, "Compile") ||
+           HasUnsupportedSupportAxis(meta, "Training");
+}
+
+std::string FrontendSupportBlockReasonFromAxes(
+    const cyxwiz::NodeMetadata* meta) {
+    if (!meta) return {};
+    const auto* support_state = FindSupportAxis(meta, "Support State");
+    if (support_state && support_state->value == "blocked" &&
+        !support_state->reason.empty()) {
+        return support_state->reason;
+    }
+    for (const auto& axis : meta->support_axes) {
+        if (!axis.supported && !axis.reason.empty()) {
+            return axis.reason;
+        }
+    }
+    return {};
+}
+
+bool IsExecutableRuntimeSupportMode(
+    cyxwiz::PipelineRuntimeSupportMode mode) {
+    return mode == cyxwiz::PipelineRuntimeSupportMode::OperatorBacked ||
+           mode == cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor;
+}
+
+int RuntimeOwnerCount(const cyxwiz::PipelineRuntimeSupport& support) {
+    int owners = 0;
+    if (support.implementation_owner ==
+        cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory) {
+        ++owners;
+    }
+    if (support.implementation_owner ==
+        cyxwiz::PipelineRuntimeImplementationOwner::PipelineExecutor) {
+        ++owners;
+    }
+    if (support.implementation_owner ==
+        cyxwiz::PipelineRuntimeImplementationOwner::None) {
+        ++owners;
+    }
+    return owners;
+}
+
+void CheckRuntimeModeOwnerCompatibility(
+    const cyxwiz::PipelineRuntimeSupport& support,
+    const std::string& context) {
+    switch (support.mode) {
+    case cyxwiz::PipelineRuntimeSupportMode::OperatorBacked:
+        Check(support.implementation_owner ==
+                  cyxwiz::PipelineRuntimeImplementationOwner::
+                      PipelineOperatorFactory,
+              "operator-backed runtime should be owned by "
+              "PipelineOperatorFactory: " +
+                  context);
+        return;
+    case cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor:
+        Check(support.implementation_owner ==
+                  cyxwiz::PipelineRuntimeImplementationOwner::PipelineExecutor,
+              "legacy runtime should be owned by PipelineExecutor: " +
+                  context);
+        return;
+    case cyxwiz::PipelineRuntimeSupportMode::FailClosed:
+        Check(support.implementation_owner ==
+                  cyxwiz::PipelineRuntimeImplementationOwner::None,
+              "fail-closed runtime should not have an execution owner: " +
+                  context);
+        return;
+    case cyxwiz::PipelineRuntimeSupportMode::Unknown:
+        Check(support.implementation_owner ==
+                  cyxwiz::PipelineRuntimeImplementationOwner::Unknown,
+              "unknown runtime should keep owner unknown: " + context);
+        return;
+    }
+}
+
+void CheckRuntimeOwnerContract(
+    const cyxwiz::PipelineRuntimeSupport& support,
+    cyxwiz::PipelineRuntimeSupportMode expected_mode,
+    cyxwiz::PipelineRuntimeImplementationOwner expected_owner,
+    const std::string& context) {
+    Check(support.mode == expected_mode,
+          "runtime support mode drift: " + context);
+    Check(support.implementation_owner == expected_owner,
+          "runtime implementation owner drift: " + context);
+    Check(RuntimeOwnerCount(support) == 1,
+          "runtime support should resolve exactly one implementation owner: " +
+              context);
+    Check(support.implementation_owner !=
+              cyxwiz::PipelineRuntimeImplementationOwner::Unknown,
+          "runtime support should not leave owner unknown: " + context);
+    CheckRuntimeModeOwnerCompatibility(support, context);
 }
 
 std::vector<std::string> ParseCatalogEnumValues(
@@ -506,34 +620,42 @@ int main() {
 
         std::set<int> materializer_storage_backends;
         int materializer_supported_backends = 0;
+        const std::set<std::string> expected_materializer_storage_backends = {
+            "ArrowTable",
+            "ParquetBacked",
+            "ImageDataset",
+            "AudioDataset",
+            "TextDataset",
+        };
         for (const auto& capability :
              cyxwiz::GetPipelineMaterializerStorageBackendCapabilities()) {
+            const std::string backend_name =
+                cyxwiz::PipelineStorageBackendName(capability.backend);
             const int key = static_cast<int>(capability.backend);
             Check(materializer_storage_backends.insert(key).second,
                   "duplicate materializer storage backend capability: " +
-                      std::string(cyxwiz::PipelineStorageBackendName(
-                          capability.backend)));
+                      backend_name);
+            Check(ContainsString(expected_materializer_storage_backends,
+                                 backend_name),
+                  "unexpected materializer storage backend capability: " +
+                      backend_name);
             const auto resolved =
                 cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(
                     capability.backend);
             Check(resolved.backend == capability.backend,
                   "materializer storage backend capability does not resolve: " +
-                      std::string(cyxwiz::PipelineStorageBackendName(
-                          capability.backend)));
+                      backend_name);
             Check(resolved.materializer_supported ==
                       capability.materializer_supported,
                   "materializer storage backend support mismatch: " +
-                      std::string(cyxwiz::PipelineStorageBackendName(
-                          capability.backend)));
+                      backend_name);
             Check(resolved.storage_support == capability.storage_support,
                   "materializer storage support scope mismatch: " +
-                      std::string(cyxwiz::PipelineStorageBackendName(
-                          capability.backend)));
+                      backend_name);
             Check(capability.reason != nullptr &&
                       std::string(capability.reason).size() > 16,
                   "materializer storage backend reason is too weak: " +
-                      std::string(cyxwiz::PipelineStorageBackendName(
-                          capability.backend)));
+                      backend_name);
             if (capability.materializer_supported) {
                 ++materializer_supported_backends;
                 Check(capability.backend == cyxwiz::PipelineStorageBackend::ArrowTable,
@@ -549,6 +671,143 @@ int main() {
         }
         Check(materializer_supported_backends == 1,
               "exactly one materializer storage backend should be supported today");
+        Check(materializer_storage_backends.size() ==
+                  expected_materializer_storage_backends.size(),
+              "materializer storage scope should pin Arrow plus four pass-through domains");
+    }
+
+    for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {
+        const std::string name = capability.legacy_type_name;
+        CheckRuntimeOwnerContract(
+            cyxwiz::ResolvePipelineRuntimeSupport(name),
+            cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+            cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+            "operator capability " + name);
+    }
+
+    for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {
+        const std::string name = capability.legacy_type_name;
+        CheckRuntimeOwnerContract(
+            cyxwiz::ResolvePipelineRuntimeSupport(name),
+            cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+            cyxwiz::PipelineRuntimeImplementationOwner::PipelineExecutor,
+            "legacy capability " + name);
+    }
+
+    for (const auto& capability : cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
+        const std::string name = capability.legacy_type_name;
+        CheckRuntimeOwnerContract(
+            cyxwiz::ResolvePipelineRuntimeSupport(name),
+            cyxwiz::PipelineRuntimeSupportMode::FailClosed,
+            cyxwiz::PipelineRuntimeImplementationOwner::None,
+            "fail-closed capability " + name);
+    }
+
+    struct ExpectedAliasDecision {
+        const char* alias;
+        const char* canonical;
+        gui::NodeType canonical_type;
+        cyxwiz::PipelineLegacyAliasDecision decision;
+    };
+    const std::vector<ExpectedAliasDecision> expected_alias_decisions = {
+        {"SaveDataset", "DataOutput", gui::NodeType::DataOutput,
+         cyxwiz::PipelineLegacyAliasDecision::HiddenCompatibilityAlias},
+        {"DeployToNodeEditor", "DeployToNodeEditorNode",
+         gui::NodeType::DeployToNodeEditorNode,
+         cyxwiz::PipelineLegacyAliasDecision::HiddenCompatibilityAlias},
+        {"TextClean", "TextCleanNode", gui::NodeType::TextCleanNode,
+         cyxwiz::PipelineLegacyAliasDecision::NormalizeToCanonical},
+        {"TextTokenize", "TextTokenizer", gui::NodeType::TextTokenizer,
+         cyxwiz::PipelineLegacyAliasDecision::HiddenCompatibilityAlias},
+        {"TextVectorize", "CountVectorizer", gui::NodeType::CountVectorizer,
+         cyxwiz::PipelineLegacyAliasDecision::HiddenCompatibilityAlias},
+        {"TSWindow", "TimeSeriesWindow", gui::NodeType::TimeSeriesWindow,
+         cyxwiz::PipelineLegacyAliasDecision::HiddenCompatibilityAlias},
+        {"TSFeatures", "TimeSeriesFeatures", gui::NodeType::TimeSeriesFeatures,
+         cyxwiz::PipelineLegacyAliasDecision::HiddenCompatibilityAlias},
+        {"TSLag", "TimeSeriesLag", gui::NodeType::TimeSeriesLag,
+         cyxwiz::PipelineLegacyAliasDecision::NormalizeToCanonical},
+        {"TSDiff", "Differencing", gui::NodeType::Differencing,
+         cyxwiz::PipelineLegacyAliasDecision::HiddenCompatibilityAlias},
+        {"PolynomialFeatures", "PolynomialFeaturesNode",
+         gui::NodeType::PolynomialFeaturesNode,
+         cyxwiz::PipelineLegacyAliasDecision::NormalizeToCanonical},
+        {"Binning", "BinningNode", gui::NodeType::BinningNode,
+         cyxwiz::PipelineLegacyAliasDecision::NormalizeToCanonical},
+    };
+    std::set<std::string> observed_alias_decisions;
+    for (const auto& expected : expected_alias_decisions) {
+        const auto* decision =
+            cyxwiz::ResolvePipelineLegacyAliasDecision(expected.alias);
+        Check(decision != nullptr,
+              std::string("missing alias retirement decision: ") +
+                  expected.alias);
+        Check(observed_alias_decisions.insert(expected.alias).second,
+              std::string("duplicate expected alias decision fixture: ") +
+                  expected.alias);
+        Check(std::string(decision->canonical_type_name) == expected.canonical,
+              std::string("alias canonical target drift: ") + expected.alias);
+        Check(decision->canonical_node_type == expected.canonical_type,
+              std::string("alias canonical node type drift: ") +
+                  expected.alias);
+        Check(decision->decision == expected.decision,
+              std::string("alias retirement decision drift: ") +
+                  expected.alias);
+        Check(decision->reason != nullptr &&
+                  std::string(decision->reason).size() > 16,
+              std::string("alias decision reason is too weak: ") +
+                  expected.alias);
+        Check(cyxwiz::IsPipelineLegacyRuntimeNode(expected.alias),
+              std::string("alias decision should point to a legacy runtime alias: ") +
+                  expected.alias);
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(
+                  decision->canonical_node_type).mode !=
+                  cyxwiz::PipelineRuntimeSupportMode::Unknown,
+              std::string("alias canonical target must resolve runtime support: ") +
+                  expected.alias);
+    }
+    Check(observed_alias_decisions.size() ==
+              cyxwiz::GetPipelineLegacyAliasDecisionCapabilities().size(),
+          "alias decision table should contain only expected Track 22 aliases");
+
+    const std::set<std::string> retirement_priority_aliases = {
+        "SaveDataset",
+        "DeployToNodeEditor",
+        "TextClean",
+        "TextTokenize",
+        "TextVectorize",
+        "TSWindow",
+        "TSFeatures",
+        "TSLag",
+        "TSDiff",
+        "PolynomialFeatures",
+        "Binning",
+    };
+    std::set<std::string> observed_retirement_priority_aliases;
+    for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {
+        const std::string name = capability.legacy_type_name;
+        if (!ContainsString(retirement_priority_aliases, name)) {
+            continue;
+        }
+        observed_retirement_priority_aliases.insert(name);
+        Check(!cyxwiz::IsPipelineOperatorRuntimeNode(name),
+              "retirement-priority alias should not be operator-backed yet: " +
+                  name);
+        Check(!cyxwiz::IsPipelineFailClosedRuntimeNode(name),
+              "retirement-priority alias should not be fail-closed: " + name);
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(name);
+        CheckRuntimeOwnerContract(
+            support,
+            cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+            cyxwiz::PipelineRuntimeImplementationOwner::PipelineExecutor,
+            name);
+        Check(support.node_type.has_value(),
+              "retirement-priority alias should resolve typed metadata before plan construction: " +
+                  name);
+    }
+    for (const auto& alias : retirement_priority_aliases) {
+        Check(ContainsString(observed_retirement_priority_aliases, alias),
+              "missing retirement-priority alias baseline: " + alias);
     }
 
     for (auto type : supported) {
@@ -965,9 +1224,6 @@ int main() {
         }
     }
 
-    const std::set<std::string> expected_string_only_legacy_names;
-    std::set<std::string> observed_string_only_legacy_names;
-
     for (const auto& capability : cyxwiz::GetPipelineLegacyRuntimeCapabilities()) {
         Check(!cyxwiz::IsPipelineOperatorRuntimeNode(capability.legacy_type_name),
               std::string("legacy runtime name is also operator-backed: ") +
@@ -986,35 +1242,10 @@ int main() {
         Check(support.node_type == capability.node_type,
               std::string("legacy-dispatched runtime node type mismatch: ") +
                   capability.legacy_type_name);
-        Check(support.legacy_dispatch_kind == capability.dispatch_kind,
-              std::string("legacy-dispatched runtime dispatch kind mismatch: ") +
+        Check(capability.node_type.has_value(),
+              std::string("legacy runtime must resolve typed metadata, not "
+                          "string-only dispatch: ") +
                   capability.legacy_type_name);
-        if (capability.node_type.has_value()) {
-            Check(capability.dispatch_kind ==
-                      cyxwiz::PipelineLegacyDispatchKind::Unknown,
-                  std::string("typed legacy runtime should not also carry "
-                              "string-only dispatch kind: ") +
-                      capability.legacy_type_name);
-            Check(capability.compatibility_reason == nullptr,
-                  std::string("typed legacy runtime should not carry string-only "
-                              "compatibility reason: ") +
-                      capability.legacy_type_name);
-        } else {
-            Check(capability.dispatch_kind !=
-                      cyxwiz::PipelineLegacyDispatchKind::Unknown,
-                  std::string("string-only legacy runtime missing dispatch kind: ") +
-                      capability.legacy_type_name);
-            Check(capability.compatibility_reason != nullptr &&
-                      std::string(capability.compatibility_reason).size() > 0,
-                  std::string("string-only legacy runtime missing compatibility "
-                              "reason: ") +
-                      capability.legacy_type_name);
-            Check(expected_string_only_legacy_names.count(
-                      capability.legacy_type_name) == 1,
-                  std::string("unexpected string-only legacy runtime exception: ") +
-                      capability.legacy_type_name);
-            observed_string_only_legacy_names.insert(capability.legacy_type_name);
-        }
         const auto runtime_node_type =
             cyxwiz::ResolvePipelineRuntimeNodeType(capability.legacy_type_name);
         Check(runtime_node_type == capability.node_type,
@@ -1083,11 +1314,6 @@ int main() {
                     capability.legacy_type_name);
             }
         }
-    }
-
-    for (const auto& expected_name : expected_string_only_legacy_names) {
-        Check(observed_string_only_legacy_names.count(expected_name) == 1,
-              "missing string-only legacy runtime exception: " + expected_name);
     }
 
     Check(std::string(cyxwiz::PipelineRuntimeSupportModeName(
@@ -1940,6 +2166,14 @@ int main() {
                   capability.legacy_type_name);
     }
 
+    // Track 22 Phase 5 validation checklist:
+    // - every new executable Data Studio node must put static required
+    //   parameters, enum values, integer bounds, and float bounds in central
+    //   runtime capability tables;
+    // - those static validation facts must resolve to exactly one executable
+    //   runtime owner before SQL/operator execution can run;
+    // - routing tests must include at least one representative bad-schema case
+    //   for each newly supported executable node.
     for (const auto& capability :
          cyxwiz::GetPipelineRequiredParameterRuntimeCapabilities()) {
         const auto required_parameters = cyxwiz::ResolvePipelineRequiredParameters(
@@ -1954,6 +2188,9 @@ int main() {
             capability.legacy_type_name);
         Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
               std::string("required-parameter runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        Check(IsExecutableRuntimeSupportMode(support.mode),
+              std::string("required-parameter runtime name is not executable: ") +
                   capability.legacy_type_name);
         Check(support.required_parameters.size() ==
                   capability.required_parameters.size(),
@@ -1978,6 +2215,9 @@ int main() {
             capability.legacy_type_name);
         Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
               std::string("allowed-parameter runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        Check(IsExecutableRuntimeSupportMode(support.mode),
+              std::string("allowed-parameter runtime name is not executable: ") +
                   capability.legacy_type_name);
         auto supported_axis = std::find_if(
             support.allowed_parameter_values.begin(),
@@ -2015,6 +2255,9 @@ int main() {
         Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
               std::string("integer-parameter runtime name has unknown support: ") +
                   capability.legacy_type_name);
+        Check(IsExecutableRuntimeSupportMode(support.mode),
+              std::string("integer-parameter runtime name is not executable: ") +
+                  capability.legacy_type_name);
         auto supported_axis = std::find_if(
             support.integer_parameters.begin(),
             support.integer_parameters.end(),
@@ -2047,6 +2290,9 @@ int main() {
             capability.legacy_type_name);
         Check(support.mode != cyxwiz::PipelineRuntimeSupportMode::Unknown,
               std::string("float-parameter runtime name has unknown support: ") +
+                  capability.legacy_type_name);
+        Check(IsExecutableRuntimeSupportMode(support.mode),
+              std::string("float-parameter runtime name is not executable: ") +
                   capability.legacy_type_name);
         auto supported_axis = std::find_if(
             support.float_parameters.begin(),
@@ -2320,8 +2566,19 @@ int main() {
           "BarChart should remain an implemented UI workflow node");
     CheckSupportAxis(bar_chart_meta, "Implementation Owner", "ui_only", true, "BarChart");
     CheckSupportAxis(bar_chart_meta, "Support State", "partial", true, "BarChart");
+    Check(!FrontendGraphAddBlockedBySupportAxes(bar_chart_meta),
+          "frontend blocked state for UI-only partial nodes should come from support_axes");
     Check(bar_chart_meta->help_text.find("UI/panel workflow surface") != std::string::npos,
           "UI-only metadata should explain the current ownership boundary");
+
+    const auto* standard_scaler_meta =
+        metadata.GetMetadata(gui::NodeType::StandardScaler);
+    Check(standard_scaler_meta != nullptr,
+          "StandardScaler metadata should exist for frontend support-axis guard");
+    CheckSupportAxis(standard_scaler_meta, "Support State", "real", true,
+                     "StandardScaler");
+    Check(!FrontendGraphAddBlockedBySupportAxes(standard_scaler_meta),
+          "frontend should not block real operator-backed nodes when support_axes are supported");
 
     for (const auto& capability :
          cyxwiz::GetPipelineFailClosedRuntimeCapabilities()) {
@@ -2395,6 +2652,12 @@ int main() {
                   std::string("non-blocking fail-closed runtime metadata should keep supported state: ") +
                       capability.legacy_type_name);
         }
+        Check(FrontendGraphAddBlockedBySupportAxes(meta),
+              std::string("frontend blocked state should be derived from fail-closed support_axes: ") +
+                  capability.legacy_type_name);
+        Check(!FrontendSupportBlockReasonFromAxes(meta).empty(),
+              std::string("frontend blocked reason should be available from fail-closed support_axes: ") +
+                  capability.legacy_type_name);
     }
 
     for (const auto& capability :
@@ -2431,6 +2694,12 @@ int main() {
         CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
         CheckSupportAxis(meta, "Implementation Owner", "training_backend", true, TypeId(type));
         CheckSupportAxis(meta, "Support State", "blocked", false, TypeId(type));
+        Check(FrontendGraphAddBlockedBySupportAxes(meta),
+              "frontend should block unsupported training nodes from support_axes: " +
+                  TypeId(type));
+        Check(!FrontendSupportBlockReasonFromAxes(meta).empty(),
+              "frontend should find unsupported training reason from support_axes: " +
+                  TypeId(type));
         const auto* training_axis = FindSupportAxis(meta, "Training Backend");
         Check(training_axis != nullptr &&
                   capability.reason != nullptr &&
@@ -2500,6 +2769,12 @@ int main() {
             "blocked",
             false,
             TypeId(capability.node_type));
+        Check(FrontendGraphAddBlockedBySupportAxes(meta),
+              "frontend should block unsupported training controls from support_axes: " +
+                  TypeId(capability.node_type));
+        Check(!FrontendSupportBlockReasonFromAxes(meta).empty(),
+              "frontend should find unsupported training control reason from support_axes: " +
+                  TypeId(capability.node_type));
         const auto* training_axis = FindSupportAxis(meta, "Training Backend");
         Check(training_axis != nullptr &&
                   capability.reason != nullptr &&

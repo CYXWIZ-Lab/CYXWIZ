@@ -22,27 +22,24 @@ struct PipelineFailClosedRuntimeCapability {
     bool blocks_metadata_status = true;
 };
 
-enum class PipelineLegacyDispatchKind {
+enum class PipelineLegacyAliasDecision {
     Unknown,
-    SaveDataset,
-    DeployToNodeEditor,
-    TextClean,
-    TextTokenize,
-    TextVectorize,
-    TSWindow,
-    TSFeatures,
-    TSLag,
-    TSDiff,
-    PolynomialFeatures,
-    Binning,
+    NormalizeToCanonical,
+    HiddenCompatibilityAlias,
+};
+
+struct PipelineLegacyAliasDecisionCapability {
+    const char* alias_type_name;
+    const char* canonical_type_name;
+    gui::NodeType canonical_node_type;
+    PipelineLegacyAliasDecision decision =
+        PipelineLegacyAliasDecision::Unknown;
+    const char* reason = nullptr;
 };
 
 struct PipelineLegacyRuntimeCapability {
     const char* legacy_type_name;
     std::optional<gui::NodeType> node_type = std::nullopt;
-    PipelineLegacyDispatchKind dispatch_kind =
-        PipelineLegacyDispatchKind::Unknown;
-    const char* compatibility_reason = nullptr;
 };
 
 struct PipelineSourceRuntimeCapability {
@@ -183,8 +180,6 @@ struct PipelineRuntimeSupport {
         allowed_parameter_values;
     std::vector<PipelineIntegerParameterRuntimeCapability> integer_parameters;
     std::vector<PipelineFloatParameterRuntimeCapability> float_parameters;
-    PipelineLegacyDispatchKind legacy_dispatch_kind =
-        PipelineLegacyDispatchKind::Unknown;
     PipelineRuntimeImplementationOwner implementation_owner =
         PipelineRuntimeImplementationOwner::Unknown;
 };
@@ -197,6 +192,9 @@ GetPipelineFailClosedRuntimeCapabilities();
 
 const std::vector<PipelineLegacyRuntimeCapability>&
 GetPipelineLegacyRuntimeCapabilities();
+
+const std::vector<PipelineLegacyAliasDecisionCapability>&
+GetPipelineLegacyAliasDecisionCapabilities();
 
 const std::vector<PipelineSourceRuntimeCapability>&
 GetPipelineSourceRuntimeCapabilities();
@@ -244,6 +242,9 @@ const char* PipelineRuntimeFailModeName(PipelineRuntimeFailMode fail_mode);
 const char* PipelineRuntimeImplementationOwnerName(
     PipelineRuntimeImplementationOwner owner);
 
+const char* PipelineLegacyAliasDecisionName(
+    PipelineLegacyAliasDecision decision);
+
 const char* PipelineMaterializerStorageSupportName(
     PipelineMaterializerStorageSupport support);
 
@@ -270,6 +271,9 @@ const char* ResolvePipelineFailClosedReason(const std::string& legacy_type_name)
 bool IsPipelineFailClosedRuntimeNode(const std::string& legacy_type_name);
 
 bool IsPipelineLegacyRuntimeNode(const std::string& legacy_type_name);
+
+const PipelineLegacyAliasDecisionCapability*
+ResolvePipelineLegacyAliasDecision(const std::string& alias_type_name);
 
 bool IsPipelineSourceRuntimeNode(const std::string& legacy_type_name);
 

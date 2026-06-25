@@ -73,6 +73,15 @@ std::string SupportAxisValueLabel(const std::string& value) {
     return label;
 }
 
+bool ShouldShowSupportReason(const SupportAxisDefinition& axis) {
+    if (axis.reason.empty()) return false;
+    if (!axis.supported) return true;
+    return axis.name == "Runtime" ||
+           axis.name == "Compile" ||
+           axis.name == "Training" ||
+           axis.name == "Materializer";
+}
+
 } // namespace
 
 NodeInfoPanel::NodeInfoPanel() : Panel("Info") {
@@ -272,7 +281,7 @@ void NodeInfoPanel::RenderSupport() {
         const std::string axis_value = SupportAxisValueLabel(axis.value);
         ImGui::TextDisabled("%s", axis_value.c_str());
 
-        if (!axis.reason.empty()) {
+        if (ShouldShowSupportReason(axis)) {
             ImGui::Indent(18.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.68f, 0.68f, 0.68f, 1.0f));
             ImGui::TextWrapped("%s", axis.reason.c_str());

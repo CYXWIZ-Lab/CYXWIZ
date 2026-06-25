@@ -1,12 +1,35 @@
 #include "cyxwiz/layers/dropout.h"
 #include "layer_arrayfire_utils.h"
+#include "../arrayfire_backend_utils.h"
 
 #include <random>
 #include <stdexcept>
+#include <string>
 
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+static void LogDropoutFallbackOnce(
+    const char* operation_name,
+    const Tensor& tensor,
+    const char* error_message)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("input", tensor.Shape()));
+    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        spdlog::warn("{}",
+            BuildArrayFireBackendFallbackMessage(
+                operation_name,
+                reason,
+                reason != BackendFallbackReason::CudaJitParamOverflow,
+                error_message,
+                context));
+    }
+}
+#endif
 
 DropoutLayer::DropoutLayer(float p) : p_(p) {
     if (p < 0.0f || p >= 1.0f) {
@@ -22,11 +45,14 @@ Tensor DropoutLayer::Forward(const Tensor& input) {
         if (training_ && p_ > 0.0f) {
             // Generate random mask
             af::array rand_mask = af::randu(x.dims(), af::dtype::f32);
+            rand_mask.eval();
             af::array mask = (rand_mask > p_).as(af::dtype::f32);
+            mask.eval();
 
             // Scale by 1/(1-p) to maintain expected value
             float scale = 1.0f / (1.0f - p_);
             af::array output = x * mask * scale;
+            output.eval();
 
             mask_ = AfToTensor(mask);
             return AfToTensor(output);
@@ -35,7 +61,7 @@ Tensor DropoutLayer::Forward(const Tensor& input) {
             return input;
         }
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire DropoutLayer::Forward failed: {}", e.what());
+        LogDropoutFallbackOnce("DropoutLayer::Forward", input, e.what());
     }
 #endif
 
@@ -73,13 +99,14 @@ Tensor DropoutLayer::Backward(const Tensor& grad_output) {
             // Apply same mask and scaling
             float scale = 1.0f / (1.0f - p_);
             af::array dx = grad_out * mask * scale;
+            dx.eval();
 
             return AfToTensor(dx);
         } else {
             return grad_output;
         }
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire DropoutLayer::Backward failed: {}", e.what());
+        LogDropoutFallbackOnce("DropoutLayer::Backward", grad_output, e.what());
     }
 #endif
 

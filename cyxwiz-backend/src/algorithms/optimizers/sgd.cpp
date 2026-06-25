@@ -49,17 +49,21 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
                     v_gpu = static_cast<float>(momentum_) * v_gpu + grad_gpu;
                     // param = param - lr * v
                     param_gpu = param_gpu - static_cast<float>(learning_rate_) * v_gpu;
+                    v_gpu.eval();
+                    param_gpu.eval();
 
                     velocity_[name].SetFromArray(v_gpu);
                 } else {
                     // Simple SGD: param = param - lr * grad
                     param_gpu = param_gpu - static_cast<float>(learning_rate_) * grad_gpu;
+                    param_gpu.eval();
                 }
 
                 param.SetFromArray(param_gpu);
                 continue;
-            } catch (const af::exception&) {
-                // Fall through to CPU
+            } catch (const af::exception& e) {
+                optimizer_detail::LogOptimizerFallbackOnce(
+                    "SGDOptimizer::Step", name, param, e.what());
             }
         }
 #endif

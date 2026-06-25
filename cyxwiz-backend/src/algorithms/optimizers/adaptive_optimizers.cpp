@@ -56,22 +56,27 @@ void RMSpropOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
                 // v = alpha * v + (1 - alpha) * grad^2
                 v_gpu = alpha * v_gpu + (1.0f - alpha) * grad_gpu * grad_gpu;
+                v_gpu.eval();
 
                 if (momentum_ > 0) {
                     af::array buf_gpu = buffer_[name].GetArray();
                     // buf = mom * buf + grad / sqrt(v + eps)
                     buf_gpu = mom * buf_gpu + grad_gpu / (af::sqrt(v_gpu) + eps);
+                    buf_gpu.eval();
                     param_gpu = param_gpu - lr * buf_gpu;
+                    param_gpu.eval();
                     buffer_[name].SetFromArray(buf_gpu);
                 } else {
                     param_gpu = param_gpu - lr * grad_gpu / (af::sqrt(v_gpu) + eps);
+                    param_gpu.eval();
                 }
 
                 param.SetFromArray(param_gpu);
                 v_[name].SetFromArray(v_gpu);
                 continue;
             } catch (const af::exception& e) {
-                spdlog::warn("RMSprop GPU step failed: {}, falling back to CPU", e.what());
+                optimizer_detail::LogOptimizerFallbackOnce(
+                    "RMSpropOptimizer::Step", name, param, e.what());
             }
         }
 #endif
@@ -145,14 +150,17 @@ void AdaGradOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
                 // cache += grad^2
                 cache_gpu = cache_gpu + grad_gpu * grad_gpu;
+                cache_gpu.eval();
                 // param -= lr * grad / sqrt(cache + eps)
                 param_gpu = param_gpu - lr * grad_gpu / (af::sqrt(cache_gpu) + eps);
+                param_gpu.eval();
 
                 param.SetFromArray(param_gpu);
                 cache_[name].SetFromArray(cache_gpu);
                 continue;
             } catch (const af::exception& e) {
-                spdlog::warn("AdaGrad GPU step failed: {}, falling back to CPU", e.what());
+                optimizer_detail::LogOptimizerFallbackOnce(
+                    "AdaGradOptimizer::Step", name, param, e.what());
             }
         }
 #endif
@@ -219,22 +227,27 @@ void AdadeltaOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
                 // Accumulate squared gradient.
                 acc_grad_gpu = rho * acc_grad_gpu + (1.0f - rho) * grad_gpu * grad_gpu;
+                acc_grad_gpu.eval();
 
                 // Compute update.
                 af::array delta = -af::sqrt(acc_delta_gpu + eps) / af::sqrt(acc_grad_gpu + eps) * grad_gpu;
+                delta.eval();
 
                 // Accumulate squared update.
                 acc_delta_gpu = rho * acc_delta_gpu + (1.0f - rho) * delta * delta;
+                acc_delta_gpu.eval();
 
                 // Apply update.
                 param_gpu = param_gpu + delta;
+                param_gpu.eval();
 
                 param.SetFromArray(param_gpu);
                 acc_grad_[name].SetFromArray(acc_grad_gpu);
                 acc_delta_[name].SetFromArray(acc_delta_gpu);
                 continue;
             } catch (const af::exception& e) {
-                spdlog::warn("Adadelta GPU step failed: {}, falling back to CPU", e.what());
+                optimizer_detail::LogOptimizerFallbackOnce(
+                    "AdadeltaOptimizer::Step", name, param, e.what());
             }
         }
 #endif

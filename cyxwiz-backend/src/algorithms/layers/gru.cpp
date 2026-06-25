@@ -278,18 +278,51 @@ Tensor GRULayer::Forward(const Tensor& input) {
 
         return AfToTensor3DRowMajor(layer_input);
     } catch (const af::exception& e) {
+        const auto fallback_reason =
+            ClassifyArrayFireBackendFallbackReason(e.what());
+        const std::string fallback_context =
+            BuildArrayFireBackendFallbackContext(
+                BuildTensorShapeContext("input", input.Shape()) +
+                "; hidden_size=" + std::to_string(hidden_size_) +
+                "; layers=" + std::to_string(num_layers_) +
+                "; bidirectional=" +
+                std::string(bidirectional_ ? "true" : "false") +
+                "; batch_first=" +
+                std::string(batch_first_ ? "true" : "false"));
         DisableArrayFireCudaRecurrentAfterFailure(
             RecurrentLayerKind::GRU, "GRULayer::Forward", e.what());
-        if (IsCudaJitFormalParameterOverflow(e.what())) {
-            spdlog::warn("{}",
-                         BuildRecurrentFormalParameterOverflowFallbackMessage(
-                             "GRULayer::Forward"));
+        if (fallback_reason == BackendFallbackReason::CudaJitParamOverflow) {
+            if (ShouldLogArrayFireBackendFallbackOnce(
+                    "GRULayer::Forward", fallback_reason,
+                    fallback_context)) {
+                std::string fallback_message =
+                    BuildRecurrentFormalParameterOverflowFallbackMessage(
+                        "GRULayer::Forward");
+                fallback_message += " Context: ";
+                fallback_message += fallback_context;
+                fallback_message += ".";
+                BackendDebugHooks::EmitDebugEvent(
+                    "GRULayer::Forward",
+                    fallback_message +
+                    (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
+                spdlog::warn("{}", fallback_message);
+            }
         } else {
-            BackendDebugHooks::EmitDebugEvent(
-                "GRULayer::Forward",
-                std::string("ArrayFire fallback: ") + e.what() +
-                (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-            spdlog::warn("ArrayFire GRULayer::Forward failed: {}, falling back to CPU", e.what());
+            const bool log_fallback =
+                ShouldLogArrayFireBackendFallbackOnce(
+                    "GRULayer::Forward", fallback_reason,
+                    fallback_context);
+            const std::string fallback_message =
+                BuildArrayFireBackendFallbackMessage(
+                    "GRULayer::Forward", fallback_reason,
+                    log_fallback, e.what(), fallback_context);
+            if (log_fallback) {
+                BackendDebugHooks::EmitDebugEvent(
+                    "GRULayer::Forward",
+                    fallback_message +
+                    (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
+                spdlog::warn("{}", fallback_message);
+            }
         }
     }
 #endif
@@ -320,7 +353,7 @@ Tensor GRULayer::Forward(const Tensor& input) {
             "GRULayer::Forward",
             std::string("ArrayFire fallback: ") + e.what() +
             (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-        spdlog::warn("ArrayFire GRULayer::Forward failed: {}, falling back to CPU", e.what());
+        // Disabled legacy AF reference path would continue through CPU below.
     }
 #endif
 

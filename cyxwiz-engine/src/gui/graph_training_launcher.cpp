@@ -326,7 +326,11 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         materialize_result.skipped_unsupported_source;
     result.materializer_unsupported_source_reason =
         materialize_result.unsupported_source_reason;
+    result.materializer_diagnostic_message =
+        materialize_result.diagnostic_message;
     if (materialize_result.skipped_unsupported_source) {
+        result.status_title = "Materializer skipped";
+        result.status_detail = materialize_result.diagnostic_message;
         spdlog::info("StartTrainingFromGraph: materializer skipped '{}' "
                      "({}): {}",
                      dataset_name,

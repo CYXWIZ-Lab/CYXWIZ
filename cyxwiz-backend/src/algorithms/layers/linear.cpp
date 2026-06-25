@@ -1,8 +1,10 @@
 #include "cyxwiz/layers/linear.h"
+#include "../arrayfire_backend_utils.h"
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -10,6 +12,40 @@
 #endif
 
 namespace cyxwiz {
+namespace {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+void LogLinearInitializationFallbackOnce(
+    const char* error_message,
+    size_t in_features,
+    size_t out_features) {
+    const BackendFallbackReason reason =
+        ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        "in_features=" + std::to_string(in_features) +
+        "; out_features=" + std::to_string(out_features));
+    if (!ShouldLogArrayFireBackendFallbackOnce(
+            "LinearLayer::InitializeWeights", reason, context)) {
+        return;
+    }
+
+    std::string message =
+        "ArrayFire LinearLayer::InitializeWeights failed (reason=" +
+        std::string(BackendFallbackReasonName(reason)) +
+        "); initializing weights on CPU.";
+    message += " Context: ";
+    message += context;
+    message += ".";
+    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
+        error_message != nullptr && error_message[0] != '\0') {
+        message += " Error: ";
+        message += error_message;
+    }
+    spdlog::warn("{}", message);
+}
+#endif
+
+} // namespace
 
 // Flag to track if GPU is available and should be used
 static bool s_use_gpu = false;
@@ -77,6 +113,7 @@ void LinearLayer::InitializeWeights() {
                                          static_cast<dim_t>(in_features_), f32);
             // Scale to [-limit, limit]
             w_gpu = (w_gpu * 2.0f - 1.0f) * static_cast<float>(limit);
+            w_gpu.eval();
 
             weight_ = Tensor::FromArrayRowMajor2D(w_gpu);
 
@@ -87,7 +124,10 @@ void LinearLayer::InitializeWeights() {
             spdlog::info("LinearLayer({}, {}) initialized with Xavier (GPU)", in_features_, out_features_);
             return;
         } catch (const af::exception& e) {
-            spdlog::warn("GPU initialization failed: {}, falling back to CPU", e.what());
+            LogLinearInitializationFallbackOnce(
+                e.what(),
+                in_features_,
+                out_features_);
         }
     }
 #endif
@@ -156,14 +196,23 @@ Tensor LinearLayer::Forward(const Tensor& input) {
 
             return Tensor(af::flat(output_gpu));
         } catch (const af::exception& e) {
-            spdlog::warn(
-                "LinearLayer GPU forward fallback: Dense(in={}, out={}, batch={}, bias={}) "
-                "could not run on the active ArrayFire GPU backend. This is usually an "
-                "ArrayFire CUDA/OpenCL JIT compilation limit from a fused matmul/bias "
-                "expression, not a graph wiring or dataset-label problem. Falling back "
-                "to the CPU implementation for this forward pass; training remains "
-                "correct but this batch/layer may run slower. Backend error: {}",
-                in_features_, out_features_, batch_size, use_bias_, e.what());
+            const BackendFallbackReason reason =
+                ClassifyArrayFireBackendFallbackReason(e.what());
+            const std::string context = BuildArrayFireBackendFallbackContext(
+                "in=" + std::to_string(in_features_) +
+                "; out=" + std::to_string(out_features_) +
+                "; batch=" + std::to_string(batch_size) +
+                "; bias=" + std::string(use_bias_ ? "true" : "false"));
+            const bool log_fallback =
+                ShouldLogArrayFireBackendFallbackOnce(
+                    "LinearLayer::Forward", reason, context);
+            if (log_fallback) {
+                spdlog::warn("{}",
+                             BuildArrayFireBackendFallbackMessage(
+                                 "LinearLayer::Forward", reason,
+                                 reason != BackendFallbackReason::CudaJitParamOverflow,
+                                 e.what(), context));
+            }
         }
     }
 #endif
@@ -259,14 +308,23 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
 
             return Tensor(af::flat(grad_input_gpu));
         } catch (const af::exception& e) {
-            spdlog::warn(
-                "LinearLayer GPU backward fallback: Dense(in={}, out={}, batch={}, bias={}) "
-                "could not run its gradient step on the active ArrayFire GPU backend. "
-                "This is normally a backend JIT/kernel limitation, not a model-shape "
-                "contract failure. Falling back to the CPU gradient implementation; "
-                "training remains correct but this batch/layer may run slower. "
-                "Backend error: {}",
-                in_features_, out_features_, batch_size, use_bias_, e.what());
+            const BackendFallbackReason reason =
+                ClassifyArrayFireBackendFallbackReason(e.what());
+            const std::string context = BuildArrayFireBackendFallbackContext(
+                "in=" + std::to_string(in_features_) +
+                "; out=" + std::to_string(out_features_) +
+                "; batch=" + std::to_string(batch_size) +
+                "; bias=" + std::string(use_bias_ ? "true" : "false"));
+            const bool log_fallback =
+                ShouldLogArrayFireBackendFallbackOnce(
+                    "LinearLayer::Backward", reason, context);
+            if (log_fallback) {
+                spdlog::warn("{}",
+                             BuildArrayFireBackendFallbackMessage(
+                                 "LinearLayer::Backward", reason,
+                                 reason != BackendFallbackReason::CudaJitParamOverflow,
+                                 e.what(), context));
+            }
         }
     }
 #endif

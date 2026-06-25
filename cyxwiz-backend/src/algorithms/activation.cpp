@@ -1,5 +1,6 @@
 #include "cyxwiz/activation.h"
 #include "cyxwiz/tensor.h"
+#include "arrayfire_backend_utils.h"
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
@@ -299,7 +300,9 @@ static af::array TensorToAf(const Tensor& t) {
 
 // Helper: Create Tensor from ArrayFire array
 static Tensor AfToTensor(const af::array& arr) {
-    return Tensor(arr);
+    af::array materialized = arr;
+    materialized.eval();
+    return Tensor(materialized);
 }
 
 static af::array TensorToSemanticAf(const Tensor& t) {
@@ -307,7 +310,30 @@ static af::array TensorToSemanticAf(const Tensor& t) {
 }
 
 static Tensor SemanticAfToTensor(const af::array& arr, const Tensor& reference) {
-    return reference.Shape().size() == 2 ? Tensor::FromArrayRowMajor2D(arr) : Tensor(arr);
+    af::array materialized = arr;
+    materialized.eval();
+    return reference.Shape().size() == 2 ? Tensor::FromArrayRowMajor2D(materialized) : Tensor(materialized);
+}
+
+static void LogActivationFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const Tensor& tensor,
+    const char* tensor_name) {
+    const BackendFallbackReason reason =
+        ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    const bool log_fallback =
+        ShouldLogArrayFireBackendFallbackOnce(
+            operation_name, reason, context);
+    if (log_fallback) {
+        spdlog::warn("{}",
+                     BuildArrayFireBackendFallbackMessage(
+                         operation_name, reason,
+                         reason != BackendFallbackReason::CudaJitParamOverflow,
+                         error_message, context));
+    }
 }
 
 // Constants for GELU approximation
@@ -364,7 +390,7 @@ Tensor ReLUActivation::Forward(const Tensor& input) {
         af::array output = af::max(x, 0.0f);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire ReLU::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("ReLU::Forward", e.what(), input, "input");
     }
 #endif
     return CpuReLUForward(input);
@@ -379,7 +405,7 @@ Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         af::array dx = grad_out * (x > 0).as(af::dtype::f32);
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire ReLU::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("ReLU::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuReLUBackward(grad_output, input);
@@ -399,7 +425,7 @@ Tensor LeakyReLUActivation::Forward(const Tensor& input) {
         af::array output = positive + negative;
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire LeakyReLU::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("LeakyReLU::Forward", e.what(), input, "input");
     }
 #endif
     return CpuElementwiseActivationForward(input, "LeakyReLU", [this](float x) {
@@ -417,7 +443,7 @@ Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& in
         af::array dx = grad_out * (mask + (1.0f - mask) * alpha_);
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire LeakyReLU::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("LeakyReLU::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuElementwiseActivationBackward(grad_output, input, "LeakyReLU", [this](float x) {
@@ -440,7 +466,7 @@ Tensor ELUActivation::Forward(const Tensor& input) {
         af::array output = af::select(x > 0, x, negative);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire ELU::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("ELU::Forward", e.what(), input, "input");
     }
 #endif
     return CpuElementwiseActivationForward(input, "ELU", [this](float x) {
@@ -457,7 +483,7 @@ Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
         af::array dx = grad_out * af::select(x > 0, 1.0f, alpha_ * af::exp(x));
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire ELU::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("ELU::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuElementwiseActivationBackward(grad_output, input, "ELU", [this](float x) {
@@ -478,7 +504,7 @@ Tensor GELUActivation::Forward(const Tensor& input) {
         af::array output = 0.5f * x * (1.0f + af::tanh(inner));
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire GELU::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("GELU::Forward", e.what(), input, "input");
     }
 #endif
     return CpuElementwiseActivationForward(input, "GELU", CpuGELU);
@@ -506,7 +532,7 @@ Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire GELU::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("GELU::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuElementwiseActivationBackward(grad_output, input, "GELU", CpuGELUDerivative);
@@ -525,7 +551,7 @@ Tensor SwishActivation::Forward(const Tensor& input) {
         af::array output = x * sigmoid_x;
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Swish::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("Swish::Forward", e.what(), input, "input");
     }
 #endif
     return CpuElementwiseActivationForward(input, "Swish", [](float x) {
@@ -546,7 +572,7 @@ Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input)
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Swish::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("Swish::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuElementwiseActivationBackward(grad_output, input, "Swish", [](float x) {
@@ -567,7 +593,7 @@ Tensor SigmoidActivation::Forward(const Tensor& input) {
         af::array output = af::sigmoid(x);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Sigmoid::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("Sigmoid::Forward", e.what(), input, "input");
     }
 #endif
     return CpuSigmoidForward(input);
@@ -585,7 +611,7 @@ Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& inpu
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Sigmoid::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("Sigmoid::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuSigmoidBackward(grad_output, input);
@@ -602,7 +628,7 @@ Tensor TanhActivation::Forward(const Tensor& input) {
         af::array output = af::tanh(x);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Tanh::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("Tanh::Forward", e.what(), input, "input");
     }
 #endif
     return CpuTanhForward(input);
@@ -620,7 +646,7 @@ Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Tanh::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("Tanh::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuTanhBackward(grad_output, input);
@@ -643,21 +669,27 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
 
         // For numerical stability, subtract max before exp
         af::array max_vals = af::max(x, actual_axis);
+        max_vals.eval();
 
         // Tile max_vals to match x dimensions for subtraction
         af::dim4 tile_dims(1, 1, 1, 1);
         tile_dims[actual_axis] = x.dims(actual_axis);
         af::array x_stable = x - af::tile(max_vals, tile_dims);
+        x_stable.eval();
 
         // Compute softmax: exp(x - max) / sum(exp(x - max))
         af::array exp_x = af::exp(x_stable);
+        exp_x.eval();
         af::array sum_exp = af::sum(exp_x, actual_axis);
+        sum_exp.eval();
         af::array output = exp_x / af::tile(sum_exp, tile_dims);
+        output.eval();
 
         cached_output_ = SemanticAfToTensor(output, input);
         return cached_output_;
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Softmax::Forward failed: {}", e.what());
+        LogActivationFallbackOnce(
+            "Softmax::Forward", e.what(), input, "input");
     }
 #endif
     return CpuSoftmaxForward(input, axis_, &cached_output_);
@@ -675,16 +707,21 @@ Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& inpu
         }
 
         // Softmax backward: softmax * (grad - sum(grad * softmax))
-        af::array sum_grad_softmax = af::sum(grad_out * softmax_out, actual_axis);
+        af::array grad_softmax = grad_out * softmax_out;
+        grad_softmax.eval();
+        af::array sum_grad_softmax = af::sum(grad_softmax, actual_axis);
+        sum_grad_softmax.eval();
 
         af::dim4 tile_dims(1, 1, 1, 1);
         tile_dims[actual_axis] = softmax_out.dims(actual_axis);
 
         af::array dx = softmax_out * (grad_out - af::tile(sum_grad_softmax, tile_dims));
+        dx.eval();
 
         return SemanticAfToTensor(dx, input);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Softmax::Backward failed: {}", e.what());
+        LogActivationFallbackOnce(
+            "Softmax::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuSoftmaxBackward(grad_output, input, axis_, cached_output_);
@@ -703,7 +740,7 @@ Tensor MishActivation::Forward(const Tensor& input) {
         af::array output = x * af::tanh(softplus_x);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Mish::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("Mish::Forward", e.what(), input, "input");
     }
 #endif
     return CpuElementwiseActivationForward(input, "Mish", CpuMish);
@@ -728,7 +765,7 @@ Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Mish::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("Mish::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuElementwiseActivationBackward(grad_output, input, "Mish", CpuMishDerivative);
@@ -754,7 +791,7 @@ Tensor HardswishActivation::Forward(const Tensor& input) {
         af::array output = mask_high * x + mask_mid * (x * (x + 3.0f) / 6.0f);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Hardswish::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("Hardswish::Forward", e.what(), input, "input");
     }
 #endif
     return CpuElementwiseActivationForward(input, "Hardswish", [](float x) {
@@ -786,7 +823,7 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
         af::array dx = grad_out * (mask_high + mask_mid * ((2.0f * x + 3.0f) / 6.0f));
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire Hardswish::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("Hardswish::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuElementwiseActivationBackward(grad_output, input, "Hardswish", [](float x) {
@@ -815,7 +852,7 @@ Tensor SELUActivation::Forward(const Tensor& input) {
         af::array output = SCALE * (positive + ALPHA * (af::exp(negative) - 1.0f));
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire SELU::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("SELU::Forward", e.what(), input, "input");
     }
 #endif
     return CpuElementwiseActivationForward(input, "SELU", [](float x) {
@@ -834,7 +871,7 @@ Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         af::array grad_input = grad * SCALE * (positive_mask + ALPHA * af::exp(x) * negative_mask);
         return AfToTensor(grad_input);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire SELU::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("SELU::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     return CpuElementwiseActivationBackward(grad_output, input, "SELU", [](float x) {
@@ -890,7 +927,7 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
 
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire PReLU::Forward failed: {}", e.what());
+        LogActivationFallbackOnce("PReLU::Forward", e.what(), input, "input");
     }
 #endif
     if (num_parameters_ != 1) {
@@ -919,7 +956,9 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
             grad_input = grad * (positive_mask + alpha(0) * negative_mask);
 
             // Gradient w.r.t alpha: sum of grad * min(0, x)
-            float grad_alpha_val = af::sum<float>(grad * af::min(x, 0.0f));
+            af::array grad_alpha_terms = grad * af::min(x, 0.0f);
+            grad_alpha_terms.eval();
+            float grad_alpha_val = af::sum<float>(grad_alpha_terms);
             float* grad_alpha_data = grad_alpha_.Data<float>();
             grad_alpha_data[0] = grad_alpha_val;
         } else {
@@ -943,7 +982,7 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
 
         return AfToTensor(grad_input);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire PReLU::Backward failed: {}", e.what());
+        LogActivationFallbackOnce("PReLU::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
     if (num_parameters_ != 1) {

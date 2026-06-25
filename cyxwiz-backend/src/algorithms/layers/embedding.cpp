@@ -1,5 +1,6 @@
 #include "cyxwiz/layers/embedding.h"
 #include "layer_arrayfire_utils.h"
+#include "../arrayfire_backend_utils.h"
 
 #include <cmath>
 #include <random>
@@ -17,6 +18,60 @@
 
 namespace cyxwiz {
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+static std::string BuildEmbeddingContext(const Tensor& tensor) {
+    return BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("input", tensor.Shape()));
+}
+
+static void LogEmbeddingFallbackOnce(
+    const char* operation_name,
+    const Tensor& tensor,
+    const char* error_message)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildEmbeddingContext(tensor);
+    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        spdlog::warn("{}",
+            BuildArrayFireBackendFallbackMessage(
+                operation_name,
+                reason,
+                reason != BackendFallbackReason::CudaJitParamOverflow,
+                error_message,
+                context));
+    }
+}
+
+static void LogEmbeddingBackendWarningOnce(
+    const char* operation_name,
+    const Tensor& tensor,
+    const char* error_message)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildEmbeddingContext(tensor);
+    if (!ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        return;
+    }
+
+    std::string message = std::string("ArrayFire ") +
+        (operation_name ? operation_name : "embedding operation") +
+        " failed (reason=" + BackendFallbackReasonName(reason) +
+        "); continuing without the ArrayFire normalization step.";
+    if (!context.empty()) {
+        message += " Context: ";
+        message += context;
+        message += ".";
+    }
+    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
+        error_message != nullptr &&
+        error_message[0] != '\0') {
+        message += " Error: ";
+        message += error_message;
+    }
+    spdlog::warn("{}", message);
+}
+#endif
+
 EmbeddingLayer::EmbeddingLayer(int num_embeddings, int embedding_dim,
                                int padding_idx, float max_norm)
     : num_embeddings_(num_embeddings), embedding_dim_(embedding_dim),
@@ -29,6 +84,7 @@ void EmbeddingLayer::InitializeWeights() {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // Initialize with normal distribution N(0, 1)
     af::array w = af::randn(af::dim4(num_embeddings_, embedding_dim_), af::dtype::f32);
+    w.eval();
     weight_ = AfToTensor(w);
 
     // Zero out padding index if specified
@@ -56,16 +112,22 @@ void EmbeddingLayer::NormalizeEmbeddings() {
 
         // Compute L2 norm for each embedding
         af::array norms = af::sqrt(af::sum(w * w, 1));
+        norms.eval();
 
         // Create scaling factors (clip to max_norm)
         af::array scale = af::min(max_norm_ / (norms + 1e-8f), 1.0f);
+        scale.eval();
 
         // Apply scaling
         w = w * af::tile(scale, 1, embedding_dim_);
+        w.eval();
 
         weight_ = AfToTensor(w);
     } catch (const af::exception& e) {
-        spdlog::warn("EmbeddingLayer::NormalizeEmbeddings failed: {}", e.what());
+        LogEmbeddingBackendWarningOnce(
+            "EmbeddingLayer::NormalizeEmbeddings",
+            weight_,
+            e.what());
     }
 #endif
 }
@@ -107,12 +169,14 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
             }
             // If idx == padding_idx or out of bounds, leave as zero
         }
+        output_flat.eval();
 
         // Reshape to [seq_len, embedding_dim]
         af::array output = af::moddims(output_flat, af::dim4(seq_len, embedding_dim_));
+        output.eval();
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire EmbeddingLayer::Forward failed: {}", e.what());
+        LogEmbeddingFallbackOnce("EmbeddingLayer::Forward", input, e.what());
     }
 #endif
 
@@ -175,6 +239,7 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
         // Get flattened gradient output
         af::array grad = TensorToAf(grad_output);
         grad = af::moddims(grad, af::dim4(total_indices, embedding_dim_));
+        grad.eval();
 
         // Scatter-add gradients to the weight matrix
         for (dim_t i = 0; i < total_indices; i++) {
@@ -184,13 +249,14 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
                                           af::span);
             }
         }
+        dw.eval();
 
         grad_weight_ = AfToTensor(dw);
 
         // Return empty tensor (no gradient w.r.t. integer indices)
         return Tensor();
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire EmbeddingLayer::Backward failed: {}", e.what());
+        LogEmbeddingFallbackOnce("EmbeddingLayer::Backward", grad_output, e.what());
     }
 #endif
 

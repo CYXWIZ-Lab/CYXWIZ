@@ -4,6 +4,7 @@
 #endif
 
 #include "cyxwiz/linear_algebra.h"
+#include "arrayfire_backend_utils.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <cstdint>
 #include <limits>
+#include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -76,7 +78,9 @@ static std::vector<std::vector<double>> AfArrayToVector(const af::array& arr) {
     int cols = static_cast<int>(arr.dims(1));
 
     std::vector<double> flat(rows * cols);
-    arr.host(flat.data());
+    af::array materialized = arr;
+    materialized.eval();
+    materialized.host(flat.data());
 
     std::vector<std::vector<double>> result(rows, std::vector<double>(cols));
     // ArrayFire uses column-major order
@@ -87,6 +91,46 @@ static std::vector<std::vector<double>> AfArrayToVector(const af::array& arr) {
     }
 
     return result;
+}
+
+static std::string BuildMatrixContext(
+    const char* matrix_name,
+    int rows,
+    int cols)
+{
+    return std::string(matrix_name ? matrix_name : "matrix") +
+           "=[" + std::to_string(rows) + "x" + std::to_string(cols) + "]";
+}
+
+static std::string BuildMatrixContext(
+    const char* left_name,
+    int left_rows,
+    int left_cols,
+    const char* right_name,
+    int right_rows,
+    int right_cols)
+{
+    return BuildMatrixContext(left_name, left_rows, left_cols) +
+           "; " +
+           BuildMatrixContext(right_name, right_rows, right_cols);
+}
+
+static void LogLinearAlgebraFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const std::string& matrix_context)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(matrix_context);
+    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        spdlog::warn("{}",
+            BuildArrayFireBackendFallbackMessage(
+                operation_name,
+                reason,
+                reason != BackendFallbackReason::CudaJitParamOverflow,
+                error_message,
+                context));
+    }
 }
 
 #endif
@@ -331,7 +375,10 @@ MatrixResult LinearAlgebra::Add(const std::vector<std::vector<double>>& A, const
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Add failed, fallback to CPU: {}", e.what());
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::Add",
+                e.what(),
+                BuildMatrixContext("A", rowsA, colsA, "B", rowsB, colsB));
         }
     }
 #endif
@@ -378,7 +425,10 @@ MatrixResult LinearAlgebra::Subtract(const std::vector<std::vector<double>>& A, 
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Subtract failed, fallback to CPU: {}", e.what());
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::Subtract",
+                e.what(),
+                BuildMatrixContext("A", rowsA, colsA, "B", rowsB, colsB));
         }
     }
 #endif
@@ -425,7 +475,10 @@ MatrixResult LinearAlgebra::Multiply(const std::vector<std::vector<double>>& A, 
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Multiply failed, fallback to CPU: {}", e.what());
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::Multiply",
+                e.what(),
+                BuildMatrixContext("A", rowsA, colsA, "B", rowsB, colsB));
         }
     }
 #endif
@@ -467,7 +520,10 @@ MatrixResult LinearAlgebra::ScalarMultiply(const std::vector<std::vector<double>
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU ScalarMultiply failed, fallback to CPU: {}", e.what());
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::ScalarMultiply",
+                e.what(),
+                BuildMatrixContext("A", rows, cols));
         }
     }
 #endif
@@ -507,7 +563,10 @@ MatrixResult LinearAlgebra::Transpose(const std::vector<std::vector<double>>& A)
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Transpose failed, fallback to CPU: {}", e.what());
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::Transpose",
+                e.what(),
+                BuildMatrixContext("A", rows, cols));
         }
     }
 #endif
@@ -551,9 +610,10 @@ MatrixResult LinearAlgebra::Inverse(const std::vector<std::vector<double>>& A) {
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Inverse failed (matrix may be singular): {}", e.what());
-            result.error_message = "Matrix inversion failed - matrix may be singular";
-            return result;
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::Inverse",
+                e.what(),
+                BuildMatrixContext("A", n, n));
         }
     }
 #endif
@@ -643,7 +703,10 @@ ScalarResult LinearAlgebra::Determinant(const std::vector<std::vector<double>>& 
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Determinant failed, fallback to CPU: {}", e.what());
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::Determinant",
+                e.what(),
+                BuildMatrixContext("A", n, n));
         }
     }
 #endif
@@ -1006,7 +1069,10 @@ QRResult LinearAlgebra::QR(const std::vector<std::vector<double>>& A) {
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU QR failed, fallback to CPU: {}", e.what());
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::QR",
+                e.what(),
+                BuildMatrixContext("A", rows, cols));
         }
     }
 #endif
@@ -1082,10 +1148,10 @@ CholeskyResult LinearAlgebra::Cholesky(const std::vector<std::vector<double>>& A
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Cholesky failed (matrix may not be positive definite): {}", e.what());
-            result.error_message = "Cholesky decomposition failed - matrix may not be positive definite";
-            result.is_positive_definite = false;
-            return result;
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::Cholesky",
+                e.what(),
+                BuildMatrixContext("A", n, n));
         }
     }
 #endif
@@ -1151,6 +1217,7 @@ LUResult LinearAlgebra::LU(const std::vector<std::vector<double>>& A) {
             // Extract permutation indices from P matrix
             std::vector<int> perm(n);
             std::vector<float> Pdata(n * n);
+            P.eval();
             P.host(Pdata.data());
             for (int i = 0; i < n; ++i) {
                 for (int j = 0; j < n; ++j) {
@@ -1165,7 +1232,10 @@ LUResult LinearAlgebra::LU(const std::vector<std::vector<double>>& A) {
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU LU failed, fallback to CPU: {}", e.what());
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::LU",
+                e.what(),
+                BuildMatrixContext("A", n, n));
         }
     }
 #endif
@@ -1247,9 +1317,10 @@ MatrixResult LinearAlgebra::Solve(const std::vector<std::vector<double>>& A, con
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU Solve failed: {}", e.what());
-            result.error_message = "Linear system solve failed - matrix may be singular";
-            return result;
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::Solve",
+                e.what(),
+                BuildMatrixContext("A", n, n, "b", bRows, bCols));
         }
     }
 #endif
@@ -1325,7 +1396,10 @@ MatrixResult LinearAlgebra::LeastSquares(const std::vector<std::vector<double>>&
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[LinearAlgebra] GPU LeastSquares failed, fallback to CPU: {}", e.what());
+            LogLinearAlgebraFallbackOnce(
+                "LinearAlgebra::LeastSquares",
+                e.what(),
+                BuildMatrixContext("A", rowsA, colsA, "b", rowsB, colsB));
         }
     }
 #endif

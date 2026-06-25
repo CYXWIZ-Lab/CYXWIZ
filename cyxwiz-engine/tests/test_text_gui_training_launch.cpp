@@ -603,6 +603,13 @@ void CheckUnsupportedMaterializerSource(
           label + " materializer backend reason should be registered");
     Check(result.unsupported_source_reason == backend_support.reason,
           label + " source should expose central materializer skip reason");
+    Check(result.diagnostic_message.find(
+              cyxwiz::PipelineMaterializerSourceKindName(source_kind)) !=
+              std::string::npos,
+          label + " source should expose source kind in materializer diagnostic");
+    Check(result.diagnostic_message.find(result.unsupported_source_reason) !=
+              std::string::npos,
+          label + " source should expose central reason in materializer diagnostic");
 }
 
 void TestTrainingRunComparisonRecord() {
@@ -1416,6 +1423,14 @@ int main() {
     Check(legacy_text_result.materializer_unsupported_source_reason ==
               legacy_text_backend_support.reason,
           "legacy text result should expose central skip reason");
+    Check(legacy_text_result.materializer_diagnostic_message.find(
+              legacy_text_backend_support.reason) != std::string::npos,
+          "legacy text result should expose materializer diagnostic");
+    Check(legacy_text_result.status_title == "Materializer skipped",
+          "legacy text result should expose user-visible materializer status");
+    Check(legacy_text_result.status_detail ==
+              legacy_text_result.materializer_diagnostic_message,
+          "legacy text status detail should use materializer diagnostic");
     registry.UnregisterTextDataset(kScopeTextDatasetName);
 
     std::cout << "Text GUI training launch helper passed\n";

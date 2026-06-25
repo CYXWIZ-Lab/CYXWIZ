@@ -6,6 +6,8 @@
 #endif
 
 #include "cyxwiz/clustering.h"
+#include "arrayfire_backend_utils.h"
+#include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -30,6 +32,48 @@
 namespace cyxwiz {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+
+static std::string BuildClusteringContext(
+    const std::vector<std::vector<double>>& data,
+    const std::string& extra = {})
+{
+    std::string context = "samples=" + std::to_string(data.size()) +
+        "; features=" + std::to_string(data.empty() ? 0 : data[0].size());
+    if (!extra.empty()) {
+        context += "; ";
+        context += extra;
+    }
+    return context;
+}
+
+static void LogClusteringBackendFailureOnce(
+    const char* operation_name,
+    const char* error_message,
+    const std::string& data_context)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(data_context);
+    if (!ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        return;
+    }
+
+    std::string message = std::string("ArrayFire ") +
+        (operation_name ? operation_name : "clustering operation") +
+        " failed (reason=" + BackendFallbackReasonName(reason) +
+        "); clustering evaluation cannot complete on the current ArrayFire backend.";
+    if (!context.empty()) {
+        message += " Context: ";
+        message += context;
+        message += ".";
+    }
+    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
+        error_message != nullptr &&
+        error_message[0] != '\0') {
+        message += " Error: ";
+        message += error_message;
+    }
+    spdlog::error("{}", message);
+}
 
 // ==================== Cluster Evaluation ====================
 
@@ -63,6 +107,7 @@ ClusterMetrics Clustering::EvaluateClustering(
 
         // Compute silhouette
         af::array silhouette = ComputeSilhouetteCoefficients(dist_matrix, af_labels, n_clusters);
+        silhouette.eval();
         result.per_sample_silhouette = AfArrayToDoubleVector(silhouette);
         result.silhouette_score = af::mean<double>(silhouette);
 
@@ -91,6 +136,10 @@ ClusterMetrics Clustering::EvaluateClustering(
 
     } catch (const af::exception& e) {
         result.error_message = std::string("ArrayFire error: ") + e.what();
+        LogClusteringBackendFailureOnce(
+            "Clustering::EvaluateClustering",
+            e.what(),
+            BuildClusteringContext(data, "labels=" + std::to_string(labels.size())));
     }
 
     return result;
@@ -101,6 +150,7 @@ af::array Clustering::ComputeSilhouetteCoefficients(const af::array& dist_matrix
 
     std::vector<int> cpu_labels = AfArrayToIntVector(labels);
     std::vector<double> dist_flat(n * n);
+    dist_matrix.eval();
     dist_matrix.host(dist_flat.data());
 
     std::vector<double> silhouettes(n);
@@ -147,7 +197,9 @@ af::array Clustering::ComputeSilhouetteCoefficients(const af::array& dist_matrix
         silhouettes[i] = (max_ab > 0) ? (b_i - a_i) / max_ab : 0.0;
     }
 
-    return af::array(n, silhouettes.data());
+    af::array result(n, silhouettes.data());
+    result.eval();
+    return result;
 }
 
 double Clustering::ComputeSilhouetteScore(

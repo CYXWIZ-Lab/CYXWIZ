@@ -3279,12 +3279,6 @@ bool PipelineExecutor::ExecuteNode(const Node& node, ExecutionContext& ctx) {
         return false;
     }
 
-    if (support.mode == PipelineRuntimeSupportMode::LegacyExecutor &&
-        support.legacy_dispatch_kind != PipelineLegacyDispatchKind::Unknown) {
-        return ExecuteLegacyDispatchKind(node, ctx,
-                                         support.legacy_dispatch_kind);
-    }
-
     ReportError("Unknown node type: " + node.type);
     return false;
 }
@@ -3410,41 +3404,6 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         handled = false;
         return false;
     }
-}
-
-bool PipelineExecutor::ExecuteLegacyDispatchKind(
-    const Node& node,
-    ExecutionContext& ctx,
-    PipelineLegacyDispatchKind dispatch_kind) {
-    switch (dispatch_kind) {
-    case PipelineLegacyDispatchKind::SaveDataset:
-        return ExecuteSaveDataset(node, ctx);
-    case PipelineLegacyDispatchKind::DeployToNodeEditor:
-        return ExecuteDeployToNodeEditor(node, ctx);
-    case PipelineLegacyDispatchKind::TextClean:
-        return ExecuteTextClean(node, ctx);
-    case PipelineLegacyDispatchKind::TextTokenize:
-        return ExecuteTextTokenize(node, ctx);
-    case PipelineLegacyDispatchKind::TextVectorize:
-        return ExecuteTextVectorize(node, ctx);
-    case PipelineLegacyDispatchKind::TSWindow:
-        return ExecuteTSWindow(node, ctx);
-    case PipelineLegacyDispatchKind::TSFeatures:
-        return ExecuteTSFeatures(node, ctx);
-    case PipelineLegacyDispatchKind::TSLag:
-        return ExecuteTSLag(node, ctx);
-    case PipelineLegacyDispatchKind::TSDiff:
-        return ExecuteTSDiff(node, ctx);
-    case PipelineLegacyDispatchKind::PolynomialFeatures:
-        return ExecutePolynomialFeatures(node, ctx);
-    case PipelineLegacyDispatchKind::Binning:
-        return ExecuteBinning(node, ctx);
-    case PipelineLegacyDispatchKind::Unknown:
-        break;
-    }
-
-    ReportError("Unknown legacy dispatch kind for node type: " + node.type);
-    return false;
 }
 
 bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx) {

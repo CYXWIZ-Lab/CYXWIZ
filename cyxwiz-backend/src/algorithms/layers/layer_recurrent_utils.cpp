@@ -32,21 +32,12 @@ std::atomic<bool>& RecurrentFailureDisableFlag(RecurrentLayerKind kind) {
 
 } // namespace
 
-bool IsCudaJitFormalParameterOverflow(const char* message) {
-    if (message == nullptr) {
-        return false;
-    }
-    const std::string text(message);
-    return text.find("Formal parameter space overflowed") != std::string::npos ||
-           text.find("formal parameter") != std::string::npos;
-}
-
 std::string BuildRecurrentFormalParameterOverflowFallbackMessage(
     const char* layer_name) {
     return std::string("ArrayFire ") + layer_name +
            " hit CUDA generated-kernel formal-parameter overflow "
            "(reason=" +
-           RecurrentCudaPlacementReason::CudaJitParamOverflowRisk +
+           BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow) +
            "); falling back to CPU. This is separate from VRAM capacity.";
 }
 
@@ -64,7 +55,7 @@ void DisableArrayFireCudaRecurrentAfterFailure(
             std::string(layer_name) +
             " ArrayFire CUDA recurrent path hit CUDA generated-kernel "
             "formal-parameter overflow (reason=" +
-            RecurrentCudaPlacementReason::CudaJitParamOverflowRisk +
+            BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow) +
             "). Disabling this recurrent CUDA path "
             "for the rest of the process and using CPU directly for later "
             "batches. This is separate from VRAM capacity.";

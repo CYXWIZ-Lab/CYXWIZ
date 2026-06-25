@@ -1,13 +1,41 @@
 #include "cyxwiz/activations/tanh.h"
+#include "../arrayfire_backend_utils.h"
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+#include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #endif
 
 namespace cyxwiz {
+namespace {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+void LogTanhFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const Tensor& tensor,
+    const char* tensor_name) {
+    const BackendFallbackReason reason =
+        ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    if (ShouldLogArrayFireBackendFallbackOnce(
+            operation_name, reason, context)) {
+        spdlog::warn("{}",
+                     BuildArrayFireBackendFallbackMessage(
+                         operation_name,
+                         reason,
+                         reason != BackendFallbackReason::CudaJitParamOverflow,
+                         error_message,
+                         context));
+    }
+}
+#endif
+
+} // namespace
 
 static bool s_use_gpu = false;
 static bool s_gpu_checked = false;
@@ -39,10 +67,11 @@ Tensor Tanh::Forward(const Tensor& input) {
 
             // Tanh
             af::array output_gpu = af::tanh(input_gpu);
+            output_gpu.eval();
 
             return Tensor(output_gpu);
-        } catch (const af::exception&) {
-            // Fall through to CPU
+        } catch (const af::exception& e) {
+            LogTanhFallbackOnce("Tanh::Forward", e.what(), input, "input");
         }
     }
 #endif
@@ -74,10 +103,12 @@ Tensor Tanh::Backward(const Tensor& grad_output, const Tensor& input) {
             // Gradient: grad * (1 - tanh(x)^2)
             af::array tanh_val = af::tanh(input_gpu);
             af::array grad_input_gpu = grad_gpu * (1.0f - tanh_val * tanh_val);
+            grad_input_gpu.eval();
 
             return Tensor(grad_input_gpu);
-        } catch (const af::exception&) {
-            // Fall through to CPU
+        } catch (const af::exception& e) {
+            LogTanhFallbackOnce(
+                "Tanh::Backward", e.what(), grad_output, "grad_output");
         }
     }
 #endif

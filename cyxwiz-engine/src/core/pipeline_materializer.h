@@ -53,6 +53,7 @@ struct MaterializeResult {
         PipelineMaterializerSourceKind::Unknown;
     bool skipped_unsupported_source = false;
     std::string unsupported_source_reason;
+    std::string diagnostic_message;
     bool success = true;
     std::string error_message;
 };

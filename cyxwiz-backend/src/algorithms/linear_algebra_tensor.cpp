@@ -4,10 +4,12 @@
 #endif
 
 #include "cyxwiz/linear_algebra.h"
+#include "arrayfire_backend_utils.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -39,9 +41,42 @@ static cyxwiz::DataType AfTypeToTensorType(af::dtype dtype) {
 static cyxwiz::Tensor AfArrayToTensorWithShape(const af::array& arr, const std::vector<size_t>& shape) {
     cyxwiz::Tensor out(shape, AfTypeToTensorType(arr.type()));
     if (out.NumBytes() > 0) {
-        arr.host(out.Data());
+        af::array materialized = arr;
+        materialized.eval();
+        materialized.host(out.Data());
     }
     return out;
+}
+
+static std::string BuildTensorContext(const char* tensor_name, const Tensor& tensor) {
+    return BuildTensorShapeContext(tensor_name, tensor.Shape());
+}
+
+static std::string BuildTensorContext(
+    const char* left_name,
+    const Tensor& left,
+    const char* right_name,
+    const Tensor& right)
+{
+    return BuildTensorContext(left_name, left) + "; " + BuildTensorContext(right_name, right);
+}
+
+static void LogLinearAlgebraTensorFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const std::string& tensor_context)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(tensor_context);
+    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        spdlog::warn("{}",
+            BuildArrayFireBackendFallbackMessage(
+                operation_name,
+                reason,
+                reason != BackendFallbackReason::CudaJitParamOverflow,
+                error_message,
+                context));
+    }
 }
 #endif
 
@@ -170,11 +205,15 @@ TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
         }
 
         af::array aC = af::matmul(aA, aB);
+        aC.eval();
         result.tensor = Tensor::FromArrayRowMajor2D(aC);
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor Multiply AF path failed, fallback to CPU: {}", e.what());
+        LogLinearAlgebraTensorFallbackOnce(
+            "LinearAlgebra::TensorMultiply",
+            e.what(),
+            BuildTensorContext("A", A, "B", B));
     }
 #endif
 
@@ -211,11 +250,15 @@ TensorResult LinearAlgebra::Transpose(const Tensor& A) {
         }
 
         af::array aT = af::transpose(aA);
+        aT.eval();
         result.tensor = AfArrayToTensorWithShape(aT, {cols, rows});
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor Transpose AF path failed, fallback to CPU: {}", e.what());
+        LogLinearAlgebraTensorFallbackOnce(
+            "LinearAlgebra::TensorTranspose",
+            e.what(),
+            BuildTensorContext("A", A));
     }
 #endif
 
@@ -254,11 +297,15 @@ TensorResult LinearAlgebra::Inverse(const Tensor& A) {
         }
 
         af::array aInv = af::inverse(aA);
+        aInv.eval();
         result.tensor = AfArrayToTensorWithShape(aInv, {n, n});
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor Inverse AF path failed, fallback to CPU: {}", e.what());
+        LogLinearAlgebraTensorFallbackOnce(
+            "LinearAlgebra::TensorInverse",
+            e.what(),
+            BuildTensorContext("A", A));
     }
 #endif
 
@@ -290,11 +337,17 @@ ScalarResult LinearAlgebra::FrobeniusNorm(const Tensor& A) {
             aA = aA.as(af::dtype::f64);
         }
         af::array sq = aA * aA;
-        result.value = std::sqrt(af::sum<double>(af::flat(sq)));
+        sq.eval();
+        af::array flat_sq = af::flat(sq);
+        flat_sq.eval();
+        result.value = std::sqrt(af::sum<double>(flat_sq));
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor FrobeniusNorm AF path failed, fallback to CPU: {}", e.what());
+        LogLinearAlgebraTensorFallbackOnce(
+            "LinearAlgebra::TensorFrobeniusNorm",
+            e.what(),
+            BuildTensorContext("A", A));
     }
 #endif
 
@@ -345,8 +398,10 @@ TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
         }
 
         af::array x = af::solve(aA, aB);
+        x.eval();
         if (b_was_vector) {
             af::array x_vec = af::moddims(x, static_cast<dim_t>(n));
+            x_vec.eval();
             result.tensor = AfArrayToTensorWithShape(x_vec, {n});
         } else {
             result.tensor = AfArrayToTensorWithShape(x, {n, b_cols});
@@ -354,7 +409,10 @@ TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor Solve AF path failed, fallback to CPU: {}", e.what());
+        LogLinearAlgebraTensorFallbackOnce(
+            "LinearAlgebra::TensorSolve",
+            e.what(),
+            BuildTensorContext("A", A, "b", b));
     }
 #endif
 
@@ -411,8 +469,10 @@ TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
         }
 
         af::array x = af::solve(aA, aB, AF_MAT_NONE);
+        x.eval();
         if (b_was_vector) {
             af::array x_vec = af::moddims(x, static_cast<dim_t>(colsA));
+            x_vec.eval();
             result.tensor = AfArrayToTensorWithShape(x_vec, {colsA});
         } else {
             result.tensor = AfArrayToTensorWithShape(x, {colsA, colsB});
@@ -420,7 +480,10 @@ TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
         result.success = true;
         return result;
     } catch (const af::exception& e) {
-        spdlog::warn("[LinearAlgebra] Tensor LeastSquares AF path failed, fallback to CPU: {}", e.what());
+        LogLinearAlgebraTensorFallbackOnce(
+            "LinearAlgebra::TensorLeastSquares",
+            e.what(),
+            BuildTensorContext("A", A, "b", b));
     }
 #endif
 

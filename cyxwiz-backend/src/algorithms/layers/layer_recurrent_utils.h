@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../arrayfire_backend_utils.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 
 #include <cstddef>
@@ -8,7 +9,6 @@
 namespace cyxwiz {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-bool IsCudaJitFormalParameterOverflow(const char* message);
 std::string BuildRecurrentFormalParameterOverflowFallbackMessage(const char* layer_name);
 void DisableArrayFireCudaRecurrentAfterFailure(
     RecurrentLayerKind kind,

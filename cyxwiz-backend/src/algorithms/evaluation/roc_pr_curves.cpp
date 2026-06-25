@@ -6,11 +6,13 @@
 #endif
 
 #include "cyxwiz/model_evaluation.h"
+#include "../arrayfire_backend_utils.h"
 
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <spdlog/spdlog.h>
+#include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -50,6 +52,27 @@ static bool CheckGPUAvailable() {
 #endif
     return s_use_gpu;
 }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+static void LogEvaluationFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    size_t sample_count)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        "samples=" + std::to_string(sample_count));
+    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        spdlog::warn("{}",
+            BuildArrayFireBackendFallbackMessage(
+                operation_name,
+                reason,
+                reason != BackendFallbackReason::CudaJitParamOverflow,
+                error_message,
+                context));
+    }
+}
+#endif
 
 std::vector<size_t> ModelEvaluation::ArgSort(const std::vector<double>& v, bool descending) {
     std::vector<size_t> idx(v.size());
@@ -91,12 +114,17 @@ ROCCurveData ModelEvaluation::ComputeROC(
                 // Sort by scores descending
                 af::array sorted_scores, sort_idx;
                 af::sort(sorted_scores, sort_idx, af_scores, 0, false);  // descending
+                sorted_scores.eval();
+                sort_idx.eval();
 
                 // Reorder labels by sorted indices
                 af::array sorted_labels = af_labels(sort_idx);
+                sorted_labels.eval();
 
                 // Count positives and negatives
-                int n_pos = static_cast<int>(af::sum<int>(af_labels == 1));
+                af::array positive_mask = af_labels == 1;
+                positive_mask.eval();
+                int n_pos = static_cast<int>(af::sum<int>(positive_mask));
                 int n_neg = n - n_pos;
 
                 if (n_pos == 0 || n_neg == 0) {
@@ -106,10 +134,14 @@ ROCCurveData ModelEvaluation::ComputeROC(
 
                 // Compute cumulative sums for TPR and FPR
                 af::array is_pos = (sorted_labels == 1).as(f64);
+                is_pos.eval();
                 af::array is_neg = (sorted_labels == 0).as(f64);
+                is_neg.eval();
 
                 af::array cum_tp = af::accum(is_pos);
+                cum_tp.eval();
                 af::array cum_fp = af::accum(is_neg);
+                cum_fp.eval();
 
                 // Convert to host
                 std::vector<double> cum_tp_host(n), cum_fp_host(n), scores_host(n);
@@ -151,7 +183,7 @@ ROCCurveData ModelEvaluation::ComputeROC(
                 return result;
 
             } catch (const af::exception& e) {
-                spdlog::warn("ComputeROC ArrayFire error, fallback to CPU: {}", e.what());
+                LogEvaluationFallbackOnce("ModelEvaluation::ComputeROC", e.what(), y_true.size());
             }
         }
 #endif
@@ -290,11 +322,16 @@ PRCurveData ModelEvaluation::ComputePRCurve(
                 // Sort by scores descending
                 af::array sorted_scores, sort_idx;
                 af::sort(sorted_scores, sort_idx, af_scores, 0, false);
+                sorted_scores.eval();
+                sort_idx.eval();
 
                 af::array sorted_labels = af_labels(sort_idx);
+                sorted_labels.eval();
 
                 // Count total positives
-                int n_pos = static_cast<int>(af::sum<int>(af_labels == 1));
+                af::array positive_mask = af_labels == 1;
+                positive_mask.eval();
+                int n_pos = static_cast<int>(af::sum<int>(positive_mask));
 
                 if (n_pos == 0) {
                     result.error_message = "No positive samples";
@@ -303,13 +340,18 @@ PRCurveData ModelEvaluation::ComputePRCurve(
 
                 // Compute cumulative TP and total predictions
                 af::array is_pos = (sorted_labels == 1).as(f64);
+                is_pos.eval();
                 af::array cum_tp = af::accum(is_pos);
+                cum_tp.eval();
                 af::array total_pred = af::range(af::dim4(n), 0, f64) + 1.0;
+                total_pred.eval();
 
                 // Precision = cum_tp / total_pred
                 // Recall = cum_tp / n_pos
                 af::array precision_arr = cum_tp / total_pred;
+                precision_arr.eval();
                 af::array recall_arr = cum_tp / static_cast<double>(n_pos);
+                recall_arr.eval();
 
                 // Convert to host
                 std::vector<double> precision_host(n), recall_host(n), scores_host(n);
@@ -350,7 +392,7 @@ PRCurveData ModelEvaluation::ComputePRCurve(
                 return result;
 
             } catch (const af::exception& e) {
-                spdlog::warn("ComputePRCurve ArrayFire error, fallback to CPU: {}", e.what());
+                LogEvaluationFallbackOnce("ModelEvaluation::ComputePRCurve", e.what(), y_true.size());
             }
         }
 #endif

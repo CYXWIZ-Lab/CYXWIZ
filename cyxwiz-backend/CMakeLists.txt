@@ -74,6 +74,7 @@ set(BACKEND_SOURCES
     src/core/memory_manager.cpp
     src/core/cyxwiz_c.cpp
     src/algorithms/optimizer.cpp
+    src/algorithms/arrayfire_backend_utils.cpp
     src/algorithms/optimizers/optimizer_utils.cpp
     src/algorithms/optimizers/sgd.cpp
     src/algorithms/optimizers/adam_family.cpp

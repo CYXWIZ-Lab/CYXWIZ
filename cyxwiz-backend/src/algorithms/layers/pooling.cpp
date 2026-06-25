@@ -1,4 +1,5 @@
 #include "cyxwiz/layers/pooling.h"
+#include "../arrayfire_backend_utils.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
 
@@ -18,6 +19,33 @@
 
 namespace cyxwiz {
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+namespace {
+
+void LogPoolingFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const Tensor& tensor,
+    const char* tensor_name) {
+    const BackendFallbackReason reason =
+        ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    const bool log_fallback =
+        ShouldLogArrayFireBackendFallbackOnce(
+            operation_name, reason, context);
+    if (log_fallback) {
+        spdlog::warn("{}",
+                     BuildArrayFireBackendFallbackMessage(
+                         operation_name, reason,
+                         reason != BackendFallbackReason::CudaJitParamOverflow,
+                         error_message, context));
+    }
+}
+
+} // namespace
+#endif
+
 MaxPool2DLayer::MaxPool2DLayer(int pool_size, int stride, int padding)
     : pool_size_(pool_size), stride_(stride > 0 ? stride : pool_size), padding_(padding) {
 }
@@ -34,6 +62,7 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
             // Pad with -infinity for max pooling
             x = af::pad(x, af::dim4(padding_, padding_, 0, 0),
                         af::dim4(padding_, padding_, 0, 0), AF_PAD_ZERO);
+            x.eval();
             // Note: For max pooling with zero padding, zeros will participate
             // in max computation but won't affect results if inputs are positive
         }
@@ -59,24 +88,33 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
                 // Extract patches using unwrap
                 af::array patches = af::unwrap(channel, pool_size_, pool_size_,
                                                 stride_, stride_);
+                patches.eval();
 
                 // patches shape: [pool_size*pool_size, num_patches]
                 // Take max along first dimension
                 af::array max_vals, max_idx;
                 af::max(max_vals, max_idx, patches, 0);
+                max_vals.eval();
+                max_idx.eval();
 
                 // Reshape to output spatial dimensions
                 max_vals = af::moddims(max_vals, af::dim4(out_h, out_w));
+                max_vals.eval();
+                af::array reshaped_idx = af::moddims(max_idx, af::dim4(out_h, out_w));
+                reshaped_idx.eval();
 
                 output(af::span, af::span, c, b) = max_vals;
-                indices(af::span, af::span, c, b) = af::moddims(max_idx, af::dim4(out_h, out_w));
+                indices(af::span, af::span, c, b) = reshaped_idx;
             }
         }
+        output.eval();
+        indices.eval();
 
         max_indices_ = AfToTensor(indices);
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire MaxPool2DLayer::Forward failed: {}", e.what());
+        LogPoolingFallbackOnce(
+            "MaxPool2DLayer::Forward", e.what(), input, "input");
     }
 #endif
 
@@ -177,9 +215,11 @@ Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
             }
         }
 
+        dx.eval();
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire MaxPool2DLayer::Backward failed: {}", e.what());
+        LogPoolingFallbackOnce(
+            "MaxPool2DLayer::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
 
@@ -250,6 +290,7 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
         if (padding_ > 0) {
             x = af::pad(x, af::dim4(padding_, padding_, 0, 0),
                         af::dim4(padding_, padding_, 0, 0), AF_PAD_ZERO);
+            x.eval();
         }
 
         dim_t in_h = x.dims(0);
@@ -270,20 +311,25 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
                 // Extract patches using unwrap
                 af::array patches = af::unwrap(channel, pool_size_, pool_size_,
                                                 stride_, stride_);
+                patches.eval();
 
                 // Take mean along first dimension
                 af::array mean_vals = af::mean(patches, 0);
+                mean_vals.eval();
 
                 // Reshape to output spatial dimensions
                 mean_vals = af::moddims(mean_vals, af::dim4(out_h, out_w));
+                mean_vals.eval();
 
                 output(af::span, af::span, c, b) = mean_vals;
             }
         }
+        output.eval();
 
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire AvgPool2DLayer::Forward failed: {}", e.what());
+        LogPoolingFallbackOnce(
+            "AvgPool2DLayer::Forward", e.what(), input, "input");
     }
 #endif
 
@@ -374,9 +420,11 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
             }
         }
 
+        dx.eval();
         return AfToTensor(dx);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire AvgPool2DLayer::Backward failed: {}", e.what());
+        LogPoolingFallbackOnce(
+            "AvgPool2DLayer::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
 

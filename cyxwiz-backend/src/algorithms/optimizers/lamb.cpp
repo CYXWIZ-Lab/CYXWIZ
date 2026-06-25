@@ -63,18 +63,24 @@ void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
                 // Update moments (same as Adam)
                 m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
+                m_gpu.eval();
                 v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
+                v_gpu.eval();
 
                 // Bias-corrected estimates
                 af::array m_hat = m_gpu / bias_correction1;
+                m_hat.eval();
                 af::array v_hat = v_gpu / bias_correction2;
+                v_hat.eval();
 
                 // Adam update direction: m_hat / (sqrt(v_hat) + eps)
                 af::array adam_update = m_hat / (af::sqrt(v_hat) + eps);
+                adam_update.eval();
 
                 // Add weight decay to update (LAMB uses decoupled weight decay)
                 if (wd > 0) {
                     adam_update = adam_update + wd * param_gpu;
+                    adam_update.eval();
                 }
 
                 // Compute trust ratio (layer-wise scaling)
@@ -88,13 +94,15 @@ void LAMBOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
                 // Apply scaled update
                 param_gpu = param_gpu - lr * trust_ratio * adam_update;
+                param_gpu.eval();
 
                 param.SetFromArray(param_gpu);
                 m_[name].SetFromArray(m_gpu);
                 v_[name].SetFromArray(v_gpu);
                 continue;
             } catch (const af::exception& e) {
-                spdlog::warn("LAMB GPU step failed: {}, falling back to CPU", e.what());
+                optimizer_detail::LogOptimizerFallbackOnce(
+                    "LAMBOptimizer::Step", name, param, e.what());
             }
         }
 #endif

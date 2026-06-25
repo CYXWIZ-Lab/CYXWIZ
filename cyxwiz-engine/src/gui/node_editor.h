@@ -722,6 +722,9 @@ struct SearchableNode {
     NodeImplementationStatus status = NodeImplementationStatus::Implemented;  // Default to implemented
     std::string description;  // Brief description for info panel
     std::string tooltip;      // Tooltip text (for templates: why not available)
+    bool support_blocked = false;  // Derived from NodeMetadata::support_axes
+    std::string support_state;     // Compact central support state value
+    std::string support_reason;    // Compact central support reason
 };
 
 // Alignment types for arranging selected nodes

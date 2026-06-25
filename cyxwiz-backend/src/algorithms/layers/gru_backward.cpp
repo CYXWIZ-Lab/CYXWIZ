@@ -120,8 +120,19 @@ Tensor GRULayer::Backward(const Tensor& grad_output) {
                     af::moddims(dx_t, af::dim4(1, batch_i, layer_input_i));
 
                 dh_next = dh_prev_direct + af::matmul(dgates_h, W_hh);
+                dW_ih.eval();
+                dW_hh.eval();
+                db_ih.eval();
+                db_hh.eval();
+                d_layer_input.eval();
+                dh_next.eval();
             }
 
+            dW_ih.eval();
+            dW_hh.eval();
+            db_ih.eval();
+            db_hh.eval();
+            d_layer_input.eval();
             grad_W_ih_[layer] = AfToTensor(dW_ih);
             grad_W_hh_[layer] = AfToTensor(dW_hh);
             grad_b_ih_[layer] = AfToTensor(db_ih);
@@ -133,14 +144,28 @@ Tensor GRULayer::Backward(const Tensor& grad_output) {
         if (batch_first_) {
             layer_grad = af::reorder(layer_grad, 1, 0, 2);
         }
+        layer_grad.eval();
 
         return AfToTensor3DRowMajor(layer_grad);
     } catch (const af::exception& e) {
-        BackendDebugHooks::EmitDebugEvent(
-            "GRULayer::Backward",
-            std::string("ArrayFire fallback: ") + e.what() +
-            (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-        spdlog::warn("ArrayFire GRULayer::Backward failed: {}, falling back to CPU", e.what());
+        const BackendFallbackReason reason =
+            ClassifyArrayFireBackendFallbackReason(e.what());
+        const std::string context = BuildArrayFireBackendFallbackContext(
+            BuildTensorShapeContext("grad_output", grad_output.Shape()));
+        if (ShouldLogArrayFireBackendFallbackOnce("GRULayer::Backward", reason, context)) {
+            const std::string fallback_message =
+                BuildArrayFireBackendFallbackMessage(
+                    "GRULayer::Backward",
+                    reason,
+                    reason != BackendFallbackReason::CudaJitParamOverflow,
+                    e.what(),
+                    context);
+            BackendDebugHooks::EmitDebugEvent(
+                "GRULayer::Backward",
+                fallback_message +
+                (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
+            spdlog::warn("{}", fallback_message);
+        }
     }
 #endif
 

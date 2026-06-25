@@ -1,9 +1,12 @@
 #include "loss_utils.h"
+#include "../arrayfire_backend_utils.h"
 
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
+
+#include <spdlog/spdlog.h>
 
 // Undefine Windows macros that conflict with ArrayFire functions.
 // Must be AFTER all includes (Windows headers define these).
@@ -284,27 +287,64 @@ Tensor AfToTensor(const af::array& arr) {
     return Tensor(arr);
 }
 
+void LogArrayFireLossFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const Tensor& tensor,
+    const char* tensor_name) {
+    const BackendFallbackReason reason =
+        ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context =
+        BuildArrayFireBackendFallbackContext(
+            BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    const bool log_fallback =
+        ShouldLogArrayFireBackendFallbackOnce(
+            operation_name, reason, context);
+    if (log_fallback) {
+        spdlog::warn("{}",
+                     BuildArrayFireBackendFallbackMessage(
+                         operation_name, reason,
+                         reason != BackendFallbackReason::CudaJitParamOverflow,
+                         error_message, context));
+    }
+}
+
 af::array ApplyReduction(const af::array& loss, Reduction reduction) {
     switch (reduction) {
         case Reduction::None:
             return loss;
-        case Reduction::Mean:
-            return af::mean(loss);
-        case Reduction::Sum:
-            return af::sum(loss);
-        default:
-            return af::mean(loss);
+        case Reduction::Mean: {
+            af::array result = af::mean(loss);
+            result.eval();
+            return result;
+        }
+        case Reduction::Sum: {
+            af::array result = af::sum(loss);
+            result.eval();
+            return result;
+        }
+        default: {
+            af::array result = af::mean(loss);
+            result.eval();
+            return result;
+        }
     }
 }
 
 af::array StableSoftmax(const af::array& x, int axis) {
     af::array max_val = af::max(x, axis);
+    max_val.eval();
     af::dim4 tile_dims(1, 1, 1, 1);
     tile_dims[axis] = x.dims(axis);
     af::array x_stable = x - af::tile(max_val, tile_dims);
+    x_stable.eval();
     af::array exp_x = af::exp(x_stable);
+    exp_x.eval();
     af::array sum_exp = af::sum(exp_x, axis);
-    return exp_x / af::tile(sum_exp, tile_dims);
+    sum_exp.eval();
+    af::array result = exp_x / af::tile(sum_exp, tile_dims);
+    result.eval();
+    return result;
 }
 
 af::array SignLike(const af::array& x) {

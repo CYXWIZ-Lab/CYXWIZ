@@ -1,4 +1,5 @@
 #include "cyxwiz/layers/dense.h"
+#include "../arrayfire_backend_utils.h"
 #include "layer_arrayfire_utils.h"
 
 #include <stdexcept>
@@ -14,6 +15,30 @@
 #endif
 
 namespace cyxwiz {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+namespace {
+
+void LogDenseArrayFireFallback(
+    const char* operation_name,
+    BackendFallbackReason reason,
+    const char* error_message,
+    const std::string& shape_context) {
+    const std::string context =
+        BuildArrayFireBackendFallbackContext(shape_context);
+    const bool log_fallback =
+        ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context);
+    if (log_fallback) {
+        spdlog::warn("{}",
+                     BuildArrayFireBackendFallbackMessage(
+                         operation_name, reason,
+                         reason != BackendFallbackReason::CudaJitParamOverflow,
+                         error_message, context));
+    }
+}
+
+} // namespace
+#endif
 
 DenseLayer::DenseLayer(int in_features, int out_features, bool use_bias)
     : in_features_(in_features), out_features_(out_features), use_bias_(use_bias) {
@@ -55,26 +80,41 @@ Tensor DenseLayer::Forward(const Tensor& input) {
     cached_input_ = input;
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array x = TensorToAf(input);
-        af::array w = TensorToAf(weights_);
+    if (ShouldForceArrayFireBackendFallbackForTesting("DenseLayer::Forward")) {
+        LogDenseArrayFireFallback(
+            "DenseLayer::Forward",
+            BackendFallbackReason::GpuBackendException,
+            "forced ArrayFire backend fallback test hook",
+            BuildTensorShapeContext("input", input.Shape()));
+    } else {
+        try {
+            af::array x = TensorToAf(input);
+            af::array w = TensorToAf(weights_);
 
-        // Ensure x is 2D: [batch_size, in_features]
-        // Matrix multiply: output = x @ W^T
-        // Where W is [out_features, in_features]
-        af::array output = af::matmul(x, af::transpose(w));
+            // Ensure x is 2D: [batch_size, in_features]
+            // Matrix multiply: output = x @ W^T
+            // Where W is [out_features, in_features]
+            af::array output = af::matmul(x, af::transpose(w));
+            output.eval();
 
-        if (use_bias_) {
-            af::array b = TensorToAf(bias_);
-            // Broadcast row bias across the batch dimension. `output` is
-            // semantic row-major [batch, out_features].
-            output = output + af::tile(af::transpose(b),
-                                       static_cast<unsigned int>(output.dims(0)));
+            if (use_bias_) {
+                af::array b = TensorToAf(bias_);
+                // Broadcast row bias across the batch dimension. `output` is
+                // semantic row-major [batch, out_features].
+                output = output + af::tile(
+                    af::transpose(b),
+                    static_cast<unsigned int>(output.dims(0)));
+                output.eval();
+            }
+
+            return AfToTensor(output);
+        } catch (const af::exception& e) {
+            const BackendFallbackReason reason =
+                ClassifyArrayFireBackendFallbackReason(e.what());
+            LogDenseArrayFireFallback(
+                "DenseLayer::Forward", reason, e.what(),
+                BuildTensorShapeContext("input", input.Shape()));
         }
-
-        return AfToTensor(output);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire DenseLayer::Forward failed: {}", e.what());
     }
 #endif
 
@@ -122,28 +162,44 @@ Tensor DenseLayer::Forward(const Tensor& input) {
 
 Tensor DenseLayer::Backward(const Tensor& grad_output) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::array grad_out = TensorToAf(grad_output);
-        af::array x = TensorToAf(cached_input_);
-        af::array w = TensorToAf(weights_);
+    if (ShouldForceArrayFireBackendFallbackForTesting("DenseLayer::Backward")) {
+        LogDenseArrayFireFallback(
+            "DenseLayer::Backward",
+            BackendFallbackReason::GpuBackendException,
+            "forced ArrayFire backend fallback test hook",
+            BuildTensorShapeContext("grad_output", grad_output.Shape()));
+    } else {
+        try {
+            af::array grad_out = TensorToAf(grad_output);
+            af::array x = TensorToAf(cached_input_);
+            af::array w = TensorToAf(weights_);
 
-        // Gradient w.r.t weights: dW = grad_out^T @ x
-        af::array dW = af::matmul(af::transpose(grad_out), x);
-        grad_weights_ = AfToTensor(dW);
+            // Gradient w.r.t weights: dW = grad_out^T @ x
+            af::array dW = af::matmul(af::transpose(grad_out), x);
+            dW.eval();
+            grad_weights_ = AfToTensor(dW);
 
-        // Gradient w.r.t bias: db = sum(grad_out, axis=0)
-        if (use_bias_) {
-            af::array db = af::sum(grad_out, 0);
-            db = af::moddims(db, af::dim4(db.elements()));
-            grad_bias_ = AfToTensor(db);
+            // Gradient w.r.t bias: db = sum(grad_out, axis=0)
+            if (use_bias_) {
+                af::array db = af::sum(grad_out, 0);
+                db.eval();
+                db = af::moddims(db, af::dim4(db.elements()));
+                db.eval();
+                grad_bias_ = AfToTensor(db);
+            }
+
+            // Gradient w.r.t input: dx = grad_out @ W
+            af::array dx = af::matmul(grad_out, w);
+            dx.eval();
+
+            return AfToTensor(dx);
+        } catch (const af::exception& e) {
+            const BackendFallbackReason reason =
+                ClassifyArrayFireBackendFallbackReason(e.what());
+            LogDenseArrayFireFallback(
+                "DenseLayer::Backward", reason, e.what(),
+                BuildTensorShapeContext("grad_output", grad_output.Shape()));
         }
-
-        // Gradient w.r.t input: dx = grad_out @ W
-        af::array dx = af::matmul(grad_out, w);
-
-        return AfToTensor(dx);
-    } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire DenseLayer::Backward failed: {}", e.what());
     }
 #endif
 

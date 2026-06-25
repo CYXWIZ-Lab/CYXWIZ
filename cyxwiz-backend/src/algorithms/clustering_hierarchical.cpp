@@ -6,6 +6,7 @@
 #endif
 
 #include "cyxwiz/clustering.h"
+#include "arrayfire_backend_utils.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -32,6 +33,48 @@
 namespace cyxwiz {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+
+static std::string BuildClusteringContext(
+    const std::vector<std::vector<double>>& data,
+    const std::string& extra = {})
+{
+    std::string context = "samples=" + std::to_string(data.size()) +
+        "; features=" + std::to_string(data.empty() ? 0 : data[0].size());
+    if (!extra.empty()) {
+        context += "; ";
+        context += extra;
+    }
+    return context;
+}
+
+static void LogClusteringBackendFailureOnce(
+    const char* operation_name,
+    const char* error_message,
+    const std::string& data_context)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(data_context);
+    if (!ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        return;
+    }
+
+    std::string message = std::string("ArrayFire ") +
+        (operation_name ? operation_name : "clustering operation") +
+        " failed (reason=" + BackendFallbackReasonName(reason) +
+        "); clustering operation cannot complete on the current ArrayFire backend.";
+    if (!context.empty()) {
+        message += " Context: ";
+        message += context;
+        message += ".";
+    }
+    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
+        error_message != nullptr &&
+        error_message[0] != '\0') {
+        message += " Error: ";
+        message += error_message;
+    }
+    spdlog::error("{}", message);
+}
 
 // ==================== Hierarchical Clustering ====================
 
@@ -62,6 +105,7 @@ HierarchicalResult Clustering::Hierarchical(
 
         // Transfer to CPU for agglomerative clustering
         std::vector<double> dist_flat(n * n);
+        dist_matrix.eval();
         dist_matrix.host(dist_flat.data());
 
         // Build distance matrix on CPU
@@ -174,7 +218,14 @@ HierarchicalResult Clustering::Hierarchical(
 
     } catch (const af::exception& e) {
         result.error_message = std::string("ArrayFire error: ") + e.what();
-        spdlog::error("Hierarchical clustering failed: {}", result.error_message);
+        LogClusteringBackendFailureOnce(
+            "Clustering::Hierarchical",
+            e.what(),
+            BuildClusteringContext(
+                data,
+                "clusters=" + std::to_string(n_clusters) +
+                "; linkage=" + linkage +
+                "; metric=" + metric));
     }
 
     return result;

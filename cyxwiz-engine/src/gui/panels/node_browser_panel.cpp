@@ -62,6 +62,26 @@ const cyxwiz::SupportAxisDefinition* FindSupportState(
     return FindAxis(metadata, "Support State");
 }
 
+std::string FirstUnsupportedSupportReason(
+    const cyxwiz::NodeMetadata* metadata) {
+    if (!metadata) return {};
+
+    if (const auto* support_state = FindSupportState(metadata)) {
+        if (!support_state->reason.empty() &&
+            (!support_state->supported || support_state->value == "blocked")) {
+            return support_state->reason;
+        }
+    }
+
+    for (const auto& axis : metadata->support_axes) {
+        if (!axis.supported && !axis.reason.empty()) {
+            return axis.name + ": " + axis.reason;
+        }
+    }
+
+    return {};
+}
+
 ImU32 SupportStateBadgeColor(const std::string& state) {
     if (state == "real") return IM_COL32(45, 140, 80, 235);
     if (state == "partial") return IM_COL32(185, 125, 35, 235);
@@ -759,17 +779,17 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     ImGui::InvisibleButton("##card", card_size);
 
     bool hovered = ImGui::IsItemHovered();
+    const bool support_blocked = IsSupportBlocked(metadata);
+    const bool can_add_to_graph = !metadata->IsTemplate() && !support_blocked;
 
     // Handle double-click to create node
-    if (hovered && ImGui::IsMouseDoubleClicked(0)) {
-        if (!metadata->IsTemplate()) {
-            CreateNodeAtMouse(metadata);
-            registry.RecordUsage(metadata->type);
-        }
+    if (hovered && ImGui::IsMouseDoubleClicked(0) && can_add_to_graph) {
+        CreateNodeAtMouse(metadata);
+        registry.RecordUsage(metadata->type);
     }
 
-    // Handle drag-drop source (only for implemented nodes)
-    if (!metadata->IsTemplate() && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+    // Handle drag-drop source (only for graph-addable nodes)
+    if (can_add_to_graph && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
         ImGui::SetDragDropPayload("NODE_TYPE", &metadata->type, sizeof(cyxwiz::NodeType));
         ImGui::Text("%s %s", metadata->icon.c_str(), metadata->name.c_str());
         dragging_node_ = metadata;
@@ -781,7 +801,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         ImGui::TextDisabled("%s %s", metadata->icon.c_str(), metadata->name.c_str());
         ImGui::Separator();
 
-        if (!metadata->IsTemplate()) {
+        if (can_add_to_graph) {
             if (ImGui::MenuItem(ICON_FA_PLUS " Add to Canvas", "Double-click")) {
                 CreateNodeAtMouse(metadata);
                 registry.RecordUsage(metadata->type);
@@ -790,10 +810,16 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
             if (ImGui::MenuItem(ICON_FA_STAR " Toggle Favorite")) {
                 registry.ToggleFavorite(metadata->type);
             }
-        } else {
+        } else if (metadata->IsTemplate()) {
             ImGui::TextDisabled(ICON_FA_CLOCK " Coming Soon");
             if (ImGui::MenuItem(ICON_FA_THUMBS_UP " Vote for this feature")) {
                 // TODO: Increment user_votes and save preferences
+            }
+        } else {
+            ImGui::TextDisabled(ICON_FA_TRIANGLE_EXCLAMATION " Blocked");
+            const std::string reason = FirstUnsupportedSupportReason(metadata);
+            if (!reason.empty()) {
+                ImGui::TextWrapped("%s", reason.c_str());
             }
         }
 
@@ -863,8 +889,8 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
     float text_y = icon_y + NODE_ICON_SIZE + 4;
 
-    // Dim text for template nodes
-    ImU32 text_color = metadata->IsTemplate() ?
+    // Dim text for nodes that cannot currently be added.
+    ImU32 text_color = !can_add_to_graph ?
         IM_COL32(150, 150, 150, 255) : IM_COL32(220, 220, 220, 255);
 
     draw_list->AddText(ImVec2(text_x, text_y), text_color, display_name.c_str());
@@ -1070,7 +1096,18 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
 
     // Usage hint
     ImGui::Separator();
-    ImGui::TextDisabled("Double-click or drag to add");
+    if (metadata->IsTemplate()) {
+        ImGui::TextDisabled("Template node: not addable yet");
+    } else if (IsSupportBlocked(metadata)) {
+        const std::string reason = FirstUnsupportedSupportReason(metadata);
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                           ICON_FA_TRIANGLE_EXCLAMATION " Blocked from graph add");
+        if (!reason.empty()) {
+            ImGui::TextWrapped("%s", reason.c_str());
+        }
+    } else {
+        ImGui::TextDisabled("Double-click or drag to add");
+    }
 
     ImGui::EndTooltip();
 }
@@ -1093,8 +1130,8 @@ void NodeBrowserPanel::NavigateBack() {
 void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata) {
     if (!node_editor_ || !metadata) return;
 
-    // Only create implemented nodes
-    if (metadata->IsTemplate()) {
+    // Only create nodes that central support metadata says are graph-addable.
+    if (metadata->IsTemplate() || IsSupportBlocked(metadata)) {
         return;
     }
 

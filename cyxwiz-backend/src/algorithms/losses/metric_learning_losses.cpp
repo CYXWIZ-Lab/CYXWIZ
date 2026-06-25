@@ -7,8 +7,6 @@
 #include <string>
 #include <vector>
 
-#include <spdlog/spdlog.h>
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #endif
@@ -367,7 +365,8 @@ Tensor CosineEmbeddingLoss::Forward(const Tensor& x1, const Tensor& x2) {
 
         return AfToTensor(loss);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire CosineEmbeddingLoss::Forward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "CosineEmbeddingLoss::Forward", e.what(), x1, "x1");
     }
 #endif
     return CpuCosineEmbeddingForward(x1, x2, labels_, margin_, reduction_);
@@ -396,6 +395,7 @@ Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
 
         af::array grad_cos = a2 / af::tile(norm_product, tile_dims) -
                              a1 * af::tile(cos_sim / norm1_sq, tile_dims);
+        grad_cos.eval();
 
         // For similar pairs: d_loss = -d_cos_sim
         // For dissimilar pairs: d_loss = d_cos_sim (if cos_sim > margin)
@@ -404,16 +404,20 @@ Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
         af::array mask_dissimilar = (1.0f - mask_similar);
         af::array mask_above_margin = (cos_sim > margin_).as(af::dtype::f32);
         af::array scale = mask_similar * (-1.0f) + mask_dissimilar * mask_above_margin;
+        scale.eval();
 
         af::array grad = grad_cos * af::tile(scale, tile_dims);
+        grad.eval();
 
         if (reduction_ == Reduction::Mean) {
             grad = grad / static_cast<float>(batch_size);
+            grad.eval();
         }
 
         return AfToTensor(grad);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire CosineEmbeddingLoss::Backward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "CosineEmbeddingLoss::Backward", e.what(), x1, "x1");
     }
 #endif
     return CpuCosineEmbeddingBackward(x1, x2, labels_, margin_, reduction_);
@@ -458,7 +462,8 @@ Tensor TripletLoss::Forward(const Tensor& anchor, const Tensor& positive) {
 
         return AfToTensor(loss);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire TripletLoss::Forward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "TripletLoss::Forward", e.what(), anchor, "anchor");
     }
 #endif
     return CpuTripletForward(anchor, positive, negative_, distance_type_, margin_, reduction_,
@@ -512,8 +517,11 @@ Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
             af::array safe_dist_an = af::max(dist_an, 1e-8f);
 
             af::array grad_ap = (a - p) / af::tile(safe_dist_ap, tile_dims);
+            grad_ap.eval();
             af::array grad_an = (a - n) / af::tile(safe_dist_an, tile_dims);
+            grad_an.eval();
             grad_a = (grad_ap - grad_an) * af::tile(margin_violated, tile_dims);
+            grad_a.eval();
         } else {
             // Cosine distance gradient is more complex - simplified version
             af::array norm_a = af::sqrt(af::sum(a * a, 1));
@@ -521,17 +529,22 @@ Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
             af::array norm_n = af::sqrt(af::sum(n * n, 1));
 
             af::array grad_ap = -p / af::tile(norm_a * norm_p + 1e-8f, tile_dims);
+            grad_ap.eval();
             af::array grad_an = -n / af::tile(norm_a * norm_n + 1e-8f, tile_dims);
+            grad_an.eval();
             grad_a = (grad_ap - grad_an) * af::tile(margin_violated, tile_dims);
+            grad_a.eval();
         }
 
         if (reduction_ == Reduction::Mean) {
             grad_a = grad_a / static_cast<float>(batch_size);
+            grad_a.eval();
         }
 
         return AfToTensor(grad_a);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire TripletLoss::Backward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "TripletLoss::Backward", e.what(), anchor, "anchor");
     }
 #endif
     return CpuTripletBackward(anchor, positive, negative_, cached_dist_ap_, cached_dist_an_,
@@ -565,7 +578,8 @@ Tensor ContrastiveLoss::Forward(const Tensor& x1, const Tensor& x2) {
 
         return AfToTensor(loss);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire ContrastiveLoss::Forward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "ContrastiveLoss::Forward", e.what(), x1, "x1");
     }
 #endif
     return CpuContrastiveForward(x1, x2, labels_, margin_, reduction_, &cached_distances_);
@@ -603,21 +617,29 @@ Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
 
         // Dissimilar pairs gradient: -2 * (margin - d) / d * diff (when d < margin)
         af::array margin_diff = margin_ - safe_distances;
+        margin_diff.eval();
         af::array mask_in_margin = (distances < margin_).as(af::dtype::f32);
+        mask_in_margin.eval();
         af::array scale = -2.0f * margin_diff / safe_distances * mask_in_margin;
+        scale.eval();
         af::array grad_dissimilar = diff * af::tile(scale, tile_dims);
+        grad_dissimilar.eval();
 
         // Combine based on labels (0=similar, 1=dissimilar)
         af::array labels_tiled = af::tile(labels, tile_dims);
+        labels_tiled.eval();
         af::array grad = (1.0f - labels_tiled) * grad_similar + labels_tiled * grad_dissimilar;
+        grad.eval();
 
         if (reduction_ == Reduction::Mean) {
             grad = grad / static_cast<float>(batch_size);
+            grad.eval();
         }
 
         return AfToTensor(grad);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire ContrastiveLoss::Backward failed: {}", e.what());
+        LogArrayFireLossFallbackOnce(
+            "ContrastiveLoss::Backward", e.what(), x1, "x1");
     }
 #endif
     return CpuContrastiveBackward(x1, x2, labels_, cached_distances_, margin_, reduction_);

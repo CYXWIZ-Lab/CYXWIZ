@@ -1,4 +1,5 @@
 #include "cyxwiz/layers/attention.h"
+#include "../arrayfire_backend_utils.h"
 #include "layer_arrayfire_utils.h"
 
 #include <cmath>
@@ -16,6 +17,40 @@
 #endif
 
 namespace cyxwiz {
+namespace {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+void LogAttentionInitializationFallbackOnce(
+    const char* error_message,
+    int embed_dim,
+    int num_heads) {
+    const BackendFallbackReason reason =
+        ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        "embed_dim=" + std::to_string(embed_dim) +
+        "; num_heads=" + std::to_string(num_heads));
+    if (!ShouldLogArrayFireBackendFallbackOnce(
+            "MultiHeadAttentionLayer::InitializeWeights", reason, context)) {
+        return;
+    }
+
+    std::string message =
+        "ArrayFire MultiHeadAttentionLayer::InitializeWeights failed (reason=" +
+        std::string(BackendFallbackReasonName(reason)) +
+        "); initializing weights on CPU.";
+    message += " Context: ";
+    message += context;
+    message += ".";
+    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
+        error_message != nullptr && error_message[0] != '\0') {
+        message += " Error: ";
+        message += error_message;
+    }
+    spdlog::warn("{}", message);
+}
+#endif
+
+} // namespace
 
 MultiHeadAttentionLayer::MultiHeadAttentionLayer(int embed_dim, int num_heads,
                                                    float dropout, bool use_bias)
@@ -42,6 +77,10 @@ void MultiHeadAttentionLayer::InitializeWeights() {
         af::array w_k = af::randu(af::dim4(embed_dim_, embed_dim_)) * 2.0f * limit - limit;
         af::array w_v = af::randu(af::dim4(embed_dim_, embed_dim_)) * 2.0f * limit - limit;
         af::array w_o = af::randu(af::dim4(embed_dim_, embed_dim_)) * 2.0f * limit - limit;
+        w_q.eval();
+        w_k.eval();
+        w_v.eval();
+        w_o.eval();
 
         W_q_ = AfToTensor(w_q);
         W_k_ = AfToTensor(w_k);
@@ -74,7 +113,10 @@ void MultiHeadAttentionLayer::InitializeWeights() {
 
         return;
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire init failed: {}, using CPU", e.what());
+        LogAttentionInitializationFallbackOnce(
+            e.what(),
+            embed_dim_,
+            num_heads_);
     }
 #endif
 

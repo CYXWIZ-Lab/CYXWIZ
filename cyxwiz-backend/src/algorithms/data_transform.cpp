@@ -6,12 +6,14 @@
 #endif
 
 #include "cyxwiz/data_transform.h"
+#include "arrayfire_backend_utils.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
 #include <limits>
 #include <random>
+#include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -52,6 +54,38 @@ static bool CheckGPUAvailable() {
     return s_use_gpu;
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+static void LogDataTransformFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const std::string& data_context)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(data_context);
+    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        spdlog::warn("{}",
+            BuildArrayFireBackendFallbackMessage(
+                operation_name,
+                reason,
+                reason != BackendFallbackReason::CudaJitParamOverflow,
+                error_message,
+                context));
+    }
+}
+
+static std::string BuildColumnTransformContext(size_t value_count) {
+    return "values=" + std::to_string(value_count);
+}
+
+static std::string BuildMatrixTransformContext(
+    size_t column_count,
+    size_t values_per_column)
+{
+    return "columns=" + std::to_string(column_count) +
+           "; values_per_column=" + std::to_string(values_per_column);
+}
+#endif
+
 // ============================================================================
 // Utility Functions
 // ============================================================================
@@ -74,6 +108,7 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
 
             // Sort for percentiles
             af::array sorted = af::sort(gpu_data);
+            sorted.eval();
             std::vector<double> sorted_cpu(data.size());
             sorted.host(sorted_cpu.data());
 
@@ -90,7 +125,10 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
 
             return stats;
         } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU stats failed, fallback to CPU: {}", e.what());
+            LogDataTransformFallbackOnce(
+                "DataTransform::ComputeColumnStats",
+                e.what(),
+                BuildColumnTransformContext(data.size()));
         }
     }
 #endif
@@ -210,6 +248,7 @@ TransformResult DataTransform::NormalizeColumn(const std::vector<double>& data,
 
             double target_range = range_max - range_min;
             af::array transformed = ((gpu_data - data_min) / data_range) * target_range + range_min;
+            transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
             transformed.host(transformed_cpu.data());
@@ -218,7 +257,10 @@ TransformResult DataTransform::NormalizeColumn(const std::vector<double>& data,
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU normalize failed, fallback to CPU: {}", e.what());
+            LogDataTransformFallbackOnce(
+                "DataTransform::NormalizeColumn",
+                e.what(),
+                BuildColumnTransformContext(data.size()));
         }
     }
 #endif
@@ -308,6 +350,7 @@ TransformResult DataTransform::StandardizeColumn(const std::vector<double>& data
             result.params["std_dev"] = std_dev;
 
             af::array transformed = (gpu_data - mean) / std_dev;
+            transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
             transformed.host(transformed_cpu.data());
@@ -316,7 +359,10 @@ TransformResult DataTransform::StandardizeColumn(const std::vector<double>& data
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU standardize failed, fallback to CPU: {}", e.what());
+            LogDataTransformFallbackOnce(
+                "DataTransform::StandardizeColumn",
+                e.what(),
+                BuildColumnTransformContext(data.size()));
         }
     }
 #endif
@@ -403,6 +449,7 @@ TransformResult DataTransform::LogTransformColumn(const std::vector<double>& dat
 
             if (use_log1p) {
                 gpu_data = gpu_data + 1.0;
+                gpu_data.eval();
             }
 
             af::array transformed;
@@ -413,6 +460,7 @@ TransformResult DataTransform::LogTransformColumn(const std::vector<double>& dat
             } else {  // log2
                 transformed = af::log(gpu_data) / std::log(2.0);
             }
+            transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
             transformed.host(transformed_cpu.data());
@@ -421,7 +469,10 @@ TransformResult DataTransform::LogTransformColumn(const std::vector<double>& dat
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU log transform failed, fallback to CPU: {}", e.what());
+            LogDataTransformFallbackOnce(
+                "DataTransform::LogTransformColumn",
+                e.what(),
+                BuildColumnTransformContext(data.size()));
         }
     }
 #endif
@@ -576,6 +627,7 @@ TransformResult DataTransform::BoxCoxColumn(const std::vector<double>& data,
             } else {
                 transformed = (af::pow(gpu_data, use_lambda) - 1.0) / use_lambda;
             }
+            transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
             transformed.host(transformed_cpu.data());
@@ -584,7 +636,10 @@ TransformResult DataTransform::BoxCoxColumn(const std::vector<double>& data,
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU BoxCox failed, fallback to CPU: {}", e.what());
+            LogDataTransformFallbackOnce(
+                "DataTransform::BoxCoxColumn",
+                e.what(),
+                BuildColumnTransformContext(data.size()));
         }
     }
 #endif
@@ -759,6 +814,7 @@ TransformResult DataTransform::RobustScaleColumn(const std::vector<double>& data
         try {
             af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
             af::array transformed = (gpu_data - stats.median) / stats.iqr;
+            transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
             transformed.host(transformed_cpu.data());
@@ -767,7 +823,10 @@ TransformResult DataTransform::RobustScaleColumn(const std::vector<double>& data
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU robust scale failed, fallback to CPU: {}", e.what());
+            LogDataTransformFallbackOnce(
+                "DataTransform::RobustScaleColumn",
+                e.what(),
+                BuildColumnTransformContext(data.size()));
         }
     }
 #endif
@@ -824,7 +883,9 @@ TransformResult DataTransform::MaxAbsScaleColumn(const std::vector<double>& data
     if (CheckGPUAvailable() && data.size() > 1000) {
         try {
             af::array gpu_data(static_cast<dim_t>(data.size()), data.data());
-            double max_abs = af::max<double>(af::abs(gpu_data));
+            af::array abs_data = af::abs(gpu_data);
+            abs_data.eval();
+            double max_abs = af::max<double>(abs_data);
 
             if (max_abs < 1e-10) {
                 result.error_message = "Data is all zeros";
@@ -834,6 +895,7 @@ TransformResult DataTransform::MaxAbsScaleColumn(const std::vector<double>& data
             result.params["max_abs"] = max_abs;
 
             af::array transformed = gpu_data / max_abs;
+            transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
             transformed.host(transformed_cpu.data());
@@ -842,7 +904,10 @@ TransformResult DataTransform::MaxAbsScaleColumn(const std::vector<double>& data
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU maxabs scale failed, fallback to CPU: {}", e.what());
+            LogDataTransformFallbackOnce(
+                "DataTransform::MaxAbsScaleColumn",
+                e.what(),
+                BuildColumnTransformContext(data.size()));
         }
     }
 #endif
@@ -984,6 +1049,7 @@ TransformResult DataTransform::PowerTransform(const std::vector<std::vector<doub
                 }
 
                 af::array transformed = af::pow(gpu_data, power);
+                transformed.eval();
 
                 std::vector<double> transformed_cpu(data[col].size());
                 transformed.host(transformed_cpu.data());
@@ -994,7 +1060,10 @@ TransformResult DataTransform::PowerTransform(const std::vector<std::vector<doub
             result.success = true;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("[DataTransform] GPU power transform failed, fallback to CPU: {}", e.what());
+            LogDataTransformFallbackOnce(
+                "DataTransform::PowerTransform",
+                e.what(),
+                BuildMatrixTransformContext(data.size(), data.empty() ? 0 : data[0].size()));
             result.transformed_data.clear();
         }
     }

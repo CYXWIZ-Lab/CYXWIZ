@@ -7,9 +7,11 @@
 
 #define _USE_MATH_DEFINES
 #include "cyxwiz/dimensionality_reduction.h"
+#include "arrayfire_backend_utils.h"
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <spdlog/spdlog.h>
 
 // Undef Windows min/max macros if they leaked through
@@ -54,6 +56,29 @@ static bool CheckGPUAvailable() {
 #endif
     return s_use_gpu;
 }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+static void LogDimensionalityReductionFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    size_t sample_count,
+    size_t feature_count)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        "samples=" + std::to_string(sample_count) +
+        "; features=" + std::to_string(feature_count));
+    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        spdlog::warn("{}",
+            BuildArrayFireBackendFallbackMessage(
+                operation_name,
+                reason,
+                reason != BackendFallbackReason::CudaJitParamOverflow,
+                error_message,
+                context));
+    }
+}
+#endif
 
 // ============================================================================
 // Utility Methods
@@ -188,7 +213,9 @@ std::vector<std::vector<double>> DimensionalityReduction::ComputeCovarianceMatri
 
             // Compute covariance: C = X^T * X / (n-1)
             af::array XtX = af::matmul(af::transpose(gpu_data), gpu_data);
+            XtX.eval();
             XtX = XtX / static_cast<double>(n_samples - 1);
+            XtX.eval();
 
             // Copy back to CPU
             std::vector<std::vector<double>> cov(n_features, std::vector<double>(n_features));
@@ -203,7 +230,11 @@ std::vector<std::vector<double>> DimensionalityReduction::ComputeCovarianceMatri
 
             return cov;
         } catch (const af::exception& e) {
-            spdlog::warn("[DimensionalityReduction] GPU covariance failed, fallback to CPU: {}", e.what());
+            LogDimensionalityReductionFallbackOnce(
+                "DimensionalityReduction::ComputeCovarianceMatrix",
+                e.what(),
+                n_samples,
+                n_features);
         }
     }
 #endif
@@ -396,12 +427,22 @@ std::vector<std::vector<double>> DimensionalityReduction::ComputeSquaredDistance
 
             // Compute pairwise squared distances using the formula:
             // ||x_i - x_j||^2 = ||x_i||^2 + ||x_j||^2 - 2 * x_i . x_j
-            af::array sq_norms = af::sum(X * X, 1);  // [n x 1]
+            af::array squared = X * X;
+            squared.eval();
+            af::array sq_norms = af::sum(squared, 1);  // [n x 1]
+            sq_norms.eval();
             af::array dot_products = af::matmul(X, af::transpose(X));  // [n x n]
+            dot_products.eval();
 
             // Broadcast sq_norms to [n x n]
-            af::array dist_sq = af::tile(sq_norms, 1, static_cast<unsigned int>(n)) + af::tile(af::transpose(sq_norms), static_cast<unsigned int>(n), 1) - 2.0 * dot_products;
+            af::array left_norms = af::tile(sq_norms, 1, static_cast<unsigned int>(n));
+            left_norms.eval();
+            af::array right_norms = af::tile(af::transpose(sq_norms), static_cast<unsigned int>(n), 1);
+            right_norms.eval();
+            af::array dist_sq = left_norms + right_norms - 2.0 * dot_products;
+            dist_sq.eval();
             dist_sq = af::max(dist_sq, 0.0);  // Clamp negative values due to numerical errors
+            dist_sq.eval();
 
             // Copy back to CPU
             std::vector<std::vector<double>> distances(n, std::vector<double>(n, 0.0));
@@ -416,7 +457,11 @@ std::vector<std::vector<double>> DimensionalityReduction::ComputeSquaredDistance
 
             return distances;
         } catch (const af::exception& e) {
-            spdlog::warn("[DimensionalityReduction] GPU distance failed, fallback to CPU: {}", e.what());
+            LogDimensionalityReductionFallbackOnce(
+                "DimensionalityReduction::ComputeSquaredDistances",
+                e.what(),
+                n,
+                data.empty() ? 0 : data[0].size());
         }
     }
 #endif

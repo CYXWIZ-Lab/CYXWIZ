@@ -485,18 +485,51 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
         // with the TensorToAf3DRowMajor at the entry.
         return AfToTensor3DRowMajor(output);
     } catch (const af::exception& e) {
+        const auto fallback_reason =
+            ClassifyArrayFireBackendFallbackReason(e.what());
+        const std::string fallback_context =
+            BuildArrayFireBackendFallbackContext(
+                BuildTensorShapeContext("input", input.Shape()) +
+                "; hidden_size=" + std::to_string(hidden_size_) +
+                "; layers=" + std::to_string(num_layers_) +
+                "; bidirectional=" +
+                std::string(bidirectional_ ? "true" : "false") +
+                "; batch_first=" +
+                std::string(batch_first_ ? "true" : "false"));
         DisableArrayFireCudaRecurrentAfterFailure(
             RecurrentLayerKind::LSTM, "LSTMLayer::Forward", e.what());
-        if (IsCudaJitFormalParameterOverflow(e.what())) {
-            spdlog::warn("{}",
-                         BuildRecurrentFormalParameterOverflowFallbackMessage(
-                             "LSTMLayer::Forward"));
+        if (fallback_reason == BackendFallbackReason::CudaJitParamOverflow) {
+            if (ShouldLogArrayFireBackendFallbackOnce(
+                    "LSTMLayer::Forward", fallback_reason,
+                    fallback_context)) {
+                std::string fallback_message =
+                    BuildRecurrentFormalParameterOverflowFallbackMessage(
+                        "LSTMLayer::Forward");
+                fallback_message += " Context: ";
+                fallback_message += fallback_context;
+                fallback_message += ".";
+                BackendDebugHooks::EmitDebugEvent(
+                    "LSTMLayer::Forward",
+                    fallback_message +
+                    (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
+                spdlog::warn("{}", fallback_message);
+            }
         } else {
-            BackendDebugHooks::EmitDebugEvent(
-                "LSTMLayer::Forward",
-                std::string("ArrayFire fallback: ") + e.what() +
-                (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-            spdlog::warn("ArrayFire LSTMLayer::Forward failed: {}, falling back to CPU", e.what());
+            const bool log_fallback =
+                ShouldLogArrayFireBackendFallbackOnce(
+                    "LSTMLayer::Forward", fallback_reason,
+                    fallback_context);
+            const std::string fallback_message =
+                BuildArrayFireBackendFallbackMessage(
+                    "LSTMLayer::Forward", fallback_reason,
+                    log_fallback, e.what(), fallback_context);
+            if (log_fallback) {
+                BackendDebugHooks::EmitDebugEvent(
+                    "LSTMLayer::Forward",
+                    fallback_message +
+                    (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
+                spdlog::warn("{}", fallback_message);
+            }
         }
     }
 #endif
@@ -522,7 +555,7 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
 
     int num_directions = bidirectional_ ? 2 : 1;
 
-    // Reinitialize weights with CPU if they have null data (ArrayFire init failed)
+    // Reinitialize weights with CPU if ArrayFire initialization produced null data.
     if (W_ih_.empty() || W_ih_[0].Data<float>() == nullptr) {
         for (int layer = 0; layer < num_layers_; layer++) {
             size_t layer_input_size = (layer == 0) ? input_dim : static_cast<size_t>(hidden_size_ * num_directions);

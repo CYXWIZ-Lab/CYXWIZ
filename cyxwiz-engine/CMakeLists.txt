@@ -111,6 +111,7 @@ set(ENGINE_SOURCES
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/pipeline_runtime_capabilities.cpp  # Data Studio runtime support truth
+    src/core/data_studio_execution_plan.cpp  # Track 22 typed Data Studio plan
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/annotation_manager.cpp
@@ -486,6 +487,7 @@ set(ENGINE_HEADERS
     src/core/arrow_converters.h
     src/core/duckdb_connector.h
     src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/data_studio_execution_plan.h
     src/core/node_metadata.h       # Node Browser: node metadata structures
     src/core/node_metadata_registry.h  # Node Browser: metadata registry
     src/core/texture_manager.h
@@ -1370,6 +1372,33 @@ if(WIN32)
 endif()
 
 set_target_properties(test_pipeline_executor_operator_routing PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Data Studio typed execution plan =====
+add_executable(test_data_studio_execution_plan
+    tests/test_data_studio_execution_plan.cpp
+    src/core/data_studio_execution_plan.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+)
+
+target_include_directories(test_data_studio_execution_plan PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_data_studio_execution_plan PRIVATE
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_data_studio_execution_plan PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_data_studio_execution_plan PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

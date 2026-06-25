@@ -50,6 +50,11 @@ Tensor CpuKLDivBackward(const Tensor& predictions,
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array TensorToAf(const Tensor& t);
 Tensor AfToTensor(const af::array& arr);
+void LogArrayFireLossFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const Tensor& tensor,
+    const char* tensor_name);
 af::array ApplyReduction(const af::array& loss, Reduction reduction);
 af::array StableSoftmax(const af::array& x, int axis = 0);
 af::array SignLike(const af::array& x);

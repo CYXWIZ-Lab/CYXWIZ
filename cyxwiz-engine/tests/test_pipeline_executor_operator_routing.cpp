@@ -5,12 +5,15 @@
 
 #include <arrow/api.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -126,16 +129,164 @@ std::string JsonEscapePath(std::string path) {
     return escaped;
 }
 
+std::set<std::string> ValidationCapabilityNodeNames() {
+    std::set<std::string> names;
+    for (const auto& capability :
+         cyxwiz::GetPipelineRequiredParameterRuntimeCapabilities()) {
+        names.insert(capability.legacy_type_name);
+    }
+    for (const auto& capability :
+         cyxwiz::GetPipelineAllowedParameterValuesRuntimeCapabilities()) {
+        names.insert(capability.legacy_type_name);
+    }
+    for (const auto& capability :
+         cyxwiz::GetPipelineIntegerParameterRuntimeCapabilities()) {
+        names.insert(capability.legacy_type_name);
+    }
+    for (const auto& capability :
+         cyxwiz::GetPipelineFloatParameterRuntimeCapabilities()) {
+        names.insert(capability.legacy_type_name);
+    }
+    return names;
+}
+
+const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
+    static const std::set<std::string> names = {
+        "ACFNode",
+        "ARIMAForecaster",
+        "Binning",
+        "BinningNode",
+        "CalculatorNode",
+        "CellExtractor",
+        "CellUpdater",
+        "ConfusionMatrixNode",
+        "Convolution1D",
+        "CountVectorizer",
+        "DataConvert",
+        "DataInput",
+        "DataOutput",
+        "DBSCANCluster",
+        "Differencing",
+        "ExcelInput",
+        "ExponentialSmoothing",
+        "ExportCSV",
+        "ExportJSON",
+        "ExportParquet",
+        "FFTNode",
+        "FileInput",
+        "FillMissing",
+        "FilterDesigner",
+        "FilterRows",
+        "GMMCluster",
+        "GroupBy",
+        "HDF5Dataset",
+        "HierarchicalCluster",
+        "Join",
+        "JSONFile",
+        "JSONPathExtractor",
+        "KMeansCluster",
+        "LabelEncoder",
+        "LinearRegressionNode",
+        "LogTransform",
+        "MathFormula",
+        "NERSequenceBuilder",
+        "NERTagVocabulary",
+        "OrdinalEncoder",
+        "OutlierDetector",
+        "PACFNode",
+        "ParquetInput",
+        "PCANode",
+        "PolynomialFeatures",
+        "PolynomialFeaturesNode",
+        "PolynomialRegressionNode",
+        "POSVocabulary",
+        "PRCurveNode",
+        "RegexTester",
+        "RegressionMetricsNode",
+        "RenameColumns",
+        "RESTAPISource",
+        "RobustScaler",
+        "ROCCurveNode",
+        "RowToColumnNames",
+        "RuleEngine",
+        "SaveDataset",
+        "SeasonalityDetector",
+        "SelectColumns",
+        "SentimentAnalyzer",
+        "SortRows",
+        "SQLQuery",
+        "StationarityTest",
+        "StringManipulation",
+        "TableCropper",
+        "TargetEncoder",
+        "TextClean",
+        "TextCleanNode",
+        "TextTokenize",
+        "TextTokenizer",
+        "TextVectorize",
+        "TFIDFVectorizer",
+        "TimeSeriesDecomposition",
+        "TimeSeriesFeatures",
+        "TimeSeriesLag",
+        "TimeSeriesSplit",
+        "TimeSeriesWindow",
+        "TokenVocabulary",
+        "TSDiff",
+        "TSFeatures",
+        "TSLag",
+        "TSWindow",
+        "ValueCounts",
+    };
+    return names;
+}
+
+void CheckValidationBadSchemaRoutingCoverage() {
+    const auto validation_nodes = ValidationCapabilityNodeNames();
+    const auto& covered_nodes = BadSchemaRoutingCoverageNodeNames();
+
+    for (const auto& validation_node : validation_nodes) {
+        Check(covered_nodes.count(validation_node) > 0,
+              "central validation capability lacks bad-schema routing coverage: " +
+                  validation_node);
+    }
+    for (const auto& covered_node : covered_nodes) {
+        Check(validation_nodes.count(covered_node) > 0,
+              "bad-schema routing coverage entry no longer has a central "
+              "validation capability: " + covered_node);
+    }
+}
+
 } // namespace
 
 int main() {
     namespace fs = std::filesystem;
+    CheckValidationBadSchemaRoutingCoverage();
 
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_datainput_429");
+    registry.UnloadDataset("ds_datainput_9901");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_operator_ACFNode_202");
+
+    const std::string preflight_invalid_schema_json =
+        R"({"nodes":[)"
+        R"({"id":9901,"type":"DataInput","name":"PreflightInput","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":9902,"type":"ACFNode","name":"PreflightBadACF","parameters":{}})"
+        R"(],"links":[{"start_node":9901,"end_node":9902}]})";
+
+    cyxwiz::PipelineExecutor preflight_invalid_schema_executor;
+    Check(!preflight_invalid_schema_executor.ExecutePipeline(
+              preflight_invalid_schema_json),
+          "invalid schema should fail before any node execution");
+    Check(preflight_invalid_schema_executor.GetLastError().find(
+              "missing required parameter 'signal_col'") != std::string::npos,
+          "preflight schema validation should report the invalid downstream node: " +
+              preflight_invalid_schema_executor.GetLastError());
+    Check(registry.GetArrowDataset("ds_datainput_9901") == nullptr,
+          "invalid schema must fail before DataInput loads or SQL/operator "
+          "execution begins");
 
     const fs::path csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_routing.csv";

@@ -61,23 +61,29 @@ void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
                 // Update biased first moment estimate: m = b1 * m + (1 - b1) * grad
                 m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
+                m_gpu.eval();
 
                 // Update biased second moment estimate: v = b2 * v + (1 - b2) * grad^2
                 v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
+                v_gpu.eval();
 
                 // Compute bias-corrected estimates
                 af::array m_hat = m_gpu / bias_correction1;
+                m_hat.eval();
                 af::array v_hat = v_gpu / bias_correction2;
+                v_hat.eval();
 
                 // Update parameters: param = param - lr * m_hat / (sqrt(v_hat) + eps)
                 param_gpu = param_gpu - lr * m_hat / (af::sqrt(v_hat) + eps);
+                param_gpu.eval();
 
                 param.SetFromArray(param_gpu);
                 m_[name].SetFromArray(m_gpu);
                 v_[name].SetFromArray(v_gpu);
                 continue;
                 } catch (const af::exception& e) {
-                spdlog::warn("Adam GPU step failed: {}, falling back to CPU", e.what());
+                optimizer_detail::LogOptimizerFallbackOnce(
+                    "AdamOptimizer::Step", name, param, e.what());
             }
         }
 #endif
@@ -141,9 +147,12 @@ void AdamWOptimizer::Step(std::map<std::string, Tensor>& parameters,
                 try {
                     af::array param_gpu = param.GetArray();
                     param_gpu = param_gpu * (1.0f - wd);
+                    param_gpu.eval();
                     param.SetFromArray(param_gpu);
                     continue;
-    } catch (const af::exception&) {
+    } catch (const af::exception& e) {
+                    optimizer_detail::LogOptimizerFallbackOnce(
+                        "AdamWOptimizer::WeightDecay", param_pair.first, param, e.what());
                     // Fall through to CPU
                 }
             }
@@ -213,24 +222,31 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
                 // Update moments
                 m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
+                m_gpu.eval();
                 v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
+                v_gpu.eval();
 
                 // Bias-corrected estimates
                 af::array m_hat = m_gpu / bias_correction1;
+                m_hat.eval();
                 af::array v_hat = v_gpu / bias_correction2;
+                v_hat.eval();
 
                 // NAdam: Nesterov momentum term
                 af::array m_nesterov = b1 * m_hat + (1.0f - b1) * grad_gpu / bias_correction1;
+                m_nesterov.eval();
 
                 // Update parameters
                 param_gpu = param_gpu - lr * m_nesterov / (af::sqrt(v_hat) + eps);
+                param_gpu.eval();
 
                 param.SetFromArray(param_gpu);
                 m_[name].SetFromArray(m_gpu);
                 v_[name].SetFromArray(v_gpu);
                 continue;
             } catch (const af::exception& e) {
-                spdlog::warn("NAdam GPU step failed: {}, falling back to CPU", e.what());
+                optimizer_detail::LogOptimizerFallbackOnce(
+                    "NAdamOptimizer::Step", name, param, e.what());
             }
         }
 #endif

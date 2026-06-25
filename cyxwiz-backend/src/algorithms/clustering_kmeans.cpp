@@ -6,6 +6,7 @@
 #endif
 
 #include "cyxwiz/clustering.h"
+#include "arrayfire_backend_utils.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <limits>
@@ -30,6 +31,48 @@ namespace cyxwiz {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
+static std::string BuildClusteringContext(
+    const std::vector<std::vector<double>>& data,
+    const std::string& extra = {})
+{
+    std::string context = "samples=" + std::to_string(data.size()) +
+        "; features=" + std::to_string(data.empty() ? 0 : data[0].size());
+    if (!extra.empty()) {
+        context += "; ";
+        context += extra;
+    }
+    return context;
+}
+
+static void LogClusteringBackendFailureOnce(
+    const char* operation_name,
+    const char* error_message,
+    const std::string& data_context)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(data_context);
+    if (!ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        return;
+    }
+
+    std::string message = std::string("ArrayFire ") +
+        (operation_name ? operation_name : "clustering operation") +
+        " failed (reason=" + BackendFallbackReasonName(reason) +
+        "); clustering operation cannot complete on the current ArrayFire backend.";
+    if (!context.empty()) {
+        message += " Context: ";
+        message += context;
+        message += ".";
+    }
+    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
+        error_message != nullptr &&
+        error_message[0] != '\0') {
+        message += " Error: ";
+        message += error_message;
+    }
+    spdlog::error("{}", message);
+}
+
 // ==================== K-Means GPU Helpers ====================
 
 af::array Clustering::InitializeCentroidsRandom(const af::array& data, int n_clusters, unsigned int seed) {
@@ -39,14 +82,19 @@ af::array Clustering::InitializeCentroidsRandom(const af::array& data, int n_clu
 
     // Generate random indices
     af::array rand_vals = af::randu(n, f64);
+    rand_vals.eval();
     af::array sorted_vals, indices;
     af::sort(sorted_vals, indices, rand_vals);
+    indices.eval();
 
     // Take first n_clusters indices
     af::array selected_indices = indices(af::seq(0, n_clusters - 1));
+    selected_indices.eval();
 
     // Gather centroids
-    return data(selected_indices, af::span);
+    af::array centroids = data(selected_indices, af::span);
+    centroids.eval();
+    return centroids;
 }
 
 af::array Clustering::InitializeCentroidsKMeansPP(const af::array& data, int n_clusters, unsigned int seed) {
@@ -59,7 +107,9 @@ af::array Clustering::InitializeCentroidsKMeansPP(const af::array& data, int n_c
     std::vector<af::array> centroid_list;
 
     // Choose first centroid randomly
-    int first_idx = static_cast<int>(af::randu(1, u32).scalar<unsigned int>() % n);
+    af::array first_idx_array = af::randu(1, u32);
+    first_idx_array.eval();
+    int first_idx = static_cast<int>(first_idx_array.scalar<unsigned int>() % n);
     centroid_list.push_back(data(first_idx, af::span));
 
     // Distance to nearest centroid for each point
@@ -69,20 +119,30 @@ af::array Clustering::InitializeCentroidsKMeansPP(const af::array& data, int n_c
         // Update distances to last added centroid
         af::array last_centroid = centroid_list.back();
         af::array last_centroid_tile = af::tile(last_centroid, n, 1);
+        last_centroid_tile.eval();
 
         af::array sq_dist = af::sum(af::pow(data - last_centroid_tile, 2), 1);
+        sq_dist.eval();
         min_distances = af::min(min_distances, sq_dist);
+        min_distances.eval();
 
         // Sample proportional to squared distance
-        af::array probs = min_distances / af::sum(min_distances);
+        double distance_sum = af::sum<double>(min_distances);
+        af::array probs = min_distances / distance_sum;
+        probs.eval();
         af::array cum_probs = af::accum(probs);
+        cum_probs.eval();
 
-        double r = af::randu(1, f64).scalar<double>();
+        af::array random_value = af::randu(1, f64);
+        random_value.eval();
+        double r = random_value.scalar<double>();
         af::array mask = cum_probs >= r;
+        mask.eval();
 
         // Find first true index
         unsigned int next_idx = 0;
         af::array true_indices = af::where(mask);
+        true_indices.eval();
         if (!true_indices.isempty()) {
             next_idx = true_indices(0).scalar<unsigned int>();
         }
@@ -95,6 +155,7 @@ af::array Clustering::InitializeCentroidsKMeansPP(const af::array& data, int n_c
     for (int i = 0; i < n_clusters; ++i) {
         centroids(i, af::span) = centroid_list[i];
     }
+    centroids.eval();
 
     return centroids;
 }
@@ -103,6 +164,7 @@ af::array Clustering::AssignClusters(const af::array& data, const af::array& cen
     af::array distances = ComputePointToCentroidDistances(data, centroids);
     af::array min_vals, labels;
     af::min(min_vals, labels, distances, 1);
+    labels.eval();
     return labels;
 }
 
@@ -115,17 +177,22 @@ af::array Clustering::UpdateCentroids(const af::array& data, const af::array& la
 
     for (int k = 0; k < n_clusters; ++k) {
         af::array mask = (labels == k);
+        mask.eval();
         af::array cluster_points = af::where(mask);
+        cluster_points.eval();
 
         if (!cluster_points.isempty()) {
             int cluster_size = static_cast<int>(cluster_points.elements());
             af::array cluster_data = data(cluster_points, af::span);
+            cluster_data.eval();
 
             // Mean of cluster points
             af::array centroid = af::sum(cluster_data, 0) / static_cast<double>(cluster_size);
+            centroid.eval();
             new_centroids(k, af::span) = centroid;
         }
     }
+    new_centroids.eval();
 
     return new_centroids;
 }
@@ -137,14 +204,19 @@ double Clustering::ComputeInertia(const af::array& data, const af::array& labels
 
     for (int c = 0; c < k; ++c) {
         af::array mask = (labels == c);
+        mask.eval();
         af::array cluster_indices = af::where(mask);
+        cluster_indices.eval();
 
         if (!cluster_indices.isempty()) {
             af::array cluster_data = data(cluster_indices, af::span);
+            cluster_data.eval();
             af::array centroid = centroids(c, af::span);
             af::array centroid_tile = af::tile(centroid, static_cast<int>(cluster_data.dims(0)), 1);
+            centroid_tile.eval();
 
             af::array sq_dist = af::sum(af::pow(cluster_data - centroid_tile, 2), 1);
+            sq_dist.eval();
             inertia += af::sum<double>(sq_dist);
         }
     }
@@ -253,7 +325,12 @@ KMeansResult Clustering::KMeans(
 
     } catch (const af::exception& e) {
         result.error_message = std::string("ArrayFire error: ") + e.what();
-        spdlog::error("K-Means failed: {}", result.error_message);
+        LogClusteringBackendFailureOnce(
+            "Clustering::KMeans",
+            e.what(),
+            BuildClusteringContext(
+                data,
+                "clusters=" + std::to_string(n_clusters)));
     }
 
     return result;

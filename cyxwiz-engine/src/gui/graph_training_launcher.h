@@ -27,6 +27,7 @@ struct GraphTrainingLaunchResult {
         cyxwiz::PipelineMaterializerSourceKind::Unknown;
     bool materializer_skipped_unsupported_source = false;
     std::string materializer_unsupported_source_reason;
+    std::string materializer_diagnostic_message;
     int epochs = 0;
     int batch_size = 0;
 };

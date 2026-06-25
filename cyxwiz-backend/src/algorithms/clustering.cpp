@@ -62,7 +62,9 @@ std::vector<std::vector<double>> Clustering::FromAfArray(const af::array& arr) {
     int n_features = static_cast<int>(arr.dims(1));
 
     std::vector<double> flat_data(n_samples * n_features);
-    arr.host(flat_data.data());
+    af::array materialized = arr;
+    materialized.eval();
+    materialized.host(flat_data.data());
 
     std::vector<std::vector<double>> result(n_samples, std::vector<double>(n_features));
     for (int i = 0; i < n_samples; ++i) {
@@ -82,6 +84,7 @@ std::vector<int> Clustering::AfArrayToIntVector(const af::array& arr) {
 
     // Convert to int array on host
     af::array int_arr = arr.as(s32);
+    int_arr.eval();
     int_arr.host(result.data());
 
     return result;
@@ -94,6 +97,7 @@ std::vector<double> Clustering::AfArrayToDoubleVector(const af::array& arr) {
     std::vector<double> result(n);
 
     af::array double_arr = arr.as(f64);
+    double_arr.eval();
     double_arr.host(result.data());
 
     return result;
@@ -109,20 +113,28 @@ af::array Clustering::ComputeEuclideanDistanceMatrix(const af::array& data) {
 
     // ||a - b||^2 = ||a||^2 + ||b||^2 - 2 * a.b
     af::array sq_norms = af::sum(data * data, 1);  // [n x 1]
+    sq_norms.eval();
 
     // Expand for broadcasting
     af::array sq_norms_row = af::tile(sq_norms, 1, n);          // [n x n]
+    sq_norms_row.eval();
     af::array sq_norms_col = af::tile(sq_norms.T(), n, 1);      // [n x n]
+    sq_norms_col.eval();
 
     // Compute dot products: data @ data.T
     af::array dot_products = af::matmul(data, data.T());  // [n x n]
+    dot_products.eval();
 
     // Squared distances
     af::array sq_distances = sq_norms_row + sq_norms_col - 2.0 * dot_products;
+    sq_distances.eval();
 
     // Clamp negative values (numerical errors) and take sqrt
     sq_distances = af::max(sq_distances, 0.0);
-    return af::sqrt(sq_distances);
+    sq_distances.eval();
+    af::array distances = af::sqrt(sq_distances);
+    distances.eval();
+    return distances;
 }
 
 af::array Clustering::ComputeManhattanDistanceMatrix(const af::array& data) {
@@ -132,15 +144,22 @@ af::array Clustering::ComputeManhattanDistanceMatrix(const af::array& data) {
     // Expand data for pairwise computation
     // data_i: [n x 1 x d], data_j: [1 x n x d]
     af::array data_i = af::moddims(data, n, 1, d);
+    data_i.eval();
     af::array data_j = af::moddims(data, 1, n, d);
+    data_j.eval();
 
     // Tile for broadcasting
     data_i = af::tile(data_i, 1, n, 1);
+    data_i.eval();
     data_j = af::tile(data_j, n, 1, 1);
+    data_j.eval();
 
     // Manhattan distance: sum(|a - b|)
     af::array diff = af::abs(data_i - data_j);
-    return af::sum(diff, 2);  // [n x n]
+    diff.eval();
+    af::array distances = af::sum(diff, 2);  // [n x n]
+    distances.eval();
+    return distances;
 }
 
 af::array Clustering::ComputeCosineDistanceMatrix(const af::array& data) {
@@ -149,14 +168,20 @@ af::array Clustering::ComputeCosineDistanceMatrix(const af::array& data) {
 
     // Normalize data
     af::array norms = af::sqrt(af::sum(data * data, 1));  // [n x 1]
+    norms.eval();
     norms = af::max(norms, 1e-10);  // Avoid division by zero
+    norms.eval();
     af::array normalized = data / af::tile(norms, 1, static_cast<int>(data.dims(1)));
+    normalized.eval();
 
     // Cosine similarity = normalized @ normalized.T
     af::array similarity = af::matmul(normalized, normalized.T());
+    similarity.eval();
 
     // Cosine distance = 1 - similarity
-    return 1.0 - similarity;
+    af::array distances = 1.0 - similarity;
+    distances.eval();
+    return distances;
 }
 
 af::array Clustering::ComputeDistanceMatrix(const af::array& data, const std::string& metric) {
@@ -175,17 +200,26 @@ af::array Clustering::ComputePointToCentroidDistances(const af::array& data, con
 
     // ||x - c||^2 = ||x||^2 + ||c||^2 - 2 * x.c
     af::array data_sq = af::sum(data * data, 1);          // [n x 1]
+    data_sq.eval();
     af::array cent_sq = af::sum(centroids * centroids, 1); // [k x 1]
+    cent_sq.eval();
 
     af::array data_sq_tile = af::tile(data_sq, 1, k);      // [n x k]
+    data_sq_tile.eval();
     af::array cent_sq_tile = af::tile(cent_sq.T(), n, 1);  // [n x k]
+    cent_sq_tile.eval();
 
     af::array dot = af::matmul(data, centroids.T());       // [n x k]
+    dot.eval();
 
     af::array sq_distances = data_sq_tile + cent_sq_tile - 2.0 * dot;
+    sq_distances.eval();
     sq_distances = af::max(sq_distances, 0.0);
+    sq_distances.eval();
 
-    return af::sqrt(sq_distances);
+    af::array distances = af::sqrt(sq_distances);
+    distances.eval();
+    return distances;
 }
 
 #else  // No ArrayFire - CPU fallback stubs

@@ -6,6 +6,7 @@
 #endif
 
 #include "cyxwiz/clustering.h"
+#include "arrayfire_backend_utils.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <queue>
@@ -29,6 +30,48 @@
 namespace cyxwiz {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+
+static std::string BuildClusteringContext(
+    const std::vector<std::vector<double>>& data,
+    const std::string& extra = {})
+{
+    std::string context = "samples=" + std::to_string(data.size()) +
+        "; features=" + std::to_string(data.empty() ? 0 : data[0].size());
+    if (!extra.empty()) {
+        context += "; ";
+        context += extra;
+    }
+    return context;
+}
+
+static void LogClusteringBackendFailureOnce(
+    const char* operation_name,
+    const char* error_message,
+    const std::string& data_context)
+{
+    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(data_context);
+    if (!ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
+        return;
+    }
+
+    std::string message = std::string("ArrayFire ") +
+        (operation_name ? operation_name : "clustering operation") +
+        " failed (reason=" + BackendFallbackReasonName(reason) +
+        "); clustering operation cannot complete on the current ArrayFire backend.";
+    if (!context.empty()) {
+        message += " Context: ";
+        message += context;
+        message += ".";
+    }
+    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
+        error_message != nullptr &&
+        error_message[0] != '\0') {
+        message += " Error: ";
+        message += error_message;
+    }
+    spdlog::error("{}", message);
+}
 
 // ==================== DBSCAN Implementation ====================
 
@@ -55,6 +98,7 @@ DBSCANResult Clustering::DBSCAN(
         // Transfer distance matrix to CPU for DBSCAN logic
         // (DBSCAN requires sequential cluster expansion which is hard to parallelize)
         std::vector<double> dist_flat(n * n);
+        dist_matrix.eval();
         dist_matrix.host(dist_flat.data());
 
         // Initialize labels
@@ -133,7 +177,14 @@ DBSCANResult Clustering::DBSCAN(
 
     } catch (const af::exception& e) {
         result.error_message = std::string("ArrayFire error: ") + e.what();
-        spdlog::error("DBSCAN failed: {}", result.error_message);
+        LogClusteringBackendFailureOnce(
+            "Clustering::DBSCAN",
+            e.what(),
+            BuildClusteringContext(
+                data,
+                "eps=" + std::to_string(eps) +
+                "; min_samples=" + std::to_string(min_samples) +
+                "; metric=" + metric));
     }
 
     return result;
@@ -155,19 +206,25 @@ std::vector<double> Clustering::ComputeKDistances(
         af::array sorted_dists;
         af::array indices;
         af::sort(sorted_dists, indices, dist_matrix, 1);
+        sorted_dists.eval();
 
         // Get k-th column (k-th nearest neighbor distance)
         int k_idx = std::min(k, n - 1);
         af::array k_distances = sorted_dists(af::span, k_idx);
+        k_distances.eval();
 
         // Sort k-distances for plotting
         af::array sorted_k_dists;
         af::sort(sorted_k_dists, indices, k_distances);
+        sorted_k_dists.eval();
 
         return AfArrayToDoubleVector(sorted_k_dists);
 
     } catch (const af::exception& e) {
-        spdlog::error("ComputeKDistances failed: {}", e.what());
+        LogClusteringBackendFailureOnce(
+            "Clustering::ComputeKDistances",
+            e.what(),
+            BuildClusteringContext(data, "k=" + std::to_string(k)));
         return {};
     }
 }

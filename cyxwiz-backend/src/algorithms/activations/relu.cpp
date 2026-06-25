@@ -4,15 +4,43 @@
 #endif
 
 #include "cyxwiz/activations/relu.h"
+#include "../arrayfire_backend_utils.h"
 #include <cstring>
 #include <algorithm>
 #include <stdexcept>
+#include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #endif
 
 namespace cyxwiz {
+namespace {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+void LogReluFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const Tensor& tensor,
+    const char* tensor_name) {
+    const BackendFallbackReason reason =
+        ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    if (ShouldLogArrayFireBackendFallbackOnce(
+            operation_name, reason, context)) {
+        spdlog::warn("{}",
+                     BuildArrayFireBackendFallbackMessage(
+                         operation_name,
+                         reason,
+                         reason != BackendFallbackReason::CudaJitParamOverflow,
+                         error_message,
+                         context));
+    }
+}
+#endif
+
+} // namespace
 
 // GPU availability flag (shared across the library)
 extern bool CheckGPUAvailable();
@@ -47,10 +75,11 @@ Tensor ReLU::Forward(const Tensor& input) {
 
             // ReLU: max(0, x)
             af::array output_gpu = af::max(input_gpu, 0.0f);
+            output_gpu.eval();
 
             return Tensor(output_gpu);
-        } catch (const af::exception&) {
-            // Fall through to CPU
+        } catch (const af::exception& e) {
+            LogReluFallbackOnce("ReLU::Forward", e.what(), input, "input");
         }
     }
 #endif
@@ -82,10 +111,12 @@ Tensor ReLU::Backward(const Tensor& grad_output, const Tensor& input) {
             // Gradient: grad * (input > 0)
             af::array mask = input_gpu > 0.0f;
             af::array grad_input_gpu = grad_gpu * mask.as(f32);
+            grad_input_gpu.eval();
 
             return Tensor(grad_input_gpu);
-        } catch (const af::exception&) {
-            // Fall through to CPU
+        } catch (const af::exception& e) {
+            LogReluFallbackOnce(
+                "ReLU::Backward", e.what(), grad_output, "grad_output");
         }
     }
 #endif

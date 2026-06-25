@@ -152,9 +152,21 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
 
                 // dh_prev = dgates @ W_hh
                 dh_next = af::matmul(dgates, W_hh);
+                dW_ih.eval();
+                dW_hh.eval();
+                db_ih.eval();
+                db_hh.eval();
+                d_layer_input.eval();
+                dh_next.eval();
+                dc_next.eval();
             }
 
             // Stash per-layer weight grads.
+            dW_ih.eval();
+            dW_hh.eval();
+            db_ih.eval();
+            db_hh.eval();
+            d_layer_input.eval();
             grad_W_ih_[layer] = AfToTensor(dW_ih);
             grad_W_hh_[layer] = AfToTensor(dW_hh);
             grad_b_ih_[layer] = AfToTensor(db_ih);
@@ -168,14 +180,28 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
         if (batch_first_) {
             layer_grad = af::reorder(layer_grad, 1, 0, 2);
         }
+        layer_grad.eval();
 
         return AfToTensor3DRowMajor(layer_grad);
     } catch (const af::exception& e) {
-        BackendDebugHooks::EmitDebugEvent(
-            "LSTMLayer::Backward",
-            std::string("ArrayFire fallback: ") + e.what() +
-            (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-        spdlog::warn("ArrayFire LSTMLayer::Backward failed: {}, falling back to CPU", e.what());
+        const BackendFallbackReason reason =
+            ClassifyArrayFireBackendFallbackReason(e.what());
+        const std::string context = BuildArrayFireBackendFallbackContext(
+            BuildTensorShapeContext("grad_output", grad_output.Shape()));
+        if (ShouldLogArrayFireBackendFallbackOnce("LSTMLayer::Backward", reason, context)) {
+            const std::string fallback_message =
+                BuildArrayFireBackendFallbackMessage(
+                    "LSTMLayer::Backward",
+                    reason,
+                    reason != BackendFallbackReason::CudaJitParamOverflow,
+                    e.what(),
+                    context);
+            BackendDebugHooks::EmitDebugEvent(
+                "LSTMLayer::Backward",
+                fallback_message +
+                (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
+            spdlog::warn("{}", fallback_message);
+        }
     }
 #endif
 

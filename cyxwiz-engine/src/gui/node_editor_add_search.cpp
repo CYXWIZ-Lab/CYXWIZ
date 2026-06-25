@@ -14,6 +14,61 @@
 
 namespace gui {
 
+namespace {
+
+const cyxwiz::SupportAxisDefinition* FindSupportAxis(
+    const cyxwiz::NodeMetadata* metadata,
+    const char* axis_name) {
+    if (!metadata) return nullptr;
+    auto it = std::find_if(
+        metadata->support_axes.begin(),
+        metadata->support_axes.end(),
+        [axis_name](const cyxwiz::SupportAxisDefinition& axis) {
+            return axis.name == axis_name;
+        });
+    return it != metadata->support_axes.end() ? &*it : nullptr;
+}
+
+bool HasUnsupportedSupportAxis(const cyxwiz::NodeMetadata* metadata,
+                               const char* axis_name) {
+    const auto* axis = FindSupportAxis(metadata, axis_name);
+    return axis != nullptr && !axis->supported;
+}
+
+bool IsMetadataSupportBlocked(const cyxwiz::NodeMetadata* metadata) {
+    const auto* support_state = FindSupportAxis(metadata, "Support State");
+    if (support_state && support_state->value == "blocked") return true;
+
+    return HasUnsupportedSupportAxis(metadata, "Runtime") ||
+           HasUnsupportedSupportAxis(metadata, "Pipeline Executor") ||
+           HasUnsupportedSupportAxis(metadata, "Training Backend") ||
+           HasUnsupportedSupportAxis(metadata, "Compile") ||
+           HasUnsupportedSupportAxis(metadata, "Training");
+}
+
+std::string FirstSupportBlockReason(const cyxwiz::NodeMetadata* metadata) {
+    if (!metadata) return {};
+
+    if (const auto* support_state = FindSupportAxis(metadata, "Support State")) {
+        if (!support_state->reason.empty() &&
+            (!support_state->supported || support_state->value == "blocked")) {
+            return support_state->reason;
+        }
+    }
+
+    for (const auto& axis : metadata->support_axes) {
+        if (!axis.supported && !axis.reason.empty()) {
+            return axis.name + ": " + axis.reason;
+        }
+    }
+
+    return IsMetadataSupportBlocked(metadata)
+        ? std::string("Blocked by central support metadata")
+        : std::string();
+}
+
+} // namespace
+
 // Fuzzy match algorithm - returns a score (higher is better match, 0 = no match)
 // Inspired by fzf/sublime text matching
 int NodeEditor::FuzzyMatch(const std::string& pattern, const std::string& str) {
@@ -144,6 +199,14 @@ void NodeEditor::InitializeSearchableNodes() {
             node.status = to_gui_status(meta->status);
             node.description = meta->brief_description;
             node.tooltip = meta->help_text;
+            node.support_blocked = IsMetadataSupportBlocked(meta);
+            if (const auto* support_state = FindSupportAxis(meta, "Support State")) {
+                node.support_state = support_state->value;
+            }
+            node.support_reason = FirstSupportBlockReason(meta);
+            if (node.support_blocked && !node.support_reason.empty()) {
+                node.tooltip = node.support_reason;
+            }
             all_searchable_nodes_.push_back(std::move(node));
         }
     }
@@ -341,9 +404,10 @@ void NodeEditor::ShowNodeAddSearch() {
             // Add the selected node
             SearchableNode* selected = filtered_nodes_[node_add_search_.selected_index].second;
 
-            // Block template nodes - they're not implemented yet
-            if (selected->status == NodeImplementationStatus::Template) {
-                // Don't add template nodes - just show they're not available
+            // Block template and centrally unsupported nodes.
+            if (selected->status == NodeImplementationStatus::Template ||
+                selected->support_blocked) {
+                // Don't add unavailable nodes; the dropdown shows the reason.
             } else {
                 // Set position for new node (center of visible canvas)
                 ImVec2 editor_pan = ImNodes::EditorContextGetPanning();
@@ -381,7 +445,7 @@ void NodeEditor::ShowNodeAddSearch() {
     if (node_add_search_.show_results && has_search_text && !filtered_nodes_.empty()) {
         ImVec2 dropdown_pos(search_pos.x, search_pos.y + search_height + 2);
         float dropdown_width = search_width;
-        float item_height = 32.0f;
+        float item_height = 40.0f;
         float dropdown_height = std::min(item_height * filtered_nodes_.size() + 8, 400.0f);
 
         // Create a separate floating window for dropdown results
@@ -421,18 +485,24 @@ void NodeEditor::ShowNodeAddSearch() {
                     );
                 }
 
-                // Handle click - block template nodes
+                // Handle click - block template and centrally unsupported nodes
                 bool is_template = (node->status == NodeImplementationStatus::Template);
+                bool is_blocked = node->support_blocked;
+                bool can_add = !is_template && !is_blocked;
                 ImGui::InvisibleButton(("node_result_" + std::to_string(i)).c_str(), item_size);
-                if (ImGui::IsItemClicked() && !is_template) {
-                    // Add the clicked node (not template)
+                if (ImGui::IsItemClicked() && can_add) {
+                    // Add the clicked node.
                     ImVec2 editor_pan = ImNodes::EditorContextGetPanning();
                     context_menu_pos_ = ImVec2(
                         canvas_size.x / 2 - editor_pan.x,
                         canvas_size.y / 2 - editor_pan.y
                     );
 
-                    AddNode(node->type, node->name);
+                    if (node->type == NodeType::PluginCustom &&
+                        !node->plugin_qualified_name.empty())
+                        AddNode(node->type, node->plugin_qualified_name);
+                    else
+                        AddNode(node->type, node->name);
 
                     // Reset search state
                     node_add_search_.show_results = false;
@@ -442,21 +512,23 @@ void NodeEditor::ShowNodeAddSearch() {
                 }
                 if (ImGui::IsItemHovered()) {
                     node_add_search_.selected_index = static_cast<int>(i);
-                    // Show tooltip for template nodes
-                    if (is_template && !node->tooltip.empty()) {
+                    // Show central availability reason when a node cannot be added.
+                    if (!can_add && !node->tooltip.empty()) {
                         ImGui::SetTooltip("%s", node->tooltip.c_str());
                     }
                 }
 
-                // Draw node name and category (with Coming Soon badge for templates)
+                // Draw node name and category (with availability badge when blocked)
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 4));
-                if (is_template) {
-                    // Grayed out name for template nodes
+                if (!can_add) {
+                    // Grayed out name for unavailable nodes.
                     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", node->name.c_str());
-                    // Add "Coming Soon" badge
                     ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.6f, 0.2f, 1.0f));
-                    ImGui::TextUnformatted(" [Coming Soon]");
+                    const ImVec4 badge_color = is_template
+                        ? ImVec4(0.9f, 0.6f, 0.2f, 1.0f)
+                        : ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Text, badge_color);
+                    ImGui::TextUnformatted(is_template ? " [Coming Soon]" : " [Blocked]");
                     ImGui::PopStyleColor();
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", node->name.c_str());
@@ -464,6 +536,12 @@ void NodeEditor::ShowNodeAddSearch() {
 
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 18));
                 ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.6f, 1.0f), "%s", node->category.c_str());
+
+                if (is_blocked && !node->support_reason.empty()) {
+                    ImGui::SetCursorScreenPos(ImVec2(item_pos.x + 8, item_pos.y + 31));
+                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                                       "%s", node->support_reason.c_str());
+                }
 
                 ImGui::SetCursorScreenPos(ImVec2(item_pos.x, item_pos.y + item_height));
             }
@@ -488,4 +566,3 @@ void NodeEditor::ShowNodeAddSearch() {
 }
 
 } // namespace gui
-
