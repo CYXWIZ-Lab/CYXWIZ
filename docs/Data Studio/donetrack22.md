@@ -1,15 +1,15 @@
-# Track 22 - Runtime Architecture Execution Plan
+# Done Track 22 - Runtime Architecture Execution Plan
 
 **Created:** 2026-06-24
-**Source:** Working plan for `tofix22.md`.
+**Source:** Working plan for `done22.md`.
 
 ## Purpose
 
-This file tracks execution of `tofix22.md`. Use it as the active checklist
+This file tracks execution of `done22.md`. Use it as the active checklist
 when changing runtime architecture so each change has one owner, one validation
 path, and one test target.
 
-`tofix22.md` remains the problem statement and runtime truth. This file is the
+`done22.md` remains the problem statement and runtime truth. This file is the
 work plan.
 
 ## Operating Rules
