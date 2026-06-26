@@ -32,10 +32,12 @@ Before adding work from this file, use this current truth:
   `TokenCrossEntropyLoss` node.
 - Sequence tag metrics and sequence inference decode helpers exist.
 - Saved NER graph assets exist under `examples/cyxgraph/NER`.
-- The sequence model currently forwards only `word_ids`; optional `pos_ids`
-  and `attention_mask` are carried by the batch contract but not consumed by
+- Optional `pos_ids` can be consumed by the explicit sequence feature-fusion
+  path when the training config declares `sequence_feature_fusion=true`.
+  Attention masks are carried by the batch contract but not yet consumed by
   the model path.
-- `FeatureConcat` and full POS embedding fusion are still missing.
+- Generic `FeatureConcat` is still not a first-class runtime graph node; POS
+  embedding fusion is implemented as a sequence-only module instead.
 - `SequenceTagOutput` exists as inference decode behavior, not as a
   first-class Studio output node.
 - Siamese support remains backend-loss-only plus compiler guardrails. The
@@ -325,8 +327,8 @@ NER needs a word vocabulary independent of POS and tag vocabularies.
 Current status:
 
 - Implemented through `SequenceVocabulary` with POS vocabulary mode.
-- POS IDs are batchable, but POS embedding fusion is not yet consumed by the
-  sequence model path.
+- POS IDs are batchable and can be consumed by the explicit
+  sequence-feature-fusion model path.
 
 Purpose:
 
@@ -388,8 +390,9 @@ labels and masks padded in alignment with tokens.
 Current status:
 
 - Still missing as a first-class runtime graph node.
-- This is the main remaining bridge for combining word embeddings and POS
-  embeddings in NER.
+- Word/POS fusion for sequence taggers is implemented separately by
+  `SequenceFeatureFusionModule`, which avoids turning the training runtime
+  into a generic multi-input graph executor.
 
 Purpose:
 
@@ -483,8 +486,8 @@ Follow-up work:
 - keep the saved NER graph end-to-end smoke green before claiming broader NER
   work
   support
-- connect future POS feature fusion without turning the graph runtime into a
-  broad arbitrary multi-input executor
+- keep sequence-only POS feature fusion separate from any future generic
+  multi-input graph executor
 
 ### 9. `TokenCrossEntropyLoss`
 
@@ -642,7 +645,8 @@ Status: partially complete.
    sequence training path.
 2. Verify LSTM/GRU can return `[batch, seq_len, hidden]`. Implemented for
    supported `return_sequences=true` wrappers.
-3. Add `FeatureConcat`. Still missing.
+3. Add generic `FeatureConcat`. Still missing as a first-class graph-runtime
+   node; sequence-only word/POS fusion is implemented separately.
 4. Add `TimeDistributedDense`. Implemented.
 
 ### Phase 4 - Token-level training
@@ -1196,6 +1200,24 @@ These capabilities will also help future tasks such as:
 
 ## Progress Log
 
+### 2026-06-26 - Sequence POS feature fusion
+
+Added the Track 14 Phase 2 POS-fusion path without broadening the graph
+runtime into arbitrary multi-input execution:
+
+- added backend `SequenceFeatureFusionModule`
+- added `BuildSequenceModelInput` to pack word/POS IDs only for configs that
+  declare `sequence_feature_fusion=true`
+- updated sequence training and validation loops to use the packed input when
+  fusion is enabled
+- carried POS vocabulary size through the Arrow sequence batcher build result
+- updated the saved NER smoke to train the POS-fused path
+- added smoke assertions that missing/mismatched POS IDs fail before forward
+  and that changing POS IDs changes model logits
+
+Generic `FeatureConcat` is still not a first-class runtime graph node, and
+attention-mask consumption remains future sequence work.
+
 ### 2026-06-26 - Saved NER sequence smoke
 
 Added `test_saved_ner_sequence_smoke` as the Track 14 Phase 1 proof:
@@ -1206,13 +1228,13 @@ Added `test_saved_ner_sequence_smoke` as the Track 14 Phase 1 proof:
 - loads `examples/cyxgraph/NER/generated/ner_sentences.csv`
 - builds the Arrow-backed `ISequenceBatcher`
 - normalizes embedding vocabulary size and TimeDistributed tag width
-- trains one tiny word-ID sequence pass through `TrainingExecutor`
+- trains one tiny sequence pass through `TrainingExecutor`
 - packages sequence vocab assets into `.cyxmodel`
 - decodes sample sequence logits through the inference helper
 
-This does not implement POS feature fusion. POS IDs remain carried by the
-batch and packaged assets, while model consumption of POS embeddings stays in
-Track 14 Phase 2.
+This was originally word-ID-only. Track 14 Phase 2 later updated the smoke to
+train through explicit word/POS sequence feature fusion.
+
 
 ### 2026-06-07 - NER target-design compile guard
 

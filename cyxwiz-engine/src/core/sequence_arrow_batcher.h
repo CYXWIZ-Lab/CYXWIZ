@@ -18,6 +18,7 @@ struct SequenceArrowBatcherBuildResult {
     size_t sample_count = 0;
     size_t sequence_length = 0;
     size_t token_vocabulary_size = 0;
+    size_t pos_vocabulary_size = 0;
     size_t tag_vocabulary_size = 0;
 
     bool success() const {

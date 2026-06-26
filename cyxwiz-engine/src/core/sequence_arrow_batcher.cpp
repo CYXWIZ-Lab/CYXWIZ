@@ -2,6 +2,7 @@
 
 #include "arrow_dataset.h"
 #include "ner_sequence_builder.h"
+#include "sequence_model_input.h"
 
 #include <arrow/api.h>
 
@@ -359,6 +360,7 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
         result.sequence_length = ResolveSequenceLength(
             build.samples, build.batcher_config.max_sequence_length);
         result.token_vocabulary_size = build.token_vocabulary.Size();
+        result.pos_vocabulary_size = build.pos_vocabulary.Size();
         result.tag_vocabulary_size = build.tag_vocabulary.Size();
         result.batcher = std::make_unique<SequenceBatcher>(
             std::move(build.samples), build.batcher_config);
@@ -384,6 +386,16 @@ void ApplySequenceBatcherBuildResultToTrainingConfig(
     int last_time_distributed = -1;
     for (size_t i = 0; i < config.layers.size(); ++i) {
         auto& layer = config.layers[i];
+        if (IsSequenceFeatureFusionLayer(layer)) {
+            if (build.token_vocabulary_size > 0) {
+                layer.parameters["word_num_embeddings"] =
+                    std::to_string(build.token_vocabulary_size);
+            }
+            if (build.pos_vocabulary_size > 0) {
+                layer.parameters["pos_num_embeddings"] =
+                    std::to_string(build.pos_vocabulary_size);
+            }
+        }
         if (!embedding_vocab_applied &&
             layer.type == gui::NodeType::Embedding &&
             build.token_vocabulary_size > 0) {

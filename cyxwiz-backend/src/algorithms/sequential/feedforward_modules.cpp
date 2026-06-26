@@ -1,6 +1,7 @@
 ﻿#include <cyxwiz/sequential.h>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace cyxwiz {
 // ============================================================================
@@ -211,6 +212,191 @@ void EmbeddingModule::LoadPretrainedWeights(const Tensor& weights, bool freeze) 
 std::string EmbeddingModule::GetName() const {
     return "Embedding(" + std::to_string(num_embeddings_) + " x " +
            std::to_string(embedding_dim_) + ")";
+}
+
+// ============================================================================
+// SequenceFeatureFusionModule Implementation
+// ============================================================================
+
+namespace {
+
+int64_t ReadIdAt(const Tensor& tensor, size_t index) {
+    switch (tensor.GetDataType()) {
+        case DataType::Float32:
+            return static_cast<int64_t>(tensor.Data<float>()[index]);
+        case DataType::Int32:
+            return static_cast<int64_t>(tensor.Data<int32_t>()[index]);
+        case DataType::Int64:
+            return tensor.Data<int64_t>()[index];
+        default:
+            throw std::runtime_error(
+                "SequenceFeatureFusionModule: ids must be Float32, Int32, or Int64");
+    }
+}
+
+std::map<std::string, Tensor> FilterPrefixedParams(
+    const std::map<std::string, Tensor>& params,
+    const std::string& prefix) {
+    std::map<std::string, Tensor> out;
+    for (const auto& [key, tensor] : params) {
+        if (key.rfind(prefix, 0) == 0) {
+            out[key.substr(prefix.size())] = tensor;
+        }
+    }
+    return out;
+}
+
+void AppendPrefixedParams(std::map<std::string, Tensor>& out,
+                          std::map<std::string, Tensor> params,
+                          const std::string& prefix) {
+    for (auto& [key, tensor] : params) {
+        out[prefix + key] = std::move(tensor);
+    }
+}
+
+} // namespace
+
+SequenceFeatureFusionModule::SequenceFeatureFusionModule(
+    size_t word_num_embeddings,
+    size_t word_embedding_dim,
+    size_t pos_num_embeddings,
+    size_t pos_embedding_dim,
+    int word_padding_idx,
+    int pos_padding_idx)
+    : word_embedding_(word_num_embeddings, word_embedding_dim, word_padding_idx)
+    , pos_embedding_(pos_num_embeddings, pos_embedding_dim, pos_padding_idx)
+    , word_embedding_dim_(word_embedding_dim)
+    , pos_embedding_dim_(pos_embedding_dim)
+    , fused_embedding_dim_(word_embedding_dim + pos_embedding_dim) {
+    if (word_num_embeddings < 2 || pos_num_embeddings < 2) {
+        throw std::runtime_error(
+            "SequenceFeatureFusionModule: vocabularies must have at least two entries");
+    }
+    if (word_embedding_dim_ < 1 || pos_embedding_dim_ < 1) {
+        throw std::runtime_error(
+            "SequenceFeatureFusionModule: embedding dimensions must be positive");
+    }
+}
+
+Tensor SequenceFeatureFusionModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    input_shape_ = input.Shape();
+    if (input_shape_.size() != 3 || input_shape_[2] != 2) {
+        throw std::runtime_error(
+            "SequenceFeatureFusionModule: input must be [batch, seq_len, 2]");
+    }
+
+    const size_t batch = input_shape_[0];
+    const size_t seq_len = input_shape_[1];
+    const size_t token_count = batch * seq_len;
+    std::vector<int64_t> word_ids(token_count, 0);
+    std::vector<int64_t> pos_ids(token_count, 0);
+
+    for (size_t i = 0; i < token_count; ++i) {
+        word_ids[i] = ReadIdAt(input, i * 2);
+        pos_ids[i] = ReadIdAt(input, i * 2 + 1);
+    }
+
+    Tensor word_tensor({batch, seq_len}, word_ids.data(), DataType::Int64);
+    Tensor pos_tensor({batch, seq_len}, pos_ids.data(), DataType::Int64);
+    Tensor word_emb = word_embedding_.Forward(word_tensor);
+    Tensor pos_emb = pos_embedding_.Forward(pos_tensor);
+
+    const auto& word_shape = word_emb.Shape();
+    const auto& pos_shape = pos_emb.Shape();
+    if (word_shape.size() != 3 || pos_shape.size() != 3 ||
+        word_shape[0] != batch || pos_shape[0] != batch ||
+        word_shape[1] != seq_len || pos_shape[1] != seq_len ||
+        word_shape[2] != word_embedding_dim_ ||
+        pos_shape[2] != pos_embedding_dim_) {
+        throw std::runtime_error(
+            "SequenceFeatureFusionModule: embedding output shape mismatch");
+    }
+
+    Tensor output({batch, seq_len, fused_embedding_dim_}, DataType::Float32);
+    const float* word_data = word_emb.Data<float>();
+    const float* pos_data = pos_emb.Data<float>();
+    float* dst = output.Data<float>();
+    for (size_t token = 0; token < token_count; ++token) {
+        const size_t out_base = token * fused_embedding_dim_;
+        const size_t word_base = token * word_embedding_dim_;
+        const size_t pos_base = token * pos_embedding_dim_;
+        for (size_t dim = 0; dim < word_embedding_dim_; ++dim) {
+            dst[out_base + dim] = word_data[word_base + dim];
+        }
+        for (size_t dim = 0; dim < pos_embedding_dim_; ++dim) {
+            dst[out_base + word_embedding_dim_ + dim] =
+                pos_data[pos_base + dim];
+        }
+    }
+    return output;
+}
+
+Tensor SequenceFeatureFusionModule::Backward(const Tensor& grad_output) {
+    if (input_shape_.size() != 3) {
+        throw std::runtime_error(
+            "SequenceFeatureFusionModule: Backward called before Forward");
+    }
+    const auto& grad_shape = grad_output.Shape();
+    if (grad_shape.size() != 3 ||
+        grad_shape[0] != input_shape_[0] ||
+        grad_shape[1] != input_shape_[1] ||
+        grad_shape[2] != fused_embedding_dim_) {
+        throw std::runtime_error(
+            "SequenceFeatureFusionModule: grad_output shape mismatch");
+    }
+
+    const size_t batch = input_shape_[0];
+    const size_t seq_len = input_shape_[1];
+    const size_t token_count = batch * seq_len;
+    Tensor word_grad({batch, seq_len, word_embedding_dim_}, DataType::Float32);
+    Tensor pos_grad({batch, seq_len, pos_embedding_dim_}, DataType::Float32);
+
+    const float* src = grad_output.Data<float>();
+    float* word_dst = word_grad.Data<float>();
+    float* pos_dst = pos_grad.Data<float>();
+    for (size_t token = 0; token < token_count; ++token) {
+        const size_t in_base = token * fused_embedding_dim_;
+        const size_t word_base = token * word_embedding_dim_;
+        const size_t pos_base = token * pos_embedding_dim_;
+        for (size_t dim = 0; dim < word_embedding_dim_; ++dim) {
+            word_dst[word_base + dim] = src[in_base + dim];
+        }
+        for (size_t dim = 0; dim < pos_embedding_dim_; ++dim) {
+            pos_dst[pos_base + dim] =
+                src[in_base + word_embedding_dim_ + dim];
+        }
+    }
+
+    word_embedding_.Backward(word_grad);
+    pos_embedding_.Backward(pos_grad);
+    return Tensor();
+}
+
+std::map<std::string, Tensor> SequenceFeatureFusionModule::GetParameters() {
+    std::map<std::string, Tensor> out;
+    AppendPrefixedParams(out, word_embedding_.GetParameters(), "word.");
+    AppendPrefixedParams(out, pos_embedding_.GetParameters(), "pos.");
+    return out;
+}
+
+void SequenceFeatureFusionModule::SetParameters(
+    const std::map<std::string, Tensor>& params) {
+    word_embedding_.SetParameters(FilterPrefixedParams(params, "word."));
+    pos_embedding_.SetParameters(FilterPrefixedParams(params, "pos."));
+}
+
+std::map<std::string, Tensor> SequenceFeatureFusionModule::GetGradients() {
+    std::map<std::string, Tensor> out;
+    AppendPrefixedParams(out, word_embedding_.GetGradients(), "word.");
+    AppendPrefixedParams(out, pos_embedding_.GetGradients(), "pos.");
+    return out;
+}
+
+std::string SequenceFeatureFusionModule::GetName() const {
+    return "SequenceFeatureFusion(word=" +
+           std::to_string(word_embedding_dim_) + ", pos=" +
+           std::to_string(pos_embedding_dim_) + ")";
 }
 
 // ============================================================================

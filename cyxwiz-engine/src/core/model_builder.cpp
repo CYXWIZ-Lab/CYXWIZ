@@ -123,6 +123,70 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 break;
             }
 
+            case gui::NodeType::Concatenate: {
+                if (!ParseBoolParam(layer_cfg, "sequence_feature_fusion", false)) {
+                    spdlog::warn(
+                        "  [{}] Concatenate is not supported in SequentialModel",
+                        i);
+                    break;
+                }
+                if (i != 0) {
+                    throw std::runtime_error(
+                        "sequence feature fusion must be the first model layer");
+                }
+
+                size_t word_num_embeddings =
+                    ParseSizeParam(layer_cfg, "word_num_embeddings",
+                                   ParseSizeParam(layer_cfg, "num_embeddings", 10000));
+                size_t word_embedding_dim =
+                    ParseSizeParam(layer_cfg, "word_embedding_dim",
+                                   ParseSizeParam(layer_cfg, "embedding_dim", 256));
+                size_t pos_num_embeddings =
+                    ParseSizeParam(layer_cfg, "pos_num_embeddings", 128);
+                size_t pos_embedding_dim =
+                    ParseSizeParam(layer_cfg, "pos_embedding_dim", 32);
+
+                if (word_num_embeddings < 2) word_num_embeddings = 2;
+                if (pos_num_embeddings < 2) pos_num_embeddings = 2;
+                if (word_embedding_dim < 1) word_embedding_dim = 1;
+                if (pos_embedding_dim < 1) pos_embedding_dim = 1;
+
+                int word_padding_idx = -1;
+                if (auto it = layer_cfg.parameters.find("word_padding_idx");
+                    it != layer_cfg.parameters.end()) {
+                    try { word_padding_idx = std::stoi(it->second); }
+                    catch (...) {}
+                }
+                int pos_padding_idx = -1;
+                if (auto it = layer_cfg.parameters.find("pos_padding_idx");
+                    it != layer_cfg.parameters.end()) {
+                    try { pos_padding_idx = std::stoi(it->second); }
+                    catch (...) {}
+                }
+
+                model.Add<SequenceFeatureFusionModule>(
+                    word_num_embeddings,
+                    word_embedding_dim,
+                    pos_num_embeddings,
+                    pos_embedding_dim,
+                    word_padding_idx,
+                    pos_padding_idx);
+                current_sequence_length =
+                    config.input_size > 0 ? config.input_size : 1;
+                current_input_size = word_embedding_dim + pos_embedding_dim;
+                spdlog::info(
+                    "  [{}] SequenceFeatureFusion(word={}x{}, pos={}x{}) - "
+                    "output [batch, seq_len={}, features={}]",
+                    i,
+                    word_num_embeddings,
+                    word_embedding_dim,
+                    pos_num_embeddings,
+                    pos_embedding_dim,
+                    current_sequence_length,
+                    current_input_size);
+                break;
+            }
+
             case gui::NodeType::Embedding: {
                 // Read num_embeddings (vocab size) and embedding_dim from
                 // the generic parameters map. Defaults cover the case

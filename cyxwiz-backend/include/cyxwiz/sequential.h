@@ -244,6 +244,35 @@ private:
     float max_norm_;
 };
 
+// Focused token-feature fusion for sequence taggers.
+// Input is [batch, seq_len, 2] ids: channel 0 = word, channel 1 = POS.
+// Output is [batch, seq_len, word_embedding_dim + pos_embedding_dim].
+class CYXWIZ_API SequenceFeatureFusionModule : public Module {
+public:
+    SequenceFeatureFusionModule(size_t word_num_embeddings,
+                                size_t word_embedding_dim,
+                                size_t pos_num_embeddings,
+                                size_t pos_embedding_dim,
+                                int word_padding_idx = -1,
+                                int pos_padding_idx = -1);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    EmbeddingModule word_embedding_;
+    EmbeddingModule pos_embedding_;
+    size_t word_embedding_dim_;
+    size_t pos_embedding_dim_;
+    size_t fused_embedding_dim_;
+    std::vector<size_t> input_shape_;
+};
+
 /**
  * @brief Parameter-free sinusoidal positional encoding.
  *

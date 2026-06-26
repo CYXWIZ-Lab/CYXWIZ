@@ -3,6 +3,7 @@
 #include "dataset_batcher.h"
 #include "graph_compiler.h"
 #include "model_builder.h"
+#include "sequence_model_input.h"
 #include "sequence_tag_metrics.h"
 
 #include <cmath>
@@ -93,7 +94,8 @@ inline SequenceTrainingEpochResult TrainSequenceTaggerEpoch(
             const Tensor& targets =
                 is_language_modeling ? batch.target_ids : batch.tag_ids;
 
-            Tensor predictions = built.model->Forward(batch.word_ids);
+            Tensor model_input = BuildSequenceModelInput(batch, config);
+            Tensor predictions = built.model->Forward(model_input);
             Tensor loss_tensor = built.loss->Forward(predictions, targets);
             const float batch_loss = loss_tensor.Data<float>()[0];
             if (!std::isfinite(batch_loss)) {

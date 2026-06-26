@@ -4,6 +4,7 @@
 #include <cyxwiz/debug_hooks.h>
 #include "training_trace_collector.h"
 #include "model_builder.h"
+#include "sequence_model_input.h"
 #include "sequence_training_step.h"
 #include "training_batcher_setup.h"
 #ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
@@ -1377,7 +1378,8 @@ void TrainingExecutor::RunTrainingEpochSequence(
             TrainingTraceStage::Forward, epoch, batch_num,
             static_cast<int>(total_batches));
         const auto forward_start = std::chrono::steady_clock::now();
-        Tensor predictions = Forward(batch.word_ids);
+        Tensor model_input = BuildSequenceModelInput(batch, config_);
+        Tensor predictions = Forward(model_input);
         const auto forward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - forward_start).count();
         TrainingTraceCollector::Instance().RecordStage(
@@ -1534,7 +1536,8 @@ void TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
             : config_.sequence_batch.ignore_index;
 
         ++batch_num;
-        Tensor predictions = Forward(batch.word_ids);
+        Tensor model_input = BuildSequenceModelInput(batch, config_);
+        Tensor predictions = Forward(model_input);
         const float batch_loss = ComputeLoss(predictions, targets);
         if (!std::isfinite(batch_loss)) {
             throw std::runtime_error(

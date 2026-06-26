@@ -48,14 +48,16 @@ Implemented:
 - `CrossEntropyLoss` uses sequence `ignore_index` for token-level targets.
 - Sequence tag metrics and sequence inference decode helpers exist.
 - Saved NER graph assets exist under `examples/cyxgraph/NER`.
+- Explicit sequence feature fusion exists for token taggers through
+  `SequenceFeatureFusionModule` and opt-in `sequence_feature_fusion=true`
+  configs. It combines word IDs and POS IDs without adding a generic
+  multi-input graph executor.
 
 Known limitations:
 
-- The sequence model currently forwards only `word_ids`; POS IDs and
-  attention masks are carried by the batch contract but not consumed by the
-  model.
 - `FeatureConcat` is not a first-class runtime graph node.
-- POS embedding fusion is not implemented end-to-end.
+- Attention masks are carried by the batch contract but not consumed by the
+  model path.
 - `SequenceTagOutput` exists as inference decode behavior, not as a
   first-class Studio output node.
 - Generic tabular `TrainingExecutor` dispatch still correctly fails closed for
@@ -124,7 +126,7 @@ Target scope:
 
 Non-goals:
 
-- Full POS embedding fusion.
+- Generic `FeatureConcat` graph fan-in execution.
 - Full production NER accuracy.
 - New UI node types.
 - Real `SequenceTagOutput` Studio node.
@@ -139,14 +141,15 @@ Acceptance:
 
 Notes:
 
-- The smoke intentionally trains the current word-ID sequence path. POS IDs
-  are carried in the batch and package assets, but POS embedding fusion remains
-  Phase 2.
 - The saved graph still reports the current `FeatureConcat` limitation during
-  compile. That is expected until Phase 2 adds explicit sequence feature
-  fusion.
+  compile. The Phase 2 implementation adds explicit sequence feature fusion
+  for the training config instead of broadening `FeatureConcat` into generic
+  graph fan-in execution.
 
 ## Phase 2 - Sequence Feature Fusion
+
+Status: completed 2026-06-26 by `SequenceFeatureFusionModule` and the
+POS-fused `test_saved_ner_sequence_smoke` path.
 
 Goal: consume optional POS IDs without broadening the runtime into an arbitrary
 multi-input graph executor.
@@ -160,9 +163,19 @@ Possible smallest design:
 
 Acceptance:
 
-- POS IDs affect the model path only when the graph declares POS usage.
-- Shape mismatches fail before training.
-- Existing word-only NER path remains supported.
+- [x] POS IDs affect the model path only when the graph declares POS usage.
+- [x] Shape mismatches fail before training.
+- [x] Existing word-only NER path remains supported.
+
+Notes:
+
+- `BuildSequenceModelInput` packs `[batch, seq]` word/POS ID tensors into
+  `[batch, seq, 2]` only when the first layer declares
+  `sequence_feature_fusion=true`.
+- `SequenceFeatureFusionModule` owns separate word/POS embeddings and emits
+  `[batch, seq, word_dim + pos_dim]` for the normal sequential model path.
+- The saved NER smoke asserts missing/mismatched POS IDs fail before forward
+  and that changing POS IDs changes model logits.
 
 ## Phase 3 - Sequence Output Surface
 

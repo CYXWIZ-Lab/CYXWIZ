@@ -1,8 +1,10 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/graph_compiler.h"
+#include "../src/core/model_builder.h"
 #include "../src/core/sequence_arrow_batcher.h"
 #include "../src/core/sequence_inference_response.h"
+#include "../src/core/sequence_model_input.h"
 #include "../src/core/sequence_tag_metrics.h"
 #include "../src/core/training_executor.h"
 #include "../src/gui/loaders/data_loader.h"
@@ -13,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -255,7 +258,7 @@ bool HasIssueText(const cyxwiz::TrainingConfiguration& config,
     return false;
 }
 
-cyxwiz::TrainingConfiguration MakeWordOnlySequenceTrainingConfig(
+cyxwiz::TrainingConfiguration MakePosFusedSequenceTrainingConfig(
     cyxwiz::TrainingConfiguration compiled,
     const cyxwiz::SequenceArrowBatcherBuildResult& build,
     const std::filesystem::path& checkpoint_dir) {
@@ -283,12 +286,16 @@ cyxwiz::TrainingConfiguration MakeWordOnlySequenceTrainingConfig(
     compiled.optimizer_type = gui::NodeType::SGD;
     compiled.learning_rate = 0.01f;
 
-    cyxwiz::CompiledLayer embedding;
-    embedding.type = gui::NodeType::Embedding;
-    embedding.parameters["num_embeddings"] = "1";
-    embedding.parameters["embedding_dim"] = "8";
-    embedding.parameters["padding_idx"] = "0";
-    compiled.layers.push_back(std::move(embedding));
+    cyxwiz::CompiledLayer fusion;
+    fusion.type = gui::NodeType::Concatenate;
+    fusion.parameters["sequence_feature_fusion"] = "true";
+    fusion.parameters["word_num_embeddings"] = "1";
+    fusion.parameters["word_embedding_dim"] = "8";
+    fusion.parameters["word_padding_idx"] = "0";
+    fusion.parameters["pos_num_embeddings"] = "1";
+    fusion.parameters["pos_embedding_dim"] = "4";
+    fusion.parameters["pos_padding_idx"] = "0";
+    compiled.layers.push_back(std::move(fusion));
 
     cyxwiz::CompiledLayer encoder;
     encoder.type = gui::NodeType::LSTM;
@@ -357,6 +364,98 @@ void CheckDecodedGoldLogits(const cyxwiz::SequenceBatch& batch,
           "decode response should preserve batch rows");
     Check(!decoded.tag_labels.empty() && !decoded.tag_labels[0].empty(),
           "decode response should expose readable tag labels");
+}
+
+bool FloatTensorsDiffer(const cyxwiz::Tensor& lhs,
+                        const cyxwiz::Tensor& rhs) {
+    if (lhs.Shape() != rhs.Shape() ||
+        lhs.GetDataType() != cyxwiz::DataType::Float32 ||
+        rhs.GetDataType() != cyxwiz::DataType::Float32) {
+        return true;
+    }
+    const float* a = lhs.Data<float>();
+    const float* b = rhs.Data<float>();
+    for (size_t i = 0; i < lhs.NumElements(); ++i) {
+        if (std::fabs(a[i] - b[i]) > 1.0e-6f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void CheckSequenceFusionInputGuards(
+    const cyxwiz::SequenceBatch& batch,
+    const cyxwiz::TrainingConfiguration& config) {
+    Check(cyxwiz::UsesSequenceFeatureFusion(config),
+          "test config should declare sequence feature fusion");
+
+    const auto packed = cyxwiz::BuildSequenceModelInput(batch, config);
+    Check(packed.Shape() ==
+              std::vector<size_t>({batch.size, batch.sequence_length, 2}),
+          "sequence fusion input should pack word and POS ids");
+
+    cyxwiz::SequenceBatch missing_pos = batch;
+    missing_pos.pos_ids = cyxwiz::Tensor();
+    bool missing_threw = false;
+    try {
+        (void)cyxwiz::BuildSequenceModelInput(missing_pos, config);
+    } catch (const std::exception& e) {
+        missing_threw = std::string(e.what()).find("POS ids") !=
+                        std::string::npos;
+    }
+    Check(missing_threw,
+          "sequence fusion should reject missing POS ids before forward");
+
+    std::vector<int64_t> mismatched_pos(
+        batch.size * (batch.sequence_length + 1), 0);
+    cyxwiz::SequenceBatch mismatched = batch;
+    mismatched.pos_ids = cyxwiz::Tensor(
+        {batch.size, batch.sequence_length + 1},
+        mismatched_pos.data(),
+        cyxwiz::DataType::Int64);
+    bool mismatch_threw = false;
+    try {
+        (void)cyxwiz::BuildSequenceModelInput(mismatched, config);
+    } catch (const std::exception& e) {
+        mismatch_threw = std::string(e.what()).find("shape") !=
+                         std::string::npos;
+    }
+    Check(mismatch_threw,
+          "sequence fusion should reject POS shape mismatches before forward");
+}
+
+void CheckPosIdsAffectModelPath(
+    const cyxwiz::SequenceBatch& batch,
+    const cyxwiz::TrainingConfiguration& config,
+    size_t pos_vocabulary_size) {
+    Check(pos_vocabulary_size > 1,
+          "POS influence check requires more than one POS id");
+    auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(built.ok() && built.model,
+          "sequence fusion model should build for POS influence check");
+
+    cyxwiz::Tensor original_input =
+        cyxwiz::BuildSequenceModelInput(batch, config);
+    cyxwiz::Tensor original_logits = built.model->Forward(original_input);
+
+    const auto& pos_shape = batch.pos_ids.Shape();
+    std::vector<int64_t> altered_pos(batch.pos_ids.NumElements(), 0);
+    const auto* pos_data = batch.pos_ids.Data<int64_t>();
+    const int64_t vocab = static_cast<int64_t>(pos_vocabulary_size);
+    for (size_t i = 0; i < altered_pos.size(); ++i) {
+        altered_pos[i] = pos_data[i] == 0 ? 1 : ((pos_data[i] % (vocab - 1)) + 1);
+    }
+
+    cyxwiz::SequenceBatch altered = batch;
+    altered.pos_ids = cyxwiz::Tensor(pos_shape,
+                                     altered_pos.data(),
+                                     cyxwiz::DataType::Int64);
+    cyxwiz::Tensor altered_input =
+        cyxwiz::BuildSequenceModelInput(altered, config);
+    cyxwiz::Tensor altered_logits = built.model->Forward(altered_input);
+
+    Check(FloatTensorsDiffer(original_logits, altered_logits),
+          "changing POS ids should change the fused model logits");
 }
 
 void CheckPackagedSequenceAssets(const std::filesystem::path& package_path,
@@ -502,6 +601,8 @@ int main() {
           "saved NER sequence batcher should honor saved max length");
     Check(sequence_build.token_vocabulary_size > 0,
           "saved NER sequence batcher should infer token vocabulary");
+    Check(sequence_build.pos_vocabulary_size > 0,
+          "saved NER sequence batcher should infer POS vocabulary");
     Check(sequence_build.tag_vocabulary_size > 0,
           "saved NER sequence batcher should infer tag vocabulary");
     Check(sequence_build.id_to_label.size() ==
@@ -525,18 +626,25 @@ int main() {
     fs::remove_all(work_dir);
     fs::create_directories(work_dir);
 
-    auto training_config = MakeWordOnlySequenceTrainingConfig(
+    auto training_config = MakePosFusedSequenceTrainingConfig(
         compiled, sequence_build, work_dir / "checkpoints");
     Check(training_config.input_size == 96,
           "sequence training config should normalize input length");
     Check(training_config.output_size == sequence_build.tag_vocabulary_size,
           "sequence training config should normalize tag width");
-    Check(training_config.layers.front().parameters["num_embeddings"] ==
+    Check(training_config.layers.front().parameters["word_num_embeddings"] ==
               std::to_string(sequence_build.token_vocabulary_size),
-          "sequence training config should normalize embedding vocabulary");
+          "sequence training config should normalize word vocabulary");
+    Check(training_config.layers.front().parameters["pos_num_embeddings"] ==
+              std::to_string(sequence_build.pos_vocabulary_size),
+          "sequence training config should normalize POS vocabulary");
     Check(training_config.layers.back().units ==
               static_cast<int>(sequence_build.tag_vocabulary_size),
           "sequence training config should normalize token head width");
+    CheckSequenceFusionInputGuards(decode_batch, training_config);
+    CheckPosIdsAffectModelPath(decode_batch,
+                               training_config,
+                               sequence_build.pos_vocabulary_size);
 
     auto training_build = cyxwiz::BuildSequenceBatcherFromArrowDataset(
         dataset, training_config, training_config.batch_size);
