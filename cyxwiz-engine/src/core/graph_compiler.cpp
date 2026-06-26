@@ -420,6 +420,48 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
             }
         }
     }
+
+    if (node.type == gui::NodeType::TextPadding) {
+        auto mask_it = params.find("create_attention_mask");
+        if (mask_it != params.end()) {
+            const std::string value = LowerParamValue(mask_it->second);
+            sequence.create_attention_mask =
+                value != "false" && value != "0" && value != "off";
+        }
+
+        auto max_sequence_it = params.find("max_length");
+        if (max_sequence_it == params.end()) {
+            max_sequence_it = params.find("max_sequence_length");
+        }
+        if (max_sequence_it != params.end()) {
+            try {
+                sequence.max_sequence_length =
+                    std::max(0, std::stoi(max_sequence_it->second));
+            } catch (...) {
+                sequence.max_sequence_length = 0;
+            }
+        }
+    }
+
+    if (node.type == gui::NodeType::CrossEntropyLoss) {
+        auto ignore_it = params.find("ignore_index");
+        if (ignore_it != params.end()) {
+            try {
+                sequence.ignore_index = std::stoi(ignore_it->second);
+            } catch (...) {
+                sequence.ignore_index = -100;
+            }
+        }
+
+        auto target_ignore_it = params.find("target_ignore_index");
+        if (target_ignore_it != params.end()) {
+            try {
+                sequence.target_ignore_index = std::stoi(target_ignore_it->second);
+            } catch (...) {
+                sequence.target_ignore_index = -100;
+            }
+        }
+    }
 }
 
 void ExtractSequenceBatchContract(
@@ -2506,6 +2548,16 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     ExtractSequenceBatchContract(nodes, training_path_ids, config);
+    if (loss_node && config.sequence_batch.enabled) {
+        ExtractSequenceBatchContractFromNode(*loss_node, config.sequence_batch);
+    }
+    if (config.sequence_batch.enabled) {
+        for (const auto& node : nodes) {
+            if (node.type == gui::NodeType::TextPadding) {
+                ExtractSequenceBatchContractFromNode(node, config.sequence_batch);
+            }
+        }
+    }
     ValidateTrainingPathImplementationStatus(nodes, links, training_path_ids, config);
 
     if (dataset_node) {

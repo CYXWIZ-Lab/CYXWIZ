@@ -82,15 +82,17 @@ Known limitations:
 
 ## Phase 0 - Refresh The Truth
 
+Status: completed 2026-06-25.
+
 Goal: align `tofix14.md` with the current implementation state.
 
 Tasks:
 
-- [ ] Mark implemented NER primitives as current truth.
-- [ ] Mark stale NER missing-node bullets as completed, partial, or still
+- [x] Mark implemented NER primitives as current truth.
+- [x] Mark stale NER missing-node bullets as completed, partial, or still
   missing.
-- [ ] Record that Siamese remains backend-loss-only plus compiler guardrails.
-- [ ] Keep the old tensor exposure progress as closed history.
+- [x] Record that Siamese remains backend-loss-only plus compiler guardrails.
+- [x] Keep the old tensor exposure progress as closed history.
 
 Acceptance:
 
@@ -99,6 +101,9 @@ Acceptance:
 - Remaining work points to concrete code gaps.
 
 ## Phase 1 - NER End-To-End Smoke
+
+Status: completed 2026-06-26 by
+`test_saved_ner_sequence_smoke`.
 
 Goal: prove the smallest real NER training path works from saved graph assets
 through sequence batcher construction, sequence training, asset packaging, and
@@ -127,10 +132,19 @@ Non-goals:
 
 Acceptance:
 
-- One focused test target covers saved NER graph compile -> sequence batcher ->
+- [x] One focused test target covers saved NER graph compile -> sequence batcher ->
   tiny training -> sequence asset/decode proof.
-- The test does not depend on the external full NER dataset path.
-- Existing guardrails still reject fake Dense-encoded NER placeholders.
+- [x] The test does not depend on the external full NER dataset path.
+- [x] Existing guardrails still reject fake Dense-encoded NER placeholders.
+
+Notes:
+
+- The smoke intentionally trains the current word-ID sequence path. POS IDs
+  are carried in the batch and package assets, but POS embedding fusion remains
+  Phase 2.
+- The saved graph still reports the current `FeatureConcat` limitation during
+  compile. That is expected until Phase 2 adds explicit sequence feature
+  fusion.
 
 ## Phase 2 - Sequence Feature Fusion
 
@@ -225,4 +239,3 @@ Keep these green while working from Track 14:
   touched by the change
 - `cyxwiz-engine` Debug build
 - `git diff --check`
-

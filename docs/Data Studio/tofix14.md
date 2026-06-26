@@ -480,7 +480,8 @@ Follow-up work:
 - keep backend placement honest: it is a sequence wrapper, not direct GPU
   tensor execution
 - keep validating output/label shapes for token classification graphs
-- add the saved NER graph end-to-end smoke before claiming production NER
+- keep the saved NER graph end-to-end smoke green before claiming broader NER
+  work
   support
 - connect future POS feature fusion without turning the graph runtime into a
   broad arbitrary multi-input executor
@@ -653,8 +654,10 @@ Status: mostly complete.
 2. Add mask-aware reduction. Implemented through ignored tag IDs.
 3. Add token-level accuracy. Implemented.
 4. Add entity-level precision/recall/F1. Implemented.
-5. Add saved NER graph end-to-end smoke. Still missing and should be the next
-   narrow Track 14 slice.
+5. Add saved NER graph end-to-end smoke. Implemented by
+   `test_saved_ner_sequence_smoke`; keep it as the narrow regression gate for
+   compile, sequence batcher construction, tiny training, asset packaging, and
+   decode.
 
 ### Phase 5 - Inference and export
 
@@ -1192,6 +1195,24 @@ These capabilities will also help future tasks such as:
 - retrieval and nearest-neighbor search
 
 ## Progress Log
+
+### 2026-06-26 - Saved NER sequence smoke
+
+Added `test_saved_ner_sequence_smoke` as the Track 14 Phase 1 proof:
+
+- loads `examples/cyxgraph/NER/ner_bilstm_sequence_tagger.cyxgraph`
+- compiles the graph and verifies the sequence batch contract
+- preserves saved sequence padding and token-loss ignore settings
+- loads `examples/cyxgraph/NER/generated/ner_sentences.csv`
+- builds the Arrow-backed `ISequenceBatcher`
+- normalizes embedding vocabulary size and TimeDistributed tag width
+- trains one tiny word-ID sequence pass through `TrainingExecutor`
+- packages sequence vocab assets into `.cyxmodel`
+- decodes sample sequence logits through the inference helper
+
+This does not implement POS feature fusion. POS IDs remain carried by the
+batch and packaged assets, while model consumption of POS embeddings stays in
+Track 14 Phase 2.
 
 ### 2026-06-07 - NER target-design compile guard
 
