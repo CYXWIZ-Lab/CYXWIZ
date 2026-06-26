@@ -1,10 +1,12 @@
 // local_inference_server.cpp - Embedded HTTP inference server implementation
 #include "local_inference_server.h"
+#include "metric_learning_inference_input.h"
 #include "text_inference_input.h"
 #include "../core/language_model_training.h"
 #include "../core/model_importer.h"
 #include "../core/formats/cyxmodel_format.h"
 #include "../core/sequence_inference_response.h"
+#include "../core/sequence_model_input.h"
 #include "../core/sequence_tag_metrics.h"
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
@@ -347,7 +349,21 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
                     new_has_sequence_tag_vocabulary =
                         !new_sequence_tag_vocabulary.empty();
                 }
+            } else {
+                last_error_ = "Failed to load sequence vocabulary assets: " +
+                              cyxmodel_format.GetLastError();
+                spdlog::error("{}", last_error_);
+                return false;
             }
+        }
+        try {
+            RequireDeclaredSequenceTagVocabulary(
+                probe.has_sequence_tag_vocabulary,
+                new_sequence_tag_vocabulary);
+        } catch (const std::exception& e) {
+            last_error_ = e.what();
+            spdlog::error("{}", last_error_);
+            return false;
         }
 
         model_ = std::move(new_model);
@@ -504,12 +520,22 @@ void LocalInferenceServer::RegisterRoutes() {
         HandlePredict(req, res);
     });
 
+    // Metric-learning embedding extraction
+    server_->Post("/v1/embeddings", [this](const httplib::Request& req, httplib::Response& res) {
+        HandleEmbeddings(req, res);
+    });
+
+    // Metric-learning pair scoring
+    server_->Post("/v1/pair-score", [this](const httplib::Request& req, httplib::Response& res) {
+        HandlePairScore(req, res);
+    });
+
     // Greedy text generation
     server_->Post("/v1/generate", [this](const httplib::Request& req, httplib::Response& res) {
         HandleGenerate(req, res);
     });
 
-    spdlog::info("Registered routes: /health, /v1/model, /v1/predict, /v1/generate");
+    spdlog::info("Registered routes: /health, /v1/model, /v1/predict, /v1/embeddings, /v1/pair-score, /v1/generate");
 }
 
 void LocalInferenceServer::HandleHealth(const httplib::Request&, httplib::Response& res) {
@@ -623,7 +649,9 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
 
     // Parse input tensor
     Tensor input_tensor;
+    Tensor sequence_pos_tensor;
     bool is_sequence_input = false;
+    bool has_sequence_pos_input = false;
     std::vector<int64_t> sequence_lengths;
     try {
         const auto& input_json = request_body["input"];
@@ -631,7 +659,9 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
         std::vector<float> input_data;
         std::vector<size_t> shape;
         std::vector<size_t> word_shape;
+        std::vector<size_t> pos_shape;
         std::vector<int64_t> word_data;
+        std::vector<int64_t> pos_data;
         std::vector<int64_t> optional_data;
 
         if (input_json.is_object() && input_json.contains("word_ids")) {
@@ -647,11 +677,14 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
 
             if (input_json.contains("pos_ids")) {
                 ParseIntIdRows(input_json["pos_ids"], "input.pos_ids",
-                               optional_data, shape);
-                if (shape != word_shape) {
+                               pos_data, pos_shape);
+                if (pos_shape != word_shape) {
                     throw std::runtime_error(
                         "input.pos_ids shape must match input.word_ids");
                 }
+                sequence_pos_tensor =
+                    Tensor(pos_shape, pos_data.data(), DataType::Int64);
+                has_sequence_pos_input = true;
             }
             if (input_json.contains("attention_mask")) {
                 ParseIntIdRows(input_json["attention_mask"],
@@ -744,6 +777,14 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
         if (!model_) {
             throw std::runtime_error("Model unloaded during request");
         }
+        if (is_sequence_input && ModelUsesSequenceFeatureFusion(*model_)) {
+            if (!has_sequence_pos_input) {
+                throw std::runtime_error(
+                    "sequence feature fusion requires input.pos_ids");
+            }
+            input_tensor = BuildPackedWordPosSequenceInput(
+                input_tensor, sequence_pos_tensor);
+        }
         output_tensor = model_->Forward(input_tensor);
         request_count_++;
 
@@ -828,6 +869,202 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
     }
 
     res.set_content(response.dump(), "application/json");
+}
+
+void LocalInferenceServer::HandleEmbeddings(const httplib::Request& req,
+                                            httplib::Response& res) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    if (!HasModel()) {
+        json error = {
+            {"error", {
+                {"message", "No model loaded"},
+                {"type", "server_error"},
+                {"code", "no_model"}
+            }}
+        };
+        res.status = 503;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    json request_body;
+    try {
+        request_body = json::parse(req.body);
+    } catch (const json::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Invalid JSON: ") + e.what()},
+                {"type", "invalid_request_error"},
+                {"code", "parse_error"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    MetricEmbeddingInferenceInput input;
+    try {
+        input = ParseMetricEmbeddingInferenceInput(request_body);
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Failed to parse embedding input: ") +
+                                e.what()},
+                {"type", "invalid_request_error"},
+                {"code", "invalid_input"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    Tensor embeddings;
+    try {
+        std::lock_guard<std::mutex> lock(model_mutex_);
+        if (!model_) {
+            throw std::runtime_error("Model unloaded during request");
+        }
+        embeddings = model_->Forward(input.input);
+        request_count_++;
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Embedding inference failed: ") +
+                                e.what()},
+                {"type", "server_error"},
+                {"code", "inference_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    try {
+        const auto output = BuildEmbeddingOutputResponse(
+            embeddings, input.sample_ids, input.class_ids);
+        json response = EmbeddingOutputResponseToJson(output);
+        auto end_time = std::chrono::high_resolution_clock::now();
+        response["latency_ms"] = std::chrono::duration<double, std::milli>(
+            end_time - start_time).count();
+        res.set_content(response.dump(), "application/json");
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Failed to format embeddings: ") +
+                                e.what()},
+                {"type", "server_error"},
+                {"code", "output_format_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+    }
+}
+
+void LocalInferenceServer::HandlePairScore(const httplib::Request& req,
+                                           httplib::Response& res) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    if (!HasModel()) {
+        json error = {
+            {"error", {
+                {"message", "No model loaded"},
+                {"type", "server_error"},
+                {"code", "no_model"}
+            }}
+        };
+        res.status = 503;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    json request_body;
+    try {
+        request_body = json::parse(req.body);
+    } catch (const json::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Invalid JSON: ") + e.what()},
+                {"type", "invalid_request_error"},
+                {"code", "parse_error"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    MetricPairScoreInferenceInput input;
+    try {
+        input = ParseMetricPairScoreInferenceInput(request_body);
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Failed to parse pair-score input: ") +
+                                e.what()},
+                {"type", "invalid_request_error"},
+                {"code", "invalid_input"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    Tensor embedding_a;
+    Tensor embedding_b;
+    try {
+        std::lock_guard<std::mutex> lock(model_mutex_);
+        if (!model_) {
+            throw std::runtime_error("Model unloaded during request");
+        }
+        embedding_a = model_->Forward(input.input_a);
+        embedding_b = model_->Forward(input.input_b);
+        request_count_++;
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Pair-score inference failed: ") +
+                                e.what()},
+                {"type", "server_error"},
+                {"code", "inference_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    try {
+        const auto output = BuildPairScoreOutputResponse(
+            embedding_a,
+            embedding_b,
+            input.score_mode,
+            input.sample_id_a,
+            input.sample_id_b,
+            input.class_id_a,
+            input.class_id_b);
+        json response = PairScoreOutputResponseToJson(output);
+        auto end_time = std::chrono::high_resolution_clock::now();
+        response["latency_ms"] = std::chrono::duration<double, std::milli>(
+            end_time - start_time).count();
+        res.set_content(response.dump(), "application/json");
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"message", std::string("Failed to format pair scores: ") +
+                                e.what()},
+                {"type", "server_error"},
+                {"code", "output_format_error"}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+    }
 }
 
 void LocalInferenceServer::HandleGenerate(const httplib::Request& req, httplib::Response& res) {

@@ -362,6 +362,8 @@ int main() {
             {gui::NodeType::POSVocabulary, "POS Vocabulary", "min_freq"},
             {gui::NodeType::NERTagVocabulary, "NER Tag Vocabulary",
              "outside_tag"},
+            {gui::NodeType::SequenceTagOutput, "Sequence Tag Output",
+             "num_tags"},
         };
 
         for (const auto& node_case : cases) {
@@ -383,8 +385,10 @@ int main() {
                           std::string::npos,
                   "sequence metadata should describe its task: " +
                       node_case.name);
-            CheckSupportAxis(meta, "Pipeline Executor", "supported", true,
-                             node_case.name);
+            if (node_case.type != gui::NodeType::SequenceTagOutput) {
+                CheckSupportAxis(meta, "Pipeline Executor", "supported", true,
+                                 node_case.name);
+            }
         }
 
         Check(HasOutputType(metadata.GetMetadata(gui::NodeType::TokenVocabulary),
@@ -396,6 +400,67 @@ int main() {
         Check(HasOutputType(metadata.GetMetadata(gui::NodeType::NERTagVocabulary),
                             "NER Tag Vocabulary", gui::PinType::Parameters),
               "NERTagVocabulary should expose a Parameters output");
+        Check(HasOutputType(metadata.GetMetadata(gui::NodeType::SequenceTagOutput),
+                            "Predictions", gui::PinType::Tensor),
+              "SequenceTagOutput should expose a Tensor output");
+    }
+
+    {
+        struct MetricLearningMetadataCase {
+            gui::NodeType type;
+            std::string name;
+            std::string required_parameter;
+        };
+
+        const MetricLearningMetadataCase cases[] = {
+            {gui::NodeType::PairDatasetBuilder, "Pair Dataset Builder",
+             "sample_a_column"},
+            {gui::NodeType::TripletDatasetBuilder, "Triplet Dataset Builder",
+             "anchor_column"},
+            {gui::NodeType::SharedEncoder, "Shared Encoder", "encoder_id"},
+            {gui::NodeType::SiameseBranch, "Siamese Branch", "branch"},
+            {gui::NodeType::ContrastiveLoss, "Contrastive Loss", "margin"},
+            {gui::NodeType::CosineEmbeddingLoss, "Cosine Embedding Loss",
+             "margin"},
+            {gui::NodeType::TripletLoss, "Triplet Loss", "margin"},
+            {gui::NodeType::PairMetrics, "Pair Metrics", "threshold"},
+            {gui::NodeType::RetrievalMetrics, "Retrieval Metrics", "k"},
+            {gui::NodeType::EmbeddingOutput, "Embedding Output",
+             "include_metadata"},
+            {gui::NodeType::PairScoreOutput, "Pair Score Output",
+             "score_mode"},
+        };
+
+        for (const auto& node_case : cases) {
+            const auto* meta = metadata.GetMetadata(node_case.type);
+            Check(meta != nullptr,
+                  "metric-learning metadata missing: " + node_case.name);
+            Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
+                  "metric-learning metadata should be template-blocked: " +
+                      node_case.name);
+            Check(meta->badge == "Blocked",
+                  "metric-learning metadata should show blocked badge: " +
+                      node_case.name);
+            Check(meta->category == gui::NodeCategory::Training,
+                  "metric-learning metadata should live under Training: " +
+                      node_case.name);
+            Check(HasParameter(meta, node_case.required_parameter),
+                  "metric-learning metadata missing required parameter: " +
+                      node_case.name);
+            Check(meta->brief_description.find("Metric") != std::string::npos ||
+                      meta->brief_description.find("metric") !=
+                          std::string::npos ||
+                      ContainsString(meta->keywords, "metric"),
+                  "metric-learning metadata should describe metric-learning: " +
+                      node_case.name);
+        }
+
+        Check(HasOutputType(metadata.GetMetadata(gui::NodeType::EmbeddingOutput),
+                            "Embedding Records", gui::PinType::Dataset),
+              "EmbeddingOutput should expose dataset records");
+        Check(HasOutputType(metadata.GetMetadata(gui::NodeType::PairScoreOutput),
+                            "Pair Scores", gui::PinType::Dataset),
+              "PairScoreOutput should expose pair score records");
     }
 
     {

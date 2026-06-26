@@ -235,8 +235,16 @@ def validate_inference_payload(metadata_path: Path, metadata: dict, issues: list
 
     for key in ["word_ids", "pos_ids", "attention_mask"]:
         values = input_payload.get(key)
-        if not isinstance(values, list) or len(values) != max_length:
-            add_issue(issues, f"Inference payload {key} length must equal max_length.")
+        if (
+            not isinstance(values, list)
+            or len(values) != 1
+            or not isinstance(values[0], list)
+            or len(values[0]) != max_length
+        ):
+            add_issue(
+                issues,
+                f"Inference payload {key} must be shaped [1, max_length].",
+            )
 
 
 def main() -> int:

@@ -162,7 +162,7 @@ void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
         {14, gui::NodeType::TimeDistributed},
         {15, gui::NodeType::CrossEntropyLoss},
         {16, gui::NodeType::Adam},
-        {18, gui::NodeType::Output},
+        {18, gui::NodeType::SequenceTagOutput},
     };
 
     int checked_nodes = 0;

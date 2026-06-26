@@ -467,6 +467,7 @@ bool TestExecutor::BuildModelFromConfig() {
             }
 
             // Skip non-layer nodes
+            case gui::NodeType::SequenceTagOutput:
             case gui::NodeType::DatasetInput:
             case gui::NodeType::DataLoader:
             case gui::NodeType::Augmentation:

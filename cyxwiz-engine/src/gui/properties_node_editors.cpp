@@ -324,6 +324,44 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             break;
         }
 
+        case NodeType::SequenceTagOutput: {
+            ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.85f, 1.0f),
+                               "Sequence tag output");
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                               "Declares token-level logits and BIO decode metadata.");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            bool shape_changed = false;
+            shape_changed |= RenderTextParameter(
+                node, "num_tags", "Number of tags", "0",
+                ImGuiInputTextFlags_CharsDecimal);
+            RenderTextParameter(node, "tag_vocab_file", "Tag vocabulary", "");
+
+            std::string& decode_scheme = node.parameters["decode_scheme"];
+            if (decode_scheme.empty()) {
+                decode_scheme = "BIO";
+            }
+            const char* decode_schemes[] = {"BIO"};
+            int current_scheme = 0;
+            ImGui::Text("Decode scheme:");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::Combo("##decode_scheme", &current_scheme,
+                             decode_schemes, 1)) {
+                decode_scheme = decode_schemes[current_scheme];
+            }
+
+            if (shape_changed) {
+                context.invalidate_shapes();
+            }
+
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                               "Uses num_tags for CrossEntropy class-count validation.");
+            break;
+        }
+
         case NodeType::NERSequenceBuilder: {
             ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.85f, 1.0f),
                                "NER sequence materializer");

@@ -458,7 +458,8 @@ bool NodeEditor::HasInputNode() {
 
 bool NodeEditor::HasOutputNode() {
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::Output) {
+        if (node.type == NodeType::Output ||
+            node.type == NodeType::SequenceTagOutput) {
             return true;
         }
     }

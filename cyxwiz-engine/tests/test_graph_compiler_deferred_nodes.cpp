@@ -79,6 +79,16 @@ bool HasIssueText(const cyxwiz::TrainingConfiguration& config,
     return false;
 }
 
+bool HasMetricLearningBlocker(const cyxwiz::TrainingConfiguration& config,
+                              const std::string& text) {
+    for (const auto& blocker : config.metric_learning_graph.blockers) {
+        if (blocker.find(text) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool HasPlanNode(const cyxwiz::CompiledGraphPlan& plan, int node_id) {
     for (const auto& node : plan.nodes) {
         if (node.node_id == node_id) {
@@ -953,6 +963,52 @@ int main() {
           "metric-learning sketch should report the matched sketch name");
     Check(HasIssueText(config, "shared-weight graph contract"),
           "metric-learning sketch should report missing shared encoder contract");
+    Check(config.metric_learning_graph.detected,
+          "metric-learning contract should detect selected SharedEncoder sketch");
+    Check(!config.metric_learning_graph.executable,
+          "metric-learning graph contract should remain non-executable");
+    Check(config.metric_learning_graph.kind ==
+              cyxwiz::MetricLearningGraphKind::None,
+          "lone SharedEncoder sketch should not infer a training kind");
+    Check(config.metric_learning_graph.shared_encoder_node_ids.size() == 1 &&
+              config.metric_learning_graph.shared_encoder_node_ids[0] == 38,
+          "metric-learning contract should record the shared encoder node");
+    Check(HasMetricLearningBlocker(config, "visual shared-encoder graph execution"),
+          "metric-learning contract should record shared-encoder execution blocker");
+
+    auto typed_pair_score_output = Node(
+        42,
+        gui::NodeType::PairScoreOutput,
+        "Renamed Pair Scorer",
+        {Pin(4201, gui::PinType::Tensor, "Embedding A", true),
+         Pin(4202, gui::PinType::Tensor, "Embedding B", true)},
+        {Pin(4203, gui::PinType::Dataset, "Pair Scores", false)});
+
+    nodes = {data, dense, typed_pair_score_output, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 42, 4201),
+        Link(3, 2, 202, 42, 4202),
+        Link(4, 42, 4203, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "typed metric-learning output node should be invalid");
+    Check(HasIssueText(config, "PairScoreOutput"),
+          "typed metric-learning node should report its enum contract");
+    Check(config.metric_learning_graph.detected,
+          "metric-learning contract should detect typed PairScoreOutput");
+    Check(config.metric_learning_graph.kind ==
+              cyxwiz::MetricLearningGraphKind::PairScoring,
+          "PairScoreOutput should infer pair-scoring contract kind");
+    Check(config.metric_learning_graph.pair_score_output_node_ids.size() == 1 &&
+              config.metric_learning_graph.pair_score_output_node_ids[0] == 42,
+          "metric-learning contract should record pair-score output node");
+    Check(HasMetricLearningBlocker(config, "visual graph/runtime routing"),
+          "pair-score contract should report missing visual graph output routing");
 
     auto siamese_side_output = Node(39,
                                     gui::NodeType::Output,
@@ -998,6 +1054,14 @@ int main() {
           "triplet sketch should report the matched parameter");
     Check(HasIssueText(config, "pair/triplet batch payloads"),
           "triplet sketch should report missing batch contract");
+    Check(config.metric_learning_graph.detected,
+          "metric-learning contract should detect triplet column sketch");
+    Check(config.metric_learning_graph.kind ==
+              cyxwiz::MetricLearningGraphKind::TripletTraining,
+          "triplet columns should infer triplet-training contract kind");
+    Check(config.metric_learning_graph.triplet_dataset_builder_node_ids.size() == 1 &&
+              config.metric_learning_graph.triplet_dataset_builder_node_ids[0] == 2,
+          "metric-learning contract should record triplet batch source sketch");
 
     auto gnn_sketch = dense;
     gnn_sketch.id = 40;
@@ -1500,6 +1564,33 @@ int main() {
           "CrossEntropy class count mismatch should be invalid");
     Check(HasIssueText(config, "class count"),
           "CrossEntropy loss should report class/output mismatch");
+
+    auto sequence_tag_output = Node(
+        18,
+        gui::NodeType::SequenceTagOutput,
+        "Sequence Tag Output",
+        {Pin(1801, gui::PinType::Tensor, "Token Logits", true)},
+        {Pin(1802, gui::PinType::Tensor, "Predictions", false)});
+    sequence_tag_output.parameters["num_tags"] = "4";
+    sequence_tag_output.parameters["decode_scheme"] = "BIO";
+    sequence_tag_output.parameters["tag_vocab_file"] =
+        "examples/cyxgraph/NER/generated/ner_tag_vocab.txt";
+
+    class_dense.parameters["units"] = "4";
+    nodes = {data, class_dense, sequence_tag_output, class_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 18, 1801),
+        Link(3, 18, 1802, 15, 1501),
+        Link(4, 1, 102, 15, 1502),
+        Link(5, 15, 1503, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.preprocessing.num_classes == 4,
+          "SequenceTagOutput num_tags should drive CrossEntropy class count");
+    Check(!HasIssueText(config, "class count"),
+          "SequenceTagOutput num_tags should satisfy class-count validation");
 
     auto resize = Node(17,
                        gui::NodeType::Resize,

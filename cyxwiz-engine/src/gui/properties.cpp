@@ -36,6 +36,7 @@ bool IsCustomSequencePropertiesNode(NodeType type) {
         case NodeType::TokenVocabulary:
         case NodeType::POSVocabulary:
         case NodeType::NERTagVocabulary:
+        case NodeType::SequenceTagOutput:
             return true;
         default:
             return false;

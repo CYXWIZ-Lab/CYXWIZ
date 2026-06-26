@@ -1,5 +1,6 @@
 #include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/sequence_inference_response.h"
+#include "../src/core/sequence_model_input.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -155,6 +156,56 @@ int main() {
     }
     Check(mismatched_lengths_failed,
           "decode should reject sequence length count mismatches");
+
+    bool declared_missing_tag_failed = false;
+    try {
+        cyxwiz::RequireDeclaredSequenceTagVocabulary(true, {});
+    } catch (const std::exception& e) {
+        declared_missing_tag_failed =
+            std::string(e.what()).find("declared but missing or empty") !=
+            std::string::npos;
+    }
+    Check(declared_missing_tag_failed,
+          "declared sequence tag vocabulary should fail when missing");
+    cyxwiz::RequireDeclaredSequenceTagVocabulary(true, labels);
+    cyxwiz::RequireDeclaredSequenceTagVocabulary(false, {});
+
+    cyxwiz::SequentialModel fusion_model;
+    fusion_model.Add<cyxwiz::SequenceFeatureFusionModule>(8, 3, 5, 2, 0, 0);
+    Check(cyxwiz::ModelUsesSequenceFeatureFusion(fusion_model),
+          "fusion detector should recognize sequence feature fusion module");
+
+    cyxwiz::SequentialModel word_only_model;
+    word_only_model.Add<cyxwiz::EmbeddingModule>(8, 3, 0);
+    Check(!cyxwiz::ModelUsesSequenceFeatureFusion(word_only_model),
+          "fusion detector should leave word-only sequence models unchanged");
+
+    const std::vector<int64_t> word_ids = {2, 3, 0, 4};
+    const std::vector<int64_t> pos_ids = {1, 2, 0, 3};
+    const cyxwiz::Tensor word_tensor(
+        {2, 2}, word_ids.data(), cyxwiz::DataType::Int64);
+    const cyxwiz::Tensor pos_tensor(
+        {2, 2}, pos_ids.data(), cyxwiz::DataType::Int64);
+    const cyxwiz::Tensor packed =
+        cyxwiz::BuildPackedWordPosSequenceInput(word_tensor, pos_tensor);
+    Check(packed.Shape() == std::vector<size_t>({2, 2, 2}),
+          "packed sequence inference input should be [batch, seq, 2]");
+    const auto* packed_ids = packed.Data<int64_t>();
+    Check(std::vector<int64_t>(packed_ids, packed_ids + packed.NumElements()) ==
+              std::vector<int64_t>({2, 1, 3, 2, 0, 0, 4, 3}),
+          "packed sequence inference input should interleave word/POS ids");
+
+    bool pos_shape_failed = false;
+    try {
+        const cyxwiz::Tensor bad_pos(
+            {1, 4}, pos_ids.data(), cyxwiz::DataType::Int64);
+        (void)cyxwiz::BuildPackedWordPosSequenceInput(word_tensor, bad_pos);
+    } catch (const std::exception& e) {
+        pos_shape_failed =
+            std::string(e.what()).find("POS ids shape") != std::string::npos;
+    }
+    Check(pos_shape_failed,
+          "packed sequence inference input should reject POS shape mismatch");
 
     fs::remove_all(root);
     std::cout << "CyxModel sequence asset packaging test passed\n";

@@ -557,6 +557,21 @@ enum class NodeType {
     TokenVocabulary,    // Token id vocabulary for sequence tagging
     POSVocabulary,      // Optional POS id vocabulary for sequence tagging
     NERTagVocabulary,   // BIO tag vocabulary for sequence tagging
+    SequenceTagOutput,  // Decode/export token-level tag predictions
+
+    // ===== Metric Learning / Siamese Contract Nodes =====
+    // Appended to preserve existing serialized numeric NodeType ids.
+    PairDatasetBuilder,     // Build aligned pair samples for metric learning
+    TripletDatasetBuilder,  // Build anchor/positive/negative samples
+    SharedEncoder,          // Declare one shared encoder parameter set
+    SiameseBranch,          // Reference a shared encoder branch
+    ContrastiveLoss,        // Contrastive pair loss contract
+    CosineEmbeddingLoss,    // Cosine embedding pair loss contract
+    TripletLoss,            // Triplet loss contract
+    PairMetrics,            // Pair distance metric output
+    RetrievalMetrics,       // Embedding retrieval metric output
+    EmbeddingOutput,        // Embedding inference output
+    PairScoreOutput,        // Pair score inference output
 
     // Special sentinel value
     Unknown

@@ -757,7 +757,8 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 break;
             }
 
-            case gui::NodeType::Output: {
+            case gui::NodeType::Output:
+            case gui::NodeType::SequenceTagOutput: {
                 // Output node is just a marker, not an actual layer
                 // The actual output transformation is done by the preceding Dense layer
                 spdlog::info("  [{}] Output (marker, no layer added)", i);

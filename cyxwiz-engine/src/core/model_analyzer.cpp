@@ -189,6 +189,7 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::TokenVocabulary: return "TokenVocabulary";
         case gui::NodeType::POSVocabulary: return "POSVocabulary";
         case gui::NodeType::NERTagVocabulary: return "NERTagVocabulary";
+        case gui::NodeType::SequenceTagOutput: return "SequenceTagOutput";
         default: return "Unknown";
     }
 }
@@ -610,6 +611,7 @@ bool ModelAnalyzer::IsUtilityNode(gui::NodeType type) const {
         case gui::NodeType::DataLoader:
         case gui::NodeType::DataSplit:
         case gui::NodeType::Output:
+        case gui::NodeType::SequenceTagOutput:
         case gui::NodeType::MSELoss:
         case gui::NodeType::CrossEntropyLoss:
         case gui::NodeType::BCELoss:

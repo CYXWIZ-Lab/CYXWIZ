@@ -16,6 +16,15 @@ struct SequenceTagDecodeResponse {
     std::vector<size_t> effective_lengths;
 };
 
+inline void RequireDeclaredSequenceTagVocabulary(
+    bool has_sequence_tag_vocabulary,
+    const std::vector<std::string>& id_to_label) {
+    if (has_sequence_tag_vocabulary && id_to_label.empty()) {
+        throw std::runtime_error(
+            "sequence tag vocabulary metadata is declared but missing or empty");
+    }
+}
+
 inline SequenceTagDecodeResponse DecodeSequenceTagIdsForInference(
     const Tensor& predicted_ids,
     const std::vector<std::string>& id_to_label,

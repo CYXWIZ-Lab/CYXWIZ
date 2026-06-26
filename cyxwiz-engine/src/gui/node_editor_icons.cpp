@@ -1931,10 +1931,27 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_ALIGN_LEFT;
         case NodeType::NERSequenceBuilder:
         case NodeType::NERTagVocabulary:
+        case NodeType::SequenceTagOutput:
             return ICON_FA_TAG;
         case NodeType::TokenVocabulary:
         case NodeType::POSVocabulary:
             return ICON_FA_BOOK;
+        case NodeType::PairDatasetBuilder:
+        case NodeType::TripletDatasetBuilder:
+        case NodeType::SiameseBranch:
+            return ICON_FA_CODE_BRANCH;
+        case NodeType::SharedEncoder:
+            return ICON_FA_SHARE_NODES;
+        case NodeType::ContrastiveLoss:
+        case NodeType::CosineEmbeddingLoss:
+        case NodeType::TripletLoss:
+            return ICON_FA_SCALE_BALANCED;
+        case NodeType::PairMetrics:
+        case NodeType::RetrievalMetrics:
+        case NodeType::PairScoreOutput:
+            return ICON_FA_CHART_LINE;
+        case NodeType::EmbeddingOutput:
+            return ICON_FA_CUBE;
 
         // Upsampling
         case NodeType::ConvTranspose2D:

@@ -58,8 +58,8 @@ Known limitations:
 - `FeatureConcat` is not a first-class runtime graph node.
 - Attention masks are carried by the batch contract but not consumed by the
   model path.
-- `SequenceTagOutput` exists as inference decode behavior, not as a
-  first-class Studio output node.
+- `SequenceTagOutput` is now a first-class Studio output node for
+  token-level tagger logits and BIO decode metadata.
 - Generic tabular `TrainingExecutor` dispatch still correctly fails closed for
   sequence graphs; Studio graph launch must build the `ISequenceBatcher`
   bridge before calling `StartTrainingSequence`.
@@ -179,23 +179,54 @@ Notes:
 
 ## Phase 3 - Sequence Output Surface
 
+Status: completed 2026-06-26.
+
 Goal: make sequence-tagging inference/output visible as a first-class Studio
 contract after the runtime path is proven.
 
 Tasks:
 
-- Decide whether `SequenceTagOutput` should be a real node or an export/infer
-  option on Output.
-- Persist tag vocabulary and max-length metadata in exported models.
-- Ensure local inference returns token/tag pairs for sequence-tagging models.
-- Add tests for invalid/missing sequence vocab assets.
+- [x] Decide whether `SequenceTagOutput` should be a real node or an
+  export/infer option on Output.
+- [x] Persist tag vocabulary and max-length metadata in exported models.
+- [x] Ensure local inference can return token/tag pairs for sequence-tagging
+  models.
+- [x] Reuse `ModelBuilder` when importing packaged graph models so deployed
+  inference understands the same sequence modules as training.
+- [x] Pack local inference `word_ids` + `pos_ids` for POS-fused sequence
+  models.
+- [x] Add tests for invalid/missing sequence vocab assets.
+- [x] Add first-class `SequenceTagOutput` Studio node metadata, creation,
+  save/load, pattern, CyxQL, shape, properties, icon, codegen, and compiler
+  terminal handling.
+- [x] Update the saved NER graph to use `SequenceTagOutput` instead of a
+  generic `Output` node.
+- [x] Add compiler/template tests proving `SequenceTagOutput.num_tags` drives
+  token-class CrossEntropy validation and that the saved graph uses the
+  first-class node type.
 
 Acceptance:
 
 - A deployed sequence tagger can return readable token/tag predictions.
 - Missing sequence metadata fails with a clear error.
 
+Notes:
+
+- `LocalInferenceServer` now preserves `input.pos_ids` and packs named
+  sequence inputs for models whose first module is
+  `SequenceFeatureFusionModule`.
+- `ModelImporter` now delegates graph architecture rebuilds to
+  `BuildSequentialFromConfig` instead of maintaining a stale duplicate layer
+  builder.
+- Local model loading now fails closed when a package declares sequence tag
+  vocabulary metadata but the tag vocabulary is missing or empty.
+- `SequenceTagOutput` is implemented as a terminal graph/output contract, not
+  a trainable layer or PipelineExecutor table operator.
+- The saved NER graph now serializes node 18 as `SequenceTagOutput`.
+
 ## Phase 4 - Siamese Backend Smoke Only
+
+Status: completed 2026-06-26 by `test_siamese_backend_smoke`.
 
 Goal: prove the backend metric-learning pieces can support a minimal manual
 training loop before adding visual graph nodes.
@@ -216,11 +247,21 @@ Non-goals:
 
 Acceptance:
 
-- Backend example/test proves the losses are useful in a controlled training
+- [x] Backend example/test proves the losses are useful in a controlled training
   loop.
-- GraphCompiler continues to reject visual Siamese sketches.
+- [x] GraphCompiler continues to reject visual Siamese sketches.
+
+Notes:
+
+- `test_siamese_backend_smoke` trains a tiny manually shared linear encoder
+  with `ContrastiveLoss`, proving positive pairs stay close while negative
+  pairs move out to the margin.
+- This does not add Studio graph nodes, pair/triplet batchers, or shared
+  encoder graph semantics.
 
 ## Phase 5 - Siamese Graph Runtime Design
+
+Status: completed 2026-06-26 as a design contract only.
 
 Goal: design the first visual graph contract for metric learning only after the
 backend smoke path is proven.
@@ -234,10 +275,140 @@ Required contracts:
 - pair and retrieval metrics,
 - embedding or pair-score inference outputs.
 
+Runtime contract:
+
+- `PairBatch` and `TripletBatch` are new typed training payloads beside
+  `Batch` and `SequenceBatch`; metric-learning launch must not pack multiple
+  samples into `Batch.data`.
+- `PairBatch` carries named tensors for `input_a`, `input_b`, `pair_label`,
+  and optional `sample_id_a`, `sample_id_b`, `class_id_a`, and `class_id_b`.
+- `TripletBatch` carries named tensors for `anchor`, `positive`, `negative`,
+  plus optional sample/class IDs for retrieval metrics and export.
+- `ContrastiveLoss` labels use the backend convention proven by
+  `test_siamese_backend_smoke`: `0 = similar`, `1 = dissimilar`.
+- `CosineEmbeddingLoss` labels remain `1 = similar`, `-1 = dissimilar`; graph
+  metadata must show this explicitly because it differs from contrastive loss.
+- `TripletLoss` consumes anchor/positive/negative embeddings directly and does
+  not require pair labels.
+
+Shared encoder contract:
+
+- `SharedEncoder` owns exactly one encoder module/parameter set.
+- Branch nodes reference the shared encoder by ID/name; they do not clone the
+  encoder layers.
+- The executor runs the same encoder object for each branch, accumulates
+  branch gradients into the same parameters, and lets the optimizer update
+  those parameters once per training step.
+- The compiler rejects duplicated branch encoders, mismatched embedding
+  dimensions, missing labels/negative samples, ambiguous label conventions,
+  and optimizers that cannot reach the metric loss.
+
+Inference contract:
+
+- `EmbeddingOutput` is the single-sample export path and returns embeddings
+  with optional sample/class metadata.
+- `PairScoreOutput` is the pair-inference path and returns distance or
+  similarity scores; it must not masquerade as class probabilities.
+- Pair metrics are distance-threshold based first: pair accuracy, positive and
+  negative distance means, and optional ROC/AUC.
+- Retrieval metrics are embedding-space based: recall@k, mean reciprocal rank,
+  and nearest-neighbor class agreement.
+
+Implementation slices:
+
+1. Add internal `PairBatch` / `TripletBatch` contracts and shape/label tests.
+   Completed 2026-06-26 by `metric_learning_batch.h` and
+   `test_metric_learning_batch_contracts`.
+2. Add pair/triplet dataset builders and batchers without visual graph runtime
+   execution. Completed 2026-06-26 by `PairDatasetBuilder`,
+   `TripletDatasetBuilder`, `PairBatcher`, and `TripletBatcher`.
+3. Add Studio node metadata and compiler guards for metric-learning nodes,
+   marked unsupported until the executor path exists. Completed 2026-06-26
+   for blocked `Template` metadata, save/load aliases, pattern/CyxQL/icon
+   coverage, default pins, and type-based compiler rejection.
+4. Add shared-encoder compile representation and a runtime harness that reuses
+   one encoder object across branches. Runtime harness completed 2026-06-26
+   by `SharedEncoderRuntime` and
+   `test_metric_learning_shared_encoder_contracts`; passive compiler graph
+   representation completed 2026-06-26 by `MetricLearningGraphContract` and
+   `test_graph_compiler_deferred_nodes`. Executable compiler/runtime support
+   remains open. Deterministic `SequentialModel` pair/triplet backward is now
+   supported by branch replay plus accumulated gradient maps; training-mode
+   stateful modules still require activation snapshots.
+5. Wire `ContrastiveLoss`, `CosineEmbeddingLoss`, and `TripletLoss` through
+   the graph executor. Internal loss adapter contracts completed 2026-06-26
+   by `metric_learning_losses.h` and `test_metric_learning_losses`; internal
+   training-step contracts completed 2026-06-26 by
+   `metric_learning_training_step.h` and
+   `test_metric_learning_training_step`. Visual graph executor routing remains
+   open.
+6. Add `PairMetrics`, `RetrievalMetrics`, `EmbeddingOutput`, and
+   `PairScoreOutput` after training is executable. Internal pair/retrieval
+   metric helpers completed 2026-06-26 by `metric_learning_metrics.h` and
+   `test_metric_learning_metrics`; internal inference response contracts
+   completed 2026-06-26 by `metric_learning_inference_outputs.h` and
+   `test_metric_learning_inference_outputs`, including JSON packaging and
+   pair-score mode parsing. Local-inference input parsing contracts completed
+   2026-06-26 by `metric_learning_inference_input.h/.cpp` and
+   `test_metric_learning_inference_input`. Embedded local inference routes
+   completed 2026-06-26 by `/v1/embeddings` and `/v1/pair-score` handlers.
+   Graph nodes and visual runtime wiring remain open.
+
 Acceptance:
 
-- A graph-level design can be implemented without overloading `Batch.data` or
-  duplicating encoder weights.
+- [x] A graph-level design can be implemented without overloading `Batch.data`
+  or duplicating encoder weights.
+- [x] The next implementation slice is narrowed to typed batch contracts and
+  tests, not broad Studio node support.
+- [x] The first internal contract slice has typed pair/triplet payloads,
+  validation helpers, label-convention helpers, and focused tests.
+- [x] In-memory pair/triplet sample batchers can emit aligned tensors, preserve
+  optional sample/class metadata IDs, reject invalid labels/shapes, and handle
+  partial/drop-last batches.
+- [x] Internal pair/triplet dataset builders can validate row shape/metadata
+  contracts, derive pair labels from class IDs when configured, validate triplet
+  class semantics, and create the in-memory batchers.
+- [x] Internal shared-encoder runtime harness owns exactly one executable
+  encoder, routes pair/triplet branches through that object, accumulates branch
+  gradients into the same encoder, and performs one parameter update per batch.
+- [x] Internal pair/retrieval metric helpers compute distance-threshold pair
+  accuracy, positive/negative distance means, recall@k, mean reciprocal rank,
+  and nearest-neighbor class agreement without enabling graph execution.
+- [x] Internal embedding and pair-score response helpers preserve embedding
+  shape/metadata and expose distance or similarity scores without
+  masquerading as class probabilities.
+- [x] Metric-learning inference output helpers serialize stable JSON payloads
+  for embedding records and pair-score records, with explicit score-mode
+  parsing.
+- [x] Metric-learning local-inference input helpers parse embedding and
+  pair-score request payloads into typed tensors, validate branch shape
+  agreement, and preserve batch-aligned sample/class metadata without adding
+  HTTP routes.
+- [x] Embedded local inference exposes `/v1/embeddings` and `/v1/pair-score`
+  routes that run a loaded embedding model and serialize the metric-learning
+  response contracts without accepting visual Siamese graph execution.
+- [x] Internal metric-loss adapters validate pair/triplet contracts and return
+  branch gradients for contrastive, cosine-embedding, and Euclidean triplet
+  loss helpers without enabling graph execution.
+- [x] Internal metric-learning training-step helpers route typed pair/triplet
+  batches through shared encoder forward, metric loss, branch backward, and an
+  optional single optimizer update without enabling visual graph execution.
+- [x] Explicit metric-learning Studio node types are registered as blocked
+  templates, can round-trip through the Studio metadata surfaces, and are
+  rejected by the compiler by node type even when renamed.
+- [x] Compiler output exposes a passive metric-learning graph contract with
+  detected node IDs, inferred pair/triplet/output intent, and structured
+  blockers while keeping execution disabled.
+- [x] Shared-encoder runtime supports deterministic real `SequentialModel`
+  multi-branch backward by replaying cached branch inputs and summing
+  parameter-gradient maps.
+- [ ] Graph compiler/runtime support for visual shared-encoder Siamese graphs
+  is still not accepted.
+- [ ] Training-mode stateful `SequentialModel` modules still need branch
+  activation snapshots before they can be used safely for multi-branch graph
+  execution.
+- [ ] Visual graph/runtime wiring for `EmbeddingOutput` and `PairScoreOutput`
+  is still open.
 
 ## Verification Targets
 
@@ -247,6 +418,17 @@ Keep these green while working from Track 14:
 - `test_training_executor_arrow_parquet`
 - `test_text_gui_training_launch`
 - `test_cyxmodel_sequence_assets`
+- `test_saved_ner_sequence_smoke`
+- `test_pattern_template_guard`
+- `test_pipeline_operator_metadata`
+- `test_siamese_backend_smoke`
+- `test_metric_learning_batch_contracts`
+- `test_metric_learning_shared_encoder_contracts`
+- `test_metric_learning_losses`
+- `test_metric_learning_training_step`
+- `test_metric_learning_metrics`
+- `test_metric_learning_inference_input`
+- `test_metric_learning_inference_outputs`
 - `test_recurrent_backend_placement`
 - `cyxwiz-tests` filters: `[loss]`, `[sequence]` or focused sequence filters
   touched by the change

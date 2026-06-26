@@ -47,6 +47,11 @@ bool IsDatasetSourceType(gui::NodeType type) {
            type == gui::NodeType::DatasetInput;
 }
 
+bool IsOutputNodeType(gui::NodeType type) {
+    return type == gui::NodeType::Output ||
+           type == gui::NodeType::SequenceTagOutput;
+}
+
 bool IsPreTrainInspectionNode(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::DataProfiler:
@@ -790,6 +795,44 @@ bool LooksLikeReconstructionGenerativeTrainingSketch(
 
 bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
                                            std::string& matched_key) {
+    switch (node.type) {
+        case gui::NodeType::PairDatasetBuilder:
+            matched_key = "PairDatasetBuilder";
+            return true;
+        case gui::NodeType::TripletDatasetBuilder:
+            matched_key = "TripletDatasetBuilder";
+            return true;
+        case gui::NodeType::SharedEncoder:
+            matched_key = "SharedEncoder";
+            return true;
+        case gui::NodeType::SiameseBranch:
+            matched_key = "SiameseBranch";
+            return true;
+        case gui::NodeType::ContrastiveLoss:
+            matched_key = "ContrastiveLoss";
+            return true;
+        case gui::NodeType::CosineEmbeddingLoss:
+            matched_key = "CosineEmbeddingLoss";
+            return true;
+        case gui::NodeType::TripletLoss:
+            matched_key = "TripletLoss";
+            return true;
+        case gui::NodeType::PairMetrics:
+            matched_key = "PairMetrics";
+            return true;
+        case gui::NodeType::RetrievalMetrics:
+            matched_key = "RetrievalMetrics";
+            return true;
+        case gui::NodeType::EmbeddingOutput:
+            matched_key = "EmbeddingOutput";
+            return true;
+        case gui::NodeType::PairScoreOutput:
+            matched_key = "PairScoreOutput";
+            return true;
+        default:
+            break;
+    }
+
     const char* sketch_names[] = {
         "PairDatasetBuilder",
         "TripletDatasetBuilder",
@@ -800,7 +843,8 @@ bool LooksLikeMetricLearningTrainingSketch(const gui::MLNode& node,
         "TripletLoss",
         "PairMetrics",
         "RetrievalMetrics",
-        "EmbeddingOutput"
+        "EmbeddingOutput",
+        "PairScoreOutput"
     };
 
     for (const char* name : sketch_names) {
@@ -2654,6 +2698,8 @@ TrainingConfiguration GraphCompiler::Compile(
         config.data_source_node_id,
         config.loss_node_id,
         config.optimizer_node_id);
+    config.metric_learning_graph =
+        AnalyzeMetricLearningGraphContract(config.graph_plan);
 
     // Check if we're using CrossEntropyLoss (which applies softmax internally)
     bool using_cross_entropy = (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss);
@@ -2839,14 +2885,21 @@ TrainingConfiguration GraphCompiler::Compile(
         const gui::MLNode* output_node = FindFirstReachableNodeOfType(
             nodes, training_path_ids, gui::NodeType::Output);
         if (!output_node) {
+            output_node = FindFirstReachableNodeOfType(
+                nodes, training_path_ids, gui::NodeType::SequenceTagOutput);
+        }
+        if (!output_node) {
             output_node = FindOutputNode(nodes);
         }
         if (output_node) {
-            auto it = output_node->parameters.find("classes");
+            auto it = output_node->parameters.find(
+                output_node->type == gui::NodeType::SequenceTagOutput
+                    ? "num_tags"
+                    : "classes");
             if (it != output_node->parameters.end() && !it->second.empty()) {
                 try {
                     config.preprocessing.num_classes = std::stoul(it->second);
-                    spdlog::info("GraphCompiler: num_classes={} from Output node",
+                    spdlog::info("GraphCompiler: num_classes={} from output node",
                                  config.preprocessing.num_classes);
                 } catch (...) {
                     config.preprocessing.num_classes = 0;  // Will fall back below
@@ -3403,7 +3456,7 @@ const gui::MLNode* GraphCompiler::FindOptimizerNode(const std::vector<gui::MLNod
 
 const gui::MLNode* GraphCompiler::FindOutputNode(const std::vector<gui::MLNode>& nodes) const {
     for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::Output) {
+        if (IsOutputNodeType(node.type)) {
             return &node;
         }
     }
@@ -4475,7 +4528,7 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
                 if (node_it == node_by_id.end()) continue;
 
                 const gui::MLNode* upstream_node = node_it->second;
-                if (upstream_node->type == gui::NodeType::Output ||
+                if (IsOutputNodeType(upstream_node->type) ||
                     IsModelLayer(upstream_node->type)) {
                     found_model_source = true;
                     break;

@@ -31,6 +31,8 @@ class Tokenizer;
  *   GET  /health       - Health check
  *   GET  /v1/model     - Model info (architecture, layers)
  *   POST /v1/predict   - Run inference
+ *   POST /v1/embeddings - Run embedding extraction inference
+ *   POST /v1/pair-score - Score pairs through the loaded embedding model
  *   POST /v1/generate  - Greedy text generation for packaged text models
  */
 class LocalInferenceServer {
@@ -111,6 +113,8 @@ private:
     void HandleHealth(const httplib::Request& req, httplib::Response& res);
     void HandleModelInfo(const httplib::Request& req, httplib::Response& res);
     void HandlePredict(const httplib::Request& req, httplib::Response& res);
+    void HandleEmbeddings(const httplib::Request& req, httplib::Response& res);
+    void HandlePairScore(const httplib::Request& req, httplib::Response& res);
     void HandleGenerate(const httplib::Request& req, httplib::Response& res);
 
     // Server thread function

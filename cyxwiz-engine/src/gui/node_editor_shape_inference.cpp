@@ -298,6 +298,7 @@ std::vector<size_t> ShapeInferenceEngine::InferNodeOutputShape(
 
         // Loss and output nodes - preserve shape
         case NodeType::Output:
+        case NodeType::SequenceTagOutput:
         case NodeType::MSELoss:
         case NodeType::CrossEntropyLoss:
             output_shape = input_shape;

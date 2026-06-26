@@ -270,6 +270,7 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::TokenVocabulary:
         case NodeType::POSVocabulary:
         case NodeType::NERTagVocabulary:
+        case NodeType::SequenceTagOutput:
             return NodeCategory::TextProcessing;
 
         // Upsampling
@@ -2380,6 +2381,141 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.outputs.push_back(out);
             node.parameters["outside_tag"] = "O";
             node.parameters["bio_scheme"] = "BIO";
+            break;
+        }
+
+        case NodeType::SequenceTagOutput: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Tensor;
+            in.name = "Token Logits";
+            in.is_input = true;
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Tensor;
+            out.name = "Predictions";
+            out.is_input = false;
+            out.is_required = false;
+            node.outputs.push_back(out);
+            node.parameters["num_tags"] = "0";
+            node.parameters["tag_vocab_file"] = "";
+            node.parameters["decode_scheme"] = "BIO";
+            break;
+        }
+
+        case NodeType::PairDatasetBuilder: {
+            NodePin in{next_pin_id_++, PinType::Dataset, "Rows", true};
+            node.inputs.push_back(in);
+            NodePin out{next_pin_id_++, PinType::Dataset, "Pair Batch", false};
+            node.outputs.push_back(out);
+            node.parameters["sample_a_column"] = "";
+            node.parameters["sample_b_column"] = "";
+            node.parameters["pair_label_column"] = "";
+            node.parameters["label_convention"] = "contrastive_zero_similar";
+            break;
+        }
+
+        case NodeType::TripletDatasetBuilder: {
+            NodePin in{next_pin_id_++, PinType::Dataset, "Rows", true};
+            node.inputs.push_back(in);
+            NodePin out{next_pin_id_++, PinType::Dataset, "Triplet Batch", false};
+            node.outputs.push_back(out);
+            node.parameters["anchor_column"] = "";
+            node.parameters["positive_column"] = "";
+            node.parameters["negative_column"] = "";
+            break;
+        }
+
+        case NodeType::SharedEncoder: {
+            NodePin in{next_pin_id_++, PinType::Tensor, "Encoder", true};
+            node.inputs.push_back(in);
+            NodePin out{next_pin_id_++, PinType::Parameters, "Shared Encoder", false};
+            node.outputs.push_back(out);
+            node.parameters["encoder_id"] = "shared_encoder";
+            break;
+        }
+
+        case NodeType::SiameseBranch: {
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Input", true});
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Parameters, "Shared Encoder", true});
+            node.outputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Embedding", false});
+            node.parameters["branch"] = "a";
+            break;
+        }
+
+        case NodeType::ContrastiveLoss:
+        case NodeType::CosineEmbeddingLoss: {
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Embedding A", true});
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Embedding B", true});
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Labels, "Labels", true});
+            node.outputs.push_back(
+                NodePin{next_pin_id_++, PinType::Loss, "Loss", false});
+            node.parameters["margin"] =
+                type == NodeType::ContrastiveLoss ? "1.0" : "0.0";
+            break;
+        }
+
+        case NodeType::TripletLoss: {
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Anchor", true});
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Positive", true});
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Negative", true});
+            node.outputs.push_back(
+                NodePin{next_pin_id_++, PinType::Loss, "Loss", false});
+            node.parameters["margin"] = "1.0";
+            break;
+        }
+
+        case NodeType::PairMetrics: {
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Embedding A", true});
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Embedding B", true});
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Labels, "Labels", true});
+            node.outputs.push_back(
+                NodePin{next_pin_id_++, PinType::Dataset, "Metrics", false});
+            node.parameters["threshold"] = "0.5";
+            break;
+        }
+
+        case NodeType::RetrievalMetrics: {
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Embeddings", true});
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Labels, "Class IDs", true});
+            node.outputs.push_back(
+                NodePin{next_pin_id_++, PinType::Dataset, "Metrics", false});
+            node.parameters["k"] = "10";
+            break;
+        }
+
+        case NodeType::EmbeddingOutput: {
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Embeddings", true});
+            node.outputs.push_back(
+                NodePin{next_pin_id_++, PinType::Dataset, "Embedding Records", false});
+            node.parameters["include_metadata"] = "true";
+            break;
+        }
+
+        case NodeType::PairScoreOutput: {
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Embedding A", true});
+            node.inputs.push_back(
+                NodePin{next_pin_id_++, PinType::Tensor, "Embedding B", true});
+            node.outputs.push_back(
+                NodePin{next_pin_id_++, PinType::Dataset, "Pair Scores", false});
+            node.parameters["score_mode"] = "distance";
             break;
         }
 
@@ -5567,6 +5703,7 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::TokenVocabulary:
         case NodeType::POSVocabulary:
         case NodeType::NERTagVocabulary:
+        case NodeType::SequenceTagOutput:
             return IM_COL32(0, 150, 136, 255);
 
         // ===== Upsampling - Indigo =====

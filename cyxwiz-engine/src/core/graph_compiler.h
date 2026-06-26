@@ -1,6 +1,7 @@
 #pragma once
 
 #include "compiled_graph_plan.h"
+#include "metric_learning_graph_contract.h"
 #include "../gui/node_editor.h"
 #include "../preprocessing/preprocessing_config.h"
 #include <cyxwiz/tensor.h>
@@ -313,6 +314,12 @@ struct TrainingConfiguration {
     // The compiler leaves this empty until a node group is deliberately
     // exposed. Focused backend tests may populate it directly.
     std::vector<int> graph_op_node_ids;
+
+    // Passive metric-learning graph contract. Populated when the selected
+    // training path contains Siamese / metric-learning nodes, but remains
+    // executable=false until the graph executor and local inference routes are
+    // implemented.
+    MetricLearningGraphContract metric_learning_graph;
 
     // Input/Output configuration
     std::vector<size_t> input_shape;    // e.g., [28, 28, 1] for MNIST

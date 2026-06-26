@@ -284,6 +284,17 @@ std::vector<size_t> InferOutputShape(
             break;
         }
 
+        case NodeType::SequenceTagOutput: {
+            int num_tags = 0;
+            if (params.count("num_tags")) {
+                num_tags = std::stoi(params.at("num_tags"));
+            }
+            output_shape = num_tags > 0
+                               ? std::vector<size_t>{static_cast<size_t>(num_tags)}
+                               : input_shape;
+            break;
+        }
+
         case NodeType::MSELoss:
         case NodeType::CrossEntropyLoss:
         case NodeType::SGD:
@@ -371,6 +382,7 @@ LayerParameters ComputeLayerParameters(
         case NodeType::MaxPool2D:
         case NodeType::Dropout:
         case NodeType::Output:
+        case NodeType::SequenceTagOutput:
         case NodeType::DatasetInput:
         case NodeType::DataLoader:
         case NodeType::Augmentation:

@@ -677,7 +677,9 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
         if (!node) continue;
 
         // Skip DatasetInput and Output nodes in __init__ (they don't have layers)
-        if (node->type == NodeType::DatasetInput || node->type == NodeType::Output) {
+        if (node->type == NodeType::DatasetInput ||
+            node->type == NodeType::Output ||
+            node->type == NodeType::SequenceTagOutput) {
             continue;
         }
 
@@ -731,6 +733,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 break;
 
             case NodeType::Output:
+            case NodeType::SequenceTagOutput:
                 code += "        # Output layer\n";
                 break;
 
@@ -927,7 +930,9 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
         if (!node) continue;
 
         // Skip DatasetInput and Output nodes in __init__
-        if (node->type == NodeType::DatasetInput || node->type == NodeType::Output) {
+        if (node->type == NodeType::DatasetInput ||
+            node->type == NodeType::Output ||
+            node->type == NodeType::SequenceTagOutput) {
             continue;
         }
 
@@ -981,6 +986,7 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
                 break;
 
             case NodeType::Output:
+            case NodeType::SequenceTagOutput:
                 code += "        # Output layer\n";
                 break;
 
@@ -1105,7 +1111,9 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
         if (!node) continue;
 
         // Skip DatasetInput and Output nodes in __init__
-        if (node->type == NodeType::DatasetInput || node->type == NodeType::Output) {
+        if (node->type == NodeType::DatasetInput ||
+            node->type == NodeType::Output ||
+            node->type == NodeType::SequenceTagOutput) {
             continue;
         }
 
@@ -1441,6 +1449,7 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
             }
 
             case NodeType::Output:
+            case NodeType::SequenceTagOutput:
                 last_expr = input_expr(*node, 0);
                 break;
 
@@ -1896,6 +1905,10 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
             code = "layers.Dense(" + units + ", activation='softmax')";
             break;
         }
+
+        case NodeType::SequenceTagOutput:
+            code = "# SequenceTagOutput marker";
+            break;
 
         case NodeType::LinearAttention: {
             std::string embed_dim = "512";

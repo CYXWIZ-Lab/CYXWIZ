@@ -1,5 +1,6 @@
 #include "model_importer.h"
 #include "graph_compiler.h"
+#include "model_builder.h"
 #include <cyxwiz/sequential.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -157,156 +158,13 @@ static bool BuildModelFromGraph(
             return false;
         }
 
-        spdlog::info("Building model from graph: {} layers, input={}, output={}",
-                     config.layers.size(), config.input_size, config.output_size);
-
-        // Build model layers from configuration
-        size_t current_input_size = config.input_size;
-
-        for (size_t i = 0; i < config.layers.size(); ++i) {
-            const auto& layer_cfg = config.layers[i];
-
-            switch (layer_cfg.type) {
-                case gui::NodeType::Dense: {
-                    size_t out_features = 64;
-                    if (layer_cfg.parameters.count("units")) {
-                        out_features = std::stoul(layer_cfg.parameters.at("units"));
-                    }
-                    model.Add<LinearModule>(current_input_size, out_features, true);
-                    spdlog::debug("  [{}] Linear({} -> {})", i, current_input_size, out_features);
-                    current_input_size = out_features;
-                    break;
-                }
-
-                case gui::NodeType::Embedding: {
-                    size_t num_embeddings = 10000;
-                    size_t embedding_dim = 256;
-                    if (layer_cfg.parameters.count("num_embeddings")) {
-                        try { num_embeddings = static_cast<size_t>(std::stoul(layer_cfg.parameters.at("num_embeddings"))); }
-                        catch (...) {}
-                    }
-                    if (layer_cfg.parameters.count("embedding_dim")) {
-                        try { embedding_dim = static_cast<size_t>(std::stoul(layer_cfg.parameters.at("embedding_dim"))); }
-                        catch (...) {}
-                    }
-                    if (num_embeddings < 2) num_embeddings = 2;
-                    if (embedding_dim < 1) embedding_dim = 1;
-
-                    const int padding_idx =
-                        GetIntParam(layer_cfg, "padding_idx", -1);
-                    const std::string weights_file =
-                        GetStringParam(layer_cfg, "weights_file",
-                            GetStringParam(layer_cfg, "embedding_weights_file"));
-                    const bool freeze_embedding =
-                        GetBoolParam(layer_cfg, "freeze", false);
-                    const float max_norm =
-                        GetFloatParam(layer_cfg, "max_norm", 0.0f);
-
-                    if (!weights_file.empty()) {
-                        auto embedding = std::make_unique<EmbeddingModule>(
-                            num_embeddings, embedding_dim, padding_idx,
-                            max_norm);
-                        Tensor weights = LoadEmbeddingWeightsTextFile(
-                            weights_file, num_embeddings, embedding_dim);
-                        embedding->LoadPretrainedWeights(weights, freeze_embedding);
-                        spdlog::debug("  [{}] Loaded embedding weights from '{}'{}",
-                                      i, weights_file,
-                                      freeze_embedding ? " (frozen)" : "");
-                        model.AddModule(std::move(embedding));
-                    } else {
-                        model.Add<EmbeddingModule>(num_embeddings, embedding_dim,
-                                                   padding_idx, max_norm);
-                    }
-
-                    bool next_is_recurrent = false;
-                    if (i + 1 < config.layers.size()) {
-                        const auto nt = config.layers[i + 1].type;
-                        next_is_recurrent = (nt == gui::NodeType::LSTM ||
-                                             nt == gui::NodeType::GRU ||
-                                             nt == gui::NodeType::RNN);
-                    }
-                    current_input_size = next_is_recurrent ? embedding_dim
-                                                           : current_input_size * embedding_dim;
-                    spdlog::debug("  [{}] Embedding({} x {})", i, num_embeddings, embedding_dim);
-                    break;
-                }
-
-                case gui::NodeType::GRU: {
-                    size_t hidden_size = 128;
-                    size_t num_layers = 1;
-                    bool bidirectional = false;
-                    bool return_sequences = false;
-
-                    if (layer_cfg.parameters.count("hidden_size")) {
-                        try { hidden_size = static_cast<size_t>(std::stoul(layer_cfg.parameters.at("hidden_size"))); }
-                        catch (...) {}
-                    }
-                    if (layer_cfg.parameters.count("num_layers")) {
-                        try { num_layers = static_cast<size_t>(std::stoul(layer_cfg.parameters.at("num_layers"))); }
-                        catch (...) {}
-                    }
-                    if (layer_cfg.parameters.count("bidirectional")) {
-                        const auto& v = layer_cfg.parameters.at("bidirectional");
-                        bidirectional = (v == "true" || v == "1");
-                    }
-                    if (layer_cfg.parameters.count("return_sequences")) {
-                        const auto& v = layer_cfg.parameters.at("return_sequences");
-                        return_sequences = (v == "true" || v == "1");
-                    }
-                    if (hidden_size < 1) hidden_size = 1;
-                    if (num_layers < 1) num_layers = 1;
-
-                    model.Add<GRUModule>(current_input_size, hidden_size,
-                                         num_layers, bidirectional,
-                                         return_sequences);
-
-                    current_input_size = hidden_size * (bidirectional ? 2 : 1);
-                    spdlog::debug("  [{}] GRU(in={}, hidden={}, layers={}, bidir={}, return_seq={})",
-                                  i, current_input_size, hidden_size, num_layers, bidirectional, return_sequences);
-                    break;
-                }
-
-                case gui::NodeType::ReLU:
-                    model.Add<ReLUModule>();
-                    break;
-
-                case gui::NodeType::Sigmoid:
-                    model.Add<SigmoidModule>();
-                    break;
-
-                case gui::NodeType::Tanh:
-                    model.Add<TanhModule>();
-                    break;
-
-                case gui::NodeType::Softmax:
-                    model.Add<SoftmaxModule>();
-                    break;
-
-                case gui::NodeType::Output:
-                    // Output node is just a terminal marker, not an actual layer
-                    // The last Dense layer already outputs the correct features
-                    break;
-
-                case gui::NodeType::Dropout: {
-                    float rate = 0.5f;
-                    if (layer_cfg.parameters.count("rate")) {
-                        rate = std::stof(layer_cfg.parameters.at("rate"));
-                    }
-                    model.Add<DropoutModule>(rate);
-                    break;
-                }
-
-                default:
-                    // Skip non-layer nodes (preprocessing, loss, optimizer, etc.)
-                    break;
-            }
-        }
-
-        if (model.Size() == 0) {
-            error_message = "No layers were created from the graph";
+        auto built = BuildSequentialFromConfig(config);
+        if (!built.ok() || !built.model) {
+            error_message = "ModelBuilder could not rebuild model from graph";
             return false;
         }
 
+        model = std::move(*built.model);
         spdlog::info("Built model with {} layers from graph", model.Size());
         return true;
 

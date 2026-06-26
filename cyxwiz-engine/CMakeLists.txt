@@ -327,6 +327,7 @@ set(ENGINE_SOURCES
     src/gui/panels/python_settings_panel.cpp
     src/network/deployment_client.cpp
     src/inference/local_inference_server.cpp
+    src/inference/metric_learning_inference_input.cpp
     src/inference/text_inference_input.cpp
     # DNN inference (Phase 3)
     src/inference/dnn_models.cpp
@@ -494,6 +495,15 @@ set(ENGINE_HEADERS
     src/core/async_task_manager.h
     src/core/graph_compiler.h
     src/core/dataset_batcher.h
+    src/core/metric_learning_batch.h
+    src/core/metric_learning_batcher.h
+    src/core/metric_learning_dataset_builder.h
+    src/core/metric_learning_graph_contract.h
+    src/core/metric_learning_inference_outputs.h
+    src/core/metric_learning_losses.h
+    src/core/metric_learning_metrics.h
+    src/core/metric_learning_shared_encoder.h
+    src/core/metric_learning_training_step.h
     src/core/ner_sequence_builder.h
     src/core/sequence_arrow_batcher.h
     src/core/sequence_model_input.h
@@ -581,6 +591,7 @@ set(ENGINE_HEADERS
     src/gui/panels/python_settings_panel.h
     src/network/deployment_client.h
     src/inference/local_inference_server.h
+    src/inference/metric_learning_inference_input.h
     src/inference/text_inference_input.h
     # DNN inference (Phase 3)
     src/inference/dnn_models.h
@@ -1139,6 +1150,197 @@ if(WIN32)
 endif()
 
 set_target_properties(test_debug_executor PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Siamese Backend Smoke =====
+add_executable(test_siamese_backend_smoke
+    tests/test_siamese_backend_smoke.cpp
+)
+
+target_link_libraries(test_siamese_backend_smoke PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_siamese_backend_smoke PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_siamese_backend_smoke PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Metric-Learning Batch Contracts =====
+add_executable(test_metric_learning_batch_contracts
+    tests/test_metric_learning_batch_contracts.cpp
+)
+
+target_include_directories(test_metric_learning_batch_contracts PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_metric_learning_batch_contracts PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_metric_learning_batch_contracts PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_metric_learning_batch_contracts PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Metric-Learning Shared Encoder Contracts =====
+add_executable(test_metric_learning_shared_encoder_contracts
+    tests/test_metric_learning_shared_encoder_contracts.cpp
+    src/core/executable_model.cpp
+)
+
+target_include_directories(test_metric_learning_shared_encoder_contracts PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_metric_learning_shared_encoder_contracts PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_metric_learning_shared_encoder_contracts PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_metric_learning_shared_encoder_contracts PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Metric-Learning Metrics =====
+add_executable(test_metric_learning_metrics
+    tests/test_metric_learning_metrics.cpp
+)
+
+target_include_directories(test_metric_learning_metrics PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_metric_learning_metrics PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_metric_learning_metrics PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_metric_learning_metrics PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Metric-Learning Inference Outputs =====
+add_executable(test_metric_learning_inference_outputs
+    tests/test_metric_learning_inference_outputs.cpp
+)
+
+target_include_directories(test_metric_learning_inference_outputs PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_metric_learning_inference_outputs PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_metric_learning_inference_outputs PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_metric_learning_inference_outputs PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Metric-Learning Inference Input Parsing =====
+add_executable(test_metric_learning_inference_input
+    tests/test_metric_learning_inference_input.cpp
+    src/inference/metric_learning_inference_input.cpp
+)
+
+target_include_directories(test_metric_learning_inference_input PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_metric_learning_inference_input PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_metric_learning_inference_input PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_metric_learning_inference_input PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Metric-Learning Loss Contracts =====
+add_executable(test_metric_learning_losses
+    tests/test_metric_learning_losses.cpp
+)
+
+target_include_directories(test_metric_learning_losses PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_metric_learning_losses PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_metric_learning_losses PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_metric_learning_losses PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Metric-Learning Training Step Contracts =====
+add_executable(test_metric_learning_training_step
+    tests/test_metric_learning_training_step.cpp
+    src/core/executable_model.cpp
+)
+
+target_include_directories(test_metric_learning_training_step PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_metric_learning_training_step PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_metric_learning_training_step PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_metric_learning_training_step PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

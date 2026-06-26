@@ -2211,6 +2211,112 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {"output", "final"}, 0, false, "Model output", "", "",
         {{"Input", PinType::Tensor, true, "Final output"}}, {},
         {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::PairDatasetBuilder, NodeCategory::Training, "Pair Dataset Builder", ICON_FA_CODE_BRANCH,
+        {"metric", "learning", "pair", "siamese"}, 0, false,
+        "Declare aligned pair samples for metric-learning training", "", "",
+        {{"Rows", PinType::Dataset, true, "Source rows with sample A/B columns and labels"}},
+        {{"Pair Batch", PinType::Dataset, true, "Typed PairBatch payload"}},
+        {{"sample_a_column", "string", "", "First sample column", {}, ""},
+         {"sample_b_column", "string", "", "Second sample column", {}, ""},
+         {"pair_label_column", "string", "", "Pair label column", {}, ""},
+         {"label_convention", "enum", "contrastive_zero_similar", "Label convention",
+          {"contrastive_zero_similar", "cosine_one_similar"}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::TripletDatasetBuilder, NodeCategory::Training, "Triplet Dataset Builder", ICON_FA_CODE_BRANCH,
+        {"metric", "learning", "triplet", "siamese"}, 0, false,
+        "Declare anchor/positive/negative samples for metric-learning training", "", "",
+        {{"Rows", PinType::Dataset, true, "Source rows with triplet sample columns"}},
+        {{"Triplet Batch", PinType::Dataset, true, "Typed TripletBatch payload"}},
+        {{"anchor_column", "string", "", "Anchor sample column", {}, ""},
+         {"positive_column", "string", "", "Positive sample column", {}, ""},
+         {"negative_column", "string", "", "Negative sample column", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::SharedEncoder, NodeCategory::Training, "Shared Encoder", ICON_FA_SHARE_NODES,
+        {"metric", "learning", "shared", "encoder", "siamese"}, 0, false,
+        "Declare one encoder parameter set referenced by metric-learning branches", "", "",
+        {{"Encoder", PinType::Tensor, true, "Encoder layer chain"}},
+        {{"Shared Encoder", PinType::Parameters, true, "Shared encoder reference"}},
+        {{"encoder_id", "string", "shared_encoder", "Shared encoder id", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::SiameseBranch, NodeCategory::Training, "Siamese Branch", ICON_FA_CODE_BRANCH,
+        {"metric", "learning", "branch", "siamese"}, 0, false,
+        "Reference a shared encoder for one metric-learning branch", "", "",
+        {{"Input", PinType::Tensor, true, "Branch input"},
+         {"Shared Encoder", PinType::Parameters, true, "Shared encoder reference"}},
+        {{"Embedding", PinType::Tensor, true, "Branch embedding"}},
+        {{"branch", "enum", "a", "Branch role", {"a", "b", "anchor", "positive", "negative"}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::ContrastiveLoss, NodeCategory::Training, "Contrastive Loss", ICON_FA_SCALE_BALANCED,
+        {"metric", "learning", "contrastive", "loss"}, 0, false,
+        "Metric-learning pair loss using 0=similar and 1=dissimilar labels", "", "",
+        {{"Embedding A", PinType::Tensor, true, "First embedding"},
+         {"Embedding B", PinType::Tensor, true, "Second embedding"},
+         {"Labels", PinType::Labels, true, "Pair labels"}},
+        {{"Loss", PinType::Loss, true, "Contrastive loss"}},
+        {{"margin", "float", "1.0", "Distance margin", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::CosineEmbeddingLoss, NodeCategory::Training, "Cosine Embedding Loss", ICON_FA_SCALE_BALANCED,
+        {"metric", "learning", "cosine", "loss"}, 0, false,
+        "Metric-learning pair loss using 1=similar and -1=dissimilar labels", "", "",
+        {{"Embedding A", PinType::Tensor, true, "First embedding"},
+         {"Embedding B", PinType::Tensor, true, "Second embedding"},
+         {"Labels", PinType::Labels, true, "Pair labels"}},
+        {{"Loss", PinType::Loss, true, "Cosine embedding loss"}},
+        {{"margin", "float", "0.0", "Cosine margin", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::TripletLoss, NodeCategory::Training, "Triplet Loss", ICON_FA_SCALE_BALANCED,
+        {"metric", "learning", "triplet", "loss"}, 0, false,
+        "Metric-learning triplet loss over anchor/positive/negative embeddings", "", "",
+        {{"Anchor", PinType::Tensor, true, "Anchor embedding"},
+         {"Positive", PinType::Tensor, true, "Positive embedding"},
+         {"Negative", PinType::Tensor, true, "Negative embedding"}},
+        {{"Loss", PinType::Loss, true, "Triplet loss"}},
+        {{"margin", "float", "1.0", "Triplet margin", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::PairMetrics, NodeCategory::Training, "Pair Metrics", ICON_FA_CHART_LINE,
+        {"metric", "learning", "pair", "metrics"}, 0, false,
+        "Compute distance-threshold metrics for metric-learning pairs", "", "",
+        {{"Embedding A", PinType::Tensor, true, "First embedding"},
+         {"Embedding B", PinType::Tensor, true, "Second embedding"},
+         {"Labels", PinType::Labels, true, "Pair labels"}},
+        {{"Metrics", PinType::Dataset, true, "Pair metric rows"}},
+        {{"threshold", "float", "0.5", "Distance threshold", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::RetrievalMetrics, NodeCategory::Training, "Retrieval Metrics", ICON_FA_CHART_LINE,
+        {"metric", "learning", "retrieval", "metrics"}, 0, false,
+        "Compute recall@k, MRR, and nearest-neighbor agreement for embeddings", "", "",
+        {{"Embeddings", PinType::Tensor, true, "Embedding matrix"},
+         {"Class IDs", PinType::Labels, true, "Class ids"}},
+        {{"Metrics", PinType::Dataset, true, "Retrieval metric rows"}},
+        {{"k", "int", "10", "Retrieval cutoff", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::EmbeddingOutput, NodeCategory::Training, "Embedding Output", ICON_FA_CUBE,
+        {"metric", "learning", "embedding", "output"}, 0, false,
+        "Declare embedding extraction output for metric-learning inference", "", "",
+        {{"Embeddings", PinType::Tensor, true, "Embedding matrix"}},
+        {{"Embedding Records", PinType::Dataset, true, "Embedding output records"}},
+        {{"include_metadata", "bool", "true", "Include sample/class metadata", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::PairScoreOutput, NodeCategory::Training, "Pair Score Output", ICON_FA_CHART_LINE,
+        {"metric", "learning", "pair", "score", "output"}, 0, false,
+        "Declare pair distance/similarity output for metric-learning inference", "", "",
+        {{"Embedding A", PinType::Tensor, true, "First embedding"},
+         {"Embedding B", PinType::Tensor, true, "Second embedding"}},
+        {{"Pair Scores", PinType::Dataset, true, "Pair score records"}},
+        {{"score_mode", "enum", "distance", "Score mode",
+          {"distance", "negative_distance", "cosine_similarity"}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
 }
 
 // =============================================================================
@@ -2330,6 +2436,16 @@ void NodeMetadataRegistry::InitializeTextNodes() {
         {{"NER Tag Vocabulary", PinType::Parameters, true, "value,id BIO tag vocabulary table"}},
         {{"outside_tag", "string", "O", "Outside tag label", {}, ""},
          {"bio_scheme", "enum", "BIO", "Tag scheme", {"BIO"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SequenceTagOutput, NodeCategory::TextProcessing, "Sequence Tag Output", ICON_FA_TAG,
+        {"sequence", "tag", "output", "ner", "decode"}, 0, false,
+        "Declare token-level sequence tagger output and decode metadata", "", "",
+        {{"Token Logits", PinType::Tensor, true, "Per-token logits [batch, seq_len, num_tags]"}},
+        {{"Predictions", PinType::Tensor, false, "Token-level prediction tensor"}},
+        {{"num_tags", "int", "0", "Number of BIO tags (0 = infer)", {}, ""},
+         {"tag_vocab_file", "string", "", "Tag vocabulary file", {}, ""},
+         {"decode_scheme", "enum", "BIO", "Decode scheme", {"BIO"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 }
 

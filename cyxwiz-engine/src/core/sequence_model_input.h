@@ -3,6 +3,8 @@
 #include "dataset_batcher.h"
 #include "graph_compiler.h"
 
+#include <cyxwiz/sequential.h>
+
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -47,6 +49,35 @@ inline int64_t ReadSequenceIdAt(const Tensor& tensor, size_t index) {
     }
 }
 
+inline bool ModelUsesSequenceFeatureFusion(const SequentialModel& model) {
+    return dynamic_cast<const SequenceFeatureFusionModule*>(
+               model.GetModule(0)) != nullptr;
+}
+
+inline Tensor BuildPackedWordPosSequenceInput(const Tensor& word_ids,
+                                              const Tensor& pos_ids) {
+    const auto& word_shape = word_ids.Shape();
+    const auto& pos_shape = pos_ids.Shape();
+    if (word_shape.size() != 2) {
+        throw std::runtime_error(
+            "sequence feature fusion expects word ids with shape [batch, seq]");
+    }
+    if (pos_shape != word_shape) {
+        throw std::runtime_error(
+            "sequence feature fusion requires POS ids shape to match word ids");
+    }
+
+    const size_t token_count = word_ids.NumElements();
+    std::vector<int64_t> packed(token_count * 2, 0);
+    for (size_t i = 0; i < token_count; ++i) {
+        packed[i * 2] = ReadSequenceIdAt(word_ids, i);
+        packed[i * 2 + 1] = ReadSequenceIdAt(pos_ids, i);
+    }
+    return Tensor({word_shape[0], word_shape[1], 2},
+                  packed.data(),
+                  DataType::Int64);
+}
+
 inline Tensor BuildSequenceModelInput(const SequenceBatch& batch,
                                       const TrainingConfiguration& config) {
     const int fusion_index = FindSequenceFeatureFusionLayerIndex(config);
@@ -66,26 +97,7 @@ inline Tensor BuildSequenceModelInput(const SequenceBatch& batch,
             "sequence feature fusion requires POS ids");
     }
 
-    const auto& word_shape = batch.word_ids.Shape();
-    const auto& pos_shape = batch.pos_ids.Shape();
-    if (word_shape.size() != 2) {
-        throw std::runtime_error(
-            "sequence feature fusion expects word ids with shape [batch, seq]");
-    }
-    if (pos_shape != word_shape) {
-        throw std::runtime_error(
-            "sequence feature fusion requires POS ids shape to match word ids");
-    }
-
-    const size_t token_count = batch.word_ids.NumElements();
-    std::vector<int64_t> packed(token_count * 2, 0);
-    for (size_t i = 0; i < token_count; ++i) {
-        packed[i * 2] = ReadSequenceIdAt(batch.word_ids, i);
-        packed[i * 2 + 1] = ReadSequenceIdAt(batch.pos_ids, i);
-    }
-    return Tensor({word_shape[0], word_shape[1], 2},
-                  packed.data(),
-                  DataType::Int64);
+    return BuildPackedWordPosSequenceInput(batch.word_ids, batch.pos_ids);
 }
 
 } // namespace cyxwiz

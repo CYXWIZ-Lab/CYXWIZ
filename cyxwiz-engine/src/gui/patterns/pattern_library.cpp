@@ -529,6 +529,18 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"TokenVocabulary", NodeType::TokenVocabulary},
         {"POSVocabulary", NodeType::POSVocabulary},
         {"NERTagVocabulary", NodeType::NERTagVocabulary},
+        {"SequenceTagOutput", NodeType::SequenceTagOutput},
+        {"PairDatasetBuilder", NodeType::PairDatasetBuilder},
+        {"TripletDatasetBuilder", NodeType::TripletDatasetBuilder},
+        {"SharedEncoder", NodeType::SharedEncoder},
+        {"SiameseBranch", NodeType::SiameseBranch},
+        {"ContrastiveLoss", NodeType::ContrastiveLoss},
+        {"CosineEmbeddingLoss", NodeType::CosineEmbeddingLoss},
+        {"TripletLoss", NodeType::TripletLoss},
+        {"PairMetrics", NodeType::PairMetrics},
+        {"RetrievalMetrics", NodeType::RetrievalMetrics},
+        {"EmbeddingOutput", NodeType::EmbeddingOutput},
+        {"PairScoreOutput", NodeType::PairScoreOutput},
 
         // Time Series Preprocessing (Phase 4) - real Cat-1 operators.
         {"TimeSeriesWindow", NodeType::TimeSeriesWindow},

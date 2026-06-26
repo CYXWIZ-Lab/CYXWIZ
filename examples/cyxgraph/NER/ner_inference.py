@@ -157,11 +157,12 @@ def build_payload(
     sequence_length: int,
 ) -> dict:
     # Sequence-based NER inference expects named tensors in `input`.
+    # The embedded local server requires explicit [batch, seq] rows.
     return {
         "input": {
-            "word_ids": word_ids,
-            "pos_ids": pos_ids,
-            "attention_mask": attention_mask,
+            "word_ids": [word_ids],
+            "pos_ids": [pos_ids],
+            "attention_mask": [attention_mask],
             # Optional length metadata helps confirm batch/sequence framing.
             "sequence_lengths": [sequence_length],
         }
