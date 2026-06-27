@@ -19,12 +19,19 @@ private:
 
 class CYXWIZ_API BCEWithLogitsLoss : public Loss {
 public:
-    explicit BCEWithLogitsLoss(Reduction reduction = Reduction::Mean)
-        : Loss(reduction) {}
+    explicit BCEWithLogitsLoss(Reduction reduction = Reduction::Mean,
+                               float pos_weight = 1.0f)
+        : Loss(reduction), pos_weight_(pos_weight) {}
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
     std::string GetName() const override { return "BCEWithLogits"; }
+
+    float GetPosWeight() const { return pos_weight_; }
+    void SetPosWeight(float pos_weight) { pos_weight_ = pos_weight; }
+
+private:
+    float pos_weight_ = 1.0f;
 };
 
 class CYXWIZ_API KLDivLoss : public Loss {

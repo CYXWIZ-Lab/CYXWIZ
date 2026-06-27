@@ -194,7 +194,10 @@ float CpuSigmoidValue(float x) {
     return exp_x / (1.0f + exp_x);
 }
 
-Tensor CpuBCEWithLogitsForward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
+Tensor CpuBCEWithLogitsForward(const Tensor& predictions,
+                               const Tensor& targets,
+                               Reduction reduction,
+                               float pos_weight) {
     ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
     const size_t count = predictions.NumElements();
     const float* logits = predictions.Data<float>();
@@ -202,13 +205,19 @@ Tensor CpuBCEWithLogitsForward(const Tensor& predictions, const Tensor& targets,
     std::vector<float> losses(count);
     for (size_t i = 0; i < count; ++i) {
         const float logit = logits[i];
-        losses[i] = std::max(logit, 0.0f) - logit * target[i] +
-                    std::log1p(std::exp(-std::fabs(logit)));
+        const float log_weight = 1.0f + (pos_weight - 1.0f) * target[i];
+        losses[i] = (1.0f - target[i]) * logit +
+                    log_weight *
+                        (std::max(-logit, 0.0f) +
+                         std::log1p(std::exp(-std::fabs(logit))));
     }
     return ApplyCpuReduction(predictions.Shape(), losses, reduction);
 }
 
-Tensor CpuBCEWithLogitsBackward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
+Tensor CpuBCEWithLogitsBackward(const Tensor& predictions,
+                                const Tensor& targets,
+                                Reduction reduction,
+                                float pos_weight) {
     ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
     Tensor grad(predictions.Shape(), DataType::Float32);
     const size_t count = predictions.NumElements();
@@ -217,7 +226,11 @@ Tensor CpuBCEWithLogitsBackward(const Tensor& predictions, const Tensor& targets
     const float* target = targets.Data<float>();
     float* out = grad.Data<float>();
     for (size_t i = 0; i < count; ++i) {
-        out[i] = (CpuSigmoidValue(logits[i]) - target[i]) * scale;
+        const float log_weight = 1.0f + (pos_weight - 1.0f) * target[i];
+        out[i] =
+            ((1.0f - target[i]) +
+             log_weight * (CpuSigmoidValue(logits[i]) - 1.0f)) *
+            scale;
     }
     return grad;
 }

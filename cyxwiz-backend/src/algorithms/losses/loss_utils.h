@@ -36,8 +36,14 @@ Tensor CpuSmoothL1Backward(const Tensor& predictions,
 Tensor CpuBCEForward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction);
 Tensor CpuBCEBackward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction);
 float CpuSigmoidValue(float x);
-Tensor CpuBCEWithLogitsForward(const Tensor& predictions, const Tensor& targets, Reduction reduction);
-Tensor CpuBCEWithLogitsBackward(const Tensor& predictions, const Tensor& targets, Reduction reduction);
+Tensor CpuBCEWithLogitsForward(const Tensor& predictions,
+                               const Tensor& targets,
+                               Reduction reduction,
+                               float pos_weight = 1.0f);
+Tensor CpuBCEWithLogitsBackward(const Tensor& predictions,
+                                const Tensor& targets,
+                                Reduction reduction,
+                                float pos_weight = 1.0f);
 Tensor CpuKLDivForward(const Tensor& predictions,
                        const Tensor& targets,
                        bool log_target,

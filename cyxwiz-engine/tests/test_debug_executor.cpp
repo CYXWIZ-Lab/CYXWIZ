@@ -411,6 +411,73 @@ void TestCrossEntropyTokenShapeIgnoreIndex() {
     spdlog::info("  OK: token-shaped CrossEntropy/NLL honor ignore_index");
 }
 
+void TestWeightedCrossEntropyBackend() {
+    spdlog::info("--- TestWeightedCrossEntropyBackend ---");
+    CrossEntropyLoss loss(Reduction::Mean, -100, {1.0f, 3.0f});
+
+    const std::vector<float> logits = {
+        2.0f, 0.0f,
+        0.0f, 0.0f,
+    };
+    const std::vector<int64_t> targets = {0, 1};
+    Tensor predictions({2, 2}, logits.data(), DataType::Float32);
+    Tensor labels({2}, targets.data(), DataType::Int64);
+
+    Tensor loss_value = loss.Forward(predictions, labels);
+    const float exp2 = std::exp(2.0f);
+    const float p0 = exp2 / (exp2 + 1.0f);
+    const float p1 = 0.5f;
+    const float expected_loss =
+        (-std::log(p0 + 1e-10f) + 3.0f * -std::log(p1 + 1e-10f)) / 4.0f;
+    ExpectNear(loss_value.Data<float>()[0], expected_loss, 1e-5f,
+               "weighted CE mean should divide by sum of target weights");
+
+    Tensor grad = loss.Backward(predictions, labels);
+    ExpectTrue(grad.Shape() == std::vector<size_t>({2, 2}),
+               "weighted CE grad should preserve prediction shape");
+    const float* g = grad.Data<float>();
+    ExpectNear(g[0], (p0 - 1.0f) / 4.0f, 1e-5f,
+               "weighted CE class-0 grad should use class weight denominator");
+    ExpectNear(g[1], (1.0f - p0) / 4.0f, 1e-5f,
+               "weighted CE non-target grad should use class weight denominator");
+    ExpectNear(g[2], 3.0f * p1 / 4.0f, 1e-5f,
+               "weighted CE non-target row grad should scale by class weight");
+    ExpectNear(g[3], 3.0f * (p1 - 1.0f) / 4.0f, 1e-5f,
+               "weighted CE target grad should scale by class weight");
+}
+
+void TestBCEWithLogitsPosWeightBackend() {
+    spdlog::info("--- TestBCEWithLogitsPosWeightBackend ---");
+    BCEWithLogitsLoss loss(Reduction::Mean, 4.0f);
+
+    const std::vector<float> logits = {0.0f, 0.0f};
+    const std::vector<float> targets = {1.0f, 0.0f};
+    Tensor predictions({2}, logits.data(), DataType::Float32);
+    Tensor labels({2}, targets.data(), DataType::Float32);
+
+    Tensor loss_value = loss.Forward(predictions, labels);
+    const float expected_loss =
+        (4.0f * std::log(2.0f) + std::log(2.0f)) / 2.0f;
+    ExpectNear(loss_value.Data<float>()[0], expected_loss, 1e-5f,
+               "BCEWithLogits pos_weight should scale positive loss terms");
+
+    Tensor grad = loss.Backward(predictions, labels);
+    ExpectTrue(grad.Shape() == std::vector<size_t>({2}),
+               "BCEWithLogits pos_weight grad should preserve shape");
+    const float* g = grad.Data<float>();
+    ExpectNear(g[0], -1.0f, 1e-6f,
+               "BCEWithLogits positive grad should scale by pos_weight / mean count");
+    ExpectNear(g[1], 0.25f, 1e-6f,
+               "BCEWithLogits negative grad should remain unweighted / mean count");
+
+    const std::vector<float> fractional_target = {0.25f};
+    Tensor fractional_predictions({1}, logits.data(), DataType::Float32);
+    Tensor fractional_labels({1}, fractional_target.data(), DataType::Float32);
+    Tensor fractional_grad = loss.Backward(fractional_predictions, fractional_labels);
+    ExpectNear(fractional_grad.Data<float>()[0], -0.125f, 1e-6f,
+               "BCEWithLogits pos_weight grad should support fractional targets");
+}
+
 void TestTimeDistributedDenseModule() {
     spdlog::info("--- TestTimeDistributedDenseModule ---");
 
@@ -683,6 +750,8 @@ int main() {
         TestBuildSequentialTextEmbeddingWeights();
         TestCrossEntropyIgnoreIndexFromLossParams();
         TestCrossEntropyTokenShapeIgnoreIndex();
+        TestWeightedCrossEntropyBackend();
+        TestBCEWithLogitsPosWeightBackend();
         TestTimeDistributedDenseModule();
         TestBuildSequentialTimeDistributedHead();
         TestDebugExecutorGoldenPath();

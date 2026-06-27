@@ -954,8 +954,11 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // CrossEntropy Loss (concrete implementation)
     py::class_<cyxwiz::CrossEntropyLoss, cyxwiz::Loss>(m, "CrossEntropyLoss")
-        .def(py::init<>(),
-             "Create CrossEntropy Loss with softmax for classification")
+        .def(py::init<cyxwiz::Reduction, int, std::vector<float>>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("ignore_index") = -100,
+             py::arg("class_weights") = std::vector<float>{},
+             "Create CrossEntropy Loss with optional per-class weights")
         .def("forward", &cyxwiz::CrossEntropyLoss::Forward,
              py::arg("predictions"),
              py::arg("targets"),
@@ -963,7 +966,29 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("backward", &cyxwiz::CrossEntropyLoss::Backward,
              py::arg("predictions"),
              py::arg("targets"),
-             "Backward: gradient w.r.t logits");
+             "Backward: gradient w.r.t logits")
+        .def_property_readonly("class_weights",
+             &cyxwiz::CrossEntropyLoss::GetClassWeights,
+             "Per-class loss weights");
+
+    // BCEWithLogits Loss (for binary / multi-label classification)
+    py::class_<cyxwiz::BCEWithLogitsLoss, cyxwiz::Loss>(m, "BCEWithLogitsLoss")
+        .def(py::init<cyxwiz::Reduction, float>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("pos_weight") = 1.0f,
+             "Create BCEWithLogits Loss with optional positive-class weight")
+        .def("forward", &cyxwiz::BCEWithLogitsLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute binary cross entropy from logits")
+        .def("backward", &cyxwiz::BCEWithLogitsLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t logits")
+        .def_property("pos_weight",
+             &cyxwiz::BCEWithLogitsLoss::GetPosWeight,
+             &cyxwiz::BCEWithLogitsLoss::SetPosWeight,
+             "Positive-class weighting factor");
 
     // Focal Loss (for class imbalance)
     py::class_<cyxwiz::FocalLoss, cyxwiz::Loss>(m, "FocalLoss")

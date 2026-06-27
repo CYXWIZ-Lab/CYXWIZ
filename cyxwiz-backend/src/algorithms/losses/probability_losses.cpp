@@ -82,6 +82,9 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
 // ============================================================================
 
 Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    if (pos_weight_ != 1.0f) {
+        return CpuBCEWithLogitsForward(predictions, targets, reduction_, pos_weight_);
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array logits = TensorToAf(predictions);
@@ -101,10 +104,13 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
             "BCEWithLogitsLoss::Forward", e.what(), predictions, "predictions");
     }
 #endif
-    return CpuBCEWithLogitsForward(predictions, targets, reduction_);
+    return CpuBCEWithLogitsForward(predictions, targets, reduction_, pos_weight_);
 }
 
 Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    if (pos_weight_ != 1.0f) {
+        return CpuBCEWithLogitsBackward(predictions, targets, reduction_, pos_weight_);
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array logits = TensorToAf(predictions);
@@ -127,7 +133,7 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
             "BCEWithLogitsLoss::Backward", e.what(), predictions, "predictions");
     }
 #endif
-    return CpuBCEWithLogitsBackward(predictions, targets, reduction_);
+    return CpuBCEWithLogitsBackward(predictions, targets, reduction_, pos_weight_);
 }
 
 // ============================================================================

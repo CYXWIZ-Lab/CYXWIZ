@@ -103,6 +103,15 @@ void ValidateClassIndex(int64_t class_index, size_t classes, const char* name) {
     }
 }
 
+void ValidateClassWeights(const std::vector<float>& class_weights,
+                          size_t classes,
+                          const char* name) {
+    if (!class_weights.empty() && class_weights.size() != classes) {
+        throw std::runtime_error(
+            std::string(name) + " class_weights size must match class count");
+    }
+}
+
 Tensor ApplyClassReduction(const std::vector<float>& per_sample,
                            const ClassAxisShape& shape,
                            Reduction reduction,
@@ -167,8 +176,10 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
                               const Tensor& targets,
                               Reduction reduction,
                               int ignore_index,
+                              const std::vector<float>& class_weights,
                               Tensor* cached_softmax) {
     const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "CrossEntropy");
+    ValidateClassWeights(class_weights, shape.classes, "CrossEntropy");
     Tensor softmax = CpuSoftmaxRows(predictions, shape);
     if (cached_softmax) {
         *cached_softmax = softmax;
@@ -177,6 +188,7 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
     const float* probs = softmax.Data<float>();
     std::vector<float> losses(shape.batch, 0.0f);
     size_t mean_count = shape.batch;
+    float mean_weight = 0.0f;
     if (TargetsAreClassIndices(predictions, targets)) {
         ValidateClassIndexTargets(targets, shape, "CrossEntropy");
         mean_count = 0;
@@ -186,17 +198,51 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
                 continue;
             }
             ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
-            losses[batch] = -std::log(probs[batch * shape.classes + static_cast<size_t>(class_index)] + 1e-10f);
+            const size_t target_class = static_cast<size_t>(class_index);
+            const float weight = class_weights.empty() ? 1.0f : class_weights[target_class];
+            losses[batch] =
+                -weight * std::log(probs[batch * shape.classes + target_class] + 1e-10f);
             ++mean_count;
+            mean_weight += weight;
+        }
+        if (!class_weights.empty() && reduction != Reduction::None) {
+            if (reduction == Reduction::Mean) {
+                const float divisor = mean_weight > 0.0f
+                    ? mean_weight
+                    : static_cast<float>(mean_count);
+                float total = 0.0f;
+                for (float value : losses) {
+                    total += value;
+                }
+                if (divisor > 0.0f) {
+                    total /= divisor;
+                }
+                return Tensor({1}, &total, DataType::Float32);
+            }
         }
     } else {
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
         const float* target = targets.Data<float>();
         for (size_t batch = 0; batch < shape.batch; ++batch) {
             const size_t base = batch * shape.classes;
+            float sample_weight = 0.0f;
             for (size_t c = 0; c < shape.classes; ++c) {
-                losses[batch] -= target[base + c] * std::log(probs[base + c] + 1e-10f);
+                const float weight = class_weights.empty() ? 1.0f : class_weights[c];
+                losses[batch] -=
+                    weight * target[base + c] * std::log(probs[base + c] + 1e-10f);
+                sample_weight += weight * target[base + c];
             }
+            mean_weight += sample_weight;
+        }
+        if (!class_weights.empty() && reduction == Reduction::Mean) {
+            float total = 0.0f;
+            for (float value : losses) {
+                total += value;
+            }
+            if (mean_weight > 0.0f) {
+                total /= mean_weight;
+            }
+            return Tensor({1}, &total, DataType::Float32);
         }
     }
     return ApplyClassReduction(losses, shape, reduction, mean_count);
@@ -206,8 +252,10 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
                                const Tensor& targets,
                                Reduction reduction,
                                int ignore_index,
+                               const std::vector<float>& class_weights,
                                const Tensor& cached_softmax) {
     const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "CrossEntropy");
+    ValidateClassWeights(class_weights, shape.classes, "CrossEntropy");
     Tensor softmax = cached_softmax.Shape() == predictions.Shape()
                          ? cached_softmax
                          : CpuSoftmaxRows(predictions, shape);
@@ -215,8 +263,9 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
     Tensor grad(predictions.Shape(), DataType::Float32);
     const float* probs = softmax.Data<float>();
     float* out = grad.Data<float>();
-    std::copy(probs, probs + predictions.NumElements(), out);
+    std::fill(out, out + predictions.NumElements(), 0.0f);
     size_t mean_count = shape.batch;
+    float mean_weight = 0.0f;
 
     if (TargetsAreClassIndices(predictions, targets)) {
         ValidateClassIndexTargets(targets, shape, "CrossEntropy");
@@ -229,20 +278,40 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
                 continue;
             }
             ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
-            out[base + static_cast<size_t>(class_index)] -= 1.0f;
+            const size_t target_class = static_cast<size_t>(class_index);
+            const float weight = class_weights.empty() ? 1.0f : class_weights[target_class];
+            for (size_t c = 0; c < shape.classes; ++c) {
+                const float target_value = c == target_class ? 1.0f : 0.0f;
+                out[base + c] = weight * (probs[base + c] - target_value);
+            }
             ++mean_count;
+            mean_weight += weight;
         }
     } else {
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
         const float* target = targets.Data<float>();
-        for (size_t i = 0; i < predictions.NumElements(); ++i) {
-            out[i] -= target[i];
+        for (size_t batch = 0; batch < shape.batch; ++batch) {
+            const size_t base = batch * shape.classes;
+            float weighted_target_sum = 0.0f;
+            for (size_t c = 0; c < shape.classes; ++c) {
+                const float weight = class_weights.empty() ? 1.0f : class_weights[c];
+                weighted_target_sum += weight * target[base + c];
+            }
+            mean_weight += weighted_target_sum;
+            for (size_t c = 0; c < shape.classes; ++c) {
+                const float weight = class_weights.empty() ? 1.0f : class_weights[c];
+                out[base + c] =
+                    probs[base + c] * weighted_target_sum - weight * target[base + c];
+            }
         }
     }
 
     const size_t divisor = mean_count > 0 ? mean_count : shape.batch;
     if (reduction == Reduction::Mean && divisor > 0) {
-        const float scale = 1.0f / static_cast<float>(divisor);
+        const float denominator = !class_weights.empty() && mean_weight > 0.0f
+            ? mean_weight
+            : static_cast<float>(divisor);
+        const float scale = 1.0f / denominator;
         for (size_t i = 0; i < predictions.NumElements(); ++i) {
             out[i] *= scale;
         }
@@ -378,10 +447,14 @@ Tensor CpuFocalBackward(const Tensor& predictions,
 // ============================================================================
 
 Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    if (!class_weights_.empty()) {
+        return CpuCrossEntropyForward(
+            predictions, targets, reduction_, ignore_index_, class_weights_, &cached_softmax_);
+    }
     if (TargetsAreClassIndices(predictions, targets) &&
         ClassIndexTargetsContain(targets, ignore_index_)) {
         return CpuCrossEntropyForward(
-            predictions, targets, reduction_, ignore_index_, &cached_softmax_);
+            predictions, targets, reduction_, ignore_index_, class_weights_, &cached_softmax_);
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -442,18 +515,23 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
             "CrossEntropyLoss::Forward", e.what(), predictions, "predictions");
     }
 #endif
-    return CpuCrossEntropyForward(predictions, targets, reduction_, ignore_index_, &cached_softmax_);
+    return CpuCrossEntropyForward(
+        predictions, targets, reduction_, ignore_index_, class_weights_, &cached_softmax_);
 }
 
 Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    if (!class_weights_.empty()) {
+        return CpuCrossEntropyBackward(
+            predictions, targets, reduction_, ignore_index_, class_weights_, cached_softmax_);
+    }
     if (TargetsAreClassIndices(predictions, targets) &&
         ClassIndexTargetsContain(targets, ignore_index_)) {
         return CpuCrossEntropyBackward(
-            predictions, targets, reduction_, ignore_index_, cached_softmax_);
+            predictions, targets, reduction_, ignore_index_, class_weights_, cached_softmax_);
     }
     if (predictions.Shape().size() == 3) {
         return CpuCrossEntropyBackward(
-            predictions, targets, reduction_, ignore_index_, cached_softmax_);
+            predictions, targets, reduction_, ignore_index_, class_weights_, cached_softmax_);
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -510,7 +588,8 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
             "CrossEntropyLoss::Backward", e.what(), predictions, "predictions");
     }
 #endif
-    return CpuCrossEntropyBackward(predictions, targets, reduction_, ignore_index_, cached_softmax_);
+    return CpuCrossEntropyBackward(
+        predictions, targets, reduction_, ignore_index_, class_weights_, cached_softmax_);
 }
 
 // ============================================================================

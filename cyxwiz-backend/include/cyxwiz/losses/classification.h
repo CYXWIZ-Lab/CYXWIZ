@@ -2,19 +2,28 @@
 
 #include "cyxwiz/losses/loss_base.h"
 
+#include <utility>
+#include <vector>
+
 namespace cyxwiz {
 
 class CYXWIZ_API CrossEntropyLoss : public Loss {
 public:
-    explicit CrossEntropyLoss(Reduction reduction = Reduction::Mean, int ignore_index = -100)
-        : Loss(reduction), ignore_index_(ignore_index) {}
+    explicit CrossEntropyLoss(Reduction reduction = Reduction::Mean,
+                              int ignore_index = -100,
+                              std::vector<float> class_weights = {})
+        : Loss(reduction),
+          ignore_index_(ignore_index),
+          class_weights_(std::move(class_weights)) {}
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
     std::string GetName() const override { return "CrossEntropy"; }
+    const std::vector<float>& GetClassWeights() const { return class_weights_; }
 
 private:
     int ignore_index_;
+    std::vector<float> class_weights_;
     Tensor cached_softmax_;
 };
 
