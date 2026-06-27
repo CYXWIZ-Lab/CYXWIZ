@@ -107,6 +107,62 @@ const char* IssueLevelLabel(IssueLevel level) {
     return "?";
 }
 
+std::string ToLowerAscii(std::string value) {
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+    return value;
+}
+
+bool IsTruthyParameterValue(const std::string& value) {
+    const std::string lower = ToLowerAscii(value);
+    return lower == "true" || lower == "1" || lower == "yes" ||
+           lower == "on";
+}
+
+bool IsNeutralUnsupportedParameterValue(const std::string& key,
+                                        const std::string& value) {
+    const std::string lower = ToLowerAscii(value);
+    return lower.empty() || lower == "false" || lower == "0" ||
+           lower == "none" || lower == "off" ||
+           (key == "balance_mode" && lower == "none") ||
+           (key == "class_weight" && lower == "none");
+}
+
+std::vector<std::string> PresentUnsupportedParameters(
+    const std::map<std::string, std::string>& parameters,
+    const std::vector<const char*>& names,
+    bool ignore_neutral_values = false) {
+    std::vector<std::string> present;
+    for (const char* name : names) {
+        auto it = parameters.find(name);
+        if (it == parameters.end()) {
+            continue;
+        }
+        if (ignore_neutral_values &&
+            IsNeutralUnsupportedParameterValue(name, it->second)) {
+            continue;
+        }
+        present.push_back(name);
+    }
+    return present;
+}
+
+std::string JoinNames(const std::vector<std::string>& values) {
+    std::ostringstream out;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            out << ", ";
+        }
+        out << values[i];
+    }
+    return out.str();
+}
+
 const char* ImplementationStatusLabel(NodeImplementationStatus status) {
     switch (status) {
         case NodeImplementationStatus::Implemented:
@@ -2501,6 +2557,19 @@ TrainingConfiguration GraphCompiler::Compile(
         } catch (const std::exception& e) {
             spdlog::warn("GraphCompiler: DataSplit param parse error ({}) - using defaults", e.what());
         }
+
+        auto stratified = split_node->parameters.find("stratified");
+        if (stratified != split_node->parameters.end() &&
+            IsTruthyParameterValue(stratified->second)) {
+            AddIssue(
+                config,
+                IssueLevel::Warning,
+                "DataSplit.stratified=true is not implemented; current "
+                "train/validation/test partition assignment is random/global "
+                "and does not preserve label proportions.",
+                split_node->id,
+                split_node->name);
+        }
     }
     if (config.has_data_split) {
         spdlog::info("GraphCompiler: DataSplit node found - train={:.2f}, val={:.2f}, test={:.2f}, seed={}",
@@ -2559,6 +2628,24 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.checkpoint_dir = loader_node->parameters.at("checkpoint_dir");
         } catch (const std::exception& e) {
             spdlog::warn("GraphCompiler: DataLoader param parse error ({}) - using defaults", e.what());
+        }
+
+        const auto unsupported_balance_params = PresentUnsupportedParameters(
+            loader_node->parameters,
+            {"balance_classes", "balance_mode", "balance_target",
+             "balance_seed", "weighted_sampler", "oversample", "undersample"},
+            true);
+        if (!unsupported_balance_params.empty()) {
+            AddIssue(
+                config,
+                IssueLevel::Warning,
+                "DataLoader class-balancing parameters are present but not "
+                "implemented and will be ignored: " +
+                    JoinNames(unsupported_balance_params) +
+                    ". Training batches use the current shuffled/sequential "
+                    "split indices.",
+                loader_node->id,
+                loader_node->name);
         }
     }
     if (config.has_data_loader) {
@@ -2857,6 +2944,24 @@ TrainingConfiguration GraphCompiler::Compile(
     if (loss_node) {
         config.loss_type = loss_node->type;
         config.loss_params = loss_node->parameters;
+
+        const auto unsupported_loss_params = PresentUnsupportedParameters(
+            loss_node->parameters,
+            {"weight", "class_weight", "class_weights", "sample_weight",
+             "sample_weights", "pos_weight"},
+            true);
+        if (!unsupported_loss_params.empty()) {
+            AddIssue(
+                config,
+                IssueLevel::Warning,
+                "Loss weighting parameters are present but not implemented "
+                "for graph training and will be ignored: " +
+                    JoinNames(unsupported_loss_params) +
+                    ". Use external dataset preprocessing until weighted "
+                    "loss support is implemented.",
+                loss_node->id,
+                loss_node->name);
+        }
     }
 
     // Extract optimizer configuration

@@ -79,6 +79,18 @@ bool HasIssueText(const cyxwiz::TrainingConfiguration& config,
     return false;
 }
 
+bool HasIssueText(const cyxwiz::TrainingConfiguration& config,
+                  cyxwiz::IssueLevel level,
+                  const std::string& text) {
+    for (const auto& issue : config.issues) {
+        if (issue.level == level &&
+            issue.message.find(text) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool HasMetricLearningBlocker(const cyxwiz::TrainingConfiguration& config,
                               const std::string& text) {
     for (const auto& blocker : config.metric_learning_graph.blockers) {
@@ -1532,6 +1544,73 @@ int main() {
                               true);
     Check(!HasIssueText(config, "No pre-train data inspection node found"),
           "reachable DataProfiler should satisfy the pre-train inspection warning");
+
+    auto stratified_split = Node(27,
+                                 gui::NodeType::DataSplit,
+                                 "Stratified Split",
+                                 {Pin(2701, gui::PinType::Tensor, "Data", true),
+                                  Pin(2702, gui::PinType::Labels, "Labels", true)},
+                                 {Pin(2703, gui::PinType::Tensor, "Train Data", false),
+                                  Pin(2704, gui::PinType::Labels, "Train Labels", false)});
+    stratified_split.parameters["train_ratio"] = "0.8";
+    stratified_split.parameters["val_ratio"] = "0.1";
+    stratified_split.parameters["test_ratio"] = "0.1";
+    stratified_split.parameters["stratified"] = "true";
+
+    auto balanced_loader = Node(31,
+                                gui::NodeType::DataLoader,
+                                "Balanced Loader",
+                                {Pin(3101, gui::PinType::Tensor, "Input", true),
+                                 Pin(3102, gui::PinType::Labels, "Labels", true)},
+                                {Pin(3103, gui::PinType::Tensor, "Batch", false),
+                                 Pin(3104, gui::PinType::Labels, "Labels", false)});
+    balanced_loader.parameters["batch_size"] = "16";
+    balanced_loader.parameters["balance_classes"] = "true";
+    balanced_loader.parameters["balance_mode"] = "weighted_sampler";
+    balanced_loader.parameters["balance_target"] = "max";
+
+    auto weighted_loss = Node(32,
+                              gui::NodeType::CrossEntropyLoss,
+                              "Weighted Loss",
+                              {Pin(3201, gui::PinType::Tensor, "Predictions", true),
+                               Pin(3202, gui::PinType::Labels, "Targets", true)},
+                              {Pin(3203, gui::PinType::Loss, "Loss", false)});
+    weighted_loss.parameters["class_weight"] = "balanced";
+    weighted_loss.parameters["pos_weight"] = "1.5";
+
+    nodes = {data, stratified_split, balanced_loader, dense, weighted_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 27, 2701),
+        Link(2, 1, 102, 27, 2702),
+        Link(3, 27, 2703, 31, 3101),
+        Link(4, 27, 2704, 31, 3102),
+        Link(5, 31, 3103, 2, 201),
+        Link(6, 2, 202, 32, 3201),
+        Link(7, 31, 3104, 32, 3202),
+        Link(8, 32, 3203, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "unsupported imbalance parameters should warn without invalidating the graph");
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
+                       "DataSplit.stratified=true is not implemented"),
+          "compiler should warn when DataSplit.stratified is ignored");
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
+                       "DataLoader class-balancing parameters are present"),
+          "compiler should warn when DataLoader balancing params are ignored");
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
+                       "balance_classes"),
+          "DataLoader balancing warning should name balance_classes");
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
+                       "Loss weighting parameters are present"),
+          "compiler should warn when loss weighting params are ignored");
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
+                       "class_weight"),
+          "loss weighting warning should name class_weight");
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
+                       "pos_weight"),
+          "loss weighting warning should name pos_weight");
 
     auto class_loss = Node(15,
                            gui::NodeType::CrossEntropyLoss,
