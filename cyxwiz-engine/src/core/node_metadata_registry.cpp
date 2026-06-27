@@ -2119,13 +2119,17 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
 // =============================================================================
 void NodeMetadataRegistry::InitializeTrainingNodes() {
     RegisterNode({NodeType::MSELoss, NodeCategory::Training, "MSE Loss", ICON_FA_CHART_LINE,
-        {"mse", "loss", "regression"}, 0, false, "Mean squared error", "", "",
+        {"mse", "loss", "regression", "criterion", "objective", "optimization"},
+        0, false, "Mean squared error", "", "",
         {{"Predictions", PinType::Tensor, true, "Predictions"}, {"Targets", PinType::Tensor, true, "Targets"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CrossEntropyLoss, NodeCategory::Training, "CrossEntropy / Token CE", ICON_FA_CHART_PIE,
-        {"crossentropy", "classification", "token loss", "sequence", "ner"}, 0, false,
+        {"crossentropy", "cross entropy", "ce", "classification", "multiclass",
+         "token loss", "sequence", "ner", "criterion", "objective",
+         "optimization", "loss"},
+        0, false,
         "Class or token-level cross-entropy loss", "", "",
         {{"Logits", PinType::Tensor, true, "Class logits [N,C] or token logits [N,T,C]"},
          {"Labels", PinType::Labels, true, "Class labels [N] or token labels [N,T]"}},
@@ -2134,18 +2138,117 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"ignore_index", "int", "-100", "Padding label ignore index", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::BCELoss, NodeCategory::Training, "BCE Loss", ICON_FA_CHART_PIE,
+        {"bce", "binary", "binary cross entropy", "classification", "criterion",
+         "objective", "optimization", "loss"},
+        0, false, "Binary cross-entropy loss for probability predictions", "", "",
+        {{"Predictions", PinType::Tensor, true, "Predicted probabilities"},
+         {"Targets", PinType::Tensor, true, "Binary targets"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::BCEWithLogits, NodeCategory::Training, "BCE with Logits", ICON_FA_CHART_PIE,
+        {"bce", "bcewithlogits", "binary", "binary cross entropy", "logits",
+         "classification", "criterion", "objective", "optimization", "loss"},
+        0, false,
+        "Numerically stable binary cross-entropy loss for logits", "", "",
+        {{"Logits", PinType::Tensor, true, "Binary logits"},
+         {"Targets", PinType::Tensor, true, "Binary targets"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::L1Loss, NodeCategory::Training, "L1 Loss", ICON_FA_CHART_LINE,
+        {"l1", "mae", "mean absolute error", "absolute", "regression",
+         "criterion", "objective", "optimization", "loss"},
+        0, false, "Mean absolute error loss for regression", "", "",
+        {{"Predictions", PinType::Tensor, true, "Predictions"},
+         {"Targets", PinType::Tensor, true, "Targets"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SmoothL1Loss, NodeCategory::Training, "Smooth L1 Loss", ICON_FA_CHART_LINE,
+        {"smooth l1", "smoothl1", "huber", "regression", "robust",
+         "criterion", "objective", "optimization", "loss"},
+        0, false, "Smooth L1 loss for robust regression", "", "",
+        {{"Predictions", PinType::Tensor, true, "Predictions"},
+         {"Targets", PinType::Tensor, true, "Targets"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"beta", "float", "1.0", "Transition point", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::HuberLoss, NodeCategory::Training, "Huber Loss", ICON_FA_CHART_LINE,
+        {"huber", "smooth l1", "smoothl1", "regression", "robust",
+         "criterion", "objective", "optimization", "loss"},
+        0, false, "Huber-style robust regression loss", "", "",
+        {{"Predictions", PinType::Tensor, true, "Predictions"},
+         {"Targets", PinType::Tensor, true, "Targets"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"beta", "float", "1.0", "Transition point", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::NLLLoss, NodeCategory::Training, "NLL Loss", ICON_FA_CHART_PIE,
+        {"nll", "negative log likelihood", "log likelihood", "classification",
+         "multiclass", "criterion", "objective", "optimization", "loss"},
+        0, false, "Negative log-likelihood loss for log-probability inputs", "", "",
+        {{"Log Probabilities", PinType::Tensor, true, "Log-probability predictions"},
+         {"Labels", PinType::Labels, true, "Class labels"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"ignore_index", "int", "-100", "Padding label ignore index", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::Adam, NodeCategory::Training, "Adam", ICON_FA_GRADUATION_CAP,
-        {"adam", "optimizer"}, 0, false, "Adam optimizer", "", "",
+        {"adam", "optimizer", "optimization", "training"}, 0, false,
+        "Adam optimizer", "", "",
         {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
         {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
         {{"lr", "float", "0.001", "Learning rate", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SGD, NodeCategory::Training, "SGD", ICON_FA_GRADUATION_CAP,
-        {"sgd", "optimizer"}, 0, false, "SGD optimizer", "", "",
+        {"sgd", "stochastic gradient descent", "optimizer", "optimization", "training"},
+        0, false, "SGD optimizer", "", "",
         {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
         {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
         {{"lr", "float", "0.01", "Learning rate", {}, ""}, {"momentum", "float", "0.9", "Momentum", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::AdamW, NodeCategory::Training, "AdamW", ICON_FA_GRADUATION_CAP,
+        {"adamw", "adam", "weight decay", "optimizer", "optimization", "training"},
+        0, false, "Adam optimizer with decoupled weight decay", "", "",
+        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
+        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
+        {{"learning_rate", "float", "0.001", "Learning rate", {}, ""},
+         {"weight_decay", "float", "0.01", "Weight decay", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RMSprop, NodeCategory::Training, "RMSprop", ICON_FA_GRADUATION_CAP,
+        {"rmsprop", "optimizer", "adaptive", "optimization", "training"},
+        0, false, "RMSprop optimizer", "", "",
+        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
+        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
+        {{"learning_rate", "float", "0.001", "Learning rate", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Adagrad, NodeCategory::Training, "Adagrad", ICON_FA_GRADUATION_CAP,
+        {"adagrad", "ada grad", "optimizer", "adaptive", "optimization", "training"},
+        0, false, "Adagrad optimizer", "", "",
+        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
+        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
+        {{"learning_rate", "float", "0.01", "Learning rate", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::NAdam, NodeCategory::Training, "NAdam", ICON_FA_GRADUATION_CAP,
+        {"nadam", "nesterov adam", "adam", "optimizer", "optimization", "training"},
+        0, false, "Nesterov-accelerated Adam optimizer", "", "",
+        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
+        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
+        {{"learning_rate", "float", "0.002", "Learning rate", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::StepLR, NodeCategory::Training, "Step LR", ICON_FA_GRADUATION_CAP,

@@ -96,6 +96,18 @@ bool ContainsString(const std::set<std::string>& values,
     return values.find(expected) != values.end();
 }
 
+bool SearchContainsType(cyxwiz::NodeMetadataRegistry& metadata,
+                        const std::string& query,
+                        gui::NodeType expected) {
+    const auto results = metadata.Search(query, true);
+    return std::any_of(
+        results.begin(),
+        results.end(),
+        [expected](const cyxwiz::NodeMetadata* meta) {
+            return meta != nullptr && meta->type == expected;
+        });
+}
+
 const cyxwiz::ParameterDefinition* FindParameter(
     const cyxwiz::NodeMetadata* meta,
     const std::string& name) {
@@ -2485,9 +2497,9 @@ int main() {
         Check(cyxwiz::IsPipelineSupportedTrainingRoleNode(role_case.node_type),
               "training role should be centralized for type " +
                   TypeId(role_case.node_type));
-        if (meta == nullptr) {
-            continue;
-        }
+        Check(meta != nullptr,
+              "training role metadata should be registered for type " +
+                  TypeId(role_case.node_type));
         CheckSupportAxis(
             meta,
             "Training Role",
@@ -2612,6 +2624,21 @@ int main() {
         "CrossEntropyLoss");
     Check(cross_entropy_meta->help_text.find("class labels") != std::string::npos,
           "CrossEntropyLoss task guidance should point users to class-label classification");
+
+    Check(SearchContainsType(metadata, "bce", gui::NodeType::BCELoss),
+          "searching bce should find BCE Loss metadata");
+    Check(SearchContainsType(metadata, "bce", gui::NodeType::BCEWithLogits),
+          "searching bce should find BCE with Logits metadata");
+    Check(SearchContainsType(metadata, "binary", gui::NodeType::BCELoss),
+          "searching binary should find BCE Loss metadata");
+    Check(SearchContainsType(metadata, "binary", gui::NodeType::BCEWithLogits),
+          "searching binary should find BCE with Logits metadata");
+    Check(SearchContainsType(metadata, "negative log likelihood", gui::NodeType::NLLLoss),
+          "searching negative log likelihood should find NLL Loss metadata");
+    Check(SearchContainsType(metadata, "optimization", gui::NodeType::Adam),
+          "searching optimization should find training optimizer metadata");
+    Check(SearchContainsType(metadata, "optimization", gui::NodeType::CrossEntropyLoss),
+          "searching optimization should find training loss metadata");
 
     const auto* time_distributed_meta =
         metadata.GetMetadata(gui::NodeType::TimeDistributed);
