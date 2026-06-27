@@ -2,6 +2,8 @@
 #include "graph_executable_model.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -58,6 +60,146 @@ std::string ParseStringParam(const CompiledLayer& layer,
 Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
                                     size_t expected_rows,
                                     size_t expected_cols);
+
+std::string TrimAscii(std::string value) {
+    auto is_space = [](unsigned char c) {
+        return std::isspace(c) != 0;
+    };
+    value.erase(value.begin(),
+                std::find_if(value.begin(), value.end(),
+                             [&](char c) { return !is_space(static_cast<unsigned char>(c)); }));
+    value.erase(std::find_if(value.rbegin(), value.rend(),
+                             [&](char c) { return !is_space(static_cast<unsigned char>(c)); }).base(),
+                value.end());
+    return value;
+}
+
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
+
+const std::string* FindLossParam(const TrainingConfiguration& config,
+                                 std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+        auto it = config.loss_params.find(key);
+        if (it != config.loss_params.end()) {
+            return &it->second;
+        }
+    }
+    return nullptr;
+}
+
+bool IsNeutralLossValue(const std::string& value) {
+    const std::string lower = ToLowerAscii(TrimAscii(value));
+    return lower.empty() || lower == "none" || lower == "false" ||
+           lower == "0" || lower == "off";
+}
+
+std::vector<float> ParseFloatVectorLiteral(const std::string& raw,
+                                           const char* context) {
+    std::string value = raw;
+    for (char& c : value) {
+        if (c == '[' || c == ']' || c == '(' || c == ')' ||
+            c == ',' || c == ';') {
+            c = ' ';
+        }
+    }
+
+    std::vector<float> values;
+    std::istringstream in(value);
+    std::string token;
+    while (in >> token) {
+        try {
+            size_t parsed = 0;
+            const float weight = std::stof(token, &parsed);
+            if (parsed != token.size() || !std::isfinite(weight) ||
+                weight < 0.0f) {
+                throw std::runtime_error("invalid weight");
+            }
+            values.push_back(weight);
+        } catch (...) {
+            throw std::runtime_error(std::string(context) +
+                                     " contains invalid float weight '" +
+                                     token + "'");
+        }
+    }
+    return values;
+}
+
+std::vector<float> ResolveCrossEntropyClassWeights(
+    const TrainingConfiguration& config) {
+    const std::string* class_weight =
+        FindLossParam(config, {"class_weight"});
+    const std::string* explicit_weights =
+        FindLossParam(config, {"class_weights", "weight", "weights"});
+
+    if (class_weight && IsNeutralLossValue(*class_weight)) {
+        return {};
+    }
+
+    if (class_weight) {
+        const std::string mode = ToLowerAscii(TrimAscii(*class_weight));
+        if (mode == "balanced") {
+            spdlog::warn(
+                "TrainingExecutor: class_weight=balanced requires "
+                "dataset-frequency computation and is not applied yet; "
+                "using unweighted CrossEntropy loss");
+            return {};
+        }
+        if (mode == "manual") {
+            if (!explicit_weights || IsNeutralLossValue(*explicit_weights)) {
+                throw std::runtime_error(
+                    "CrossEntropy class_weight=manual requires class_weights");
+            }
+        } else if (!explicit_weights) {
+            explicit_weights = class_weight;
+        }
+    }
+
+    if (!explicit_weights || IsNeutralLossValue(*explicit_weights)) {
+        return {};
+    }
+
+    std::vector<float> weights =
+        ParseFloatVectorLiteral(*explicit_weights,
+                                "CrossEntropy class_weights");
+    const size_t expected_classes =
+        config.output_size > 0
+            ? config.output_size
+            : config.preprocessing.num_classes;
+    if (expected_classes > 0 && weights.size() != expected_classes) {
+        throw std::runtime_error(
+            "CrossEntropy class_weights size (" +
+            std::to_string(weights.size()) +
+            ") does not match class/output count (" +
+            std::to_string(expected_classes) + ")");
+    }
+    return weights;
+}
+
+float ResolveBCEWithLogitsPosWeight(const TrainingConfiguration& config) {
+    const std::string* value = FindLossParam(config, {"pos_weight"});
+    if (!value || IsNeutralLossValue(*value)) {
+        return 1.0f;
+    }
+    const std::string text = TrimAscii(*value);
+    try {
+        size_t parsed = 0;
+        const float pos_weight = std::stof(text, &parsed);
+        if (parsed != text.size() || !std::isfinite(pos_weight) ||
+            pos_weight <= 0.0f) {
+            throw std::runtime_error("invalid pos_weight");
+        }
+        return pos_weight;
+    } catch (...) {
+        throw std::runtime_error(
+            "BCEWithLogits pos_weight must be a positive finite float");
+    }
+}
 
 std::vector<int> ParseIntListParam(const CompiledLayer& layer,
                                    const std::string& key) {
@@ -840,10 +982,13 @@ std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
     switch (config.loss_type) {
         case gui::NodeType::CrossEntropyLoss: {
             const int ignore_index = ResolveCrossEntropyIgnoreIndex(config);
+            const std::vector<float> class_weights =
+                ResolveCrossEntropyClassWeights(config);
             spdlog::info("TrainingExecutor: Using CrossEntropy loss "
-                         "(ignore_index={})", ignore_index);
+                         "(ignore_index={}, class_weights={})",
+                         ignore_index, class_weights.size());
             return std::make_unique<CrossEntropyLoss>(
-                Reduction::Mean, ignore_index);
+                Reduction::Mean, ignore_index, class_weights);
         }
         case gui::NodeType::MSELoss:
             spdlog::info("TrainingExecutor: Using MSE loss");
@@ -851,9 +996,13 @@ std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
         case gui::NodeType::BCELoss:
             spdlog::info("TrainingExecutor: Using BCE loss");
             return CreateLoss(LossType::BinaryCrossEntropy);
-        case gui::NodeType::BCEWithLogits:
-            spdlog::info("TrainingExecutor: Using BCEWithLogits loss");
-            return CreateLoss(LossType::BCEWithLogits);
+        case gui::NodeType::BCEWithLogits: {
+            const float pos_weight = ResolveBCEWithLogitsPosWeight(config);
+            spdlog::info("TrainingExecutor: Using BCEWithLogits loss "
+                         "(pos_weight={})", pos_weight);
+            return std::make_unique<BCEWithLogitsLoss>(
+                Reduction::Mean, pos_weight);
+        }
         case gui::NodeType::L1Loss:
             spdlog::info("TrainingExecutor: Using L1 loss");
             return CreateLoss(LossType::L1);

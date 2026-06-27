@@ -335,6 +335,36 @@ void TestCrossEntropyIgnoreIndexFromLossParams() {
     spdlog::info("  OK: CrossEntropy ignore_index=-100 propagates to loss");
 }
 
+void TestWeightedLossConfigParams() {
+    spdlog::info("--- TestWeightedLossConfigParams ---");
+
+    auto ce_cfg = MakeTabularConfig();
+    ce_cfg.loss_params["class_weight"] = "manual";
+    ce_cfg.loss_params["class_weights"] = "[1.0, 2.0, 3.0, 4.0]";
+    auto ce_built = BuildSequentialFromConfig(ce_cfg);
+    ExpectTrue(ce_built.ok(), "weighted CrossEntropy config should build");
+    auto* ce_loss = dynamic_cast<CrossEntropyLoss*>(ce_built.loss.get());
+    ExpectTrue(ce_loss != nullptr,
+               "weighted CrossEntropy config should construct CrossEntropyLoss");
+    ExpectTrue(ce_loss->GetClassWeights().size() == 4,
+               "CrossEntropyLoss should receive four class weights");
+    ExpectNear(ce_loss->GetClassWeights()[3], 4.0f, 1e-6f,
+               "CrossEntropyLoss should preserve manual class weights");
+
+    auto bce_cfg = MakeTabularConfig();
+    bce_cfg.output_size = 1;
+    bce_cfg.layers.back().units = 1;
+    bce_cfg.loss_type = gui::NodeType::BCEWithLogits;
+    bce_cfg.loss_params["pos_weight"] = "2.5";
+    auto bce_built = BuildSequentialFromConfig(bce_cfg);
+    ExpectTrue(bce_built.ok(), "weighted BCEWithLogits config should build");
+    auto* bce_loss = dynamic_cast<BCEWithLogitsLoss*>(bce_built.loss.get());
+    ExpectTrue(bce_loss != nullptr,
+               "weighted BCEWithLogits config should construct BCEWithLogitsLoss");
+    ExpectNear(bce_loss->GetPosWeight(), 2.5f, 1e-6f,
+               "BCEWithLogitsLoss should preserve pos_weight");
+}
+
 void TestCrossEntropyTokenShapeIgnoreIndex() {
     spdlog::info("--- TestCrossEntropyTokenShapeIgnoreIndex ---");
     CrossEntropyLoss loss(Reduction::Mean, -100);
@@ -749,6 +779,7 @@ int main() {
         TestMseLossLabelsAreFloat();
         TestBuildSequentialTextEmbeddingWeights();
         TestCrossEntropyIgnoreIndexFromLossParams();
+        TestWeightedLossConfigParams();
         TestCrossEntropyTokenShapeIgnoreIndex();
         TestWeightedCrossEntropyBackend();
         TestBCEWithLogitsPosWeightBackend();

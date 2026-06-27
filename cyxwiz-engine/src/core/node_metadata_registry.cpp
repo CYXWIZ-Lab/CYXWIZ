@@ -2135,7 +2135,9 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"Labels", PinType::Labels, true, "Class labels [N] or token labels [N,T]"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
-         {"ignore_index", "int", "-100", "Padding label ignore index", {}, ""}},
+         {"ignore_index", "int", "-100", "Padding label ignore index", {}, ""},
+         {"class_weight", "enum", "none", "Class weight mode", {"none", "manual", "balanced"}, ""},
+         {"class_weights", "string", "", "Manual per-class weights", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::BCELoss, NodeCategory::Training, "BCE Loss", ICON_FA_CHART_PIE,
@@ -2145,7 +2147,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"Predictions", PinType::Tensor, true, "Predicted probabilities"},
          {"Targets", PinType::Tensor, true, "Binary targets"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
-        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"pos_weight", "float", "1.0", "Positive-class weight", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::BCEWithLogits, NodeCategory::Training, "BCE with Logits", ICON_FA_CHART_PIE,

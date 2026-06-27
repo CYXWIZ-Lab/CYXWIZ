@@ -1575,8 +1575,8 @@ int main() {
                               {Pin(3201, gui::PinType::Tensor, "Predictions", true),
                                Pin(3202, gui::PinType::Labels, "Targets", true)},
                               {Pin(3203, gui::PinType::Loss, "Loss", false)});
-    weighted_loss.parameters["class_weight"] = "balanced";
-    weighted_loss.parameters["pos_weight"] = "1.5";
+    weighted_loss.parameters["class_weight"] = "manual";
+    weighted_loss.parameters["class_weights"] = "[1.0, 3.0]";
 
     nodes = {data, stratified_split, balanced_loader, dense, weighted_loss, optimizer};
     links = {
@@ -1592,7 +1592,7 @@ int main() {
 
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
-          "unsupported imbalance parameters should warn without invalidating the graph");
+          "supported imbalance parameters should compile");
     Check(config.stratified,
           "compiler should preserve DataSplit.stratified=true in training config");
     Check(!HasIssueText(config, "DataSplit.stratified=true is not implemented"),
@@ -1605,15 +1605,28 @@ int main() {
           "compiler should preserve DataLoader balance_target");
     Check(!HasIssueText(config, "DataLoader class-balancing parameters are present"),
           "compiler should not warn that implemented DataLoader balancing is ignored");
-    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
-                       "Loss weighting parameters are present"),
-          "compiler should warn when loss weighting params are ignored");
-    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
-                       "class_weight"),
-          "loss weighting warning should name class_weight");
-    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
-                       "pos_weight"),
-          "loss weighting warning should name pos_weight");
+    Check(config.loss_params.at("class_weight") == "manual",
+          "compiler should preserve CrossEntropy class_weight mode");
+    Check(config.loss_params.at("class_weights") == "[1.0, 3.0]",
+          "compiler should preserve CrossEntropy manual class weights");
+    Check(!HasIssueText(config, "Loss weighting parameters are present"),
+          "compiler should not warn that supported loss weights are ignored");
+
+    auto invalid_weighted_loss = weighted_loss;
+    invalid_weighted_loss.parameters["class_weights"] = "[1.0, 2.0, 3.0]";
+    nodes = {data, dense, invalid_weighted_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 32, 3201),
+        Link(3, 1, 102, 32, 3202),
+        Link(4, 32, 3203, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "CrossEntropy manual class_weights length mismatch should be invalid");
+    Check(HasIssueText(config, "class_weights size"),
+          "class_weights length mismatch should report a clear diagnostic");
 
     auto class_loss = Node(15,
                            gui::NodeType::CrossEntropyLoss,

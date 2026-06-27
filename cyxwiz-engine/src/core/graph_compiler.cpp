@@ -118,6 +118,19 @@ std::string ToLowerAscii(std::string value) {
     return value;
 }
 
+std::string TrimAscii(std::string value) {
+    auto is_space = [](unsigned char c) {
+        return std::isspace(c) != 0;
+    };
+    value.erase(value.begin(),
+                std::find_if(value.begin(), value.end(),
+                             [&](char c) { return !is_space(static_cast<unsigned char>(c)); }));
+    value.erase(std::find_if(value.rbegin(), value.rend(),
+                             [&](char c) { return !is_space(static_cast<unsigned char>(c)); }).base(),
+                value.end());
+    return value;
+}
+
 bool IsTruthyParameterValue(const std::string& value) {
     const std::string lower = ToLowerAscii(value);
     return lower == "true" || lower == "1" || lower == "yes" ||
@@ -161,6 +174,153 @@ std::string JoinNames(const std::vector<std::string>& values) {
         out << values[i];
     }
     return out.str();
+}
+
+const std::string* FindParam(
+    const std::map<std::string, std::string>& params,
+    std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+        auto it = params.find(key);
+        if (it != params.end()) {
+            return &it->second;
+        }
+    }
+    return nullptr;
+}
+
+bool ParseFloatVectorLiteral(const std::string& raw,
+                             std::vector<float>& values,
+                             std::string& error) {
+    std::string text = raw;
+    for (char& c : text) {
+        if (c == '[' || c == ']' || c == '(' || c == ')' ||
+            c == ',' || c == ';') {
+            c = ' ';
+        }
+    }
+
+    values.clear();
+    std::istringstream in(text);
+    std::string token;
+    while (in >> token) {
+        try {
+            size_t parsed = 0;
+            const float weight = std::stof(token, &parsed);
+            if (parsed != token.size() || !std::isfinite(weight) ||
+                weight < 0.0f) {
+                throw std::runtime_error("invalid weight");
+            }
+            values.push_back(weight);
+        } catch (...) {
+            error = "invalid float weight '" + token + "'";
+            return false;
+        }
+    }
+    return true;
+}
+
+void ValidateCrossEntropyWeightParams(
+    TrainingConfiguration& config,
+    const gui::MLNode& loss_node) {
+    const auto& params = loss_node.parameters;
+    const std::string* class_weight = FindParam(params, {"class_weight"});
+    const std::string* explicit_weights =
+        FindParam(params, {"class_weights", "weight", "weights"});
+
+    if (class_weight && IsNeutralUnsupportedParameterValue(
+            "class_weight", *class_weight)) {
+        return;
+    }
+
+    const std::string* vector_source = explicit_weights;
+    if (class_weight) {
+        const std::string mode = ToLowerAscii(TrimAscii(*class_weight));
+        if (mode == "balanced") {
+            AddIssue(
+                config,
+                IssueLevel::Warning,
+                "CrossEntropy class_weight=balanced requires training-split "
+                "class frequency computation and is not implemented yet; "
+                "use manual class_weights for now.",
+                loss_node.id,
+                loss_node.name);
+            return;
+        }
+        if (mode == "manual") {
+            if (!explicit_weights ||
+                IsNeutralUnsupportedParameterValue("class_weights",
+                                                   *explicit_weights)) {
+                AddIssue(
+                    config,
+                    IssueLevel::Error,
+                    "CrossEntropy class_weight=manual requires class_weights.",
+                    loss_node.id,
+                    loss_node.name);
+                return;
+            }
+        } else if (!explicit_weights) {
+            vector_source = class_weight;
+        }
+    }
+
+    if (!vector_source ||
+        IsNeutralUnsupportedParameterValue("class_weights", *vector_source)) {
+        return;
+    }
+
+    std::vector<float> weights;
+    std::string error;
+    if (!ParseFloatVectorLiteral(*vector_source, weights, error)) {
+        AddIssue(
+            config,
+            IssueLevel::Error,
+            "CrossEntropy class_weights parse error: " + error,
+            loss_node.id,
+            loss_node.name);
+        return;
+    }
+
+    const size_t expected_classes =
+        config.preprocessing.num_classes > 0
+            ? config.preprocessing.num_classes
+            : config.output_size;
+    if (expected_classes > 0 && weights.size() != expected_classes) {
+        AddIssue(
+            config,
+            IssueLevel::Error,
+            "CrossEntropy class_weights size (" +
+                std::to_string(weights.size()) +
+                ") does not match class/output count (" +
+                std::to_string(expected_classes) + ")",
+            loss_node.id,
+            loss_node.name);
+    }
+}
+
+void ValidateBCEWithLogitsPosWeight(
+    TrainingConfiguration& config,
+    const gui::MLNode& loss_node) {
+    const std::string* raw = FindParam(loss_node.parameters, {"pos_weight"});
+    if (!raw || IsNeutralUnsupportedParameterValue("pos_weight", *raw)) {
+        return;
+    }
+
+    const std::string value = TrimAscii(*raw);
+    try {
+        size_t parsed = 0;
+        const float pos_weight = std::stof(value, &parsed);
+        if (parsed != value.size() || !std::isfinite(pos_weight) ||
+            pos_weight <= 0.0f) {
+            throw std::runtime_error("invalid pos_weight");
+        }
+    } catch (...) {
+        AddIssue(
+            config,
+            IssueLevel::Error,
+            "BCEWithLogits pos_weight must be a positive finite float.",
+            loss_node.id,
+            loss_node.name);
+    }
 }
 
 const char* ImplementationStatusLabel(NodeImplementationStatus status) {
@@ -2955,22 +3115,50 @@ TrainingConfiguration GraphCompiler::Compile(
         config.loss_type = loss_node->type;
         config.loss_params = loss_node->parameters;
 
-        const auto unsupported_loss_params = PresentUnsupportedParameters(
+        const auto unsupported_sample_weight_params = PresentUnsupportedParameters(
             loss_node->parameters,
-            {"weight", "class_weight", "class_weights", "sample_weight",
-             "sample_weights", "pos_weight"},
+            {"sample_weight", "sample_weights"},
             true);
-        if (!unsupported_loss_params.empty()) {
+        if (!unsupported_sample_weight_params.empty()) {
             AddIssue(
                 config,
                 IssueLevel::Warning,
-                "Loss weighting parameters are present but not implemented "
-                "for graph training and will be ignored: " +
-                    JoinNames(unsupported_loss_params) +
-                    ". Use external dataset preprocessing until weighted "
-                    "loss support is implemented.",
+                "Sample-weight loss parameters are present but not "
+                "implemented for graph training and will be ignored: " +
+                    JoinNames(unsupported_sample_weight_params) + ".",
                 loss_node->id,
                 loss_node->name);
+        }
+        if (loss_node->type != gui::NodeType::CrossEntropyLoss) {
+            const auto class_weight_params = PresentUnsupportedParameters(
+                loss_node->parameters,
+                {"weight", "class_weight", "class_weights", "weights"},
+                true);
+            if (!class_weight_params.empty()) {
+                AddIssue(
+                    config,
+                    IssueLevel::Warning,
+                    "Class-weight loss parameters are supported only on "
+                    "CrossEntropyLoss and will be ignored here: " +
+                        JoinNames(class_weight_params) + ".",
+                    loss_node->id,
+                    loss_node->name);
+            }
+        }
+        if (loss_node->type != gui::NodeType::BCEWithLogits) {
+            const auto pos_weight_params = PresentUnsupportedParameters(
+                loss_node->parameters,
+                {"pos_weight"},
+                true);
+            if (!pos_weight_params.empty()) {
+                AddIssue(
+                    config,
+                    IssueLevel::Warning,
+                    "pos_weight is supported only on BCEWithLogits and "
+                    "will be ignored here.",
+                    loss_node->id,
+                    loss_node->name);
+            }
         }
     }
 
@@ -3045,6 +3233,10 @@ TrainingConfiguration GraphCompiler::Compile(
                      ") does not match the model output size (" +
                      std::to_string(config.output_size) + ")");
         }
+
+        if (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss) {
+            ValidateCrossEntropyWeightParams(config, *loss_node);
+        }
     }
 
     if (config.loss_type == gui::NodeType::BCELoss ||
@@ -3058,6 +3250,9 @@ TrainingConfiguration GraphCompiler::Compile(
                      " requires a single prediction output for binary "
                      "classification; the selected model path outputs " +
                      std::to_string(config.output_size));
+        }
+        if (loss_node && loss_node->type == gui::NodeType::BCEWithLogits) {
+            ValidateBCEWithLogitsPosWeight(config, *loss_node);
         }
     }
 
