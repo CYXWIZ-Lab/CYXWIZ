@@ -421,6 +421,29 @@ int main() {
     Check(stratified_test_counts == std::vector<size_t>({2, 1}),
           "stratified test split should preserve 2:1 class ratio");
 
+    auto balanced_loader_config = MakeConfig();
+    balanced_loader_config.train_ratio = 0.75f;
+    balanced_loader_config.shuffle = false;
+    balanced_loader_config.balance_classes = true;
+    balanced_loader_config.balance_mode = "oversample";
+    balanced_loader_config.balance_target = "max";
+    balanced_loader_config.balance_seed = 11;
+    auto balanced_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        balanced_loader_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    Check(balanced_batchers.num_train_samples == 16,
+          "balanced Arrow oversampling should expand train split to max class count per class");
+    Check(balanced_batchers.num_val_samples == 3,
+          "balanced Arrow oversampling should not alter validation split");
+    Check(balanced_batchers.num_test_samples == 0,
+          "balanced Arrow oversampling should not create test samples");
+    auto balanced_train_counts =
+        CountOneHotLabels(*balanced_batchers.train, 2, "balanced train");
+    Check(balanced_train_counts == std::vector<size_t>({8, 8}),
+          "balanced Arrow oversampling should equalize train class counts");
+
     auto high_worker_config = MakeConfig();
     high_worker_config.num_workers = cyxwiz::GetDefaultNumWorkers() + 64;
     auto high_worker_batchers = cyxwiz::BuildArrowTrainingBatchers(
@@ -606,6 +629,7 @@ int main() {
     parquet_prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     explicit_split_batchers = cyxwiz::TrainingBatcherSet{};
     stratified_batchers = cyxwiz::TrainingBatcherSet{};
+    balanced_batchers = cyxwiz::TrainingBatcherSet{};
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};

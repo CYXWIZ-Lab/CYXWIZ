@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 namespace cyxwiz {
 
@@ -34,7 +35,11 @@ public:
                        int num_workers = 0,
                        uint32_t seed = 42,
                        bool stratified = false,
-                       uint32_t split_seed = 42);
+                       uint32_t split_seed = 42,
+                       bool balance_classes = false,
+                       const std::string& balance_mode = "none",
+                       const std::string& balance_target = "max",
+                       uint32_t balance_seed = 42);
 
     Batch GetNextBatch() override;
     void Reset() override;

@@ -261,4 +261,13 @@ inline arrow::Result<std::shared_ptr<arrow::Table>> AddSplitPartitionColumn(
     return split_partition_detail::AppendPartitionColumn(table, partitions);
 }
 
+inline arrow::Result<std::vector<int64_t>> ReadNumericLabelColumn(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& label_column) {
+    if (!table) {
+        return arrow::Status::Invalid("cannot read labels from a null table");
+    }
+    return split_partition_detail::ReadLabels(table, label_column);
+}
+
 } // namespace cyxwiz

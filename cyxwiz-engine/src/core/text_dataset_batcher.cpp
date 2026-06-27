@@ -96,7 +96,11 @@ TextDatasetBatcher::TextDatasetBatcher(
     int num_workers,
     uint32_t seed,
     bool stratified,
-    uint32_t split_seed)
+    uint32_t split_seed,
+    bool balance_classes,
+    const std::string& balance_mode,
+    const std::string& balance_target,
+    uint32_t balance_seed)
     : batch_size_(batch_size),
       num_workers_(std::max(0, num_workers))
 {
@@ -187,7 +191,8 @@ TextDatasetBatcher::TextDatasetBatcher(
     train_batcher_ = std::make_unique<ArrowDatasetBatcher>(
         tokenized_dataset_, "y", normalized_batch_size,
         shuffle, 1.0f, true, "__partition__", 0, num_workers_,
-        BatcherPhase::Train, 0.0f, seed);
+        BatcherPhase::Train, 0.0f, seed,
+        balance_classes, balance_mode, balance_target, balance_seed);
     val_batcher_ = std::make_unique<ArrowDatasetBatcher>(
         tokenized_dataset_, "y", normalized_batch_size,
         false, 1.0f, false, "__partition__", 1, num_workers_,

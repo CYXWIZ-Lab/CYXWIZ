@@ -7,6 +7,7 @@
 #include <vector>
 #include <random>
 #include <memory>
+#include <string>
 
 namespace cyxwiz {
 
@@ -401,7 +402,11 @@ public:
         int num_workers = 0,
         BatcherPhase split_phase = BatcherPhase::Train,
         float val_split = 0.0f,
-        uint32_t seed = 42
+        uint32_t seed = 42,
+        bool balance_classes = false,
+        const std::string& balance_mode = "none",
+        const std::string& balance_target = "max",
+        uint32_t balance_seed = 42
     );
 
     // IBatcher interface
@@ -438,8 +443,13 @@ private:
     float val_split_ = 0.0f;
 
     std::vector<int64_t> indices_;   // Row indices for this split
+    std::vector<int64_t> base_indices_;  // Original split before balancing/shuffle
     size_t current_index_ = 0;
     std::mt19937 rng_;
+    std::mt19937 balance_rng_;
+    bool balance_classes_ = false;
+    std::string balance_mode_ = "none";
+    std::string balance_target_ = "max";
 
     // Feature and label column indices
     std::vector<int> feature_cols_;
@@ -457,6 +467,7 @@ private:
 
     void ShuffleIndices();
     void InitializeColumns();
+    void RebuildBalancedIndices();
 };
 
 } // namespace cyxwiz

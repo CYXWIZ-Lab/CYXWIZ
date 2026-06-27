@@ -1597,12 +1597,14 @@ int main() {
           "compiler should preserve DataSplit.stratified=true in training config");
     Check(!HasIssueText(config, "DataSplit.stratified=true is not implemented"),
           "compiler should not warn that implemented DataSplit stratification is ignored");
-    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
-                       "DataLoader class-balancing parameters are present"),
-          "compiler should warn when DataLoader balancing params are ignored");
-    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
-                       "balance_classes"),
-          "DataLoader balancing warning should name balance_classes");
+    Check(config.balance_classes,
+          "compiler should preserve DataLoader balance_classes=true");
+    Check(config.balance_mode == "weighted_sampler",
+          "compiler should preserve DataLoader balance_mode");
+    Check(config.balance_target == "max",
+          "compiler should preserve DataLoader balance_target");
+    Check(!HasIssueText(config, "DataLoader class-balancing parameters are present"),
+          "compiler should not warn that implemented DataLoader balancing is ignored");
     Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
                        "Loss weighting parameters are present"),
           "compiler should warn when loss weighting params are ignored");

@@ -2607,6 +2607,41 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.dataloader_seed = std::max(0, std::stoi(loader_node->parameters.at("seed")));
             if (loader_node->parameters.count("grad_accum_steps"))
                 config.grad_accum_steps = std::max(1, std::stoi(loader_node->parameters.at("grad_accum_steps")));
+            if (loader_node->parameters.count("balance_classes"))
+                config.balance_classes =
+                    IsTruthyParameterValue(loader_node->parameters.at("balance_classes"));
+            if (loader_node->parameters.count("balance_mode")) {
+                config.balance_mode =
+                    ToLowerAscii(loader_node->parameters.at("balance_mode"));
+                if (config.balance_mode == "weighted sampler") {
+                    config.balance_mode = "weighted_sampler";
+                }
+            }
+            if (loader_node->parameters.count("weighted_sampler") &&
+                IsTruthyParameterValue(loader_node->parameters.at("weighted_sampler"))) {
+                config.balance_classes = true;
+                config.balance_mode = "weighted_sampler";
+            }
+            if (loader_node->parameters.count("oversample") &&
+                IsTruthyParameterValue(loader_node->parameters.at("oversample"))) {
+                config.balance_classes = true;
+                config.balance_mode = "oversample";
+            }
+            if (loader_node->parameters.count("undersample") &&
+                IsTruthyParameterValue(loader_node->parameters.at("undersample"))) {
+                config.balance_classes = true;
+                config.balance_mode = "undersample";
+            }
+            if (loader_node->parameters.count("balance_target"))
+                config.balance_target =
+                    ToLowerAscii(loader_node->parameters.at("balance_target"));
+            if (loader_node->parameters.count("balance_seed"))
+                config.balance_seed = std::max(
+                    0, std::stoi(loader_node->parameters.at("balance_seed")));
+            if (config.balance_classes &&
+                (config.balance_mode.empty() || config.balance_mode == "none")) {
+                config.balance_mode = "oversample";
+            }
             if (loader_node->parameters.count("pin_memory") &&
                 loader_node->parameters.at("pin_memory") == "true") {
                 spdlog::warn("GraphCompiler: DataLoader pin_memory=true is unsupported by current batchers and will be ignored");
@@ -2620,30 +2655,14 @@ TrainingConfiguration GraphCompiler::Compile(
         } catch (const std::exception& e) {
             spdlog::warn("GraphCompiler: DataLoader param parse error ({}) - using defaults", e.what());
         }
-
-        const auto unsupported_balance_params = PresentUnsupportedParameters(
-            loader_node->parameters,
-            {"balance_classes", "balance_mode", "balance_target",
-             "balance_seed", "weighted_sampler", "oversample", "undersample"},
-            true);
-        if (!unsupported_balance_params.empty()) {
-            AddIssue(
-                config,
-                IssueLevel::Warning,
-                "DataLoader class-balancing parameters are present but not "
-                "implemented and will be ignored: " +
-                    JoinNames(unsupported_balance_params) +
-                    ". Training batches use the current shuffled/sequential "
-                    "split indices.",
-                loader_node->id,
-                loader_node->name);
-        }
     }
     if (config.has_data_loader) {
-        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}, prefetch_factor={}, log_interval={}, validation_freq={}, seed={}, grad_accum_steps={}, save_best_checkpoint={}, early_stopping_patience={}, checkpoint_dir='{}'",
+        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}, prefetch_factor={}, log_interval={}, validation_freq={}, seed={}, grad_accum_steps={}, balance_classes={}, balance_mode='{}', balance_target='{}', balance_seed={}, save_best_checkpoint={}, early_stopping_patience={}, checkpoint_dir='{}'",
                      config.batch_size, config.epochs, config.shuffle, config.drop_last, config.num_workers, config.prefetch_factor,
                      config.log_interval, config.validation_freq, config.dataloader_seed,
-                     config.grad_accum_steps, config.save_best_checkpoint, config.early_stopping_patience,
+                     config.grad_accum_steps, config.balance_classes,
+                     config.balance_mode, config.balance_target,
+                     config.balance_seed, config.save_best_checkpoint, config.early_stopping_patience,
                      config.checkpoint_dir);
         if (config.num_workers > 0) {
             spdlog::info("GraphCompiler: num_workers={} will be forwarded to supported batchers",

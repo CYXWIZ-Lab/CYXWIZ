@@ -1,11 +1,15 @@
 #include "dataset_batcher.h"
 #include "label_column_resolver.h"
+#include "split_partitioning.h"
 
 #include <arrow/api.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
+#include <map>
 #include <memory>
+#include <sstream>
 #include <thread>
 #include <utility>
 
@@ -25,7 +29,11 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     int num_workers,
     BatcherPhase split_phase,
     float val_split,
-    uint32_t seed)
+    uint32_t seed,
+    bool balance_classes,
+    const std::string& balance_mode,
+    const std::string& balance_target,
+    uint32_t balance_seed)
     : dataset_(dataset)
     , label_column_(label_column)
     , batch_size_(batch_size)
@@ -37,6 +45,10 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     , split_phase_(split_phase)
     , val_split_(val_split)
     , rng_(seed)
+    , balance_rng_(balance_seed)
+    , balance_classes_(balance_classes)
+    , balance_mode_(balance_mode)
+    , balance_target_(balance_target)
 {
     if (!dataset_) {
         spdlog::error("ArrowDatasetBatcher: Invalid dataset");
@@ -131,6 +143,8 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
 
     // Initialize feature/label column indices
     InitializeColumns();
+    base_indices_ = indices_;
+    RebuildBalancedIndices();
 
     const char* phase_name = split_phase_ == BatcherPhase::Train ? "train" :
         (split_phase_ == BatcherPhase::Val ? "val" : "test");
@@ -715,6 +729,8 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
 
 void ArrowDatasetBatcher::Reset() {
     current_index_ = 0;
+    indices_ = base_indices_;
+    RebuildBalancedIndices();
     if (shuffle_) {
         ShuffleIndices();
     }
@@ -741,6 +757,142 @@ void ArrowDatasetBatcher::SetOneHotEncoding(size_t num_classes) {
 
 void ArrowDatasetBatcher::ShuffleIndices() {
     std::shuffle(indices_.begin(), indices_.end(), rng_);
+}
+
+void ArrowDatasetBatcher::RebuildBalancedIndices() {
+    if (!balance_classes_ ||
+        balance_mode_ == "none" ||
+        split_phase_ != BatcherPhase::Train ||
+        !is_training_ ||
+        regression_mode_ ||
+        label_col_idx_ < 0 ||
+        !dataset_ ||
+        base_indices_.empty()) {
+        return;
+    }
+
+    auto labels_result = ReadNumericLabelColumn(
+        dataset_->GetArrowTable(), label_column_);
+    if (!labels_result.ok()) {
+        spdlog::warn("ArrowDatasetBatcher: class balancing requested but "
+                     "labels could not be read ({}); using unbalanced train split",
+                     labels_result.status().ToString());
+        return;
+    }
+
+    const auto& labels = labels_result.ValueOrDie();
+    std::map<int64_t, std::vector<int64_t>> by_label;
+    for (int64_t row : base_indices_) {
+        if (row >= 0 && static_cast<size_t>(row) < labels.size()) {
+            by_label[labels[static_cast<size_t>(row)]].push_back(row);
+        }
+    }
+
+    if (by_label.size() < 2) {
+        spdlog::warn("ArrowDatasetBatcher: class balancing requested but "
+                     "the train split has fewer than two labels");
+        return;
+    }
+
+    std::vector<size_t> class_counts;
+    class_counts.reserve(by_label.size());
+    for (const auto& entry : by_label) {
+        class_counts.push_back(entry.second.size());
+    }
+
+    const auto minmax = std::minmax_element(
+        class_counts.begin(), class_counts.end());
+    size_t target_count = *minmax.second;
+    if (balance_target_ == "min") {
+        target_count = *minmax.first;
+    } else if (balance_target_ == "median") {
+        auto sorted = class_counts;
+        std::sort(sorted.begin(), sorted.end());
+        target_count = sorted[sorted.size() / 2];
+    } else if (!balance_target_.empty() &&
+               std::all_of(balance_target_.begin(), balance_target_.end(),
+                           [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+        try {
+            target_count = std::max<size_t>(
+                1, static_cast<size_t>(std::stoull(balance_target_)));
+        } catch (...) {
+            target_count = *minmax.second;
+        }
+    }
+
+    if (target_count == 0) {
+        return;
+    }
+
+    std::ostringstream original_dist;
+    bool first = true;
+    for (const auto& entry : by_label) {
+        if (!first) original_dist << ", ";
+        original_dist << entry.first << ":" << entry.second.size();
+        first = false;
+    }
+
+    std::vector<int64_t> balanced;
+    if (balance_mode_ == "undersample") {
+        for (auto& entry : by_label) {
+            auto rows = entry.second;
+            std::shuffle(rows.begin(), rows.end(), balance_rng_);
+            const size_t keep = std::min(target_count, rows.size());
+            balanced.insert(balanced.end(), rows.begin(), rows.begin() + keep);
+        }
+    } else if (balance_mode_ == "weighted_sampler") {
+        const size_t total_samples = target_count * by_label.size();
+        std::vector<int64_t> labels_order;
+        labels_order.reserve(by_label.size());
+        for (const auto& entry : by_label) {
+            labels_order.push_back(entry.first);
+        }
+        std::uniform_int_distribution<size_t> class_dist(
+            0, labels_order.size() - 1);
+        balanced.reserve(total_samples);
+        for (size_t i = 0; i < total_samples; ++i) {
+            auto& rows = by_label[labels_order[class_dist(balance_rng_)]];
+            std::uniform_int_distribution<size_t> row_dist(0, rows.size() - 1);
+            balanced.push_back(rows[row_dist(balance_rng_)]);
+        }
+    } else {
+        if (balance_mode_ != "oversample") {
+            spdlog::warn("ArrowDatasetBatcher: unsupported balance_mode='{}'; "
+                         "using oversample", balance_mode_);
+        }
+        for (auto& entry : by_label) {
+            auto rows = entry.second;
+            std::shuffle(rows.begin(), rows.end(), balance_rng_);
+            for (size_t i = 0; i < target_count; ++i) {
+                balanced.push_back(rows[i % rows.size()]);
+            }
+        }
+    }
+
+    if (balanced.empty()) {
+        return;
+    }
+
+    indices_ = std::move(balanced);
+
+    std::map<int64_t, size_t> effective_counts;
+    for (int64_t row : indices_) {
+        if (row >= 0 && static_cast<size_t>(row) < labels.size()) {
+            ++effective_counts[labels[static_cast<size_t>(row)]];
+        }
+    }
+    std::ostringstream effective_dist;
+    first = true;
+    for (const auto& entry : effective_counts) {
+        if (!first) effective_dist << ", ";
+        effective_dist << entry.first << ":" << entry.second;
+        first = false;
+    }
+
+    spdlog::info("ArrowDatasetBatcher: balanced train split mode='{}', "
+                 "target='{}', original=[{}], effective=[{}], samples={}",
+                 balance_mode_, balance_target_, original_dist.str(),
+                 effective_dist.str(), indices_.size());
 }
 
 } // namespace cyxwiz

@@ -350,6 +350,10 @@ struct TrainingConfiguration {
     int validation_freq = 1;            // epoch-based validation cadence; final epoch always validates
     int dataloader_seed = 42;           // deterministic DataLoader split/shuffle seed
     int grad_accum_steps = 1;           // optimizer step every N backward passes
+    bool balance_classes = false;       // rebalance training split batches when supported
+    std::string balance_mode = "none";  // none|oversample|undersample|weighted_sampler
+    std::string balance_target = "max"; // max|median|min|number
+    int balance_seed = 42;              // deterministic class balancing seed
     bool has_data_loader = false;       // true if a DataLoader node was found
     bool save_best_checkpoint = true;   // keep best validation epoch
     int early_stopping_patience = 5;    // stop after this many non-improving epochs

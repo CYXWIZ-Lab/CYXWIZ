@@ -120,7 +120,11 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
         config.shuffle, config.train_ratio, true,
         partition_col, /*partition_value=*/0, num_workers,
         BatcherPhase::Train, effective_val_ratio,
-        static_cast<uint32_t>(config.dataloader_seed));
+        static_cast<uint32_t>(config.dataloader_seed),
+        config.balance_classes && !config.is_time_series,
+        config.balance_mode,
+        config.balance_target,
+        static_cast<uint32_t>(std::max(0, config.balance_seed)));
     result.arrow_val = std::make_unique<ArrowDatasetBatcher>(
         effective_dataset, effective_label, batch_size,
         false, config.train_ratio, false,
@@ -198,6 +202,11 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         spdlog::warn("TrainingExecutor: stratified DataSplit is not available "
                      "for disk-backed Parquet datasets yet; falling back to "
                      "row-group train/validation/test slicing");
+    }
+    if (config.balance_classes && !config.is_time_series) {
+        spdlog::warn("TrainingExecutor: DataLoader class balancing is not "
+                     "available for disk-backed Parquet datasets yet; training "
+                     "uses the row-group train split without resampling");
     }
     const std::string effective_label =
         config.is_time_series ? "y" : label_column;
