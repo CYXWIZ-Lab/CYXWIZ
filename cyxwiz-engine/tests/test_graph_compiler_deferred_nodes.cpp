@@ -1593,9 +1593,10 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "unsupported imbalance parameters should warn without invalidating the graph");
-    Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
-                       "DataSplit.stratified=true is not implemented"),
-          "compiler should warn when DataSplit.stratified is ignored");
+    Check(config.stratified,
+          "compiler should preserve DataSplit.stratified=true in training config");
+    Check(!HasIssueText(config, "DataSplit.stratified=true is not implemented"),
+          "compiler should not warn that implemented DataSplit stratification is ignored");
     Check(HasIssueText(config, cyxwiz::IssueLevel::Warning,
                        "DataLoader class-balancing parameters are present"),
           "compiler should warn when DataLoader balancing params are ignored");

@@ -601,7 +601,9 @@ void TestExecutor::Test(
             config_.test_ratio,
             false,
             config_.num_workers,
-            static_cast<uint32_t>(config_.dataloader_seed));
+            static_cast<uint32_t>(config_.dataloader_seed),
+            config_.stratified,
+            static_cast<uint32_t>(std::max(0, config_.split_seed)));
         text_test_batcher->SetPhase(BatcherPhase::Test);
         text_test_batcher->Reset();
 

@@ -249,7 +249,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             0.0f,
             config.shuffle,
             config.num_workers,
-            static_cast<uint32_t>(config.dataloader_seed));
+            static_cast<uint32_t>(config.dataloader_seed),
+            config.stratified,
+            static_cast<uint32_t>(std::max(0, config.split_seed)));
 
         config.input_size = static_cast<size_t>(text_batcher->GetMaxLength());
         config.input_shape = {static_cast<size_t>(text_batcher->GetMaxLength())};

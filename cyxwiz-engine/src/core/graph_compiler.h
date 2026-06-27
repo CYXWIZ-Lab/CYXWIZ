@@ -336,6 +336,7 @@ struct TrainingConfiguration {
     float test_ratio = 0.1f;
     int split_seed = 42;
     bool has_data_split = false;        // true if a DataSplit node was found
+    bool stratified = false;            // preserve label ratios when supported
 
     // DataLoader configuration (from DataLoader node, or defaults if absent).
     // epochs lives here too — DataLoader owns all training-loop hyperparams.

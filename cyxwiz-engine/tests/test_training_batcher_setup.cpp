@@ -89,6 +89,26 @@ std::shared_ptr<cyxwiz::ArrowDataset> MakeMultiGroupDataset() {
     return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup_multi");
 }
 
+std::shared_ptr<cyxwiz::ArrowDataset> MakeStratifiedDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::int32()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f,
+                          5.0f, 6.0f, 7.0f, 8.0f,
+                          9.0f, 10.0f, 11.0f, 12.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f,
+                          50.0f, 60.0f, 70.0f, 80.0f,
+                          90.0f, 100.0f, 110.0f, 120.0f}),
+        FinishIntArray({0, 0, 0, 0, 0, 0, 0, 0,
+                        1, 1, 1, 1}),
+    }, 12);
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "batcher_setup_stratified");
+}
+
 std::shared_ptr<cyxwiz::ArrowDataset> MakeTimeSeriesDataset() {
     auto schema = arrow::schema({
         arrow::field("x0", arrow::float32()),
@@ -173,6 +193,35 @@ void CheckFeatureAndLabelShapes(const cyxwiz::Batch& batch,
     Check(batch.labels.Shape().size() == 2, label + " label tensor should be 2D");
     Check(batch.labels.Shape()[0] == batch_rows, label + " label rows should match");
     Check(batch.labels.Shape()[1] == label_width, label + " label width should match");
+}
+
+std::vector<size_t> CountOneHotLabels(cyxwiz::IBatcher& batcher,
+                                      size_t num_classes,
+                                      const std::string& label) {
+    std::vector<size_t> counts(num_classes, 0);
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        Check(batch.labels.Shape().size() == 2,
+              label + " labels should be one-hot 2D");
+        Check(batch.labels.Shape()[1] == num_classes,
+              label + " one-hot width should match class count");
+        const float* values = batch.labels.Data<float>();
+        for (size_t row = 0; row < batch.labels.Shape()[0]; ++row) {
+            size_t best = 0;
+            float best_value = values[row * num_classes];
+            for (size_t cls = 1; cls < num_classes; ++cls) {
+                const float value = values[row * num_classes + cls];
+                if (value > best_value) {
+                    best = cls;
+                    best_value = value;
+                }
+            }
+            ++counts[best];
+        }
+    }
+    return counts;
 }
 
 void WriteParquetWithRowGroupSize(const cyxwiz::ArrowDataset& dataset,
@@ -339,6 +388,38 @@ int main() {
           "explicit Arrow DataSplit val split should contain 1 sample");
     Check(explicit_split_batchers.num_test_samples == 2,
           "explicit Arrow DataSplit test split should contain 2 held-out samples");
+
+    auto stratified_split_config = MakeConfig();
+    stratified_split_config.has_data_split = true;
+    stratified_split_config.train_ratio = 0.50f;
+    stratified_split_config.val_ratio = 0.25f;
+    stratified_split_config.test_ratio = 0.25f;
+    stratified_split_config.stratified = true;
+    stratified_split_config.split_seed = 7;
+    stratified_split_config.shuffle = false;
+    auto stratified_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        stratified_split_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/3);
+    Check(stratified_batchers.num_train_samples == 6,
+          "stratified Arrow DataSplit train split should contain 6 samples");
+    Check(stratified_batchers.num_val_samples == 3,
+          "stratified Arrow DataSplit val split should contain 3 samples");
+    Check(stratified_batchers.num_test_samples == 3,
+          "stratified Arrow DataSplit test split should contain 3 samples");
+    auto stratified_train_counts =
+        CountOneHotLabels(*stratified_batchers.train, 2, "stratified train");
+    auto stratified_val_counts =
+        CountOneHotLabels(*stratified_batchers.val, 2, "stratified val");
+    auto stratified_test_counts =
+        CountOneHotLabels(*stratified_batchers.test, 2, "stratified test");
+    Check(stratified_train_counts == std::vector<size_t>({4, 2}),
+          "stratified train split should preserve 2:1 class ratio");
+    Check(stratified_val_counts == std::vector<size_t>({2, 1}),
+          "stratified val split should preserve 2:1 class ratio");
+    Check(stratified_test_counts == std::vector<size_t>({2, 1}),
+          "stratified test split should preserve 2:1 class ratio");
 
     auto high_worker_config = MakeConfig();
     high_worker_config.num_workers = cyxwiz::GetDefaultNumWorkers() + 64;
@@ -524,6 +605,7 @@ int main() {
     prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     parquet_prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     explicit_split_batchers = cyxwiz::TrainingBatcherSet{};
+    stratified_batchers = cyxwiz::TrainingBatcherSet{};
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};

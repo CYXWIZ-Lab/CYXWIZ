@@ -11,6 +11,8 @@
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+
 namespace cyxwiz {
 
 namespace {
@@ -466,7 +468,9 @@ bool TrainingManager::StartTrainingText(
         config.test_ratio,
         config.shuffle,
         config.num_workers,
-        static_cast<uint32_t>(config.dataloader_seed));
+        static_cast<uint32_t>(config.dataloader_seed),
+        config.stratified,
+        static_cast<uint32_t>(std::max(0, config.split_seed)));
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Text dataset has 0 samples");

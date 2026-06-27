@@ -32,7 +32,9 @@ public:
                        float test_split = 0.1f,
                        bool shuffle = true,
                        int num_workers = 0,
-                       uint32_t seed = 42);
+                       uint32_t seed = 42,
+                       bool stratified = false,
+                       uint32_t split_seed = 42);
 
     Batch GetNextBatch() override;
     void Reset() override;

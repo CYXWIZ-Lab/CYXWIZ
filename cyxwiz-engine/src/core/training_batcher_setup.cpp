@@ -1,10 +1,14 @@
 #include "training_batcher_setup.h"
 
-#include <cstdint>
+#include "arrow_dataset.h"
 #include "prefetch_batcher.h"
+#include "split_partitioning.h"
 #include "worker_defaults.h"
 
 #include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <cstdint>
 
 namespace cyxwiz {
 
@@ -77,27 +81,54 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
                  config.is_time_series, num_workers, config.prefetch_factor,
                  config.dataloader_seed);
 
-    const std::string partition_col = config.is_time_series
-        ? "__partition__" : "";
+    std::string partition_col = config.is_time_series
+        ? kSplitPartitionColumn : "";
+    auto effective_dataset = dataset;
+    if (config.stratified && !config.is_time_series) {
+        auto partitioned = AddSplitPartitionColumn(
+            dataset ? dataset->GetArrowTable() : nullptr,
+            SplitPartitionOptions{
+                label_column,
+                config.train_ratio,
+                config.val_ratio,
+                config.test_ratio,
+                config.shuffle,
+                static_cast<uint32_t>(std::max(0, config.split_seed)),
+                true,
+                "TrainingExecutor Arrow"});
+        if (partitioned.ok()) {
+            effective_dataset = std::make_shared<ArrowDataset>(
+                partitioned.ValueOrDie(),
+                dataset ? dataset->GetName() + "_stratified_split"
+                        : "stratified_split");
+            partition_col = kSplitPartitionColumn;
+        } else {
+            spdlog::warn("TrainingExecutor: stratified Arrow DataSplit "
+                         "could not be prepared ({}); falling back to "
+                         "global train/validation/test slicing",
+                         partitioned.status().ToString());
+        }
+    }
     const std::string effective_label =
         config.is_time_series ? "y" : label_column;
     const float effective_val_ratio =
-        config.has_data_split ? config.val_ratio : 0.0f;
+        !partition_col.empty() ? 0.0f :
+        (config.has_data_split ? config.val_ratio : 0.0f);
 
     result.arrow_train = std::make_unique<ArrowDatasetBatcher>(
-        dataset, effective_label, batch_size,
+        effective_dataset, effective_label, batch_size,
         config.shuffle, config.train_ratio, true,
         partition_col, /*partition_value=*/0, num_workers,
         BatcherPhase::Train, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed));
     result.arrow_val = std::make_unique<ArrowDatasetBatcher>(
-        dataset, effective_label, batch_size,
+        effective_dataset, effective_label, batch_size,
         false, config.train_ratio, false,
         partition_col, /*partition_value=*/1, num_workers,
         BatcherPhase::Val, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed));
     result.arrow_test = std::make_unique<ArrowDatasetBatcher>(
-        dataset, effective_label, batch_size,
+        effective_dataset, effective_label, batch_size,
         false, config.train_ratio, false,
         partition_col, /*partition_value=*/2, num_workers,
         BatcherPhase::Test, effective_val_ratio,
@@ -162,7 +193,12 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
                  config.dataloader_seed);
 
     const std::string partition_col = config.is_time_series
-        ? "__partition__" : "";
+        ? kSplitPartitionColumn : "";
+    if (config.stratified && !config.is_time_series) {
+        spdlog::warn("TrainingExecutor: stratified DataSplit is not available "
+                     "for disk-backed Parquet datasets yet; falling back to "
+                     "row-group train/validation/test slicing");
+    }
     const std::string effective_label =
         config.is_time_series ? "y" : label_column;
     const float effective_val_ratio =

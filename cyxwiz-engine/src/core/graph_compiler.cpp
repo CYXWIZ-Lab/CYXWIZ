@@ -2554,26 +2554,17 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.test_ratio = std::stof(split_node->parameters.at("test_ratio"));
             if (split_node->parameters.count("seed"))
                 config.split_seed = std::stoi(split_node->parameters.at("seed"));
+            if (split_node->parameters.count("stratified"))
+                config.stratified =
+                    IsTruthyParameterValue(split_node->parameters.at("stratified"));
         } catch (const std::exception& e) {
             spdlog::warn("GraphCompiler: DataSplit param parse error ({}) - using defaults", e.what());
         }
-
-        auto stratified = split_node->parameters.find("stratified");
-        if (stratified != split_node->parameters.end() &&
-            IsTruthyParameterValue(stratified->second)) {
-            AddIssue(
-                config,
-                IssueLevel::Warning,
-                "DataSplit.stratified=true is not implemented; current "
-                "train/validation/test partition assignment is random/global "
-                "and does not preserve label proportions.",
-                split_node->id,
-                split_node->name);
-        }
     }
     if (config.has_data_split) {
-        spdlog::info("GraphCompiler: DataSplit node found - train={:.2f}, val={:.2f}, test={:.2f}, seed={}",
-                     config.train_ratio, config.val_ratio, config.test_ratio, config.split_seed);
+        spdlog::info("GraphCompiler: DataSplit node found - train={:.2f}, val={:.2f}, test={:.2f}, seed={}, stratified={}",
+                     config.train_ratio, config.val_ratio, config.test_ratio,
+                     config.split_seed, config.stratified);
     } else {
         spdlog::info("GraphCompiler: No DataSplit node - using defaults (train=0.80, val=0.10, test=0.10)");
     }

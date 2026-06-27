@@ -1,18 +1,15 @@
 #include "text_dataset_batcher.h"
 #include "formats/text_dataset.h"
 #include "node_executors/text_tokenizer_operator.h"
+#include "split_partitioning.h"
 #include "text_arrow_adapter.h"
 
-#include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <map>
 #include <memory>
-#include <numeric>
-#include <random>
 #include <string>
-#include <vector>
 
 namespace cyxwiz {
 
@@ -86,79 +83,6 @@ int TokenizerTypeToParam(TokenizerType type) {
     }
 }
 
-arrow::Result<std::shared_ptr<arrow::Table>> AddSplitPartitionColumn(
-    const std::shared_ptr<arrow::Table>& table,
-    float train_split,
-    float val_split,
-    float test_split,
-    bool shuffle,
-    uint32_t seed) {
-
-    if (!table) {
-        return arrow::Status::Invalid("TextDatasetBatcher: tokenized table is null");
-    }
-
-    const size_t total = static_cast<size_t>(table->num_rows());
-    float split_sum = train_split + val_split + test_split;
-    if (!(split_sum > 0.0f)) {
-        train_split = 0.8f;
-        val_split = 0.1f;
-        test_split = 0.1f;
-        split_sum = 1.0f;
-    }
-    train_split /= split_sum;
-    val_split /= split_sum;
-    test_split /= split_sum;
-
-    size_t train_count = static_cast<size_t>(total * train_split);
-    size_t val_count = static_cast<size_t>(total * val_split);
-    if (total > 0 && train_count == 0) train_count = 1;
-    if (train_count > total) train_count = total;
-    if (train_count + val_count > total) {
-        val_count = total - train_count;
-    }
-    const size_t test_count = total - train_count - val_count;
-
-    std::vector<size_t> order(total);
-    std::iota(order.begin(), order.end(), 0);
-    if (shuffle) {
-        std::mt19937 rng(seed);
-        std::shuffle(order.begin(), order.end(), rng);
-    }
-
-    std::vector<int8_t> partitions(total, 0);
-    for (size_t i = 0; i < order.size(); ++i) {
-        int8_t partition = 0;
-        if (i >= train_count + val_count) {
-            partition = 2;
-        } else if (i >= train_count) {
-            partition = 1;
-        }
-        partitions[order[i]] = partition;
-    }
-
-    arrow::Int8Builder builder;
-    ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(total)));
-    for (int8_t partition : partitions) {
-        ARROW_RETURN_NOT_OK(builder.Append(partition));
-    }
-
-    std::shared_ptr<arrow::Array> partition_array;
-    ARROW_RETURN_NOT_OK(builder.Finish(&partition_array));
-    auto partition_chunked =
-        std::make_shared<arrow::ChunkedArray>(partition_array);
-
-    ARROW_ASSIGN_OR_RAISE(auto out, table->AddColumn(
-        table->num_columns(),
-        arrow::field("__partition__", arrow::int8()),
-        partition_chunked));
-
-    spdlog::info("TextDatasetBatcher: partitioned tokenized text table "
-                 "({} train / {} val / {} test rows)",
-                 train_count, val_count, test_count);
-    return out;
-}
-
 } // namespace
 
 TextDatasetBatcher::TextDatasetBatcher(
@@ -170,7 +94,9 @@ TextDatasetBatcher::TextDatasetBatcher(
     float test_split,
     bool shuffle,
     int num_workers,
-    uint32_t seed)
+    uint32_t seed,
+    bool stratified,
+    uint32_t split_seed)
     : batch_size_(batch_size),
       num_workers_(std::max(0, num_workers))
 {
@@ -238,7 +164,16 @@ TextDatasetBatcher::TextDatasetBatcher(
     vocab_size_ = tokenizer.GetLastVocabSize();
 
     auto partitioned_result = AddSplitPartitionColumn(
-        tokenized_table, train_split, val_split, test_split, shuffle, seed);
+        tokenized_table,
+        SplitPartitionOptions{
+            "y",
+            train_split,
+            val_split,
+            test_split,
+            shuffle,
+            split_seed,
+            stratified,
+            "TextDatasetBatcher"});
     if (!partitioned_result.ok()) {
         spdlog::error("TextDatasetBatcher: partitioning tokenized table failed: {}",
                       partitioned_result.status().ToString());
