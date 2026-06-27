@@ -1628,6 +1628,34 @@ int main() {
     Check(HasIssueText(config, "class_weights size"),
           "class_weights length mismatch should report a clear diagnostic");
 
+    auto focal_loss = Node(33,
+                           gui::NodeType::FocalLoss,
+                           "Focal Loss",
+                           {Pin(3301, gui::PinType::Tensor, "Predictions", true),
+                            Pin(3302, gui::PinType::Labels, "Targets", true)},
+                           {Pin(3303, gui::PinType::Loss, "Loss", false)});
+    focal_loss.parameters["alpha"] = "0.75";
+    focal_loss.parameters["gamma"] = "1.5";
+    nodes = {data, dense, focal_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 33, 3301),
+        Link(3, 1, 102, 33, 3302),
+        Link(4, 33, 3303, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "FocalLoss graph should compile as a supported classification loss");
+    Check(config.loss_type == gui::NodeType::FocalLoss,
+          "compiler should preserve FocalLoss type");
+    Check(config.loss_params.at("alpha") == "0.75",
+          "compiler should preserve FocalLoss alpha");
+    Check(config.loss_params.at("gamma") == "1.5",
+          "compiler should preserve FocalLoss gamma");
+    Check(!config.preprocessing.has_onehot,
+          "FocalLoss should keep integer class labels instead of one-hot labels");
+
     auto class_loss = Node(15,
                            gui::NodeType::CrossEntropyLoss,
                            "Class Loss",

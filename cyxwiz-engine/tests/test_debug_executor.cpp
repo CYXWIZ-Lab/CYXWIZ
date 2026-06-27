@@ -363,6 +363,20 @@ void TestWeightedLossConfigParams() {
                "weighted BCEWithLogits config should construct BCEWithLogitsLoss");
     ExpectNear(bce_loss->GetPosWeight(), 2.5f, 1e-6f,
                "BCEWithLogitsLoss should preserve pos_weight");
+
+    auto focal_cfg = MakeTabularConfig();
+    focal_cfg.loss_type = gui::NodeType::FocalLoss;
+    focal_cfg.loss_params["alpha"] = "0.75";
+    focal_cfg.loss_params["gamma"] = "1.5";
+    auto focal_built = BuildSequentialFromConfig(focal_cfg);
+    ExpectTrue(focal_built.ok(), "FocalLoss config should build");
+    auto* focal_loss = dynamic_cast<FocalLoss*>(focal_built.loss.get());
+    ExpectTrue(focal_loss != nullptr,
+               "FocalLoss config should construct FocalLoss");
+    ExpectNear(focal_loss->GetAlpha(), 0.75f, 1e-6f,
+               "FocalLoss should preserve alpha");
+    ExpectNear(focal_loss->GetGamma(), 1.5f, 1e-6f,
+               "FocalLoss should preserve gamma");
 }
 
 void TestCrossEntropyTokenShapeIgnoreIndex() {

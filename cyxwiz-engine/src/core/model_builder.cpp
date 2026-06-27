@@ -201,6 +201,31 @@ float ResolveBCEWithLogitsPosWeight(const TrainingConfiguration& config) {
     }
 }
 
+float ResolveLossFloatParam(const TrainingConfiguration& config,
+                            const char* key,
+                            float fallback,
+                            float min_value,
+                            const char* context) {
+    const std::string* value = FindLossParam(config, {key});
+    if (!value || IsNeutralLossValue(*value)) {
+        return fallback;
+    }
+    const std::string text = TrimAscii(*value);
+    try {
+        size_t parsed = 0;
+        const float parsed_value = std::stof(text, &parsed);
+        if (parsed != text.size() || !std::isfinite(parsed_value) ||
+            parsed_value < min_value) {
+            throw std::runtime_error("invalid float");
+        }
+        return parsed_value;
+    } catch (...) {
+        throw std::runtime_error(std::string(context) +
+                                 " must be a finite float >= " +
+                                 std::to_string(min_value));
+    }
+}
+
 std::vector<int> ParseIntListParam(const CompiledLayer& layer,
                                    const std::string& key) {
     auto it = layer.parameters.find(key);
@@ -918,6 +943,7 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
             // Loss functions
             case gui::NodeType::MSELoss:
             case gui::NodeType::CrossEntropyLoss:
+            case gui::NodeType::FocalLoss:
             case gui::NodeType::BCELoss:
             case gui::NodeType::BCEWithLogits:
             case gui::NodeType::L1Loss:
@@ -989,6 +1015,16 @@ std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
                          ignore_index, class_weights.size());
             return std::make_unique<CrossEntropyLoss>(
                 Reduction::Mean, ignore_index, class_weights);
+        }
+        case gui::NodeType::FocalLoss: {
+            const float alpha = ResolveLossFloatParam(
+                config, "alpha", 0.25f, 0.0f, "FocalLoss alpha");
+            const float gamma = ResolveLossFloatParam(
+                config, "gamma", 2.0f, 0.0f, "FocalLoss gamma");
+            spdlog::info("TrainingExecutor: Using Focal loss "
+                         "(alpha={}, gamma={})", alpha, gamma);
+            return std::make_unique<FocalLoss>(
+                alpha, gamma, Reduction::Mean);
         }
         case gui::NodeType::MSELoss:
             spdlog::info("TrainingExecutor: Using MSE loss");

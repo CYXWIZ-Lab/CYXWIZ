@@ -81,6 +81,7 @@ bool HasReachablePreTrainInspectionNode(
 bool IsLossNodeType(gui::NodeType type) {
     return type == gui::NodeType::MSELoss ||
            type == gui::NodeType::CrossEntropyLoss ||
+           type == gui::NodeType::FocalLoss ||
            type == gui::NodeType::BCELoss ||
            type == gui::NodeType::BCEWithLogits ||
            type == gui::NodeType::L1Loss ||
@@ -2958,8 +2959,11 @@ TrainingConfiguration GraphCompiler::Compile(
     config.metric_learning_graph =
         AnalyzeMetricLearningGraphContract(config.graph_plan);
 
-    // Check if we're using CrossEntropyLoss (which applies softmax internally)
-    bool using_cross_entropy = (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss);
+    // CrossEntropy/Focal consume logits and apply softmax internally.
+    bool using_cross_entropy =
+        loss_node &&
+        (loss_node->type == gui::NodeType::CrossEntropyLoss ||
+         loss_node->type == gui::NodeType::FocalLoss);
 
     // Log all nodes in the graph for debugging
     spdlog::info("GraphCompiler: Processing {} nodes (using_cross_entropy={})", sorted_ids.size(), using_cross_entropy);
@@ -3000,10 +3004,12 @@ TrainingConfiguration GraphCompiler::Compile(
             continue;
         }
 
-        // Skip Softmax when using CrossEntropyLoss (it applies softmax internally)
+        // Skip Softmax when using a logits-based class loss.
         // This prevents double-softmax which kills gradients
         if (node->type == gui::NodeType::Softmax && using_cross_entropy) {
-            spdlog::warn("GraphCompiler: Softmax layer skipped - CrossEntropyLoss applies softmax internally");
+            spdlog::warn(
+                "GraphCompiler: Softmax layer skipped - {} loss applies softmax internally",
+                config.GetLossName());
             continue;
         }
 
@@ -3181,8 +3187,11 @@ TrainingConfiguration GraphCompiler::Compile(
     }
 
     // Set one-hot encoding if we have classification (CrossEntropy loss)
-    if (config.loss_type == gui::NodeType::CrossEntropyLoss) {
-        config.preprocessing.has_onehot = true;
+    if (config.loss_type == gui::NodeType::CrossEntropyLoss ||
+        config.loss_type == gui::NodeType::FocalLoss) {
+        if (config.loss_type == gui::NodeType::CrossEntropyLoss) {
+            config.preprocessing.has_onehot = true;
+        }
 
         // Try to get num_classes from Output node's "classes" parameter
         const gui::MLNode* output_node = FindFirstReachableNodeOfType(
@@ -3219,7 +3228,8 @@ TrainingConfiguration GraphCompiler::Compile(
 
         if (config.output_size > 0 && config.output_size < 2) {
             AddIssue(config, IssueLevel::Error,
-                     "CrossEntropyLoss requires at least two prediction logits; "
+                     config.GetLossName() +
+                     " requires at least two prediction logits; "
                      "the selected model path outputs " +
                      std::to_string(config.output_size));
         }
@@ -3228,7 +3238,7 @@ TrainingConfiguration GraphCompiler::Compile(
             config.output_size > 0 &&
             config.preprocessing.num_classes != config.output_size) {
             AddIssue(config, IssueLevel::Error,
-                     "CrossEntropyLoss class count (" +
+                     config.GetLossName() + " class count (" +
                      std::to_string(config.preprocessing.num_classes) +
                      ") does not match the model output size (" +
                      std::to_string(config.output_size) + ")");
@@ -4648,6 +4658,7 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
     auto is_loss_node = [](gui::NodeType t) {
         return t == gui::NodeType::MSELoss ||
                t == gui::NodeType::CrossEntropyLoss ||
+               t == gui::NodeType::FocalLoss ||
                t == gui::NodeType::BCELoss ||
                t == gui::NodeType::BCEWithLogits ||
                t == gui::NodeType::L1Loss ||
@@ -4779,6 +4790,7 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
     auto is_loss_node = [](gui::NodeType t) {
         return t == gui::NodeType::MSELoss ||
                t == gui::NodeType::CrossEntropyLoss ||
+               t == gui::NodeType::FocalLoss ||
                t == gui::NodeType::BCELoss ||
                t == gui::NodeType::BCEWithLogits ||
                t == gui::NodeType::L1Loss ||
@@ -4923,6 +4935,7 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
     auto is_loss_node = [](gui::NodeType t) {
         return t == gui::NodeType::MSELoss ||
                t == gui::NodeType::CrossEntropyLoss ||
+               t == gui::NodeType::FocalLoss ||
                t == gui::NodeType::BCELoss ||
                t == gui::NodeType::BCEWithLogits ||
                t == gui::NodeType::L1Loss ||

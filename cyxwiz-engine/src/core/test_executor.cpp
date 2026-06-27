@@ -477,6 +477,7 @@ bool TestExecutor::BuildModelFromConfig() {
             case gui::NodeType::OneHotEncode:
             case gui::NodeType::MSELoss:
             case gui::NodeType::CrossEntropyLoss:
+            case gui::NodeType::FocalLoss:
             case gui::NodeType::BCELoss:
             case gui::NodeType::BCEWithLogits:
             case gui::NodeType::L1Loss:
@@ -512,6 +513,9 @@ bool TestExecutor::Initialize(int /*batch_size*/) {
     switch (config_.loss_type) {
         case gui::NodeType::CrossEntropyLoss:
             loss_ = CreateLoss(LossType::CrossEntropy);
+            break;
+        case gui::NodeType::FocalLoss:
+            loss_ = CreateLoss(LossType::Focal);
             break;
         case gui::NodeType::MSELoss:
             loss_ = CreateLoss(LossType::MSE);

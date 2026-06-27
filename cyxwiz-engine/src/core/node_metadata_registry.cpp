@@ -660,6 +660,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "multiclass_classification",
         "Use for mutually exclusive class labels with logits.");
     apply_task_type_guidance(
+        NodeType::FocalLoss,
+        "multiclass_classification",
+        "Use for imbalanced mutually exclusive class labels with logits.");
+    apply_task_type_guidance(
         NodeType::NLLLoss,
         "multiclass_classification",
         "Use for class labels when the model outputs log probabilities.");
@@ -2138,6 +2142,19 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"ignore_index", "int", "-100", "Padding label ignore index", {}, ""},
          {"class_weight", "enum", "none", "Class weight mode", {"none", "manual", "balanced"}, ""},
          {"class_weights", "string", "", "Manual per-class weights", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::FocalLoss, NodeCategory::Training, "Focal Loss", ICON_FA_CHART_PIE,
+        {"focal", "focal loss", "classification", "multiclass", "imbalanced",
+         "class imbalance", "criterion", "objective", "optimization", "loss"},
+        0, false,
+        "Focal loss for imbalanced multiclass classification logits", "", "",
+        {{"Logits", PinType::Tensor, true, "Class logits [N,C]"},
+         {"Labels", PinType::Labels, true, "Class labels [N]"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"alpha", "float", "0.25", "Class imbalance scale", {}, ""},
+         {"gamma", "float", "2.0", "Focusing parameter", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::BCELoss, NodeCategory::Training, "BCE Loss", ICON_FA_CHART_PIE,

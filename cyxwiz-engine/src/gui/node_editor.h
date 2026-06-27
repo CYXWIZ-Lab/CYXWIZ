@@ -573,6 +573,9 @@ enum class NodeType {
     EmbeddingOutput,        // Embedding inference output
     PairScoreOutput,        // Pair score inference output
 
+    // ===== Appended Training Loss Nodes =====
+    FocalLoss,          // Class-imbalance-aware focal cross-entropy loss
+
     // Special sentinel value
     Unknown
 };

@@ -90,6 +90,7 @@ Tensor MakeLabels(const TrainingConfiguration& config, uint32_t seed) {
 
     switch (config.loss_type) {
         case gui::NodeType::CrossEntropyLoss:
+        case gui::NodeType::FocalLoss:
         case gui::NodeType::NLLLoss:
             return MakeInt64Random({1}, 0,
                                    static_cast<int64_t>(num_classes),

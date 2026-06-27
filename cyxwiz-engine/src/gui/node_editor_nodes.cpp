@@ -203,6 +203,7 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::SmoothL1Loss:
         case NodeType::HuberLoss:
         case NodeType::NLLLoss:
+        case NodeType::FocalLoss:
         case NodeType::Output:
             return NodeCategory::Training;
 
@@ -1113,7 +1114,8 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         // ========== Loss Functions ==========
 
         case NodeType::MSELoss:
-        case NodeType::CrossEntropyLoss: {
+        case NodeType::CrossEntropyLoss:
+        case NodeType::FocalLoss: {
             // Loss function: takes predictions and targets, outputs loss value
             // Input 1: Predictions (from model output)
             NodePin pred_pin;
@@ -1158,6 +1160,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             if (node.type == NodeType::CrossEntropyLoss) {
                 node.parameters["reduction"] = "mean";  // mean, sum, none
                 node.parameters["ignore_index"] = "-100";
+            } else if (node.type == NodeType::FocalLoss) {
+                node.parameters["reduction"] = "mean";  // mean, sum, none
+                node.parameters["alpha"] = "0.25";
+                node.parameters["gamma"] = "2.0";
             }
             break;
         }
@@ -5631,6 +5637,7 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::SmoothL1Loss:
         case NodeType::HuberLoss:
         case NodeType::NLLLoss:
+        case NodeType::FocalLoss:
             return IM_COL32(192, 57, 43, 255);
 
         // ===== Optimizers - Dark Blue Gray =====

@@ -468,6 +468,7 @@ struct TrainingConfiguration {
         switch (loss_type) {
             case gui::NodeType::MSELoss: return "MSE";
             case gui::NodeType::CrossEntropyLoss: return "CrossEntropy";
+            case gui::NodeType::FocalLoss: return "Focal";
             case gui::NodeType::BCELoss: return "BCE";
             case gui::NodeType::BCEWithLogits: return "BCEWithLogits";
             case gui::NodeType::L1Loss: return "L1";

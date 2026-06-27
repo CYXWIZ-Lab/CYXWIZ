@@ -614,6 +614,7 @@ bool ModelAnalyzer::IsUtilityNode(gui::NodeType type) const {
         case gui::NodeType::SequenceTagOutput:
         case gui::NodeType::MSELoss:
         case gui::NodeType::CrossEntropyLoss:
+        case gui::NodeType::FocalLoss:
         case gui::NodeType::BCELoss:
         case gui::NodeType::BCEWithLogits:
         case gui::NodeType::L1Loss:
