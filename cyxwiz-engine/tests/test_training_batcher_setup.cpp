@@ -224,6 +224,35 @@ std::vector<size_t> CountOneHotLabels(cyxwiz::IBatcher& batcher,
     return counts;
 }
 
+std::vector<size_t> CollectOneHotLabels(cyxwiz::IBatcher& batcher,
+                                        size_t num_classes,
+                                        const std::string& label) {
+    std::vector<size_t> labels;
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        Check(batch.labels.Shape().size() == 2,
+              label + " labels should be one-hot 2D");
+        Check(batch.labels.Shape()[1] == num_classes,
+              label + " one-hot width should match class count");
+        const float* values = batch.labels.Data<float>();
+        for (size_t row = 0; row < batch.labels.Shape()[0]; ++row) {
+            size_t best = 0;
+            float best_value = values[row * num_classes];
+            for (size_t cls = 1; cls < num_classes; ++cls) {
+                const float value = values[row * num_classes + cls];
+                if (value > best_value) {
+                    best = cls;
+                    best_value = value;
+                }
+            }
+            labels.push_back(best);
+        }
+    }
+    return labels;
+}
+
 void WriteParquetWithRowGroupSize(const cyxwiz::ArrowDataset& dataset,
                                   const std::string& path,
                                   int64_t row_group_size) {
@@ -443,6 +472,44 @@ int main() {
         CountOneHotLabels(*balanced_batchers.train, 2, "balanced train");
     Check(balanced_train_counts == std::vector<size_t>({8, 8}),
           "balanced Arrow oversampling should equalize train class counts");
+
+    auto weighted_sampler_config = MakeConfig();
+    weighted_sampler_config.train_ratio = 0.75f;
+    weighted_sampler_config.shuffle = false;
+    weighted_sampler_config.balance_classes = true;
+    weighted_sampler_config.balance_mode = "weighted_sampler";
+    weighted_sampler_config.balance_target = "max";
+    weighted_sampler_config.balance_seed = 19;
+    auto weighted_sampler_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        weighted_sampler_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    Check(weighted_sampler_batchers.num_train_samples == 16,
+          "weighted sampler should draw target_count * num_classes train samples");
+    Check(weighted_sampler_batchers.num_val_samples == 3,
+          "weighted sampler should not alter validation split");
+    Check(weighted_sampler_batchers.num_test_samples == 0,
+          "weighted sampler should not create test samples");
+    auto weighted_labels = CollectOneHotLabels(
+        *weighted_sampler_batchers.train, 2, "weighted sampler train");
+    auto weighted_sampler_batchers_repeat = cyxwiz::BuildArrowTrainingBatchers(
+        weighted_sampler_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    auto weighted_labels_repeat = CollectOneHotLabels(
+        *weighted_sampler_batchers_repeat.train, 2, "weighted sampler repeat");
+    Check(weighted_labels == weighted_labels_repeat,
+          "weighted sampler should be deterministic for a fixed balance_seed");
+    size_t weighted_minority_count = 0;
+    for (size_t label : weighted_labels) {
+        if (label == 1) {
+            ++weighted_minority_count;
+        }
+    }
+    Check(weighted_minority_count > 1,
+          "weighted sampler should sample minority class rows with replacement");
 
     auto high_worker_config = MakeConfig();
     high_worker_config.num_workers = cyxwiz::GetDefaultNumWorkers() + 64;

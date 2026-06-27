@@ -447,6 +447,8 @@ private:
     size_t current_index_ = 0;
     std::mt19937 rng_;
     std::mt19937 balance_rng_;
+    uint32_t balance_seed_ = 42;
+    uint32_t balance_epoch_ = 0;
     bool balance_classes_ = false;
     std::string balance_mode_ = "none";
     std::string balance_target_ = "max";

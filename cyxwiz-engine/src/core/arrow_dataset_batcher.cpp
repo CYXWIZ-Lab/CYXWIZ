@@ -46,6 +46,7 @@ ArrowDatasetBatcher::ArrowDatasetBatcher(
     , val_split_(val_split)
     , rng_(seed)
     , balance_rng_(balance_seed)
+    , balance_seed_(balance_seed)
     , balance_classes_(balance_classes)
     , balance_mode_(balance_mode)
     , balance_target_(balance_target)
@@ -823,6 +824,8 @@ void ArrowDatasetBatcher::RebuildBalancedIndices() {
     if (target_count == 0) {
         return;
     }
+
+    balance_rng_.seed(balance_seed_ + balance_epoch_++);
 
     std::ostringstream original_dist;
     bool first = true;
