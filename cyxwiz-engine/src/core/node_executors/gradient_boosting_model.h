@@ -45,8 +45,10 @@ public:
     const std::vector<std::vector<GradientBoostingRegressionTree>>& Trees() const {
         return trees_;
     }
+    const std::vector<double>& InitialScores() const { return initial_scores_; }
     const std::vector<std::string>& ClassLabels() const { return class_labels_; }
     const std::vector<std::string>& FeatureNames() const { return feature_names_; }
+    double LearningRate() const { return learning_rate_; }
     bool HasNumericLabels() const { return numeric_labels_; }
     int MaxDepth() const;
 

@@ -1,6 +1,7 @@
 #include "gradient_boosting_operator.h"
 #include "feature_matrix_utils.h"
 #include "tree_classification_utils.h"
+#include "tree_model_artifact.h"
 
 #include <spdlog/spdlog.h>
 
@@ -14,6 +15,7 @@ bool GradientBoostingClassifierOperator::Configure(
     feature_cols_.clear();
     target_col_.clear();
     prediction_col_ = "prediction";
+    model_path_.clear();
     options_ = GradientBoostingTrainingOptions{};
 
     auto fc = params.find("feature_cols");
@@ -31,6 +33,10 @@ bool GradientBoostingClassifierOperator::Configure(
     auto prediction = params.find("prediction_col");
     if (prediction != params.end() && !TrimAscii(prediction->second).empty()) {
         prediction_col_ = TrimAscii(prediction->second);
+    }
+    auto model_path = params.find("model_path");
+    if (model_path != params.end() && !TrimAscii(model_path->second).empty()) {
+        model_path_ = TrimAscii(model_path->second);
     }
 
     if (!ParseIntParam(params, "n_estimators", options_.n_estimators,
@@ -110,6 +116,14 @@ GradientBoostingClassifierOperator::Apply(
     }
 
     const std::vector<int> predictions = model.PredictClasses(features);
+    if (!model_path_.empty()) {
+        std::string error;
+        if (!SaveGradientBoostingModelArtifact(model, model_path_, &error)) {
+            return arrow::Status::IOError(
+                "GradientBoostingClassifier: failed to save model artifact: " +
+                error);
+        }
+    }
     spdlog::info(
         "GradientBoostingClassifier: fit {} rows x {} features, classes={}, "
         "estimators={}, max_depth={}, learning_rate={}",

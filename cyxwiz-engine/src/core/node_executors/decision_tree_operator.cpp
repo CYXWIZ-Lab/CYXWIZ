@@ -1,6 +1,7 @@
 #include "decision_tree_operator.h"
 #include "feature_matrix_utils.h"
 #include "tree_classification_utils.h"
+#include "tree_model_artifact.h"
 
 #include <arrow/api.h>
 #include <spdlog/spdlog.h>
@@ -15,6 +16,7 @@ bool DecisionTreeClassifierOperator::Configure(
     feature_cols_.clear();
     target_col_.clear();
     prediction_col_ = "prediction";
+    model_path_.clear();
     options_ = DecisionTreeTrainingOptions{};
 
     auto fc = params.find("feature_cols");
@@ -32,6 +34,10 @@ bool DecisionTreeClassifierOperator::Configure(
     auto prediction = params.find("prediction_col");
     if (prediction != params.end() && !TrimAscii(prediction->second).empty()) {
         prediction_col_ = TrimAscii(prediction->second);
+    }
+    auto model_path = params.find("model_path");
+    if (model_path != params.end() && !TrimAscii(model_path->second).empty()) {
+        model_path_ = TrimAscii(model_path->second);
     }
 
     if (!ParseIntParam(params, "max_depth", options_.max_depth, GetName(), error) ||
@@ -107,6 +113,14 @@ DecisionTreeClassifierOperator::Apply(
     }
 
     const std::vector<int> predictions = model.PredictClasses(features);
+    if (!model_path_.empty()) {
+        std::string error;
+        if (!SaveDecisionTreeModelArtifact(model, model_path_, &error)) {
+            return arrow::Status::IOError(
+                "DecisionTreeClassifier: failed to save model artifact: " +
+                error);
+        }
+    }
     spdlog::info(
         "DecisionTreeClassifier: fit {} rows x {} features, classes={}, "
         "nodes={}, depth={}, criterion={}",

@@ -293,6 +293,12 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_routing.csv";
     const fs::path decision_tree_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_decision_tree.csv";
+    const fs::path decision_tree_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_decision_tree_model.json";
+    const fs::path random_forest_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_random_forest_model.json";
+    const fs::path gradient_boosting_model_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_gradient_boosting_model.json";
     const fs::path ts_analysis_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_ts_analysis.csv";
     const fs::path export_csv_path =
@@ -332,6 +338,9 @@ int main() {
     const fs::path roc_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_roc.csv";
     fs::remove(decision_tree_csv_path);
+    fs::remove(decision_tree_model_path);
+    fs::remove(random_forest_model_path);
+    fs::remove(gradient_boosting_model_path);
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
@@ -476,7 +485,9 @@ int main() {
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":211,"type":"DecisionTreeClassifier","name":"Tree","parameters":{)"
         R"("target_col":"label","feature_cols":"x,z","prediction_col":"pred",)"
-        R"("max_depth":"2","criterion":"gini"}})"
+        R"("max_depth":"2","criterion":"gini","model_path":")" +
+        JsonEscapePath(decision_tree_model_path.string()) +
+        R"("}})"
         R"(],"links":[{"start_node":210,"end_node":211}]})";
 
     cyxwiz::PipelineExecutor decision_tree_executor;
@@ -500,6 +511,8 @@ int main() {
           "DecisionTreeClassifier predicts the first training row");
     Check(ReadNumericValue(decision_tree_table, "pred", 3) == 1.0,
           "DecisionTreeClassifier predicts the last training row");
+    Check(fs::exists(decision_tree_model_path),
+          "DecisionTreeClassifier model_path should write a model artifact");
 
     const std::string random_forest_json =
         R"({"nodes":[)"
@@ -509,7 +522,10 @@ int main() {
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":213,"type":"RandomForestClassifier","name":"Forest","parameters":{)"
         R"("target_col":"label","feature_cols":"x,z","prediction_col":"rf_pred",)"
-        R"("n_estimators":"9","max_depth":"3","max_features":"all","seed":"7"}})"
+        R"("n_estimators":"9","max_depth":"3","max_features":"all","seed":"7",)"
+        R"("model_path":")" +
+        JsonEscapePath(random_forest_model_path.string()) +
+        R"("}})"
         R"(],"links":[{"start_node":212,"end_node":213}]})";
 
     cyxwiz::PipelineExecutor random_forest_executor;
@@ -533,6 +549,8 @@ int main() {
           "RandomForestClassifier predicts the first training row");
     Check(ReadNumericValue(random_forest_table, "rf_pred", 3) == 1.0,
           "RandomForestClassifier predicts the last training row");
+    Check(fs::exists(random_forest_model_path),
+          "RandomForestClassifier model_path should write a model artifact");
 
     const std::string gradient_boosting_json =
         R"({"nodes":[)"
@@ -542,7 +560,10 @@ int main() {
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":219,"type":"GradientBoostingClassifier","name":"Boost","parameters":{)"
         R"("target_col":"label","feature_cols":"x,z","prediction_col":"gb_pred",)"
-        R"("n_estimators":"30","learning_rate":"0.4","max_depth":"2"}})"
+        R"("n_estimators":"30","learning_rate":"0.4","max_depth":"2",)"
+        R"("model_path":")" +
+        JsonEscapePath(gradient_boosting_model_path.string()) +
+        R"("}})"
         R"(],"links":[{"start_node":218,"end_node":219}]})";
 
     cyxwiz::PipelineExecutor gradient_boosting_executor;
@@ -566,6 +587,8 @@ int main() {
           "GradientBoostingClassifier predicts the first training row");
     Check(ReadNumericValue(gradient_boosting_table, "gb_pred", 3) == 1.0,
           "GradientBoostingClassifier predicts the last training row");
+    Check(fs::exists(gradient_boosting_model_path),
+          "GradientBoostingClassifier model_path should write a model artifact");
 
     const std::string missing_acf_signal_json =
         R"({"nodes":[)"
@@ -5590,6 +5613,9 @@ int main() {
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
     fs::remove(decision_tree_csv_path);
+    fs::remove(decision_tree_model_path);
+    fs::remove(random_forest_model_path);
+    fs::remove(gradient_boosting_model_path);
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);

@@ -2596,6 +2596,7 @@ int main() {
     Check(HasParameter(decision_tree_meta, "target_col") &&
               HasParameter(decision_tree_meta, "feature_cols") &&
               HasParameter(decision_tree_meta, "prediction_col") &&
+              HasParameter(decision_tree_meta, "model_path") &&
               HasParameter(decision_tree_meta, "max_depth") &&
               HasParameter(decision_tree_meta, "min_samples_split") &&
               HasParameter(decision_tree_meta, "min_samples_leaf") &&
@@ -2627,6 +2628,7 @@ int main() {
     Check(HasParameter(random_forest_meta, "target_col") &&
               HasParameter(random_forest_meta, "feature_cols") &&
               HasParameter(random_forest_meta, "prediction_col") &&
+              HasParameter(random_forest_meta, "model_path") &&
               HasParameter(random_forest_meta, "n_estimators") &&
               HasParameter(random_forest_meta, "max_depth") &&
               HasParameter(random_forest_meta, "min_samples_split") &&
@@ -2668,6 +2670,7 @@ int main() {
     Check(HasParameter(gradient_boosting_meta, "target_col") &&
               HasParameter(gradient_boosting_meta, "feature_cols") &&
               HasParameter(gradient_boosting_meta, "prediction_col") &&
+              HasParameter(gradient_boosting_meta, "model_path") &&
               HasParameter(gradient_boosting_meta, "n_estimators") &&
               HasParameter(gradient_boosting_meta, "learning_rate") &&
               HasParameter(gradient_boosting_meta, "max_depth") &&

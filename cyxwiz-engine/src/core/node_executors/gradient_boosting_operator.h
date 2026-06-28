@@ -23,6 +23,7 @@ private:
     std::vector<std::string> feature_cols_;
     std::string target_col_;
     std::string prediction_col_ = "prediction";
+    std::string model_path_;
     GradientBoostingTrainingOptions options_;
 };
 

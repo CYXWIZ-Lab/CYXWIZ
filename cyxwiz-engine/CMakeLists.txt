@@ -160,6 +160,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/sentiment_analyzer_operator.cpp  # Tool-to-Node Band 1
     src/core/node_executors/clustering_operators.cpp         # Tool-to-Node Band 1
     src/core/node_executors/tree_classification_utils.cpp    # Tool-to-Node Band 1
+    src/core/node_executors/tree_model_artifact.cpp          # Tool-to-Node Band 1
     src/core/node_executors/decision_tree_model.cpp          # Tool-to-Node Band 1
     src/core/node_executors/decision_tree_trainer.cpp        # Tool-to-Node Band 1
     src/core/node_executors/decision_tree_operator.cpp       # Tool-to-Node Band 1
@@ -542,6 +543,7 @@ set(ENGINE_HEADERS
     src/core/node_executors/sentiment_analyzer_operator.h
     src/core/node_executors/clustering_operators.h
     src/core/node_executors/tree_classification_utils.h
+    src/core/node_executors/tree_model_artifact.h
     src/core/node_executors/decision_tree_model.h
     src/core/node_executors/decision_tree_trainer.h
     src/core/node_executors/decision_tree_operator.h
@@ -1490,8 +1492,11 @@ set_target_properties(test_time_series_analysis_operators PROPERTIES
 add_executable(test_decision_tree_operator
     tests/test_decision_tree_operator.cpp
     src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
     src/core/node_executors/decision_tree_trainer.cpp
+    src/core/node_executors/random_forest_model.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/decision_tree_operator.cpp
 )
 
@@ -1501,6 +1506,7 @@ target_include_directories(test_decision_tree_operator PRIVATE
 
 target_link_libraries(test_decision_tree_operator PRIVATE
     Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
     spdlog::spdlog
     fmt::fmt
     cyxwiz-backend
@@ -1521,10 +1527,12 @@ set_target_properties(test_decision_tree_operator PROPERTIES
 add_executable(test_random_forest_operator
     tests/test_random_forest_operator.cpp
     src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
     src/core/node_executors/decision_tree_trainer.cpp
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/random_forest_operator.cpp
 )
 
@@ -1534,6 +1542,7 @@ target_include_directories(test_random_forest_operator PRIVATE
 
 target_link_libraries(test_random_forest_operator PRIVATE
     Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
     spdlog::spdlog
     fmt::fmt
     cyxwiz-backend
@@ -1554,6 +1563,9 @@ set_target_properties(test_random_forest_operator PROPERTIES
 add_executable(test_gradient_boosting_operator
     tests/test_gradient_boosting_operator.cpp
     src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/tree_model_artifact.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/node_executors/gradient_boosting_trainer.cpp
     src/core/node_executors/gradient_boosting_operator.cpp
@@ -1565,6 +1577,7 @@ target_include_directories(test_gradient_boosting_operator PRIVATE
 
 target_link_libraries(test_gradient_boosting_operator PRIVATE
     Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
     spdlog::spdlog
     fmt::fmt
     cyxwiz-backend
@@ -1581,6 +1594,39 @@ set_target_properties(test_gradient_boosting_operator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Tree Model Artifact Round Trip =====
+add_executable(test_tree_model_artifact
+    tests/test_tree_model_artifact.cpp
+    src/core/node_executors/tree_model_artifact.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/decision_tree_trainer.cpp
+    src/core/node_executors/random_forest_model.cpp
+    src/core/node_executors/random_forest_trainer.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/node_executors/gradient_boosting_trainer.cpp
+)
+
+target_include_directories(test_tree_model_artifact PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_tree_model_artifact PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_tree_model_artifact PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_tree_model_artifact PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Pipeline Operator Metadata Drift Guard =====
 add_executable(test_pipeline_operator_metadata
     tests/test_pipeline_operator_metadata.cpp
@@ -1593,6 +1639,7 @@ add_executable(test_pipeline_operator_metadata
     src/gui/data_studio/node_registry_builtin.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
     src/core/node_executors/decision_tree_trainer.cpp
     src/core/node_executors/decision_tree_operator.cpp
@@ -1662,6 +1709,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
     src/core/node_executors/decision_tree_trainer.cpp
     src/core/node_executors/decision_tree_operator.cpp
@@ -2101,6 +2149,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/decision_tree_model.cpp
     src/core/node_executors/decision_tree_trainer.cpp
     src/core/node_executors/decision_tree_operator.cpp

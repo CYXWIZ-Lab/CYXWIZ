@@ -30,6 +30,9 @@ Implemented so far:
   wired from graph parameters into runtime loss construction.
 - Simple loss nodes are controlled from the Properties panel, with no separate
   Open Dialog.
+- DecisionTree, RandomForest, and GradientBoosting table-path classifiers can
+  optionally write native JSON model artifacts via `model_path`, and their
+  model classes have load/save round-trip coverage.
 
 ## Current Code Truth
 
@@ -183,13 +186,18 @@ Current state:
 - Runtime capability now treats `DecisionTreeClassifier`,
   `RandomForestClassifier`, and `GradientBoostingClassifier` as
   operator-backed.
+- Each tree-family classifier exposes optional `model_path` metadata and can
+  write a native `cyxwiz_tree_model` JSON artifact during pipeline execution.
+- Native load/save helpers round-trip DecisionTree, RandomForest, and
+  GradientBoosting model state and preserve predictions across sessions.
 
 Still pending:
 
-- No saved tree model artifact or cross-session model serialization yet.
-- No separate training-graph compiler path that exports persisted
-  DecisionTree/RandomForest/GradientBoosting model artifacts; the implemented
-  route is in-pipeline fit-and-predict over a table.
+- Tree-family artifacts are native JSON files, not `.cyxmodel` packages.
+- There is no separate GUI load/inference node for applying a persisted tree
+  artifact to a new dataset yet; the implemented route remains in-pipeline
+  fit-and-predict, with artifact save/load APIs available for follow-up
+  inference work.
 
 Affected files:
 
@@ -204,6 +212,8 @@ Affected files:
 - `cyxwiz-engine/src/core/node_executors/decision_tree_operator.cpp`
 - `cyxwiz-engine/src/core/node_executors/tree_classification_utils.h`
 - `cyxwiz-engine/src/core/node_executors/tree_classification_utils.cpp`
+- `cyxwiz-engine/src/core/node_executors/tree_model_artifact.h`
+- `cyxwiz-engine/src/core/node_executors/tree_model_artifact.cpp`
 - `cyxwiz-engine/src/core/node_executors/random_forest_model.h`
 - `cyxwiz-engine/src/core/node_executors/random_forest_model.cpp`
 - `cyxwiz-engine/src/core/node_executors/random_forest_trainer.h`
@@ -222,6 +232,7 @@ Affected files:
 - `cyxwiz-engine/tests/test_decision_tree_operator.cpp`
 - `cyxwiz-engine/tests/test_random_forest_operator.cpp`
 - `cyxwiz-engine/tests/test_gradient_boosting_operator.cpp`
+- `cyxwiz-engine/tests/test_tree_model_artifact.cpp`
 - `cyxwiz-engine/tests/test_pipeline_executor_operator_routing.cpp`
 - `cyxwiz-engine/tests/test_pipeline_operator_metadata.cpp`
 
@@ -291,7 +302,9 @@ For an imbalanced sentiment dataset after this pass:
 
 Remaining caveat: `DecisionTreeClassifier`, `RandomForestClassifier`, and
 `GradientBoostingClassifier` are executable as table-path
-PipelineOperatorFactory nodes, but they are not yet persisted model artifacts.
+PipelineOperatorFactory nodes and can write native JSON model artifacts, but
+there is not yet a separate GUI load/inference node for applying a saved tree
+artifact to a new dataset.
 
 ## Recommended Implementation Order
 
@@ -499,6 +512,8 @@ Decision:
   with separate boosted model, trainer, and operator translation units.
 - Keep model persistence/export as a separate future phase for all tree
   classifiers.
+- Add a native JSON artifact format before any `.cyxmodel` integration so
+  tree-family model persistence is independent from `SequentialModel`.
 
 Tasks:
 
@@ -536,6 +551,11 @@ Tasks:
 - [x] Expose controllable gradient-boosting properties in GUI metadata.
 - [x] Add standalone gradient-boosting fit/predict tests and routed pipeline
   tests.
+- [x] Add native JSON model-artifact save/load helpers for DecisionTree,
+  RandomForest, and GradientBoosting.
+- [x] Expose optional `model_path` properties so each classifier can write an
+  artifact during pipeline execution.
+- [x] Add artifact round-trip tests and routed pipeline artifact-write checks.
 
 Acceptance:
 
@@ -548,6 +568,10 @@ Acceptance:
 - `DecisionTreeClassifier`, `RandomForestClassifier`, and
   `GradientBoostingClassifier` metadata are implemented, operator-backed, and
   expose controllable properties in the Properties panel.
+- `model_path` writes a native JSON model artifact for each tree-family
+  classifier when supplied.
+- Saved tree-family artifacts load back into native models and preserve
+  predictions.
 
 ## Non-Goals
 
