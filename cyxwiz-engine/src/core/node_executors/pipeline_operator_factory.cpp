@@ -7,6 +7,7 @@
 #include "log_transform_operator.h"
 #include "pca_operator.h"
 #include "preprocessing_operators.h"
+#include "random_forest_operator.h"
 #include "regression_operators.h"
 #include "sentiment_analyzer_operator.h"
 #include "signal_processing_operators.h"
@@ -111,6 +112,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::DecisionTreeClassifier, []() {
         return std::make_unique<DecisionTreeClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::RandomForestClassifier, []() {
+        return std::make_unique<RandomForestClassifierOperator>();
     });
     // Tool-to-Node data preprocessing block (closes Phase 4).
     RegisterCreator(gui::NodeType::StandardScaler, []() {

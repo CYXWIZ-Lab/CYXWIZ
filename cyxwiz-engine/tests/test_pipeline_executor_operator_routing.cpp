@@ -202,6 +202,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "RegexTester",
         "RegressionMetricsNode",
         "RenameColumns",
+        "RandomForestClassifier",
         "RobustScaler",
         "ROCCurveNode",
         "RowToColumnNames",
@@ -265,6 +266,7 @@ int main() {
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_operator_ACFNode_202");
     registry.UnloadDataset("ds_operator_DecisionTreeClassifier_211");
+    registry.UnloadDataset("ds_operator_RandomForestClassifier_213");
 
     const std::string preflight_invalid_schema_json =
         R"({"nodes":[)"
@@ -496,6 +498,39 @@ int main() {
           "DecisionTreeClassifier predicts the first training row");
     Check(ReadNumericValue(decision_tree_table, "pred", 3) == 1.0,
           "DecisionTreeClassifier predicts the last training row");
+
+    const std::string random_forest_json =
+        R"({"nodes":[)"
+        R"({"id":212,"type":"DataInput","name":"ForestInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":213,"type":"RandomForestClassifier","name":"Forest","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"rf_pred",)"
+        R"("n_estimators":"9","max_depth":"3","max_features":"all","seed":"7"}})"
+        R"(],"links":[{"start_node":212,"end_node":213}]})";
+
+    cyxwiz::PipelineExecutor random_forest_executor;
+    Check(random_forest_executor.ExecutePipeline(random_forest_json),
+          "PipelineExecutor routes RandomForestClassifier through "
+          "PipelineOperatorFactory: " +
+              random_forest_executor.GetLastError());
+
+    auto random_forest_output =
+        registry.GetArrowDataset("ds_operator_RandomForestClassifier_213");
+    Check(random_forest_output != nullptr,
+          "RandomForestClassifier operator output dataset is registered");
+    auto random_forest_table = random_forest_output->GetArrowTable();
+    Check(random_forest_table != nullptr,
+          "RandomForestClassifier operator output table exists");
+    Check(random_forest_table->num_rows() == 4,
+          "RandomForestClassifier operator preserves row count");
+    Check(random_forest_table->schema()->GetFieldIndex("rf_pred") >= 0,
+          "RandomForestClassifier operator appends prediction column");
+    Check(ReadNumericValue(random_forest_table, "rf_pred", 0) == 0.0,
+          "RandomForestClassifier predicts the first training row");
+    Check(ReadNumericValue(random_forest_table, "rf_pred", 3) == 1.0,
+          "RandomForestClassifier predicts the last training row");
 
     const std::string missing_acf_signal_json =
         R"({"nodes":[)"
@@ -1738,6 +1773,23 @@ int main() {
               "missing required parameter 'target_col'") != std::string::npos,
           "DecisionTreeClassifier missing target_col validation should be specific: " +
               missing_decision_tree_target_executor.GetLastError());
+
+    const std::string missing_random_forest_target_json =
+        R"({"nodes":[)"
+        R"({"id":216,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":217,"type":"RandomForestClassifier","name":"MissingTarget","parameters":{)"
+        R"("feature_cols":"x,z"}})"
+        R"(],"links":[{"start_node":216,"end_node":217}]})";
+
+    cyxwiz::PipelineExecutor missing_random_forest_target_executor;
+    Check(!missing_random_forest_target_executor.ExecutePipeline(
+              missing_random_forest_target_json),
+          "RandomForestClassifier missing target_col should fail validation");
+    Check(missing_random_forest_target_executor.GetLastError().find(
+              "missing required parameter 'target_col'") != std::string::npos,
+          "RandomForestClassifier missing target_col validation should be specific: " +
+              missing_random_forest_target_executor.GetLastError());
 
     const std::string missing_convolution_kernel_json =
         R"({"nodes":[)"
@@ -5391,6 +5443,7 @@ int main() {
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_operator_ACFNode_202");
     registry.UnloadDataset("ds_operator_DecisionTreeClassifier_211");
+    registry.UnloadDataset("ds_operator_RandomForestClassifier_213");
     registry.UnloadDataset("ds_input_133");
     registry.UnloadDataset("ds_select_134");
     registry.UnloadDataset("ds_datainput_300");

@@ -2613,6 +2613,44 @@ int main() {
     Check(decision_tree_meta->help_text.find("classical ML") != std::string::npos,
           "DecisionTree workflow lane guidance should name the classical ML lane");
 
+    const auto* random_forest_meta =
+        metadata.GetMetadata(gui::NodeType::RandomForestClassifier);
+    Check(random_forest_meta != nullptr, "RandomForest metadata should exist");
+    Check(random_forest_meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+          "RandomForest metadata should be implemented");
+    Check(random_forest_meta->badge != "Blocked",
+          "RandomForest metadata should not be blocked");
+    Check(HasInputType(random_forest_meta, "Data", gui::PinType::Dataset),
+          "RandomForest should expose a table input");
+    Check(HasOutputType(random_forest_meta, "Predictions", gui::PinType::Dataset),
+          "RandomForest should expose a table prediction output");
+    Check(HasParameter(random_forest_meta, "target_col") &&
+              HasParameter(random_forest_meta, "feature_cols") &&
+              HasParameter(random_forest_meta, "prediction_col") &&
+              HasParameter(random_forest_meta, "n_estimators") &&
+              HasParameter(random_forest_meta, "max_depth") &&
+              HasParameter(random_forest_meta, "min_samples_split") &&
+              HasParameter(random_forest_meta, "min_samples_leaf") &&
+              HasParameter(random_forest_meta, "criterion") &&
+              HasParameter(random_forest_meta, "max_features") &&
+              HasParameter(random_forest_meta, "seed"),
+          "RandomForest should expose classifier properties in metadata");
+    Check(HasEnumValue(random_forest_meta, "criterion", "gini") &&
+              HasEnumValue(random_forest_meta, "criterion", "entropy"),
+          "RandomForest criterion should expose supported split criteria");
+    Check(HasEnumValue(random_forest_meta, "max_features", "sqrt") &&
+              HasEnumValue(random_forest_meta, "max_features", "log2") &&
+              HasEnumValue(random_forest_meta, "max_features", "all"),
+          "RandomForest max_features should expose supported feature modes");
+    CheckSupportAxis(
+        random_forest_meta,
+        "Workflow Lane",
+        "classic_ml",
+        true,
+        "RandomForestClassifier");
+    Check(random_forest_meta->help_text.find("classical ML") != std::string::npos,
+          "RandomForest workflow lane guidance should name the classical ML lane");
+
     for (auto type : {
              gui::NodeType::StandardScaler,
              gui::NodeType::TimeSeriesWindow,

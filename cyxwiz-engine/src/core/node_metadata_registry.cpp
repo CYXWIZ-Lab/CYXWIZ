@@ -707,6 +707,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::DecisionTreeClassifier,
         "classic_ml",
         "Table-path classical ML classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::RandomForestClassifier,
+        "classic_ml",
+        "Table-path classical ML ensemble classifier for numeric tabular features.");
 
     for (NodeType node_type : {
              NodeType::Dense,
@@ -1422,14 +1426,21 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RandomForestClassifier, NodeCategory::Analytics, "Random Forest", ICON_FA_CUBES,
-        {"random", "forest", "ensemble"}, 0, false, "Random Forest ensemble",
-        "Ensemble of decision trees with bagging and feature randomization.", "",
-        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}},
-        {{"n_estimators", "int", "100", "Number of trees", {}, ""},
+        {"random", "forest", "ensemble", "classification", "classic ml"}, 0, false, "Random Forest ensemble",
+        "Fits a bagged ensemble of decision trees and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"target_col", "string", "", "Target label column", {}, ""},
+         {"feature_cols", "string", "", "Feature columns (comma-separated; blank = numeric auto-detect)", {}, ""},
+         {"prediction_col", "string", "prediction", "Output prediction column", {}, ""},
+         {"n_estimators", "int", "100", "Number of trees", {}, ""},
          {"max_depth", "int", "10", "Max depth per tree", {}, ""},
-         {"max_features", "enum", "sqrt", "Features per split", {"sqrt", "log2", "all"}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+         {"min_samples_split", "int", "2", "Min samples to split", {}, ""},
+         {"min_samples_leaf", "int", "1", "Min samples per leaf", {}, ""},
+         {"criterion", "enum", "gini", "Split criterion", {"gini", "entropy"}, ""},
+         {"max_features", "enum", "sqrt", "Features per tree", {"sqrt", "log2", "all"}, ""},
+         {"seed", "int", "42", "Random seed", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GradientBoostingClassifier, NodeCategory::Analytics, "Gradient Boosting", ICON_FA_CHART_LINE,
         {"gradient", "boosting", "classifier", "trees"}, 0, false, "Gradient Boosted Trees classifier",

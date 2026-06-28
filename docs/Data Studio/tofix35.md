@@ -160,22 +160,32 @@ Current state:
   table-path classifier. It reads numeric feature columns plus `target_col`,
   fits a deterministic binary CART-style tree, and appends a configurable
   prediction column.
+- `RandomForestClassifier` is implemented as a PipelineOperatorFactory-backed
+  table-path ensemble. It reuses the tree training path, trains deterministic
+  bootstrap feature-subset trees, majority-votes predictions, and appends a
+  configurable prediction column.
 - `DecisionTreeClassifier` exposes GUI metadata for `target_col`,
   `feature_cols`, `prediction_col`, `max_depth`, `min_samples_split`,
   `min_samples_leaf`, and `criterion`.
-- `DecisionTreeClassifier` is assigned to the `classic_ml` workflow lane.
-- `RandomForestClassifier` and `GradientBoostingClassifier` remain
-  `Template` / `Blocked`.
-- Runtime capability now treats `DecisionTreeClassifier` as operator-backed
-  and keeps random-forest and gradient-boosting execution fail-closed.
+- `RandomForestClassifier` exposes GUI metadata for `target_col`,
+  `feature_cols`, `prediction_col`, `n_estimators`, `max_depth`,
+  `min_samples_split`, `min_samples_leaf`, `criterion`, `max_features`, and
+  `seed`.
+- `DecisionTreeClassifier` and `RandomForestClassifier` are assigned to the
+  `classic_ml` workflow lane.
+- `GradientBoostingClassifier` remains `Template` / `Blocked`.
+- Runtime capability now treats `DecisionTreeClassifier` and
+  `RandomForestClassifier` as operator-backed and keeps gradient-boosting
+  execution fail-closed.
 
 Still pending:
 
 - No saved tree model artifact or cross-session model serialization yet.
-- No separate training-graph compiler path that exports a DecisionTree model;
-  the implemented route is in-pipeline fit-and-predict over a table.
-- `RandomForestClassifier` and `GradientBoostingClassifier` still need real
-  model/executor tracks before their blocked status can be removed.
+- No separate training-graph compiler path that exports persisted
+  DecisionTree/RandomForest model artifacts; the implemented route is
+  in-pipeline fit-and-predict over a table.
+- `GradientBoostingClassifier` still needs a real model/executor track before
+  its blocked status can be removed.
 
 Affected files:
 
@@ -188,10 +198,19 @@ Affected files:
 - `cyxwiz-engine/src/core/node_executors/decision_tree_trainer.cpp`
 - `cyxwiz-engine/src/core/node_executors/decision_tree_operator.h`
 - `cyxwiz-engine/src/core/node_executors/decision_tree_operator.cpp`
+- `cyxwiz-engine/src/core/node_executors/tree_classification_utils.h`
+- `cyxwiz-engine/src/core/node_executors/tree_classification_utils.cpp`
+- `cyxwiz-engine/src/core/node_executors/random_forest_model.h`
+- `cyxwiz-engine/src/core/node_executors/random_forest_model.cpp`
+- `cyxwiz-engine/src/core/node_executors/random_forest_trainer.h`
+- `cyxwiz-engine/src/core/node_executors/random_forest_trainer.cpp`
+- `cyxwiz-engine/src/core/node_executors/random_forest_operator.h`
+- `cyxwiz-engine/src/core/node_executors/random_forest_operator.cpp`
 - `cyxwiz-engine/src/core/node_executors/pipeline_operator_factory.cpp`
 - `cyxwiz-engine/src/core/node_metadata_registry.cpp`
 - `cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp`
 - `cyxwiz-engine/tests/test_decision_tree_operator.cpp`
+- `cyxwiz-engine/tests/test_random_forest_operator.cpp`
 - `cyxwiz-engine/tests/test_pipeline_executor_operator_routing.cpp`
 - `cyxwiz-engine/tests/test_pipeline_operator_metadata.cpp`
 
@@ -259,10 +278,10 @@ For an imbalanced sentiment dataset after this pass:
 - `DataSplit.stratified=true` is honored for supported Arrow/text splits.
 - `FocalLoss` can be selected as a supported visual graph loss.
 
-Remaining caveat: `DecisionTreeClassifier` is executable as a table-path
-PipelineOperatorFactory node, but it is not yet a persisted model artifact.
-`RandomForestClassifier` and `GradientBoostingClassifier` remain fail-closed
-until real model/executor tracks are implemented.
+Remaining caveat: `DecisionTreeClassifier` and `RandomForestClassifier` are
+executable as table-path PipelineOperatorFactory nodes, but they are not yet
+persisted model artifacts. `GradientBoostingClassifier` remains fail-closed
+until a real model/executor track is implemented.
 
 ## Recommended Implementation Order
 
@@ -454,18 +473,21 @@ Acceptance:
   and honored by the constructed backend loss.
 - Existing CrossEntropy graphs are unaffected.
 
-### Phase 7 - Decision Tree Runtime
+### Phase 7 - Decision Tree And Random Forest Runtime
 
-Goal: make the first tree classifier a real table-path runtime node without
-pretending the ensemble tree nodes are implemented.
+Goal: make the first tree classifier and first tree ensemble real table-path
+runtime nodes without pretending the remaining boosted tree node is
+implemented.
 
 Decision:
 
 - Implement `DecisionTreeClassifier` as a modular Cat-1 table operator with
   separate model, trainer, and operator translation units.
-- Keep `RandomForestClassifier` and `GradientBoostingClassifier` fail-closed
-  until they get their own model representation, prediction contract,
-  persistence story, and tests.
+- Implement `RandomForestClassifier` as a modular Cat-1 table operator that
+  reuses the native tree model/trainer and keeps ensemble code in separate
+  model, trainer, and operator translation units.
+- Keep `GradientBoostingClassifier` fail-closed until it gets its own model
+  representation, prediction contract, persistence story, and tests.
 
 Tasks:
 
@@ -481,17 +503,32 @@ Tasks:
   operator-backed runtime support.
 - [x] Expose controllable classifier properties in GUI metadata.
 - [x] Add standalone fit/predict tests and routed pipeline tests.
-- [x] Decide that `RandomForestClassifier` and `GradientBoostingClassifier`
-  remain separate future phases.
+- [x] Add shared classification-label/prediction helpers so tree-family
+  operators do not duplicate target parsing and output writing.
+- [x] Add a native deterministic random-forest model representation.
+- [x] Add a native random-forest trainer with bootstrap row sampling,
+  deterministic seeds, and `sqrt` / `log2` / `all` feature subsets.
+- [x] Add a `RandomForestClassifier` operator that reads numeric features,
+  learns from `target_col`, majority-votes, and appends `prediction_col`.
+- [x] Register the random-forest operator in `PipelineOperatorFactory`.
+- [x] Move `RandomForestClassifier` from fail-closed runtime support to
+  operator-backed runtime support.
+- [x] Expose controllable random-forest properties in GUI metadata.
+- [x] Add standalone random-forest fit/predict tests and routed pipeline tests.
+- [x] Decide that `GradientBoostingClassifier` remains a separate future
+  phase.
 
 Acceptance:
 
 - `DecisionTreeClassifier` is executable through PipelineExecutor and appends
   a prediction column for numeric or string labels.
-- `DecisionTreeClassifier` metadata is implemented, operator-backed, and
-  exposes controllable properties in the Properties panel.
-- `RandomForestClassifier` and `GradientBoostingClassifier` remain clearly
-  blocked with no ambiguous UI claims.
+- `RandomForestClassifier` is executable through PipelineExecutor and appends
+  a prediction column for numeric or string labels.
+- `DecisionTreeClassifier` and `RandomForestClassifier` metadata are
+  implemented, operator-backed, and expose controllable properties in the
+  Properties panel.
+- `GradientBoostingClassifier` remains clearly blocked with no ambiguous UI
+  claims.
 
 ## Non-Goals
 
@@ -519,5 +556,6 @@ Recommended coverage when implementing from this document:
 - New loss Properties panel regression for editable loss parameters
 - New `FocalLoss` graph training smoke if Phase 6 is implemented
 - New decision-tree fit/predict tests if Phase 7 is implemented
+- New random-forest fit/predict tests if Phase 7 is implemented
 - `cyxwiz-engine` Debug build
 - `git diff --check`
