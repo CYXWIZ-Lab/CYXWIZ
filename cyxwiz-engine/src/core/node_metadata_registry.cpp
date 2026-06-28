@@ -703,6 +703,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::PolynomialRegressionNode,
         "classic_ml",
         "Table-path classical ML baseline for polynomial regression.");
+    apply_workflow_lane_guidance(
+        NodeType::DecisionTreeClassifier,
+        "classic_ml",
+        "Table-path classical ML classifier for numeric tabular features.");
 
     for (NodeType node_type : {
              NodeType::Dense,
@@ -1404,14 +1408,18 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
 
     // Classification
     RegisterNode({NodeType::DecisionTreeClassifier, NodeCategory::Analytics, "Decision Tree", ICON_FA_SITEMAP,
-        {"decision", "tree", "classifier"}, 0, false, "Decision Tree classifier",
-        "Learns decision rules from features. Interpretable and handles non-linear boundaries.", "",
-        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}},
-        {{"max_depth", "int", "10", "Max depth", {}, ""},
+        {"decision", "tree", "classifier", "classification", "classic ml"}, 0, false, "Decision Tree classifier",
+        "Learns decision rules from tabular features and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"target_col", "string", "", "Target label column", {}, ""},
+         {"feature_cols", "string", "", "Feature columns (comma-separated; blank = numeric auto-detect)", {}, ""},
+         {"prediction_col", "string", "prediction", "Output prediction column", {}, ""},
+         {"max_depth", "int", "10", "Max depth", {}, ""},
          {"min_samples_split", "int", "2", "Min samples to split", {}, ""},
+         {"min_samples_leaf", "int", "1", "Min samples per leaf", {}, ""},
          {"criterion", "enum", "gini", "Split criterion", {"gini", "entropy"}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RandomForestClassifier, NodeCategory::Analytics, "Random Forest", ICON_FA_CUBES,
         {"random", "forest", "ensemble"}, 0, false, "Random Forest ensemble",
@@ -2164,8 +2172,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"Predictions", PinType::Tensor, true, "Predicted probabilities"},
          {"Targets", PinType::Tensor, true, "Binary targets"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
-        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
-         {"pos_weight", "float", "1.0", "Positive-class weight", {}, ""}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::BCEWithLogits, NodeCategory::Training, "BCE with Logits", ICON_FA_CHART_PIE,
@@ -2176,7 +2183,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"Logits", PinType::Tensor, true, "Binary logits"},
          {"Targets", PinType::Tensor, true, "Binary targets"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
-        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"pos_weight", "float", "1.0", "Positive-class weight", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::L1Loss, NodeCategory::Training, "L1 Loss", ICON_FA_CHART_LINE,

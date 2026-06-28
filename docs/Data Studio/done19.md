@@ -23,7 +23,7 @@ to make CyxWiz honest and extensible:
 - add missing contracts one at a time,
 - avoid adding frontend nodes before the backend can execute them.
 
-This overlaps with `tofix14.md` for NER/Siamese details, `tofix16.md` for
+This overlaps with `done14.md` for NER/Siamese details, `tofix16.md` for
 performance/deferred transformer work, and `tofix17.md` for GPU execution.
 Use this file as the broader model-family map.
 

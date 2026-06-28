@@ -1,4 +1,4 @@
-# To Fix 14 - NER Sequence Tagging and Siamese Engine Gaps
+# Done 14 - NER Sequence Tagging and Siamese Engine Gaps
 
 This note documents the gap between advanced graph designs and what the
 current CyxWiz engine can train today.

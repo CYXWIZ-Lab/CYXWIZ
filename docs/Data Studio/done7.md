@@ -122,7 +122,7 @@ Design rule:
 | `LSTM` | Yes | Yes | Yes | `Partial` | Sequential text/time-series path exists; metadata now correctly marks it implemented. Broader sequence-output tasks such as NER are not complete. | Keep visible with task limits. |
 | `GRU` | Yes | Yes | Yes | `Partial` | Sequential text/time-series path exists; metadata now correctly marks it implemented. Broader sequence-output tasks are not complete. | Keep visible with task limits. |
 | `RNN` | Yes | Blocked with error | No | `Blocked` | Compiler now fails closed because the sequential builder path is not ready. | Implement or keep hidden. |
-| `Bidirectional` | Yes | Blocked with error | No | `Blocked` | Compiler now fails closed; NER-style bidirectional tagging still needs first-class contracts. | Implement under `tofix14.md` / `tofix19.md`. |
+| `Bidirectional` | Yes | Blocked with error | No | `Blocked` | Compiler now fails closed; NER-style bidirectional tagging still needs first-class contracts. | Implement under `done14.md` / `tofix19.md`. |
 | `TimeDistributed` | Yes | Yes, shape-guarded | Yes | `Partial` | Builds as `TimeDistributedDenseModule` for sequence-shaped inputs and rejects non-sequence tensors. Backend placement now reports an explicit `timedistributed_sequence_wrapper` unknown-placement reason instead of treating it as unclassified. Full NER still needs sequence-batch executor wiring and token metrics. | Keep visible with task limits. |
 
 ---
@@ -340,7 +340,7 @@ current cleanup scope:
 Remaining `Partial` and `Placeholder` rows are intentionally follow-up work:
 
 - recurrent/NER sequence-output completion belongs with the sequence work in
-  `tofix14.md` / `tofix19.md`
+  `done14.md` / `tofix19.md`
 - materializer/data-mode parity for time-series and text pipelines should be
   handled as a runtime parity follow-up
 - placeholder dataset and augmentation sources should be hidden, marked

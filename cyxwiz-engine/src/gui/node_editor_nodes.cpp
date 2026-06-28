@@ -730,6 +730,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["shuffle"] = "true";
             node.parameters["drop_last"] = "false";
             node.parameters["seed"] = "42";             // reproducibility
+            node.parameters["balance_classes"] = "false";
+            node.parameters["balance_mode"] = "none";   // none, oversample, undersample, weighted_sampler
+            node.parameters["balance_target"] = "max";  // max, median, min, or numeric count
+            node.parameters["balance_seed"] = "42";
             node.parameters["num_workers"] = std::to_string(cyxwiz::GetDefaultNumWorkers());
             node.parameters["prefetch_factor"] = "2";
             node.parameters["pin_memory"] = "false";    // serialized compatibility; unsupported by current batchers

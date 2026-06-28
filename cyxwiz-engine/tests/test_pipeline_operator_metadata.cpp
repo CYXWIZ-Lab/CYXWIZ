@@ -2582,6 +2582,37 @@ int main() {
     Check(polynomial_regression_meta->help_text.find("classical ML") != std::string::npos,
           "PolynomialRegression workflow lane guidance should name the classical ML lane");
 
+    const auto* decision_tree_meta =
+        metadata.GetMetadata(gui::NodeType::DecisionTreeClassifier);
+    Check(decision_tree_meta != nullptr, "DecisionTree metadata should exist");
+    Check(decision_tree_meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+          "DecisionTree metadata should be implemented");
+    Check(decision_tree_meta->badge != "Blocked",
+          "DecisionTree metadata should not be blocked");
+    Check(HasInputType(decision_tree_meta, "Data", gui::PinType::Dataset),
+          "DecisionTree should expose a table input");
+    Check(HasOutputType(decision_tree_meta, "Predictions", gui::PinType::Dataset),
+          "DecisionTree should expose a table prediction output");
+    Check(HasParameter(decision_tree_meta, "target_col") &&
+              HasParameter(decision_tree_meta, "feature_cols") &&
+              HasParameter(decision_tree_meta, "prediction_col") &&
+              HasParameter(decision_tree_meta, "max_depth") &&
+              HasParameter(decision_tree_meta, "min_samples_split") &&
+              HasParameter(decision_tree_meta, "min_samples_leaf") &&
+              HasParameter(decision_tree_meta, "criterion"),
+          "DecisionTree should expose classifier properties in metadata");
+    Check(HasEnumValue(decision_tree_meta, "criterion", "gini") &&
+              HasEnumValue(decision_tree_meta, "criterion", "entropy"),
+          "DecisionTree criterion should expose supported split criteria");
+    CheckSupportAxis(
+        decision_tree_meta,
+        "Workflow Lane",
+        "classic_ml",
+        true,
+        "DecisionTreeClassifier");
+    Check(decision_tree_meta->help_text.find("classical ML") != std::string::npos,
+          "DecisionTree workflow lane guidance should name the classical ML lane");
+
     for (auto type : {
              gui::NodeType::StandardScaler,
              gui::NodeType::TimeSeriesWindow,

@@ -596,7 +596,7 @@ public:
     DataLoaderDialog(MLNode* node);
     void Apply() override;
     void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(560, 560); }
+    ImVec2 GetDefaultSize() const override { return ImVec2(620, 680); }
 
 protected:
     void RenderContent() override;
@@ -612,6 +612,10 @@ private:
     int validation_freq_ = 1;
     int seed_ = 42;
     int grad_accum_steps_ = 1;
+    bool balance_classes_ = false;
+    int balance_mode_index_ = 0;
+    char balance_target_[32] = "max";
+    int balance_seed_ = 42;
     bool pin_memory_requested_ = false;
     bool save_best_checkpoint_ = true;
     int early_stopping_patience_ = 5;

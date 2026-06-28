@@ -145,8 +145,8 @@ std::vector<float> ResolveCrossEntropyClassWeights(
         const std::string mode = ToLowerAscii(TrimAscii(*class_weight));
         if (mode == "balanced") {
             spdlog::warn(
-                "TrainingExecutor: class_weight=balanced requires "
-                "dataset-frequency computation and is not applied yet; "
+                "TrainingExecutor: class_weight=balanced was not resolved "
+                "before loss construction; "
                 "using unweighted CrossEntropy loss");
             return {};
         }
@@ -224,6 +224,37 @@ float ResolveLossFloatParam(const TrainingConfiguration& config,
                                  " must be a finite float >= " +
                                  std::to_string(min_value));
     }
+}
+
+Reduction ResolveLossReduction(const TrainingConfiguration& config) {
+    const std::string* value = FindLossParam(config, {"reduction"});
+    if (!value) {
+        return Reduction::Mean;
+    }
+    const std::string mode = ToLowerAscii(TrimAscii(*value));
+    if (mode.empty() || mode == "false" || mode == "0" || mode == "off") {
+        return Reduction::Mean;
+    }
+    if (mode == "mean") {
+        return Reduction::Mean;
+    }
+    if (mode == "sum") {
+        return Reduction::Sum;
+    }
+    if (mode == "none") {
+        return Reduction::None;
+    }
+    throw std::runtime_error(
+        "Loss reduction must be one of: mean, sum, none");
+}
+
+const char* ReductionName(Reduction reduction) {
+    switch (reduction) {
+        case Reduction::Mean: return "mean";
+        case Reduction::Sum: return "sum";
+        case Reduction::None: return "none";
+    }
+    return "mean";
 }
 
 std::vector<int> ParseIntListParam(const CompiledLayer& layer,
@@ -1005,16 +1036,18 @@ int ResolveCrossEntropyIgnoreIndex(const TrainingConfiguration& config) {
 }
 
 std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
+    const Reduction reduction = ResolveLossReduction(config);
     switch (config.loss_type) {
         case gui::NodeType::CrossEntropyLoss: {
             const int ignore_index = ResolveCrossEntropyIgnoreIndex(config);
             const std::vector<float> class_weights =
                 ResolveCrossEntropyClassWeights(config);
             spdlog::info("TrainingExecutor: Using CrossEntropy loss "
-                         "(ignore_index={}, class_weights={})",
-                         ignore_index, class_weights.size());
+                         "(reduction={}, ignore_index={}, class_weights={})",
+                         ReductionName(reduction), ignore_index,
+                         class_weights.size());
             return std::make_unique<CrossEntropyLoss>(
-                Reduction::Mean, ignore_index, class_weights);
+                reduction, ignore_index, class_weights);
         }
         case gui::NodeType::FocalLoss: {
             const float alpha = ResolveLossFloatParam(
@@ -1022,36 +1055,51 @@ std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
             const float gamma = ResolveLossFloatParam(
                 config, "gamma", 2.0f, 0.0f, "FocalLoss gamma");
             spdlog::info("TrainingExecutor: Using Focal loss "
-                         "(alpha={}, gamma={})", alpha, gamma);
+                         "(reduction={}, alpha={}, gamma={})",
+                         ReductionName(reduction), alpha, gamma);
             return std::make_unique<FocalLoss>(
-                alpha, gamma, Reduction::Mean);
+                alpha, gamma, reduction);
         }
         case gui::NodeType::MSELoss:
-            spdlog::info("TrainingExecutor: Using MSE loss");
-            return CreateLoss(LossType::MSE);
+            spdlog::info("TrainingExecutor: Using MSE loss (reduction={})",
+                         ReductionName(reduction));
+            return CreateLoss(LossType::MSE, reduction);
         case gui::NodeType::BCELoss:
-            spdlog::info("TrainingExecutor: Using BCE loss");
-            return CreateLoss(LossType::BinaryCrossEntropy);
+            spdlog::info("TrainingExecutor: Using BCE loss (reduction={})",
+                         ReductionName(reduction));
+            return CreateLoss(LossType::BinaryCrossEntropy, reduction);
         case gui::NodeType::BCEWithLogits: {
             const float pos_weight = ResolveBCEWithLogitsPosWeight(config);
             spdlog::info("TrainingExecutor: Using BCEWithLogits loss "
-                         "(pos_weight={})", pos_weight);
+                         "(reduction={}, pos_weight={})",
+                         ReductionName(reduction), pos_weight);
             return std::make_unique<BCEWithLogitsLoss>(
-                Reduction::Mean, pos_weight);
+                reduction, pos_weight);
         }
         case gui::NodeType::L1Loss:
-            spdlog::info("TrainingExecutor: Using L1 loss");
-            return CreateLoss(LossType::L1);
+            spdlog::info("TrainingExecutor: Using L1 loss (reduction={})",
+                         ReductionName(reduction));
+            return CreateLoss(LossType::L1, reduction);
         case gui::NodeType::SmoothL1Loss:
-        case gui::NodeType::HuberLoss:
-            spdlog::info("TrainingExecutor: Using SmoothL1/Huber loss");
-            return CreateLoss(LossType::SmoothL1);
-        case gui::NodeType::NLLLoss:
-            spdlog::info("TrainingExecutor: Using NLL loss");
-            return CreateLoss(LossType::NLLLoss);
+        case gui::NodeType::HuberLoss: {
+            const float beta = ResolveLossFloatParam(
+                config, "beta", 1.0f, 0.000001f, "SmoothL1/Huber beta");
+            spdlog::info("TrainingExecutor: Using SmoothL1/Huber loss "
+                         "(reduction={}, beta={})",
+                         ReductionName(reduction), beta);
+            return CreateLoss(LossType::SmoothL1, reduction, beta);
+        }
+        case gui::NodeType::NLLLoss: {
+            const int ignore_index = ResolveCrossEntropyIgnoreIndex(config);
+            spdlog::info("TrainingExecutor: Using NLL loss "
+                         "(reduction={}, ignore_index={})",
+                         ReductionName(reduction), ignore_index);
+            return std::make_unique<NLLLoss>(reduction, ignore_index);
+        }
         default:
-            spdlog::info("TrainingExecutor: Defaulting to CrossEntropy loss");
-            return CreateLoss(LossType::CrossEntropy);
+            spdlog::info("TrainingExecutor: Defaulting to CrossEntropy loss "
+                         "(reduction={})", ReductionName(reduction));
+            return CreateLoss(LossType::CrossEntropy, reduction);
     }
 }
 

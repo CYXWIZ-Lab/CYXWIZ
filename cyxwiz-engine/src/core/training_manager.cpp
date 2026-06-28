@@ -212,6 +212,12 @@ bool TrainingManager::StartTrainingArrow(
     }
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
+    TryApplyBalancedClassWeightsFromArrowTable(
+        config,
+        arrow_dataset ? arrow_dataset->GetArrowTable() : nullptr,
+        label_column,
+        /*partition_column=*/"",
+        "TrainingManager Arrow");
 
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), arrow_dataset, label_column);
     return StartTrainingCommon(
@@ -500,6 +506,8 @@ bool TrainingManager::StartTrainingText(
     if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
         batcher->SetOneHotEncoding(config.preprocessing.num_classes);
     }
+
+    batcher->TryApplyBalancedClassWeights(config);
 
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batcher));
     return StartTrainingCommon(

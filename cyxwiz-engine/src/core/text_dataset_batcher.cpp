@@ -3,6 +3,7 @@
 #include "node_executors/text_tokenizer_operator.h"
 #include "split_partitioning.h"
 #include "text_arrow_adapter.h"
+#include "training_batcher_setup.h"
 
 #include <spdlog/spdlog.h>
 
@@ -283,6 +284,16 @@ void TextDatasetBatcher::SetOneHotEncoding(size_t num_classes) {
 
 void TextDatasetBatcher::SetFlatten(bool /*flatten*/) {
     // Text token tables are already flat per sample.
+}
+
+bool TextDatasetBatcher::TryApplyBalancedClassWeights(
+    TrainingConfiguration& config) const {
+    return TryApplyBalancedClassWeightsFromArrowTable(
+        config,
+        tokenized_dataset_ ? tokenized_dataset_->GetArrowTable() : nullptr,
+        "y",
+        "__partition__",
+        "TextDatasetBatcher");
 }
 
 } // namespace cyxwiz

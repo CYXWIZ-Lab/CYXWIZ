@@ -118,7 +118,7 @@ Non-goal:
 
 - `done8.md`: closed minimal LLM/text-generation implementation roadmap.
 - `tracker8_done.md`: implementation history and validation record for `done8.md`.
-- `tofix14.md`: structural/modularity debt such as splitting oversized layer
+- `done14.md`: structural/modularity debt such as splitting oversized layer
   implementation files into cleaner translation units.
 - `tofix27.md`: Data Studio runtime/materializer parity follow-up from `done7.md`,
   not an LLM follow-up.

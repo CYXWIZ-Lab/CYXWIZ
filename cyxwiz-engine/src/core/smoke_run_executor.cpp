@@ -274,6 +274,10 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         batcher->SetOneHotEncoding(config.output_size);
     }
 
+    if (auto* text_batcher = dynamic_cast<TextDatasetBatcher*>(batcher.get())) {
+        text_batcher->TryApplyBalancedClassWeights(config);
+    }
+
     BuiltModel built = BuildSequentialFromConfig(config);
     if (!built.ok() || !built.loss || !built.optimizer) {
         result.summary = "Smoke Run failed to build model/loss/optimizer.";

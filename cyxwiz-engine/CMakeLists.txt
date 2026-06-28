@@ -159,6 +159,9 @@ set(ENGINE_SOURCES
     src/core/node_executors/pca_operator.cpp                 # Tool-to-Node Band 1
     src/core/node_executors/sentiment_analyzer_operator.cpp  # Tool-to-Node Band 1
     src/core/node_executors/clustering_operators.cpp         # Tool-to-Node Band 1
+    src/core/node_executors/decision_tree_model.cpp          # Tool-to-Node Band 1
+    src/core/node_executors/decision_tree_trainer.cpp        # Tool-to-Node Band 1
+    src/core/node_executors/decision_tree_operator.cpp       # Tool-to-Node Band 1
     src/core/node_executors/signal_processing_operators.cpp  # Tool-to-Node Band 1
     src/core/node_executors/regression_operators.cpp         # Tool-to-Node Band 1
     src/core/node_executors/preprocessing_operators.cpp      # Tool-to-Node Band 1
@@ -531,6 +534,9 @@ set(ENGINE_HEADERS
     src/core/node_executors/pca_operator.h
     src/core/node_executors/sentiment_analyzer_operator.h
     src/core/node_executors/clustering_operators.h
+    src/core/node_executors/decision_tree_model.h
+    src/core/node_executors/decision_tree_trainer.h
+    src/core/node_executors/decision_tree_operator.h
     src/core/node_executors/signal_processing_operators.h
     src/core/node_executors/regression_operators.h
     src/core/node_executors/preprocessing_operators.h
@@ -1120,11 +1126,14 @@ add_executable(test_debug_executor
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/model_builder.cpp
+    src/core/training_batcher_setup.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/text_arrow_adapter.cpp
     src/core/text_dataset_batcher.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/parquet_arrow_batcher.cpp
     src/core/formats/text_dataset.cpp
 )
 
@@ -1463,6 +1472,36 @@ set_target_properties(test_time_series_analysis_operators PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Decision Tree Operator =====
+add_executable(test_decision_tree_operator
+    tests/test_decision_tree_operator.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/decision_tree_trainer.cpp
+    src/core/node_executors/decision_tree_operator.cpp
+)
+
+target_include_directories(test_decision_tree_operator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_decision_tree_operator PRIVATE
+    Arrow::arrow_shared
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_decision_tree_operator PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_decision_tree_operator PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Pipeline Operator Metadata Drift Guard =====
 add_executable(test_pipeline_operator_metadata
     tests/test_pipeline_operator_metadata.cpp
@@ -1474,6 +1513,9 @@ add_executable(test_pipeline_operator_metadata
     src/gui/data_studio/node_registry.cpp
     src/gui/data_studio/node_registry_builtin.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/decision_tree_trainer.cpp
+    src/core/node_executors/decision_tree_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/log_transform_operator.cpp
@@ -1533,6 +1575,9 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/datasets/streaming_dataset.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/decision_tree_trainer.cpp
+    src/core/node_executors/decision_tree_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/log_transform_operator.cpp
@@ -1962,6 +2007,9 @@ add_executable(test_graph_training_sequence_preflight
     src/data/data_table.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/decision_tree_trainer.cpp
+    src/core/node_executors/decision_tree_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/log_transform_operator.cpp

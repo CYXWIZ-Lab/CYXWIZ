@@ -1,6 +1,7 @@
 #include "pipeline_operator_factory.h"
 #include "clustering_operators.h"
 #include "count_vectorizer_operator.h"
+#include "decision_tree_operator.h"
 #include "differencing_operator.h"
 #include "identity_operator.h"
 #include "log_transform_operator.h"
@@ -107,6 +108,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::PolynomialRegressionNode, []() {
         return std::make_unique<PolynomialRegressionOperator>();
+    });
+    RegisterCreator(gui::NodeType::DecisionTreeClassifier, []() {
+        return std::make_unique<DecisionTreeClassifierOperator>();
     });
     // Tool-to-Node data preprocessing block (closes Phase 4).
     RegisterCreator(gui::NodeType::StandardScaler, []() {

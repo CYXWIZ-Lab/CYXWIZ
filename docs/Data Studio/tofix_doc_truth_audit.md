@@ -35,7 +35,7 @@ scanning so stale or duplicate work is not reintroduced.
 | `tofix9.md` | active/tracked | Keep active. Debugger CPU/GPU fallback classification remains pending as diagnostics/tooling, not backend fallback implementation. |
 | `tofix11.md` | active/untracked | Keep active. Vocabulary dialog/workflow scope is distinct from model-family support. |
 | `tofix12.md` | active/untracked | Updated. Sentiment fine-tuning note now points pretrained/generative gaps to `tofix19.md`. |
-| `tofix14.md` | active/untracked | Updated. NER/Siamese note records the Dense-encoded NER compile guard and keeps real NER contracts open. |
+| `done14.md` | completed | Updated. NER/Siamese note records the Dense-encoded NER compile guard and keeps real NER contracts open. |
 | `tofix16.md` | active/tracked | Keep active. Loader throughput/performance work remains deferred and distinct. |
 | `tofix17.md` | active/tracked | Updated. CPU fallback work from `done2.md`/`done10.md`/`done15.md` is no longer implied as undone. |
 | `tofix18.md` | active/tracked | Keep active. Pipeline canvas placeholder naming cleanup remains a separate deferred UI task. |
@@ -53,7 +53,7 @@ scanning so stale or duplicate work is not reintroduced.
   fallback implementation slices and still-pending fallback diagnostics,
   policy, and GPU-first performance work.
 - Model-family docs needed a boundary: `tofix19.md` is the broad
-  unsupported-family map; `tofix8.md`, `tofix12.md`, and `tofix14.md`
+  unsupported-family map; `tofix8.md`, `tofix12.md`, and `done14.md`
   remain focused child notes.
 
 ## Patch Log
@@ -190,7 +190,7 @@ scanning so stale or duplicate work is not reintroduced.
   fail-closed executor/compiler truth.
 - Updated `tofix17.md` for completed CPU fallback/residency evidence from
   closed docs.
-- Updated `tofix8.md`, `tofix12.md`, `tofix14.md`, and `tofix19.md` for
+- Updated `tofix8.md`, `tofix12.md`, `done14.md`, and `tofix19.md` for
   model-family source-of-truth boundaries and the NER compile guard.
 - 2026-06-07 follow-up: updated metadata truth for registered fail-closed
   nodes: unsupported classical ML/evaluation/DNN/utility/signal nodes are now

@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -69,6 +71,221 @@ bool RenderBoolParameter(MLNode& node,
         return true;
     }
     return false;
+}
+
+bool RenderEnumParameter(MLNode& node,
+                         const char* key,
+                         const char* label,
+                         const char* const* values,
+                         int value_count,
+                         const char* fallback) {
+    std::string& value = node.parameters[key];
+    if (value.empty()) {
+        value = fallback;
+    }
+    int current = 0;
+    for (int i = 0; i < value_count; ++i) {
+        if (value == values[i]) {
+            current = i;
+            break;
+        }
+    }
+
+    ImGui::Text("%s:", label);
+    ImGui::SameLine(150.0f);
+    ImGui::SetNextItemWidth(180.0f);
+    const std::string imgui_id = std::string("##") + key;
+    if (ImGui::Combo(imgui_id.c_str(), &current, values, value_count)) {
+        value = values[current];
+        return true;
+    }
+    return false;
+}
+
+bool RenderFloatParameter(MLNode& node,
+                          const char* key,
+                          const char* label,
+                          const char* fallback,
+                          float min_value = 0.0f) {
+    std::string& value = node.parameters[key];
+    if (value.empty()) {
+        value = fallback;
+    }
+    float parsed = min_value;
+    try {
+        parsed = std::stof(value);
+    } catch (...) {
+        parsed = std::stof(fallback);
+    }
+    if (!std::isfinite(parsed) || parsed < min_value) {
+        parsed = std::stof(fallback);
+    }
+
+    ImGui::Text("%s:", label);
+    ImGui::SameLine(150.0f);
+    ImGui::SetNextItemWidth(120.0f);
+    const std::string imgui_id = std::string("##") + key;
+    if (ImGui::InputFloat(imgui_id.c_str(), &parsed, 0.0f, 0.0f, "%.4f")) {
+        if (parsed < min_value) {
+            parsed = min_value;
+        }
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%.6g", parsed);
+        value = buffer;
+        return true;
+    }
+    return false;
+}
+
+bool ParseNonNegativeFloatVector(const std::string& raw,
+                                 std::vector<float>& values,
+                                 std::string& error) {
+    std::string text = raw;
+    for (char& c : text) {
+        if (c == '[' || c == ']' || c == '(' || c == ')' ||
+            c == ',' || c == ';') {
+            c = ' ';
+        }
+    }
+
+    values.clear();
+    std::istringstream in(text);
+    std::string token;
+    while (in >> token) {
+        try {
+            size_t parsed = 0;
+            const float weight = std::stof(token, &parsed);
+            if (parsed != token.size() || !std::isfinite(weight) ||
+                weight < 0.0f) {
+                throw std::runtime_error("invalid weight");
+            }
+            values.push_back(weight);
+        } catch (...) {
+            error = "invalid non-negative number '" + token + "'";
+            return false;
+        }
+    }
+
+    if (values.empty()) {
+        error = "enter at least one class weight";
+        return false;
+    }
+    return true;
+}
+
+size_t ParsePositiveSizeOrZero(const std::string& value) {
+    try {
+        size_t parsed = 0;
+        const size_t count = std::stoul(value, &parsed);
+        if (parsed == value.size() && count > 0) {
+            return count;
+        }
+    } catch (...) {
+    }
+    return 0;
+}
+
+size_t FindExpectedClassCount(const RenderNodePropertiesContext& context) {
+    if (!context.node_editor) {
+        return 0;
+    }
+
+    for (const auto& graph_node : context.node_editor->GetNodes()) {
+        if (graph_node.type != NodeType::Output) {
+            continue;
+        }
+        auto it = graph_node.parameters.find("num_classes");
+        if (it != graph_node.parameters.end()) {
+            const size_t count = ParsePositiveSizeOrZero(it->second);
+            if (count > 0) {
+                return count;
+            }
+        }
+    }
+    return 0;
+}
+
+void RenderClassWeightsValidation(const MLNode& node,
+                                  const RenderNodePropertiesContext& context) {
+    const std::string weights = ParamOr(node, "class_weights", "");
+    std::vector<float> parsed_weights;
+    std::string error;
+    if (!ParseNonNegativeFloatVector(weights, parsed_weights, error)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+                           "  Invalid weight vector: %s", error.c_str());
+        return;
+    }
+
+    const size_t expected_classes = FindExpectedClassCount(context);
+    if (expected_classes > 0 && parsed_weights.size() != expected_classes) {
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+                           "  Weight count %zu does not match expected class count %zu.",
+                           parsed_weights.size(), expected_classes);
+        return;
+    }
+
+    if (expected_classes > 0) {
+        ImGui::TextDisabled("  %zu weights parsed. Expected class count: %zu.",
+                            parsed_weights.size(), expected_classes);
+    } else {
+        ImGui::TextDisabled("  %zu weights parsed. Expected class count is unknown until compile.",
+                            parsed_weights.size());
+    }
+}
+
+void RenderLossReduction(MLNode& node) {
+    static const char* reductions[] = {"mean", "sum", "none"};
+    RenderEnumParameter(node, "reduction", "Reduction",
+                        reductions, IM_ARRAYSIZE(reductions), "mean");
+}
+
+void RenderSimpleLossProperties(MLNode& node,
+                                const RenderNodePropertiesContext& context) {
+    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", node.name.c_str());
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    RenderLossReduction(node);
+
+    switch (node.type) {
+        case NodeType::CrossEntropyLoss: {
+            RenderTextParameter(node, "ignore_index", "Ignore index", "-100",
+                                ImGuiInputTextFlags_CharsDecimal);
+            static const char* weight_modes[] = {"none", "manual", "balanced"};
+            RenderEnumParameter(node, "class_weight", "Class weights",
+                                weight_modes, IM_ARRAYSIZE(weight_modes),
+                                "none");
+            const std::string mode = ParamOr(node, "class_weight", "none");
+            if (mode == "manual") {
+                RenderTextParameter(node, "class_weights", "Weight vector", "");
+                ImGui::TextDisabled("  Example: [1.0, 2.5, 1.0]. Length must match output classes.");
+                RenderClassWeightsValidation(node, context);
+            } else if (mode == "balanced") {
+                ImGui::TextDisabled("  Auto-computed from Arrow/text train labels when supported.");
+                ImGui::TextDisabled("  Unsupported dataset paths fall back to unweighted loss.");
+            }
+            break;
+        }
+        case NodeType::BCEWithLogits:
+            RenderFloatParameter(node, "pos_weight", "Positive weight",
+                                 "1.0", 0.000001f);
+            ImGui::TextDisabled("  Scales positive examples for imbalanced binary labels.");
+            break;
+        case NodeType::FocalLoss:
+            RenderFloatParameter(node, "alpha", "Alpha", "0.25", 0.0f);
+            RenderFloatParameter(node, "gamma", "Gamma", "2.0", 0.0f);
+            break;
+        case NodeType::SmoothL1Loss:
+        case NodeType::HuberLoss:
+            RenderFloatParameter(node, "beta", "Beta", "1.0", 0.000001f);
+            break;
+        case NodeType::NLLLoss:
+            RenderTextParameter(node, "ignore_index", "Ignore index", "-100",
+                                ImGuiInputTextFlags_CharsDecimal);
+            break;
+        default:
+            break;
+    }
 }
 
 }  // namespace
@@ -577,15 +794,15 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
 
         // ========== Loss Functions ==========
         case NodeType::MSELoss:
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Mean Squared Error Loss");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "L = mean((y - y_hat)^2)");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Use for: Regression tasks");
-            break;
-
         case NodeType::CrossEntropyLoss:
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Cross Entropy Loss");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "L = -sum(y * log(y_hat))");
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Use for: Classification tasks");
+        case NodeType::FocalLoss:
+        case NodeType::BCELoss:
+        case NodeType::BCEWithLogits:
+        case NodeType::L1Loss:
+        case NodeType::SmoothL1Loss:
+        case NodeType::HuberLoss:
+        case NodeType::NLLLoss:
+            RenderSimpleLossProperties(node, context);
             break;
 
         // ========== Optimizers ==========

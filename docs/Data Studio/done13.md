@@ -1524,7 +1524,7 @@ Guardrails:
 
 Remaining local Studio C++ runtime execution for arbitrary tensor graph nodes
 is not part of this modularity item. That work has been carried forward into
-`tofix14.md` as a separate runtime adapter concern.
+`done14.md` as a separate runtime adapter concern.
 
 
 

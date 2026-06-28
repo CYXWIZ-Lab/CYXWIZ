@@ -79,242 +79,42 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
         case NodeType::DataLoader: {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 1.0f, 1.0f), "Data Loader Node");
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-                               "Owns all training-loop hyperparameters");
+                               "Configured from the Open Dialog");
             ImGui::Separator();
             ImGui::Spacing();
 
-            // ---- Training loop ----
-            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Training Loop");
+            const std::string batch_size =
+                node.parameters.count("batch_size") ? node.parameters.at("batch_size") : "32";
+            const std::string epochs =
+                node.parameters.count("epochs") ? node.parameters.at("epochs") : "10";
+            const std::string shuffle =
+                node.parameters.count("shuffle") ? node.parameters.at("shuffle") : "true";
+            const std::string balance_classes =
+                node.parameters.count("balance_classes") ? node.parameters.at("balance_classes") : "false";
+            const std::string balance_mode =
+                node.parameters.count("balance_mode") ? node.parameters.at("balance_mode") : "none";
+            const std::string balance_target =
+                node.parameters.count("balance_target") ? node.parameters.at("balance_target") : "max";
 
-            // Epochs
-            std::string& epochs = node.parameters["epochs"];
-            if (epochs.empty()) epochs = "10";
-            char epochs_buffer[16];
-            strncpy(epochs_buffer, epochs.c_str(), sizeof(epochs_buffer) - 1);
-            epochs_buffer[sizeof(epochs_buffer) - 1] = '\0';
             ImGui::Text("Epochs:");
             ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##epochs", epochs_buffer, sizeof(epochs_buffer),
-                                 ImGuiInputTextFlags_CharsDecimal)) {
-                epochs = epochs_buffer;
-            }
-
-            // Batch size
-            std::string& batch_size = node.parameters["batch_size"];
-            if (batch_size.empty()) batch_size = "32";
-            char batch_buffer[16];
-            strncpy(batch_buffer, batch_size.c_str(), sizeof(batch_buffer) - 1);
-            batch_buffer[sizeof(batch_buffer) - 1] = '\0';
-            ImGui::Text("Batch Size:");
+            ImGui::TextUnformatted(epochs.c_str());
+            ImGui::Text("Batch size:");
             ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##batch_size", batch_buffer, sizeof(batch_buffer),
-                                 ImGuiInputTextFlags_CharsDecimal)) {
-                batch_size = batch_buffer;
-            }
-
-            // Gradient accumulation steps (effective batch = batch_size * this)
-            std::string& grad_accum = node.parameters["grad_accum_steps"];
-            if (grad_accum.empty()) grad_accum = "1";
-            char grad_accum_buffer[16];
-            strncpy(grad_accum_buffer, grad_accum.c_str(), sizeof(grad_accum_buffer) - 1);
-            grad_accum_buffer[sizeof(grad_accum_buffer) - 1] = '\0';
-            ImGui::Text("Grad Accum:");
+            ImGui::TextUnformatted(batch_size.c_str());
+            ImGui::Text("Shuffle:");
             ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##grad_accum", grad_accum_buffer, sizeof(grad_accum_buffer),
-                                 ImGuiInputTextFlags_CharsDecimal)) {
-                grad_accum = grad_accum_buffer;
+            ImGui::TextUnformatted(shuffle.c_str());
+            ImGui::Text("Class balance:");
+            ImGui::SameLine(140.0f);
+            ImGui::TextUnformatted(balance_classes == "true" ? balance_mode.c_str() : "off");
+            if (balance_classes == "true") {
+                ImGui::Text("Balance target:");
+                ImGui::SameLine(140.0f);
+                ImGui::TextUnformatted(balance_target.c_str());
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Runtime-supported optimizer cadence.\n"
-                                  "Gradients are averaged over N backward passes before one optimizer step.");
-            }
-
             ImGui::Spacing();
-
-            // ---- Iteration order ----
-            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Iteration Order");
-
-            std::string& shuffle = node.parameters["shuffle"];
-            if (shuffle.empty()) shuffle = "true";
-            bool shuffle_val = (shuffle == "true");
-            if (ImGui::Checkbox("Shuffle", &shuffle_val)) {
-                shuffle = shuffle_val ? "true" : "false";
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Reshuffle samples at the start of every epoch.");
-            }
-
-            std::string& drop_last = node.parameters["drop_last"];
-            if (drop_last.empty()) drop_last = "false";
-            bool drop_last_val = (drop_last == "true");
-            if (ImGui::Checkbox("Drop Last Batch", &drop_last_val)) {
-                drop_last = drop_last_val ? "true" : "false";
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Skip the final batch if it has fewer than batch_size samples.");
-            }
-
-            // Seed for reproducibility
-            std::string& seed = node.parameters["seed"];
-            if (seed.empty()) seed = "42";
-            char seed_buffer[16];
-            strncpy(seed_buffer, seed.c_str(), sizeof(seed_buffer) - 1);
-            seed_buffer[sizeof(seed_buffer) - 1] = '\0';
-            ImGui::Text("Seed:");
-            ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##seed", seed_buffer, sizeof(seed_buffer),
-                                 ImGuiInputTextFlags_CharsDecimal)) {
-                seed = seed_buffer;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Runtime-supported DataLoader seed for deterministic batcher split/shuffle order.\n"
-                                  "DataSplit.seed separately controls DataSplit node partitioning.");
-            }
-
-            ImGui::Spacing();
-
-            // ---- Checkpointing ----
-            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Checkpointing");
-
-            std::string& save_best_checkpoint = node.parameters["save_best_checkpoint"];
-            if (save_best_checkpoint.empty()) save_best_checkpoint = "true";
-            bool save_best_checkpoint_val = (save_best_checkpoint == "true");
-            if (ImGui::Checkbox("Save Best Checkpoint", &save_best_checkpoint_val)) {
-                save_best_checkpoint = save_best_checkpoint_val ? "true" : "false";
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Keep the best validation epoch instead of only the last epoch.");
-            }
-
-            std::string& early_stop_patience = node.parameters["early_stopping_patience"];
-            if (early_stop_patience.empty()) early_stop_patience = "5";
-            char patience_buffer[16];
-            strncpy(patience_buffer, early_stop_patience.c_str(), sizeof(patience_buffer) - 1);
-            patience_buffer[sizeof(patience_buffer) - 1] = '\0';
-            ImGui::Text("Early Stop Patience:");
-            ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##early_stopping_patience", patience_buffer, sizeof(patience_buffer),
-                                 ImGuiInputTextFlags_CharsDecimal)) {
-                early_stop_patience = patience_buffer;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Stop after this many epochs with no validation improvement.\n"
-                                  "Set 0 to disable early stopping.");
-            }
-
-            std::string& checkpoint_dir = node.parameters["checkpoint_dir"];
-            if (checkpoint_dir.empty()) checkpoint_dir = "";
-            char checkpoint_dir_buffer[260];
-            strncpy(checkpoint_dir_buffer, checkpoint_dir.c_str(), sizeof(checkpoint_dir_buffer) - 1);
-            checkpoint_dir_buffer[sizeof(checkpoint_dir_buffer) - 1] = '\0';
-            ImGui::Text("Checkpoint Dir:");
-            ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(220.0f);
-            if (ImGui::InputText("##checkpoint_dir", checkpoint_dir_buffer, sizeof(checkpoint_dir_buffer))) {
-                checkpoint_dir = checkpoint_dir_buffer;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Optional checkpoint root. Empty uses the default run-local folder.");
-            }
-
-            ImGui::Spacing();
-
-            // ---- Performance ----
-            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Performance");
-
-            std::string& num_workers = node.parameters["num_workers"];
-            if (num_workers.empty()) num_workers = std::to_string(cyxwiz::GetDefaultNumWorkers());
-            char workers_buffer[16];
-            strncpy(workers_buffer, num_workers.c_str(), sizeof(workers_buffer) - 1);
-            workers_buffer[sizeof(workers_buffer) - 1] = '\0';
-            ImGui::Text("Num Workers:");
-            ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##num_workers", workers_buffer, sizeof(workers_buffer),
-                                 ImGuiInputTextFlags_CharsDecimal)) {
-                num_workers = workers_buffer;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Synchronous per-batch workers where supported. 0 = single-threaded.\n"
-                                  "Empty uses a hardware-based default. Async prefetch is controlled by Prefetch.");
-            }
-
-            std::string& prefetch = node.parameters["prefetch_factor"];
-            if (prefetch.empty()) prefetch = "2";
-            char prefetch_buffer[16];
-            strncpy(prefetch_buffer, prefetch.c_str(), sizeof(prefetch_buffer) - 1);
-            prefetch_buffer[sizeof(prefetch_buffer) - 1] = '\0';
-            ImGui::Text("Prefetch:");
-            ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##prefetch_factor", prefetch_buffer, sizeof(prefetch_buffer),
-                                 ImGuiInputTextFlags_CharsDecimal)) {
-                prefetch = prefetch_buffer;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Bounded async queue depth for supported Arrow and Parquet batchers.\n"
-                                  "0 disables prefetch. Positive values overlap batch construction with model compute.");
-            }
-
-            std::string& pin_memory = node.parameters["pin_memory"];
-            if (pin_memory.empty()) pin_memory = "false";
-            const bool pin_memory_val = (pin_memory == "true");
-            ImGui::Text("Pin Memory:");
-            ImGui::SameLine(140.0f);
-            ImGui::TextDisabled(pin_memory_val ? "unsupported (saved true)" : "unsupported");
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Serialized for graph compatibility only. Current batchers do not own pinned host-memory transfers.");
-            }
-            if (pin_memory_val) {
-                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                                   "  This loaded graph requests pin_memory=true, but runtime ignores it.");
-            } else {
-                ImGui::TextDisabled("  Reserved until a real pinned host-memory transfer backend exists.");
-            }
-
-            ImGui::Spacing();
-
-            // ---- Logging ----
-            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Logging");
-
-            std::string& log_interval = node.parameters["log_interval"];
-            if (log_interval.empty()) log_interval = "10";
-            char log_buffer[16];
-            strncpy(log_buffer, log_interval.c_str(), sizeof(log_buffer) - 1);
-            log_buffer[sizeof(log_buffer) - 1] = '\0';
-            ImGui::Text("Log every N:");
-            ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##log_interval", log_buffer, sizeof(log_buffer),
-                                 ImGuiInputTextFlags_CharsDecimal)) {
-                log_interval = log_buffer;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Runtime-supported batch progress cadence.\n"
-                                  "The first batch is always logged; 0 disables periodic follow-up logs.");
-            }
-
-            std::string& val_freq = node.parameters["validation_freq"];
-            if (val_freq.empty()) val_freq = "1";
-            char val_freq_buffer[16];
-            strncpy(val_freq_buffer, val_freq.c_str(), sizeof(val_freq_buffer) - 1);
-            val_freq_buffer[sizeof(val_freq_buffer) - 1] = '\0';
-            ImGui::Text("Validate every:");
-            ImGui::SameLine(140.0f);
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::InputText("##validation_freq", val_freq_buffer, sizeof(val_freq_buffer),
-                                 ImGuiInputTextFlags_CharsDecimal)) {
-                val_freq = val_freq_buffer;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Runtime-supported epoch validation cadence.\n"
-                                  "Values below 1 compile as 1; the final epoch always validates.");
-            }
+            ImGui::TextDisabled("Use Open Dialog to edit DataLoader batching, imbalance, checkpointing, and performance settings.");
             break;
         }
 

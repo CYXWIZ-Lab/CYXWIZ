@@ -1,14 +1,14 @@
 # Track 14 - NER And Metric-Learning Execution Plan
 
 **Created:** 2026-06-25
-**Source:** Working plan for `tofix14.md`.
+**Source:** Working plan for archived `done14.md`.
 
 ## Purpose
 
-Track the remaining implementation work from `tofix14.md` against the current
+Track the remaining implementation work from `done14.md` against the current
 codebase truth.
 
-`tofix14.md` started as a design-gap document. Since then, several NER
+`done14.md` started as a design-gap document. Since then, several NER
 sequence-tagging primitives have landed. This tracker separates what is now
 real from what remains target design, so the next work does not reimplement
 existing contracts or claim unsupported graph behavior.
@@ -86,7 +86,7 @@ Known limitations:
 
 Status: completed 2026-06-25.
 
-Goal: align `tofix14.md` with the current implementation state.
+Goal: align `done14.md` with the current implementation state.
 
 Tasks:
 
@@ -98,7 +98,7 @@ Tasks:
 
 Acceptance:
 
-- `tofix14.md` no longer implies `NERSequenceBuilder`, sequence batches,
+- `done14.md` no longer implies `NERSequenceBuilder`, sequence batches,
   TimeDistributed, or sequence metrics are entirely missing.
 - Remaining work points to concrete code gaps.
 

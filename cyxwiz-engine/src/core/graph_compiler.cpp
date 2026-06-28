@@ -237,14 +237,9 @@ void ValidateCrossEntropyWeightParams(
     if (class_weight) {
         const std::string mode = ToLowerAscii(TrimAscii(*class_weight));
         if (mode == "balanced") {
-            AddIssue(
-                config,
-                IssueLevel::Warning,
-                "CrossEntropy class_weight=balanced requires training-split "
-                "class frequency computation and is not implemented yet; "
-                "use manual class_weights for now.",
-                loss_node.id,
-                loss_node.name);
+            // Runtime resolves this from the supported train split before
+            // constructing the loss. Unsupported dataset paths warn later and
+            // fall back to unweighted CrossEntropy.
             return;
         }
         if (mode == "manual") {

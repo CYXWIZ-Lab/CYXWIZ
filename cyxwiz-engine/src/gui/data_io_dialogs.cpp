@@ -823,6 +823,32 @@ void ReadBoolParam(const std::map<std::string, std::string>& params,
     auto it = params.find(key);
     if (it != params.end()) out = (it->second == "true");
 }
+
+int BalanceModeIndexFromName(const std::string& value) {
+    std::string normalized = LowerAscii(value);
+    if (normalized == "weighted sampler") normalized = "weighted_sampler";
+    if (normalized == "oversample") return 1;
+    if (normalized == "undersample") return 2;
+    if (normalized == "weighted_sampler") return 3;
+    return 0;
+}
+
+const char* BalanceModeName(int index) {
+    switch (index) {
+        case 1: return "oversample";
+        case 2: return "undersample";
+        case 3: return "weighted_sampler";
+        default: return "none";
+    }
+}
+
+bool IsPositiveIntegerText(const char* text) {
+    if (!text || text[0] == '\0') return false;
+    for (const char* c = text; *c != '\0'; ++c) {
+        if (!std::isdigit(static_cast<unsigned char>(*c))) return false;
+    }
+    return true;
+}
 }
 
 DataLoaderDialog::DataLoaderDialog(MLNode* node)
@@ -845,6 +871,19 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         if (seed_ < 0) seed_ = 0;
         ReadIntParam(node_->parameters, "grad_accum_steps", grad_accum_steps_);
         if (grad_accum_steps_ < 1) grad_accum_steps_ = 1;
+        ReadBoolParam(node_->parameters, "balance_classes", balance_classes_);
+        balance_mode_index_ = BalanceModeIndexFromName(
+            ReadStringParamValue(node_->parameters, "balance_mode", "none"));
+        if (balance_classes_ && balance_mode_index_ == 0) {
+            balance_mode_index_ = 1;
+        }
+        CopyToBuffer(balance_target_, sizeof(balance_target_),
+                     ReadStringParamValue(node_->parameters, "balance_target", "max"));
+        if (balance_target_[0] == '\0') {
+            CopyToBuffer(balance_target_, sizeof(balance_target_), "max");
+        }
+        ReadIntParam(node_->parameters, "balance_seed", balance_seed_);
+        if (balance_seed_ < 0) balance_seed_ = 0;
         ReadBoolParam(node_->parameters, "pin_memory", pin_memory_requested_);
         ReadBoolParam(node_->parameters, "save_best_checkpoint", save_best_checkpoint_);
         ReadIntParam(node_->parameters, "early_stopping_patience", early_stopping_patience_);
@@ -865,12 +904,20 @@ void DataLoaderDialog::Apply() {
     node_->parameters["validation_freq"] = std::to_string(validation_freq_);
     node_->parameters["seed"] = std::to_string(seed_);
     node_->parameters["grad_accum_steps"] = std::to_string(grad_accum_steps_);
+    node_->parameters["balance_classes"] = balance_classes_ ? "true" : "false";
+    node_->parameters["balance_mode"] = BalanceModeName(
+        balance_classes_ ? balance_mode_index_ : 0);
+    node_->parameters["balance_target"] = balance_target_;
+    node_->parameters["balance_seed"] = std::to_string(balance_seed_);
     node_->parameters["save_best_checkpoint"] = save_best_checkpoint_ ? "true" : "false";
     node_->parameters["early_stopping_patience"] = std::to_string(early_stopping_patience_);
     node_->parameters["checkpoint_dir"] = checkpoint_dir_;
     node_->description = "epochs=" + std::to_string(epochs_) +
                           ", batch=" + std::to_string(batch_size_) +
-                          (shuffle_ ? ", shuffled" : ", ordered");
+                          (shuffle_ ? ", shuffled" : ", ordered") +
+                          (balance_classes_
+                               ? ", balanced=" + std::string(BalanceModeName(balance_mode_index_))
+                               : "");
     has_changes_ = false;
 }
 
@@ -888,6 +935,10 @@ void DataLoaderDialog::Reset() {
     validation_freq_ = 1;
     seed_ = 42;
     grad_accum_steps_ = 1;
+    balance_classes_ = false;
+    balance_mode_index_ = 0;
+    CopyToBuffer(balance_target_, sizeof(balance_target_), "max");
+    balance_seed_ = 42;
     pin_memory_requested_ = false;
     save_best_checkpoint_ = true;
     early_stopping_patience_ = 5;
@@ -907,6 +958,19 @@ void DataLoaderDialog::Reset() {
     if (seed_ < 0) seed_ = 0;
     ReadIntParam(original_params_, "grad_accum_steps", grad_accum_steps_);
     if (grad_accum_steps_ < 1) grad_accum_steps_ = 1;
+    ReadBoolParam(original_params_, "balance_classes", balance_classes_);
+    balance_mode_index_ = BalanceModeIndexFromName(
+        ReadStringParamValue(original_params_, "balance_mode", "none"));
+    if (balance_classes_ && balance_mode_index_ == 0) {
+        balance_mode_index_ = 1;
+    }
+    CopyToBuffer(balance_target_, sizeof(balance_target_),
+                 ReadStringParamValue(original_params_, "balance_target", "max"));
+    if (balance_target_[0] == '\0') {
+        CopyToBuffer(balance_target_, sizeof(balance_target_), "max");
+    }
+    ReadIntParam(original_params_, "balance_seed", balance_seed_);
+    if (balance_seed_ < 0) balance_seed_ = 0;
     ReadBoolParam(original_params_, "pin_memory", pin_memory_requested_);
     ReadBoolParam(original_params_, "save_best_checkpoint", save_best_checkpoint_);
     ReadIntParam(original_params_, "early_stopping_patience", early_stopping_patience_);
@@ -993,6 +1057,92 @@ void DataLoaderDialog::RenderContent() {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(split/shuffle order)");
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Class Imbalance");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::Checkbox("Balance training classes", &balance_classes_)) {
+        if (balance_classes_ && balance_mode_index_ == 0) {
+            balance_mode_index_ = 1;
+        }
+        if (!balance_classes_) {
+            balance_mode_index_ = 0;
+        }
+        has_changes_ = true;
+    }
+    ImGui::TextDisabled("  Applies only to training batches. Validation and test distributions stay unchanged.");
+
+    const char* balance_modes[] = {
+        "None", "Oversample minority", "Undersample majority", "Weighted sampler"
+    };
+    ImGui::BeginDisabled(!balance_classes_);
+    ImGui::Text("Mode:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(190);
+    if (ImGui::Combo("##balance_mode", &balance_mode_index_,
+                     balance_modes, IM_ARRAYSIZE(balance_modes))) {
+        if (balance_mode_index_ == 0) {
+            balance_classes_ = false;
+        }
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(train split only)");
+
+    const char* balance_targets[] = {"max", "median", "min", "custom number"};
+    int target_index = 0;
+    if (std::strcmp(balance_target_, "median") == 0) {
+        target_index = 1;
+    } else if (std::strcmp(balance_target_, "min") == 0) {
+        target_index = 2;
+    } else if (IsPositiveIntegerText(balance_target_)) {
+        target_index = 3;
+    }
+    ImGui::Text("Target:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(190);
+    if (ImGui::Combo("##balance_target_mode", &target_index,
+                     balance_targets, IM_ARRAYSIZE(balance_targets))) {
+        if (target_index == 0) {
+            CopyToBuffer(balance_target_, sizeof(balance_target_), "max");
+        } else if (target_index == 1) {
+            CopyToBuffer(balance_target_, sizeof(balance_target_), "median");
+        } else if (target_index == 2) {
+            CopyToBuffer(balance_target_, sizeof(balance_target_), "min");
+        } else if (!IsPositiveIntegerText(balance_target_)) {
+            CopyToBuffer(balance_target_, sizeof(balance_target_), "1");
+        }
+        has_changes_ = true;
+    }
+    if (target_index == 3) {
+        int target_count = 1;
+        try {
+            target_count = std::max(1, std::stoi(balance_target_));
+        } catch (...) {
+            target_count = 1;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110);
+        if (ImGui::InputInt("##balance_target_count", &target_count)) {
+            if (target_count < 1) target_count = 1;
+            CopyToBuffer(balance_target_, sizeof(balance_target_),
+                         std::to_string(target_count));
+            has_changes_ = true;
+        }
+    }
+
+    ImGui::Text("Balance seed:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##balance_seed", &balance_seed_)) {
+        if (balance_seed_ < 0) balance_seed_ = 0;
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(deterministic sampler)");
+    ImGui::EndDisabled();
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Checkpointing");

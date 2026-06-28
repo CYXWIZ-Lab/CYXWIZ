@@ -8,6 +8,10 @@
 #include <memory>
 #include <string>
 
+namespace arrow {
+class Table;
+}
+
 namespace cyxwiz {
 
 class ArrowDataset;
@@ -40,6 +44,13 @@ struct TrainingInputSizeResolution {
 TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     const TrainingConfiguration& config,
     size_t num_columns);
+
+bool TryApplyBalancedClassWeightsFromArrowTable(
+    TrainingConfiguration& config,
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& label_column,
+    const std::string& partition_column,
+    const std::string& context);
 
 TrainingBatcherSet BuildArrowTrainingBatchers(
     const TrainingConfiguration& config,

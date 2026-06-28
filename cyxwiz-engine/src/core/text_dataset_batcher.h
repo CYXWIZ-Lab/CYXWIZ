@@ -56,6 +56,7 @@ public:
     size_t GetVocabSize() const;
     size_t GetNumValSamples() const { return val_samples_; }
     size_t GetNumTestSamples() const { return test_samples_; }
+    bool TryApplyBalancedClassWeights(TrainingConfiguration& config) const;
 
 private:
     std::shared_ptr<ArrowDataset> tokenized_dataset_;

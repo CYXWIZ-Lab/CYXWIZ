@@ -341,11 +341,14 @@ void TestWeightedLossConfigParams() {
     auto ce_cfg = MakeTabularConfig();
     ce_cfg.loss_params["class_weight"] = "manual";
     ce_cfg.loss_params["class_weights"] = "[1.0, 2.0, 3.0, 4.0]";
+    ce_cfg.loss_params["reduction"] = "sum";
     auto ce_built = BuildSequentialFromConfig(ce_cfg);
     ExpectTrue(ce_built.ok(), "weighted CrossEntropy config should build");
     auto* ce_loss = dynamic_cast<CrossEntropyLoss*>(ce_built.loss.get());
     ExpectTrue(ce_loss != nullptr,
                "weighted CrossEntropy config should construct CrossEntropyLoss");
+    ExpectTrue(ce_loss->GetReduction() == Reduction::Sum,
+               "CrossEntropyLoss should preserve reduction");
     ExpectTrue(ce_loss->GetClassWeights().size() == 4,
                "CrossEntropyLoss should receive four class weights");
     ExpectNear(ce_loss->GetClassWeights()[3], 4.0f, 1e-6f,
@@ -356,11 +359,14 @@ void TestWeightedLossConfigParams() {
     bce_cfg.layers.back().units = 1;
     bce_cfg.loss_type = gui::NodeType::BCEWithLogits;
     bce_cfg.loss_params["pos_weight"] = "2.5";
+    bce_cfg.loss_params["reduction"] = "sum";
     auto bce_built = BuildSequentialFromConfig(bce_cfg);
     ExpectTrue(bce_built.ok(), "weighted BCEWithLogits config should build");
     auto* bce_loss = dynamic_cast<BCEWithLogitsLoss*>(bce_built.loss.get());
     ExpectTrue(bce_loss != nullptr,
                "weighted BCEWithLogits config should construct BCEWithLogitsLoss");
+    ExpectTrue(bce_loss->GetReduction() == Reduction::Sum,
+               "BCEWithLogitsLoss should preserve reduction");
     ExpectNear(bce_loss->GetPosWeight(), 2.5f, 1e-6f,
                "BCEWithLogitsLoss should preserve pos_weight");
 
@@ -368,15 +374,32 @@ void TestWeightedLossConfigParams() {
     focal_cfg.loss_type = gui::NodeType::FocalLoss;
     focal_cfg.loss_params["alpha"] = "0.75";
     focal_cfg.loss_params["gamma"] = "1.5";
+    focal_cfg.loss_params["reduction"] = "none";
     auto focal_built = BuildSequentialFromConfig(focal_cfg);
     ExpectTrue(focal_built.ok(), "FocalLoss config should build");
     auto* focal_loss = dynamic_cast<FocalLoss*>(focal_built.loss.get());
     ExpectTrue(focal_loss != nullptr,
                "FocalLoss config should construct FocalLoss");
+    ExpectTrue(focal_loss->GetReduction() == Reduction::None,
+               "FocalLoss should preserve reduction");
     ExpectNear(focal_loss->GetAlpha(), 0.75f, 1e-6f,
                "FocalLoss should preserve alpha");
     ExpectNear(focal_loss->GetGamma(), 1.5f, 1e-6f,
                "FocalLoss should preserve gamma");
+
+    auto smooth_cfg = MakeTabularConfig();
+    smooth_cfg.loss_type = gui::NodeType::SmoothL1Loss;
+    smooth_cfg.loss_params["beta"] = "0.5";
+    smooth_cfg.loss_params["reduction"] = "sum";
+    auto smooth_built = BuildSequentialFromConfig(smooth_cfg);
+    ExpectTrue(smooth_built.ok(), "SmoothL1 config should build");
+    auto* smooth_loss = dynamic_cast<SmoothL1Loss*>(smooth_built.loss.get());
+    ExpectTrue(smooth_loss != nullptr,
+               "SmoothL1 config should construct SmoothL1Loss");
+    ExpectTrue(smooth_loss->GetReduction() == Reduction::Sum,
+               "SmoothL1Loss should preserve reduction");
+    ExpectNear(smooth_loss->GetDelta(), 0.5f, 1e-6f,
+               "SmoothL1Loss should preserve beta/delta");
 }
 
 void TestCrossEntropyTokenShapeIgnoreIndex() {

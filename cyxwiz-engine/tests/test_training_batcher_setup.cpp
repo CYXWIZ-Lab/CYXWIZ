@@ -511,6 +511,48 @@ int main() {
     Check(weighted_minority_count > 1,
           "weighted sampler should sample minority class rows with replacement");
 
+    auto balanced_loss_config = MakeConfig();
+    balanced_loss_config.train_ratio = 0.75f;
+    balanced_loss_config.output_size = 2;
+    balanced_loss_config.loss_type = gui::NodeType::CrossEntropyLoss;
+    balanced_loss_config.loss_params["class_weight"] = "balanced";
+    const bool applied_balanced_weights =
+        cyxwiz::TryApplyBalancedClassWeightsFromArrowTable(
+            balanced_loss_config,
+            MakeStratifiedDataset()->GetArrowTable(),
+            "label",
+            "",
+            "test balanced loss weights");
+    Check(applied_balanced_weights,
+          "balanced CrossEntropy weights should be computed from Arrow train split");
+    Check(balanced_loss_config.loss_params["class_weight"] == "manual",
+          "balanced class_weight should be resolved to manual weights");
+    Check(balanced_loss_config.loss_params["class_weights"] == "[0.5625, 4.5]",
+          "balanced class_weights should use n_samples / (n_classes * class_count)");
+
+    auto stratified_loss_config = MakeConfig();
+    stratified_loss_config.has_data_split = true;
+    stratified_loss_config.train_ratio = 0.50f;
+    stratified_loss_config.val_ratio = 0.25f;
+    stratified_loss_config.test_ratio = 0.25f;
+    stratified_loss_config.stratified = true;
+    stratified_loss_config.split_seed = 7;
+    stratified_loss_config.shuffle = false;
+    stratified_loss_config.output_size = 2;
+    stratified_loss_config.loss_type = gui::NodeType::CrossEntropyLoss;
+    stratified_loss_config.loss_params["class_weight"] = "balanced";
+    const bool applied_stratified_weights =
+        cyxwiz::TryApplyBalancedClassWeightsFromArrowTable(
+            stratified_loss_config,
+            MakeStratifiedDataset()->GetArrowTable(),
+            "label",
+            "",
+            "test stratified balanced loss weights");
+    Check(applied_stratified_weights,
+          "balanced CrossEntropy weights should support stratified train splits");
+    Check(stratified_loss_config.loss_params["class_weights"] == "[0.75, 1.5]",
+          "stratified balanced class_weights should use stratified train counts");
+
     auto high_worker_config = MakeConfig();
     high_worker_config.num_workers = cyxwiz::GetDefaultNumWorkers() + 64;
     auto high_worker_batchers = cyxwiz::BuildArrowTrainingBatchers(

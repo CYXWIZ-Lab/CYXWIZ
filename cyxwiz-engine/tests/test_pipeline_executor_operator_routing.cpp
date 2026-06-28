@@ -166,8 +166,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "DataInput",
         "DataOutput",
         "DBSCANCluster",
+        "DecisionTreeClassifier",
         "Differencing",
-        "ExcelInput",
         "ExponentialSmoothing",
         "ExportCSV",
         "ExportJSON",
@@ -179,10 +179,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "FilterRows",
         "GMMCluster",
         "GroupBy",
-        "HDF5Dataset",
         "HierarchicalCluster",
         "Join",
-        "JSONFile",
         "JSONPathExtractor",
         "KMeansCluster",
         "LabelEncoder",
@@ -204,7 +202,6 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "RegexTester",
         "RegressionMetricsNode",
         "RenameColumns",
-        "RESTAPISource",
         "RobustScaler",
         "ROCCurveNode",
         "RowToColumnNames",
@@ -214,7 +211,6 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "SelectColumns",
         "SentimentAnalyzer",
         "SortRows",
-        "SQLQuery",
         "StationarityTest",
         "StringManipulation",
         "TableCropper",
@@ -268,6 +264,7 @@ int main() {
     registry.UnloadDataset("ds_datainput_9901");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_operator_ACFNode_202");
+    registry.UnloadDataset("ds_operator_DecisionTreeClassifier_211");
 
     const std::string preflight_invalid_schema_json =
         R"({"nodes":[)"
@@ -290,6 +287,8 @@ int main() {
 
     const fs::path csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_routing.csv";
+    const fs::path decision_tree_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_decision_tree.csv";
     const fs::path ts_analysis_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_ts_analysis.csv";
     const fs::path export_csv_path =
@@ -328,6 +327,7 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_json_payload.csv";
     const fs::path roc_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_roc.csv";
+    fs::remove(decision_tree_csv_path);
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
@@ -358,6 +358,14 @@ int main() {
         csv << "payload\n";
         csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Ada\"\"}}\"\n";
         csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Grace\"\"}}\"\n";
+    }
+    {
+        std::ofstream csv(decision_tree_csv_path);
+        csv << "x,z,label\n";
+        csv << "0.0,4.0,0\n";
+        csv << "0.1,3.0,0\n";
+        csv << "0.9,2.0,1\n";
+        csv << "1.0,1.0,1\n";
     }
     {
         std::ofstream csv(roc_csv_path);
@@ -455,6 +463,39 @@ int main() {
           "ACF operator emits max_lag + 1 rows");
     Check(acf_table->schema()->GetFieldIndex("acf") >= 0,
           "ACF operator output has acf column");
+
+    const std::string decision_tree_json =
+        R"({"nodes":[)"
+        R"({"id":210,"type":"DataInput","name":"TreeInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":211,"type":"DecisionTreeClassifier","name":"Tree","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"pred",)"
+        R"("max_depth":"2","criterion":"gini"}})"
+        R"(],"links":[{"start_node":210,"end_node":211}]})";
+
+    cyxwiz::PipelineExecutor decision_tree_executor;
+    Check(decision_tree_executor.ExecutePipeline(decision_tree_json),
+          "PipelineExecutor routes DecisionTreeClassifier through "
+          "PipelineOperatorFactory: " +
+              decision_tree_executor.GetLastError());
+
+    auto decision_tree_output =
+        registry.GetArrowDataset("ds_operator_DecisionTreeClassifier_211");
+    Check(decision_tree_output != nullptr,
+          "DecisionTreeClassifier operator output dataset is registered");
+    auto decision_tree_table = decision_tree_output->GetArrowTable();
+    Check(decision_tree_table != nullptr,
+          "DecisionTreeClassifier operator output table exists");
+    Check(decision_tree_table->num_rows() == 4,
+          "DecisionTreeClassifier operator preserves row count");
+    Check(decision_tree_table->schema()->GetFieldIndex("pred") >= 0,
+          "DecisionTreeClassifier operator appends prediction column");
+    Check(ReadNumericValue(decision_tree_table, "pred", 0) == 0.0,
+          "DecisionTreeClassifier predicts the first training row");
+    Check(ReadNumericValue(decision_tree_table, "pred", 3) == 1.0,
+          "DecisionTreeClassifier predicts the last training row");
 
     const std::string missing_acf_signal_json =
         R"({"nodes":[)"
@@ -1680,6 +1721,23 @@ int main() {
               "missing required parameter 'target_col'") != std::string::npos,
           "LinearRegressionNode missing target_col validation should be specific: " +
               missing_linear_regression_target_executor.GetLastError());
+
+    const std::string missing_decision_tree_target_json =
+        R"({"nodes":[)"
+        R"({"id":214,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":215,"type":"DecisionTreeClassifier","name":"MissingTarget","parameters":{)"
+        R"("feature_cols":"x,z"}})"
+        R"(],"links":[{"start_node":214,"end_node":215}]})";
+
+    cyxwiz::PipelineExecutor missing_decision_tree_target_executor;
+    Check(!missing_decision_tree_target_executor.ExecutePipeline(
+              missing_decision_tree_target_json),
+          "DecisionTreeClassifier missing target_col should fail validation");
+    Check(missing_decision_tree_target_executor.GetLastError().find(
+              "missing required parameter 'target_col'") != std::string::npos,
+          "DecisionTreeClassifier missing target_col validation should be specific: " +
+              missing_decision_tree_target_executor.GetLastError());
 
     const std::string missing_convolution_kernel_json =
         R"({"nodes":[)"
@@ -5332,6 +5390,7 @@ int main() {
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_operator_ACFNode_202");
+    registry.UnloadDataset("ds_operator_DecisionTreeClassifier_211");
     registry.UnloadDataset("ds_input_133");
     registry.UnloadDataset("ds_select_134");
     registry.UnloadDataset("ds_datainput_300");
@@ -5424,6 +5483,7 @@ int main() {
     registry.UnloadDataset("ds_datainput_150");
     registry.UnloadDataset("ds_datainput_83");
     fs::remove(csv_path);
+    fs::remove(decision_tree_csv_path);
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);

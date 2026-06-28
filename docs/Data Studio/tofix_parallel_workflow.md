@@ -47,7 +47,7 @@ Primary doc:
 Allowed write scope:
 
 - `docs/Data Studio/tofix19.md`
-- `docs/Data Studio/tofix14.md`, only if needed for direct NER/Siamese truth
+- `docs/Data Studio/done14.md`, only if needed for direct NER/Siamese truth
 - focused compiler/training guardrail files under `cyxwiz-engine/src/core`
 - focused tests under `cyxwiz-engine/tests`
 
