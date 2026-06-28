@@ -4037,6 +4037,27 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        case NodeType::TreeModelPredictor: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin pred_out;
+            pred_out.id = next_pin_id_++;
+            pred_out.type = PinType::Dataset;
+            pred_out.name = "Predictions";
+            pred_out.is_input = false;
+            node.outputs.push_back(pred_out);
+
+            node.parameters["model_path"] = "";
+            node.parameters["feature_cols"] = "";
+            node.parameters["prediction_col"] = "prediction";
+            break;
+        }
+
         case NodeType::SVMClassifier: {
             NodePin data_in;
             data_in.id = next_pin_id_++;
@@ -5864,6 +5885,7 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::DecisionTreeClassifier:
         case NodeType::RandomForestClassifier:
         case NodeType::GradientBoostingClassifier:
+        case NodeType::TreeModelPredictor:
         case NodeType::SVMClassifier:
         case NodeType::KNNClassifier:
         case NodeType::NaiveBayesClassifier:

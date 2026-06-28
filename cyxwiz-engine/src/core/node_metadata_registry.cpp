@@ -715,6 +715,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::GradientBoostingClassifier,
         "classic_ml",
         "Table-path boosted classical ML classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::TreeModelPredictor,
+        "classic_ml",
+        "Table-path classical ML inference node for saved tree-family model artifacts.");
 
     for (NodeType node_type : {
              NodeType::Dense,
@@ -1462,6 +1466,16 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"max_depth", "int", "3", "Max tree depth", {}, ""},
          {"min_samples_split", "int", "2", "Min samples to split", {}, ""},
          {"min_samples_leaf", "int", "1", "Min samples per leaf", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TreeModelPredictor, NodeCategory::Analytics, "Tree Model Predictor", ICON_FA_FILE_IMPORT,
+        {"tree", "model", "predict", "predictor", "inference", "artifact", "classic ml"}, 0, false, "Saved tree model inference",
+        "Loads a native CyxWiz tree-family model artifact and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with compatible numeric feature columns"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"model_path", "string", "", "Saved JSON tree model artifact path", {}, ""},
+         {"feature_cols", "string", "", "Feature columns (comma-separated; blank = artifact feature order)", {}, ""},
+         {"prediction_col", "string", "prediction", "Output prediction column", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SVMClassifier, NodeCategory::Analytics, "SVM Classifier", ICON_FA_BORDER_ALL,

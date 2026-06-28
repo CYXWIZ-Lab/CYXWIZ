@@ -381,6 +381,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_TI_PLANT;
             case NodeType::GradientBoostingClassifier:
                 return ICON_TI_CHART_CANDLE;
+            case NodeType::TreeModelPredictor:
+                return ICON_TI_FILE_ANALYTICS;
             case NodeType::SVMClassifier:
             case NodeType::SVMRegressor:
                 return ICON_TI_VECTOR;
@@ -562,6 +564,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TableSplitter:
             case NodeType::HierarchicalCluster:
             case NodeType::DecisionTreeClassifier:
+            case NodeType::TreeModelPredictor:
                 return ICON_RI_NODE_TREE;
 
             // Merge Operations
@@ -2115,6 +2118,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_CUBES;
         case NodeType::GradientBoostingClassifier:
             return ICON_FA_CHART_LINE;
+        case NodeType::TreeModelPredictor:
+            return ICON_FA_FILE_IMPORT;
         case NodeType::SVMClassifier:
         case NodeType::SVMRegressor:
             return ICON_FA_SQUARE;

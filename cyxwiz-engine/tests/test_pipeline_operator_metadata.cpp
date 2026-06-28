@@ -2687,6 +2687,34 @@ int main() {
               std::string::npos,
           "GradientBoosting workflow lane guidance should name the classical ML lane");
 
+    const auto* tree_predictor_meta =
+        metadata.GetMetadata(gui::NodeType::TreeModelPredictor);
+    Check(tree_predictor_meta != nullptr,
+          "TreeModelPredictor metadata should exist");
+    Check(tree_predictor_meta->status ==
+              cyxwiz::NodeImplementationStatus::Implemented,
+          "TreeModelPredictor metadata should be implemented");
+    Check(tree_predictor_meta->badge != "Blocked",
+          "TreeModelPredictor metadata should not be blocked");
+    Check(HasInputType(tree_predictor_meta, "Data", gui::PinType::Dataset),
+          "TreeModelPredictor should expose a table input");
+    Check(HasOutputType(tree_predictor_meta, "Predictions",
+                        gui::PinType::Dataset),
+          "TreeModelPredictor should expose a table prediction output");
+    Check(HasParameter(tree_predictor_meta, "model_path") &&
+              HasParameter(tree_predictor_meta, "feature_cols") &&
+              HasParameter(tree_predictor_meta, "prediction_col"),
+          "TreeModelPredictor should expose inference properties in metadata");
+    CheckSupportAxis(
+        tree_predictor_meta,
+        "Workflow Lane",
+        "classic_ml",
+        true,
+        "TreeModelPredictor");
+    Check(tree_predictor_meta->help_text.find("classical ML") !=
+              std::string::npos,
+          "TreeModelPredictor workflow lane guidance should name the classical ML lane");
+
     for (auto type : {
              gui::NodeType::StandardScaler,
              gui::NodeType::TimeSeriesWindow,

@@ -4748,6 +4748,10 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
         case NodeType::ExportParquet: return "ExportParquet";
         case NodeType::ExportJSON: return "ExportJSON";
         case NodeType::DescribeStats: return "DescribeStats";
+        case NodeType::DecisionTreeClassifier: return "DecisionTreeClassifier";
+        case NodeType::RandomForestClassifier: return "RandomForestClassifier";
+        case NodeType::GradientBoostingClassifier: return "GradientBoostingClassifier";
+        case NodeType::TreeModelPredictor: return "TreeModelPredictor";
         // KNIME-style table manipulation nodes
         case NodeType::ExcelFile: return "ExcelInput";
         case NodeType::ExportExcel: return "ExportExcel";

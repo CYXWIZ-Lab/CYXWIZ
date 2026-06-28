@@ -56,6 +56,9 @@ void TestDecisionTreeRoundTrip(const std::filesystem::path& root) {
     Check(cyxwiz::SaveDecisionTreeModelArtifact(
               model, path.string(), &error),
           error);
+    Check(cyxwiz::ReadTreeModelArtifactType(path.string(), &error) ==
+              "DecisionTreeClassifier",
+          "DecisionTree artifact type should be readable");
 
     cyxwiz::DecisionTreeModel loaded;
     Check(cyxwiz::LoadDecisionTreeModelArtifact(

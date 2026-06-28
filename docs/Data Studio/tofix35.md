@@ -33,6 +33,8 @@ Implemented so far:
 - DecisionTree, RandomForest, and GradientBoosting table-path classifiers can
   optionally write native JSON model artifacts via `model_path`, and their
   model classes have load/save round-trip coverage.
+- `TreeModelPredictor` can load a saved native tree-family artifact and append
+  predictions to a compatible new table.
 
 ## Current Code Truth
 
@@ -190,14 +192,15 @@ Current state:
   write a native `cyxwiz_tree_model` JSON artifact during pipeline execution.
 - Native load/save helpers round-trip DecisionTree, RandomForest, and
   GradientBoosting model state and preserve predictions across sessions.
+- `TreeModelPredictor` is implemented as a PipelineOperatorFactory-backed
+  table-path inference node. It requires `model_path`, defaults to the artifact
+  feature order when `feature_cols` is blank, and appends `prediction_col`.
+- `TreeModelPredictor` exposes simple Properties-panel controls for
+  `model_path`, `feature_cols`, and `prediction_col`; no Open Dialog is needed.
 
 Still pending:
 
 - Tree-family artifacts are native JSON files, not `.cyxmodel` packages.
-- There is no separate GUI load/inference node for applying a persisted tree
-  artifact to a new dataset yet; the implemented route remains in-pipeline
-  fit-and-predict, with artifact save/load APIs available for follow-up
-  inference work.
 
 Affected files:
 
@@ -300,11 +303,10 @@ For an imbalanced sentiment dataset after this pass:
 - `DataSplit.stratified=true` is honored for supported Arrow/text splits.
 - `FocalLoss` can be selected as a supported visual graph loss.
 
-Remaining caveat: `DecisionTreeClassifier`, `RandomForestClassifier`, and
-`GradientBoostingClassifier` are executable as table-path
-PipelineOperatorFactory nodes and can write native JSON model artifacts, but
-there is not yet a separate GUI load/inference node for applying a saved tree
-artifact to a new dataset.
+Tree-model caveat: `DecisionTreeClassifier`, `RandomForestClassifier`,
+`GradientBoostingClassifier`, and `TreeModelPredictor` use native JSON
+`cyxwiz_tree_model` artifacts. A future `.cyxmodel` package can wrap the same
+model state if/when the broader model-package format is defined.
 
 ## Recommended Implementation Order
 
@@ -556,6 +558,11 @@ Tasks:
 - [x] Expose optional `model_path` properties so each classifier can write an
   artifact during pipeline execution.
 - [x] Add artifact round-trip tests and routed pipeline artifact-write checks.
+- [x] Add a `TreeModelPredictor` operator that loads saved native tree-family
+  artifacts and appends predictions to a new compatible table.
+- [x] Register `TreeModelPredictor` in GUI metadata, graph loading/runtime name
+  maps, PipelineOperatorFactory, and runtime capability validation.
+- [x] Add standalone predictor tests and routed pipeline inference checks.
 
 Acceptance:
 
@@ -572,6 +579,9 @@ Acceptance:
   classifier when supplied.
 - Saved tree-family artifacts load back into native models and preserve
   predictions.
+- `TreeModelPredictor` loads saved DecisionTree, RandomForest, and
+  GradientBoosting artifacts and appends a prediction column for numeric or
+  string labels.
 
 ## Non-Goals
 

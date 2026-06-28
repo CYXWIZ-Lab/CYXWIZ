@@ -217,6 +217,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "StringManipulation",
         "TableCropper",
         "TargetEncoder",
+        "TreeModelPredictor",
         "TextClean",
         "TextCleanNode",
         "TextTokenize",
@@ -262,6 +263,7 @@ int main() {
 
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnloadDataset("ds_datainput_1");
+    registry.UnloadDataset("ds_datainput_222");
     registry.UnloadDataset("ds_datainput_429");
     registry.UnloadDataset("ds_datainput_9901");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
@@ -269,6 +271,7 @@ int main() {
     registry.UnloadDataset("ds_operator_DecisionTreeClassifier_211");
     registry.UnloadDataset("ds_operator_RandomForestClassifier_213");
     registry.UnloadDataset("ds_operator_GradientBoostingClassifier_219");
+    registry.UnloadDataset("ds_operator_TreeModelPredictor_223");
 
     const std::string preflight_invalid_schema_json =
         R"({"nodes":[)"
@@ -514,6 +517,38 @@ int main() {
     Check(fs::exists(decision_tree_model_path),
           "DecisionTreeClassifier model_path should write a model artifact");
 
+    const std::string tree_predictor_json =
+        R"({"nodes":[)"
+        R"({"id":222,"type":"DataInput","name":"PredictInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":223,"type":"TreeModelPredictor","name":"TreePredict","parameters":{)"
+        R"("model_path":")" +
+        JsonEscapePath(decision_tree_model_path.string()) +
+        R"(","feature_cols":"x,z","prediction_col":"loaded_pred"}})"
+        R"(],"links":[{"start_node":222,"end_node":223}]})";
+
+    cyxwiz::PipelineExecutor tree_predictor_executor;
+    Check(tree_predictor_executor.ExecutePipeline(tree_predictor_json),
+          "PipelineExecutor routes TreeModelPredictor through "
+          "PipelineOperatorFactory: " +
+              tree_predictor_executor.GetLastError());
+
+    auto tree_predictor_output =
+        registry.GetArrowDataset("ds_operator_TreeModelPredictor_223");
+    Check(tree_predictor_output != nullptr,
+          "TreeModelPredictor operator output dataset is registered");
+    auto tree_predictor_table = tree_predictor_output->GetArrowTable();
+    Check(tree_predictor_table != nullptr,
+          "TreeModelPredictor operator output table exists");
+    Check(tree_predictor_table->schema()->GetFieldIndex("loaded_pred") >= 0,
+          "TreeModelPredictor operator appends prediction column");
+    Check(ReadNumericValue(tree_predictor_table, "loaded_pred", 0) == 0.0,
+          "TreeModelPredictor predicts first row from loaded artifact");
+    Check(ReadNumericValue(tree_predictor_table, "loaded_pred", 3) == 1.0,
+          "TreeModelPredictor predicts last row from loaded artifact");
+
     const std::string random_forest_json =
         R"({"nodes":[)"
         R"({"id":212,"type":"DataInput","name":"ForestInput","parameters":{)"
@@ -589,6 +624,22 @@ int main() {
           "GradientBoostingClassifier predicts the last training row");
     Check(fs::exists(gradient_boosting_model_path),
           "GradientBoostingClassifier model_path should write a model artifact");
+
+    const std::string missing_tree_predictor_model_json =
+        R"({"nodes":[)"
+        R"({"id":224,"type":"DataInput","name":"PredictInput","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":225,"type":"TreeModelPredictor","name":"MissingModel","parameters":{}})"
+        R"(],"links":[{"start_node":224,"end_node":225}]})";
+
+    cyxwiz::PipelineExecutor missing_tree_predictor_model_executor;
+    Check(!missing_tree_predictor_model_executor.ExecutePipeline(
+              missing_tree_predictor_model_json),
+          "TreeModelPredictor missing model_path should fail validation");
+    Check(missing_tree_predictor_model_executor.GetLastError().find(
+              "missing required parameter 'model_path'") != std::string::npos,
+          "TreeModelPredictor missing model_path validation should be specific: " +
+              missing_tree_predictor_model_executor.GetLastError());
 
     const std::string missing_acf_signal_json =
         R"({"nodes":[)"
@@ -5576,6 +5627,8 @@ int main() {
     registry.UnloadDataset("ds_operator_TextVectorize_157");
     registry.UnloadDataset("ds_datainput_158");
     registry.UnloadDataset("ds_datainput_160");
+    registry.UnloadDataset("ds_datainput_222");
+    registry.UnloadDataset("ds_operator_TreeModelPredictor_223");
     registry.UnloadDataset("ds_datainput_71");
     registry.UnloadDataset("ds_binning_72");
     registry.UnloadDataset("ds_datainput_197");

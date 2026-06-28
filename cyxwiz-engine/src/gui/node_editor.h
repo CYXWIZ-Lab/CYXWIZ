@@ -576,6 +576,9 @@ enum class NodeType {
     // ===== Appended Training Loss Nodes =====
     FocalLoss,          // Class-imbalance-aware focal cross-entropy loss
 
+    // ===== Appended Classic ML Inference Nodes =====
+    TreeModelPredictor, // Apply a saved tree-family model artifact
+
     // Special sentinel value
     Unknown
 };

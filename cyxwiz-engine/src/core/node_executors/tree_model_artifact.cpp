@@ -181,6 +181,33 @@ bool ValidateEnvelope(const json& document,
 
 } // namespace
 
+std::string ReadTreeModelArtifactType(const std::string& path,
+                                      std::string* error) {
+    try {
+        json document;
+        if (!ReadJsonFile(path, document, error)) {
+            return {};
+        }
+        if (document.value("format", "") != "cyxwiz_tree_model") {
+            SetError(error, "model artifact format is not cyxwiz_tree_model");
+            return {};
+        }
+        const std::string model_type = document.value("model_type", "");
+        if (model_type.empty()) {
+            SetError(error, "model artifact is missing model_type");
+            return {};
+        }
+        if (!document.contains("model")) {
+            SetError(error, "model artifact is missing model payload");
+            return {};
+        }
+        return model_type;
+    } catch (const std::exception& ex) {
+        SetError(error, ex.what());
+        return {};
+    }
+}
+
 bool SaveDecisionTreeModelArtifact(const DecisionTreeModel& model,
                                    const std::string& path,
                                    std::string* error) {

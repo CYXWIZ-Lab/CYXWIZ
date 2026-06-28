@@ -8,6 +8,9 @@
 
 namespace cyxwiz {
 
+std::string ReadTreeModelArtifactType(const std::string& path,
+                                      std::string* error = nullptr);
+
 bool SaveDecisionTreeModelArtifact(const DecisionTreeModel& model,
                                    const std::string& path,
                                    std::string* error = nullptr);

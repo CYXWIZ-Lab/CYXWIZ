@@ -166,6 +166,10 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"GMMCluster", NodeType::GMMCluster},
         {"LinearRegressionNode", NodeType::LinearRegressionNode},
         {"PolynomialRegressionNode", NodeType::PolynomialRegressionNode},
+        {"DecisionTreeClassifier", NodeType::DecisionTreeClassifier},
+        {"RandomForestClassifier", NodeType::RandomForestClassifier},
+        {"GradientBoostingClassifier", NodeType::GradientBoostingClassifier},
+        {"TreeModelPredictor", NodeType::TreeModelPredictor},
 
         // Text Preprocessing (Phase 3) — the GraphCompiler treats these
         // as config-only nodes: ExtractTextTokenizer / ExtractTextVocabulary

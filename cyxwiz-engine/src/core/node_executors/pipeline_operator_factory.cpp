@@ -14,6 +14,7 @@
 #include "signal_processing_operators.h"
 #include "text_tokenizer_operator.h"
 #include "tfidf_vectorizer_operator.h"
+#include "tree_model_predictor_operator.h"
 #include "time_series_analysis_operators.h"
 #include "time_series_features_operator.h"
 #include "time_series_split_operator.h"
@@ -119,6 +120,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::GradientBoostingClassifier, []() {
         return std::make_unique<GradientBoostingClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::TreeModelPredictor, []() {
+        return std::make_unique<TreeModelPredictorOperator>();
     });
     // Tool-to-Node data preprocessing block (closes Phase 4).
     RegisterCreator(gui::NodeType::StandardScaler, []() {
