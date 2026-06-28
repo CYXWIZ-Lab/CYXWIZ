@@ -166,6 +166,9 @@ set(ENGINE_SOURCES
     src/core/node_executors/random_forest_model.cpp          # Tool-to-Node Band 1
     src/core/node_executors/random_forest_trainer.cpp        # Tool-to-Node Band 1
     src/core/node_executors/random_forest_operator.cpp       # Tool-to-Node Band 1
+    src/core/node_executors/gradient_boosting_model.cpp      # Tool-to-Node Band 1
+    src/core/node_executors/gradient_boosting_trainer.cpp    # Tool-to-Node Band 1
+    src/core/node_executors/gradient_boosting_operator.cpp   # Tool-to-Node Band 1
     src/core/node_executors/signal_processing_operators.cpp  # Tool-to-Node Band 1
     src/core/node_executors/regression_operators.cpp         # Tool-to-Node Band 1
     src/core/node_executors/preprocessing_operators.cpp      # Tool-to-Node Band 1
@@ -545,6 +548,9 @@ set(ENGINE_HEADERS
     src/core/node_executors/random_forest_model.h
     src/core/node_executors/random_forest_trainer.h
     src/core/node_executors/random_forest_operator.h
+    src/core/node_executors/gradient_boosting_model.h
+    src/core/node_executors/gradient_boosting_trainer.h
+    src/core/node_executors/gradient_boosting_operator.h
     src/core/node_executors/signal_processing_operators.h
     src/core/node_executors/regression_operators.h
     src/core/node_executors/preprocessing_operators.h
@@ -1544,6 +1550,37 @@ set_target_properties(test_random_forest_operator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Gradient Boosting Operator =====
+add_executable(test_gradient_boosting_operator
+    tests/test_gradient_boosting_operator.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/node_executors/gradient_boosting_trainer.cpp
+    src/core/node_executors/gradient_boosting_operator.cpp
+)
+
+target_include_directories(test_gradient_boosting_operator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_gradient_boosting_operator PRIVATE
+    Arrow::arrow_shared
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_gradient_boosting_operator PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_gradient_boosting_operator PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Pipeline Operator Metadata Drift Guard =====
 add_executable(test_pipeline_operator_metadata
     tests/test_pipeline_operator_metadata.cpp
@@ -1562,6 +1599,9 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/node_executors/gradient_boosting_trainer.cpp
+    src/core/node_executors/gradient_boosting_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/log_transform_operator.cpp
@@ -1628,6 +1668,9 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/node_executors/gradient_boosting_trainer.cpp
+    src/core/node_executors/gradient_boosting_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/log_transform_operator.cpp
@@ -2064,6 +2107,9 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/random_forest_model.cpp
     src/core/node_executors/random_forest_trainer.cpp
     src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/node_executors/gradient_boosting_trainer.cpp
+    src/core/node_executors/gradient_boosting_operator.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/log_transform_operator.cpp

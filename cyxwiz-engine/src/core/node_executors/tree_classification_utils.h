@@ -18,6 +18,12 @@ bool ParseIntParam(const std::map<std::string, std::string>& params,
                    const std::string& op_name,
                    std::string& error);
 
+bool ParseDoubleParam(const std::map<std::string, std::string>& params,
+                      const std::string& key,
+                      double& out,
+                      const std::string& op_name,
+                      std::string& error);
+
 arrow::Status ReadClassificationLabels(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& target_col,

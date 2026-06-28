@@ -3,6 +3,7 @@
 #include "count_vectorizer_operator.h"
 #include "decision_tree_operator.h"
 #include "differencing_operator.h"
+#include "gradient_boosting_operator.h"
 #include "identity_operator.h"
 #include "log_transform_operator.h"
 #include "pca_operator.h"
@@ -115,6 +116,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::RandomForestClassifier, []() {
         return std::make_unique<RandomForestClassifierOperator>();
+    });
+    RegisterCreator(gui::NodeType::GradientBoostingClassifier, []() {
+        return std::make_unique<GradientBoostingClassifierOperator>();
     });
     // Tool-to-Node data preprocessing block (closes Phase 4).
     RegisterCreator(gui::NodeType::StandardScaler, []() {

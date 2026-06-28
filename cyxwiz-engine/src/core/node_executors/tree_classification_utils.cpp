@@ -49,6 +49,30 @@ bool ParseIntParam(const std::map<std::string, std::string>& params,
     }
 }
 
+bool ParseDoubleParam(const std::map<std::string, std::string>& params,
+                      const std::string& key,
+                      double& out,
+                      const std::string& op_name,
+                      std::string& error) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        return true;
+    }
+    try {
+        size_t parsed = 0;
+        const double value = std::stod(it->second, &parsed);
+        if (parsed != it->second.size()) {
+            throw std::runtime_error("trailing characters");
+        }
+        out = value;
+        return true;
+    } catch (...) {
+        error = op_name + ": '" + key + "' is not a valid number: " +
+                it->second;
+        return false;
+    }
+}
+
 namespace {
 
 bool IsNumericType(const std::shared_ptr<arrow::DataType>& type) {

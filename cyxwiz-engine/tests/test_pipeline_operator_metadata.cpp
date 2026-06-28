@@ -2651,6 +2651,39 @@ int main() {
     Check(random_forest_meta->help_text.find("classical ML") != std::string::npos,
           "RandomForest workflow lane guidance should name the classical ML lane");
 
+    const auto* gradient_boosting_meta =
+        metadata.GetMetadata(gui::NodeType::GradientBoostingClassifier);
+    Check(gradient_boosting_meta != nullptr,
+          "GradientBoosting metadata should exist");
+    Check(gradient_boosting_meta->status ==
+              cyxwiz::NodeImplementationStatus::Implemented,
+          "GradientBoosting metadata should be implemented");
+    Check(gradient_boosting_meta->badge != "Blocked",
+          "GradientBoosting metadata should not be blocked");
+    Check(HasInputType(gradient_boosting_meta, "Data", gui::PinType::Dataset),
+          "GradientBoosting should expose a table input");
+    Check(HasOutputType(gradient_boosting_meta, "Predictions",
+                        gui::PinType::Dataset),
+          "GradientBoosting should expose a table prediction output");
+    Check(HasParameter(gradient_boosting_meta, "target_col") &&
+              HasParameter(gradient_boosting_meta, "feature_cols") &&
+              HasParameter(gradient_boosting_meta, "prediction_col") &&
+              HasParameter(gradient_boosting_meta, "n_estimators") &&
+              HasParameter(gradient_boosting_meta, "learning_rate") &&
+              HasParameter(gradient_boosting_meta, "max_depth") &&
+              HasParameter(gradient_boosting_meta, "min_samples_split") &&
+              HasParameter(gradient_boosting_meta, "min_samples_leaf"),
+          "GradientBoosting should expose classifier properties in metadata");
+    CheckSupportAxis(
+        gradient_boosting_meta,
+        "Workflow Lane",
+        "classic_ml",
+        true,
+        "GradientBoostingClassifier");
+    Check(gradient_boosting_meta->help_text.find("classical ML") !=
+              std::string::npos,
+          "GradientBoosting workflow lane guidance should name the classical ML lane");
+
     for (auto type : {
              gui::NodeType::StandardScaler,
              gui::NodeType::TimeSeriesWindow,

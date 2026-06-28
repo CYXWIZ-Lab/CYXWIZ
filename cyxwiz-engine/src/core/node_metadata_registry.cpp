@@ -711,6 +711,10 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::RandomForestClassifier,
         "classic_ml",
         "Table-path classical ML ensemble classifier for numeric tabular features.");
+    apply_workflow_lane_guidance(
+        NodeType::GradientBoostingClassifier,
+        "classic_ml",
+        "Table-path boosted classical ML classifier for numeric tabular features.");
 
     for (NodeType node_type : {
              NodeType::Dense,
@@ -1443,14 +1447,19 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GradientBoostingClassifier, NodeCategory::Analytics, "Gradient Boosting", ICON_FA_CHART_LINE,
-        {"gradient", "boosting", "classifier", "trees"}, 0, false, "Gradient Boosted Trees classifier",
-        "Boosted decision-tree classifier. Not wired to a real graph executor yet.", "",
-        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}},
-        {{"n_estimators", "int", "100", "Number of trees", {}, ""},
+        {"gradient", "boosting", "classifier", "trees", "classic ml"}, 0, false, "Gradient Boosted Trees classifier",
+        "Fits one-vs-rest boosted regression trees and appends a prediction column.", "",
+        {{"Data", PinType::Dataset, true, "Input table with features and target column"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus prediction column"}},
+        {{"target_col", "string", "", "Target label column", {}, ""},
+         {"feature_cols", "string", "", "Feature columns (comma-separated; blank = numeric auto-detect)", {}, ""},
+         {"prediction_col", "string", "prediction", "Output prediction column", {}, ""},
+         {"n_estimators", "int", "100", "Number of boosting rounds", {}, ""},
          {"learning_rate", "float", "0.1", "Learning rate", {}, ""},
-         {"max_depth", "int", "3", "Max tree depth", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+         {"max_depth", "int", "3", "Max tree depth", {}, ""},
+         {"min_samples_split", "int", "2", "Min samples to split", {}, ""},
+         {"min_samples_leaf", "int", "1", "Min samples per leaf", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SVMClassifier, NodeCategory::Analytics, "SVM Classifier", ICON_FA_BORDER_ALL,
         {"svm", "support", "vector"}, 0, false, "Support Vector Machine classifier",

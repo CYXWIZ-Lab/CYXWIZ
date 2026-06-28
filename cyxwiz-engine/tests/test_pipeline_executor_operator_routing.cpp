@@ -178,6 +178,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "FilterDesigner",
         "FilterRows",
         "GMMCluster",
+        "GradientBoostingClassifier",
         "GroupBy",
         "HierarchicalCluster",
         "Join",
@@ -267,6 +268,7 @@ int main() {
     registry.UnloadDataset("ds_operator_ACFNode_202");
     registry.UnloadDataset("ds_operator_DecisionTreeClassifier_211");
     registry.UnloadDataset("ds_operator_RandomForestClassifier_213");
+    registry.UnloadDataset("ds_operator_GradientBoostingClassifier_219");
 
     const std::string preflight_invalid_schema_json =
         R"({"nodes":[)"
@@ -531,6 +533,39 @@ int main() {
           "RandomForestClassifier predicts the first training row");
     Check(ReadNumericValue(random_forest_table, "rf_pred", 3) == 1.0,
           "RandomForestClassifier predicts the last training row");
+
+    const std::string gradient_boosting_json =
+        R"({"nodes":[)"
+        R"({"id":218,"type":"DataInput","name":"BoostInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(decision_tree_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":219,"type":"GradientBoostingClassifier","name":"Boost","parameters":{)"
+        R"("target_col":"label","feature_cols":"x,z","prediction_col":"gb_pred",)"
+        R"("n_estimators":"30","learning_rate":"0.4","max_depth":"2"}})"
+        R"(],"links":[{"start_node":218,"end_node":219}]})";
+
+    cyxwiz::PipelineExecutor gradient_boosting_executor;
+    Check(gradient_boosting_executor.ExecutePipeline(gradient_boosting_json),
+          "PipelineExecutor routes GradientBoostingClassifier through "
+          "PipelineOperatorFactory: " +
+              gradient_boosting_executor.GetLastError());
+
+    auto gradient_boosting_output =
+        registry.GetArrowDataset("ds_operator_GradientBoostingClassifier_219");
+    Check(gradient_boosting_output != nullptr,
+          "GradientBoostingClassifier operator output dataset is registered");
+    auto gradient_boosting_table = gradient_boosting_output->GetArrowTable();
+    Check(gradient_boosting_table != nullptr,
+          "GradientBoostingClassifier operator output table exists");
+    Check(gradient_boosting_table->num_rows() == 4,
+          "GradientBoostingClassifier operator preserves row count");
+    Check(gradient_boosting_table->schema()->GetFieldIndex("gb_pred") >= 0,
+          "GradientBoostingClassifier operator appends prediction column");
+    Check(ReadNumericValue(gradient_boosting_table, "gb_pred", 0) == 0.0,
+          "GradientBoostingClassifier predicts the first training row");
+    Check(ReadNumericValue(gradient_boosting_table, "gb_pred", 3) == 1.0,
+          "GradientBoostingClassifier predicts the last training row");
 
     const std::string missing_acf_signal_json =
         R"({"nodes":[)"
@@ -1790,6 +1825,23 @@ int main() {
               "missing required parameter 'target_col'") != std::string::npos,
           "RandomForestClassifier missing target_col validation should be specific: " +
               missing_random_forest_target_executor.GetLastError());
+
+    const std::string missing_gradient_boosting_target_json =
+        R"({"nodes":[)"
+        R"({"id":220,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"({"id":221,"type":"GradientBoostingClassifier","name":"MissingTarget","parameters":{)"
+        R"("feature_cols":"x,z"}})"
+        R"(],"links":[{"start_node":220,"end_node":221}]})";
+
+    cyxwiz::PipelineExecutor missing_gradient_boosting_target_executor;
+    Check(!missing_gradient_boosting_target_executor.ExecutePipeline(
+              missing_gradient_boosting_target_json),
+          "GradientBoostingClassifier missing target_col should fail validation");
+    Check(missing_gradient_boosting_target_executor.GetLastError().find(
+              "missing required parameter 'target_col'") != std::string::npos,
+          "GradientBoostingClassifier missing target_col validation should be specific: " +
+              missing_gradient_boosting_target_executor.GetLastError());
 
     const std::string missing_convolution_kernel_json =
         R"({"nodes":[)"
@@ -5444,6 +5496,7 @@ int main() {
     registry.UnloadDataset("ds_operator_ACFNode_202");
     registry.UnloadDataset("ds_operator_DecisionTreeClassifier_211");
     registry.UnloadDataset("ds_operator_RandomForestClassifier_213");
+    registry.UnloadDataset("ds_operator_GradientBoostingClassifier_219");
     registry.UnloadDataset("ds_input_133");
     registry.UnloadDataset("ds_select_134");
     registry.UnloadDataset("ds_datainput_300");
