@@ -1,5 +1,7 @@
 #include "arrayfire_backend_utils.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <mutex>
 #include <set>
@@ -15,6 +17,23 @@ namespace {
 std::mutex g_backend_fallback_log_mutex;
 std::set<std::string> g_backend_fallback_log_keys;
 
+std::string ToLowerAscii(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return text;
+}
+
+bool ContainsAny(const std::string& text,
+                 const std::initializer_list<const char*> needles) {
+    for (const char* needle : needles) {
+        if (needle != nullptr && text.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 const char* BackendFallbackReasonName(BackendFallbackReason reason) {
@@ -25,8 +44,18 @@ const char* BackendFallbackReasonName(BackendFallbackReason reason) {
         return "arrayfire_jit_compile_failure";
     case BackendFallbackReason::GpuBackendException:
         return "gpu_backend_exception";
+    case BackendFallbackReason::GpuOutOfMemory:
+        return "gpu_out_of_memory";
+    case BackendFallbackReason::UnsupportedDtype:
+        return "unsupported_dtype";
+    case BackendFallbackReason::UnsupportedShape:
+        return "unsupported_shape";
+    case BackendFallbackReason::BackendCompileTimeout:
+        return "backend_compile_timeout";
+    case BackendFallbackReason::BackendInternalError:
+        return "backend_internal_error";
     }
-    return "gpu_backend_exception";
+    return "backend_internal_error";
 }
 
 bool IsCudaJitFormalParameterOverflow(const char* message) {
@@ -44,16 +73,56 @@ BackendFallbackReason ClassifyArrayFireBackendFallbackReason(
         return BackendFallbackReason::CudaJitParamOverflow;
     }
     if (message == nullptr) {
-        return BackendFallbackReason::GpuBackendException;
+        return BackendFallbackReason::BackendInternalError;
     }
-    const std::string text(message);
-    if (text.find("NVRTC") != std::string::npos ||
-        text.find("JIT") != std::string::npos ||
-        text.find("compile") != std::string::npos ||
-        text.find("Compile") != std::string::npos) {
+    const std::string text = ToLowerAscii(message);
+    if (ContainsAny(text, {
+            "out of memory",
+            "cuda_error_memory_allocation",
+            "memory allocation",
+            "allocation failed",
+            "failed to allocate",
+            "cl_mem_object_allocation_failure",
+            "af_err_no_mem"})) {
+        return BackendFallbackReason::GpuOutOfMemory;
+    }
+    if (ContainsAny(text, {
+            "unsupported dtype",
+            "unsupported type",
+            "type not supported",
+            "invalid type",
+            "dtype not supported",
+            "af_err_type"})) {
+        return BackendFallbackReason::UnsupportedDtype;
+    }
+    if (ContainsAny(text, {
+            "unsupported shape",
+            "shape not supported",
+            "invalid shape",
+            "invalid dimension",
+            "dimension mismatch",
+            "dims mismatch",
+            "af_err_size"})) {
+        return BackendFallbackReason::UnsupportedShape;
+    }
+    if (ContainsAny(text, {
+            "timeout",
+            "timed out",
+            "compile timeout",
+            "execution timeout",
+            "launch timeout"})) {
+        return BackendFallbackReason::BackendCompileTimeout;
+    }
+    if (ContainsAny(text, {
+            "nvrtc",
+            "jit",
+            "compile",
+            "compilation",
+            "program build",
+            "build program"})) {
         return BackendFallbackReason::ArrayFireJitCompileFailure;
     }
-    return BackendFallbackReason::GpuBackendException;
+    return BackendFallbackReason::BackendInternalError;
 }
 
 std::string BuildTensorShapeContext(

@@ -7,6 +7,7 @@
 #include "worker_defaults.h"
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
+#include "cyxwiz/backend_placement_observation.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "../gui/loaders/data_loader.h"
 #include "../gui/node_import_guardrails.h"
@@ -1320,9 +1321,18 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
         const auto capability = backend_placement::ClassifyLayer(layer.type);
         switch (capability.kind) {
             case backend_placement::LayerCapabilityKind::ArrayFireTensor:
-                config.backend_placements.push_back(
-                    backend_placement::BuildArrayFireTensorPlacement(layer));
+            {
+                auto placement =
+                    backend_placement::BuildArrayFireTensorPlacement(layer);
+                config.backend_placements.push_back(placement);
+                if (placement.status == BackendPlacementStatus::Cpu) {
+                    AddIssue(config, IssueLevel::Warning,
+                             placement.explanation + " Reason code: " +
+                                 placement.reason_code + ".",
+                             layer.node_id, layer.name);
+                }
                 continue;
+            }
             case backend_placement::LayerCapabilityKind::UnsupportedSequentialModelLayer:
                 config.backend_placements.push_back(
                     backend_placement::BuildUnsupportedSequentialModelPlacement(
@@ -1382,34 +1392,75 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
         request.return_sequences = return_sequences;
 
         const auto decision = EvaluateRecurrentCudaPlacement(request);
+        BackendPlacementObservation cached_observation;
+        bool has_cached_observation =
+            decision.should_attempt_arrayfire_cuda &&
+            TryGetRecurrentCudaPlacementObservation(request, cached_observation);
+        if (decision.should_attempt_arrayfire_cuda && !has_cached_observation) {
+            has_cached_observation =
+                TryRunRecurrentCudaPreflightProbe(request, cached_observation);
+        }
+        const bool cached_cuda_overflow =
+            has_cached_observation &&
+            cached_observation.reason_code ==
+                BackendPlacementObservationReason::CudaJitParamOverflow;
         BackendPlacementEntry placement;
         placement.node_id = layer.node_id;
         placement.node_name = layer.name;
         placement.node_type = decision.layer_name;
         placement.requested_backend = "auto";
-        placement.expected_backend = decision.expected_backend;
+        placement.expected_backend =
+            cached_cuda_overflow ? "CPU" : decision.expected_backend;
         placement.fallback_backend = decision.fallback_backend;
-        placement.status = decision.should_attempt_arrayfire_cuda
-            ? BackendPlacementStatus::Gpu
-            : BackendPlacementStatus::Cpu;
-        placement.reason_code = decision.reason_code;
-        placement.explanation = decision.should_attempt_arrayfire_cuda
-            ? decision.layer_name + " recurrent step is allowed on ArrayFire CUDA by the current placement policy."
-            : decision.reason;
-        placement.suggested_action = decision.should_attempt_arrayfire_cuda
-            ? "No action needed."
-            : "Training can continue. To keep this recurrent step on GPU, use a future fused/native CUDA recurrent kernel or exact backend probe; reducing hidden_size, sequence length, layers, or bidirectionality may help only for LSTM estimator-limited shapes.";
+        placement.status = cached_cuda_overflow
+            ? BackendPlacementStatus::Cpu
+            : (decision.should_attempt_arrayfire_cuda
+                   ? BackendPlacementStatus::Gpu
+                   : BackendPlacementStatus::Cpu);
+        placement.reason_code = cached_cuda_overflow
+            ? RecurrentCudaPlacementReason::CudaJitParamOverflowRisk
+            : decision.reason_code;
+        const std::string observation_source_label =
+            cached_observation.source ==
+                    BackendPlacementObservationSource::PreflightProbe
+                ? "preflight probe observation"
+                : cached_observation.source ==
+                          BackendPlacementObservationSource::RuntimeFallback
+                      ? "runtime fallback observation"
+                      : "runtime/probe observation";
+        placement.explanation = cached_cuda_overflow
+            ? decision.layer_name +
+                  " recurrent step is expected to run on CPU because a previous " +
+                  observation_source_label + " for this exact "
+                  "backend/device/dtype/shape reported CUDA generated-kernel "
+                  "formal-parameter overflow (reason=" +
+                  cached_observation.reason_code +
+                  ", source=" + cached_observation.source +
+                  "). This is separate from VRAM capacity. Device: " +
+                  cached_observation.device + ". Shape signature: " +
+                  cached_observation.shape_signature + "."
+            : (decision.should_attempt_arrayfire_cuda
+                   ? decision.layer_name + " recurrent step is allowed on ArrayFire CUDA by the current placement policy."
+                   : decision.reason);
+        placement.suggested_action = cached_cuda_overflow
+            ? "Training can continue. Use CPU for this recurrent shape until "
+              "a fused/native CUDA recurrent kernel or exact successful "
+              "backend probe proves the shape safe on this device."
+            : (decision.should_attempt_arrayfire_cuda
+                   ? "No action needed."
+                   : "Training can continue. To keep this recurrent step on GPU, use a future fused/native CUDA recurrent kernel or exact backend probe; reducing hidden_size, sequence length, layers, or bidirectionality may help only for LSTM estimator-limited shapes.");
         config.backend_placements.push_back(placement);
 
-        if (decision.should_attempt_arrayfire_cuda) {
+        if (decision.should_attempt_arrayfire_cuda && !cached_cuda_overflow) {
             continue;
         }
 
         const std::string issue_name =
             decision.layer_name + " hidden_size=" + std::to_string(hidden_size);
         std::ostringstream msg;
-        msg << decision.layer_name << " layer is valid, but " << decision.reason
-            << " Reason code: " << decision.reason_code << ". "
+        msg << decision.layer_name << " layer is valid, but "
+            << placement.explanation
+            << " Reason code: " << placement.reason_code << ". "
             << "Runtime will use the same placement policy instead of "
             << "repeatedly attempting CUDA and falling back every batch.";
         AddIssue(config, IssueLevel::Warning, msg.str(),

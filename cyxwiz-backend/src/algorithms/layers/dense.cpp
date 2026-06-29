@@ -1,9 +1,11 @@
 #include "cyxwiz/layers/dense.h"
 #include "../arrayfire_backend_utils.h"
 #include "layer_arrayfire_utils.h"
+#include "cyxwiz/backend_placement_observation.h"
 
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 
@@ -23,9 +25,24 @@ void LogDenseArrayFireFallback(
     const char* operation_name,
     BackendFallbackReason reason,
     const char* error_message,
-    const std::string& shape_context) {
+    const std::string& shape_context,
+    const std::vector<size_t>& input_shape,
+    size_t out_features) {
     const std::string context =
         BuildArrayFireBackendFallbackContext(shape_context);
+    RecordBackendPlacementObservationForActiveDevice(
+        "Dense",
+        "cuda",
+        "float32",
+        BuildDensePlacementShapeSignature(input_shape, out_features),
+        BackendFallbackReasonName(reason),
+        BackendPlacementObservationSource::RuntimeFallback,
+        BuildArrayFireBackendFallbackMessage(
+            operation_name,
+            reason,
+            reason != BackendFallbackReason::CudaJitParamOverflow,
+            error_message,
+            context));
     const bool log_fallback =
         ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context);
     if (log_fallback) {
@@ -85,7 +102,9 @@ Tensor DenseLayer::Forward(const Tensor& input) {
             "DenseLayer::Forward",
             BackendFallbackReason::GpuBackendException,
             "forced ArrayFire backend fallback test hook",
-            BuildTensorShapeContext("input", input.Shape()));
+            BuildTensorShapeContext("input", input.Shape()),
+            input.Shape(),
+            static_cast<size_t>(out_features_));
     } else {
         try {
             af::array x = TensorToAf(input);
@@ -113,7 +132,9 @@ Tensor DenseLayer::Forward(const Tensor& input) {
                 ClassifyArrayFireBackendFallbackReason(e.what());
             LogDenseArrayFireFallback(
                 "DenseLayer::Forward", reason, e.what(),
-                BuildTensorShapeContext("input", input.Shape()));
+                BuildTensorShapeContext("input", input.Shape()),
+                input.Shape(),
+                static_cast<size_t>(out_features_));
         }
     }
 #endif
@@ -167,7 +188,9 @@ Tensor DenseLayer::Backward(const Tensor& grad_output) {
             "DenseLayer::Backward",
             BackendFallbackReason::GpuBackendException,
             "forced ArrayFire backend fallback test hook",
-            BuildTensorShapeContext("grad_output", grad_output.Shape()));
+            BuildTensorShapeContext("grad_output", grad_output.Shape()),
+            cached_input_.Shape(),
+            static_cast<size_t>(out_features_));
     } else {
         try {
             af::array grad_out = TensorToAf(grad_output);
@@ -198,7 +221,9 @@ Tensor DenseLayer::Backward(const Tensor& grad_output) {
                 ClassifyArrayFireBackendFallbackReason(e.what());
             LogDenseArrayFireFallback(
                 "DenseLayer::Backward", reason, e.what(),
-                BuildTensorShapeContext("grad_output", grad_output.Shape()));
+                BuildTensorShapeContext("grad_output", grad_output.Shape()),
+                cached_input_.Shape(),
+                static_cast<size_t>(out_features_));
         }
     }
 #endif

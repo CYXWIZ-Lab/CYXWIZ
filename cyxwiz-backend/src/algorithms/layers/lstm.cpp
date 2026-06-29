@@ -497,7 +497,15 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
                 "; batch_first=" +
                 std::string(batch_first_ ? "true" : "false"));
         DisableArrayFireCudaRecurrentAfterFailure(
-            RecurrentLayerKind::LSTM, "LSTMLayer::Forward", e.what());
+            RecurrentLayerKind::LSTM,
+            "LSTMLayer::Forward",
+            af_guard_batch,
+            af_guard_seq,
+            af_guard_input,
+            hidden_size_,
+            num_layers_,
+            bidirectional_,
+            e.what());
         if (fallback_reason == BackendFallbackReason::CudaJitParamOverflow) {
             if (ShouldLogArrayFireBackendFallbackOnce(
                     "LSTMLayer::Forward", fallback_reason,

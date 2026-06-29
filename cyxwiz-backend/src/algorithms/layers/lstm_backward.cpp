@@ -1,4 +1,5 @@
 #include "cyxwiz/layers/recurrent.h"
+#include "cyxwiz/backend_placement_observation.h"
 #include "lstm_direction_helpers.h"
 #include "cyxwiz/debug_hooks.h"
 #include "layer_arrayfire_utils.h"
@@ -205,6 +206,27 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
             ClassifyArrayFireBackendFallbackReason(e.what());
         const std::string context = BuildArrayFireBackendFallbackContext(
             BuildTensorShapeContext("grad_output", grad_output.Shape()));
+        if (reason == BackendFallbackReason::CudaJitParamOverflow) {
+            const auto& input_shape = cached_input_.Shape();
+            RecurrentCudaPlacementRequest request;
+            request.kind = RecurrentLayerKind::LSTM;
+            request.batch_size = batch_first_ ? input_shape[0] : input_shape[1];
+            request.seq_len = batch_first_ ? input_shape[1] : input_shape[0];
+            request.input_size = input_shape.size() >= 3 ? input_shape[2] : 0;
+            request.hidden_size =
+                static_cast<size_t>(hidden_size_ > 0 ? hidden_size_ : 1);
+            request.num_layers =
+                static_cast<size_t>(num_layers_ > 0 ? num_layers_ : 1);
+            request.bidirectional = bidirectional_;
+            request.return_sequences = false;
+            RecordRecurrentCudaPlacementObservation(
+                request,
+                BackendFallbackReasonName(reason),
+                BackendPlacementObservationSource::RuntimeFallback,
+                "LSTMLayer::Backward runtime ArrayFire CUDA failed with "
+                "generated-kernel formal-parameter overflow. Future compiler "
+                "preflight should route the same recurrent shape to CPU.");
+        }
         if (ShouldLogArrayFireBackendFallbackOnce("LSTMLayer::Backward", reason, context)) {
             const std::string fallback_message =
                 BuildArrayFireBackendFallbackMessage(

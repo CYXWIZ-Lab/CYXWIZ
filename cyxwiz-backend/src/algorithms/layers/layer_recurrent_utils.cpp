@@ -2,6 +2,7 @@
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
+#include "cyxwiz/backend_placement_observation.h"
 #include "cyxwiz/debug_hooks.h"
 
 #include <algorithm>
@@ -44,10 +45,36 @@ std::string BuildRecurrentFormalParameterOverflowFallbackMessage(
 void DisableArrayFireCudaRecurrentAfterFailure(
     RecurrentLayerKind kind,
     const char* layer_name,
+    size_t batch_size,
+    size_t seq_len,
+    size_t input_size,
+    int hidden_size,
+    int num_layers,
+    bool bidirectional,
     const char* error_message) {
     if (!IsCudaJitFormalParameterOverflow(error_message)) {
         return;
     }
+
+    RecurrentCudaPlacementRequest request;
+    request.kind = kind;
+    request.batch_size = batch_size;
+    request.seq_len = seq_len;
+    request.input_size = input_size;
+    request.hidden_size = static_cast<size_t>(std::max(1, hidden_size));
+    request.num_layers = static_cast<size_t>(std::max(1, num_layers));
+    request.bidirectional = bidirectional;
+    request.return_sequences = false;
+
+    RecordRecurrentCudaPlacementObservation(
+        request,
+        BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow),
+        BackendPlacementObservationSource::RuntimeFallback,
+        std::string(layer_name) +
+            " runtime ArrayFire CUDA forward failed with generated-kernel "
+            "formal-parameter overflow. This observation should make future "
+            "compiler preflight route the same recurrent shape to CPU before "
+            "training starts.");
 
     auto& disabled = RecurrentFailureDisableFlag(kind);
     if (!disabled.exchange(true)) {

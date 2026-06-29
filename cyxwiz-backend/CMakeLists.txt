@@ -75,6 +75,7 @@ set(BACKEND_SOURCES
     src/core/cyxwiz_c.cpp
     src/algorithms/optimizer.cpp
     src/algorithms/arrayfire_backend_utils.cpp
+    src/algorithms/backend_placement_observation.cpp
     src/algorithms/optimizers/optimizer_utils.cpp
     src/algorithms/optimizers/sgd.cpp
     src/algorithms/optimizers/adam_family.cpp
@@ -202,6 +203,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/device.h
     include/cyxwiz/memory_manager.h
     include/cyxwiz/optimizer.h
+    include/cyxwiz/backend_placement_observation.h
     include/cyxwiz/optimizers/adaptive.h
     include/cyxwiz/optimizers/adam.h
     include/cyxwiz/optimizers/lamb.h

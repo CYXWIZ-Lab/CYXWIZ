@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cyxwiz/api_export.h"
+
 #include <string>
 #include <vector>
 
@@ -9,11 +11,17 @@ enum class BackendFallbackReason {
     GpuBackendException,
     ArrayFireJitCompileFailure,
     CudaJitParamOverflow,
+    GpuOutOfMemory,
+    UnsupportedDtype,
+    UnsupportedShape,
+    BackendCompileTimeout,
+    BackendInternalError,
 };
 
-const char* BackendFallbackReasonName(BackendFallbackReason reason);
-bool IsCudaJitFormalParameterOverflow(const char* message);
-BackendFallbackReason ClassifyArrayFireBackendFallbackReason(const char* message);
+CYXWIZ_API const char* BackendFallbackReasonName(BackendFallbackReason reason);
+CYXWIZ_API bool IsCudaJitFormalParameterOverflow(const char* message);
+CYXWIZ_API BackendFallbackReason ClassifyArrayFireBackendFallbackReason(
+    const char* message);
 
 std::string BuildTensorShapeContext(
     const char* tensor_name,

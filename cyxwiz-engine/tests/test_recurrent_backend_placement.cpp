@@ -1,6 +1,8 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/backend_placement_capabilities.h"
 #include "../src/gui/loaders/data_loader.h"
+#include "../../cyxwiz-backend/src/algorithms/arrayfire_backend_utils.h"
+#include "cyxwiz/backend_placement_observation.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 
 #include <cstdlib>
@@ -227,6 +229,62 @@ cyxwiz::TrainingConfiguration CompileUnclassifiedLayerGraph() {
 } // namespace
 
 int main() {
+    Check(cyxwiz::ClassifyArrayFireBackendFallbackReason(
+              "Formal parameter space overflowed") ==
+              cyxwiz::BackendFallbackReason::CudaJitParamOverflow,
+          "fallback classifier should preserve CUDA formal-parameter overflow");
+    Check(cyxwiz::ClassifyArrayFireBackendFallbackReason(
+              "CUDA_ERROR_MEMORY_ALLOCATION: out of memory") ==
+              cyxwiz::BackendFallbackReason::GpuOutOfMemory,
+          "fallback classifier should detect GPU out-of-memory");
+    Check(cyxwiz::ClassifyArrayFireBackendFallbackReason(
+              "unsupported dtype for this ArrayFire kernel") ==
+              cyxwiz::BackendFallbackReason::UnsupportedDtype,
+          "fallback classifier should detect unsupported dtype");
+    Check(cyxwiz::ClassifyArrayFireBackendFallbackReason(
+              "invalid dimension / shape not supported") ==
+              cyxwiz::BackendFallbackReason::UnsupportedShape,
+          "fallback classifier should detect unsupported shape");
+    Check(cyxwiz::ClassifyArrayFireBackendFallbackReason(
+              "NVRTC compile timeout while building generated kernel") ==
+              cyxwiz::BackendFallbackReason::BackendCompileTimeout,
+          "fallback classifier should detect backend compile timeout");
+    Check(cyxwiz::ClassifyArrayFireBackendFallbackReason(
+              "NVRTC compilation failed") ==
+              cyxwiz::BackendFallbackReason::ArrayFireJitCompileFailure,
+          "fallback classifier should detect generic JIT compile failures");
+    Check(cyxwiz::ClassifyArrayFireBackendFallbackReason(
+              "driver returned an unexpected backend error") ==
+              cyxwiz::BackendFallbackReason::BackendInternalError,
+          "fallback classifier should classify unknown backend errors");
+    Check(std::string(cyxwiz::BackendFallbackReasonName(
+              cyxwiz::BackendFallbackReason::BackendInternalError)) ==
+              cyxwiz::BackendPlacementObservationReason::BackendInternalError,
+          "fallback reason names should align with observation reason codes");
+    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
+    cyxwiz::RecordBackendPlacementObservationForActiveDevice(
+        "Dense",
+        "cuda",
+        "float32",
+        cyxwiz::BuildDensePlacementShapeSignature({64, 128}, 2),
+        cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory,
+        cyxwiz::BackendPlacementObservationSource::RuntimeFallback,
+        "dense matmul allocation failed");
+    cyxwiz::BackendPlacementObservation generic_observation;
+    Check(cyxwiz::TryGetBackendPlacementObservationForActiveDevice(
+              "Dense",
+              "cuda",
+              "float32",
+              cyxwiz::BuildDensePlacementShapeSignature({64, 128}, 2),
+              generic_observation),
+          "generic fallback observation should be retrievable by active device");
+    Check(generic_observation.reason_code ==
+              cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory,
+          "generic fallback observation should preserve structured reason");
+    Check(generic_observation.source ==
+              cyxwiz::BackendPlacementObservationSource::RuntimeFallback,
+          "generic fallback observation should preserve source");
+
     Check(cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
               gui::NodeType::Embedding),
           "Embedding should be classified as ArrayFire tensor-capable");
@@ -317,6 +375,116 @@ int main() {
               lstm_config,
               cyxwiz::RecurrentCudaPlacementReason::ArrayFireCudaAllowedByEstimator),
           "GPU-eligible LSTM placement should not create a warning");
+
+    cyxwiz::RecurrentCudaPlacementRequest observed_lstm;
+    observed_lstm.kind = cyxwiz::RecurrentLayerKind::LSTM;
+    observed_lstm.batch_size = 64;
+    observed_lstm.seq_len = 64;
+    observed_lstm.input_size = 64;
+    observed_lstm.hidden_size = 8;
+    observed_lstm.num_layers = 1;
+    observed_lstm.bidirectional = false;
+    observed_lstm.return_sequences = false;
+    cyxwiz::RecordRecurrentCudaPlacementObservation(
+        observed_lstm,
+        cyxwiz::BackendPlacementObservationReason::CudaJitParamOverflow,
+        cyxwiz::BackendPlacementObservationSource::Test,
+        "test observation");
+    cyxwiz::BackendPlacementObservation direct_observation;
+    Check(cyxwiz::TryGetBackendPlacementObservation(
+              "LSTM",
+              "cuda",
+              cyxwiz::CurrentBackendPlacementDeviceSignature(),
+              "float32",
+              cyxwiz::BuildRecurrentCudaPlacementShapeSignature(observed_lstm),
+              direct_observation),
+          "recurrent observation should be keyed by active device signature");
+    Check(!cyxwiz::TryGetBackendPlacementObservation(
+              "LSTM",
+              "cuda",
+              "different-device",
+              "float32",
+              cyxwiz::BuildRecurrentCudaPlacementShapeSignature(observed_lstm),
+              direct_observation),
+          "recurrent observation should not match a different device signature");
+
+    auto cached_lstm_config =
+        CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
+    const auto* cached_lstm_placement =
+        FindPlacement(cached_lstm_config, 4);
+    Check(cached_lstm_placement != nullptr,
+          "cached LSTM placement entry should reference node 4");
+    Check(cached_lstm_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
+          "cached CUDA overflow should route previously GPU-eligible LSTM to CPU");
+    Check(cached_lstm_placement->reason_code ==
+              cyxwiz::RecurrentCudaPlacementReason::CudaJitParamOverflowRisk,
+          "cached CUDA overflow should use compiler placement overflow reason");
+    Check(cached_lstm_placement->explanation.find(
+              "previous runtime/probe observation") != std::string::npos,
+          "test-source LSTM placement should explain generic cache feedback");
+    Check(cached_lstm_placement->explanation.find("source=test") !=
+              std::string::npos,
+          "cached LSTM placement should include observation source");
+    Check(cached_lstm_placement->explanation.find("Device:") !=
+              std::string::npos,
+          "cached LSTM placement should include observation device");
+    Check(cached_lstm_placement->explanation.find("separate from VRAM") !=
+              std::string::npos,
+          "cached LSTM placement should distinguish kernel overflow from VRAM");
+    Check(HasWarningText(
+              cached_lstm_config,
+              cyxwiz::RecurrentCudaPlacementReason::CudaJitParamOverflowRisk),
+          "cached CUDA overflow should surface as a compiler warning");
+    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
+
+    cyxwiz::RecordRecurrentCudaPreflightProbeFailure(
+        observed_lstm,
+        cyxwiz::BackendPlacementObservationReason::CudaJitParamOverflow,
+        "simulated probe observation");
+    auto probed_lstm_config =
+        CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
+    const auto* probed_lstm_placement =
+        FindPlacement(probed_lstm_config, 4);
+    Check(probed_lstm_placement != nullptr,
+          "preflight-probed LSTM placement entry should reference node 4");
+    Check(probed_lstm_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
+          "preflight probe observation should route GPU-eligible LSTM to CPU");
+    Check(probed_lstm_placement->explanation.find("source=preflight_probe") !=
+              std::string::npos,
+          "preflight probe observation source should be visible");
+    Check(probed_lstm_placement->explanation.find(
+              "previous preflight probe observation") != std::string::npos,
+          "preflight probe placement should use source-specific wording");
+    Check(HasWarningText(probed_lstm_config, "source=preflight_probe"),
+          "preflight probe observation should surface through compiler warnings");
+    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
+
+    cyxwiz::RecordBackendPlacementObservationForActiveDevice(
+        "Dense",
+        "cuda",
+        "float32",
+        cyxwiz::BuildDensePlacementShapeSignature({8}, 2),
+        cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory,
+        cyxwiz::BackendPlacementObservationSource::RuntimeFallback,
+        "simulated Dense fallback observation");
+    auto dense_cached_config =
+        CompileRecurrentGraph(gui::NodeType::LSTM, 8, false);
+    const auto* dense_cached_placement =
+        FindPlacement(dense_cached_config, 5);
+    Check(dense_cached_placement != nullptr,
+          "cached Dense fallback placement entry should reference node 5");
+    Check(dense_cached_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
+          "cached tensor-layer fallback should route exact Dense shape to CPU");
+    Check(dense_cached_placement->reason_code ==
+              cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory,
+          "cached Dense fallback should preserve structured fallback reason");
+    Check(dense_cached_placement->explanation.find("source=runtime_fallback") !=
+              std::string::npos,
+          "cached Dense fallback should include observation source");
+    Check(HasWarningText(dense_cached_config,
+                         cyxwiz::BackendPlacementObservationReason::GpuOutOfMemory),
+          "cached Dense fallback should surface as a compiler warning");
+    cyxwiz::ClearBackendPlacementObservationCacheForTesting();
 
     cyxwiz::TrainingConfiguration unknown_config;
     cyxwiz::BackendPlacementEntry unknown_placement;

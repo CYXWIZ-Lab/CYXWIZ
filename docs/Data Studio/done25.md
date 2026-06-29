@@ -1,4 +1,4 @@
-# tofix25 - Compiler-Owned Backend Placement and Preflight
+# done25 - Compiler-Owned Backend Placement and Preflight
 
 ## Purpose
 
@@ -590,3 +590,72 @@ limit. This is separate from VRAM capacity. Training can continue, but the GRU
 step may be slower until a fused/native CUDA recurrent kernel or backend probe
 system is available.
 ```
+
+## Current implementation slice: placement observation cache
+
+The next lean slice adds the feedback contract that must exist before a real
+JIT probe is useful:
+
+- `cyxwiz::BackendPlacementObservation` records backend/device/dtype/shape
+  observations.
+- Each observation records its source, currently `runtime_fallback`, `test`, or
+  future `preflight_probe`.
+- Recurrent CUDA observations use a stable shape signature:
+  `kind`, `batch`, `seq`, `input`, `hidden`, `layers`, `bidirectional`, and
+  `return_sequences`.
+- Observations are keyed by the active ArrayFire device signature, not just a
+  generic "active device" placeholder. This keeps future probe/runtime cache
+  entries scoped per backend device.
+- Runtime recurrent formal-parameter overflow records a `runtime_fallback`
+  `cuda_jit_param_overflow` observation for the exact shape before disabling
+  the ArrayFire recurrent path for the rest of the process.
+- GRU/LSTM backward CUDA formal-parameter overflow also records a
+  `runtime_fallback` observation, so backward-only discoveries can feed future
+  compiler preflight decisions.
+- Compiler recurrent placement consults the observation cache before trusting
+  the static estimator.
+- If the cache says an otherwise GPU-eligible LSTM shape already overflowed,
+  compiler preflight routes that shape to CPU and explains that the cause is
+  generated-kernel formal-parameter overflow, not VRAM exhaustion.
+- Cached-observation warnings include the observation source, device signature,
+  and recurrent shape signature so engineers can see exactly what cache entry
+  influenced placement.
+- Cached-observation warnings use source-aware wording: runtime fallback,
+  preflight probe, or generic runtime/probe for test/manual sources.
+- Focused placement tests cover cache miss, cache hit, reason-code preservation,
+  user-facing explanation, and warning emission.
+- Focused placement tests also simulate a `preflight_probe` observation and
+  prove the compiler consumes it through the same cache path.
+- `TryRunRecurrentCudaPreflightProbe()` now provides a bounded, failure-only
+  ArrayFire CUDA LSTM probe for GPU-eligible, single-direction LSTM shapes.
+  The probe runs only on the active CUDA backend, uses the exact
+  backend/device/dtype/shape cache key, records failures as `preflight_probe`
+  observations, and does not mark successful probes as proof of safety.
+- Passing probes are remembered only as "attempted" for the current process and
+  exact backend/device/dtype/shape, preventing repeated compile-time probe
+  latency without changing placement semantics.
+- The backend fallback classifier now emits the ticket's structured reason
+  codes for CUDA formal-parameter overflow, GPU out-of-memory, unsupported
+  dtype, unsupported shape, backend compile timeout, generic JIT compile
+  failure, and backend internal error. These names align with placement
+  observation reason codes so future runtime fallback observations can feed the
+  compiler cache without string translation.
+- Generic runtime fallback code can now record and query active-device
+  placement observations through
+  `RecordBackendPlacementObservationForActiveDevice()` and
+  `TryGetBackendPlacementObservationForActiveDevice()`. Recurrent recording now
+  uses this shared helper instead of hand-assembling observations.
+- Dense runtime ArrayFire fallback now records a generic active-device
+  observation keyed by `Dense`, backend, dtype, and
+  `BuildDensePlacementShapeSignature(input_shape, out_features)`. The Dense
+  signature normalizes input shape to `in_features` so runtime batch dimensions
+  and compiler feature-shape contracts match.
+- Compiler placement consumes cached fallback observations for ArrayFire tensor
+  layers and routes exact observed shapes to CPU with a warning that includes
+  reason, source, device, and shape signature. Dense is currently the first
+  runtime writer using this generic compiler path.
+
+The probe is intentionally conservative: it can prove that a shape failed on
+this device before training starts, but a passing synthetic probe is not enough
+to override runtime placement policy or declare the full recurrent training
+path safe.

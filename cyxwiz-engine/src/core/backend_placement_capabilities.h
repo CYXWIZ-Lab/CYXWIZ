@@ -2,6 +2,7 @@
 
 #include "graph_compiler.h"
 #include "pipeline_runtime_capabilities.h"
+#include "cyxwiz/backend_placement_observation.h"
 
 #include <string>
 
@@ -169,22 +170,60 @@ inline LayerCapability ClassifyLayer(gui::NodeType type) {
 
 inline BackendPlacementEntry BuildArrayFireTensorPlacement(
     const CompiledLayer& layer) {
+    const std::string layer_type_name = LayerTypeName(layer.type);
+    const std::string shape_signature =
+        layer.type == gui::NodeType::Dense
+            ? BuildDensePlacementShapeSignature(
+                  layer.input_shape,
+                  static_cast<size_t>(layer.units))
+            : BuildTensorLayerPlacementShapeSignature(
+                  layer.input_shape,
+                  layer.output_shape);
+    BackendPlacementObservation cached_observation;
+    const bool cached_fallback =
+        TryGetBackendPlacementObservationForActiveDevice(
+            layer_type_name,
+            "cuda",
+            "float32",
+            shape_signature,
+            cached_observation);
     BackendPlacementEntry placement;
     placement.node_id = layer.node_id;
     placement.node_name = layer.name;
-    placement.node_type = LayerTypeName(layer.type);
+    placement.node_type = layer_type_name;
     placement.requested_backend = "auto";
-    placement.expected_backend = "ArrayFire active backend";
+    placement.expected_backend = cached_fallback
+        ? "CPU"
+        : "ArrayFire active backend";
     placement.fallback_backend = "CPU";
-    placement.status = BackendPlacementStatus::Gpu;
-    placement.reason_code = BackendPlacementReason::ArrayFireTensorOpCapable;
-    placement.explanation =
-        std::string(placement.node_type) +
-        " is compiled as a standard tensor/model layer. The runtime can "
-        "execute supported dtype/shape paths on the active ArrayFire backend "
-        "and uses the normal CPU fallback when ArrayFire is unavailable, the "
-        "dtype or shape is unsupported, or a backend operation fails.";
-    placement.suggested_action = "No action needed.";
+    placement.status = cached_fallback
+        ? BackendPlacementStatus::Cpu
+        : BackendPlacementStatus::Gpu;
+    placement.reason_code = cached_fallback
+        ? cached_observation.reason_code
+        : BackendPlacementReason::ArrayFireTensorOpCapable;
+    if (cached_fallback) {
+        placement.explanation =
+            std::string(placement.node_type) +
+            " is expected to run on CPU because a previous runtime fallback "
+            "observation for this exact backend/device/dtype/shape reported "
+            "a backend failure (reason=" + cached_observation.reason_code +
+            ", source=" + cached_observation.source + "). Device: " +
+            cached_observation.device + ". Shape signature: " +
+            cached_observation.shape_signature + ".";
+        placement.suggested_action =
+            "Training can continue. Inspect the fallback reason and reduce "
+            "batch size/features or use CPU for this tensor-layer shape until the "
+            "backend path is fixed.";
+    } else {
+        placement.explanation =
+            std::string(placement.node_type) +
+            " is compiled as a standard tensor/model layer. The runtime can "
+            "execute supported dtype/shape paths on the active ArrayFire backend "
+            "and uses the normal CPU fallback when ArrayFire is unavailable, the "
+            "dtype or shape is unsupported, or a backend operation fails.";
+        placement.suggested_action = "No action needed.";
+    }
     return placement;
 }
 

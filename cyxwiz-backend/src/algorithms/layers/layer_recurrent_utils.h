@@ -13,6 +13,12 @@ std::string BuildRecurrentFormalParameterOverflowFallbackMessage(const char* lay
 void DisableArrayFireCudaRecurrentAfterFailure(
     RecurrentLayerKind kind,
     const char* layer_name,
+    size_t batch_size,
+    size_t seq_len,
+    size_t input_size,
+    int hidden_size,
+    int num_layers,
+    bool bidirectional,
     const char* error_message);
 bool ShouldUseArrayFireRecurrentForward(
     RecurrentLayerKind kind,
