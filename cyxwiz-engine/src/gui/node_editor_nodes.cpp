@@ -1532,9 +1532,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.is_input = false;
             output_pin.description =
                 "Same shape as Input. For classifier heads use only "
-                "the [CLS] token; for seq2seq feed into the decoder's "
-                "Memory pin (encoder) or into the projection head "
-                "(decoder).";
+                "the [CLS] token; for decoder-only language models feed "
+                "into a projection head. Encoder-decoder Memory wiring "
+                "requires a future seq2seq contract.";
             node.outputs.push_back(output_pin);
 
             node.parameters["d_model"] = "512";

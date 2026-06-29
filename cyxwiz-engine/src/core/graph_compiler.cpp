@@ -2830,7 +2830,14 @@ TrainingConfiguration GraphCompiler::Compile(
             }
             if (loader_node->parameters.count("pin_memory") &&
                 loader_node->parameters.at("pin_memory") == "true") {
-                spdlog::warn("GraphCompiler: DataLoader pin_memory=true is unsupported by current batchers and will be ignored");
+                const std::string msg =
+                    "DataLoader pin_memory=true is unsupported by current "
+                    "batchers and will be ignored; serialized for "
+                    "compatibility only until a pinned host-memory transfer "
+                    "backend exists";
+                spdlog::warn("GraphCompiler: {}", msg);
+                AddIssue(config, IssueLevel::Warning, msg,
+                         loader_node->id, loader_node->name);
             }
             if (loader_node->parameters.count("save_best_checkpoint"))
                 config.save_best_checkpoint = (loader_node->parameters.at("save_best_checkpoint") == "true");

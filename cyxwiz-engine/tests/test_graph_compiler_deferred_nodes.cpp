@@ -396,6 +396,7 @@ int main() {
     sequence_loader.parameters["early_stopping_patience"] = "7";
     sequence_loader.parameters["checkpoint_dir"] = "runs/compiler_contract";
     sequence_loader.parameters["batch_layout"] = "batch_first";
+    sequence_loader.parameters["pin_memory"] = "true";
 
     nodes = {data, sequence_loader, dense, loss, optimizer};
     links = {
@@ -439,6 +440,8 @@ int main() {
           "DataLoader should preserve early stopping patience");
     Check(config.checkpoint_dir == "runs/compiler_contract",
           "DataLoader should preserve checkpoint directory");
+    Check(HasIssueText(config, "pin_memory=true is unsupported"),
+          "DataLoader should surface unsupported pin_memory as a compiler warning");
 
     auto sequence_builder = Node(22,
                                  gui::NodeType::NERSequenceBuilder,

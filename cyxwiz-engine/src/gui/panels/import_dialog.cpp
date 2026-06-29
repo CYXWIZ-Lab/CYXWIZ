@@ -246,44 +246,42 @@ void ImportDialog::RenderProbeInfo() {
 }
 
 void ImportDialog::RenderOptions() {
-    ImGui::Text(ICON_FA_GEAR " Import Options");
+    ImGui::Text(ICON_FA_GEAR " Inspection Options");
     ImGui::Spacing();
 
     // Only show options for .cyxmodel format
     if (file_probed_ && probe_result_.valid && probe_result_.format == ModelFormat::CyxModel) {
-        ImGui::BeginDisabled(!probe_result_.has_optimizer_state);
-        ImGui::Checkbox("Load Optimizer State", &load_optimizer_state_);
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            if (!probe_result_.has_optimizer_state) {
-                ImGui::SetTooltip("Model does not contain optimizer state");
-            } else {
-                ImGui::SetTooltip("Load optimizer state to resume training");
-            }
-        }
-
-        ImGui::BeginDisabled(!probe_result_.has_training_history);
-        ImGui::Checkbox("Load Training History", &load_training_history_);
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            if (!probe_result_.has_training_history) {
-                ImGui::SetTooltip("Model does not contain training history");
-            } else {
-                ImGui::SetTooltip("Load loss/accuracy history for visualization");
-            }
-        }
+        load_optimizer_state_ = false;
+        load_training_history_ = false;
+        ImGui::TextDisabled("Optimizer state: %s",
+                            probe_result_.has_optimizer_state
+                                ? "present, inspection only"
+                                : "not present");
+        ImGui::TextDisabled("Training history: %s",
+                            probe_result_.has_training_history
+                                ? "present, inspection only"
+                                : "not present");
+        ImGui::TextWrapped(
+            "Checkpoint tensors, optimizer state, and training history are "
+            "not loaded into a trainable Studio model by this dialog.");
     }
 
     ImGui::Spacing();
 
+    strict_mode_ = false;
+    allow_shape_mismatch_ = false;
+    ImGui::BeginDisabled(true);
     ImGui::Checkbox("Strict Mode", &strict_mode_);
+    ImGui::EndDisabled();
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Fail if layer names don't match exactly");
+        ImGui::SetTooltip("Layer matching is unavailable until import-to-training exists");
     }
 
+    ImGui::BeginDisabled(true);
     ImGui::Checkbox("Allow Shape Mismatch", &allow_shape_mismatch_);
+    ImGui::EndDisabled();
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Allow loading weights with different shapes (use with caution)");
+        ImGui::SetTooltip("Shape-mismatch loading is unavailable until weights are imported");
     }
 
     // Transfer Learning Options
@@ -291,7 +289,7 @@ void ImportDialog::RenderOptions() {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        ImGui::Text("Transfer Learning");
+        ImGui::Text("Import-to-Training Status");
         ImGui::Spacing();
 
         enable_transfer_learning_ = false;
@@ -307,7 +305,7 @@ void ImportDialog::RenderOptions() {
 }
 
 void ImportDialog::RenderProgress() {
-    ImGui::Text(ICON_FA_SPINNER " Importing...");
+    ImGui::Text(ICON_FA_SPINNER " Inspecting...");
     ImGui::Spacing();
 
     int progress = import_progress_.load();

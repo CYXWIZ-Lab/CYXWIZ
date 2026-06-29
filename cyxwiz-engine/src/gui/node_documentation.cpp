@@ -730,9 +730,12 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::TransformerDecoder] = {
         "Transformer Decoder",
-        "Stack of decoder layers with causal self-attention, cross-attention, "
-        "and feedforward networks. Used for generation (GPT-style).",
-        "Uses causal mask to prevent attending to future tokens.",
+        "Stack of decoder layers with causal self-attention and feedforward "
+        "networks. Current Studio execution supports tested decoder-only "
+        "language-model stacks.",
+        "Uses a causal mask to prevent attending to future tokens. "
+        "Cross-attention Memory input and generation loops require a future "
+        "seq2seq/generation contract.",
         {
             {"num_layers", "Number of decoder layers"},
             {"d_model", "Model dimension"},
@@ -740,8 +743,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"d_ff", "Feedforward hidden dimension"}
         },
         {
-            "For decoder-only (GPT): no cross-attention",
-            "For encoder-decoder: add cross-attention"
+            "Supported now: decoder-only causal self-attention",
+            "Not first-class yet: encoder-decoder cross-attention Memory path",
+            "Not first-class yet: autoregressive generation loop"
         },
         "Attention"
     };
@@ -1281,7 +1285,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
         },
         {
             "Preferred over Adam when using weight decay",
-            "Standard for Transformer fine-tuning"
+            "Common in Transformer training stacks"
         },
         "Optimizers"
     };

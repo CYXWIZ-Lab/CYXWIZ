@@ -5,6 +5,7 @@
 #include "layer_recurrent_utils.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -14,6 +15,16 @@
 namespace cyxwiz {
 
 using lstm_detail::RunLSTMCpuDirectionBackward;
+
+int LstmAfBackwardEvalInterval() {
+    const char* value = std::getenv("CYXWIZ_LSTM_AF_BACKWARD_EVAL_INTERVAL");
+    if (!value || value[0] == '\0') {
+        return 1;
+    }
+    char* end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+    return parsed > 0 ? static_cast<int>(parsed) : 1;
+}
 
 Tensor LSTMLayer::Backward(const Tensor& grad_output) {
     // Guard: caches populated by the CPU Forward path above. The AF
@@ -52,6 +63,7 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
     // through to CPU.
     constexpr bool kAfBackwardEnabled = true;
     if (kAfBackwardEnabled && !bidirectional_) try {
+        const int eval_interval = LstmAfBackwardEvalInterval();
         af::array dout = TensorToAf3DRowMajor(grad_output);
 
         // Convert to seq-first if batch_first.
@@ -152,13 +164,18 @@ Tensor LSTMLayer::Backward(const Tensor& grad_output) {
 
                 // dh_prev = dgates @ W_hh
                 dh_next = af::matmul(dgates, W_hh);
-                dW_ih.eval();
-                dW_hh.eval();
-                db_ih.eval();
-                db_hh.eval();
-                d_layer_input.eval();
-                dh_next.eval();
-                dc_next.eval();
+                const dim_t reverse_step = seq_len - 1 - t;
+                if (eval_interval <= 1 ||
+                    reverse_step % static_cast<dim_t>(eval_interval) == 0 ||
+                    t == 0) {
+                    dW_ih.eval();
+                    dW_hh.eval();
+                    db_ih.eval();
+                    db_hh.eval();
+                    d_layer_input.eval();
+                    dh_next.eval();
+                    dc_next.eval();
+                }
             }
 
             // Stash per-layer weight grads.
