@@ -139,6 +139,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::BCELoss:
             case NodeType::BCEWithLogits:
             case NodeType::NLLLoss:
+            case NodeType::SoftDiceLoss:
+            case NodeType::TverskyLoss:
+            case NodeType::JaccardLoss:
                 return ICON_TI_SCALE;
 
             // Optimizers
@@ -408,6 +411,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::CrossValidationNode:
                 return ICON_TI_COPY;
             case NodeType::RegressionMetricsNode:
+            case NodeType::ClassificationMetricsNode:
                 return ICON_TI_LIST_NUMBERS;
 
             // Data Preprocessing Nodes
@@ -602,11 +606,15 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::ClassificationMetricsNode:
                 return ICON_RI_CALCULATOR;
             case NodeType::CrossEntropyLoss:
             case NodeType::BCELoss:
             case NodeType::BCEWithLogits:
             case NodeType::NLLLoss:
+            case NodeType::SoftDiceLoss:
+            case NodeType::TverskyLoss:
+            case NodeType::JaccardLoss:
                 return ICON_RI_FUNCTION;
 
             // Optimizers
@@ -961,11 +969,15 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::ClassificationMetricsNode:
                 return ICON_LU_CALCULATOR;
             case NodeType::CrossEntropyLoss:
             case NodeType::BCELoss:
             case NodeType::BCEWithLogits:
             case NodeType::NLLLoss:
+            case NodeType::SoftDiceLoss:
+            case NodeType::TverskyLoss:
+            case NodeType::JaccardLoss:
                 return ICON_LU_FUNCTION_SQUARE;
 
             // Optimizers & Scalers
@@ -1277,11 +1289,15 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::ClassificationMetricsNode:
                 return ICON_IO_CALCULATOR;
             case NodeType::CrossEntropyLoss:
             case NodeType::BCELoss:
             case NodeType::BCEWithLogits:
             case NodeType::NLLLoss:
+            case NodeType::SoftDiceLoss:
+            case NodeType::TverskyLoss:
+            case NodeType::JaccardLoss:
                 return ICON_IO_SIGMA;
 
             // Optimizers & Scalers
@@ -1593,11 +1609,15 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::ClassificationMetricsNode:
                 return ICON_PH_CALCULATOR;
             case NodeType::CrossEntropyLoss:
             case NodeType::BCELoss:
             case NodeType::BCEWithLogits:
             case NodeType::NLLLoss:
+            case NodeType::SoftDiceLoss:
+            case NodeType::TverskyLoss:
+            case NodeType::JaccardLoss:
                 return ICON_PH_SIGMA;
 
             // Optimizers & Scalers
@@ -1850,6 +1870,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::BCELoss:
         case NodeType::BCEWithLogits:
         case NodeType::NLLLoss:
+        case NodeType::SoftDiceLoss:
+        case NodeType::TverskyLoss:
+        case NodeType::JaccardLoss:
             return ICON_FA_SCALE_BALANCED;
 
         // Optimizers
@@ -2145,6 +2168,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::CrossValidationNode:
             return ICON_FA_COPY;
         case NodeType::RegressionMetricsNode:
+        case NodeType::ClassificationMetricsNode:
             return ICON_FA_CALCULATOR;
 
         // Data Preprocessing Nodes

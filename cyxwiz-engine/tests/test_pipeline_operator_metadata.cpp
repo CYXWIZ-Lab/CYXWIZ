@@ -1798,6 +1798,23 @@ int main() {
     Check(regression_metrics_meta->status ==
               cyxwiz::NodeImplementationStatus::Implemented,
           "RegressionMetricsNode metadata should be implemented");
+    const auto classification_metrics_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ClassificationMetricsNode);
+    Check(classification_metrics_support.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "ClassificationMetricsNode enum support should resolve to legacy executor");
+    const auto classification_metrics_type =
+        cyxwiz::ResolvePipelineRuntimeNodeType("ClassificationMetricsNode");
+    Check(classification_metrics_type.has_value() &&
+              *classification_metrics_type == gui::NodeType::ClassificationMetricsNode,
+          "ClassificationMetricsNode runtime name should resolve typed metadata");
+    const auto* classification_metrics_meta =
+        metadata.GetMetadata(gui::NodeType::ClassificationMetricsNode);
+    Check(classification_metrics_meta != nullptr,
+          "ClassificationMetricsNode metadata should exist");
+    Check(classification_metrics_meta->status ==
+              cyxwiz::NodeImplementationStatus::Implemented,
+          "ClassificationMetricsNode metadata should be implemented");
     const auto confusion_matrix_support =
         cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::ConfusionMatrixNode);
     Check(confusion_matrix_support.mode ==
@@ -2012,6 +2029,9 @@ int main() {
         gui::NodeType::SmoothL1Loss,
         gui::NodeType::HuberLoss,
         gui::NodeType::NLLLoss,
+        gui::NodeType::SoftDiceLoss,
+        gui::NodeType::TverskyLoss,
+        gui::NodeType::JaccardLoss,
         gui::NodeType::SGD,
         gui::NodeType::Adam,
         gui::NodeType::AdamW,
@@ -2138,6 +2158,9 @@ int main() {
         gui::NodeType::SmoothL1Loss,
         gui::NodeType::HuberLoss,
         gui::NodeType::NLLLoss,
+        gui::NodeType::SoftDiceLoss,
+        gui::NodeType::TverskyLoss,
+        gui::NodeType::JaccardLoss,
         gui::NodeType::SGD,
         gui::NodeType::Adam,
         gui::NodeType::AdamW,
@@ -2485,6 +2508,9 @@ int main() {
         {gui::NodeType::SmoothL1Loss, "loss"},
         {gui::NodeType::HuberLoss, "loss"},
         {gui::NodeType::NLLLoss, "loss"},
+        {gui::NodeType::SoftDiceLoss, "loss"},
+        {gui::NodeType::TverskyLoss, "loss"},
+        {gui::NodeType::JaccardLoss, "loss"},
         {gui::NodeType::SGD, "optimizer"},
         {gui::NodeType::Adam, "optimizer"},
         {gui::NodeType::AdamW, "optimizer"},
@@ -2768,6 +2794,24 @@ int main() {
           "searching binary should find BCE with Logits metadata");
     Check(SearchContainsType(metadata, "negative log likelihood", gui::NodeType::NLLLoss),
           "searching negative log likelihood should find NLL Loss metadata");
+    Check(SearchContainsType(metadata, "soft dice", gui::NodeType::SoftDiceLoss),
+          "searching soft dice should find Soft Dice Loss metadata");
+    Check(SearchContainsType(metadata, "segmentation", gui::NodeType::SoftDiceLoss),
+          "searching segmentation should find Soft Dice Loss metadata");
+    Check(SearchContainsType(metadata, "tversky", gui::NodeType::TverskyLoss),
+          "searching tversky should find Tversky Loss metadata");
+    Check(SearchContainsType(metadata, "segmentation", gui::NodeType::TverskyLoss),
+          "searching segmentation should find Tversky Loss metadata");
+    Check(SearchContainsType(metadata, "jaccard", gui::NodeType::JaccardLoss),
+          "searching jaccard should find Jaccard Loss metadata");
+    Check(SearchContainsType(metadata, "iou", gui::NodeType::JaccardLoss),
+          "searching iou should find Jaccard Loss metadata");
+    Check(SearchContainsType(metadata, "segmentation", gui::NodeType::JaccardLoss),
+          "searching segmentation should find Jaccard Loss metadata");
+    Check(SearchContainsType(metadata, "accuracy", gui::NodeType::ClassificationMetricsNode),
+          "searching accuracy should find Classification Metrics metadata");
+    Check(SearchContainsType(metadata, "f1", gui::NodeType::ClassificationMetricsNode),
+          "searching f1 should find Classification Metrics metadata");
     Check(SearchContainsType(metadata, "optimization", gui::NodeType::Adam),
           "searching optimization should find training optimizer metadata");
     Check(SearchContainsType(metadata, "optimization", gui::NodeType::CrossEntropyLoss),

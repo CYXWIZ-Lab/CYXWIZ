@@ -954,11 +954,12 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // CrossEntropy Loss (concrete implementation)
     py::class_<cyxwiz::CrossEntropyLoss, cyxwiz::Loss>(m, "CrossEntropyLoss")
-        .def(py::init<cyxwiz::Reduction, int, std::vector<float>>(),
+        .def(py::init<cyxwiz::Reduction, int, std::vector<float>, float>(),
              py::arg("reduction") = cyxwiz::Reduction::Mean,
              py::arg("ignore_index") = -100,
              py::arg("class_weights") = std::vector<float>{},
-             "Create CrossEntropy Loss with optional per-class weights")
+             py::arg("label_smoothing") = 0.0f,
+             "Create CrossEntropy Loss with optional per-class weights and label smoothing")
         .def("forward", &cyxwiz::CrossEntropyLoss::Forward,
              py::arg("predictions"),
              py::arg("targets"),
@@ -969,7 +970,10 @@ PYBIND11_MODULE(pycyxwiz, m) {
              "Backward: gradient w.r.t logits")
         .def_property_readonly("class_weights",
              &cyxwiz::CrossEntropyLoss::GetClassWeights,
-             "Per-class loss weights");
+             "Per-class loss weights")
+        .def_property_readonly("label_smoothing",
+             &cyxwiz::CrossEntropyLoss::GetLabelSmoothing,
+             "Label smoothing factor");
 
     // BCEWithLogits Loss (for binary / multi-label classification)
     py::class_<cyxwiz::BCEWithLogitsLoss, cyxwiz::Loss>(m, "BCEWithLogitsLoss")
@@ -989,6 +993,65 @@ PYBIND11_MODULE(pycyxwiz, m) {
              &cyxwiz::BCEWithLogitsLoss::GetPosWeight,
              &cyxwiz::BCEWithLogitsLoss::SetPosWeight,
              "Positive-class weighting factor");
+
+    py::class_<cyxwiz::SoftDiceLoss, cyxwiz::Loss>(m, "SoftDiceLoss")
+        .def(py::init<cyxwiz::Reduction, float>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("smooth") = 1.0f,
+             "Create Soft Dice loss for probability masks")
+        .def("forward", &cyxwiz::SoftDiceLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute Soft Dice loss")
+        .def("backward", &cyxwiz::SoftDiceLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t predictions")
+        .def_property_readonly("smooth",
+             &cyxwiz::SoftDiceLoss::GetSmooth,
+             "Smoothing constant");
+
+    py::class_<cyxwiz::TverskyLoss, cyxwiz::Loss>(m, "TverskyLoss")
+        .def(py::init<cyxwiz::Reduction, float, float, float>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("alpha") = 0.5f,
+             py::arg("beta") = 0.5f,
+             py::arg("smooth") = 1.0f,
+             "Create Tversky loss for probability masks")
+        .def("forward", &cyxwiz::TverskyLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute Tversky loss")
+        .def("backward", &cyxwiz::TverskyLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t predictions")
+        .def_property_readonly("alpha",
+             &cyxwiz::TverskyLoss::GetAlpha,
+             "False-positive penalty")
+        .def_property_readonly("beta",
+             &cyxwiz::TverskyLoss::GetBeta,
+             "False-negative penalty")
+        .def_property_readonly("smooth",
+             &cyxwiz::TverskyLoss::GetSmooth,
+             "Smoothing constant");
+
+    py::class_<cyxwiz::JaccardLoss, cyxwiz::Loss>(m, "JaccardLoss")
+        .def(py::init<cyxwiz::Reduction, float>(),
+             py::arg("reduction") = cyxwiz::Reduction::Mean,
+             py::arg("smooth") = 1.0f,
+             "Create Jaccard/IoU loss for probability masks")
+        .def("forward", &cyxwiz::JaccardLoss::Forward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Forward: compute Jaccard loss")
+        .def("backward", &cyxwiz::JaccardLoss::Backward,
+             py::arg("predictions"),
+             py::arg("targets"),
+             "Backward: gradient w.r.t predictions")
+        .def_property_readonly("smooth",
+             &cyxwiz::JaccardLoss::GetSmooth,
+             "Smoothing constant");
 
     // Focal Loss (for class imbalance)
     py::class_<cyxwiz::FocalLoss, cyxwiz::Loss>(m, "FocalLoss")

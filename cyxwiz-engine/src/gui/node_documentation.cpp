@@ -207,6 +207,9 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::SmoothL1Loss:
         case NodeType::HuberLoss:
         case NodeType::NLLLoss:
+        case NodeType::SoftDiceLoss:
+        case NodeType::TverskyLoss:
+        case NodeType::JaccardLoss:
             return "Loss Functions";
 
         // Optimizers
@@ -1178,6 +1181,55 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "Requires LogSoftmax activation before",
             "CrossEntropyLoss is usually more convenient"
+        },
+        "Loss Functions"
+    };
+
+    docs_[NodeType::SoftDiceLoss] = {
+        "Soft Dice Loss",
+        "Dice overlap loss for segmentation-style probability masks. "
+        "Predictions and targets must be same-shaped Float32 tensors.",
+        "Computes 1 - Dice coefficient with a smoothing constant.",
+        {
+            {"smooth", "Smoothing constant to avoid division by zero"}
+        },
+        {
+            "Use with probability masks, not raw logits",
+            "Targets must match prediction shape"
+        },
+        "Loss Functions"
+    };
+
+    docs_[NodeType::TverskyLoss] = {
+        "Tversky Loss",
+        "Tversky overlap loss for imbalanced segmentation-style probability masks. "
+        "Predictions and targets must be same-shaped Float32 tensors.",
+        "Computes 1 - (TP + smooth) / (TP + alpha*FP + beta*FN + smooth).",
+        {
+            {"alpha", "False-positive penalty"},
+            {"beta", "False-negative penalty"},
+            {"smooth", "Smoothing constant to avoid division by zero"}
+        },
+        {
+            "Use with probability masks, not raw logits",
+            "Targets must match prediction shape",
+            "Increase beta when false negatives are more costly"
+        },
+        "Loss Functions"
+    };
+
+    docs_[NodeType::JaccardLoss] = {
+        "Jaccard / IoU Loss",
+        "Intersection-over-union loss for segmentation-style probability masks. "
+        "Predictions and targets must be same-shaped Float32 tensors.",
+        "Computes 1 - (intersection + smooth) / (union + smooth).",
+        {
+            {"smooth", "Smoothing constant to avoid division by zero"}
+        },
+        {
+            "Use with probability masks, not raw logits",
+            "Targets must match prediction shape",
+            "Equivalent to optimizing soft IoU overlap"
         },
         "Loss Functions"
     };

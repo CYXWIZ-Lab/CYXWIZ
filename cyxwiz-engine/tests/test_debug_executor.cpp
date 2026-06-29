@@ -341,6 +341,7 @@ void TestWeightedLossConfigParams() {
     auto ce_cfg = MakeTabularConfig();
     ce_cfg.loss_params["class_weight"] = "manual";
     ce_cfg.loss_params["class_weights"] = "[1.0, 2.0, 3.0, 4.0]";
+    ce_cfg.loss_params["label_smoothing"] = "0.1";
     ce_cfg.loss_params["reduction"] = "sum";
     auto ce_built = BuildSequentialFromConfig(ce_cfg);
     ExpectTrue(ce_built.ok(), "weighted CrossEntropy config should build");
@@ -353,6 +354,8 @@ void TestWeightedLossConfigParams() {
                "CrossEntropyLoss should receive four class weights");
     ExpectNear(ce_loss->GetClassWeights()[3], 4.0f, 1e-6f,
                "CrossEntropyLoss should preserve manual class weights");
+    ExpectNear(ce_loss->GetLabelSmoothing(), 0.1f, 1e-6f,
+               "CrossEntropyLoss should preserve label_smoothing");
 
     auto bce_cfg = MakeTabularConfig();
     bce_cfg.output_size = 1;
@@ -400,6 +403,54 @@ void TestWeightedLossConfigParams() {
                "SmoothL1Loss should preserve reduction");
     ExpectNear(smooth_loss->GetDelta(), 0.5f, 1e-6f,
                "SmoothL1Loss should preserve beta/delta");
+
+    auto dice_cfg = MakeTabularConfig();
+    dice_cfg.loss_type = gui::NodeType::SoftDiceLoss;
+    dice_cfg.loss_params["smooth"] = "0.5";
+    dice_cfg.loss_params["reduction"] = "sum";
+    auto dice_built = BuildSequentialFromConfig(dice_cfg);
+    ExpectTrue(dice_built.ok(), "SoftDice config should build");
+    auto* dice_loss = dynamic_cast<SoftDiceLoss*>(dice_built.loss.get());
+    ExpectTrue(dice_loss != nullptr,
+               "SoftDice config should construct SoftDiceLoss");
+    ExpectTrue(dice_loss->GetReduction() == Reduction::Sum,
+               "SoftDiceLoss should preserve reduction");
+    ExpectNear(dice_loss->GetSmooth(), 0.5f, 1e-6f,
+               "SoftDiceLoss should preserve smooth");
+
+    auto tversky_cfg = MakeTabularConfig();
+    tversky_cfg.loss_type = gui::NodeType::TverskyLoss;
+    tversky_cfg.loss_params["alpha"] = "0.3";
+    tversky_cfg.loss_params["beta"] = "0.7";
+    tversky_cfg.loss_params["smooth"] = "0.5";
+    tversky_cfg.loss_params["reduction"] = "sum";
+    auto tversky_built = BuildSequentialFromConfig(tversky_cfg);
+    ExpectTrue(tversky_built.ok(), "Tversky config should build");
+    auto* tversky_loss = dynamic_cast<TverskyLoss*>(tversky_built.loss.get());
+    ExpectTrue(tversky_loss != nullptr,
+               "Tversky config should construct TverskyLoss");
+    ExpectTrue(tversky_loss->GetReduction() == Reduction::Sum,
+               "TverskyLoss should preserve reduction");
+    ExpectNear(tversky_loss->GetAlpha(), 0.3f, 1e-6f,
+               "TverskyLoss should preserve alpha");
+    ExpectNear(tversky_loss->GetBeta(), 0.7f, 1e-6f,
+               "TverskyLoss should preserve beta");
+    ExpectNear(tversky_loss->GetSmooth(), 0.5f, 1e-6f,
+               "TverskyLoss should preserve smooth");
+
+    auto jaccard_cfg = MakeTabularConfig();
+    jaccard_cfg.loss_type = gui::NodeType::JaccardLoss;
+    jaccard_cfg.loss_params["smooth"] = "0.5";
+    jaccard_cfg.loss_params["reduction"] = "sum";
+    auto jaccard_built = BuildSequentialFromConfig(jaccard_cfg);
+    ExpectTrue(jaccard_built.ok(), "Jaccard config should build");
+    auto* jaccard_loss = dynamic_cast<JaccardLoss*>(jaccard_built.loss.get());
+    ExpectTrue(jaccard_loss != nullptr,
+               "Jaccard config should construct JaccardLoss");
+    ExpectTrue(jaccard_loss->GetReduction() == Reduction::Sum,
+               "JaccardLoss should preserve reduction");
+    ExpectNear(jaccard_loss->GetSmooth(), 0.5f, 1e-6f,
+               "JaccardLoss should preserve smooth");
 }
 
 void TestCrossEntropyTokenShapeIgnoreIndex() {

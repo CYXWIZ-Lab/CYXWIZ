@@ -204,6 +204,9 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::HuberLoss:
         case NodeType::NLLLoss:
         case NodeType::FocalLoss:
+        case NodeType::SoftDiceLoss:
+        case NodeType::TverskyLoss:
+        case NodeType::JaccardLoss:
         case NodeType::Output:
             return NodeCategory::Training;
 
@@ -1876,7 +1879,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::L1Loss:
         case NodeType::SmoothL1Loss:
         case NodeType::HuberLoss:
-        case NodeType::NLLLoss: {
+        case NodeType::NLLLoss:
+        case NodeType::SoftDiceLoss:
+        case NodeType::TverskyLoss:
+        case NodeType::JaccardLoss: {
             NodePin pred_pin;
             pred_pin.id = next_pin_id_++;
             pred_pin.type = PinType::Tensor;
@@ -1887,6 +1893,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
                 "logit/prob per sample; L1/SmoothL1/Huber expect a "
                 "regression value matching Targets shape; NLL expects "
                 "log-probabilities of shape [batch, classes].";
+            if (node.type == NodeType::SoftDiceLoss ||
+                node.type == NodeType::TverskyLoss ||
+                node.type == NodeType::JaccardLoss) {
+                pred_pin.description =
+                    "Probability mask predictions. Shape must match Targets.";
+            }
             node.inputs.push_back(pred_pin);
 
             NodePin target_pin;
@@ -1898,6 +1910,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
                 "Ground-truth values. BCE wants 0/1 floats; L1/Huber "
                 "want continuous floats matching Predictions shape; NLL "
                 "wants integer class indices.";
+            if (node.type == NodeType::SoftDiceLoss ||
+                node.type == NodeType::TverskyLoss ||
+                node.type == NodeType::JaccardLoss) {
+                target_pin.description =
+                    "Float32 target masks with the same shape as Predictions.";
+            }
             node.inputs.push_back(target_pin);
 
             NodePin loss_pin;
@@ -1914,6 +1932,14 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["reduction"] = "mean";
             if (node.type == NodeType::SmoothL1Loss || node.type == NodeType::HuberLoss) {
                 node.parameters["beta"] = "1.0";
+            } else if (node.type == NodeType::SoftDiceLoss) {
+                node.parameters["smooth"] = "1.0";
+            } else if (node.type == NodeType::TverskyLoss) {
+                node.parameters["alpha"] = "0.5";
+                node.parameters["beta"] = "0.5";
+                node.parameters["smooth"] = "1.0";
+            } else if (node.type == NodeType::JaccardLoss) {
+                node.parameters["smooth"] = "1.0";
             }
             break;
         }
@@ -4476,6 +4502,28 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        case NodeType::ClassificationMetricsNode: {
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            node.inputs.push_back(data_in);
+
+            NodePin metrics_out;
+            metrics_out.id = next_pin_id_++;
+            metrics_out.type = PinType::Dataset;
+            metrics_out.name = "Metrics";
+            metrics_out.is_input = false;
+            node.outputs.push_back(metrics_out);
+
+            node.parameters["actual_col"] = "";
+            node.parameters["predicted_col"] = "";
+            node.parameters["metrics"] =
+                "accuracy,precision,recall,f1,weighted_f1,count";
+            break;
+        }
+
         // ===== Phase 4: Data Preprocessing Nodes =====
         case NodeType::StandardScaler: {
             NodePin input_pin;
@@ -5663,6 +5711,9 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::HuberLoss:
         case NodeType::NLLLoss:
         case NodeType::FocalLoss:
+        case NodeType::SoftDiceLoss:
+        case NodeType::TverskyLoss:
+        case NodeType::JaccardLoss:
             return IM_COL32(192, 57, 43, 255);
 
         // ===== Optimizers - Dark Blue Gray =====
@@ -5906,6 +5957,7 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         case NodeType::FeatureImportanceNode:
         case NodeType::CrossValidationNode:
         case NodeType::RegressionMetricsNode:
+        case NodeType::ClassificationMetricsNode:
             return IM_COL32(233, 30, 99, 255);
 
         // ===== Data Preprocessing Nodes - Light Green =====

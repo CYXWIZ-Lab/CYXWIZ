@@ -575,6 +575,10 @@ enum class NodeType {
 
     // ===== Appended Training Loss Nodes =====
     FocalLoss,          // Class-imbalance-aware focal cross-entropy loss
+    SoftDiceLoss,       // Soft Dice probability-mask loss
+    TverskyLoss,        // Tversky probability-mask loss
+    JaccardLoss,        // Jaccard/IoU probability-mask loss
+    ClassificationMetricsNode, // Classification accuracy/precision/recall/F1 metrics
 
     // ===== Appended Classic ML Inference Nodes =====
     TreeModelPredictor, // Apply a saved tree-family model artifact

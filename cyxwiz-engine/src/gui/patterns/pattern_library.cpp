@@ -480,6 +480,10 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
         {"SmoothL1Loss", NodeType::SmoothL1Loss},
         {"HuberLoss", NodeType::HuberLoss},
         {"NLLLoss", NodeType::NLLLoss},
+        {"SoftDiceLoss", NodeType::SoftDiceLoss},
+        {"TverskyLoss", NodeType::TverskyLoss},
+        {"JaccardLoss", NodeType::JaccardLoss},
+        {"ClassificationMetricsNode", NodeType::ClassificationMetricsNode},
 
         // Optimizers
         {"SGD", NodeType::SGD},

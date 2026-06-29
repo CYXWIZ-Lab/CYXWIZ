@@ -251,6 +251,9 @@ void RenderSimpleLossProperties(MLNode& node,
         case NodeType::CrossEntropyLoss: {
             RenderTextParameter(node, "ignore_index", "Ignore index", "-100",
                                 ImGuiInputTextFlags_CharsDecimal);
+            RenderFloatParameter(node, "label_smoothing", "Label smoothing",
+                                 "0.0", 0.0f);
+            ImGui::TextDisabled("  Must be less than 1.0. Smooths hard class labels.");
             static const char* weight_modes[] = {"none", "manual", "balanced"};
             RenderEnumParameter(node, "class_weight", "Class weights",
                                 weight_modes, IM_ARRAYSIZE(weight_modes),
@@ -274,6 +277,20 @@ void RenderSimpleLossProperties(MLNode& node,
         case NodeType::FocalLoss:
             RenderFloatParameter(node, "alpha", "Alpha", "0.25", 0.0f);
             RenderFloatParameter(node, "gamma", "Gamma", "2.0", 0.0f);
+            break;
+        case NodeType::SoftDiceLoss:
+            RenderFloatParameter(node, "smooth", "Smooth", "1.0", 0.0f);
+            ImGui::TextDisabled("  Expects probability masks and same-shaped Float32 targets.");
+            break;
+        case NodeType::TverskyLoss:
+            RenderFloatParameter(node, "alpha", "Alpha", "0.5", 0.0f);
+            RenderFloatParameter(node, "beta", "Beta", "0.5", 0.0f);
+            RenderFloatParameter(node, "smooth", "Smooth", "1.0", 0.0f);
+            ImGui::TextDisabled("  Alpha penalizes false positives; beta penalizes false negatives.");
+            break;
+        case NodeType::JaccardLoss:
+            RenderFloatParameter(node, "smooth", "Smooth", "1.0", 0.0f);
+            ImGui::TextDisabled("  IoU-style overlap loss for same-shaped Float32 masks.");
             break;
         case NodeType::SmoothL1Loss:
         case NodeType::HuberLoss:
@@ -796,6 +813,9 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
         case NodeType::MSELoss:
         case NodeType::CrossEntropyLoss:
         case NodeType::FocalLoss:
+        case NodeType::SoftDiceLoss:
+        case NodeType::TverskyLoss:
+        case NodeType::JaccardLoss:
         case NodeType::BCELoss:
         case NodeType::BCEWithLogits:
         case NodeType::L1Loss:

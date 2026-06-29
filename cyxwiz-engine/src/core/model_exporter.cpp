@@ -1,5 +1,6 @@
 #include "model_exporter.h"
 #include "training_executor.h"
+#include "node_executors/tree_model_artifact.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <filesystem>
@@ -544,6 +545,24 @@ ExportResult ModelExporter::ExportCyxModel(
             !resolved_options.text_tokenizer_config_json.empty();
         manifest.has_vocabulary =
             !resolved_options.text_tokenizer_vocab_path.empty();
+        manifest.has_tree_model_artifact =
+            resolved_options.include_tree_model_artifact;
+        if (manifest.has_tree_model_artifact) {
+            if (!resolved_options.tree_model_artifact_json.empty()) {
+                try {
+                    const auto artifact_json =
+                        nlohmann::json::parse(
+                            resolved_options.tree_model_artifact_json);
+                    manifest.tree_model_type =
+                        artifact_json.value("model_type", "");
+                } catch (const std::exception&) {
+                    manifest.tree_model_type.clear();
+                }
+            } else if (!resolved_options.tree_model_artifact_path.empty()) {
+                manifest.tree_model_type = ReadTreeModelArtifactType(
+                    resolved_options.tree_model_artifact_path);
+            }
+        }
         if (resolved_options.include_sequence_assets) {
             manifest.has_sequence =
                 inferred_sequence_config.enabled ||
@@ -579,6 +598,9 @@ ExportResult ModelExporter::ExportCyxModel(
                 manifest.has_sequence_pos_vocabulary ? "sequence/pos_vocab.txt" : "";
             manifest.sequence_tag_vocabulary_path =
                 manifest.has_sequence_tag_vocabulary ? "sequence/tag_vocab.txt" : "";
+        }
+        if (manifest.has_tree_model_artifact) {
+            manifest.tree_model_artifact_path = "tree/model.json";
         }
 
         if (progress_cb) progress_cb(1, 6, "Extracting weights...");

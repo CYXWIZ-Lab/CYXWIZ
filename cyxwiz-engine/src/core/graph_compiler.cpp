@@ -87,7 +87,10 @@ bool IsLossNodeType(gui::NodeType type) {
            type == gui::NodeType::L1Loss ||
            type == gui::NodeType::SmoothL1Loss ||
            type == gui::NodeType::HuberLoss ||
-           type == gui::NodeType::NLLLoss;
+           type == gui::NodeType::NLLLoss ||
+           type == gui::NodeType::SoftDiceLoss ||
+           type == gui::NodeType::TverskyLoss ||
+           type == gui::NodeType::JaccardLoss;
 }
 
 bool IsSupportedOptimizerNodeType(gui::NodeType type) {
@@ -288,6 +291,33 @@ void ValidateCrossEntropyWeightParams(
                 std::to_string(weights.size()) +
                 ") does not match class/output count (" +
                 std::to_string(expected_classes) + ")",
+            loss_node.id,
+            loss_node.name);
+    }
+}
+
+void ValidateCrossEntropyLabelSmoothing(
+    TrainingConfiguration& config,
+    const gui::MLNode& loss_node) {
+    const std::string* raw =
+        FindParam(loss_node.parameters, {"label_smoothing"});
+    if (!raw || IsNeutralUnsupportedParameterValue("label_smoothing", *raw)) {
+        return;
+    }
+
+    const std::string value = TrimAscii(*raw);
+    try {
+        size_t parsed = 0;
+        const float smoothing = std::stof(value, &parsed);
+        if (parsed != value.size() || !std::isfinite(smoothing) ||
+            smoothing < 0.0f || smoothing >= 1.0f) {
+            throw std::runtime_error("invalid label_smoothing");
+        }
+    } catch (...) {
+        AddIssue(
+            config,
+            IssueLevel::Error,
+            "CrossEntropy label_smoothing must be a finite float in [0, 1).",
             loss_node.id,
             loss_node.name);
     }
@@ -3133,13 +3163,14 @@ TrainingConfiguration GraphCompiler::Compile(
         if (loss_node->type != gui::NodeType::CrossEntropyLoss) {
             const auto class_weight_params = PresentUnsupportedParameters(
                 loss_node->parameters,
-                {"weight", "class_weight", "class_weights", "weights"},
+                {"weight", "class_weight", "class_weights", "weights",
+                 "label_smoothing"},
                 true);
             if (!class_weight_params.empty()) {
                 AddIssue(
                     config,
                     IssueLevel::Warning,
-                    "Class-weight loss parameters are supported only on "
+                    "CrossEntropy loss parameters are supported only on "
                     "CrossEntropyLoss and will be ignored here: " +
                         JoinNames(class_weight_params) + ".",
                     loss_node->id,
@@ -3241,6 +3272,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
         if (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss) {
             ValidateCrossEntropyWeightParams(config, *loss_node);
+            ValidateCrossEntropyLabelSmoothing(config, *loss_node);
         }
     }
 
@@ -4659,7 +4691,10 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
                t == gui::NodeType::L1Loss ||
                t == gui::NodeType::SmoothL1Loss ||
                t == gui::NodeType::HuberLoss ||
-               t == gui::NodeType::NLLLoss;
+               t == gui::NodeType::NLLLoss ||
+               t == gui::NodeType::SoftDiceLoss ||
+               t == gui::NodeType::TverskyLoss ||
+               t == gui::NodeType::JaccardLoss;
     };
 
     // For each loss node, find its Targets input pin (the one tagged
@@ -4791,7 +4826,10 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
                t == gui::NodeType::L1Loss ||
                t == gui::NodeType::SmoothL1Loss ||
                t == gui::NodeType::HuberLoss ||
-               t == gui::NodeType::NLLLoss;
+               t == gui::NodeType::NLLLoss ||
+               t == gui::NodeType::SoftDiceLoss ||
+               t == gui::NodeType::TverskyLoss ||
+               t == gui::NodeType::JaccardLoss;
     };
 
     // Build node_id → node* lookup so the BFS can check owning node
@@ -4936,7 +4974,10 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
                t == gui::NodeType::L1Loss ||
                t == gui::NodeType::SmoothL1Loss ||
                t == gui::NodeType::HuberLoss ||
-               t == gui::NodeType::NLLLoss;
+               t == gui::NodeType::NLLLoss ||
+               t == gui::NodeType::SoftDiceLoss ||
+               t == gui::NodeType::TverskyLoss ||
+               t == gui::NodeType::JaccardLoss;
     };
 
     for (const auto& node : nodes) {

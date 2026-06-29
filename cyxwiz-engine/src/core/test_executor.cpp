@@ -478,6 +478,9 @@ bool TestExecutor::BuildModelFromConfig() {
             case gui::NodeType::MSELoss:
             case gui::NodeType::CrossEntropyLoss:
             case gui::NodeType::FocalLoss:
+            case gui::NodeType::SoftDiceLoss:
+            case gui::NodeType::TverskyLoss:
+            case gui::NodeType::JaccardLoss:
             case gui::NodeType::BCELoss:
             case gui::NodeType::BCEWithLogits:
             case gui::NodeType::L1Loss:
@@ -516,6 +519,15 @@ bool TestExecutor::Initialize(int /*batch_size*/) {
             break;
         case gui::NodeType::FocalLoss:
             loss_ = CreateLoss(LossType::Focal);
+            break;
+        case gui::NodeType::SoftDiceLoss:
+            loss_ = CreateLoss(LossType::SoftDice);
+            break;
+        case gui::NodeType::TverskyLoss:
+            loss_ = CreateLoss(LossType::Tversky);
+            break;
+        case gui::NodeType::JaccardLoss:
+            loss_ = CreateLoss(LossType::Jaccard);
             break;
         case gui::NodeType::MSELoss:
             loss_ = CreateLoss(LossType::MSE);

@@ -25,6 +25,35 @@ namespace cyxwiz {
 
 using namespace loss_detail;
 
+CrossEntropyLoss::CrossEntropyLoss(Reduction reduction, int ignore_index)
+    : CrossEntropyLoss(reduction, ignore_index, {}) {}
+
+CrossEntropyLoss::CrossEntropyLoss(Reduction reduction,
+                                   int ignore_index,
+                                   std::vector<float> class_weights)
+    : CrossEntropyLoss(reduction, ignore_index, std::move(class_weights), 0.0f) {}
+
+CrossEntropyLoss::CrossEntropyLoss(Reduction reduction,
+                                   int ignore_index,
+                                   std::vector<float> class_weights,
+                                   float label_smoothing)
+    : Loss(reduction),
+      ignore_index_(ignore_index),
+      class_weights_(std::move(class_weights)),
+      label_smoothing_(label_smoothing) {
+    if (!std::isfinite(label_smoothing_) ||
+        label_smoothing_ < 0.0f || label_smoothing_ >= 1.0f) {
+        throw std::runtime_error(
+            "CrossEntropy label_smoothing must be finite and in [0, 1)");
+    }
+}
+
+NLLLoss::NLLLoss(Reduction reduction, int ignore_index)
+    : Loss(reduction), ignore_index_(ignore_index) {}
+
+FocalLoss::FocalLoss(float alpha, float gamma, Reduction reduction)
+    : Loss(reduction), alpha_(alpha), gamma_(gamma) {}
+
 namespace {
 
 struct ClassAxisShape {
@@ -177,6 +206,7 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
                               Reduction reduction,
                               int ignore_index,
                               const std::vector<float>& class_weights,
+                              float label_smoothing,
                               Tensor* cached_softmax) {
     const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "CrossEntropy");
     ValidateClassWeights(class_weights, shape.classes, "CrossEntropy");
@@ -189,6 +219,8 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
     std::vector<float> losses(shape.batch, 0.0f);
     size_t mean_count = shape.batch;
     float mean_weight = 0.0f;
+    const float smooth_other =
+        label_smoothing / static_cast<float>(shape.classes);
     if (TargetsAreClassIndices(predictions, targets)) {
         ValidateClassIndexTargets(targets, shape, "CrossEntropy");
         mean_count = 0;
@@ -199,11 +231,19 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
             }
             ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
             const size_t target_class = static_cast<size_t>(class_index);
-            const float weight = class_weights.empty() ? 1.0f : class_weights[target_class];
-            losses[batch] =
-                -weight * std::log(probs[batch * shape.classes + target_class] + 1e-10f);
+            float sample_weight = 0.0f;
+            for (size_t c = 0; c < shape.classes; ++c) {
+                const float target_value =
+                    (c == target_class ? 1.0f - label_smoothing : 0.0f) +
+                    smooth_other;
+                const float weight = class_weights.empty() ? 1.0f : class_weights[c];
+                losses[batch] -=
+                    weight * target_value *
+                    std::log(probs[batch * shape.classes + c] + 1e-10f);
+                sample_weight += weight * target_value;
+            }
             ++mean_count;
-            mean_weight += weight;
+            mean_weight += sample_weight;
         }
         if (!class_weights.empty() && reduction != Reduction::None) {
             if (reduction == Reduction::Mean) {
@@ -228,9 +268,12 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
             float sample_weight = 0.0f;
             for (size_t c = 0; c < shape.classes; ++c) {
                 const float weight = class_weights.empty() ? 1.0f : class_weights[c];
+                const float target_value =
+                    target[base + c] * (1.0f - label_smoothing) +
+                    smooth_other;
                 losses[batch] -=
-                    weight * target[base + c] * std::log(probs[base + c] + 1e-10f);
-                sample_weight += weight * target[base + c];
+                    weight * target_value * std::log(probs[base + c] + 1e-10f);
+                sample_weight += weight * target_value;
             }
             mean_weight += sample_weight;
         }
@@ -253,6 +296,7 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
                                Reduction reduction,
                                int ignore_index,
                                const std::vector<float>& class_weights,
+                               float label_smoothing,
                                const Tensor& cached_softmax) {
     const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "CrossEntropy");
     ValidateClassWeights(class_weights, shape.classes, "CrossEntropy");
@@ -266,6 +310,8 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
     std::fill(out, out + predictions.NumElements(), 0.0f);
     size_t mean_count = shape.batch;
     float mean_weight = 0.0f;
+    const float smooth_other =
+        label_smoothing / static_cast<float>(shape.classes);
 
     if (TargetsAreClassIndices(predictions, targets)) {
         ValidateClassIndexTargets(targets, shape, "CrossEntropy");
@@ -279,13 +325,22 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
             }
             ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
             const size_t target_class = static_cast<size_t>(class_index);
-            const float weight = class_weights.empty() ? 1.0f : class_weights[target_class];
+            std::vector<float> weighted_target(shape.classes, 0.0f);
+            float weighted_target_sum = 0.0f;
             for (size_t c = 0; c < shape.classes; ++c) {
-                const float target_value = c == target_class ? 1.0f : 0.0f;
-                out[base + c] = weight * (probs[base + c] - target_value);
+                const float target_value =
+                    (c == target_class ? 1.0f - label_smoothing : 0.0f) +
+                    smooth_other;
+                const float weight = class_weights.empty() ? 1.0f : class_weights[c];
+                weighted_target[c] = weight * target_value;
+                weighted_target_sum += weighted_target[c];
+            }
+            for (size_t c = 0; c < shape.classes; ++c) {
+                out[base + c] =
+                    probs[base + c] * weighted_target_sum - weighted_target[c];
             }
             ++mean_count;
-            mean_weight += weight;
+            mean_weight += weighted_target_sum;
         }
     } else {
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
@@ -295,13 +350,19 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
             float weighted_target_sum = 0.0f;
             for (size_t c = 0; c < shape.classes; ++c) {
                 const float weight = class_weights.empty() ? 1.0f : class_weights[c];
-                weighted_target_sum += weight * target[base + c];
+                const float target_value =
+                    target[base + c] * (1.0f - label_smoothing) +
+                    smooth_other;
+                weighted_target_sum += weight * target_value;
             }
             mean_weight += weighted_target_sum;
             for (size_t c = 0; c < shape.classes; ++c) {
                 const float weight = class_weights.empty() ? 1.0f : class_weights[c];
+                const float target_value =
+                    target[base + c] * (1.0f - label_smoothing) +
+                    smooth_other;
                 out[base + c] =
-                    probs[base + c] * weighted_target_sum - weight * target[base + c];
+                    probs[base + c] * weighted_target_sum - weight * target_value;
             }
         }
     }
@@ -447,14 +508,16 @@ Tensor CpuFocalBackward(const Tensor& predictions,
 // ============================================================================
 
 Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
-    if (!class_weights_.empty()) {
+    if (!class_weights_.empty() || label_smoothing_ > 0.0f) {
         return CpuCrossEntropyForward(
-            predictions, targets, reduction_, ignore_index_, class_weights_, &cached_softmax_);
+            predictions, targets, reduction_, ignore_index_, class_weights_,
+            label_smoothing_, &cached_softmax_);
     }
     if (TargetsAreClassIndices(predictions, targets) &&
         ClassIndexTargetsContain(targets, ignore_index_)) {
         return CpuCrossEntropyForward(
-            predictions, targets, reduction_, ignore_index_, class_weights_, &cached_softmax_);
+            predictions, targets, reduction_, ignore_index_, class_weights_,
+            label_smoothing_, &cached_softmax_);
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -516,22 +579,26 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
     }
 #endif
     return CpuCrossEntropyForward(
-        predictions, targets, reduction_, ignore_index_, class_weights_, &cached_softmax_);
+        predictions, targets, reduction_, ignore_index_, class_weights_,
+        label_smoothing_, &cached_softmax_);
 }
 
 Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
-    if (!class_weights_.empty()) {
+    if (!class_weights_.empty() || label_smoothing_ > 0.0f) {
         return CpuCrossEntropyBackward(
-            predictions, targets, reduction_, ignore_index_, class_weights_, cached_softmax_);
+            predictions, targets, reduction_, ignore_index_, class_weights_,
+            label_smoothing_, cached_softmax_);
     }
     if (TargetsAreClassIndices(predictions, targets) &&
         ClassIndexTargetsContain(targets, ignore_index_)) {
         return CpuCrossEntropyBackward(
-            predictions, targets, reduction_, ignore_index_, class_weights_, cached_softmax_);
+            predictions, targets, reduction_, ignore_index_, class_weights_,
+            label_smoothing_, cached_softmax_);
     }
     if (predictions.Shape().size() == 3) {
         return CpuCrossEntropyBackward(
-            predictions, targets, reduction_, ignore_index_, class_weights_, cached_softmax_);
+            predictions, targets, reduction_, ignore_index_, class_weights_,
+            label_smoothing_, cached_softmax_);
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -589,7 +656,8 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
     }
 #endif
     return CpuCrossEntropyBackward(
-        predictions, targets, reduction_, ignore_index_, class_weights_, cached_softmax_);
+        predictions, targets, reduction_, ignore_index_, class_weights_,
+        label_smoothing_, cached_softmax_);
 }
 
 // ============================================================================

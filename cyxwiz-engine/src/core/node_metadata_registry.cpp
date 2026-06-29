@@ -664,6 +664,18 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         "multiclass_classification",
         "Use for imbalanced mutually exclusive class labels with logits.");
     apply_task_type_guidance(
+        NodeType::SoftDiceLoss,
+        "segmentation",
+        "Use for probability masks and same-shaped Float32 target masks.");
+    apply_task_type_guidance(
+        NodeType::TverskyLoss,
+        "segmentation",
+        "Use for imbalanced probability masks with tunable false-positive and false-negative penalties.");
+    apply_task_type_guidance(
+        NodeType::JaccardLoss,
+        "segmentation",
+        "Use for IoU-style probability masks and same-shaped Float32 target masks.");
+    apply_task_type_guidance(
         NodeType::NLLLoss,
         "multiclass_classification",
         "Use for class labels when the model outputs log probabilities.");
@@ -1603,6 +1615,17 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"metrics", "string", "mse,rmse,mae,r2", "Comma-separated metrics", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::ClassificationMetricsNode, NodeCategory::Analytics, "Classification Metrics", ICON_FA_CHART_SIMPLE,
+        {"classification", "metrics", "accuracy", "precision", "recall", "f1", "macro", "weighted"}, 0, false,
+        "Classification metrics",
+        "Computes accuracy, macro precision/recall/F1, weighted F1, and count from actual and predicted label columns.", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Metrics", PinType::Dataset, true, "Metric/value table"}},
+        {{"actual_col", "string", "", "Actual label column", {}, ""},
+         {"predicted_col", "string", "", "Predicted label column", {}, ""},
+         {"metrics", "string", "accuracy,precision,recall,f1,weighted_f1,count", "Comma-separated metrics", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     // Preprocessing (Phase 4)
     RegisterNode({NodeType::StandardScaler, NodeCategory::Preprocessing, "Standard Scaler", ICON_FA_SCALE_BALANCED,
         {"standardize", "zscore", "scaler"}, 0, false, "Z-score standardization",
@@ -2185,6 +2208,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
          {"ignore_index", "int", "-100", "Padding label ignore index", {}, ""},
+         {"label_smoothing", "float", "0.0", "Label smoothing", {}, ""},
          {"class_weight", "enum", "none", "Class weight mode", {"none", "manual", "balanced"}, ""},
          {"class_weights", "string", "", "Manual per-class weights", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
@@ -2199,7 +2223,46 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
          {"alpha", "float", "0.25", "Class imbalance scale", {}, ""},
-         {"gamma", "float", "2.0", "Focusing parameter", {}, ""}},
+        {"gamma", "float", "2.0", "Focusing parameter", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SoftDiceLoss, NodeCategory::Training, "Soft Dice Loss", ICON_FA_CHART_PIE,
+        {"soft dice", "dice", "dice loss", "segmentation", "mask",
+         "class imbalance", "criterion", "objective", "optimization", "loss"},
+        0, false,
+        "Soft Dice loss for probability masks and same-shaped Float32 targets", "", "",
+        {{"Predictions", PinType::Tensor, true, "Probability mask predictions"},
+         {"Targets", PinType::Tensor, true, "Same-shaped target masks"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"smooth", "float", "1.0", "Smoothing constant", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TverskyLoss, NodeCategory::Training, "Tversky Loss", ICON_FA_CHART_PIE,
+        {"tversky", "tversky loss", "segmentation", "mask", "dice",
+         "false positive", "false negative", "class imbalance", "criterion",
+         "objective", "optimization", "loss"},
+        0, false,
+        "Tversky loss for imbalanced probability masks and same-shaped Float32 targets", "", "",
+        {{"Predictions", PinType::Tensor, true, "Probability mask predictions"},
+         {"Targets", PinType::Tensor, true, "Same-shaped target masks"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"alpha", "float", "0.5", "False-positive penalty", {}, ""},
+         {"beta", "float", "0.5", "False-negative penalty", {}, ""},
+         {"smooth", "float", "1.0", "Smoothing constant", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::JaccardLoss, NodeCategory::Training, "Jaccard / IoU Loss", ICON_FA_CHART_PIE,
+        {"jaccard", "jaccard loss", "iou", "iou loss", "intersection over union",
+         "segmentation", "mask", "criterion", "objective", "optimization", "loss"},
+        0, false,
+        "Jaccard/IoU loss for probability masks and same-shaped Float32 targets", "", "",
+        {{"Predictions", PinType::Tensor, true, "Probability mask predictions"},
+         {"Targets", PinType::Tensor, true, "Same-shaped target masks"}},
+        {{"Loss", PinType::Loss, true, "Loss value"}},
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
+         {"smooth", "float", "1.0", "Smoothing constant", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::BCELoss, NodeCategory::Training, "BCE Loss", ICON_FA_CHART_PIE,

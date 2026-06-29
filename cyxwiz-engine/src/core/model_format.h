@@ -89,6 +89,12 @@ struct ExportOptions {
     std::string sequence_pos_vocabulary_path;
     std::string sequence_tag_vocabulary_path;
 
+    // Optional native tree-family model artifact for table-path models.
+    // CyxModelFormat stores this payload at tree/model.json.
+    bool include_tree_model_artifact = false;
+    std::string tree_model_artifact_json;
+    std::string tree_model_artifact_path;
+
     // Quantization
     Quantization quantization = Quantization::None;
 
@@ -191,6 +197,9 @@ struct ProbeResult {
     bool has_sequence_token_vocabulary = false;
     bool has_sequence_pos_vocabulary = false;
     bool has_sequence_tag_vocabulary = false;
+    bool has_tree_model_artifact = false;
+    std::string tree_model_type;
+    std::string tree_model_artifact_path;
     bool sequence_batch_first = true;
     bool sequence_create_attention_mask = true;
     bool sequence_create_causal_lm_targets = false;
@@ -307,6 +316,9 @@ struct ModelManifest {
     bool has_sequence_token_vocabulary = false;
     bool has_sequence_pos_vocabulary = false;
     bool has_sequence_tag_vocabulary = false;
+    bool has_tree_model_artifact = false;
+    std::string tree_model_type;
+    std::string tree_model_artifact_path;
     bool sequence_batch_first = true;
     bool sequence_create_attention_mask = true;
     bool sequence_create_causal_lm_targets = false;

@@ -98,6 +98,9 @@ Tensor MakeLabels(const TrainingConfiguration& config, uint32_t seed) {
 
         case gui::NodeType::BCELoss:
         case gui::NodeType::BCEWithLogits:
+        case gui::NodeType::SoftDiceLoss:
+        case gui::NodeType::TverskyLoss:
+        case gui::NodeType::JaccardLoss:
             return MakeBinaryFloat({1, num_classes}, seed + 1);
 
         case gui::NodeType::MSELoss:

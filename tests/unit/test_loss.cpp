@@ -179,6 +179,44 @@ TEST_CASE("CrossEntropyLoss supports token-level logits and ignored targets", "[
     REQUIRE(grad_data[5] == Catch::Approx(0.0f));
 }
 
+TEST_CASE("CrossEntropyLoss supports label smoothing", "[loss]") {
+    float logit_values[] = {2.0f, 0.0f, -1.0f};
+    int32_t target_values[] = {0};
+    cyxwiz::Tensor logits({1, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1}, target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::CrossEntropyLoss cross_entropy(
+        cyxwiz::Reduction::Mean, -100, {}, 0.2f);
+    cyxwiz::Tensor loss = cross_entropy.Forward(logits, targets);
+    cyxwiz::Tensor grad = cross_entropy.Backward(logits, targets);
+
+    const float denom = 1.0f + std::exp(-2.0f) + std::exp(-3.0f);
+    const float probs[] = {
+        1.0f / denom,
+        std::exp(-2.0f) / denom,
+        std::exp(-3.0f) / denom,
+    };
+    const float targets_smoothed[] = {
+        1.0f - 0.2f + 0.2f / 3.0f,
+        0.2f / 3.0f,
+        0.2f / 3.0f,
+    };
+    const float expected_loss =
+        -(targets_smoothed[0] * std::log(probs[0]) +
+          targets_smoothed[1] * std::log(probs[1]) +
+          targets_smoothed[2] * std::log(probs[2]));
+
+    REQUIRE(cross_entropy.GetLabelSmoothing() == Catch::Approx(0.2f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected_loss).margin(1e-6f));
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 3});
+    REQUIRE(grad.Data<float>()[0] ==
+            Catch::Approx(probs[0] - targets_smoothed[0]).margin(1e-6f));
+    REQUIRE(grad.Data<float>()[1] ==
+            Catch::Approx(probs[1] - targets_smoothed[1]).margin(1e-6f));
+    REQUIRE(grad.Data<float>()[2] ==
+            Catch::Approx(probs[2] - targets_smoothed[2]).margin(1e-6f));
+}
+
 TEST_CASE("KL divergence computes forward reductions", "[loss]") {
     float log_pred_values[] = {std::log(0.2f), std::log(0.5f), std::log(0.3f)};
     float target_values[] = {0.1f, 0.7f, 0.2f};
@@ -207,6 +245,112 @@ TEST_CASE("KL divergence computes backward values", "[loss]") {
     REQUIRE(grad.Data<float>()[0] == Catch::Approx(-0.1f / 3.0f));
     REQUIRE(grad.Data<float>()[1] == Catch::Approx(-0.7f / 3.0f));
     REQUIRE(grad.Data<float>()[2] == Catch::Approx(0.0f));
+}
+
+TEST_CASE("SoftDiceLoss computes forward and backward values", "[loss]") {
+    float pred_values[] = {0.8f, 0.2f, 0.4f, 0.9f};
+    float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    cyxwiz::Tensor predictions({1, 4}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1, 4}, target_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::SoftDiceLoss dice(cyxwiz::Reduction::Mean, 1.0f);
+    cyxwiz::Tensor loss = dice.Forward(predictions, targets);
+    cyxwiz::Tensor grad = dice.Backward(predictions, targets);
+
+    const float intersection = 0.8f + 0.9f;
+    const float pred_sum = 0.8f + 0.2f + 0.4f + 0.9f;
+    const float target_sum = 2.0f;
+    const float numerator = 2.0f * intersection + 1.0f;
+    const float denominator = pred_sum + target_sum + 1.0f;
+    const float expected_loss = 1.0f - numerator / denominator;
+
+    REQUIRE(dice.GetSmooth() == Catch::Approx(1.0f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected_loss));
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 4});
+
+    const float denom_sq = denominator * denominator;
+    REQUIRE(grad.Data<float>()[0] ==
+            Catch::Approx(-((2.0f * denominator) - numerator) / denom_sq));
+    REQUIRE(grad.Data<float>()[1] ==
+            Catch::Approx(-((0.0f * denominator) - numerator) / denom_sq));
+    REQUIRE(grad.Data<float>()[3] ==
+            Catch::Approx(-((2.0f * denominator) - numerator) / denom_sq));
+}
+
+TEST_CASE("TverskyLoss computes forward and backward values", "[loss]") {
+    float pred_values[] = {0.8f, 0.2f, 0.4f, 0.9f};
+    float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    cyxwiz::Tensor predictions({1, 4}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1, 4}, target_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::TverskyLoss tversky(cyxwiz::Reduction::Mean, 0.3f, 0.7f, 1.0f);
+    cyxwiz::Tensor loss = tversky.Forward(predictions, targets);
+    cyxwiz::Tensor grad = tversky.Backward(predictions, targets);
+
+    const float tp = 0.8f + 0.9f;
+    const float fp = 0.2f + 0.4f;
+    const float fn = 0.2f + 0.1f;
+    const float numerator = tp + 1.0f;
+    const float denominator = tp + 0.3f * fp + 0.7f * fn + 1.0f;
+    const float expected_loss = 1.0f - numerator / denominator;
+
+    REQUIRE(tversky.GetAlpha() == Catch::Approx(0.3f));
+    REQUIRE(tversky.GetBeta() == Catch::Approx(0.7f));
+    REQUIRE(tversky.GetSmooth() == Catch::Approx(1.0f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected_loss));
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 4});
+
+    const float denom_sq = denominator * denominator;
+    const float target_denominator_derivative = 1.0f - 0.7f;
+    const float background_denominator_derivative = 0.3f;
+    REQUIRE(grad.Data<float>()[0] ==
+            Catch::Approx(-((1.0f * denominator) -
+                            (numerator * target_denominator_derivative)) /
+                          denom_sq));
+    REQUIRE(grad.Data<float>()[1] ==
+            Catch::Approx(-((0.0f * denominator) -
+                            (numerator * background_denominator_derivative)) /
+                          denom_sq));
+    REQUIRE(grad.Data<float>()[3] ==
+            Catch::Approx(-((1.0f * denominator) -
+                            (numerator * target_denominator_derivative)) /
+                          denom_sq));
+}
+
+TEST_CASE("JaccardLoss computes forward and backward values", "[loss]") {
+    float pred_values[] = {0.8f, 0.2f, 0.4f, 0.9f};
+    float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    cyxwiz::Tensor predictions({1, 4}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({1, 4}, target_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::JaccardLoss jaccard(cyxwiz::Reduction::Mean, 1.0f);
+    cyxwiz::Tensor loss = jaccard.Forward(predictions, targets);
+    cyxwiz::Tensor grad = jaccard.Backward(predictions, targets);
+
+    const float intersection = 0.8f + 0.9f;
+    const float pred_sum = 0.8f + 0.2f + 0.4f + 0.9f;
+    const float target_sum = 2.0f;
+    const float numerator = intersection + 1.0f;
+    const float denominator = pred_sum + target_sum - intersection + 1.0f;
+    const float expected_loss = 1.0f - numerator / denominator;
+
+    REQUIRE(jaccard.GetSmooth() == Catch::Approx(1.0f));
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(expected_loss));
+    REQUIRE(grad.Shape() == std::vector<size_t>{1, 4});
+
+    const float denom_sq = denominator * denominator;
+    REQUIRE(grad.Data<float>()[0] ==
+            Catch::Approx(-((1.0f * denominator) -
+                            (numerator * 0.0f)) /
+                          denom_sq));
+    REQUIRE(grad.Data<float>()[1] ==
+            Catch::Approx(-((0.0f * denominator) -
+                            (numerator * 1.0f)) /
+                          denom_sq));
+    REQUIRE(grad.Data<float>()[3] ==
+            Catch::Approx(-((1.0f * denominator) -
+                            (numerator * 0.0f)) /
+                          denom_sq));
 }
 
 TEST_CASE("Focal loss computes class-index forward reduction", "[loss]") {

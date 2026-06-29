@@ -159,6 +159,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "CalculatorNode",
         "CellExtractor",
         "CellUpdater",
+        "ClassificationMetricsNode",
         "ConfusionMatrixNode",
         "Convolution1D",
         "CountVectorizer",
@@ -340,6 +341,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_json_payload.csv";
     const fs::path roc_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_roc.csv";
+    const fs::path class_metrics_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_class_metrics.csv";
     fs::remove(decision_tree_csv_path);
     fs::remove(decision_tree_model_path);
     fs::remove(random_forest_model_path);
@@ -362,6 +365,7 @@ int main() {
     fs::remove(duplicates_csv_path);
     fs::remove(json_payload_csv_path);
     fs::remove(roc_csv_path);
+    fs::remove(class_metrics_csv_path);
     {
         std::ofstream csv(csv_path);
         csv << "x,y\n";
@@ -390,6 +394,14 @@ int main() {
         csv << "1,0.40\n";
         csv << "0,0.35\n";
         csv << "1,0.80\n";
+    }
+    {
+        std::ofstream csv(class_metrics_csv_path);
+        csv << "actual,predicted,perfect,nullable\n";
+        csv << "cat,cat,cat,\n";
+        csv << "cat,dog,cat,\n";
+        csv << "dog,dog,dog,\n";
+        csv << "bird,cat,bird,\n";
     }
     {
         std::ofstream csv(missing_csv_path);
@@ -4109,6 +4121,175 @@ int main() {
               std::string::npos,
           "RegressionMetricsNode non-numeric error should be specific: " +
               bad_regression_metrics_executor.GetLastError());
+
+    const std::string classification_metrics_json =
+        R"({"nodes":[)"
+        R"({"id":854,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":855,"type":"ClassificationMetricsNode","name":"ClassMetrics","parameters":{)"
+        R"("actual_col":"x","predicted_col":"y","metrics":"accuracy,precision,recall,f1,weighted_f1,count"}})"
+        R"(],"links":[{"start_node":854,"end_node":855}]})";
+
+    cyxwiz::PipelineExecutor classification_metrics_executor;
+    Check(classification_metrics_executor.ExecutePipeline(classification_metrics_json),
+          "ClassificationMetricsNode should compute classification metrics: " +
+              classification_metrics_executor.GetLastError());
+    auto classification_metrics =
+        registry.GetArrowDataset("ds_classification_metrics_855");
+    Check(classification_metrics != nullptr,
+          "ClassificationMetricsNode output dataset is registered");
+    auto classification_metrics_table = classification_metrics->GetArrowTable();
+    Check(classification_metrics_table != nullptr,
+          "ClassificationMetricsNode output table exists");
+    Check(classification_metrics_table->num_rows() == 6,
+          "ClassificationMetricsNode should emit requested metric rows");
+    Check(ReadStringValue(classification_metrics_table, "metric", 0) == "accuracy",
+          "ClassificationMetricsNode should preserve requested metric order");
+    Check(std::fabs(ReadNumericValue(classification_metrics_table, "value", 0) -
+                    0.0) < 0.001,
+          "ClassificationMetricsNode should compute accuracy");
+    Check(std::fabs(ReadNumericValue(classification_metrics_table, "value", 3) -
+                    0.0) < 0.001,
+          "ClassificationMetricsNode should compute macro F1");
+    Check(std::fabs(ReadNumericValue(classification_metrics_table, "value", 5) -
+                    3.0) < 0.001,
+          "ClassificationMetricsNode should report valid pair count");
+
+    const std::string bad_classification_metrics_json =
+        R"({"nodes":[)"
+        R"({"id":852,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":853,"type":"ClassificationMetricsNode","name":"BadClassMetrics","parameters":{)"
+        R"("actual_col":"missing","predicted_col":"y"}})"
+        R"(],"links":[{"start_node":852,"end_node":853}]})";
+
+    cyxwiz::PipelineExecutor bad_classification_metrics_executor;
+    Check(!bad_classification_metrics_executor.ExecutePipeline(
+              bad_classification_metrics_json),
+          "ClassificationMetricsNode should reject missing label columns");
+    Check(bad_classification_metrics_executor.GetLastError().find(
+              "ClassificationMetricsNode: column 'missing' not found") !=
+              std::string::npos,
+          "ClassificationMetricsNode missing-column error should be specific: " +
+              bad_classification_metrics_executor.GetLastError());
+
+    const std::string perfect_classification_metrics_json =
+        R"({"nodes":[)"
+        R"({"id":850,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(class_metrics_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":851,"type":"ClassificationMetricsNode","name":"PerfectClassMetrics","parameters":{)"
+        R"("actual_col":"actual","predicted_col":"perfect","metrics":"accuracy,precision,recall,f1,weighted_f1,count,class_count"}})"
+        R"(],"links":[{"start_node":850,"end_node":851}]})";
+
+    cyxwiz::PipelineExecutor perfect_classification_metrics_executor;
+    Check(perfect_classification_metrics_executor.ExecutePipeline(
+              perfect_classification_metrics_json),
+          "ClassificationMetricsNode should compute all-correct metrics: " +
+              perfect_classification_metrics_executor.GetLastError());
+    auto perfect_classification_metrics =
+        registry.GetArrowDataset("ds_classification_metrics_851");
+    Check(perfect_classification_metrics != nullptr,
+          "ClassificationMetricsNode all-correct output dataset is registered");
+    auto perfect_classification_metrics_table =
+        perfect_classification_metrics->GetArrowTable();
+    Check(perfect_classification_metrics_table != nullptr,
+          "ClassificationMetricsNode all-correct output table exists");
+    Check(std::fabs(ReadNumericValue(perfect_classification_metrics_table,
+                                     "value", 0) -
+                    1.0) < 0.001,
+          "ClassificationMetricsNode should compute perfect accuracy");
+    Check(std::fabs(ReadNumericValue(perfect_classification_metrics_table,
+                                     "value", 3) -
+                    1.0) < 0.001,
+          "ClassificationMetricsNode should compute perfect macro F1");
+    Check(std::fabs(ReadNumericValue(perfect_classification_metrics_table,
+                                     "value", 6) -
+                    3.0) < 0.001,
+          "ClassificationMetricsNode should report class count");
+
+    const std::string mixed_classification_metrics_json =
+        R"({"nodes":[)"
+        R"({"id":848,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(class_metrics_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":849,"type":"ClassificationMetricsNode","name":"MixedClassMetrics","parameters":{)"
+        R"("actual_col":"actual","predicted_col":"predicted","metrics":"accuracy,precision,recall,f1,weighted_f1,count,class_count"}})"
+        R"(],"links":[{"start_node":848,"end_node":849}]})";
+
+    cyxwiz::PipelineExecutor mixed_classification_metrics_executor;
+    Check(mixed_classification_metrics_executor.ExecutePipeline(
+              mixed_classification_metrics_json),
+          "ClassificationMetricsNode should compute mixed multiclass metrics: " +
+              mixed_classification_metrics_executor.GetLastError());
+    auto mixed_classification_metrics =
+        registry.GetArrowDataset("ds_classification_metrics_849");
+    Check(mixed_classification_metrics != nullptr,
+          "ClassificationMetricsNode mixed output dataset is registered");
+    auto mixed_classification_metrics_table =
+        mixed_classification_metrics->GetArrowTable();
+    Check(mixed_classification_metrics_table != nullptr,
+          "ClassificationMetricsNode mixed output table exists");
+    Check(std::fabs(ReadNumericValue(mixed_classification_metrics_table,
+                                     "value", 0) -
+                    0.5) < 0.001,
+          "ClassificationMetricsNode should compute mixed accuracy");
+    Check(std::fabs(ReadNumericValue(mixed_classification_metrics_table,
+                                     "value", 1) -
+                    0.3333333) < 0.001,
+          "ClassificationMetricsNode should compute mixed macro precision");
+    Check(std::fabs(ReadNumericValue(mixed_classification_metrics_table,
+                                     "value", 2) -
+                    0.5) < 0.001,
+          "ClassificationMetricsNode should compute mixed macro recall");
+    Check(std::fabs(ReadNumericValue(mixed_classification_metrics_table,
+                                     "value", 3) -
+                    0.3888889) < 0.001,
+          "ClassificationMetricsNode should compute mixed macro F1");
+    Check(std::fabs(ReadNumericValue(mixed_classification_metrics_table,
+                                     "value", 4) -
+                    0.4166667) < 0.001,
+          "ClassificationMetricsNode should compute mixed weighted F1");
+
+    const std::string unsupported_classification_metric_json =
+        R"({"nodes":[)"
+        R"({"id":846,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(class_metrics_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":847,"type":"ClassificationMetricsNode","name":"BadMetric","parameters":{)"
+        R"("actual_col":"actual","predicted_col":"predicted","metrics":"accuracy,top_k"}})"
+        R"(],"links":[{"start_node":846,"end_node":847}]})";
+
+    cyxwiz::PipelineExecutor unsupported_classification_metric_executor;
+    Check(!unsupported_classification_metric_executor.ExecutePipeline(
+              unsupported_classification_metric_json),
+          "ClassificationMetricsNode should reject unsupported metrics");
+    Check(unsupported_classification_metric_executor.GetLastError().find(
+              "ClassificationMetricsNode: unsupported metric 'top_k'") !=
+              std::string::npos,
+          "ClassificationMetricsNode unsupported metric error should be specific: " +
+              unsupported_classification_metric_executor.GetLastError());
+
+    const std::string empty_classification_metrics_json =
+        R"({"nodes":[)"
+        R"({"id":844,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(class_metrics_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":845,"type":"ClassificationMetricsNode","name":"NoValidPairs","parameters":{)"
+        R"("actual_col":"nullable","predicted_col":"nullable"}})"
+        R"(],"links":[{"start_node":844,"end_node":845}]})";
+
+    cyxwiz::PipelineExecutor empty_classification_metrics_executor;
+    Check(!empty_classification_metrics_executor.ExecutePipeline(
+              empty_classification_metrics_json),
+          "ClassificationMetricsNode should reject inputs with no valid pairs");
+    Check(empty_classification_metrics_executor.GetLastError().find(
+              "ClassificationMetricsNode: no non-null actual/predicted pairs") !=
+              std::string::npos,
+          "ClassificationMetricsNode empty-pair error should be specific: " +
+              empty_classification_metrics_executor.GetLastError());
 
     const std::string confusion_matrix_json =
         R"({"nodes":[)"

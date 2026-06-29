@@ -201,6 +201,26 @@ float ResolveBCEWithLogitsPosWeight(const TrainingConfiguration& config) {
     }
 }
 
+float ResolveCrossEntropyLabelSmoothing(const TrainingConfiguration& config) {
+    const std::string* value = FindLossParam(config, {"label_smoothing"});
+    if (!value || IsNeutralLossValue(*value)) {
+        return 0.0f;
+    }
+    const std::string text = TrimAscii(*value);
+    try {
+        size_t parsed = 0;
+        const float smoothing = std::stof(text, &parsed);
+        if (parsed != text.size() || !std::isfinite(smoothing) ||
+            smoothing < 0.0f || smoothing >= 1.0f) {
+            throw std::runtime_error("invalid label_smoothing");
+        }
+        return smoothing;
+    } catch (...) {
+        throw std::runtime_error(
+            "CrossEntropy label_smoothing must be a finite float in [0, 1)");
+    }
+}
+
 float ResolveLossFloatParam(const TrainingConfiguration& config,
                             const char* key,
                             float fallback,
@@ -981,6 +1001,9 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
             case gui::NodeType::SmoothL1Loss:
             case gui::NodeType::HuberLoss:
             case gui::NodeType::NLLLoss:
+            case gui::NodeType::SoftDiceLoss:
+            case gui::NodeType::TverskyLoss:
+            case gui::NodeType::JaccardLoss:
             // Optimizers
             case gui::NodeType::SGD:
             case gui::NodeType::Adam:
@@ -1042,12 +1065,15 @@ std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
             const int ignore_index = ResolveCrossEntropyIgnoreIndex(config);
             const std::vector<float> class_weights =
                 ResolveCrossEntropyClassWeights(config);
+            const float label_smoothing =
+                ResolveCrossEntropyLabelSmoothing(config);
             spdlog::info("TrainingExecutor: Using CrossEntropy loss "
-                         "(reduction={}, ignore_index={}, class_weights={})",
+                         "(reduction={}, ignore_index={}, class_weights={}, "
+                         "label_smoothing={})",
                          ReductionName(reduction), ignore_index,
-                         class_weights.size());
+                         class_weights.size(), label_smoothing);
             return std::make_unique<CrossEntropyLoss>(
-                reduction, ignore_index, class_weights);
+                reduction, ignore_index, class_weights, label_smoothing);
         }
         case gui::NodeType::FocalLoss: {
             const float alpha = ResolveLossFloatParam(
@@ -1095,6 +1121,35 @@ std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
                          "(reduction={}, ignore_index={})",
                          ReductionName(reduction), ignore_index);
             return std::make_unique<NLLLoss>(reduction, ignore_index);
+        }
+        case gui::NodeType::SoftDiceLoss: {
+            const float smooth = ResolveLossFloatParam(
+                config, "smooth", 1.0f, 0.0f, "SoftDice smooth");
+            spdlog::info("TrainingExecutor: Using SoftDice loss "
+                         "(reduction={}, smooth={})",
+                         ReductionName(reduction), smooth);
+            return std::make_unique<SoftDiceLoss>(reduction, smooth);
+        }
+        case gui::NodeType::TverskyLoss: {
+            const float alpha = ResolveLossFloatParam(
+                config, "alpha", 0.5f, 0.0f, "Tversky alpha");
+            const float beta = ResolveLossFloatParam(
+                config, "beta", 0.5f, 0.0f, "Tversky beta");
+            const float smooth = ResolveLossFloatParam(
+                config, "smooth", 1.0f, 0.0f, "Tversky smooth");
+            spdlog::info("TrainingExecutor: Using Tversky loss "
+                         "(reduction={}, alpha={}, beta={}, smooth={})",
+                         ReductionName(reduction), alpha, beta, smooth);
+            return std::make_unique<TverskyLoss>(
+                reduction, alpha, beta, smooth);
+        }
+        case gui::NodeType::JaccardLoss: {
+            const float smooth = ResolveLossFloatParam(
+                config, "smooth", 1.0f, 0.0f, "Jaccard smooth");
+            spdlog::info("TrainingExecutor: Using Jaccard loss "
+                         "(reduction={}, smooth={})",
+                         ReductionName(reduction), smooth);
+            return std::make_unique<JaccardLoss>(reduction, smooth);
         }
         default:
             spdlog::info("TrainingExecutor: Defaulting to CrossEntropy loss "

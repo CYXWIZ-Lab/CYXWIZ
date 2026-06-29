@@ -3352,6 +3352,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteDataProfiler(node, ctx);
     case gui::NodeType::RegressionMetricsNode:
         return ExecuteRegressionMetrics(node, ctx);
+    case gui::NodeType::ClassificationMetricsNode:
+        return ExecuteClassificationMetrics(node, ctx);
     case gui::NodeType::ConfusionMatrixNode:
         return ExecuteConfusionMatrix(node, ctx);
     case gui::NodeType::ROCCurveNode:
@@ -6748,6 +6750,208 @@ bool PipelineExecutor::ExecuteRegressionMetrics(const Node& node, ExecutionConte
         return true;
     } catch (const std::exception& e) {
         ReportError("RegressionMetricsNode error: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool PipelineExecutor::ExecuteClassificationMetrics(const Node& node, ExecutionContext& ctx) {
+    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        ReportError("ClassificationMetricsNode: No input dataset");
+        return false;
+    }
+
+    const auto get_parameter = [&](std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            auto it = node.parameters.find(name);
+            if (it != node.parameters.end() && !TrimString(it->second).empty()) {
+                return TrimString(it->second);
+            }
+        }
+        return std::string{};
+    };
+
+    const std::string actual_col = get_parameter(
+        {"actual_col", "y_true_col", "truth_col", "target_col", "label_col"});
+    const std::string predicted_col = get_parameter(
+        {"predicted_col", "y_pred_col", "prediction_col"});
+    if (actual_col.empty()) {
+        ReportError("ClassificationMetricsNode: actual_col is required");
+        return false;
+    }
+    if (predicted_col.empty()) {
+        ReportError("ClassificationMetricsNode: predicted_col is required");
+        return false;
+    }
+
+    try {
+        auto& registry = DataRegistry::Instance();
+        auto input_dataset = registry.GetArrowDataset(input_dataset_name);
+        if (!input_dataset) {
+            ReportError("ClassificationMetricsNode: Input dataset not found");
+            return false;
+        }
+
+        auto input_table = input_dataset->GetArrowTable();
+        if (!input_table || !input_table->schema()) {
+            ReportError("ClassificationMetricsNode: Input table is null");
+            return false;
+        }
+
+        const int actual_index = input_table->schema()->GetFieldIndex(actual_col);
+        if (actual_index < 0) {
+            ReportError("ClassificationMetricsNode: column '" + actual_col + "' not found");
+            return false;
+        }
+        const int predicted_index = input_table->schema()->GetFieldIndex(predicted_col);
+        if (predicted_index < 0) {
+            ReportError("ClassificationMetricsNode: column '" + predicted_col + "' not found");
+            return false;
+        }
+
+        auto actual_column = input_table->column(actual_index);
+        auto predicted_column = input_table->column(predicted_index);
+        if (!actual_column || !predicted_column) {
+            ReportError("ClassificationMetricsNode: label columns are missing");
+            return false;
+        }
+
+        std::map<std::string, int64_t> true_positive;
+        std::map<std::string, int64_t> actual_totals;
+        std::map<std::string, int64_t> predicted_totals;
+        std::set<std::string> labels;
+        int64_t valid_count = 0;
+        int64_t correct_count = 0;
+
+        for (int64_t row = 0; row < input_table->num_rows(); ++row) {
+            auto actual_scalar_result = actual_column->GetScalar(row);
+            auto predicted_scalar_result = predicted_column->GetScalar(row);
+            if (!actual_scalar_result.ok() || !predicted_scalar_result.ok()) {
+                ReportError("ClassificationMetricsNode: Failed to read label column value");
+                return false;
+            }
+
+            auto actual_scalar = *actual_scalar_result;
+            auto predicted_scalar = *predicted_scalar_result;
+            if (!actual_scalar || !predicted_scalar ||
+                !actual_scalar->is_valid || !predicted_scalar->is_valid) {
+                continue;
+            }
+
+            const std::string actual_label = actual_scalar->ToString();
+            const std::string predicted_label = predicted_scalar->ToString();
+            labels.insert(actual_label);
+            labels.insert(predicted_label);
+            ++actual_totals[actual_label];
+            ++predicted_totals[predicted_label];
+            if (actual_label == predicted_label) {
+                ++true_positive[actual_label];
+                ++correct_count;
+            }
+            ++valid_count;
+        }
+
+        if (valid_count == 0) {
+            ReportError("ClassificationMetricsNode: no non-null actual/predicted pairs");
+            return false;
+        }
+
+        double macro_precision = 0.0;
+        double macro_recall = 0.0;
+        double macro_f1 = 0.0;
+        double weighted_f1 = 0.0;
+        for (const std::string& label : labels) {
+            const double tp = static_cast<double>(true_positive[label]);
+            const double predicted_total = static_cast<double>(predicted_totals[label]);
+            const double actual_total = static_cast<double>(actual_totals[label]);
+            const double precision = predicted_total > 0.0 ? tp / predicted_total : 0.0;
+            const double recall = actual_total > 0.0 ? tp / actual_total : 0.0;
+            const double f1 =
+                (precision + recall) > 0.0
+                    ? (2.0 * precision * recall) / (precision + recall)
+                    : 0.0;
+            macro_precision += precision;
+            macro_recall += recall;
+            macro_f1 += f1;
+            weighted_f1 += f1 * actual_total;
+        }
+
+        const double class_count = static_cast<double>(labels.size());
+        if (class_count > 0.0) {
+            macro_precision /= class_count;
+            macro_recall /= class_count;
+            macro_f1 /= class_count;
+        }
+        weighted_f1 /= static_cast<double>(valid_count);
+        const double accuracy =
+            static_cast<double>(correct_count) / static_cast<double>(valid_count);
+
+        std::vector<std::string> metrics;
+        auto metrics_it = node.parameters.find("metrics");
+        if (metrics_it != node.parameters.end() &&
+            !TrimString(metrics_it->second).empty()) {
+            ParseCommaList(metrics_it->second, metrics);
+        }
+        if (metrics.empty()) {
+            metrics = {"accuracy", "precision", "recall", "f1", "weighted_f1", "count"};
+        }
+
+        arrow::StringBuilder metric_builder;
+        arrow::DoubleBuilder value_builder;
+        for (std::string metric : metrics) {
+            metric = ToLowerAscii(TrimString(metric));
+            double value = 0.0;
+            if (metric == "accuracy" || metric == "acc") {
+                metric = "accuracy";
+                value = accuracy;
+            } else if (metric == "precision" || metric == "macro_precision") {
+                metric = "precision";
+                value = macro_precision;
+            } else if (metric == "recall" || metric == "macro_recall") {
+                metric = "recall";
+                value = macro_recall;
+            } else if (metric == "f1" || metric == "macro_f1") {
+                metric = "f1";
+                value = macro_f1;
+            } else if (metric == "weighted_f1") {
+                value = weighted_f1;
+            } else if (metric == "count" || metric == "n") {
+                metric = "count";
+                value = static_cast<double>(valid_count);
+            } else if (metric == "classes" || metric == "class_count") {
+                metric = "class_count";
+                value = class_count;
+            } else {
+                ReportError("ClassificationMetricsNode: unsupported metric '" + metric + "'");
+                return false;
+            }
+
+            if (!metric_builder.Append(metric).ok() ||
+                !value_builder.Append(value).ok()) {
+                ReportError("ClassificationMetricsNode: Failed to append metric row");
+                return false;
+            }
+        }
+
+        std::shared_ptr<arrow::Array> metric_array;
+        std::shared_ptr<arrow::Array> value_array;
+        if (!metric_builder.Finish(&metric_array).ok() ||
+            !value_builder.Finish(&value_array).ok()) {
+            ReportError("ClassificationMetricsNode: Failed to build metrics table");
+            return false;
+        }
+
+        auto output_table = arrow::Table::Make(
+            arrow::schema({arrow::field("metric", arrow::utf8()),
+                           arrow::field("value", arrow::float64())}),
+            {metric_array, value_array});
+        const std::string output_dataset_name =
+            "ds_classification_metrics_" + std::to_string(node.id);
+        registry.RegisterArrowTable(output_table, output_dataset_name);
+        ctx.node_results[node.id] = output_dataset_name;
+        return true;
+    } catch (const std::exception& e) {
+        ReportError("ClassificationMetricsNode error: " + std::string(e.what()));
         return false;
     }
 }

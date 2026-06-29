@@ -51,6 +51,12 @@ std::unique_ptr<Loss> CreateLoss(LossType type, Reduction reduction, float delta
             return std::make_unique<CosineEmbeddingLoss>(0.0f, reduction);
         case LossType::Focal:
             return std::make_unique<FocalLoss>(0.25f, 2.0f, reduction);
+        case LossType::SoftDice:
+            return std::make_unique<SoftDiceLoss>(reduction, delta);
+        case LossType::Tversky:
+            return std::make_unique<TverskyLoss>(reduction, 0.5f, 0.5f, delta);
+        case LossType::Jaccard:
+            return std::make_unique<JaccardLoss>(reduction, delta);
         case LossType::Triplet:
             return std::make_unique<TripletLoss>(1.0f, TripletLoss::DistanceType::Euclidean, reduction);
         case LossType::Contrastive:

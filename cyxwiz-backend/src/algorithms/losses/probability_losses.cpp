@@ -1,6 +1,10 @@
 #include "cyxwiz/losses/probability.h"
 #include "loss_utils.h"
 
+#include <cmath>
+#include <stdexcept>
+#include <vector>
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #endif
@@ -206,6 +210,333 @@ Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     }
 #endif
     return CpuKLDivBackward(predictions, targets, log_target_, reduction_);
+}
+
+// ============================================================================
+// Soft Dice Loss Implementation
+// ============================================================================
+
+namespace {
+
+std::vector<size_t> SoftDiceLossShape(size_t batch) {
+    return batch == 1 ? std::vector<size_t>{1} : std::vector<size_t>{batch};
+}
+
+size_t SoftDiceBatchSize(const Tensor& predictions) {
+    const auto& shape = predictions.Shape();
+    if (shape.empty() || shape.size() == 1) {
+        return 1;
+    }
+    return shape[0];
+}
+
+size_t SoftDiceSampleSize(const Tensor& predictions) {
+    return predictions.NumElements() / SoftDiceBatchSize(predictions);
+}
+
+void ValidateSoftDiceInputs(const Tensor& predictions,
+                            const Tensor& targets,
+                            float smooth) {
+    if (predictions.GetDataType() != DataType::Float32 ||
+        targets.GetDataType() != DataType::Float32) {
+        throw std::runtime_error(
+            "SoftDiceLoss requires Float32 predictions and targets");
+    }
+    if (predictions.Shape() != targets.Shape()) {
+        throw std::runtime_error(
+            "SoftDiceLoss predictions and targets must have identical shapes");
+    }
+    if (predictions.NumElements() == 0) {
+        throw std::runtime_error("SoftDiceLoss requires non-empty tensors");
+    }
+    if (!std::isfinite(smooth) || smooth < 0.0f) {
+        throw std::runtime_error("SoftDiceLoss smooth must be finite and non-negative");
+    }
+}
+
+}  // namespace
+
+Tensor SoftDiceLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    ValidateSoftDiceInputs(predictions, targets, smooth_);
+
+    const size_t batch = SoftDiceBatchSize(predictions);
+    const size_t sample_size = SoftDiceSampleSize(predictions);
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    std::vector<float> per_sample(batch, 0.0f);
+
+    for (size_t b = 0; b < batch; ++b) {
+        const size_t base = b * sample_size;
+        float intersection = 0.0f;
+        float pred_sum = 0.0f;
+        float target_sum = 0.0f;
+        for (size_t i = 0; i < sample_size; ++i) {
+            const float p = pred[base + i];
+            const float t = target[base + i];
+            intersection += p * t;
+            pred_sum += p;
+            target_sum += t;
+        }
+
+        const float numerator = 2.0f * intersection + smooth_;
+        const float denominator = pred_sum + target_sum + smooth_;
+        per_sample[b] = 1.0f - numerator / denominator;
+    }
+
+    if (reduction_ == Reduction::None) {
+        return Tensor(SoftDiceLossShape(batch), per_sample.data(), DataType::Float32);
+    }
+
+    float total = 0.0f;
+    for (float value : per_sample) {
+        total += value;
+    }
+    if (reduction_ == Reduction::Mean && batch > 0) {
+        total /= static_cast<float>(batch);
+    }
+    return Tensor({1}, &total, DataType::Float32);
+}
+
+Tensor SoftDiceLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    ValidateSoftDiceInputs(predictions, targets, smooth_);
+
+    const size_t batch = SoftDiceBatchSize(predictions);
+    const size_t sample_size = SoftDiceSampleSize(predictions);
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    float* out = grad.Data<float>();
+
+    for (size_t b = 0; b < batch; ++b) {
+        const size_t base = b * sample_size;
+        float intersection = 0.0f;
+        float pred_sum = 0.0f;
+        float target_sum = 0.0f;
+        for (size_t i = 0; i < sample_size; ++i) {
+            const float p = pred[base + i];
+            const float t = target[base + i];
+            intersection += p * t;
+            pred_sum += p;
+            target_sum += t;
+        }
+
+        const float numerator = 2.0f * intersection + smooth_;
+        const float denominator = pred_sum + target_sum + smooth_;
+        const float denom_sq = denominator * denominator;
+        const float reduction_scale =
+            reduction_ == Reduction::Mean && batch > 0
+                ? 1.0f / static_cast<float>(batch)
+                : 1.0f;
+
+        for (size_t i = 0; i < sample_size; ++i) {
+            const float t = target[base + i];
+            out[base + i] =
+                -((2.0f * t * denominator) - numerator) / denom_sq *
+                reduction_scale;
+        }
+    }
+
+    return grad;
+}
+
+TverskyLoss::TverskyLoss(Reduction reduction,
+                         float alpha,
+                         float beta,
+                         float smooth)
+    : Loss(reduction), alpha_(alpha), beta_(beta), smooth_(smooth) {
+    if (!std::isfinite(alpha_) || alpha_ < 0.0f) {
+        throw std::invalid_argument(
+            "TverskyLoss alpha must be finite and non-negative");
+    }
+    if (!std::isfinite(beta_) || beta_ < 0.0f) {
+        throw std::invalid_argument(
+            "TverskyLoss beta must be finite and non-negative");
+    }
+    if (!std::isfinite(smooth_) || smooth_ < 0.0f) {
+        throw std::invalid_argument(
+            "TverskyLoss smooth must be finite and non-negative");
+    }
+}
+
+Tensor TverskyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    ValidateSoftDiceInputs(predictions, targets, smooth_);
+
+    const size_t batch = SoftDiceBatchSize(predictions);
+    const size_t sample_size = SoftDiceSampleSize(predictions);
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    std::vector<float> per_sample(batch, 0.0f);
+
+    for (size_t b = 0; b < batch; ++b) {
+        const size_t base = b * sample_size;
+        float true_positive = 0.0f;
+        float false_positive = 0.0f;
+        float false_negative = 0.0f;
+
+        for (size_t i = 0; i < sample_size; ++i) {
+            const float p = pred[base + i];
+            const float t = target[base + i];
+            true_positive += p * t;
+            false_positive += p * (1.0f - t);
+            false_negative += (1.0f - p) * t;
+        }
+
+        const float numerator = true_positive + smooth_;
+        const float denominator = true_positive +
+            alpha_ * false_positive + beta_ * false_negative + smooth_;
+        per_sample[b] = 1.0f - numerator / denominator;
+    }
+
+    if (reduction_ == Reduction::None) {
+        return Tensor(SoftDiceLossShape(batch), per_sample.data(), DataType::Float32);
+    }
+
+    float total = 0.0f;
+    for (float value : per_sample) {
+        total += value;
+    }
+    if (reduction_ == Reduction::Mean && batch > 0) {
+        total /= static_cast<float>(batch);
+    }
+    return Tensor({1}, &total, DataType::Float32);
+}
+
+Tensor TverskyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    ValidateSoftDiceInputs(predictions, targets, smooth_);
+
+    const size_t batch = SoftDiceBatchSize(predictions);
+    const size_t sample_size = SoftDiceSampleSize(predictions);
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    float* out = grad.Data<float>();
+
+    for (size_t b = 0; b < batch; ++b) {
+        const size_t base = b * sample_size;
+        float true_positive = 0.0f;
+        float false_positive = 0.0f;
+        float false_negative = 0.0f;
+
+        for (size_t i = 0; i < sample_size; ++i) {
+            const float p = pred[base + i];
+            const float t = target[base + i];
+            true_positive += p * t;
+            false_positive += p * (1.0f - t);
+            false_negative += (1.0f - p) * t;
+        }
+
+        const float numerator = true_positive + smooth_;
+        const float denominator = true_positive +
+            alpha_ * false_positive + beta_ * false_negative + smooth_;
+        const float denom_sq = denominator * denominator;
+        const float reduction_scale =
+            reduction_ == Reduction::Mean && batch > 0
+                ? 1.0f / static_cast<float>(batch)
+                : 1.0f;
+
+        for (size_t i = 0; i < sample_size; ++i) {
+            const float t = target[base + i];
+            const float d_numerator = t;
+            const float d_denominator =
+                alpha_ + (1.0f - alpha_ - beta_) * t;
+            out[base + i] =
+                -((d_numerator * denominator) -
+                  (numerator * d_denominator)) /
+                denom_sq * reduction_scale;
+        }
+    }
+
+    return grad;
+}
+
+Tensor JaccardLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    ValidateSoftDiceInputs(predictions, targets, smooth_);
+
+    const size_t batch = SoftDiceBatchSize(predictions);
+    const size_t sample_size = SoftDiceSampleSize(predictions);
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    std::vector<float> per_sample(batch, 0.0f);
+
+    for (size_t b = 0; b < batch; ++b) {
+        const size_t base = b * sample_size;
+        float intersection = 0.0f;
+        float pred_sum = 0.0f;
+        float target_sum = 0.0f;
+
+        for (size_t i = 0; i < sample_size; ++i) {
+            const float p = pred[base + i];
+            const float t = target[base + i];
+            intersection += p * t;
+            pred_sum += p;
+            target_sum += t;
+        }
+
+        const float numerator = intersection + smooth_;
+        const float union_value = pred_sum + target_sum - intersection;
+        const float denominator = union_value + smooth_;
+        per_sample[b] = 1.0f - numerator / denominator;
+    }
+
+    if (reduction_ == Reduction::None) {
+        return Tensor(SoftDiceLossShape(batch), per_sample.data(), DataType::Float32);
+    }
+
+    float total = 0.0f;
+    for (float value : per_sample) {
+        total += value;
+    }
+    if (reduction_ == Reduction::Mean && batch > 0) {
+        total /= static_cast<float>(batch);
+    }
+    return Tensor({1}, &total, DataType::Float32);
+}
+
+Tensor JaccardLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    ValidateSoftDiceInputs(predictions, targets, smooth_);
+
+    const size_t batch = SoftDiceBatchSize(predictions);
+    const size_t sample_size = SoftDiceSampleSize(predictions);
+    const float* pred = predictions.Data<float>();
+    const float* target = targets.Data<float>();
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    float* out = grad.Data<float>();
+
+    for (size_t b = 0; b < batch; ++b) {
+        const size_t base = b * sample_size;
+        float intersection = 0.0f;
+        float pred_sum = 0.0f;
+        float target_sum = 0.0f;
+
+        for (size_t i = 0; i < sample_size; ++i) {
+            const float p = pred[base + i];
+            const float t = target[base + i];
+            intersection += p * t;
+            pred_sum += p;
+            target_sum += t;
+        }
+
+        const float numerator = intersection + smooth_;
+        const float union_value = pred_sum + target_sum - intersection;
+        const float denominator = union_value + smooth_;
+        const float denom_sq = denominator * denominator;
+        const float reduction_scale =
+            reduction_ == Reduction::Mean && batch > 0
+                ? 1.0f / static_cast<float>(batch)
+                : 1.0f;
+
+        for (size_t i = 0; i < sample_size; ++i) {
+            const float t = target[base + i];
+            const float d_numerator = t;
+            const float d_denominator = 1.0f - t;
+            out[base + i] =
+                -((d_numerator * denominator) -
+                  (numerator * d_denominator)) /
+                denom_sq * reduction_scale;
+        }
+    }
+
+    return grad;
 }
 
 } // namespace cyxwiz

@@ -8,6 +8,28 @@
 namespace cyxwiz {
 namespace formats {
 
+namespace {
+
+std::string ReadTreeModelArtifactTypeLocal(
+    const std::filesystem::path& tree_model_path) {
+    std::ifstream artifact_file(tree_model_path);
+    if (!artifact_file.is_open()) {
+        return {};
+    }
+
+    try {
+        nlohmann::json artifact_json = nlohmann::json::parse(artifact_file);
+        if (artifact_json.value("format", "") != "cyxwiz_tree_model") {
+            return {};
+        }
+        return artifact_json.value("model_type", "");
+    } catch (...) {
+        return {};
+    }
+}
+
+}  // namespace
+
 // JSON serialization for ModelManifest
 nlohmann::json CyxModelFormat::ManifestToJson(const ModelManifest& manifest) {
     nlohmann::json j;
@@ -41,6 +63,11 @@ nlohmann::json CyxModelFormat::ManifestToJson(const ModelManifest& manifest) {
         manifest.has_sequence_pos_vocabulary;
     j["content"]["has_sequence_tag_vocabulary"] =
         manifest.has_sequence_tag_vocabulary;
+    j["content"]["has_tree_model_artifact"] =
+        manifest.has_tree_model_artifact;
+    j["content"]["tree_model_type"] = manifest.tree_model_type;
+    j["content"]["tree_model_artifact_path"] =
+        manifest.tree_model_artifact_path;
     j["content"]["sequence_batch_first"] = manifest.sequence_batch_first;
     j["content"]["sequence_create_attention_mask"] =
         manifest.sequence_create_attention_mask;
@@ -106,6 +133,12 @@ ModelManifest CyxModelFormat::JsonToManifest(const nlohmann::json& j) {
             j["content"].value("has_sequence_pos_vocabulary", false);
         manifest.has_sequence_tag_vocabulary =
             j["content"].value("has_sequence_tag_vocabulary", false);
+        manifest.has_tree_model_artifact =
+            j["content"].value("has_tree_model_artifact", false);
+        manifest.tree_model_type =
+            j["content"].value("tree_model_type", "");
+        manifest.tree_model_artifact_path =
+            j["content"].value("tree_model_artifact_path", "");
         manifest.sequence_batch_first =
             j["content"].value("sequence_batch_first", true);
         manifest.sequence_create_attention_mask =
@@ -518,6 +551,28 @@ bool CyxModelFormat::Create(
         }
     }
 
+    if (options.include_tree_model_artifact) {
+        if (!options.tree_model_artifact_json.empty()) {
+            const std::string& artifact_json = options.tree_model_artifact_json;
+            files["tree/model.json"] =
+                std::vector<uint8_t>(artifact_json.begin(),
+                                     artifact_json.end());
+        } else if (!options.tree_model_artifact_path.empty()) {
+            std::ifstream artifact_file(options.tree_model_artifact_path,
+                                        std::ios::binary);
+            if (!artifact_file.is_open()) {
+                last_error_ = "Cannot open tree model artifact file: " +
+                              options.tree_model_artifact_path;
+                return false;
+            }
+
+            std::vector<uint8_t> artifact_bytes(
+                (std::istreambuf_iterator<char>(artifact_file)),
+                std::istreambuf_iterator<char>());
+            files["tree/model.json"] = std::move(artifact_bytes);
+        }
+    }
+
     // Write to archive or directory
     bool use_zip = output_path.size() > 9 &&
                    output_path.substr(output_path.size() - 9) == ".cyxmodel";
@@ -687,6 +742,21 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
             manifest.has_sequence_pos_vocabulary;
         result.has_sequence_tag_vocabulary =
             manifest.has_sequence_tag_vocabulary;
+        result.has_tree_model_artifact = manifest.has_tree_model_artifact;
+        result.tree_model_type = manifest.tree_model_type;
+        result.tree_model_artifact_path = manifest.tree_model_artifact_path;
+        std::filesystem::path tree_model_path =
+            std::filesystem::path(input_path) / "tree" / "model.json";
+        if (std::filesystem::exists(tree_model_path)) {
+            result.has_tree_model_artifact = true;
+            if (result.tree_model_artifact_path.empty()) {
+                result.tree_model_artifact_path = "tree/model.json";
+            }
+            if (result.tree_model_type.empty()) {
+                result.tree_model_type =
+                    ReadTreeModelArtifactTypeLocal(tree_model_path);
+            }
+        }
         result.sequence_batch_first = manifest.sequence_batch_first;
         result.sequence_create_attention_mask =
             manifest.sequence_create_attention_mask;
@@ -815,6 +885,31 @@ bool CyxModelFormat::ExtractSequenceVocabularyAssets(
     if (token_vocab_text.empty() && pos_vocab_text.empty() &&
         tag_vocab_text.empty()) {
         last_error_ = "No sequence vocabulary assets found";
+        return false;
+    }
+
+    return true;
+}
+
+bool CyxModelFormat::ExtractTreeModelArtifact(
+    const std::string& input_path,
+    std::string& artifact_json
+) {
+    std::map<std::string, std::vector<uint8_t>> files;
+    if (!ReadDirectory(input_path, files)) {
+        return false;
+    }
+
+    artifact_json.clear();
+
+    auto artifact_it = files.find("tree/model.json");
+    if (artifact_it != files.end()) {
+        artifact_json.assign(artifact_it->second.begin(),
+                             artifact_it->second.end());
+    }
+
+    if (artifact_json.empty()) {
+        last_error_ = "No tree model artifact found";
         return false;
     }
 

@@ -1577,6 +1577,7 @@ int main() {
                               {Pin(3203, gui::PinType::Loss, "Loss", false)});
     weighted_loss.parameters["class_weight"] = "manual";
     weighted_loss.parameters["class_weights"] = "[1.0, 3.0]";
+    weighted_loss.parameters["label_smoothing"] = "0.1";
 
     nodes = {data, stratified_split, balanced_loader, dense, weighted_loss, optimizer};
     links = {
@@ -1609,6 +1610,8 @@ int main() {
           "compiler should preserve CrossEntropy class_weight mode");
     Check(config.loss_params.at("class_weights") == "[1.0, 3.0]",
           "compiler should preserve CrossEntropy manual class weights");
+    Check(config.loss_params.at("label_smoothing") == "0.1",
+          "compiler should preserve CrossEntropy label_smoothing");
     Check(!HasIssueText(config, "Loss weighting parameters are present"),
           "compiler should not warn that supported loss weights are ignored");
 
@@ -1627,6 +1630,22 @@ int main() {
           "CrossEntropy manual class_weights length mismatch should be invalid");
     Check(HasIssueText(config, "class_weights size"),
           "class_weights length mismatch should report a clear diagnostic");
+
+    auto invalid_smoothed_loss = weighted_loss;
+    invalid_smoothed_loss.parameters["label_smoothing"] = "1.0";
+    nodes = {data, dense, invalid_smoothed_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 32, 3201),
+        Link(3, 1, 102, 32, 3202),
+        Link(4, 32, 3203, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "CrossEntropy label_smoothing >= 1 should be invalid");
+    Check(HasIssueText(config, "label_smoothing"),
+          "invalid label_smoothing should report a clear diagnostic");
 
     auto focal_loss = Node(33,
                            gui::NodeType::FocalLoss,
@@ -1655,6 +1674,81 @@ int main() {
           "compiler should preserve FocalLoss gamma");
     Check(!config.preprocessing.has_onehot,
           "FocalLoss should keep integer class labels instead of one-hot labels");
+
+    auto dice_loss = Node(34,
+                          gui::NodeType::SoftDiceLoss,
+                          "Soft Dice Loss",
+                          {Pin(3401, gui::PinType::Tensor, "Predictions", true),
+                           Pin(3402, gui::PinType::Tensor, "Targets", true)},
+                          {Pin(3403, gui::PinType::Loss, "Loss", false)});
+    dice_loss.parameters["smooth"] = "0.5";
+    nodes = {data, dense, dice_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 34, 3401),
+        Link(3, 1, 102, 34, 3402),
+        Link(4, 34, 3403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "SoftDiceLoss graph should compile as a supported probability-mask loss");
+    Check(config.loss_type == gui::NodeType::SoftDiceLoss,
+          "compiler should preserve SoftDiceLoss type");
+    Check(config.loss_params.at("smooth") == "0.5",
+          "compiler should preserve SoftDice smooth");
+
+    auto tversky_loss = Node(35,
+                             gui::NodeType::TverskyLoss,
+                             "Tversky Loss",
+                             {Pin(3501, gui::PinType::Tensor, "Predictions", true),
+                              Pin(3502, gui::PinType::Tensor, "Targets", true)},
+                             {Pin(3503, gui::PinType::Loss, "Loss", false)});
+    tversky_loss.parameters["alpha"] = "0.3";
+    tversky_loss.parameters["beta"] = "0.7";
+    tversky_loss.parameters["smooth"] = "0.5";
+    nodes = {data, dense, tversky_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 35, 3501),
+        Link(3, 1, 102, 35, 3502),
+        Link(4, 35, 3503, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "TverskyLoss graph should compile as a supported probability-mask loss");
+    Check(config.loss_type == gui::NodeType::TverskyLoss,
+          "compiler should preserve TverskyLoss type");
+    Check(config.loss_params.at("alpha") == "0.3",
+          "compiler should preserve Tversky alpha");
+    Check(config.loss_params.at("beta") == "0.7",
+          "compiler should preserve Tversky beta");
+    Check(config.loss_params.at("smooth") == "0.5",
+          "compiler should preserve Tversky smooth");
+
+    auto jaccard_loss = Node(36,
+                             gui::NodeType::JaccardLoss,
+                             "Jaccard Loss",
+                             {Pin(3601, gui::PinType::Tensor, "Predictions", true),
+                              Pin(3602, gui::PinType::Tensor, "Targets", true)},
+                             {Pin(3603, gui::PinType::Loss, "Loss", false)});
+    jaccard_loss.parameters["smooth"] = "0.5";
+    nodes = {data, dense, jaccard_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 36, 3601),
+        Link(3, 1, 102, 36, 3602),
+        Link(4, 36, 3603, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "JaccardLoss graph should compile as a supported probability-mask loss");
+    Check(config.loss_type == gui::NodeType::JaccardLoss,
+          "compiler should preserve JaccardLoss type");
+    Check(config.loss_params.at("smooth") == "0.5",
+          "compiler should preserve Jaccard smooth");
 
     auto class_loss = Node(15,
                            gui::NodeType::CrossEntropyLoss,

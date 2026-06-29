@@ -615,6 +615,9 @@ bool ModelAnalyzer::IsUtilityNode(gui::NodeType type) const {
         case gui::NodeType::MSELoss:
         case gui::NodeType::CrossEntropyLoss:
         case gui::NodeType::FocalLoss:
+        case gui::NodeType::SoftDiceLoss:
+        case gui::NodeType::TverskyLoss:
+        case gui::NodeType::JaccardLoss:
         case gui::NodeType::BCELoss:
         case gui::NodeType::BCEWithLogits:
         case gui::NodeType::L1Loss:

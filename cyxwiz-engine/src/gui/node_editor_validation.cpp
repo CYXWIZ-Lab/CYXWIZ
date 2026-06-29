@@ -183,7 +183,10 @@ bool NodeEditor::IsGraphValid() const {
         if (node.type == NodeType::CrossEntropyLoss || node.type == NodeType::MSELoss ||
             node.type == NodeType::BCELoss || node.type == NodeType::BCEWithLogits ||
             node.type == NodeType::L1Loss || node.type == NodeType::SmoothL1Loss ||
-            node.type == NodeType::HuberLoss || node.type == NodeType::NLLLoss) {
+            node.type == NodeType::HuberLoss || node.type == NodeType::NLLLoss ||
+            node.type == NodeType::SoftDiceLoss ||
+            node.type == NodeType::TverskyLoss ||
+            node.type == NodeType::JaccardLoss) {
             has_loss = true;
         }
         // Model layers

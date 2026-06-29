@@ -10,27 +10,34 @@ namespace cyxwiz {
 class CYXWIZ_API CrossEntropyLoss : public Loss {
 public:
     explicit CrossEntropyLoss(Reduction reduction = Reduction::Mean,
-                              int ignore_index = -100,
-                              std::vector<float> class_weights = {})
-        : Loss(reduction),
-          ignore_index_(ignore_index),
-          class_weights_(std::move(class_weights)) {}
+                              int ignore_index = -100);
+
+    explicit CrossEntropyLoss(Reduction reduction,
+                              int ignore_index,
+                              std::vector<float> class_weights);
+
+    CrossEntropyLoss(Reduction reduction,
+                     int ignore_index,
+                     std::vector<float> class_weights,
+                     float label_smoothing);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
     std::string GetName() const override { return "CrossEntropy"; }
     const std::vector<float>& GetClassWeights() const { return class_weights_; }
+    float GetLabelSmoothing() const { return label_smoothing_; }
 
 private:
     int ignore_index_;
     std::vector<float> class_weights_;
+    float label_smoothing_;
     Tensor cached_softmax_;
 };
 
 class CYXWIZ_API NLLLoss : public Loss {
 public:
-    explicit NLLLoss(Reduction reduction = Reduction::Mean, int ignore_index = -100)
-        : Loss(reduction), ignore_index_(ignore_index) {}
+    explicit NLLLoss(Reduction reduction = Reduction::Mean,
+                     int ignore_index = -100);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
@@ -43,8 +50,7 @@ private:
 class CYXWIZ_API FocalLoss : public Loss {
 public:
     explicit FocalLoss(float alpha = 0.25f, float gamma = 2.0f,
-                       Reduction reduction = Reduction::Mean)
-        : Loss(reduction), alpha_(alpha), gamma_(gamma) {}
+                       Reduction reduction = Reduction::Mean);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;

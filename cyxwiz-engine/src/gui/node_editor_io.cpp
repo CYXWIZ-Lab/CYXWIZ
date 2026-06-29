@@ -134,6 +134,15 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"NLLLoss", NodeType::NLLLoss},
         {"FocalLoss", NodeType::FocalLoss},
         {"Focal", NodeType::FocalLoss},
+        {"SoftDiceLoss", NodeType::SoftDiceLoss},
+        {"SoftDice", NodeType::SoftDiceLoss},
+        {"DiceLoss", NodeType::SoftDiceLoss},
+        {"TverskyLoss", NodeType::TverskyLoss},
+        {"Tversky", NodeType::TverskyLoss},
+        {"JaccardLoss", NodeType::JaccardLoss},
+        {"Jaccard", NodeType::JaccardLoss},
+        {"IoULoss", NodeType::JaccardLoss},
+        {"IoU", NodeType::JaccardLoss},
 
         // Optimizers
         {"SGD", NodeType::SGD},

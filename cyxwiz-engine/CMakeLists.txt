@@ -1346,6 +1346,30 @@ set_target_properties(test_metric_learning_losses PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: ML Primitive CPU/GPU Coverage Matrix =====
+add_executable(test_ml_primitive_coverage_matrix
+    tests/test_ml_primitive_coverage_matrix.cpp
+)
+
+target_include_directories(test_ml_primitive_coverage_matrix PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_ml_primitive_coverage_matrix PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_ml_primitive_coverage_matrix PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_ml_primitive_coverage_matrix PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Metric-Learning Training Step Contracts =====
 add_executable(test_metric_learning_training_step
     tests/test_metric_learning_training_step.cpp

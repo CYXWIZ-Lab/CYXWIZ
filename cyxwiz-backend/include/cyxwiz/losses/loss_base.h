@@ -20,6 +20,9 @@ enum class LossType {
     KLDivergence,
     CosineEmbedding,
     Focal,
+    SoftDice,
+    Tversky,
+    Jaccard,
     Triplet,
     Contrastive
 };

@@ -475,6 +475,9 @@ struct TrainingConfiguration {
             case gui::NodeType::SmoothL1Loss: return "SmoothL1";
             case gui::NodeType::HuberLoss: return "SmoothL1";  // HuberLoss is alias
             case gui::NodeType::NLLLoss: return "NLL";
+            case gui::NodeType::SoftDiceLoss: return "SoftDice";
+            case gui::NodeType::TverskyLoss: return "Tversky";
+            case gui::NodeType::JaccardLoss: return "Jaccard";
             default: return "CrossEntropy";
         }
     }

@@ -222,6 +222,7 @@ private:
     bool ExecuteRegexTester(const Node& node, ExecutionContext& ctx);
     bool ExecuteDataProfiler(const Node& node, ExecutionContext& ctx);
     bool ExecuteRegressionMetrics(const Node& node, ExecutionContext& ctx);
+    bool ExecuteClassificationMetrics(const Node& node, ExecutionContext& ctx);
     bool ExecuteConfusionMatrix(const Node& node, ExecutionContext& ctx);
     bool ExecuteROCCurve(const Node& node, ExecutionContext& ctx);
     bool ExecutePRCurve(const Node& node, ExecutionContext& ctx);

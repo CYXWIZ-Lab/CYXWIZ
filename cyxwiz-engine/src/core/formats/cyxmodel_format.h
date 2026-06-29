@@ -123,6 +123,17 @@ public:
     );
 
     /**
+     * Extract a native tree-family model artifact from a .cyxmodel package.
+     * @param input_path Path to .cyxmodel directory/archive
+     * @param artifact_json Output cyxwiz_tree_model JSON payload
+     * @return true when tree/model.json is present
+     */
+    bool ExtractTreeModelArtifact(
+        const std::string& input_path,
+        std::string& artifact_json
+    );
+
+    /**
      * Get last error message
      */
     const std::string& GetLastError() const { return last_error_; }
