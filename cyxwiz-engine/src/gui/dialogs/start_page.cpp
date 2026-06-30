@@ -228,16 +228,45 @@ bool StartPage::Render() {
         return false;
     }
 
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ImVec2 win_pos = ImGui::GetWindowPos();
+    const ImVec2 win_size = ImGui::GetWindowSize();
+    draw_list->AddRectFilledMultiColor(
+        win_pos,
+        ImVec2(win_pos.x + win_size.x, win_pos.y + win_size.y),
+        IM_COL32(8, 13, 24, 255),
+        IM_COL32(9, 28, 48, 255),
+        IM_COL32(5, 8, 16, 255),
+        IM_COL32(13, 20, 38, 255));
+    draw_list->AddCircleFilled(
+        ImVec2(win_pos.x + win_size.x * 0.78f, win_pos.y + 120.0f),
+        180.0f,
+        IM_COL32(0, 115, 255, 24),
+        64);
+    draw_list->AddCircleFilled(
+        ImVec2(win_pos.x + 140.0f, win_pos.y + win_size.y * 0.82f),
+        220.0f,
+        IM_COL32(0, 210, 190, 14),
+        64);
+
     // Custom styling for start page
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 12));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(40, 30));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 9.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.95f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.045f, 0.070f, 0.120f, 0.86f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.18f, 0.34f, 0.52f, 0.55f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.07f, 0.11f, 0.18f, 0.96f));
 
     // Title
     ImGui::SetCursorPos(ImVec2(40, 30));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-    ImGui::SetWindowFontScale(1.8f);
-    ImGui::Text("Get started");
+    ImGui::SetWindowFontScale(2.1f);
+    ImGui::TextColored(ImVec4(0.92f, 0.97f, 1.0f, 1.0f), "Get started");
     ImGui::SetWindowFontScale(1.0f);
+    ImGui::TextColored(ImVec4(0.45f, 0.74f, 1.0f, 1.0f),
+                       "Build, train, debug, and export ML workflows from one engine workspace.");
     ImGui::PopStyleVar();
 
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
@@ -249,7 +278,7 @@ bool StartPage::Render() {
 
     ImGui::BeginGroup();
     {
-        ImGui::BeginChild("LeftColumn", ImVec2(left_width, -60), false, ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("LeftColumn", ImVec2(left_width, -60), true, ImGuiWindowFlags_NoScrollbar);
         {
             RenderSearchBar();
             ImGui::Spacing();
@@ -266,7 +295,7 @@ bool StartPage::Render() {
 
     ImGui::BeginGroup();
     {
-        ImGui::BeginChild("RightColumn", ImVec2(right_width, -60), false);
+        ImGui::BeginChild("RightColumn", ImVec2(right_width, -60), true);
         {
             RenderActionCards();
         }
@@ -281,14 +310,16 @@ bool StartPage::Render() {
         RenderCreateProjectDialog();
     }
 
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(4);
     ImGui::End();
 
     return true;
 }
 
 void StartPage::RenderSearchBar() {
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.13f, 0.21f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.18f, 0.45f, 0.72f, 0.75f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 10));
 
     ImGui::SetNextItemWidth(-1);
@@ -303,7 +334,7 @@ void StartPage::RenderSearchBar() {
     }
 
     ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor(2);
 }
 
 void StartPage::RenderStarterGraphs() {
@@ -311,15 +342,16 @@ void StartPage::RenderStarterGraphs() {
         return;
     }
 
-    ImGui::Text("Task starter graphs");
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.58f, 0.58f, 0.58f, 1.0f));
-    ImGui::TextWrapped("Open a real example graph by prediction task.");
+    ImGui::TextColored(ImVec4(0.92f, 0.97f, 1.0f, 1.0f), "Task starter graphs");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.58f, 0.70f, 0.82f, 1.0f));
+    ImGui::TextWrapped("Open a real CyxGraph template by prediction task.");
     ImGui::PopStyleColor();
 
-    ImGui::BeginChild("##StarterGraphs", ImVec2(0, 185), false);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.035f, 0.055f, 0.095f, 0.58f));
+    ImGui::BeginChild("##StarterGraphs", ImVec2(0, 230), true);
 
     const float button_width = 96.0f;
-    const float row_height = 48.0f;
+    const float row_height = 54.0f;
     const float button_x = ImGui::GetWindowContentRegionMax().x - button_width;
     const float text_width = std::max(120.0f, ImGui::GetContentRegionAvail().x - button_width - 28.0f);
 
@@ -327,17 +359,18 @@ void StartPage::RenderStarterGraphs() {
         ImGui::PushID(starter.path.c_str());
 
         ImGui::BeginGroup();
-        ImGui::Text("%s", starter.icon.c_str());
+        ImGui::TextColored(ImVec4(0.30f, 0.70f, 1.0f, 1.0f),
+                           "%s", starter.icon.c_str());
         ImGui::SameLine();
 
         ImGui::BeginGroup();
         ImGui::Text("%s", starter.title.c_str());
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.68f, 0.95f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.30f, 0.72f, 1.0f, 1.0f));
         ImGui::Text("%s", starter.domain.c_str());
         ImGui::PopStyleColor();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + text_width);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.58f, 0.58f, 0.58f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.72f, 0.82f, 1.0f));
         ImGui::TextWrapped("%s", starter.description.c_str());
         ImGui::PopStyleColor();
         ImGui::PopTextWrapPos();
@@ -345,9 +378,13 @@ void StartPage::RenderStarterGraphs() {
         ImGui::EndGroup();
 
         ImGui::SameLine(button_x);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.04f, 0.36f, 0.88f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.07f, 0.48f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.02f, 0.26f, 0.70f, 1.0f));
         if (ImGui::Button(ICON_FA_DIAGRAM_PROJECT " Open", ImVec2(button_width, row_height))) {
             OpenStarterGraph(starter);
         }
+        ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", starter.path.c_str());
         }
@@ -357,9 +394,11 @@ void StartPage::RenderStarterGraphs() {
     }
 
     ImGui::EndChild();
+    ImGui::PopStyleColor();
 }
 
 void StartPage::RenderRecentProjects() {
+    ImGui::SeparatorText("Recent Projects");
     ImGui::BeginChild("##RecentProjects", ImVec2(0, 0), false);
 
     // This week
@@ -371,11 +410,11 @@ void StartPage::RenderRecentProjects() {
                 ImGui::PushID(proj.path.c_str());
 
                 // Project icon
-                ImGui::Text(ICON_FA_FOLDER);
+                ImGui::TextColored(ImVec4(0.34f, 0.72f, 1.0f, 1.0f), ICON_FA_FOLDER);
                 ImGui::SameLine();
 
                 // Clickable project name
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.88f, 0.94f, 1.0f, 1.0f));
                 if (ImGui::Selectable(proj.name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
                     if (ImGui::IsMouseDoubleClicked(0)) {
                         OpenProject(proj.path);
@@ -385,7 +424,7 @@ void StartPage::RenderRecentProjects() {
 
                 // Path and timestamp
                 ImGui::Indent(30);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.60f, 0.72f, 1.0f));
                 ImGui::TextWrapped("%s", proj.path.c_str());
 
                 const std::string time_str = FormatRecentProjectTime(proj.last_opened);
@@ -410,10 +449,10 @@ void StartPage::RenderRecentProjects() {
             for (const auto& proj : this_month_) {
                 ImGui::PushID(proj.path.c_str());
 
-                ImGui::Text(ICON_FA_FOLDER);
+                ImGui::TextColored(ImVec4(0.34f, 0.72f, 1.0f, 1.0f), ICON_FA_FOLDER);
                 ImGui::SameLine();
 
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.88f, 0.94f, 1.0f, 1.0f));
                 if (ImGui::Selectable(proj.name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
                     if (ImGui::IsMouseDoubleClicked(0)) {
                         OpenProject(proj.path);
@@ -422,7 +461,7 @@ void StartPage::RenderRecentProjects() {
                 ImGui::PopStyleColor();
 
                 ImGui::Indent(30);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.60f, 0.72f, 1.0f));
                 ImGui::TextWrapped("%s", proj.path.c_str());
 
                 const std::string time_str = FormatRecentProjectTime(proj.last_opened);
@@ -447,10 +486,10 @@ void StartPage::RenderRecentProjects() {
             for (const auto& proj : older_) {
                 ImGui::PushID(proj.path.c_str());
 
-                ImGui::Text(ICON_FA_FOLDER);
+                ImGui::TextColored(ImVec4(0.34f, 0.72f, 1.0f, 1.0f), ICON_FA_FOLDER);
                 ImGui::SameLine();
 
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.88f, 0.94f, 1.0f, 1.0f));
                 if (ImGui::Selectable(proj.name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
                     if (ImGui::IsMouseDoubleClicked(0)) {
                         OpenProject(proj.path);
@@ -459,7 +498,7 @@ void StartPage::RenderRecentProjects() {
                 ImGui::PopStyleColor();
 
                 ImGui::Indent(30);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.60f, 0.72f, 1.0f));
                 ImGui::TextWrapped("%s", proj.path.c_str());
 
                 const std::string time_str = FormatRecentProjectTime(proj.last_opened);
@@ -477,7 +516,7 @@ void StartPage::RenderRecentProjects() {
 
     // No projects message
     if (all_projects_.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.60f, 0.72f, 1.0f));
         ImGui::TextWrapped("No recent projects");
         ImGui::TextWrapped("Create a new project or open an existing one to get started");
         ImGui::PopStyleColor();
@@ -492,10 +531,15 @@ void StartPage::RenderActionCards() {
 
     float button_width = ImGui::GetContentRegionAvail().x;
 
+    ImGui::TextColored(ImVec4(0.92f, 0.97f, 1.0f, 1.0f), "Launch workspace");
+    ImGui::TextColored(ImVec4(0.58f, 0.70f, 0.82f, 1.0f),
+                       "Start from a workflow lane, domain starter, or existing project.");
+    ImGui::Spacing();
+
     // Create new project
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.9f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.35f, 0.75f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.02f, 0.34f, 0.92f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.05f, 0.48f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.01f, 0.25f, 0.72f, 1.0f));
     if (ImGui::Button(ICON_FA_PLUS " Create a new project", ImVec2(button_width, 0))) {
         CreateNewProject();
     }
@@ -503,13 +547,13 @@ void StartPage::RenderActionCards() {
 
     ImGui::Spacing();
 
-    ImGui::TextDisabled("Workflow lanes");
+    ImGui::SeparatorText("Workflow lanes");
     RenderProjectTemplateButton(ICON_FA_CHART_LINE " Classic ML workflow", 1);
     RenderProjectTemplateButton(ICON_FA_NETWORK_WIRED " Deep Learning workflow", 2);
 
     ImGui::Spacing();
 
-    ImGui::TextDisabled("Domain starters");
+    ImGui::SeparatorText("Domain starters");
     RenderProjectTemplateButton(ICON_FA_TABLE " Tabular project", 3);
     RenderProjectTemplateButton(ICON_FA_IMAGE " Vision project", 4);
     RenderProjectTemplateButton(ICON_FA_COMMENTS " NLP project", 5);
@@ -517,9 +561,10 @@ void StartPage::RenderActionCards() {
     ImGui::Spacing();
 
     // Open project
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+    ImGui::SeparatorText("File actions");
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.13f, 0.21f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.20f, 0.32f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.06f, 0.10f, 0.18f, 1.0f));
     if (ImGui::Button(ICON_FA_FOLDER_OPEN " Open a project or solution", ImVec2(button_width, 0))) {
         OpenExistingProject();
     }
@@ -528,9 +573,9 @@ void StartPage::RenderActionCards() {
     ImGui::Spacing();
 
     // Open folder
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.13f, 0.21f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.20f, 0.32f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.06f, 0.10f, 0.18f, 1.0f));
     if (ImGui::Button(ICON_FA_FOLDER " Open a project folder", ImVec2(button_width, 0))) {
         OpenProjectFolder();
     }
@@ -539,9 +584,9 @@ void StartPage::RenderActionCards() {
     ImGui::Spacing();
 
     // Clone repository
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.13f, 0.21f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.20f, 0.32f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.06f, 0.10f, 0.18f, 1.0f));
     ImGui::BeginDisabled();
     ImGui::Button(ICON_FA_CLOUD_ARROW_DOWN " Clone a repository (planned)", ImVec2(button_width, 0));
     ImGui::EndDisabled();
@@ -555,9 +600,13 @@ void StartPage::RenderActionCards() {
 
 void StartPage::RenderProjectTemplateButton(const char* label, int template_index) {
     float button_width = ImGui::GetContentRegionAvail().x;
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.07f, 0.12f, 0.20f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.10f, 0.22f, 0.36f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.05f, 0.16f, 0.28f, 1.0f));
     if (ImGui::Button(label, ImVec2(button_width, 0))) {
         CreateNewProjectFromTemplate(template_index);
     }
+    ImGui::PopStyleColor(3);
     if (ImGui::IsItemHovered() &&
         template_index >= 0 &&
         template_index < static_cast<int>(kProjectTemplates.size())) {

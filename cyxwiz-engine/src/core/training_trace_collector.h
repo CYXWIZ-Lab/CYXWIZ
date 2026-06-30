@@ -20,6 +20,8 @@ struct TrainingTraceEvent {
     int total_batches = 0;
     float loss = 0.0f;
     float accuracy = 0.0f;
+    float validation_loss = 0.0f;
+    float validation_accuracy = 0.0f;
     float duration_ms = 0.0f;
     uint64_t cpu_allocated_bytes = 0;
     uint64_t cpu_peak_bytes = 0;
@@ -29,6 +31,19 @@ struct TrainingTraceEvent {
     uint64_t af_lock_buffers = 0;
     std::string status = "ok";
     std::string message;
+    std::string metric_scope;
+    std::string checkpoint_path;
+    bool is_best_checkpoint = false;
+    std::string terminal_reason;
+    uint64_t task_id = 0;
+    std::string task_name;
+    std::string task_stage;
+    float task_progress = 0.0f;
+    int node_id = -1;
+    std::string node_name;
+    uint64_t estimated_memory_bytes = 0;
+    uint64_t processed_items = 0;
+    uint64_t total_items = 0;
 };
 
 struct TrainingTraceSummary {
@@ -71,6 +86,33 @@ public:
     void RecordRuntimeEvent(const std::string& stage,
                             const std::string& message,
                             const std::string& status = "ok");
+    void RecordTaskProgress(uint64_t task_id,
+                            const std::string& task_name,
+                            const std::string& task_stage,
+                            float progress,
+                            const std::string& message,
+                            const std::string& status = "running",
+                            int node_id = -1,
+                            const std::string& node_name = "",
+                            uint64_t estimated_memory_bytes = 0,
+                            uint64_t processed_items = 0,
+                            uint64_t total_items = 0);
+    void RecordValidationMetrics(int epoch,
+                                 float train_loss,
+                                 float train_accuracy,
+                                 float validation_loss,
+                                 float validation_accuracy,
+                                 float duration_ms = 0.0f);
+    void RecordCheckpointSaved(int epoch,
+                               const std::string& checkpoint_path,
+                               float validation_loss,
+                               float validation_accuracy,
+                               bool is_best_checkpoint);
+    void RecordTerminalEvent(const std::string& terminal_status,
+                             const std::string& terminal_reason,
+                             int epoch,
+                             float loss,
+                             float accuracy);
     void FinishRun(const std::string& status);
 
     void Configure(const TrainingTraceSettings& settings);

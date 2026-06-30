@@ -170,6 +170,7 @@ struct AudioPreprocessingConfig {
  */
 struct TextPreprocessingConfig {
     bool has_tokenizer_node = false;
+    bool has_vectorizer_node = false;
     // tokenizer_type: 0=Whitespace, 1=Word, 2=Character
     int tokenizer_type = 1;
     bool lowercase = true;

@@ -75,7 +75,8 @@ MaterializeResult PipelineMaterializer::Materialize(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
     DataRegistry& registry,
-    const std::string& source_dataset_name) {
+    const std::string& source_dataset_name,
+    PipelineOperatorProgressCallback progress_callback) {
 
     MaterializeResult result;
     result.effective_dataset_name = source_dataset_name;
@@ -123,7 +124,7 @@ MaterializeResult PipelineMaterializer::Materialize(
     }
 
     auto table_result = MaterializeTable(
-        nodes, links, source_table, source_dataset_name);
+        nodes, links, source_table, source_dataset_name, progress_callback);
     if (!table_result.success) {
         result.success = false;
         result.error_message = table_result.error_message;

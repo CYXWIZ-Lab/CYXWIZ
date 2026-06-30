@@ -1,6 +1,8 @@
 #include "tfidf_vectorizer_operator.h"
 #include "text_column_utils.h"
 
+#include "../profiler_trace.h"
+
 #include <cyxwiz/text_processing.h>
 
 #include <arrow/api.h>
@@ -8,12 +10,57 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
+#include <map>
 #include <memory>
+#include <new>
 #include <numeric>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace cyxwiz {
+
+void TFIDFVectorizerOperator::SetProgressCallback(
+    PipelineOperatorProgressCallback callback) {
+    progress_callback_ = std::move(callback);
+}
+
+namespace {
+
+struct TFIDFTermStats {
+    std::string term;
+    int doc_freq = 0;
+    int corpus_count = 0;
+    double idf = 1.0;
+};
+
+void NormalizeDenseRow(std::vector<float>& values, const std::string& norm) {
+    if (norm == "none") {
+        return;
+    }
+
+    double denom = 0.0;
+    if (norm == "l1") {
+        for (float value : values) {
+            denom += std::abs(static_cast<double>(value));
+        }
+    } else {
+        for (float value : values) {
+            denom += static_cast<double>(value) * value;
+        }
+        denom = std::sqrt(denom);
+    }
+
+    if (denom <= 0.0) {
+        return;
+    }
+    for (float& value : values) {
+        value = static_cast<float>(static_cast<double>(value) / denom);
+    }
+}
+
+} // namespace
 
 bool TFIDFVectorizerOperator::Configure(
     const std::map<std::string, std::string>& params,
@@ -129,9 +176,29 @@ bool TFIDFVectorizerOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz TF-IDF Materializer");
     if (!input) {
         return arrow::Status::Invalid("TFIDFVectorizer: input table is null");
     }
+
+    auto report_progress = [this](const std::string& stage,
+                                  const std::string& message,
+                                  float progress,
+                                  uint64_t estimated_memory_bytes = 0,
+                                  uint64_t processed_items = 0,
+                                  uint64_t total_items = 0) {
+        if (!progress_callback_) {
+            return;
+        }
+        PipelineOperatorProgress event;
+        event.stage = stage;
+        event.message = message;
+        event.progress = progress;
+        event.estimated_memory_bytes = estimated_memory_bytes;
+        event.processed_items = processed_items;
+        event.total_items = total_items;
+        progress_callback_(event);
+    };
 
     auto text_column = input->GetColumnByName(text_col_);
     if (!text_column) {
@@ -147,48 +214,163 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "' must be string/large_string, got '" + bad_type + "'");
     }
 
-    // Compute TF-IDF over the entire corpus.
-    auto result = TextProcessing::ComputeTFIDF(texts, use_idf_, smooth_idf_, norm_);
-    if (!result.success) {
-        return arrow::Status::ExecutionError(
-            "TFIDFVectorizer: ComputeTFIDF failed: " + result.error_message);
-    }
-
-    const size_t n = static_cast<size_t>(result.num_documents);
-    const size_t full_vocab = static_cast<size_t>(result.vocab_size);
-    if (n == 0 || full_vocab == 0) {
+    const size_t n = texts.size();
+    if (n == 0) {
         return arrow::Status::Invalid(
-            "TFIDFVectorizer: empty corpus or empty vocabulary "
-            "(n=" + std::to_string(n) + ", vocab=" + std::to_string(full_vocab) + ")");
+            "TFIDFVectorizer: empty corpus");
+    }
+    const uint64_t initial_memory_estimate =
+        static_cast<uint64_t>(n) *
+        static_cast<uint64_t>(std::max(1, max_features_)) *
+        static_cast<uint64_t>(sizeof(float));
+    report_progress(
+        "Tokenizing text",
+        "Tokenizing text and building term counts...",
+        0.10f,
+        initial_memory_estimate,
+        0,
+        static_cast<uint64_t>(n));
+
+    std::vector<std::unordered_map<std::string, int>> doc_counts;
+    std::vector<size_t> doc_token_counts;
+    doc_counts.reserve(n);
+    doc_token_counts.reserve(n);
+
+    std::unordered_map<std::string, TFIDFTermStats> term_stats_by_name;
+    try {
+        for (size_t row = 0; row < texts.size(); ++row) {
+            const auto& text = texts[row];
+            auto tokenized = TextProcessing::Tokenize(
+                text, "word", 2, /*lowercase=*/true,
+                /*remove_punctuation=*/true);
+            if (!tokenized.success) {
+                return arrow::Status::ExecutionError(
+                    "TFIDFVectorizer: tokenization failed: " +
+                    tokenized.error_message);
+            }
+
+            auto tokens =
+                TextProcessing::RemoveStopwords(tokenized.tokens, "english");
+            doc_token_counts.push_back(tokens.size());
+
+            std::unordered_map<std::string, int> counts;
+            for (const auto& token : tokens) {
+                counts[token]++;
+            }
+
+            for (const auto& pair : counts) {
+                auto& stats = term_stats_by_name[pair.first];
+                stats.term = pair.first;
+                stats.doc_freq++;
+                stats.corpus_count += pair.second;
+            }
+            doc_counts.push_back(std::move(counts));
+            if ((row + 1) % 5000 == 0 || row + 1 == texts.size()) {
+                const float p = 0.10f + 0.25f *
+                    (static_cast<float>(row + 1) /
+                     static_cast<float>(texts.size()));
+                report_progress(
+                    "Tokenizing text",
+                    "Tokenized " + std::to_string(row + 1) +
+                        "/" + std::to_string(texts.size()) + " rows",
+                    p,
+                    initial_memory_estimate,
+                    static_cast<uint64_t>(row + 1),
+                    static_cast<uint64_t>(texts.size()));
+            }
+        }
+    } catch (const std::bad_alloc&) {
+        return arrow::Status::CapacityError(
+            "TFIDFVectorizer: insufficient memory while building bounded "
+            "term-frequency maps");
+    } catch (const std::exception& e) {
+        return arrow::Status::ExecutionError(
+            std::string("TFIDFVectorizer: token counting failed: ") + e.what());
     }
 
-    // Cap to top-N most discriminating terms by IDF score (highest IDF =
-    // rarest = most discriminative). Matches sklearn TfidfVectorizer's
-    // max_features semantics. If full_vocab is already <= max_features,
-    // keep everything.
-    std::vector<size_t> kept_indices;
-    if (full_vocab <= static_cast<size_t>(max_features_)) {
-        kept_indices.resize(full_vocab);
-        std::iota(kept_indices.begin(), kept_indices.end(), size_t{0});
-    } else {
-        kept_indices.resize(full_vocab);
-        std::iota(kept_indices.begin(), kept_indices.end(), size_t{0});
-        // Partial sort by IDF descending.
+    const size_t full_vocab = term_stats_by_name.size();
+    if (full_vocab == 0) {
+        return arrow::Status::Invalid(
+            "TFIDFVectorizer: empty vocabulary after tokenization and stopword removal");
+    }
+
+    std::vector<TFIDFTermStats> all_terms;
+    report_progress(
+        "Selecting vocabulary",
+        "Selecting bounded vocabulary from " + std::to_string(full_vocab) +
+            " terms...",
+        0.45f,
+        initial_memory_estimate,
+        static_cast<uint64_t>(full_vocab),
+        static_cast<uint64_t>(full_vocab));
+    all_terms.reserve(full_vocab);
+    for (auto& pair : term_stats_by_name) {
+        auto stats = std::move(pair.second);
+        if (use_idf_) {
+            const double df = smooth_idf_
+                ? static_cast<double>(stats.doc_freq + 1)
+                : static_cast<double>(stats.doc_freq);
+            const double total = smooth_idf_
+                ? static_cast<double>(n + 1)
+                : static_cast<double>(n);
+            stats.idf = std::log(total / df) + 1.0;
+        } else {
+            stats.idf = 1.0;
+        }
+        all_terms.push_back(std::move(stats));
+    }
+
+    std::sort(all_terms.begin(), all_terms.end(),
+              [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
+                  return a.term < b.term;
+              });
+
+    const size_t kept =
+        std::min(full_vocab, static_cast<size_t>(max_features_));
+    const uint64_t bounded_memory_estimate =
+        static_cast<uint64_t>(n) *
+        static_cast<uint64_t>(std::max<size_t>(1, kept)) *
+        static_cast<uint64_t>(sizeof(float));
+    if (full_vocab > kept) {
         std::partial_sort(
-            kept_indices.begin(),
-            kept_indices.begin() + max_features_,
-            kept_indices.end(),
-            [&](size_t a, size_t b) {
-                return result.idf_scores[a] > result.idf_scores[b];
+            all_terms.begin(),
+            all_terms.begin() + kept,
+            all_terms.end(),
+            [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
+                if (a.corpus_count != b.corpus_count) {
+                    return a.corpus_count > b.corpus_count;
+                }
+                if (a.doc_freq != b.doc_freq) {
+                    return a.doc_freq > b.doc_freq;
+                }
+                if (a.idf != b.idf) return a.idf > b.idf;
+                return a.term < b.term;
             });
-        kept_indices.resize(max_features_);
-        // Re-sort kept indices in original order so column ordering is
-        // stable across runs (otherwise it's IDF-rank order which would
-        // change across corpora).
-        std::sort(kept_indices.begin(), kept_indices.end());
+        all_terms.resize(kept);
+        std::sort(all_terms.begin(), all_terms.end(),
+                  [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
+                      return a.term < b.term;
+                  });
+    } else {
+        all_terms.resize(kept);
     }
 
-    const size_t kept = kept_indices.size();
+    std::unordered_map<std::string, size_t> kept_index_by_term;
+    report_progress(
+        "Planning TF-IDF matrix",
+        "Planning " + std::to_string(n) + " rows x " +
+            std::to_string(kept) + " TF-IDF features",
+        0.55f,
+        bounded_memory_estimate,
+        0,
+        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
+    kept_index_by_term.reserve(kept);
+    std::vector<double> kept_idf;
+    kept_idf.reserve(kept);
+    for (size_t i = 0; i < kept; ++i) {
+        kept_index_by_term[all_terms[i].term] = i;
+        kept_idf.push_back(all_terms[i].idf);
+    }
 
     // Read label column if specified.
     std::vector<int> labels;
@@ -213,6 +395,13 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     // Build wide output: tfidf_0..tfidf_{kept-1}, y.
+    report_progress(
+        "Building Arrow columns",
+        "Allocating Arrow builders for TF-IDF output...",
+        0.62f,
+        bounded_memory_estimate,
+        0,
+        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
     arrow::MemoryPool* pool = arrow::default_memory_pool();
     std::vector<std::unique_ptr<arrow::FloatBuilder>> tfidf_builders;
     tfidf_builders.reserve(kept);
@@ -226,17 +415,52 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     for (size_t r = 0; r < n; ++r) {
-        const auto& doc_row = result.tfidf_matrix[r];
+        std::vector<float> dense_row(kept, 0.0f);
+        const auto& counts = doc_counts[r];
+        const size_t token_count = doc_token_counts[r];
+        if (token_count > 0) {
+            for (const auto& pair : counts) {
+                auto kept_it = kept_index_by_term.find(pair.first);
+                if (kept_it == kept_index_by_term.end()) {
+                    continue;
+                }
+                const size_t col = kept_it->second;
+                const double tf =
+                    static_cast<double>(pair.second) /
+                    static_cast<double>(token_count);
+                dense_row[col] =
+                    static_cast<float>(tf * kept_idf[col]);
+            }
+            NormalizeDenseRow(dense_row, norm_);
+        }
+
         for (size_t c = 0; c < kept; ++c) {
-            const size_t src_col = kept_indices[c];
-            const float v = (src_col < doc_row.size())
-                ? static_cast<float>(doc_row[src_col]) : 0.0f;
-            ARROW_RETURN_NOT_OK(tfidf_builders[c]->Append(v));
+            ARROW_RETURN_NOT_OK(tfidf_builders[c]->Append(dense_row[c]));
         }
         if (!labels.empty()) {
             ARROW_RETURN_NOT_OK(label_builder.Append(labels[r]));
         }
+        if ((r + 1) % 5000 == 0 || r + 1 == n) {
+            const float p = 0.65f + 0.25f *
+                (static_cast<float>(r + 1) / static_cast<float>(n));
+            report_progress(
+                "Building TF-IDF rows",
+                "Built " + std::to_string(r + 1) +
+                    "/" + std::to_string(n) + " TF-IDF rows",
+                p,
+                bounded_memory_estimate,
+                static_cast<uint64_t>(r + 1) * static_cast<uint64_t>(kept),
+                static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
+        }
     }
+
+    report_progress(
+        "Finishing Arrow table",
+        "Finalizing TF-IDF Arrow table...",
+        0.95f,
+        bounded_memory_estimate,
+        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept),
+        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
 
     std::vector<std::shared_ptr<arrow::Array>> arrays;
     std::vector<std::shared_ptr<arrow::Field>> fields;
@@ -259,8 +483,17 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     auto out_table = arrow::Table::Make(out_schema, arrays, static_cast<int64_t>(n));
 
     spdlog::info("TFIDFVectorizer: {} docs x {} features (capped from {}), "
-                 "use_idf={}, norm={}, classes={}",
-                 n, kept, full_vocab, use_idf_, norm_, class_names.size());
+                 "use_idf={}, smooth_idf={}, norm={}, classes={}, bounded=true",
+                 n, kept, full_vocab, use_idf_, smooth_idf_, norm_,
+                 class_names.size());
+    report_progress(
+        "TF-IDF materialization complete",
+        "Materialized " + std::to_string(n) + " rows x " +
+            std::to_string(kept) + " TF-IDF features",
+        1.0f,
+        bounded_memory_estimate,
+        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept),
+        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
     return out_table;
 }
 

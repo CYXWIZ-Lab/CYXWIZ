@@ -1,4 +1,5 @@
 #include "preprocessing_operators.h"
+#include "../profiler_trace.h"
 #include "feature_matrix_utils.h"
 #include "text_column_utils.h"
 #include "ts_column_utils.h"
@@ -10,6 +11,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cctype>
 #include <cmath>
 #include <limits>
@@ -23,6 +25,26 @@
 namespace cyxwiz {
 
 namespace {
+
+void ReportProgress(const PipelineOperatorProgressCallback& callback,
+                    std::string stage,
+                    std::string message,
+                    double progress,
+                    uint64_t processed = 0,
+                    uint64_t total = 0,
+                    uint64_t memory = 0) {
+    if (!callback) {
+        return;
+    }
+    PipelineOperatorProgress event;
+    event.stage = std::move(stage);
+    event.message = std::move(message);
+    event.progress = static_cast<float>(progress);
+    event.processed_items = processed;
+    event.total_items = total;
+    event.estimated_memory_bytes = memory;
+    callback(event);
+}
 
 std::string TrimString(const std::string& value) {
     auto begin = std::find_if_not(value.begin(), value.end(),
@@ -242,15 +264,34 @@ bool StandardScalerOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz StandardScaler Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Resolving columns",
+                   "Resolving numeric columns for StandardScaler", 0.05);
     std::vector<std::string> resolved;
     ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
         input, columns_, label_col_, GetName(), resolved));
+    const uint64_t estimated_bytes =
+        static_cast<uint64_t>(input->num_rows()) *
+        static_cast<uint64_t>(resolved.size()) * sizeof(float);
+    ReportProgress(progress_callback_, "Columns resolved",
+                   "Resolved " + std::to_string(resolved.size()) +
+                   " columns for StandardScaler",
+                   0.15, 0, static_cast<uint64_t>(resolved.size()),
+                   estimated_bytes);
 
     auto out = input;
     int transformed = 0;
     for (const auto& name : resolved) {
+        ReportProgress(progress_callback_, "Scaling columns",
+                       "Standard scaling column '" + name + "'",
+                       0.20 + (0.70 * static_cast<double>(transformed) /
+                               static_cast<double>(resolved.size())),
+                       static_cast<uint64_t>(transformed),
+                       static_cast<uint64_t>(resolved.size()),
+                       estimated_bytes);
         std::vector<double> data;
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
@@ -266,6 +307,10 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     spdlog::info("StandardScaler: transformed {} columns (with_mean={}, with_std={})",
                  transformed, with_mean_, with_std_);
+    ReportProgress(progress_callback_, "Complete",
+                   "StandardScaler materialization complete", 1.0,
+                   static_cast<uint64_t>(transformed),
+                   static_cast<uint64_t>(resolved.size()), estimated_bytes);
     return out;
 }
 
@@ -307,16 +352,35 @@ bool MinMaxScalerOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 MinMaxScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz MinMaxScaler Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Resolving columns",
+                   "Resolving numeric columns for MinMaxScaler", 0.05);
     std::vector<std::string> resolved;
     ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
         input, columns_, label_col_, GetName(), resolved));
+    const uint64_t estimated_bytes =
+        static_cast<uint64_t>(input->num_rows()) *
+        static_cast<uint64_t>(resolved.size()) * sizeof(float);
+    ReportProgress(progress_callback_, "Columns resolved",
+                   "Resolved " + std::to_string(resolved.size()) +
+                   " columns for MinMaxScaler",
+                   0.15, 0, static_cast<uint64_t>(resolved.size()),
+                   estimated_bytes);
 
     const double target_span = range_max_ - range_min_;
     auto out = input;
     int transformed = 0;
     for (const auto& name : resolved) {
+        ReportProgress(progress_callback_, "Scaling columns",
+                       "Min-max scaling column '" + name + "'",
+                       0.20 + (0.70 * static_cast<double>(transformed) /
+                               static_cast<double>(resolved.size())),
+                       static_cast<uint64_t>(transformed),
+                       static_cast<uint64_t>(resolved.size()),
+                       estimated_bytes);
         std::vector<double> data;
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
@@ -335,6 +399,10 @@ MinMaxScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     spdlog::info("MinMaxScaler: transformed {} columns to [{}, {}]",
                  transformed, range_min_, range_max_);
+    ReportProgress(progress_callback_, "Complete",
+                   "MinMaxScaler materialization complete", 1.0,
+                   static_cast<uint64_t>(transformed),
+                   static_cast<uint64_t>(resolved.size()), estimated_bytes);
     return out;
 }
 
@@ -384,15 +452,34 @@ bool RobustScalerOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz RobustScaler Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Resolving columns",
+                   "Resolving numeric columns for RobustScaler", 0.05);
     std::vector<std::string> resolved;
     ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
         input, columns_, label_col_, GetName(), resolved));
+    const uint64_t estimated_bytes =
+        static_cast<uint64_t>(input->num_rows()) *
+        static_cast<uint64_t>(resolved.size()) * sizeof(float);
+    ReportProgress(progress_callback_, "Columns resolved",
+                   "Resolved " + std::to_string(resolved.size()) +
+                   " columns for RobustScaler",
+                   0.15, 0, static_cast<uint64_t>(resolved.size()),
+                   estimated_bytes);
 
     auto out = input;
     int transformed = 0;
     for (const auto& name : resolved) {
+        ReportProgress(progress_callback_, "Scaling columns",
+                       "Robust scaling column '" + name + "'",
+                       0.20 + (0.70 * static_cast<double>(transformed) /
+                               static_cast<double>(resolved.size())),
+                       static_cast<uint64_t>(transformed),
+                       static_cast<uint64_t>(resolved.size()),
+                       estimated_bytes);
         std::vector<double> data;
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
@@ -412,6 +499,10 @@ RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  "q={}/{})",
                  transformed, with_centering_, with_scaling_,
                  quantile_min_, quantile_max_);
+    ReportProgress(progress_callback_, "Complete",
+                   "RobustScaler materialization complete", 1.0,
+                   static_cast<uint64_t>(transformed),
+                   static_cast<uint64_t>(resolved.size()), estimated_bytes);
     return out;
 }
 
@@ -435,8 +526,14 @@ bool LabelEncoderOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 LabelEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz LabelEncoder Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Encoding column",
+                   "Encoding label column '" + column_ + "'", 0.10,
+                   0, 1,
+                   static_cast<uint64_t>(input->num_rows()) * sizeof(int));
     int idx = input->schema()->GetFieldIndex(column_);
     if (idx < 0) {
         return arrow::Status::KeyError(
@@ -452,6 +549,9 @@ LabelEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     spdlog::info("LabelEncoder: column '{}' -> int32 with {} categories",
                  column_, categories.size());
+    ReportProgress(progress_callback_, "Complete",
+                   "LabelEncoder materialization complete", 1.0, 1, 1,
+                   static_cast<uint64_t>(input->num_rows()) * sizeof(int));
     return out;
 }
 
@@ -486,11 +586,22 @@ bool OrdinalEncoderOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 OrdinalEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz OrdinalEncoder Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
     auto out = input;
     size_t total_categories = 0;
-    for (const auto& name : columns_) {
+    for (size_t column_index = 0; column_index < columns_.size(); ++column_index) {
+        const auto& name = columns_[column_index];
+        ReportProgress(progress_callback_, "Encoding columns",
+                       "Ordinal encoding column '" + name + "'",
+                       0.10 + (0.80 * static_cast<double>(column_index) /
+                               static_cast<double>(columns_.size())),
+                       static_cast<uint64_t>(column_index),
+                       static_cast<uint64_t>(columns_.size()),
+                       static_cast<uint64_t>(input->num_rows()) *
+                       static_cast<uint64_t>(columns_.size()) * sizeof(int));
         int idx = out->schema()->GetFieldIndex(name);
         if (idx < 0) {
             return arrow::Status::KeyError(
@@ -506,6 +617,12 @@ OrdinalEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     spdlog::info("OrdinalEncoder: encoded {} columns, {} total categories",
                  columns_.size(), total_categories);
+    ReportProgress(progress_callback_, "Complete",
+                   "OrdinalEncoder materialization complete", 1.0,
+                   static_cast<uint64_t>(columns_.size()),
+                   static_cast<uint64_t>(columns_.size()),
+                   static_cast<uint64_t>(input->num_rows()) *
+                   static_cast<uint64_t>(columns_.size()) * sizeof(int));
     return out;
 }
 
@@ -556,9 +673,15 @@ bool TargetEncoderOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz TargetEncoder Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
     // Read target once.
+    ReportProgress(progress_callback_, "Reading target",
+                   "Reading target column '" + target_col_ +
+                   "' for target encoding",
+                   0.05);
     std::vector<double> target;
     int target_idx = -1;
     ARROW_RETURN_NOT_OK(ReadNumericDouble(input, target_col_, GetName(), target, target_idx));
@@ -567,6 +690,14 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     auto out = input;
     int transformed = 0;
     for (const auto& name : columns_) {
+        ReportProgress(progress_callback_, "Encoding columns",
+                       "Target encoding column '" + name + "'",
+                       0.15 + (0.75 * static_cast<double>(transformed) /
+                               static_cast<double>(columns_.size())),
+                       static_cast<uint64_t>(transformed),
+                       static_cast<uint64_t>(columns_.size()),
+                       static_cast<uint64_t>(input->num_rows()) *
+                       static_cast<uint64_t>(columns_.size()) * sizeof(float));
         int idx = out->schema()->GetFieldIndex(name);
         if (idx < 0) {
             return arrow::Status::KeyError(
@@ -614,6 +745,12 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     spdlog::info("TargetEncoder: encoded {} columns with target '{}' "
                  "(global_mean={:.4f}, smoothing={})",
                  transformed, target_col_, global_mean, smoothing_);
+    ReportProgress(progress_callback_, "Complete",
+                   "TargetEncoder materialization complete", 1.0,
+                   static_cast<uint64_t>(transformed),
+                   static_cast<uint64_t>(columns_.size()),
+                   static_cast<uint64_t>(input->num_rows()) *
+                   static_cast<uint64_t>(columns_.size()) * sizeof(float));
     return out;
 }
 
@@ -671,8 +808,12 @@ bool OutlierDetectorOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz OutlierDetector Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Resolving columns",
+                   "Resolving numeric columns for OutlierDetector", 0.05);
     std::vector<std::string> resolved;
     ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
         input, columns_, label_col_, GetName(), resolved));
@@ -683,7 +824,16 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     // Per-column IQR or Z-score detection. A row is flagged if ANY
     // column marks it as an outlier.
     int total_flagged = 0;
-    for (const auto& name : resolved) {
+    for (size_t column_index = 0; column_index < resolved.size(); ++column_index) {
+        const auto& name = resolved[column_index];
+        ReportProgress(progress_callback_, "Detecting outliers",
+                       "Detecting outliers in column '" + name + "'",
+                       0.15 + (0.70 * static_cast<double>(column_index) /
+                               static_cast<double>(resolved.size())),
+                       static_cast<uint64_t>(column_index),
+                       static_cast<uint64_t>(resolved.size()),
+                       static_cast<uint64_t>(n) *
+                       static_cast<uint64_t>(resolved.size()) * sizeof(float));
         std::vector<double> data;
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(input, name, GetName(), data, idx));
@@ -702,6 +852,11 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     // Append is_outlier column.
+    ReportProgress(progress_callback_, "Appending outlier flag",
+                   "Appending is_outlier column", 0.90,
+                   static_cast<uint64_t>(resolved.size()),
+                   static_cast<uint64_t>(resolved.size()),
+                   static_cast<uint64_t>(n) * sizeof(int));
     arrow::Int32Builder builder;
     ARROW_RETURN_NOT_OK(builder.Reserve(n));
     for (int v : is_outlier) ARROW_RETURN_NOT_OK(builder.Append(v));
@@ -716,6 +871,10 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     spdlog::info("OutlierDetector: {}/{} rows flagged (method={}, threshold={}, "
                  "cols checked={})",
                  total_flagged, n, method_, threshold_, resolved.size());
+    ReportProgress(progress_callback_, "Complete",
+                   "OutlierDetector materialization complete", 1.0,
+                   static_cast<uint64_t>(n), static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n) * sizeof(int));
     return out;
 }
 

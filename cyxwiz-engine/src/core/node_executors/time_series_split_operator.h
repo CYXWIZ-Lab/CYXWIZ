@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include <utility>
 
 namespace cyxwiz {
 
@@ -41,6 +42,9 @@ public:
 
     std::string GetName() const override { return "TimeSeriesSplit"; }
     PipelineBand GetBand() const override { return PipelineBand::Partition; }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
 
     bool Configure(
         const std::map<std::string, std::string>& params,
@@ -56,6 +60,7 @@ private:
     float train_ratio_ = 0.8f;
     float val_ratio_   = 0.1f;
     float test_ratio_  = 0.1f;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

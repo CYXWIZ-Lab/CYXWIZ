@@ -1,9 +1,34 @@
 #include "differencing_operator.h"
+#include "../profiler_trace.h"
 #include "ts_column_utils.h"
 
 #include <spdlog/spdlog.h>
+#include <cstdint>
+#include <utility>
 
 namespace cyxwiz {
+
+namespace {
+
+void ReportProgress(const PipelineOperatorProgressCallback& callback,
+                    std::string stage,
+                    std::string message,
+                    float progress,
+                    uint64_t processed_items = 0,
+                    uint64_t total_items = 0,
+                    uint64_t estimated_memory_bytes = 0) {
+    if (!callback) return;
+    PipelineOperatorProgress event;
+    event.stage = std::move(stage);
+    event.message = std::move(message);
+    event.progress = progress;
+    event.processed_items = processed_items;
+    event.total_items = total_items;
+    event.estimated_memory_bytes = estimated_memory_bytes;
+    callback(event);
+}
+
+} // namespace
 
 bool DifferencingOperator::Configure(
     const std::map<std::string, std::string>& params,
@@ -54,10 +79,14 @@ bool DifferencingOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 DifferencingOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz Differencing Materializer");
     if (!input) {
         return arrow::Status::Invalid("Differencing: input table is null");
     }
 
+    ReportProgress(progress_callback_, "read_column",
+                   "Reading column for differencing", 0.10f, 0,
+                   static_cast<uint64_t>(input->num_rows()));
     auto column = input->GetColumnByName(value_col_);
     if (!column) {
         return arrow::Status::KeyError(
@@ -76,6 +105,10 @@ DifferencingOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     const int64_t original_n = static_cast<int64_t>(values.size());
 
+    ReportProgress(progress_callback_, "difference",
+                   "Applying time-series differencing", 0.45f, 0,
+                   static_cast<uint64_t>(original_n),
+                   static_cast<uint64_t>(values.size() * sizeof(float)));
     // Apply differencing `order_` times. Each pass drops `lag_` values
     // from the front of the series.
     for (int d = 0; d < order_; ++d) {
@@ -101,6 +134,11 @@ DifferencingOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     // with the differenced float values.
     auto sliced = input->Slice(rows_dropped);
 
+    ReportProgress(progress_callback_, "write_output",
+                   "Writing differenced output", 0.90f,
+                   static_cast<uint64_t>(values.size()),
+                   static_cast<uint64_t>(original_n),
+                   static_cast<uint64_t>(values.size() * sizeof(float)));
     ARROW_ASSIGN_OR_RAISE(
         auto out_table,
         ReplaceColumnWithFloat(sliced, col_idx, values,
@@ -108,6 +146,11 @@ DifferencingOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     spdlog::info("Differencing: lag={}, order={}, {} -> {} rows (dropped {}), col='{}'",
                  lag_, order_, original_n, values.size(), rows_dropped, value_col_);
+    ReportProgress(progress_callback_, "complete",
+                   "Differencing complete", 1.0f,
+                   static_cast<uint64_t>(values.size()),
+                   static_cast<uint64_t>(original_n),
+                   static_cast<uint64_t>(values.size() * sizeof(float)));
     return out_table;
 }
 

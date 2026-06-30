@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include <utility>
 
 namespace cyxwiz {
 
@@ -33,6 +34,9 @@ class SentimentAnalyzerOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "SentimentAnalyzer"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
 
     bool Configure(
         const std::map<std::string, std::string>& params,
@@ -45,6 +49,7 @@ private:
     std::string text_col_;
     std::string label_col_;
     std::string method_ = "vader";
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

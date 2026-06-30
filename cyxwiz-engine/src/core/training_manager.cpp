@@ -784,15 +784,25 @@ void TrainingManager::TrainingThreadFunc(
                 completed_config = current_executor_->GetConfig();
             }
         }
+        const std::string run_status = final_metrics.terminal_status.empty()
+            ? (stop_requested_.load() ? "stopped" : "complete")
+            : final_metrics.terminal_status;
         const auto record = MakeTrainingRunComparisonRecord(
             run_id,
             completed_config,
             final_metrics,
             total_training_time,
             final_metrics.checkpoint_used,
-            stop_requested_.load() ? "stopped" : "complete");
+            run_status);
         panel->AddRunComparisonRecord(record);
-        panel->SetTrainingComplete(total_training_time);
+        panel->SetTrainingComplete(total_training_time,
+                                   run_status,
+                                   final_metrics.terminal_reason,
+                                   final_metrics.checkpoint_used,
+                                   final_metrics.has_validation_metrics,
+                                   final_metrics.val_loss,
+                                   final_metrics.val_accuracy,
+                                   final_metrics.current_epoch);
     }
 
     // Cleanup

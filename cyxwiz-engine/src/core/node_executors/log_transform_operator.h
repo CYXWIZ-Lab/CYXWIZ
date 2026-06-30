@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include <utility>
 
 namespace cyxwiz {
 
@@ -18,6 +19,9 @@ class LogTransformOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "LogTransform"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
 
     bool Configure(
         const std::map<std::string, std::string>& params,
@@ -28,6 +32,7 @@ public:
 
 private:
     std::string value_col_;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

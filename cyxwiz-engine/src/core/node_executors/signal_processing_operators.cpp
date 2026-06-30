@@ -1,4 +1,5 @@
 #include "signal_processing_operators.h"
+#include "../profiler_trace.h"
 #include "feature_matrix_utils.h"
 #include "ts_column_utils.h"
 
@@ -9,6 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
@@ -17,6 +19,26 @@
 namespace cyxwiz {
 
 namespace {
+
+void ReportProgress(const PipelineOperatorProgressCallback& callback,
+                    std::string stage,
+                    std::string message,
+                    double progress,
+                    uint64_t processed = 0,
+                    uint64_t total = 0,
+                    uint64_t memory = 0) {
+    if (!callback) {
+        return;
+    }
+    PipelineOperatorProgress event;
+    event.stage = std::move(stage);
+    event.message = std::move(message);
+    event.progress = static_cast<float>(progress);
+    event.processed_items = processed;
+    event.total_items = total;
+    event.estimated_memory_bytes = memory;
+    callback(event);
+}
 
 bool ParseCsvDoubles(const std::string& s, std::vector<double>& out,
                      std::string& bad_token) {
@@ -105,8 +127,13 @@ bool FFTOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz FFT Materializer");
+
     if (!input) return arrow::Status::Invalid("FFT: input table is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading FFT signal column '" + signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     int col_idx = -1;
     ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, signal_col_, "FFT", signal, col_idx));
@@ -114,6 +141,15 @@ FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     if (signal.empty()) {
         return arrow::Status::Invalid("FFT: signal column is empty");
     }
+    const uint64_t estimated_signal_bytes =
+        static_cast<uint64_t>(signal.size()) * sizeof(double);
+    ReportProgress(progress_callback_, "Computing FFT",
+                   "Computing FFT over " + std::to_string(signal.size()) +
+                   " samples",
+                   0.35,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   estimated_signal_bytes);
 
     auto result = SignalProcessing::FFT(signal, sample_rate_);
     if (!result.success) {
@@ -134,6 +170,14 @@ FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             ", freq=" + std::to_string(result.frequencies.size()) + ")");
     }
 
+    const uint64_t estimated_output_bytes =
+        static_cast<uint64_t>(nbins) * 3 * sizeof(double);
+    ReportProgress(progress_callback_, "Building Arrow table",
+                   "Building FFT frequency-domain output table",
+                   0.70,
+                   0,
+                   static_cast<uint64_t>(nbins),
+                   estimated_output_bytes);
     arrow::MemoryPool* pool = arrow::default_memory_pool();
     arrow::DoubleBuilder freq_builder(pool);
     arrow::DoubleBuilder mag_builder(pool);
@@ -162,6 +206,12 @@ FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     spdlog::info("FFT: {} samples -> {} bins, sample_rate={}",
                  signal.size(), nbins, sample_rate_);
+    ReportProgress(progress_callback_, "Complete",
+                   "FFT materialization complete",
+                   1.0,
+                   static_cast<uint64_t>(nbins),
+                   static_cast<uint64_t>(nbins),
+                   estimated_output_bytes);
     return table;
 }
 
@@ -204,8 +254,13 @@ bool Convolve1DOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz Convolve1D Materializer");
+
     if (!input) return arrow::Status::Invalid("Convolve1D: input table is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading Convolve1D signal column '" + signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     int col_idx = -1;
     ARROW_RETURN_NOT_OK(ReadColumnAsDouble(
@@ -214,8 +269,17 @@ Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     if (signal.empty()) {
         return arrow::Status::Invalid("Convolve1D: signal column is empty");
     }
+    const uint64_t estimated_signal_bytes =
+        static_cast<uint64_t>(signal.size()) * sizeof(double);
 
     // "same" mode keeps row count aligned with all other input columns.
+    ReportProgress(progress_callback_, "Convolving signal",
+                   "Applying Convolve1D kernel with " +
+                   std::to_string(kernel_.size()) + " taps",
+                   0.45,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   estimated_signal_bytes);
     auto result = SignalProcessing::Convolve1D(signal, kernel_, "same");
     if (!result.success) {
         return arrow::Status::ExecutionError(
@@ -237,12 +301,24 @@ Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     for (double value : result.output) {
         out_floats.push_back(static_cast<float>(value));
     }
+    ReportProgress(progress_callback_, "Replacing column",
+                   "Writing Convolve1D output column",
+                   0.85,
+                   static_cast<uint64_t>(out_floats.size()),
+                   static_cast<uint64_t>(out_floats.size()),
+                   static_cast<uint64_t>(out_floats.size()) * sizeof(float));
     ARROW_ASSIGN_OR_RAISE(
         auto new_table,
         ReplaceColumnWithFloat(input, col_idx, out_floats, row_count));
 
     spdlog::info("Convolve1D: {} samples, kernel size {}, column '{}' replaced",
                  signal.size(), kernel_.size(), signal_col_);
+    ReportProgress(progress_callback_, "Complete",
+                   "Convolve1D materialization complete",
+                   1.0,
+                   static_cast<uint64_t>(out_floats.size()),
+                   static_cast<uint64_t>(out_floats.size()),
+                   static_cast<uint64_t>(out_floats.size()) * sizeof(float));
     return new_table;
 }
 
@@ -340,8 +416,13 @@ bool FilterDesignerOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz FilterDesigner Materializer");
+
     if (!input) return arrow::Status::Invalid("FilterDesigner: input table is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading FilterDesigner signal column '" + signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     int col_idx = -1;
     ARROW_RETURN_NOT_OK(ReadColumnAsDouble(
@@ -350,7 +431,15 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     if (signal.empty()) {
         return arrow::Status::Invalid("FilterDesigner: signal column is empty");
     }
+    const uint64_t estimated_signal_bytes =
+        static_cast<uint64_t>(signal.size()) * sizeof(double);
 
+    ReportProgress(progress_callback_, "Designing filter",
+                   "Designing " + filter_type_ + " filter",
+                   0.35,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   estimated_signal_bytes);
     FilterCoefficients filter;
     if (filter_type_ == "lowpass") {
         filter = SignalProcessing::DesignLowpass(cutoff_, sample_rate_, order_);
@@ -368,6 +457,12 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "FilterDesigner: filter design failed: " + filter.error_message);
     }
 
+    ReportProgress(progress_callback_, "Applying filter",
+                   "Applying designed filter to signal",
+                   0.60,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   estimated_signal_bytes);
     auto filtered = SignalProcessing::ApplyFilter(signal, filter);
     if (filtered.size() != signal.size()) {
         return arrow::Status::ExecutionError(
@@ -384,6 +479,12 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     for (double value : filtered) {
         out_floats.push_back(static_cast<float>(value));
     }
+    ReportProgress(progress_callback_, "Replacing column",
+                   "Writing filtered signal column",
+                   0.85,
+                   static_cast<uint64_t>(out_floats.size()),
+                   static_cast<uint64_t>(out_floats.size()),
+                   static_cast<uint64_t>(out_floats.size()) * sizeof(float));
     ARROW_ASSIGN_OR_RAISE(
         auto new_table,
         ReplaceColumnWithFloat(input, col_idx, out_floats, row_count));
@@ -394,6 +495,12 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  (filter_type_ == "bandpass" || filter_type_ == "bandstop")
                     ? ("/" + std::to_string(cutoff_high_)) : std::string(),
                  order_, sample_rate_, signal.size());
+    ReportProgress(progress_callback_, "Complete",
+                   "FilterDesigner materialization complete",
+                   1.0,
+                   static_cast<uint64_t>(out_floats.size()),
+                   static_cast<uint64_t>(out_floats.size()),
+                   static_cast<uint64_t>(out_floats.size()) * sizeof(float));
     return new_table;
 }
 

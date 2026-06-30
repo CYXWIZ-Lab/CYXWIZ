@@ -21,6 +21,7 @@ enum class TrainingTraceStage {
     UIPlotUpdate,
     EpochComplete,
     Complete,
+    EarlyStopped,
     Failed,
     Cancelled
 };
@@ -44,6 +45,8 @@ struct CrashRunSummary {
     float accuracy = 0.0f;
     std::string file_path;
     std::string warning;
+    std::string terminal_reason;
+    std::string failure_reason;
     std::vector<std::string> panel_events;
     bool windows_crash_available = false;
     std::string windows_fault_module;
@@ -74,6 +77,7 @@ public:
                           const std::string& detail = "");
 
     void MarkCompleted();
+    void MarkEarlyStopped(const std::string& reason);
     void MarkCancelled();
     void MarkFailed(const std::string& reason);
 
@@ -99,6 +103,7 @@ private:
     std::string last_event_time_;
     std::string last_thread_id_;
     std::string failure_reason_;
+    std::string terminal_reason_;
     int epoch_ = 0;
     int batch_ = 0;
     int total_batches_ = 0;

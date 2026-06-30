@@ -3,6 +3,7 @@
 #include "pipeline_operator.h"
 
 #include <cstddef>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -56,6 +57,10 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
     size_t GetLastVocabSize() const { return last_vocab_size_; }
 
 private:
@@ -70,6 +75,7 @@ private:
     std::string vocab_file_;
     bool vocab_build_if_missing_ = false;
     size_t last_vocab_size_ = 0;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

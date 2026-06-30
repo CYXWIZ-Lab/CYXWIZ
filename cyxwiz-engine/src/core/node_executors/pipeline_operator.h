@@ -4,6 +4,8 @@
 #include <arrow/status.h>
 #include <arrow/table.h>
 #include <arrow/type_fwd.h>
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -26,6 +28,20 @@ enum class PipelineBand {
     Partition,
     PhaseAware,
 };
+
+struct PipelineOperatorProgress {
+    int node_id = -1;
+    std::string node_name;
+    std::string stage;
+    std::string message;
+    float progress = 0.0f;
+    uint64_t estimated_memory_bytes = 0;
+    uint64_t processed_items = 0;
+    uint64_t total_items = 0;
+};
+
+using PipelineOperatorProgressCallback =
+    std::function<void(const PipelineOperatorProgress&)>;
 
 /**
  * IPipelineOperator — Category 1 base interface (pipeline operations).
@@ -76,6 +92,10 @@ public:
      */
     virtual arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) = 0;
+
+    virtual void SetProgressCallback(PipelineOperatorProgressCallback callback) {
+        (void)callback;
+    }
 
     /**
      * Optional schema-only inference for compile-gate validation. Default

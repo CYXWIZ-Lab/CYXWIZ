@@ -4,6 +4,7 @@
 #include "pipeline_operator.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -19,12 +20,17 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::vector<std::string> feature_cols_;
     std::string target_col_;
     std::string prediction_col_ = "prediction";
     std::string model_path_;
     GradientBoostingTrainingOptions options_;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

@@ -49,7 +49,18 @@ public:
     // Training state updates (thread-safe) - call from TrainingManager
     void SetTrainingState(bool is_training, int current_epoch, int total_epochs,
                           float epoch_time_seconds, float samples_per_second);
-    void SetTrainingComplete(float total_time_seconds);
+    void SetPreparationState(bool is_preparing,
+                             const std::string& status_message = "",
+                             float progress = 0.0f);
+    void SetPreparationFailed(const std::string& error_message);
+    void SetTrainingComplete(float total_time_seconds,
+                             const std::string& terminal_status = "completed",
+                             const std::string& terminal_reason = "",
+                             const std::string& checkpoint_used = "",
+                             bool has_validation_metrics = false,
+                             float checkpoint_val_loss = 0.0f,
+                             float checkpoint_val_accuracy = 0.0f,
+                             int checkpoint_epoch = 0);
 
     // Per-batch progress updates (thread-safe). Called from TrainingManager's
     // batch_cb so the dashboard shows live activity inside an epoch instead of
@@ -104,11 +115,18 @@ private:
     bool show_custom_metrics_ = false;
     bool auto_scale_ = true;
     bool follow_current_epoch_ = true;
+    bool show_smoothed_curves_ = false;
+    int smoothing_window_ = 5;
     int visible_epoch_window_ = 10;
     size_t max_points_ = 1000;
 
     // Training state
     bool is_training_ = false;
+    bool is_preparing_ = false;
+    bool preparation_failed_ = false;
+    std::string preparation_status_message_;
+    std::string preparation_error_message_;
+    float preparation_progress_ = 0.0f;
     int current_epoch_ = 0;
     int total_epochs_ = 0;
     int current_batch_ = 0;
@@ -118,6 +136,13 @@ private:
     float avg_epoch_time_ = 0.0f;
     float samples_per_second_ = 0.0f;
     float total_training_time_ = 0.0f;
+    std::string terminal_status_;
+    std::string terminal_reason_;
+    std::string checkpoint_used_;
+    bool has_checkpoint_validation_metrics_ = false;
+    float checkpoint_val_loss_ = 0.0f;
+    float checkpoint_val_accuracy_ = 0.0f;
+    int checkpoint_epoch_ = 0;
     std::vector<float> epoch_times_;  // For averaging
     bool last_render_visible_ = false;
     mutable size_t sampled_read_events_ = 0;
@@ -133,6 +158,8 @@ private:
     void RenderControls();
     void RenderCurveSummary();
     void RenderSequenceMetricsSummary();
+    void RenderActiveTaskSummary();
+    void RenderTrainingWarningSummary();
     void RenderRunComparisonTable();
     void RenderStatistics();
 
@@ -142,6 +169,9 @@ private:
                                      const MetricSeries& secondary,
                                      double min_epoch,
                                      double max_epoch) const;
+    std::vector<double> CalculateMovingAverage(
+        const std::vector<double>& values,
+        int window) const;
     void TrimDataIfNeeded(MetricSeries& series);
     void RecordPanelEvent(const std::string& action,
                           const std::string& detail = "") const;

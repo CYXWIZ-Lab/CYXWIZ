@@ -1,10 +1,12 @@
 #include "random_forest_operator.h"
+#include "../profiler_trace.h"
 #include "feature_matrix_utils.h"
 #include "tree_classification_utils.h"
 #include "tree_model_artifact.h"
 
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <stdexcept>
 
 namespace cyxwiz {
@@ -93,15 +95,44 @@ bool RandomForestClassifierOperator::Configure(
 arrow::Result<std::shared_ptr<arrow::Table>>
 RandomForestClassifierOperator::Apply(
     const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz RandomForestClassifier Materializer");
+
     if (!input) {
         return arrow::Status::Invalid(
             "RandomForestClassifier: input table is null");
     }
 
+    auto report_progress = [&](std::string stage,
+                               std::string message,
+                               double progress,
+                               uint64_t processed = 0,
+                               uint64_t total = 0,
+                               uint64_t memory = 0) {
+        if (!progress_callback_) {
+            return;
+        }
+        PipelineOperatorProgress event;
+        event.stage = std::move(stage);
+        event.message = std::move(message);
+        event.progress = static_cast<float>(progress);
+        event.processed_items = processed;
+        event.total_items = total;
+        event.estimated_memory_bytes = memory;
+        progress_callback_(event);
+    };
+
+    report_progress("Resolving features",
+                    "Resolving RandomForest feature columns",
+                    0.05);
     std::vector<std::string> resolved_features;
     ARROW_RETURN_NOT_OK(ResolveFeatureColumns(
         input, feature_cols_, target_col_, GetName(), resolved_features));
 
+    report_progress("Reading feature matrix",
+                    "Reading RandomForest training feature matrix",
+                    0.20,
+                    0,
+                    static_cast<uint64_t>(resolved_features.size()));
     std::vector<std::vector<double>> features;
     int64_t n_samples = 0;
     ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
@@ -110,7 +141,25 @@ RandomForestClassifierOperator::Apply(
         return arrow::Status::Invalid(
             "RandomForestClassifier: input table has no rows");
     }
+    const uint64_t estimated_matrix_bytes =
+        static_cast<uint64_t>(n_samples) *
+        static_cast<uint64_t>(resolved_features.size()) *
+        sizeof(double);
+    report_progress("Feature matrix ready",
+                    "RandomForest matrix ready: " +
+                    std::to_string(n_samples) + " rows x " +
+                    std::to_string(resolved_features.size()) + " features",
+                    0.35,
+                    static_cast<uint64_t>(n_samples),
+                    static_cast<uint64_t>(n_samples),
+                    estimated_matrix_bytes);
 
+    report_progress("Reading labels",
+                    "Reading RandomForest target labels",
+                    0.40,
+                    0,
+                    static_cast<uint64_t>(n_samples),
+                    estimated_matrix_bytes);
     std::vector<int> labels;
     std::vector<std::string> class_labels;
     bool numeric_labels = false;
@@ -124,14 +173,33 @@ RandomForestClassifierOperator::Apply(
     RandomForestTrainer trainer(options_);
     RandomForestModel model;
     try {
+        report_progress("Training model",
+                        "Training RandomForestClassifier with " +
+                        std::to_string(options_.n_estimators) + " trees",
+                        0.55,
+                        0,
+                        static_cast<uint64_t>(options_.n_estimators),
+                        estimated_matrix_bytes);
         model = trainer.Fit(features, labels, class_labels.size(),
                             resolved_features, class_labels, numeric_labels);
     } catch (const std::exception& ex) {
         return arrow::Status::Invalid(ex.what());
     }
 
+    report_progress("Predicting rows",
+                    "Generating RandomForest training-set predictions",
+                    0.80,
+                    0,
+                    static_cast<uint64_t>(n_samples),
+                    estimated_matrix_bytes);
     const std::vector<int> predictions = model.PredictClasses(features);
     if (!model_path_.empty()) {
+        report_progress("Saving artifact",
+                        "Saving RandomForest model artifact",
+                        0.88,
+                        0,
+                        1,
+                        estimated_matrix_bytes);
         std::string error;
         if (!SaveRandomForestModelArtifact(model, model_path_, &error)) {
             return arrow::Status::IOError(
@@ -150,13 +218,26 @@ RandomForestClassifierOperator::Apply(
         options_.criterion,
         options_.max_features);
 
-    return AppendClassificationPredictions(
+    report_progress("Appending predictions",
+                    "Appending RandomForest predictions",
+                    0.95,
+                    static_cast<uint64_t>(n_samples),
+                    static_cast<uint64_t>(n_samples),
+                    estimated_matrix_bytes);
+    ARROW_ASSIGN_OR_RAISE(auto out, AppendClassificationPredictions(
         input,
         prediction_col_,
         model.ClassLabels(),
         model.HasNumericLabels(),
         predictions,
-        GetName());
+        GetName()));
+    report_progress("Complete",
+                    "RandomForestClassifier materialization complete",
+                    1.0,
+                    static_cast<uint64_t>(n_samples),
+                    static_cast<uint64_t>(n_samples),
+                    estimated_matrix_bytes);
+    return out;
 }
 
 } // namespace cyxwiz

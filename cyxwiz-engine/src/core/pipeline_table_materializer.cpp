@@ -295,7 +295,8 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
     const std::shared_ptr<arrow::Table>& source_table,
-    const std::string& source_dataset_name) {
+    const std::string& source_dataset_name,
+    PipelineOperatorProgressCallback progress_callback) {
 
     MaterializeTableResult result;
     result.table = source_table;
@@ -365,6 +366,17 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
                     "' (runtime support allows materialization but Create failed)";
                 return result;
             }
+
+            op->SetProgressCallback(
+                [progress_callback, node](const PipelineOperatorProgress& event) {
+                    if (!progress_callback) {
+                        return;
+                    }
+                    auto with_node = event;
+                    with_node.node_id = node->id;
+                    with_node.node_name = node->name;
+                    progress_callback(with_node);
+                });
 
             std::string err;
             auto params = BuildOperatorParams(*node, nodes, links);

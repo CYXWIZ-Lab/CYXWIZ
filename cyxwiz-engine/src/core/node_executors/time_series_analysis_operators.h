@@ -2,6 +2,7 @@
 
 #include "pipeline_operator.h"
 #include <string>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -34,11 +35,16 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     int period_ = 0;
     std::string method_ = "additive";
     std::string algorithm_ = "classical";
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
@@ -70,11 +76,16 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     int p_ = -1;
     int d_ = -1;
     int q_ = -1;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
@@ -104,6 +115,10 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     std::string method_ = "simple";
@@ -112,6 +127,7 @@ private:
     double gamma_ = -1.0;
     int period_ = -1;
     bool damped_ = false;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
@@ -130,9 +146,14 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     int max_lag_ = -1;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
@@ -151,9 +172,14 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     int max_lag_ = -1;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
@@ -172,9 +198,14 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     int max_lags_ = -1;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
@@ -193,10 +224,15 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     int min_period_ = 2;
     int max_period_ = -1;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

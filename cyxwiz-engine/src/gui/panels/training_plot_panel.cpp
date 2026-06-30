@@ -1,12 +1,15 @@
 #include "training_plot_panel.h"
 #ifndef CYXWIZ_PLOTTING_MODULE
+#include "../../core/async_task_manager.h"
 #include "../../core/crash_run_recorder.h"
 #include "../../core/training_manager.h"
+#include "../../core/training_trace_collector.h"
 #endif
 #include "../../core/training_run_comparison.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -21,6 +24,34 @@ bool IsSequenceMetricName(const std::string& name) {
            name == "Val Token Accuracy" ||
            name == "Train Entity F1" ||
            name == "Val Entity F1";
+}
+
+const char* ClassifyTrainingWarning(const std::string& text) {
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    if (lower.find("pin") != std::string::npos &&
+        lower.find("memory") != std::string::npos) {
+        return "Data transfer";
+    }
+    if (lower.find("fallback") != std::string::npos ||
+        (lower.find("gpu") != std::string::npos &&
+         lower.find("cpu") != std::string::npos)) {
+        return "Device fallback";
+    }
+    if (lower.find("cuda") != std::string::npos ||
+        lower.find("arrayfire") != std::string::npos ||
+        lower.find("gpu") != std::string::npos) {
+        return "GPU";
+    }
+    if (lower.find("memory") != std::string::npos ||
+        lower.find("allocation") != std::string::npos ||
+        lower.find("alloc") != std::string::npos) {
+        return "Memory";
+    }
+    return "Warning";
 }
 
 } // namespace
@@ -80,6 +111,8 @@ void TrainingPlotPanel::Render() {
 
     // Render training status (always visible)
     RenderTrainingStatus();
+    RenderActiveTaskSummary();
+    RenderTrainingWarningSummary();
 
     ImGui::Separator();
 
@@ -263,6 +296,11 @@ void TrainingPlotPanel::SetTrainingState(bool is_training, int current_epoch, in
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     is_training_ = is_training;
+    if (is_training) {
+        is_preparing_ = false;
+        preparation_status_message_.clear();
+        preparation_progress_ = 0.0f;
+    }
     current_epoch_ = current_epoch;
     total_epochs_ = total_epochs;
     last_epoch_time_ = epoch_time_seconds;
@@ -277,11 +315,25 @@ void TrainingPlotPanel::SetTrainingState(bool is_training, int current_epoch, in
     }
 }
 
-void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds) {
+void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds,
+                                            const std::string& terminal_status,
+                                            const std::string& terminal_reason,
+                                            const std::string& checkpoint_used,
+                                            bool has_validation_metrics,
+                                            float checkpoint_val_loss,
+                                            float checkpoint_val_accuracy,
+                                            int checkpoint_epoch) {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     is_training_ = false;
     total_training_time_ = total_time_seconds;
+    terminal_status_ = terminal_status;
+    terminal_reason_ = terminal_reason;
+    checkpoint_used_ = checkpoint_used;
+    has_checkpoint_validation_metrics_ = has_validation_metrics;
+    checkpoint_val_loss_ = checkpoint_val_loss;
+    checkpoint_val_accuracy_ = checkpoint_val_accuracy;
+    checkpoint_epoch_ = checkpoint_epoch;
 }
 
 void TrainingPlotPanel::SetBatchProgress(int current_epoch, int current_batch,
@@ -361,6 +413,39 @@ void TrainingPlotPanel::ExportRunComparisonCSV(const std::string& filepath) {
     }
 }
 
+void TrainingPlotPanel::SetPreparationState(bool is_preparing,
+                                            const std::string& status_message,
+                                            float progress) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+
+    is_preparing_ = is_preparing;
+    preparation_status_message_ = status_message;
+    preparation_progress_ = std::clamp(progress, 0.0f, 1.0f);
+    if (is_preparing_) {
+        preparation_failed_ = false;
+        preparation_error_message_.clear();
+        is_training_ = false;
+        total_training_time_ = 0.0f;
+        terminal_status_.clear();
+        terminal_reason_.clear();
+    }
+}
+
+void TrainingPlotPanel::SetPreparationFailed(
+    const std::string& error_message) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+
+    is_preparing_ = false;
+    is_training_ = false;
+    preparation_failed_ = true;
+    preparation_error_message_ = error_message;
+    preparation_status_message_.clear();
+    preparation_progress_ = 0.0f;
+    total_training_time_ = 0.0f;
+    terminal_status_ = "failed";
+    terminal_reason_ = error_message;
+}
+
 void TrainingPlotPanel::RenderLossPlot() {
     // Calculate plot height based on available space (at least 300px, or half available minus some padding)
     float available_height = ImGui::GetContentRegionAvail().y;
@@ -389,6 +474,16 @@ void TrainingPlotPanel::RenderLossPlot() {
                            train_loss_.epochs.data(),
                            train_loss_.values.data(),
                            static_cast<int>(train_loss_.values.size()));
+            if (show_smoothed_curves_ &&
+                static_cast<int>(train_loss_.values.size()) >= smoothing_window_) {
+                auto smoothed =
+                    CalculateMovingAverage(train_loss_.values, smoothing_window_);
+                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.65f, 0.65f, 1.0f), 3.0f);
+                ImPlot::PlotLine("Training Loss (smoothed)",
+                                 train_loss_.epochs.data(),
+                                 smoothed.data(),
+                                 static_cast<int>(smoothed.size()));
+            }
         }
 
         // Plot validation loss
@@ -398,6 +493,16 @@ void TrainingPlotPanel::RenderLossPlot() {
                            val_loss_.epochs.data(),
                            val_loss_.values.data(),
                            static_cast<int>(val_loss_.values.size()));
+            if (show_smoothed_curves_ &&
+                static_cast<int>(val_loss_.values.size()) >= smoothing_window_) {
+                auto smoothed =
+                    CalculateMovingAverage(val_loss_.values, smoothing_window_);
+                ImPlot::SetNextLineStyle(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), 3.0f);
+                ImPlot::PlotLine("Validation Loss (smoothed)",
+                                 val_loss_.epochs.data(),
+                                 smoothed.data(),
+                                 static_cast<int>(smoothed.size()));
+            }
         }
 
         ImPlot::EndPlot();
@@ -432,6 +537,16 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
                            train_accuracy_.epochs.data(),
                            train_accuracy_.values.data(),
                            static_cast<int>(train_accuracy_.values.size()));
+            if (show_smoothed_curves_ &&
+                static_cast<int>(train_accuracy_.values.size()) >= smoothing_window_) {
+                auto smoothed = CalculateMovingAverage(
+                    train_accuracy_.values, smoothing_window_);
+                ImPlot::SetNextLineStyle(ImVec4(0.65f, 1.0f, 0.65f, 1.0f), 3.0f);
+                ImPlot::PlotLine("Training Accuracy (smoothed)",
+                                 train_accuracy_.epochs.data(),
+                                 smoothed.data(),
+                                 static_cast<int>(smoothed.size()));
+            }
         }
 
         // Plot validation accuracy
@@ -441,6 +556,16 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
                            val_accuracy_.epochs.data(),
                            val_accuracy_.values.data(),
                            static_cast<int>(val_accuracy_.values.size()));
+            if (show_smoothed_curves_ &&
+                static_cast<int>(val_accuracy_.values.size()) >= smoothing_window_) {
+                auto smoothed =
+                    CalculateMovingAverage(val_accuracy_.values, smoothing_window_);
+                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.9f, 0.45f, 1.0f), 3.0f);
+                ImPlot::PlotLine("Validation Accuracy (smoothed)",
+                                 val_accuracy_.epochs.data(),
+                                 smoothed.data(),
+                                 static_cast<int>(smoothed.size()));
+            }
         }
 
         ImPlot::EndPlot();
@@ -524,6 +649,16 @@ void TrainingPlotPanel::RenderControls() {
     ImGui::Checkbox("Show Loss", &show_loss_plot_);
     ImGui::SameLine();
     ImGui::Checkbox("Show Accuracy", &show_accuracy_plot_);
+    ImGui::SameLine();
+    ImGui::Checkbox("Smooth", &show_smoothed_curves_);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Display-only moving average overlay. Raw curves are unchanged.");
+    }
+    if (show_smoothed_curves_) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderInt("Smooth Window", &smoothing_window_, 2, 50);
+    }
 
 #ifndef CYXWIZ_PLOTTING_MODULE
     ImGui::SameLine();
@@ -849,6 +984,58 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
     ImGui::Columns(1);
 }
 
+void TrainingPlotPanel::RenderActiveTaskSummary() {
+#ifndef CYXWIZ_PLOTTING_MODULE
+    auto tasks = AsyncTaskManager::Instance().GetActiveTasks();
+    if (tasks.empty()) {
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Active engine tasks:");
+    int rendered = 0;
+    for (const auto& task : tasks) {
+        if (rendered >= 3) {
+            ImGui::TextDisabled("+ %d more task(s)",
+                                static_cast<int>(tasks.size()) - rendered);
+            break;
+        }
+
+        ImGui::BulletText("%s", task.name.c_str());
+        ImGui::SameLine(220);
+        ImGui::ProgressBar(task.progress, ImVec2(160, 0));
+        ImGui::SameLine();
+        if (!task.status_message.empty()) {
+            ImGui::TextDisabled("%s", task.status_message.c_str());
+        } else {
+            ImGui::TextDisabled("running");
+        }
+        ++rendered;
+    }
+#endif
+}
+
+void TrainingPlotPanel::RenderTrainingWarningSummary() {
+#ifndef CYXWIZ_PLOTTING_MODULE
+    const auto trace = TrainingTraceCollector::Instance().Snapshot();
+    if (!trace.available || trace.warnings.empty()) {
+        return;
+    }
+
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                       "Training warnings:");
+    const int start =
+        std::max(0, static_cast<int>(trace.warnings.size()) - 3);
+    for (int i = start; i < static_cast<int>(trace.warnings.size()); ++i) {
+        const auto& warning = trace.warnings[i];
+        ImGui::BulletText("%s", ClassifyTrainingWarning(warning));
+        ImGui::SameLine(170);
+        ImGui::TextWrapped("%s", warning.c_str());
+    }
+#endif
+}
+
 void TrainingPlotPanel::RenderRunComparisonTable() {
     ImGui::Separator();
     if (!ImGui::CollapsingHeader("Run Comparison",
@@ -1022,16 +1209,39 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
 void TrainingPlotPanel::RenderTrainingStatus() {
     // Training status header with colored indicator
-    ImGui::BeginChild("TrainingStatus", ImVec2(0, 100), true);
+    ImGui::BeginGroup();
 
     // Status indicator
-    if (is_training_) {
+    if (preparation_failed_) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.30f, 1.0f));
+        ImGui::Text("PREPARATION FAILED");
+        ImGui::PopStyleColor();
+    } else if (is_preparing_) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.75f, 1.0f, 1.0f));
+        ImGui::Text("PREPARING");
+        ImGui::PopStyleColor();
+    } else if (is_training_) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
         ImGui::Text("TRAINING");
         ImGui::PopStyleColor();
     } else if (total_training_time_ > 0) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
-        ImGui::Text("COMPLETED");
+        const bool early_stopped = terminal_status_ == "early_stopped";
+        const bool cancelled = terminal_status_ == "cancelled" ||
+                               terminal_status_ == "stopped";
+        const bool failed = terminal_status_ == "failed";
+        if (early_stopped) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.25f, 1.0f));
+            ImGui::Text("EARLY STOPPED");
+        } else if (cancelled) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
+            ImGui::Text("CANCELLED");
+        } else if (failed) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+            ImGui::Text("FAILED");
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+            ImGui::Text("COMPLETED");
+        }
         ImGui::PopStyleColor();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
@@ -1039,14 +1249,73 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         ImGui::PopStyleColor();
     }
 
-    ImGui::SameLine(120);
+    ImGui::SameLine();
 
-    // Progress info
-    if (total_epochs_ > 0) {
-        float progress = static_cast<float>(current_epoch_) / total_epochs_;
-        ImGui::Text("Epoch %d / %d", current_epoch_, total_epochs_);
-        ImGui::SameLine(280);
-        ImGui::ProgressBar(progress, ImVec2(200, 0));
+    // Progress info. Keep terminal-state explanations as explicit rows instead
+    // of hiding them on one compressed line.
+    if (preparation_failed_) {
+        ImGui::TextWrapped("%s",
+                           preparation_error_message_.empty()
+                               ? "Training preparation failed."
+                               : preparation_error_message_.c_str());
+    } else if (is_preparing_) {
+        ImGui::TextWrapped("%s",
+                           preparation_status_message_.empty()
+                               ? "Preparing training..."
+                               : preparation_status_message_.c_str());
+        ImGui::ProgressBar(preparation_progress_, ImVec2(-1.0f, 0.0f));
+    } else if (total_epochs_ > 0) {
+        const float progress =
+            static_cast<float>(current_epoch_) / std::max(1, total_epochs_);
+        if (!is_training_ && total_training_time_ > 0) {
+            ImGui::Text("Final epoch state: %d / %d",
+                        current_epoch_, total_epochs_);
+        } else {
+            ImGui::Text("Epoch %d / %d", current_epoch_, total_epochs_);
+        }
+        ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f));
+    }
+
+    if (!is_training_ && total_training_time_ > 0) {
+        const bool early_stopped = terminal_status_ == "early_stopped";
+        const bool cancelled = terminal_status_ == "cancelled" ||
+                               terminal_status_ == "stopped";
+        const bool failed = terminal_status_ == "failed";
+
+        ImGui::Spacing();
+        if (early_stopped) {
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
+                               "Stop reason: early stopping triggered.");
+        } else if (cancelled) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                               "Stop reason: training was cancelled.");
+        } else if (failed) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                               "Stop reason: training failed.");
+        } else {
+            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
+                               "Stop reason: training reached its terminal epoch.");
+        }
+
+        if (!terminal_reason_.empty()) {
+            ImGui::TextWrapped("%s", terminal_reason_.c_str());
+        }
+    }
+
+    if (!is_training_ && total_training_time_ > 0 && !checkpoint_used_.empty()) {
+        ImGui::Spacing();
+        ImGui::SeparatorText("Active model state");
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
+                           "Best validation checkpoint restored");
+        if (checkpoint_epoch_ > 0 && has_checkpoint_validation_metrics_) {
+            ImGui::Text("Checkpoint epoch: %d", checkpoint_epoch_);
+            ImGui::Text("Checkpoint validation: loss %.4f, accuracy %.2f%%",
+                        checkpoint_val_loss_,
+                        checkpoint_val_accuracy_ * 100.0f);
+        } else if (checkpoint_epoch_ > 0) {
+            ImGui::Text("Checkpoint epoch: %d", checkpoint_epoch_);
+        }
+        ImGui::TextWrapped("Path: %s", checkpoint_used_.c_str());
     }
 
     // Batch-level progress within the current epoch (live feedback during training)
@@ -1155,7 +1424,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         }
     }
 
-    ImGui::EndChild();
+    ImGui::EndGroup();
 }
 
 void TrainingPlotPanel::RenderStatistics() {
@@ -1267,6 +1536,26 @@ TrainingPlotPanel::ValueRange TrainingPlotPanel::CalculateVisibleRange(
     }
 
     return range;
+}
+
+std::vector<double> TrainingPlotPanel::CalculateMovingAverage(
+    const std::vector<double>& values,
+    int window) const {
+    std::vector<double> smoothed;
+    smoothed.reserve(values.size());
+    const int safe_window = std::max(1, window);
+    double running_sum = 0.0;
+    for (size_t i = 0; i < values.size(); ++i) {
+        running_sum += values[i];
+        if (i >= static_cast<size_t>(safe_window)) {
+            running_sum -= values[i - static_cast<size_t>(safe_window)];
+        }
+        const size_t denom = std::min(
+            i + 1,
+            static_cast<size_t>(safe_window));
+        smoothed.push_back(running_sum / static_cast<double>(denom));
+    }
+    return smoothed;
 }
 
 bool TrainingPlotPanel::HasData() const {

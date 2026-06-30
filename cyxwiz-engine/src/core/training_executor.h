@@ -72,6 +72,8 @@ struct TrainingMetrics {
     bool is_paused = false;
     bool is_complete = false;
     std::string status_message;
+    std::string terminal_status;
+    std::string terminal_reason;
 
     // History (for plotting)
     std::vector<float> loss_history;

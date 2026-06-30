@@ -2,6 +2,7 @@
 
 #include "pipeline_operator.h"
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -32,6 +33,9 @@ class LinearRegressionOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "LinearRegression"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
 
     bool Configure(
         const std::map<std::string, std::string>& params,
@@ -44,6 +48,7 @@ private:
     std::vector<std::string> feature_cols_;
     std::string target_col_;
     bool fit_intercept_ = true;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
@@ -66,6 +71,9 @@ class PolynomialRegressionOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "PolynomialRegression"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
 
     bool Configure(
         const std::map<std::string, std::string>& params,
@@ -78,6 +86,7 @@ private:
     std::string feature_col_;
     std::string target_col_;
     int degree_ = 2;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

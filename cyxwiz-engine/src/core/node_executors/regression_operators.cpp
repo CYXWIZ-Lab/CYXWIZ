@@ -1,4 +1,5 @@
 #include "regression_operators.h"
+#include "../profiler_trace.h"
 #include "feature_matrix_utils.h"
 #include "ts_column_utils.h"
 
@@ -8,13 +9,34 @@
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
 
 namespace {
+
+void ReportProgress(const PipelineOperatorProgressCallback& callback,
+                    std::string stage,
+                    std::string message,
+                    double progress,
+                    uint64_t rows_processed = 0,
+                    uint64_t total_rows = 0,
+                    uint64_t memory_bytes = 0) {
+    if (!callback) return;
+
+    PipelineOperatorProgress event;
+    event.stage = std::move(stage);
+    event.message = std::move(message);
+    event.progress = static_cast<float>(progress);
+    event.processed_items = rows_processed;
+    event.total_items = total_rows;
+    event.estimated_memory_bytes = memory_bytes;
+    callback(event);
+}
 
 // Read a column as std::vector<double>, rejecting non-numeric.
 arrow::Status ReadColumnDouble(
@@ -129,6 +151,7 @@ bool LinearRegressionOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz LinearRegression Materializer");
     if (!input) {
         return arrow::Status::Invalid("LinearRegression: input table is null");
     }
@@ -157,6 +180,7 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     // Build X matrix [n x (p + intercept)], row-major.
     const size_t n_cols = fit_intercept_ ? p + 1 : p;
+    const uint64_t matrix_bytes = static_cast<uint64_t>(n) * static_cast<uint64_t>(n_cols) * sizeof(double);
     std::vector<std::vector<double>> X(n, std::vector<double>(n_cols, 0.0));
     std::vector<std::string> names;
     names.reserve(n_cols);
@@ -178,6 +202,7 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             ") — system is underdetermined");
     }
 
+    ReportProgress(progress_callback_, "fit", "Fitting linear regression model", 0.65, static_cast<uint64_t>(n), static_cast<uint64_t>(n), matrix_bytes);
     auto result = DataAnalyzer::MultipleLinearRegression(X, y, names);
     if (result.predicted.size() != n || result.residuals.size() != n) {
         return arrow::Status::ExecutionError(
@@ -239,6 +264,7 @@ bool PolynomialRegressionOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 PolynomialRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz PolynomialRegression Materializer");
     if (!input) {
         return arrow::Status::Invalid("PolynomialRegression: input table is null");
     }
@@ -260,6 +286,8 @@ PolynomialRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) 
             std::to_string(x.size()) + " for degree " + std::to_string(degree_) + ")");
     }
 
+    const uint64_t vector_bytes = static_cast<uint64_t>(x.size()) * 2U * sizeof(double);
+    ReportProgress(progress_callback_, "fit", "Fitting polynomial regression model", 0.60, static_cast<uint64_t>(x.size()), static_cast<uint64_t>(x.size()), vector_bytes);
     auto result = DataAnalyzer::PolynomialRegression(x, y, degree_);
     if (result.predicted.size() != x.size() || result.residuals.size() != x.size()) {
         return arrow::Status::ExecutionError(

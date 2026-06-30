@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -67,6 +68,10 @@ public:
     arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(
         const std::shared_ptr<arrow::Schema>& input_schema) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string value_col_;
     std::vector<std::string> feature_cols_;  // Optional multivariate extras
@@ -74,6 +79,7 @@ private:
     int input_width_ = 12;
     int label_width_ = 1;
     int shift_ = 1;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

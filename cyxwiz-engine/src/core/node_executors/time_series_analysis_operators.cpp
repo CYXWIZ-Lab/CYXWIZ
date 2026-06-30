@@ -1,4 +1,5 @@
 #include "time_series_analysis_operators.h"
+#include "../profiler_trace.h"
 #include "ts_column_utils.h"
 
 #include <cyxwiz/time_series.h>
@@ -7,6 +8,7 @@
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,6 +16,26 @@
 namespace cyxwiz {
 
 namespace {
+
+void ReportProgress(const PipelineOperatorProgressCallback& callback,
+                    std::string stage,
+                    std::string message,
+                    double progress,
+                    uint64_t processed = 0,
+                    uint64_t total = 0,
+                    uint64_t memory = 0) {
+    if (!callback) {
+        return;
+    }
+    PipelineOperatorProgress event;
+    event.stage = std::move(stage);
+    event.message = std::move(message);
+    event.progress = static_cast<float>(progress);
+    event.processed_items = processed;
+    event.total_items = total;
+    event.estimated_memory_bytes = memory;
+    callback(event);
+}
 
 // Append a float64 column to the table.
 arrow::Result<std::shared_ptr<arrow::Table>> AppendF64Column(
@@ -204,8 +226,13 @@ bool TimeSeriesDecompositionOperator::Configure(
 arrow::Result<std::shared_ptr<arrow::Table>>
 TimeSeriesDecompositionOperator::Apply(
     const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz TimeSeriesDecomposition Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading decomposition signal column '" + signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
@@ -216,6 +243,14 @@ TimeSeriesDecompositionOperator::Apply(
             std::to_string(signal.size()));
     }
 
+    const uint64_t estimated_signal_bytes =
+        static_cast<uint64_t>(signal.size()) * sizeof(double);
+    ReportProgress(progress_callback_, "Decomposing signal",
+                   "Running " + algorithm_ + " time-series decomposition",
+                   0.45,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   estimated_signal_bytes);
     DecompositionResult result;
     if (algorithm_ == "stl") {
         result = TimeSeries::STLDecompose(signal, period_);
@@ -229,6 +264,12 @@ TimeSeriesDecompositionOperator::Apply(
     }
 
     // Backend returns parallel-length trend/seasonal/residual vectors.
+    ReportProgress(progress_callback_, "Appending columns",
+                   "Appending trend, seasonal, and residual columns",
+                   0.85,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * 3 * sizeof(double));
     auto out = input;
     ARROW_ASSIGN_OR_RAISE(out, AppendF64Column(out, "trend", result.trend));
     ARROW_ASSIGN_OR_RAISE(out, AppendF64Column(out, "seasonal", result.seasonal));
@@ -238,6 +279,12 @@ TimeSeriesDecompositionOperator::Apply(
                  "trend_strength={:.4f} seasonal_strength={:.4f}",
                  GetName(), signal.size(), period_, method_, algorithm_,
                  result.trend_strength, result.seasonal_strength);
+    ReportProgress(progress_callback_, "Complete",
+                   "TimeSeriesDecomposition materialization complete",
+                   1.0,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * 3 * sizeof(double));
     return out;
 }
 
@@ -268,12 +315,25 @@ bool ARIMAOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 ARIMAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz ARIMA Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading ARIMA signal column '" + signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
     // horizon=0 so the backend produces in-sample fitted values only.
+    const uint64_t estimated_signal_bytes =
+        static_cast<uint64_t>(signal.size()) * sizeof(double);
+    ReportProgress(progress_callback_, "Fitting model",
+                   "Fitting ARIMA model",
+                   0.45,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   estimated_signal_bytes);
     auto result = TimeSeries::ARIMA(signal, 0, p_, d_, q_);
     if (!result.success) {
         return arrow::Status::ExecutionError(
@@ -289,6 +349,12 @@ ARIMAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     auto residual = ComputeResidual(signal, result.fitted_values);
 
+    ReportProgress(progress_callback_, "Appending columns",
+                   "Appending ARIMA fitted and residual columns",
+                   0.85,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * 2 * sizeof(double));
     auto out = input;
     ARROW_ASSIGN_OR_RAISE(out, AppendF64Column(out, "fitted", result.fitted_values));
     ARROW_ASSIGN_OR_RAISE(out, AppendF64Column(out, "residual", residual));
@@ -296,6 +362,12 @@ ARIMAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     spdlog::info("{}: n={} p={} d={} q={} RMSE={:.4f} AIC={:.4f} BIC={:.4f}",
                  GetName(), signal.size(), p_, d_, q_,
                  result.rmse, result.aic, result.bic);
+    ReportProgress(progress_callback_, "Complete",
+                   "ARIMA materialization complete",
+                   1.0,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * 2 * sizeof(double));
     return out;
 }
 
@@ -359,11 +431,25 @@ bool ExponentialSmoothingOperator::Configure(
 arrow::Result<std::shared_ptr<arrow::Table>>
 ExponentialSmoothingOperator::Apply(
     const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz ExponentialSmoothing Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading ExponentialSmoothing signal column '" +
+                   signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
+    const uint64_t estimated_signal_bytes =
+        static_cast<uint64_t>(signal.size()) * sizeof(double);
+    ReportProgress(progress_callback_, "Fitting model",
+                   "Fitting " + method_ + " exponential smoothing model",
+                   0.45,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   estimated_signal_bytes);
     ForecastResult result;
     if (method_ == "simple") {
         result = TimeSeries::SimpleES(signal, 0, alpha_);
@@ -388,12 +474,24 @@ ExponentialSmoothingOperator::Apply(
 
     auto residual = ComputeResidual(signal, result.fitted_values);
 
+    ReportProgress(progress_callback_, "Appending columns",
+                   "Appending smoothing fitted and residual columns",
+                   0.85,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * 2 * sizeof(double));
     auto out = input;
     ARROW_ASSIGN_OR_RAISE(out, AppendF64Column(out, "fitted", result.fitted_values));
     ARROW_ASSIGN_OR_RAISE(out, AppendF64Column(out, "residual", residual));
 
     spdlog::info("{}: n={} method={} RMSE={:.4f} AIC={:.4f}",
                  GetName(), signal.size(), method_, result.rmse, result.aic);
+    ReportProgress(progress_callback_, "Complete",
+                   "ExponentialSmoothing materialization complete",
+                   1.0,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * 2 * sizeof(double));
     return out;
 }
 
@@ -419,11 +517,22 @@ bool ACFOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 ACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz ACF Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading ACF signal column '" + signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
+    ReportProgress(progress_callback_, "Computing ACF",
+                   "Computing autocorrelation function",
+                   0.50,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * sizeof(double));
     auto result = TimeSeries::ComputeACF(signal, max_lag_);
     if (!result.success) {
         return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
@@ -448,6 +557,13 @@ ACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         arrow::field("confidence_upper", arrow::float64()),
         arrow::field("significant", arrow::boolean()),
     });
+    ReportProgress(progress_callback_, "Complete",
+                   "ACF materialization complete",
+                   1.0,
+                   static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n) *
+                   (sizeof(int32_t) + 3 * sizeof(double) + sizeof(bool)));
     return arrow::Table::Make(schema, {lag_arr, acf_arr, lower_arr, upper_arr, sig_arr});
 }
 
@@ -473,11 +589,22 @@ bool PACFOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 PACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz PACF Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading PACF signal column '" + signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
+    ReportProgress(progress_callback_, "Computing PACF",
+                   "Computing partial autocorrelation function",
+                   0.50,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * sizeof(double));
     auto result = TimeSeries::ComputePACF(signal, max_lag_);
     if (!result.success) {
         return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
@@ -502,6 +629,13 @@ PACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         arrow::field("confidence_upper", arrow::float64()),
         arrow::field("significant", arrow::boolean()),
     });
+    ReportProgress(progress_callback_, "Complete",
+                   "PACF materialization complete",
+                   1.0,
+                   static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n) *
+                   (sizeof(int32_t) + 3 * sizeof(double) + sizeof(bool)));
     return arrow::Table::Make(schema, {lag_arr, pacf_arr, lower_arr, upper_arr, sig_arr});
 }
 
@@ -526,11 +660,22 @@ bool StationarityTestOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 StationarityTestOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz StationarityTest Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading StationarityTest signal column '" + signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
+    ReportProgress(progress_callback_, "Testing stationarity",
+                   "Running stationarity tests",
+                   0.55,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * sizeof(double));
     auto result = TimeSeries::TestStationarity(signal, max_lags_);
     if (!result.success) {
         return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
@@ -561,6 +706,11 @@ StationarityTestOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         arrow::field("rolling_window", arrow::int32()),
         arrow::field("analysis", arrow::utf8()),
     });
+    ReportProgress(progress_callback_, "Complete",
+                   "StationarityTest materialization complete",
+                   1.0,
+                   1,
+                   1);
     return arrow::Table::Make(schema, {
         adf_stat, adf_p, adf_st, kpss_stat, kpss_p, kpss_st,
         stationary, diff, rolling, analysis});
@@ -593,11 +743,23 @@ bool SeasonalityDetectorOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 SeasonalityDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz SeasonalityDetector Materializer");
+
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading SeasonalityDetector signal column '" +
+                   signal_col_ + "'",
+                   0.10);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
+    ReportProgress(progress_callback_, "Detecting seasonality",
+                   "Detecting candidate seasonal periods",
+                   0.55,
+                   0,
+                   static_cast<uint64_t>(signal.size()),
+                   static_cast<uint64_t>(signal.size()) * sizeof(double));
     auto result = TimeSeries::DetectSeasonality(signal, min_period_, max_period_);
     if (!result.success) {
         return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
@@ -640,6 +802,11 @@ SeasonalityDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         arrow::field("has_seasonality", arrow::boolean()),
         arrow::field("analysis", arrow::utf8()),
     });
+    ReportProgress(progress_callback_, "Complete",
+                   "SeasonalityDetector materialization complete",
+                   1.0,
+                   static_cast<uint64_t>(periods.size()),
+                   static_cast<uint64_t>(periods.size()));
     return arrow::Table::Make(schema, {
         period_arr, strength_arr, primary_arr, has_arr, analysis_arr});
 }

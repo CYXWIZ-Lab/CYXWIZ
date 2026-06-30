@@ -1,4 +1,5 @@
 #include "text_tokenizer_operator.h"
+#include "../profiler_trace.h"
 #include "text_column_utils.h"
 
 #include <cyxwiz/tokenizer.h>
@@ -7,6 +8,7 @@
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -108,16 +110,41 @@ bool TextTokenizerOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz TextTokenizer Materializer");
+
     last_vocab_size_ = 0;
     if (!input) {
         return arrow::Status::Invalid("TextTokenizer: input table is null");
     }
+
+    auto report_progress = [&](std::string stage,
+                               std::string message,
+                               double progress,
+                               uint64_t processed = 0,
+                               uint64_t total = 0,
+                               uint64_t memory = 0) {
+        if (!progress_callback_) {
+            return;
+        }
+        PipelineOperatorProgress event;
+        event.stage = std::move(stage);
+        event.message = std::move(message);
+        event.progress = static_cast<float>(progress);
+        event.processed_items = processed;
+        event.total_items = total;
+        event.estimated_memory_bytes = memory;
+        progress_callback_(event);
+    };
 
     auto text_column = input->GetColumnByName(text_col_);
     if (!text_column) {
         return arrow::Status::KeyError(
             "TextTokenizer: text column '" + text_col_ + "' not found");
     }
+
+    report_progress("Reading text",
+                    "Reading text column '" + text_col_ + "'",
+                    0.05);
 
     std::vector<std::string> texts;
     std::string bad_type;
@@ -126,6 +153,17 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "TextTokenizer: text column '" + text_col_ +
             "' must be string/large_string, got '" + bad_type + "'");
     }
+    const uint64_t total_rows = static_cast<uint64_t>(texts.size());
+    const uint64_t estimated_token_matrix_bytes =
+        total_rows * static_cast<uint64_t>(max_length_) * sizeof(float);
+    report_progress("Planning token matrix",
+                    "Planning " + std::to_string(total_rows) +
+                    " rows x " + std::to_string(max_length_) +
+                    " token columns",
+                    0.15,
+                    0,
+                    total_rows,
+                    estimated_token_matrix_bytes);
 
     // Build tokenizer + vocab from the corpus.
     TokenizerType tt = TokenizerType::Word;
@@ -141,11 +179,23 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     tokenizer.SetTruncation(true);
 
     if (!vocab_file_.empty() && std::filesystem::exists(vocab_file_)) {
+        report_progress("Loading vocabulary",
+                        "Loading tokenizer vocabulary from file",
+                        0.20,
+                        0,
+                        total_rows,
+                        estimated_token_matrix_bytes);
         if (!tokenizer.GetVocabulary().LoadFromFile(vocab_file_)) {
             return arrow::Status::Invalid(
                 "TextTokenizer: failed to load vocab_file '" + vocab_file_ + "'");
         }
     } else if (!vocab_file_.empty() && vocab_build_if_missing_) {
+        report_progress("Training vocabulary",
+                        "Training tokenizer vocabulary before saving",
+                        0.20,
+                        0,
+                        total_rows,
+                        estimated_token_matrix_bytes);
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
         const std::filesystem::path path(vocab_file_);
         if (path.has_parent_path()) {
@@ -169,12 +219,31 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "TextTokenizer: vocab_file '" + vocab_file_ +
             "' does not exist. Enable vocab_build_if_missing, build it from the TextTokenizer dialog, or remove vocab_file to train in memory.");
     } else {
+        report_progress("Training vocabulary",
+                        "Training tokenizer vocabulary in memory",
+                        0.20,
+                        0,
+                        total_rows,
+                        estimated_token_matrix_bytes);
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
     }
     const size_t trained_vocab_size = tokenizer.GetVocabulary().Size();
+    report_progress("Vocabulary ready",
+                    "Tokenizer vocabulary ready with " +
+                    std::to_string(trained_vocab_size) + " entries",
+                    0.35,
+                    total_rows,
+                    total_rows,
+                    estimated_token_matrix_bytes);
 
     // Encode + pad. EncodeBatch then PadBatch produces the final
     // [num_samples, max_length] int matrix.
+    report_progress("Tokenizing rows",
+                    "Encoding and padding text rows",
+                    0.40,
+                    0,
+                    total_rows,
+                    estimated_token_matrix_bytes);
     auto encoded = tokenizer.EncodeBatch(texts);
     auto padded = tokenizer.PadBatch(encoded, max_length_);
     if (pad_value_ != tokenizer.GetVocabulary().PadIndex()) {
@@ -189,6 +258,13 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     const size_t n = padded.size();
+    report_progress("Rows tokenized",
+                    "Encoded and padded " + std::to_string(n) +
+                    " text rows",
+                    0.55,
+                    static_cast<uint64_t>(n),
+                    total_rows,
+                    estimated_token_matrix_bytes);
 
     // Read label column if specified.
     std::vector<int> labels;
@@ -213,6 +289,12 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     // Build wide output columns: tok_0 .. tok_{max-1}, y.
+    report_progress("Building Arrow columns",
+                    "Allocating token output columns",
+                    0.60,
+                    0,
+                    static_cast<uint64_t>(n),
+                    estimated_token_matrix_bytes);
     arrow::MemoryPool* pool = arrow::default_memory_pool();
     std::vector<std::unique_ptr<arrow::FloatBuilder>> tok_builders;
     tok_builders.reserve(max_length_);
@@ -235,8 +317,25 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         if (!labels.empty()) {
             ARROW_RETURN_NOT_OK(label_builder.Append(labels[r]));
         }
+        if ((r + 1) == n || ((r + 1) % 1024) == 0) {
+            const double row_progress =
+                n == 0 ? 0.90 : 0.60 + (0.30 * static_cast<double>(r + 1) /
+                                        static_cast<double>(n));
+            report_progress("Building token rows",
+                            "Writing token rows to Arrow columns",
+                            row_progress,
+                            static_cast<uint64_t>(r + 1),
+                            static_cast<uint64_t>(n),
+                            estimated_token_matrix_bytes);
+        }
     }
 
+    report_progress("Finishing Arrow table",
+                    "Finalizing tokenized Arrow table",
+                    0.95,
+                    static_cast<uint64_t>(n),
+                    static_cast<uint64_t>(n),
+                    estimated_token_matrix_bytes);
     std::vector<std::shared_ptr<arrow::Array>> arrays;
     std::vector<std::shared_ptr<arrow::Field>> fields;
     arrays.reserve(max_length_ + (labels.empty() ? 0 : 1));
@@ -262,6 +361,12 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  n, trained_vocab_size, max_length_,
                  class_names.size());
     last_vocab_size_ = trained_vocab_size;
+    report_progress("Complete",
+                    "TextTokenizer materialization complete",
+                    1.0,
+                    static_cast<uint64_t>(n),
+                    static_cast<uint64_t>(n),
+                    estimated_token_matrix_bytes);
     return out_table;
 }
 

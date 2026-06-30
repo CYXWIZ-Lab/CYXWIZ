@@ -1,14 +1,20 @@
 #include "graph_training_launcher.h"
 
 #include "../core/arrow_dataset.h"
+#include "../core/async_task_manager.h"
 #include "../core/data_registry.h"
 #include "../core/label_column_resolver.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/pipeline_materializer.h"
+#include "../core/profiler_trace.h"
+#include "../core/training_trace_collector.h"
+#include "panels/training_plot_panel.h"
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace gui {
@@ -308,70 +314,181 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     int epochs = config.epochs;
     ApplyLegacyOptimizerLoopParams(nodes, config, epochs, batch_size);
 
-    auto materialize_result = cyxwiz::PipelineMaterializer::Materialize(
-        nodes, links, registry, dataset_name);
-    if (!materialize_result.success) {
-        SetBlockedStatus(
-            result,
-            "Graph materialization blocked",
-            "Materializer failed for dataset '" + dataset_name + "': " +
-                materialize_result.error_message);
-        spdlog::error(result.error_message);
-        return result;
-    }
-
-    result.operators_applied = materialize_result.operators_applied;
-    result.materializer_source_kind = materialize_result.source_kind;
-    result.materializer_skipped_unsupported_source =
-        materialize_result.skipped_unsupported_source;
-    result.materializer_unsupported_source_reason =
-        materialize_result.unsupported_source_reason;
-    result.materializer_diagnostic_message =
-        materialize_result.diagnostic_message;
-    if (materialize_result.skipped_unsupported_source) {
-        result.status_title = "Materializer skipped";
-        result.status_detail = materialize_result.diagnostic_message;
-        spdlog::info("StartTrainingFromGraph: materializer skipped '{}' "
-                     "({}): {}",
-                     dataset_name,
-                     cyxwiz::PipelineMaterializerSourceKindName(
-                         materialize_result.source_kind),
-                     materialize_result.unsupported_source_reason.empty()
-                         ? "storage backend is unsupported"
-                         : materialize_result.unsupported_source_reason);
-    }
-    if (materialize_result.operators_applied > 0) {
-        spdlog::info("StartTrainingFromGraph: materialized '{}' -> '{}' "
-                     "({} Cat-1 ops)",
-                     dataset_name, materialize_result.effective_dataset_name,
-                     materialize_result.operators_applied);
-        dataset_name = materialize_result.effective_dataset_name;
-        label_column = ResolveRuntimeArrowLabelColumn(
-            registry, dataset_name, label_column);
-    }
-
-    if (config.sequence_batch.enabled) {
-        std::string sequence_column_error;
-        if (!ValidateSequenceLaunchColumns(registry, dataset_name, config,
-                                           sequence_column_error)) {
-            SetBlockedStatus(result,
-                             "Sequence materialization blocked",
-                             sequence_column_error);
-            spdlog::error("StartTrainingFromGraph: {}",
-                          result.error_message);
-            return result;
-        }
-    }
-
-    config.dataset_name = dataset_name;
-
+    result.started = true;
+    result.status_title = "Training launch queued";
+    result.status_detail =
+        "Preparing graph materialization and training loaders in the background.";
     result.effective_dataset_name = dataset_name;
     result.label_column = label_column;
     result.epochs = epochs;
     result.batch_size = batch_size;
-    result.started = dispatch(
-        std::move(config), dataset_name, label_column, epochs, batch_size,
-        plot_panel, std::move(node_editor_callback));
+
+    if (auto panel = plot_panel.lock()) {
+        panel->Clear();
+        panel->SetPreparationState(
+            true,
+            "Preparing graph materialization and training loaders...",
+            0.02f);
+        panel->SetVisible(true);
+    }
+    auto preparation_node_editor_callback = node_editor_callback;
+    if (preparation_node_editor_callback) {
+        preparation_node_editor_callback(true);
+    }
+
+    auto launch_task = std::make_shared<cyxwiz::LambdaTask>(
+        "Prepare graph training",
+        [nodes,
+         links,
+         config = std::move(config),
+         &registry,
+         dataset_name,
+         label_column,
+         epochs,
+         batch_size,
+         plot_panel,
+         callback = std::move(node_editor_callback),
+         dispatch = std::move(dispatch)](cyxwiz::LambdaTask& task) mutable {
+            CYXWIZ_PROFILE_ZONE("CyxWiz Prepare Graph Training");
+            task.ReportProgress(0.05f, "Preparing graph training launch...");
+            if (auto panel = plot_panel.lock()) {
+                panel->SetPreparationState(
+                    true, "Preparing graph training launch...", 0.05f);
+            }
+            if (task.ShouldStop()) {
+                return;
+            }
+
+            std::string effective_dataset_name = dataset_name;
+            std::string effective_label_column = label_column;
+
+            task.ReportProgress(0.15f, "Materializing graph preprocessing...");
+            if (auto panel = plot_panel.lock()) {
+                panel->SetPreparationState(
+                    true, "Materializing graph preprocessing...", 0.15f);
+            }
+            cyxwiz::MaterializeResult materialize_result;
+            {
+                CYXWIZ_PROFILE_ZONE("CyxWiz Pipeline Materialization");
+                materialize_result = cyxwiz::PipelineMaterializer::Materialize(
+                    nodes, links, registry, effective_dataset_name,
+                    [&task, plot_panel](const cyxwiz::PipelineOperatorProgress& event) {
+                        const float task_progress =
+                            0.15f + 0.50f * std::clamp(event.progress, 0.0f, 1.0f);
+                        const std::string message = event.message.empty()
+                            ? event.stage
+                            : event.message;
+                        task.ReportProgress(task_progress, message);
+                        cyxwiz::TrainingTraceCollector::Instance().RecordTaskProgress(
+                            task.GetId(),
+                            task.GetName(),
+                            event.stage.empty() ? "Materializing" : event.stage,
+                            task_progress,
+                            message,
+                            "running",
+                            event.node_id,
+                            event.node_name,
+                            event.estimated_memory_bytes,
+                            event.processed_items,
+                            event.total_items);
+                        if (auto panel = plot_panel.lock()) {
+                            panel->SetPreparationState(true, message, task_progress);
+                        }
+                    });
+            }
+            if (!materialize_result.success) {
+                throw std::runtime_error(
+                    "Materializer failed for dataset '" +
+                    effective_dataset_name + "': " +
+                    materialize_result.error_message);
+            }
+
+            if (materialize_result.skipped_unsupported_source) {
+                spdlog::info("StartTrainingFromGraph: materializer skipped '{}' "
+                             "({}): {}",
+                             effective_dataset_name,
+                             cyxwiz::PipelineMaterializerSourceKindName(
+                                 materialize_result.source_kind),
+                             materialize_result.unsupported_source_reason.empty()
+                                 ? "storage backend is unsupported"
+                                 : materialize_result.unsupported_source_reason);
+            }
+
+            if (materialize_result.operators_applied > 0) {
+                task.ReportProgress(0.65f, "Resolving materialized dataset...");
+                if (auto panel = plot_panel.lock()) {
+                    panel->SetPreparationState(
+                        true, "Resolving materialized dataset...", 0.65f);
+                }
+                spdlog::info("StartTrainingFromGraph: materialized '{}' -> '{}' "
+                             "({} Cat-1 ops)",
+                             effective_dataset_name,
+                             materialize_result.effective_dataset_name,
+                             materialize_result.operators_applied);
+                effective_dataset_name = materialize_result.effective_dataset_name;
+                effective_label_column = ResolveRuntimeArrowLabelColumn(
+                    registry, effective_dataset_name, effective_label_column);
+            }
+
+            if (task.ShouldStop()) {
+                return;
+            }
+
+            if (config.sequence_batch.enabled) {
+                task.ReportProgress(0.75f, "Validating sequence launch columns...");
+                if (auto panel = plot_panel.lock()) {
+                    panel->SetPreparationState(
+                        true, "Validating sequence launch columns...", 0.75f);
+                }
+                std::string sequence_column_error;
+                if (!ValidateSequenceLaunchColumns(
+                    registry, effective_dataset_name, config,
+                        sequence_column_error)) {
+                    throw std::runtime_error(sequence_column_error);
+                }
+            }
+
+            config.dataset_name = effective_dataset_name;
+
+            task.ReportProgress(0.9f, "Starting training...");
+            if (auto panel = plot_panel.lock()) {
+                panel->SetPreparationState(true, "Starting training...", 0.9f);
+            }
+            bool started = false;
+            {
+                CYXWIZ_PROFILE_ZONE("CyxWiz Dispatch Training");
+                started = dispatch(
+                    std::move(config), effective_dataset_name,
+                    effective_label_column, epochs, batch_size, plot_panel,
+                    std::move(callback));
+            }
+
+            if (!started) {
+                throw std::runtime_error(
+                    "Failed to start training. Another training session may be active "
+                    "or the dataset could not be resolved.");
+            }
+
+            task.ReportProgress(1.0f, "Training started");
+            if (auto panel = plot_panel.lock()) {
+                panel->SetPreparationState(false);
+            }
+        });
+    launch_task->SetCompletionCallback(
+        [plot_panel, preparation_node_editor_callback](
+            bool success,
+            const std::string& error) {
+            if (!success) {
+                if (auto panel = plot_panel.lock()) {
+                    panel->SetPreparationFailed(
+                        error.empty() ? "Training preparation failed." : error);
+                }
+                if (preparation_node_editor_callback) {
+                    preparation_node_editor_callback(false);
+                }
+            }
+        });
+    cyxwiz::AsyncTaskManager::Instance().Submit(launch_task);
 
     if (!result.started) {
         SetBlockedStatus(

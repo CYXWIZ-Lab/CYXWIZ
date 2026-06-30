@@ -467,6 +467,8 @@ void TrainingExecutor::Train(
     spdlog::info("TrainingExecutor: DataLoader runtime policy validation_freq={} epoch(s), log_interval={} batch(es), seed={}, grad_accum_steps={}",
                  validation_freq, log_interval, config_.dataloader_seed,
                  std::max(1, config_.grad_accum_steps));
+    std::string terminal_status;
+    std::string terminal_reason;
 
     std::filesystem::path checkpoint_root = config_.checkpoint_dir.empty()
         ? (std::filesystem::current_path() / ".cyxwiz" / "checkpoints")
@@ -486,6 +488,13 @@ void TrainingExecutor::Train(
             stop_ctx.learning_rate = config_.learning_rate;
             if (cyxwiz::plugin::PluginTrainingHookManager::Instance().ShouldStopEarly(stop_ctx)) {
                 spdlog::info("TrainingExecutor: Plugin requested early stop");
+                terminal_status = "early_stopped";
+                terminal_reason = "plugin_requested_early_stop";
+                UpdateMetrics([&](TrainingMetrics& m) {
+                    m.terminal_status = terminal_status;
+                    m.terminal_reason = terminal_reason;
+                    m.status_message = "Early stopping: plugin requested stop";
+                });
                 break;
             }
         }
@@ -600,6 +609,13 @@ void TrainingExecutor::Train(
             spdlog::info("Epoch {}/{}: loss={:.4f}, acc={:.2f}%, val_loss={:.4f}, val_acc={:.2f}% ({:.1f}s, {:.0f} samples/sec)",
                          epoch, epochs, current.train_loss, current.train_accuracy * 100,
                          current.val_loss, current.val_accuracy * 100, epoch_time, samples_per_sec);
+            TrainingTraceCollector::Instance().RecordValidationMetrics(
+                epoch,
+                current.train_loss,
+                current.train_accuracy,
+                current.val_loss,
+                current.val_accuracy,
+                epoch_time * 1000.0f);
         } else {
             spdlog::info("Epoch {}/{}: loss={:.4f}, acc={:.2f}%, validation skipped (validation_freq={}) ({:.1f}s, {:.0f} samples/sec)",
                          epoch, epochs, current.train_loss, current.train_accuracy * 100,
@@ -615,6 +631,12 @@ void TrainingExecutor::Train(
                                                           optimizer_.get(),
                                                           current,
                                                           current.val_loss)) {
+                        TrainingTraceCollector::Instance().RecordCheckpointSaved(
+                            epoch,
+                            checkpoint_manager->GetBestCheckpoint(),
+                            current.val_loss,
+                            current.val_accuracy,
+                            true);
                         spdlog::info("TrainingExecutor: Best validation checkpoint saved at epoch {} (val_loss={:.4f})",
                                      epoch, current.val_loss);
                     }
@@ -630,9 +652,21 @@ void TrainingExecutor::Train(
                     epochs_without_improvement >= early_stopping_patience) {
                     spdlog::info("TrainingExecutor: Early stopping after {} non-improving epoch(s) (patience={})",
                                  epochs_without_improvement, early_stopping_patience);
-                    UpdateMetrics([](TrainingMetrics& m) {
+                    terminal_status = "early_stopped";
+                    terminal_reason =
+                        "validation_loss_plateau_patience_" +
+                        std::to_string(early_stopping_patience);
+                    UpdateMetrics([&](TrainingMetrics& m) {
+                        m.terminal_status = terminal_status;
+                        m.terminal_reason = terminal_reason;
                         m.status_message = "Early stopping: validation loss plateaued";
                     });
+                    TrainingTraceCollector::Instance().RecordTerminalEvent(
+                        terminal_status,
+                        terminal_reason,
+                        epoch,
+                        current.train_loss,
+                        current.train_accuracy);
                     break;
                 }
             }
@@ -674,10 +708,24 @@ void TrainingExecutor::Train(
     TrainingMetrics final_metrics = GetMetrics();
 
     // Mark complete
-    UpdateMetrics([](TrainingMetrics& m) {
+    if (terminal_status.empty()) {
+        terminal_status = stop_requested_.load() ? "cancelled" : "completed";
+        terminal_reason = stop_requested_.load()
+            ? "user_cancelled"
+            : "completed_all_epochs";
+    }
+    UpdateMetrics([&](TrainingMetrics& m) {
         m.is_training = false;
         m.is_complete = true;
-        m.status_message = "Training complete";
+        m.terminal_status = terminal_status;
+        m.terminal_reason = terminal_reason;
+        if (terminal_status == "early_stopped") {
+            m.status_message = "Training early-stopped: " + terminal_reason;
+        } else if (terminal_status == "cancelled") {
+            m.status_message = "Training cancelled";
+        } else {
+            m.status_message = "Training complete";
+        }
     });
 
     if (!stop_requested_.load() && checkpoint_manager && save_best_checkpoint) {
@@ -715,8 +763,18 @@ void TrainingExecutor::Train(
                     m.val_loss_history = restored->val_loss_history;
                     m.val_accuracy_history = restored->val_accuracy_history;
                     m.checkpoint_used = best_checkpoint;
-                    m.status_message = "Restored best validation checkpoint";
+                    m.terminal_status = terminal_status;
+                    m.terminal_reason = terminal_reason;
+                    m.status_message = std::string(
+                        "Restored best validation checkpoint after ") +
+                        terminal_status + ": " + terminal_reason;
                 });
+                TrainingTraceCollector::Instance().RecordCheckpointSaved(
+                    restored->epoch,
+                    best_checkpoint,
+                    restored->val_loss,
+                    restored->val_accuracy,
+                    true);
                 spdlog::info("TrainingExecutor: Restored best checkpoint from epoch {} (val_loss={:.4f})",
                              restored->epoch, restored->val_loss);
             }
@@ -760,6 +818,9 @@ void TrainingExecutor::Train(
     if (stop_requested_.load()) {
         CrashRunRecorder::Instance().MarkCancelled();
         TrainingTraceCollector::Instance().FinishRun("cancelled");
+    } else if (terminal_status == "early_stopped") {
+        CrashRunRecorder::Instance().MarkEarlyStopped(terminal_reason);
+        TrainingTraceCollector::Instance().FinishRun("early_stopped");
     } else {
         CrashRunRecorder::Instance().MarkCompleted();
         TrainingTraceCollector::Instance().FinishRun("completed");

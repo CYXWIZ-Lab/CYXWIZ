@@ -7,6 +7,7 @@
 #include "icons.h"
 #include "../core/data_registry.h"
 #include "../core/training_manager.h"
+#include "../core/training_trace_collector.h"
 #include "../core/async_task_manager.h"
 #include "../core/project_manager.h"
 #include "../core/graph_executor.h"
@@ -1745,6 +1746,35 @@ void NodeEditor::RenderNodes() {
     // Update execution pulse animation
     execution_pulse_time_ += ImGui::GetIO().DeltaTime;
 
+    int active_trace_node_id = -1;
+    std::string active_trace_stage;
+    std::string active_trace_message;
+    std::string active_trace_task_name;
+    float active_trace_progress = 0.0f;
+    uint64_t active_trace_processed = 0;
+    uint64_t active_trace_total = 0;
+    uint64_t active_trace_memory = 0;
+    if (is_training_) {
+        const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+        for (auto it = trace.recent_events.rbegin();
+             it != trace.recent_events.rend();
+             ++it) {
+            if (it->node_id >= 0) {
+                active_trace_node_id = it->node_id;
+                active_trace_stage = it->task_stage.empty()
+                    ? it->stage
+                    : it->task_stage;
+                active_trace_message = it->message;
+                active_trace_task_name = it->task_name;
+                active_trace_progress = it->task_progress;
+                active_trace_processed = it->processed_items;
+                active_trace_total = it->total_items;
+                active_trace_memory = it->estimated_memory_bytes;
+                break;
+            }
+        }
+    }
+
     // Render all nodes
     for (const auto& node : nodes_) {
         // Unified Canvas Phase 6: Check execution state for highlighting
@@ -2447,6 +2477,35 @@ void NodeEditor::RenderNodes() {
             }
 
             // Show node documentation
+            if (is_training_ && hovered_node_id == active_trace_node_id) {
+                ImGui::BeginTooltip();
+                ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f),
+                                   "Active training node");
+                if (!active_trace_task_name.empty()) {
+                    ImGui::Text("Task: %s", active_trace_task_name.c_str());
+                }
+                if (!active_trace_stage.empty()) {
+                    ImGui::Text("Stage: %s", active_trace_stage.c_str());
+                }
+                if (!active_trace_message.empty()) {
+                    ImGui::TextWrapped("%s", active_trace_message.c_str());
+                }
+                if (active_trace_progress > 0.0f) {
+                    ImGui::ProgressBar(active_trace_progress, ImVec2(220.0f, 0.0f));
+                }
+                if (active_trace_total > 0) {
+                    ImGui::Text("Items: %llu / %llu",
+                                static_cast<unsigned long long>(active_trace_processed),
+                                static_cast<unsigned long long>(active_trace_total));
+                }
+                if (active_trace_memory > 0) {
+                    const double mib =
+                        static_cast<double>(active_trace_memory) /
+                        (1024.0 * 1024.0);
+                    ImGui::Text("Estimated memory: %.1f MiB", mib);
+                }
+                ImGui::EndTooltip();
+            }
             NodeDocumentationManager::Instance().RenderTooltip(node.type);
         }
 
@@ -2624,6 +2683,68 @@ void NodeEditor::RenderNodes() {
             ImVec2 node_pos = ImNodes::GetNodeScreenSpacePos(node.id);
             ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+            if (is_training_) {
+                const bool is_active_trace_node =
+                    node.id == active_trace_node_id;
+                std::string badge = "training";
+                if (is_active_trace_node && !active_trace_stage.empty()) {
+                    badge = active_trace_stage;
+                    if (active_trace_progress > 0.0f) {
+                        badge += " ";
+                        badge += std::to_string(static_cast<int>(
+                            active_trace_progress * 100.0f));
+                        badge += "%";
+                    }
+                }
+                const char* badge_text = badge.c_str();
+                ImVec2 text_size = ImGui::CalcTextSize(badge_text);
+                const float pad_x = 7.0f * zoom_;
+                const float pad_y = 3.0f * zoom_;
+                ImVec2 badge_min(
+                    node_pos.x + node_dims.x - text_size.x - pad_x * 2.0f - 8.0f * zoom_,
+                    node_pos.y + 6.0f * zoom_);
+                ImVec2 badge_max(
+                    badge_min.x + text_size.x + pad_x * 2.0f,
+                    badge_min.y + text_size.y + pad_y * 2.0f);
+                draw_list->AddRectFilled(
+                    badge_min,
+                    badge_max,
+                    is_active_trace_node
+                        ? IM_COL32(255, 155, 45, 225)
+                        : IM_COL32(40, 125, 255, 210),
+                    7.0f * zoom_);
+                draw_list->AddRect(
+                    badge_min,
+                    badge_max,
+                    is_active_trace_node
+                        ? IM_COL32(255, 220, 120, 245)
+                        : IM_COL32(130, 190, 255, 230),
+                    7.0f * zoom_,
+                    0,
+                    1.0f * zoom_);
+                draw_list->AddText(
+                    ImVec2(badge_min.x + pad_x, badge_min.y + pad_y),
+                    IM_COL32(245, 250, 255, 255),
+                    badge_text);
+
+                if (is_active_trace_node && active_trace_progress > 0.0f) {
+                    const float clamped_progress =
+                        std::max(0.0f, std::min(1.0f, active_trace_progress));
+                    const float bar_height = 3.0f * zoom_;
+                    ImVec2 bar_min(badge_min.x, badge_max.y + 2.0f * zoom_);
+                    ImVec2 bar_max(badge_max.x, badge_max.y + 2.0f * zoom_ + bar_height);
+                    ImVec2 fill_max(
+                        bar_min.x + (bar_max.x - bar_min.x) * clamped_progress,
+                        bar_max.y);
+                    draw_list->AddRectFilled(
+                        bar_min, bar_max, IM_COL32(60, 70, 85, 210),
+                        2.0f * zoom_);
+                    draw_list->AddRectFilled(
+                        bar_min, fill_max, IM_COL32(120, 255, 170, 240),
+                        2.0f * zoom_);
+                }
+            }
 
             // Position: centered below node
             float indicator_radius = 5.0f * zoom_;

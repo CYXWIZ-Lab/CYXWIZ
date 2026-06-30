@@ -1,4 +1,5 @@
 #include "time_series_features_operator.h"
+#include "../profiler_trace.h"
 #include "ts_column_utils.h"
 
 #include <arrow/api.h>
@@ -6,6 +7,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <numeric>
 #include <sstream>
@@ -163,15 +165,41 @@ bool TimeSeriesFeaturesOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz TimeSeriesFeatures Materializer");
+
     if (!input) {
         return arrow::Status::Invalid("TimeSeriesFeatures: input table is null");
     }
+
+    auto report_progress = [&](std::string stage,
+                               std::string message,
+                               double progress,
+                               uint64_t processed = 0,
+                               uint64_t total = 0,
+                               uint64_t memory = 0) {
+        if (!progress_callback_) {
+            return;
+        }
+        PipelineOperatorProgress event;
+        event.stage = std::move(stage);
+        event.message = std::move(message);
+        event.progress = static_cast<float>(progress);
+        event.processed_items = processed;
+        event.total_items = total;
+        event.estimated_memory_bytes = memory;
+        progress_callback_(event);
+    };
 
     auto column = input->GetColumnByName(value_col_);
     if (!column) {
         return arrow::Status::KeyError(
             "TimeSeriesFeatures: column '" + value_col_ + "' not found");
     }
+
+    report_progress("Reading value column",
+                    "Reading time-series feature source column '" +
+                    value_col_ + "'",
+                    0.05);
 
     std::vector<float> values;
     std::string bad_type;
@@ -182,6 +210,12 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     const int64_t n = static_cast<int64_t>(values.size());
+    report_progress("Value column ready",
+                    "Read " + std::to_string(n) +
+                    " source rows for feature engineering",
+                    0.15,
+                    static_cast<uint64_t>(n),
+                    static_cast<uint64_t>(n));
 
     // Rows to drop = max needed history.
     // lag_k needs index i - k >= 0, so i >= k    → drops first `max_lag` rows.
@@ -201,6 +235,23 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             " / max_window=" + std::to_string(max_window));
     }
 
+    const size_t lag_columns = lags_.size();
+    const size_t rolling_columns =
+        rolling_windows_.size() * rolling_aggregations_.size();
+    const size_t engineered_columns = lag_columns + rolling_columns;
+    const uint64_t estimated_engineered_bytes =
+        static_cast<uint64_t>(out_rows) *
+        static_cast<uint64_t>(engineered_columns) *
+        sizeof(float);
+    report_progress("Planning features",
+                    "Planning " + std::to_string(engineered_columns) +
+                    " engineered columns over " +
+                    std::to_string(out_rows) + " output rows",
+                    0.25,
+                    0,
+                    static_cast<uint64_t>(engineered_columns),
+                    estimated_engineered_bytes);
+
     // Slice the existing table to drop the first `rows_to_drop` rows.
     auto sliced = input->Slice(rows_to_drop);
 
@@ -209,7 +260,15 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::shared_ptr<arrow::Field>> new_fields;
     std::vector<std::shared_ptr<arrow::ChunkedArray>> new_chunks;
 
+    size_t completed_columns = 0;
     for (int lag : lags_) {
+        report_progress("Building lag features",
+                        "Computing lag feature " + std::to_string(lag),
+                        0.30 + (0.55 * static_cast<double>(completed_columns) /
+                                static_cast<double>(engineered_columns)),
+                        static_cast<uint64_t>(completed_columns),
+                        static_cast<uint64_t>(engineered_columns),
+                        estimated_engineered_bytes);
         arrow::FloatBuilder builder(pool);
         ARROW_RETURN_NOT_OK(builder.Reserve(out_rows));
         for (int64_t i = rows_to_drop; i < n; ++i) {
@@ -220,6 +279,7 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         const std::string col_name = value_col_ + "_lag_" + std::to_string(lag);
         new_fields.push_back(arrow::field(col_name, arrow::float32()));
         new_chunks.push_back(std::make_shared<arrow::ChunkedArray>(arr));
+        ++completed_columns;
     }
 
     // For each window × aggregation combination, emit one new column.
@@ -229,6 +289,14 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             RollingAgg agg;
             std::string unused;
             ParseAggKind(agg_name, agg, unused);  // already validated in Configure
+            report_progress("Building rolling features",
+                            "Computing rolling " + agg_name +
+                            " feature for window " + std::to_string(w),
+                            0.30 + (0.55 * static_cast<double>(completed_columns) /
+                                    static_cast<double>(engineered_columns)),
+                            static_cast<uint64_t>(completed_columns),
+                            static_cast<uint64_t>(engineered_columns),
+                            estimated_engineered_bytes);
             arrow::FloatBuilder builder(pool);
             ARROW_RETURN_NOT_OK(builder.Reserve(out_rows));
             for (int64_t i = rows_to_drop; i < n; ++i) {
@@ -241,16 +309,30 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 std::to_string(w) + "_" + agg_name;
             new_fields.push_back(arrow::field(col_name, arrow::float32()));
             new_chunks.push_back(std::make_shared<arrow::ChunkedArray>(arr));
+            ++completed_columns;
         }
     }
 
     // Append all new columns via AddColumn, one at a time.
+    report_progress("Appending columns",
+                    "Appending engineered feature columns to Arrow table",
+                    0.90,
+                    0,
+                    static_cast<uint64_t>(new_fields.size()),
+                    estimated_engineered_bytes);
     auto out_table = sliced;
     for (size_t i = 0; i < new_fields.size(); ++i) {
         ARROW_ASSIGN_OR_RAISE(
             out_table,
             out_table->AddColumn(out_table->num_columns(),
                                  new_fields[i], new_chunks[i]));
+        report_progress("Appending columns",
+                        "Appending engineered feature columns to Arrow table",
+                        0.90 + (0.08 * static_cast<double>(i + 1) /
+                                static_cast<double>(new_fields.size())),
+                        static_cast<uint64_t>(i + 1),
+                        static_cast<uint64_t>(new_fields.size()),
+                        estimated_engineered_bytes);
     }
 
     spdlog::info("TimeSeriesFeatures: {} rows -> {} rows (dropped {}), "
@@ -260,6 +342,12 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  rolling_windows_.size() * rolling_aggregations_.size(),
                  rolling_windows_.size(), rolling_aggregations_.size(),
                  value_col_);
+    report_progress("Complete",
+                    "TimeSeriesFeatures materialization complete",
+                    1.0,
+                    static_cast<uint64_t>(out_rows),
+                    static_cast<uint64_t>(out_rows),
+                    estimated_engineered_bytes);
     return out_table;
 }
 

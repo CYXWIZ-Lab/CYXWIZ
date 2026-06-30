@@ -1,4 +1,5 @@
 #include "pca_operator.h"
+#include "../profiler_trace.h"
 #include "text_column_utils.h"  // ReadLabelColumnAsInt
 #include "ts_column_utils.h"    // ReadColumnAsFloat
 
@@ -8,6 +9,7 @@
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -114,9 +116,34 @@ bool PCAOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz PCA Materializer");
+
     if (!input) {
         return arrow::Status::Invalid("PCA: input table is null");
     }
+
+    auto report_progress = [&](std::string stage,
+                               std::string message,
+                               double progress,
+                               uint64_t processed = 0,
+                               uint64_t total = 0,
+                               uint64_t memory = 0) {
+        if (!progress_callback_) {
+            return;
+        }
+        PipelineOperatorProgress event;
+        event.stage = std::move(stage);
+        event.message = std::move(message);
+        event.progress = static_cast<float>(progress);
+        event.processed_items = processed;
+        event.total_items = total;
+        event.estimated_memory_bytes = memory;
+        progress_callback_(event);
+    };
+
+    report_progress("Resolving features",
+                    "Resolving numeric feature columns for PCA",
+                    0.05);
 
     // Resolve which columns to use as features. Auto-detect = all
     // numeric columns except label_col and any internal `__*` metadata
@@ -150,12 +177,25 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 "Specify feature_cols explicitly.");
         }
     }
+    report_progress("Features resolved",
+                    "Resolved " + std::to_string(resolved_features.size()) +
+                    " numeric PCA feature columns",
+                    0.15,
+                    static_cast<uint64_t>(resolved_features.size()),
+                    static_cast<uint64_t>(resolved_features.size()));
 
     // Read each feature column to a parallel float vector.
     const size_t n_features = resolved_features.size();
     std::vector<std::vector<float>> feat_cols(n_features);
     int64_t n_samples = 0;
     for (size_t f = 0; f < n_features; ++f) {
+        report_progress("Reading feature columns",
+                        "Reading PCA feature column '" +
+                        resolved_features[f] + "'",
+                        0.20 + (0.20 * static_cast<double>(f) /
+                                static_cast<double>(n_features)),
+                        static_cast<uint64_t>(f),
+                        static_cast<uint64_t>(n_features));
         auto col = input->GetColumnByName(resolved_features[f]);
         std::string bad_type;
         if (!ReadColumnAsFloat(col, feat_cols[f], bad_type)) {
@@ -172,6 +212,23 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         }
     }
 
+    const uint64_t estimated_input_matrix_bytes =
+        static_cast<uint64_t>(n_samples) *
+        static_cast<uint64_t>(n_features) *
+        sizeof(double);
+    const uint64_t estimated_output_matrix_bytes =
+        static_cast<uint64_t>(n_samples) *
+        static_cast<uint64_t>(n_components_) *
+        sizeof(float);
+    report_progress("Planning PCA matrix",
+                    "Planning PCA matrix " + std::to_string(n_samples) +
+                    " samples x " + std::to_string(n_features) +
+                    " features",
+                    0.40,
+                    0,
+                    static_cast<uint64_t>(n_samples),
+                    estimated_input_matrix_bytes + estimated_output_matrix_bytes);
+
     if (n_samples < n_components_) {
         return arrow::Status::Invalid(
             "PCA: n_samples (" + std::to_string(n_samples) +
@@ -185,6 +242,12 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     // Repack as row-major double matrix [n_samples x n_features] for the
     // backend (which uses std::vector<std::vector<double>>).
+    report_progress("Packing PCA matrix",
+                    "Packing row-major PCA input matrix",
+                    0.45,
+                    0,
+                    static_cast<uint64_t>(n_samples),
+                    estimated_input_matrix_bytes + estimated_output_matrix_bytes);
     std::vector<std::vector<double>> data(n_samples,
                                            std::vector<double>(n_features, 0.0));
     for (size_t f = 0; f < n_features; ++f) {
@@ -192,14 +255,33 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         for (int64_t i = 0; i < n_samples; ++i) {
             data[i][f] = static_cast<double>(col[i]);
         }
+        report_progress("Packing PCA matrix",
+                        "Packing row-major PCA input matrix",
+                        0.45 + (0.15 * static_cast<double>(f + 1) /
+                                static_cast<double>(n_features)),
+                        static_cast<uint64_t>(f + 1),
+                        static_cast<uint64_t>(n_features),
+                        estimated_input_matrix_bytes + estimated_output_matrix_bytes);
     }
 
+    report_progress("Computing PCA",
+                    "Computing PCA projection",
+                    0.65,
+                    0,
+                    static_cast<uint64_t>(n_components_),
+                    estimated_input_matrix_bytes + estimated_output_matrix_bytes);
     auto result = DimensionalityReduction::ComputePCA(
         data, n_components_, center_, scale_);
     if (!result.success) {
         return arrow::Status::ExecutionError(
             "PCA: ComputePCA failed: " + result.error_message);
     }
+    report_progress("PCA computed",
+                    "PCA projection computed",
+                    0.75,
+                    static_cast<uint64_t>(n_components_),
+                    static_cast<uint64_t>(n_components_),
+                    estimated_input_matrix_bytes + estimated_output_matrix_bytes);
 
     // Optional label column passthrough.
     std::vector<int> labels;
@@ -224,6 +306,12 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     // Build wide output: pc_0..pc_{n-1}, y.
+    report_progress("Building Arrow columns",
+                    "Allocating PCA output columns",
+                    0.80,
+                    0,
+                    static_cast<uint64_t>(n_samples),
+                    estimated_output_matrix_bytes);
     arrow::MemoryPool* pool = arrow::default_memory_pool();
     std::vector<std::unique_ptr<arrow::FloatBuilder>> pc_builders;
     pc_builders.reserve(n_components_);
@@ -246,8 +334,23 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         if (!labels.empty()) {
             ARROW_RETURN_NOT_OK(label_builder.Append(labels[r]));
         }
+        if ((r + 1) == n_samples || ((r + 1) % 1024) == 0) {
+            report_progress("Writing PCA rows",
+                            "Writing PCA rows to Arrow columns",
+                            0.82 + (0.13 * static_cast<double>(r + 1) /
+                                    static_cast<double>(n_samples)),
+                            static_cast<uint64_t>(r + 1),
+                            static_cast<uint64_t>(n_samples),
+                            estimated_output_matrix_bytes);
+        }
     }
 
+    report_progress("Finishing Arrow table",
+                    "Finalizing PCA Arrow table",
+                    0.97,
+                    static_cast<uint64_t>(n_samples),
+                    static_cast<uint64_t>(n_samples),
+                    estimated_output_matrix_bytes);
     std::vector<std::shared_ptr<arrow::Array>> arrays;
     std::vector<std::shared_ptr<arrow::Field>> fields;
     arrays.reserve(n_components_ + (labels.empty() ? 0 : 1));
@@ -273,6 +376,12 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  n_samples, n_features, n_components_,
                  result.total_variance_explained * 100.0,
                  center_, scale_);
+    report_progress("Complete",
+                    "PCA materialization complete",
+                    1.0,
+                    static_cast<uint64_t>(n_samples),
+                    static_cast<uint64_t>(n_samples),
+                    estimated_output_matrix_bytes);
     return out_table;
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include <utility>
 
 namespace cyxwiz {
 
@@ -24,6 +25,9 @@ class DifferencingOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "Differencing"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
 
     bool Configure(
         const std::map<std::string, std::string>& params,
@@ -36,6 +40,7 @@ private:
     std::string value_col_;
     int lag_ = 1;
     int order_ = 1;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

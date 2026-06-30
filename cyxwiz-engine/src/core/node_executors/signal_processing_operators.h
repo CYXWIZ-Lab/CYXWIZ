@@ -2,6 +2,7 @@
 
 #include "pipeline_operator.h"
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -42,9 +43,14 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     double sample_rate_ = 1.0;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
@@ -77,9 +83,14 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     std::vector<double> kernel_;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 /**
@@ -115,6 +126,10 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string signal_col_;
     std::string filter_type_ = "lowpass";
@@ -122,6 +137,7 @@ private:
     double cutoff_high_ = 0.0;
     double sample_rate_ = 1.0;
     int order_ = 4;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

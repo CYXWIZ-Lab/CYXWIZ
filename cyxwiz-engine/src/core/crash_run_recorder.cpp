@@ -170,6 +170,7 @@ const char* CrashRunRecorder::StageName(TrainingTraceStage stage) {
         case TrainingTraceStage::UIPlotUpdate: return "UIPlotUpdate";
         case TrainingTraceStage::EpochComplete: return "EpochComplete";
         case TrainingTraceStage::Complete: return "Complete";
+        case TrainingTraceStage::EarlyStopped: return "EarlyStopped";
         case TrainingTraceStage::Failed: return "Failed";
         case TrainingTraceStage::Cancelled: return "Cancelled";
     }
@@ -192,6 +193,7 @@ void CrashRunRecorder::StartTrainingRun(const TrainingConfiguration& config,
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
     failure_reason_.clear();
+    terminal_reason_.clear();
     epoch_ = 0;
     batch_ = 0;
     total_batches_ = 0;
@@ -283,7 +285,22 @@ void CrashRunRecorder::MarkCompleted() {
         return;
     }
     status_ = "completed";
+    terminal_reason_ = "completed_all_epochs";
     last_stage_ = StageName(TrainingTraceStage::Complete);
+    last_event_time_ = NowIso8601();
+    last_thread_id_ = ThreadIdString();
+    WriteLocked();
+    active_ = false;
+}
+
+void CrashRunRecorder::MarkEarlyStopped(const std::string& reason) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_) {
+        return;
+    }
+    status_ = "early_stopped";
+    terminal_reason_ = reason;
+    last_stage_ = StageName(TrainingTraceStage::EarlyStopped);
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
     WriteLocked();
@@ -296,6 +313,7 @@ void CrashRunRecorder::MarkCancelled() {
         return;
     }
     status_ = "cancelled";
+    terminal_reason_ = "user_cancelled";
     last_stage_ = StageName(TrainingTraceStage::Cancelled);
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
@@ -313,6 +331,7 @@ void CrashRunRecorder::MarkFailed(const std::string& reason) {
     last_event_time_ = NowIso8601();
     last_thread_id_ = ThreadIdString();
     failure_reason_ = reason;
+    terminal_reason_ = reason;
     WriteLocked();
     active_ = false;
 }
@@ -345,6 +364,8 @@ std::optional<CrashRunSummary> CrashRunRecorder::LoadLastRun() {
         summary.loss = j.value("loss", 0.0f);
         summary.accuracy = j.value("accuracy", 0.0f);
         summary.file_path = path.string();
+        summary.terminal_reason = j.value("terminal_reason", "");
+        summary.failure_reason = j.value("failure_reason", "");
         summary.panel_events = j.value("panel_events", std::vector<std::string>{});
 
         if (summary.status == "running") {
@@ -387,6 +408,7 @@ void CrashRunRecorder::WriteLocked() {
             {"loss", loss_},
             {"accuracy", accuracy_},
             {"failure_reason", failure_reason_},
+            {"terminal_reason", terminal_reason_},
             {"panel_events", panel_events_}
         };
 

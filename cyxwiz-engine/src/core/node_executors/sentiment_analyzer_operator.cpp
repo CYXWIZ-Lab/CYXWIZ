@@ -1,4 +1,5 @@
 #include "sentiment_analyzer_operator.h"
+#include "../profiler_trace.h"
 #include "text_column_utils.h"
 
 #include <cyxwiz/text_processing.h>
@@ -7,13 +8,33 @@
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
 
 namespace {
+
+void ReportProgress(const PipelineOperatorProgressCallback& callback,
+                    std::string stage,
+                    std::string message,
+                    float progress,
+                    uint64_t processed_items = 0,
+                    uint64_t total_items = 0,
+                    uint64_t estimated_memory_bytes = 0) {
+    if (!callback) return;
+    PipelineOperatorProgress event;
+    event.stage = std::move(stage);
+    event.message = std::move(message);
+    event.progress = progress;
+    event.processed_items = processed_items;
+    event.total_items = total_items;
+    event.estimated_memory_bytes = estimated_memory_bytes;
+    callback(event);
+}
 
 // Map the backend's string label ("positive"/"negative"/"neutral") to
 // a stable int code so downstream Dense/Loss layers can use it as a
@@ -59,10 +80,14 @@ bool SentimentAnalyzerOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 SentimentAnalyzerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz SentimentAnalyzer Materializer");
     if (!input) {
         return arrow::Status::Invalid("SentimentAnalyzer: input table is null");
     }
 
+    ReportProgress(progress_callback_, "read_text",
+                   "Reading text column for sentiment analysis", 0.10f, 0,
+                   static_cast<uint64_t>(input->num_rows()));
     auto text_column = input->GetColumnByName(text_col_);
     if (!text_column) {
         return arrow::Status::KeyError(
@@ -87,6 +112,9 @@ SentimentAnalyzerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<int> labels;
     std::vector<std::string> class_names;
     if (!label_col_.empty()) {
+        ReportProgress(progress_callback_, "read_labels",
+                       "Reading sentiment label passthrough column", 0.20f, 0,
+                       static_cast<uint64_t>(n));
         auto label_column = input->GetColumnByName(label_col_);
         if (!label_column) {
             return arrow::Status::KeyError(
@@ -120,6 +148,10 @@ SentimentAnalyzerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         ARROW_RETURN_NOT_OK(label_builder.Reserve(static_cast<int64_t>(n)));
     }
 
+    ReportProgress(progress_callback_, "analyze",
+                   "Analyzing sentiment documents", 0.35f, 0,
+                   static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n * 4 * sizeof(float)));
     int pos_count = 0, neg_count = 0, neu_count = 0, failed = 0;
     for (size_t r = 0; r < n; ++r) {
         auto result = TextProcessing::AnalyzeSentiment(texts[r], method_);
@@ -144,8 +176,22 @@ SentimentAnalyzerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         if (!labels.empty()) {
             ARROW_RETURN_NOT_OK(label_builder.Append(labels[r]));
         }
+        if (r + 1 == n || (r + 1) % 1000 == 0) {
+            const float progress =
+                0.35f + (0.45f * static_cast<float>(r + 1) /
+                         static_cast<float>(n));
+            ReportProgress(progress_callback_, "analyze",
+                           "Analyzing sentiment documents", progress,
+                           static_cast<uint64_t>(r + 1),
+                           static_cast<uint64_t>(n),
+                           static_cast<uint64_t>(n * 4 * sizeof(float)));
+        }
     }
 
+    ReportProgress(progress_callback_, "finalize",
+                   "Finalizing sentiment output table", 0.90f,
+                   static_cast<uint64_t>(n), static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n * 4 * sizeof(float)));
     std::vector<std::shared_ptr<arrow::Array>> arrays;
     std::vector<std::shared_ptr<arrow::Field>> fields;
     arrays.reserve(labels.empty() ? 4 : 5);
@@ -181,6 +227,10 @@ SentimentAnalyzerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  "{}",
                  n, method_, pos_count, neu_count, neg_count,
                  failed > 0 ? (", failed=" + std::to_string(failed)) : std::string());
+    ReportProgress(progress_callback_, "complete",
+                   "Sentiment analysis complete", 1.0f,
+                   static_cast<uint64_t>(n), static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n * 4 * sizeof(float)));
     return out_table;
 }
 

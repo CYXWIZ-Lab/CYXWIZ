@@ -79,6 +79,101 @@ bool HasReachablePreTrainInspectionNode(
     return false;
 }
 
+size_t ParsePositiveSizeParam(const gui::MLNode& node,
+                              const std::string& key,
+                              size_t fallback) {
+    auto it = node.parameters.find(key);
+    if (it == node.parameters.end() || it->second.empty()) {
+        return fallback;
+    }
+    try {
+        long long parsed = std::stoll(it->second);
+        return parsed > 0 ? static_cast<size_t>(parsed) : fallback;
+    } catch (...) {
+        return fallback;
+    }
+}
+
+std::string FormatBytesForIssue(long double bytes) {
+    constexpr long double kGiB =
+        1024.0L * 1024.0L * 1024.0L;
+    constexpr long double kMiB = 1024.0L * 1024.0L;
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(1);
+    if (bytes >= kGiB) {
+        oss << static_cast<double>(bytes / kGiB) << " GiB";
+    } else {
+        oss << static_cast<double>(bytes / kMiB) << " MiB";
+    }
+    return oss.str();
+}
+
+void ValidateTFIDFMaterializerMemory(
+    TrainingConfiguration& config,
+    const std::vector<gui::MLNode>& nodes) {
+    if (config.dataset_name.empty()) {
+        return;
+    }
+
+    const gui::MLNode* tfidf_node = nullptr;
+    for (const auto& node : nodes) {
+        if (node.type == gui::NodeType::TFIDFVectorizer) {
+            tfidf_node = &node;
+            break;
+        }
+    }
+    if (!tfidf_node) {
+        return;
+    }
+
+    auto& reg = DataRegistry::Instance();
+    size_t sample_count = 0;
+    size_t full_vocab_size = 0;
+    if (const auto* text_entry =
+            reg.GetTextDatasetEntry(config.dataset_name)) {
+        sample_count = text_entry->num_samples;
+        full_vocab_size = text_entry->vocab_size;
+    }
+    if (sample_count == 0) {
+        if (auto arrow_ds = reg.GetArrowDataset(config.dataset_name)) {
+            sample_count = static_cast<size_t>(arrow_ds->GetNumRows());
+        } else if (auto pq_ds =
+                       reg.GetParquetBackedDataset(config.dataset_name)) {
+            sample_count = static_cast<size_t>(pq_ds->GetNumRows());
+        }
+    }
+    if (sample_count == 0 || full_vocab_size == 0) {
+        return;
+    }
+
+    const size_t max_features =
+        ParsePositiveSizeParam(*tfidf_node, "max_features", 2000);
+    constexpr long double kLargeBoundedOutputBytes =
+        2.0L * 1024.0L * 1024.0L * 1024.0L;
+    constexpr long double kElementBytes = 4.0L;
+    const long double estimated_bytes =
+        static_cast<long double>(sample_count) *
+        static_cast<long double>(max_features) *
+        kElementBytes;
+
+    if (estimated_bytes <= kLargeBoundedOutputBytes) {
+        return;
+    }
+
+    std::ostringstream msg;
+    msg << "TFIDFVectorizer bounded output is large: rows=" << sample_count
+        << ", full_vocab=" << full_vocab_size
+        << ", max_features=" << max_features
+        << ", estimated Arrow feature allocation="
+        << FormatBytesForIssue(estimated_bytes)
+        << ". The TF-IDF materializer is bounded by max_features, but this "
+           "wide table may still pressure host memory. Lower max_features or "
+           "train on a smaller sampled dataset if materialization is slow.";
+    AddIssue(config, IssueLevel::Warning, msg.str(),
+             tfidf_node->id, tfidf_node->name);
+}
+
 bool IsLossNodeType(gui::NodeType type) {
     return type == gui::NodeType::MSELoss ||
            type == gui::NodeType::CrossEntropyLoss ||
@@ -1267,6 +1362,7 @@ void ApplyTextInputShape(TrainingConfiguration& config) {
     int max_length = config.text_preprocessing.max_length;
     const bool graph_overrides_length =
         config.text_preprocessing.has_tokenizer_node ||
+        config.text_preprocessing.has_vectorizer_node ||
         config.text_preprocessing.has_padding_node;
 
     if (!graph_overrides_length && !config.dataset_name.empty()) {
@@ -3407,6 +3503,8 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
+    ValidateTFIDFMaterializerMemory(config, nodes);
+
     // === Domain detection ===
     // The DataInput node carries file_category (tabular / image / audio /
     // text / timeseries). The owning loader reports its PreprocessingDomain
@@ -4161,6 +4259,18 @@ static void ExtractTextTokenizerShape(
                  config.text_preprocessing.max_length);
 }
 
+static void ExtractTFIDFVectorizerShape(
+    const gui::MLNode& node,
+    TrainingConfiguration& config) {
+    config.text_preprocessing.has_vectorizer_node = true;
+    const int max_features = static_cast<int>(
+        ParseSizeParam(node.parameters, "max_features", 2000));
+    config.text_preprocessing.max_length = std::max(1, max_features);
+    spdlog::info(
+        "GraphCompiler: TFIDFVectorizer max_features={} drives text input shape",
+        config.text_preprocessing.max_length);
+}
+
 // TextVocabulary and TextPadding fold into the reachable tokenizer in
 // PipelineMaterializer; they do not own a separate training shape.
 
@@ -4195,6 +4305,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::AudioAugmentation,  PreprocessingDomain::Audio,       ExtractAudioAugmentation},
     // Text (Arrow materializer path; extract shape only)
     {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        ExtractTextTokenizerShape},
+    {gui::NodeType::TFIDFVectorizer,    PreprocessingDomain::Text,        ExtractTFIDFVectorizerShape},
     {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::NERSequenceBuilder, PreprocessingDomain::General,     nullptr},

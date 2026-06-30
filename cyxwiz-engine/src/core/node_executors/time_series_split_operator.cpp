@@ -1,4 +1,5 @@
 #include "time_series_split_operator.h"
+#include "../profiler_trace.h"
 
 #include <arrow/api.h>
 #include <arrow/builder.h>
@@ -8,11 +9,30 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
 
 namespace {
+
+void ReportProgress(const PipelineOperatorProgressCallback& callback,
+                    std::string stage,
+                    std::string message,
+                    float progress,
+                    uint64_t processed_items = 0,
+                    uint64_t total_items = 0,
+                    uint64_t estimated_memory_bytes = 0) {
+    if (!callback) return;
+    PipelineOperatorProgress event;
+    event.stage = std::move(stage);
+    event.message = std::move(message);
+    event.progress = progress;
+    event.processed_items = processed_items;
+    event.total_items = total_items;
+    event.estimated_memory_bytes = estimated_memory_bytes;
+    callback(event);
+}
 
 bool ReadFloatParam(
     const std::map<std::string, std::string>& params,
@@ -83,6 +103,7 @@ TimeSeriesSplitOperator::InferOutputSchema(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz TimeSeriesSplit Materializer");
     if (!input) {
         return arrow::Status::Invalid("TimeSeriesSplit: input table is null");
     }
@@ -102,6 +123,10 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     if (train_count + val_count > n) val_count = n - train_count;
     int64_t test_count = n - train_count - val_count;
 
+    ReportProgress(progress_callback_, "plan_split",
+                   "Planning chronological train/val/test split", 0.30f, 0,
+                   static_cast<uint64_t>(n), static_cast<uint64_t>(n));
+
     // Guard: if val or test is zero because n is too small for the
     // requested ratio, warn and steal a single row from train. This
     // keeps the smoke test viable on tiny datasets (airline passengers
@@ -119,6 +144,9 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     arrow::Int8Builder builder(pool);
     ARROW_RETURN_NOT_OK(builder.Reserve(n));
 
+    ReportProgress(progress_callback_, "write_partitions",
+                   "Writing partition assignments", 0.60f, 0,
+                   static_cast<uint64_t>(n), static_cast<uint64_t>(n));
     for (int64_t i = 0; i < train_count; ++i) {
         ARROW_RETURN_NOT_OK(builder.Append(0));
     }
@@ -138,6 +166,10 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     auto partition_chunked = std::make_shared<arrow::ChunkedArray>(partition_array);
     auto partition_field = arrow::field(kPartitionColumnName, arrow::int8());
 
+    ReportProgress(progress_callback_, "append_output",
+                   "Appending partition column", 0.90f,
+                   static_cast<uint64_t>(n), static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n));
     ARROW_ASSIGN_OR_RAISE(
         auto out_table,
         input->AddColumn(input->num_columns(), partition_field, partition_chunked));
@@ -147,6 +179,10 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  n, train_count, val_count, test_count,
                  train_ratio_, val_ratio_, test_ratio_);
 
+    ReportProgress(progress_callback_, "complete",
+                   "Time-series split complete", 1.0f,
+                   static_cast<uint64_t>(n), static_cast<uint64_t>(n),
+                   static_cast<uint64_t>(n));
     return out_table;
 }
 

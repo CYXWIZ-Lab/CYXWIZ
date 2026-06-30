@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -48,12 +49,17 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::vector<std::string> feature_cols_;  // empty = auto-detect
     std::string label_col_;
     int n_components_ = 2;
     bool center_ = true;
     bool scale_ = false;
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

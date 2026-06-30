@@ -2,6 +2,7 @@
 
 #include <cyxwiz/memory_manager.h>
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -56,6 +57,8 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"total_batches", event.total_batches},
         {"loss", event.loss},
         {"accuracy", event.accuracy},
+        {"validation_loss", event.validation_loss},
+        {"validation_accuracy", event.validation_accuracy},
         {"duration_ms", event.duration_ms},
         {"cpu_allocated_bytes", event.cpu_allocated_bytes},
         {"cpu_peak_bytes", event.cpu_peak_bytes},
@@ -64,7 +67,20 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"af_alloc_buffers", event.af_alloc_buffers},
         {"af_lock_buffers", event.af_lock_buffers},
         {"status", event.status},
-        {"message", event.message}
+        {"message", event.message},
+        {"metric_scope", event.metric_scope},
+        {"checkpoint_path", event.checkpoint_path},
+        {"is_best_checkpoint", event.is_best_checkpoint},
+        {"terminal_reason", event.terminal_reason},
+        {"task_id", event.task_id},
+        {"task_name", event.task_name},
+        {"task_stage", event.task_stage},
+        {"task_progress", event.task_progress},
+        {"node_id", event.node_id},
+        {"node_name", event.node_name},
+        {"estimated_memory_bytes", event.estimated_memory_bytes},
+        {"processed_items", event.processed_items},
+        {"total_items", event.total_items}
     };
 }
 
@@ -79,6 +95,8 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
     event.total_batches = j.value("total_batches", 0);
     event.loss = j.value("loss", 0.0f);
     event.accuracy = j.value("accuracy", 0.0f);
+    event.validation_loss = j.value("validation_loss", 0.0f);
+    event.validation_accuracy = j.value("validation_accuracy", 0.0f);
     event.duration_ms = j.value("duration_ms", 0.0f);
     event.cpu_allocated_bytes = j.value("cpu_allocated_bytes", uint64_t{0});
     event.cpu_peak_bytes = j.value("cpu_peak_bytes", uint64_t{0});
@@ -88,6 +106,19 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
     event.af_lock_buffers = j.value("af_lock_buffers", uint64_t{0});
     event.status = j.value("status", "ok");
     event.message = j.value("message", "");
+    event.metric_scope = j.value("metric_scope", "");
+    event.checkpoint_path = j.value("checkpoint_path", "");
+    event.is_best_checkpoint = j.value("is_best_checkpoint", false);
+    event.terminal_reason = j.value("terminal_reason", "");
+    event.task_id = j.value("task_id", uint64_t{0});
+    event.task_name = j.value("task_name", "");
+    event.task_stage = j.value("task_stage", "");
+    event.task_progress = j.value("task_progress", 0.0f);
+    event.node_id = j.value("node_id", -1);
+    event.node_name = j.value("node_name", "");
+    event.estimated_memory_bytes = j.value("estimated_memory_bytes", uint64_t{0});
+    event.processed_items = j.value("processed_items", uint64_t{0});
+    event.total_items = j.value("total_items", uint64_t{0});
     return event;
 }
 
@@ -200,6 +231,175 @@ void TrainingTraceCollector::RecordRuntimeEvent(const std::string& stage,
         event.loss = latest.loss;
         event.accuracy = latest.accuracy;
     }
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordTaskProgress(
+    uint64_t task_id,
+    const std::string& task_name,
+    const std::string& task_stage,
+    float progress,
+    const std::string& message,
+    const std::string& status,
+    int node_id,
+    const std::string& node_name,
+    uint64_t estimated_memory_bytes,
+    uint64_t processed_items,
+    uint64_t total_items) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = task_stage.empty() ? "TaskProgress" : task_stage;
+    event.thread_id = ThreadIdString();
+    event.status = status.empty() ? "running" : status;
+    event.message = message;
+    event.metric_scope = "task";
+    event.task_id = task_id;
+    event.task_name = task_name;
+    event.task_stage = task_stage;
+    event.task_progress = std::clamp(progress, 0.0f, 1.0f);
+    event.node_id = node_id;
+    event.node_name = node_name;
+    event.estimated_memory_bytes = estimated_memory_bytes;
+    event.processed_items = processed_items;
+    event.total_items = total_items;
+    if (!events_.empty()) {
+        const auto& latest = events_.back();
+        event.epoch = latest.epoch;
+        event.batch = latest.batch;
+        event.total_batches = latest.total_batches;
+        event.loss = latest.loss;
+        event.accuracy = latest.accuracy;
+        event.validation_loss = latest.validation_loss;
+        event.validation_accuracy = latest.validation_accuracy;
+    }
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (event.status != "running" && !event.message.empty()) {
+        warnings_.push_back(task_name + ": " + event.message);
+        if (warnings_.size() > 50) {
+            warnings_.erase(warnings_.begin());
+        }
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordValidationMetrics(
+    int epoch,
+    float train_loss,
+    float train_accuracy,
+    float validation_loss,
+    float validation_accuracy,
+    float duration_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = "ValidationCompleted";
+    event.thread_id = ThreadIdString();
+    event.epoch = epoch;
+    event.loss = train_loss;
+    event.accuracy = train_accuracy;
+    event.validation_loss = validation_loss;
+    event.validation_accuracy = validation_accuracy;
+    event.duration_ms = duration_ms;
+    event.metric_scope = "validation";
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordCheckpointSaved(
+    int epoch,
+    const std::string& checkpoint_path,
+    float validation_loss,
+    float validation_accuracy,
+    bool is_best_checkpoint) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = is_best_checkpoint ? "BestCheckpointUpdated" : "CheckpointSaved";
+    event.thread_id = ThreadIdString();
+    event.epoch = epoch;
+    event.validation_loss = validation_loss;
+    event.validation_accuracy = validation_accuracy;
+    event.metric_scope = "checkpoint";
+    event.checkpoint_path = checkpoint_path;
+    event.is_best_checkpoint = is_best_checkpoint;
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordTerminalEvent(
+    const std::string& terminal_status,
+    const std::string& terminal_reason,
+    int epoch,
+    float loss,
+    float accuracy) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = terminal_status == "early_stopped"
+        ? "EarlyStopped"
+        : "TrainingTerminal";
+    event.thread_id = ThreadIdString();
+    event.epoch = epoch;
+    event.loss = loss;
+    event.accuracy = accuracy;
+    event.status = terminal_status.empty() ? "completed" : terminal_status;
+    event.message = terminal_reason;
+    event.terminal_reason = terminal_reason;
     PopulateMemorySnapshot(event);
     events_.push_back(event);
     while (events_.size() > settings_.max_recent_events) {

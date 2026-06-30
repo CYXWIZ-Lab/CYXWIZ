@@ -46,6 +46,34 @@ ImVec4 TraceStatusColor(const std::string& status) {
     return ImVec4(0.65f, 0.7f, 0.78f, 1.0f);
 }
 
+const char* ClassifyTrainingWarning(const std::string& text) {
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    if (lower.find("pin") != std::string::npos &&
+        lower.find("memory") != std::string::npos) {
+        return "Data transfer";
+    }
+    if (lower.find("fallback") != std::string::npos ||
+        (lower.find("gpu") != std::string::npos &&
+         lower.find("cpu") != std::string::npos)) {
+        return "Device fallback";
+    }
+    if (lower.find("cuda") != std::string::npos ||
+        lower.find("arrayfire") != std::string::npos ||
+        lower.find("gpu") != std::string::npos) {
+        return "GPU";
+    }
+    if (lower.find("memory") != std::string::npos ||
+        lower.find("allocation") != std::string::npos ||
+        lower.find("alloc") != std::string::npos) {
+        return "Memory";
+    }
+    return "Warning";
+}
+
 int TraceStatusSeverity(const std::string& status) {
     if (status == "failed" || status == "nan") {
         return 4;
@@ -735,7 +763,9 @@ void StudioDebuggerPanel::RenderLiveTrainingStatus() {
                 trace.latest_accuracy * 100.0f);
     if (!trace.warnings.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
-                           "Latest warning: %s", trace.warnings.back().c_str());
+                           "Latest %s warning: %s",
+                           ClassifyTrainingWarning(trace.warnings.back()),
+                           trace.warnings.back().c_str());
     }
     ImGui::EndChild();
 }
@@ -1118,13 +1148,38 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
     RefreshLiveTrainingTrace();
 
     ImGui::Text("Training Trace");
-    ImGui::BeginChild("StudioDebuggerTrainingTrace", ImVec2(0, 170), true);
+    ImGui::BeginChild("StudioDebuggerTrainingTrace", ImVec2(0, 255), true);
 
     const auto& trace = session_.training_trace;
     if (!trace.available) {
         ImGui::TextDisabled("No training trace found yet.");
         ImGui::EndChild();
         return;
+    }
+
+    const TrainingTraceEvent* latest_task = nullptr;
+    const TrainingTraceEvent* latest_validation = nullptr;
+    const TrainingTraceEvent* latest_checkpoint = nullptr;
+    const TrainingTraceEvent* latest_terminal = nullptr;
+    for (const auto& event : trace.recent_events) {
+        if (event.metric_scope == "task" || event.task_id != 0) {
+            latest_task = &event;
+        }
+        if (event.stage == "ValidationCompleted" ||
+            event.validation_loss > 0.0f ||
+            event.validation_accuracy > 0.0f) {
+            latest_validation = &event;
+        }
+        if (event.stage == "BestCheckpointUpdated" ||
+            event.stage == "CheckpointSaved" ||
+            !event.checkpoint_path.empty()) {
+            latest_checkpoint = &event;
+        }
+        if (event.stage == "EarlyStopped" ||
+            event.stage == "TrainingTerminal" ||
+            !event.terminal_reason.empty()) {
+            latest_terminal = &event;
+        }
     }
 
     ImGui::Text("Run: %s", trace.run_id.c_str());
@@ -1140,7 +1195,68 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
         ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
                            "Warnings: %zu", trace.warnings.size());
         ImGui::SameLine();
-        ImGui::TextDisabled("latest: %s", trace.warnings.back().c_str());
+        ImGui::TextDisabled("latest %s: %s",
+                            ClassifyTrainingWarning(trace.warnings.back()),
+                            trace.warnings.back().c_str());
+        const int warning_start =
+            std::max(0, static_cast<int>(trace.warnings.size()) - 3);
+        for (int i = warning_start;
+             i < static_cast<int>(trace.warnings.size());
+             ++i) {
+            const auto& warning = trace.warnings[i];
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                               "%s:",
+                               ClassifyTrainingWarning(warning));
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", warning.c_str());
+        }
+    }
+
+    if (latest_task || latest_validation || latest_checkpoint ||
+        latest_terminal) {
+        ImGui::Separator();
+        ImGui::Text("Training Truth Summary");
+        if (latest_task) {
+            ImGui::Text("Task: %s", latest_task->task_name.empty()
+                ? latest_task->stage.c_str()
+                : latest_task->task_name.c_str());
+            ImGui::SameLine(260);
+            ImGui::TextDisabled("%.0f%% %s",
+                                latest_task->task_progress * 100.0f,
+                                latest_task->message.c_str());
+            if (!latest_task->node_name.empty()) {
+                ImGui::TextDisabled("Node: %s (%d)",
+                                    latest_task->node_name.c_str(),
+                                    latest_task->node_id);
+            }
+        }
+        if (latest_validation) {
+            ImGui::Text("Validation: epoch %d val_loss %.4f val_acc %.2f%%",
+                        latest_validation->epoch,
+                        latest_validation->validation_loss,
+                        latest_validation->validation_accuracy * 100.0f);
+        }
+        if (latest_checkpoint) {
+            ImGui::Text("Checkpoint: %s epoch %d val_loss %.4f val_acc %.2f%%",
+                        latest_checkpoint->is_best_checkpoint ? "best" : "saved",
+                        latest_checkpoint->epoch,
+                        latest_checkpoint->validation_loss,
+                        latest_checkpoint->validation_accuracy * 100.0f);
+            if (!latest_checkpoint->checkpoint_path.empty()) {
+                ImGui::TextDisabled("%s",
+                                    latest_checkpoint->checkpoint_path.c_str());
+            }
+        }
+        if (latest_terminal) {
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
+                               "Terminal: %s",
+                               latest_terminal->status.c_str());
+            if (!latest_terminal->terminal_reason.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s",
+                                    latest_terminal->terminal_reason.c_str());
+            }
+        }
     }
 
     ImGui::Separator();

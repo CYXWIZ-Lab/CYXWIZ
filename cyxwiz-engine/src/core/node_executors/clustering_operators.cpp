@@ -1,4 +1,5 @@
 #include "clustering_operators.h"
+#include "../profiler_trace.h"
 #include "feature_matrix_utils.h"
 
 #include <cyxwiz/clustering.h>
@@ -8,12 +9,33 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <set>
 #include <string>
+#include <utility>
 
 namespace cyxwiz {
 
 namespace {
+
+void ReportProgress(const PipelineOperatorProgressCallback& callback,
+                    std::string stage,
+                    std::string message,
+                    double progress,
+                    uint64_t rows_processed = 0,
+                    uint64_t total_rows = 0,
+                    uint64_t memory_bytes = 0) {
+    if (!callback) return;
+
+    PipelineOperatorProgress event;
+    event.stage = std::move(stage);
+    event.message = std::move(message);
+    event.progress = static_cast<float>(progress);
+    event.processed_items = rows_processed;
+    event.total_items = total_rows;
+    event.estimated_memory_bytes = memory_bytes;
+    callback(event);
+}
 
 template <typename T>
 bool ParseIntParam(const std::map<std::string, std::string>& params,
@@ -156,6 +178,7 @@ bool KMeansOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 KMeansOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz KMeansCluster Materializer");
     if (!input) return arrow::Status::Invalid(GetName() + ": input table is null");
 
     std::vector<std::string> resolved;
@@ -165,6 +188,7 @@ KMeansOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::vector<double>> matrix;
     int64_t n_samples = 0;
     ARROW_RETURN_NOT_OK(ReadFeatureMatrix(input, resolved, GetName(), matrix, n_samples));
+    const uint64_t matrix_bytes = static_cast<uint64_t>(n_samples) * static_cast<uint64_t>(resolved.size()) * sizeof(double);
 
     if (n_samples < n_clusters_) {
         return arrow::Status::Invalid(
@@ -172,6 +196,7 @@ KMeansOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             ") < n_clusters (" + std::to_string(n_clusters_) + ")");
     }
 
+    ReportProgress(progress_callback_, "fit", "Fitting KMeans clusters", 0.55, 0, static_cast<uint64_t>(n_clusters_), matrix_bytes);
     auto result = Clustering::KMeans(
         matrix, n_clusters_, max_iter_, init_, n_init_, tol_, seed_);
     if (!result.success) {
@@ -225,6 +250,7 @@ bool DBSCANOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 DBSCANOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz DBSCANCluster Materializer");
     if (!input) return arrow::Status::Invalid(GetName() + ": input table is null");
 
     std::vector<std::string> resolved;
@@ -234,7 +260,9 @@ DBSCANOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::vector<double>> matrix;
     int64_t n_samples = 0;
     ARROW_RETURN_NOT_OK(ReadFeatureMatrix(input, resolved, GetName(), matrix, n_samples));
+    const uint64_t matrix_bytes = static_cast<uint64_t>(n_samples) * static_cast<uint64_t>(resolved.size()) * sizeof(double);
 
+    ReportProgress(progress_callback_, "fit", "Fitting DBSCAN clusters", 0.55, 0, static_cast<uint64_t>(n_samples), matrix_bytes);
     auto result = Clustering::DBSCAN(matrix, eps_, min_samples_, metric_);
     if (!result.success) {
         return arrow::Status::ExecutionError(
@@ -296,6 +324,7 @@ bool HierarchicalOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 HierarchicalOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz HierarchicalCluster Materializer");
     if (!input) return arrow::Status::Invalid(GetName() + ": input table is null");
 
     std::vector<std::string> resolved;
@@ -305,6 +334,7 @@ HierarchicalOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::vector<double>> matrix;
     int64_t n_samples = 0;
     ARROW_RETURN_NOT_OK(ReadFeatureMatrix(input, resolved, GetName(), matrix, n_samples));
+    const uint64_t matrix_bytes = static_cast<uint64_t>(n_samples) * static_cast<uint64_t>(resolved.size()) * sizeof(double);
 
     if (n_samples < n_clusters_) {
         return arrow::Status::Invalid(
@@ -312,6 +342,7 @@ HierarchicalOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             ") < n_clusters (" + std::to_string(n_clusters_) + ")");
     }
 
+    ReportProgress(progress_callback_, "fit", "Fitting hierarchical clusters", 0.55, 0, static_cast<uint64_t>(n_clusters_), matrix_bytes);
     auto result = Clustering::Hierarchical(matrix, n_clusters_, linkage_, metric_);
     if (!result.success) {
         return arrow::Status::ExecutionError(
@@ -370,6 +401,7 @@ bool GMMOperator::Configure(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 GMMOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz GMMCluster Materializer");
     if (!input) return arrow::Status::Invalid(GetName() + ": input table is null");
 
     std::vector<std::string> resolved;
@@ -379,6 +411,7 @@ GMMOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::vector<double>> matrix;
     int64_t n_samples = 0;
     ARROW_RETURN_NOT_OK(ReadFeatureMatrix(input, resolved, GetName(), matrix, n_samples));
+    const uint64_t matrix_bytes = static_cast<uint64_t>(n_samples) * static_cast<uint64_t>(resolved.size()) * sizeof(double);
 
     if (n_samples < n_components_) {
         return arrow::Status::Invalid(
@@ -386,6 +419,7 @@ GMMOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             ") < n_components (" + std::to_string(n_components_) + ")");
     }
 
+    ReportProgress(progress_callback_, "fit", "Fitting GMM clusters", 0.55, 0, static_cast<uint64_t>(n_components_), matrix_bytes);
     auto result = Clustering::GMM(
         matrix, n_components_, covariance_type_, max_iter_, tol_, n_init_, seed_);
     if (!result.success) {

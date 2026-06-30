@@ -2,6 +2,7 @@
 
 #include "pipeline_operator.h"
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -19,10 +20,14 @@ namespace cyxwiz {
 class ClusteringOperatorBase : public IPipelineOperator {
 public:
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
 
 protected:
     std::vector<std::string> feature_cols_;
     std::string label_col_;
+    PipelineOperatorProgressCallback progress_callback_;
 
     // Shared Configure step — reads feature_cols (comma-sep, optional)
     // and label_col (optional, excluded from auto-detect). Returns true

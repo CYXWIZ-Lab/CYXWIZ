@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(cyxwiz-engine)
 
+option(CYXWIZ_ENABLE_TRACY "Enable optional Tracy profiler integration when Tracy is installed" OFF)
+
 # Find packages
 find_package(imgui CONFIG REQUIRED)
 find_package(implot CONFIG REQUIRED)
@@ -14,6 +16,15 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
+
+if(CYXWIZ_ENABLE_TRACY)
+    find_package(Tracy CONFIG QUIET)
+    if(Tracy_FOUND)
+        message(STATUS "Tracy found - CyxWiz semantic profiling zones enabled")
+    else()
+        message(WARNING "CYXWIZ_ENABLE_TRACY=ON but Tracy was not found - profiling zones compile as no-ops")
+    endif()
+endif()
 
 # Cross-platform native file dialogs
 find_package(nfd CONFIG REQUIRED)
@@ -822,6 +833,11 @@ if(OpenCV_FOUND)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_OPENCV)
 endif()
 
+if(CYXWIZ_ENABLE_TRACY AND Tracy_FOUND)
+    target_link_libraries(cyxwiz-engine PRIVATE Tracy::TracyClient)
+    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_TRACY)
+endif()
+
 # Python scripting support (controlled by CYXWIZ_HAS_PYTHON from root CMakeLists.txt)
 if(CYXWIZ_HAS_PYTHON)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_PYTHON)
@@ -1453,6 +1469,34 @@ if(WIN32)
 endif()
 
 set_target_properties(test_text_tokenizer_operator PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Computation Truth - TF-IDF + Loss Parity =====
+add_executable(test_computation_truth_tfidf_loss
+    tests/computation_truth/test_computation_truth_tfidf_loss.cpp
+    src/core/node_executors/tfidf_vectorizer_operator.cpp
+)
+
+target_include_directories(test_computation_truth_tfidf_loss PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_computation_truth_tfidf_loss PRIVATE
+    Arrow::arrow_shared
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_computation_truth_tfidf_loss PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_computation_truth_tfidf_loss PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

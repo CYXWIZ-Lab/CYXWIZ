@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -42,11 +43,16 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
 private:
     std::string value_col_;
     std::vector<int> lags_;
     std::vector<int> rolling_windows_;
     std::vector<std::string> rolling_aggregations_;  // defaults to {"mean"}
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

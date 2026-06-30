@@ -1,4 +1,5 @@
 #include "async_task_manager.h"
+#include "training_trace_collector.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 
@@ -28,6 +29,13 @@ const std::string& AsyncTask::GetErrorMessage() const {
 void AsyncTask::RequestCancel() {
     if (cancellable_) {
         cancel_requested_.store(true);
+        TrainingTraceCollector::Instance().RecordTaskProgress(
+            id_,
+            name_,
+            "TaskCancelRequested",
+            progress_.load(),
+            "cancel requested",
+            "cancel_requested");
         spdlog::info("Cancel requested for task '{}' (ID: {})", name_, id_);
     }
 }
@@ -70,6 +78,14 @@ void AsyncTask::ReportProgress(float progress, const std::string& message) {
     if (progress_callback_) {
         progress_callback_(progress_.load(), message);
     }
+
+    TrainingTraceCollector::Instance().RecordTaskProgress(
+        id_,
+        name_,
+        "TaskProgress",
+        progress_.load(),
+        message,
+        "running");
 }
 
 void AsyncTask::MarkCompleted() {
@@ -82,6 +98,13 @@ void AsyncTask::MarkCompleted() {
         status_message_ = "Completed";
     }
 
+    TrainingTraceCollector::Instance().RecordTaskProgress(
+        id_,
+        name_,
+        "TaskCompleted",
+        1.0f,
+        "Completed",
+        "completed");
     spdlog::info("Task '{}' (ID: {}) completed", name_, id_);
 }
 
@@ -95,6 +118,13 @@ void AsyncTask::MarkFailed(const std::string& error) {
         status_message_ = "Failed: " + error;
     }
 
+    TrainingTraceCollector::Instance().RecordTaskProgress(
+        id_,
+        name_,
+        "TaskFailed",
+        progress_.load(),
+        error,
+        "failed");
     spdlog::error("Task '{}' (ID: {}) failed: {}", name_, id_, error);
 }
 
@@ -336,6 +366,13 @@ void AsyncTaskManager::WorkerThread() {
         task->state_.store(TaskState::Running);
         task->start_time_ = std::chrono::steady_clock::now();
 
+        TrainingTraceCollector::Instance().RecordTaskProgress(
+            task_id,
+            task->GetName(),
+            "TaskStarted",
+            task->GetProgress(),
+            "started",
+            "running");
         spdlog::debug("Starting task '{}' (ID: {})", task->GetName(), task_id);
 
         try {
@@ -345,6 +382,13 @@ void AsyncTaskManager::WorkerThread() {
             if (task->IsCancelRequested() && task->GetState() == TaskState::Running) {
                 task->state_.store(TaskState::Cancelled);
                 task->end_time_ = std::chrono::steady_clock::now();
+                TrainingTraceCollector::Instance().RecordTaskProgress(
+                    task_id,
+                    task->GetName(),
+                    "TaskCancelled",
+                    task->GetProgress(),
+                    "cancelled",
+                    "cancelled");
                 spdlog::info("Task '{}' (ID: {}) was cancelled", task->GetName(), task_id);
             }
         } catch (const std::exception& e) {

@@ -40,11 +40,14 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override;
+
 private:
     std::string text_col_;
     std::string label_col_;
     int max_features_ = 2000;
     std::string norm_ = "l2";
+    PipelineOperatorProgressCallback progress_callback_;
 };
 
 } // namespace cyxwiz

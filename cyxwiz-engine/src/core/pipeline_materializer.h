@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../gui/node_editor.h"
+#include "node_executors/pipeline_operator.h"
 
 #include <memory>
 #include <string>
@@ -90,13 +91,15 @@ public:
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
         const std::shared_ptr<arrow::Table>& source_table,
-        const std::string& source_dataset_name = {});
+        const std::string& source_dataset_name = {},
+        PipelineOperatorProgressCallback progress_callback = {});
 
     static MaterializeResult Materialize(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
         DataRegistry& registry,
-        const std::string& source_dataset_name);
+        const std::string& source_dataset_name,
+        PipelineOperatorProgressCallback progress_callback = {});
 
     // Suffix used to register the transformed Arrow table when ops fire.
     // Exposed for the DataRegistry cleanup cascade and tests.
