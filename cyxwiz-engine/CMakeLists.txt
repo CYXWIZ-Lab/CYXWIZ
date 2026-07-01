@@ -1810,6 +1810,8 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/image_utils.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
+    src/core/pipeline_materializer.cpp
+    src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/datasets/kaggle_dataset.cpp
@@ -1873,6 +1875,85 @@ set_target_properties(test_pipeline_executor_operator_routing PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Pipeline operator executor/materializer parity =====
+add_executable(test_pipeline_operator_materializer_parity
+    tests/test_pipeline_operator_materializer_parity.cpp
+    src/core/arrow_dataset.cpp
+    src/core/data_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/data_convert_service.cpp
+    src/core/data_analyzer.cpp
+    src/core/dataset_base.cpp
+    src/core/duckdb_connector.cpp
+    src/core/image_utils.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/pipeline_executor.cpp
+    src/core/pipeline_materializer.cpp
+    src/core/pipeline_table_materializer.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/datasets/kaggle_dataset.cpp
+    src/core/datasets/streaming_dataset.cpp
+    src/core/node_executors/pipeline_operator_factory.cpp
+    src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/tree_model_artifact.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/decision_tree_trainer.cpp
+    src/core/node_executors/decision_tree_operator.cpp
+    src/core/node_executors/random_forest_model.cpp
+    src/core/node_executors/random_forest_trainer.cpp
+    src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/node_executors/gradient_boosting_trainer.cpp
+    src/core/node_executors/gradient_boosting_operator.cpp
+    src/core/node_executors/tree_model_predictor_operator.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/differencing_operator.cpp
+    src/core/node_executors/log_transform_operator.cpp
+    src/core/node_executors/pca_operator.cpp
+    src/core/node_executors/preprocessing_operators.cpp
+    src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/sentiment_analyzer_operator.cpp
+    src/core/node_executors/signal_processing_operators.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/node_executors/time_series_features_operator.cpp
+    src/core/node_executors/time_series_split_operator.cpp
+    src/core/node_executors/time_series_window_operator.cpp
+    src/data/data_table.cpp
+    src/plotting/stb_image_impl.cpp
+    src/plugin/registries/plugin_data_loader_registry.cpp
+)
+
+target_include_directories(test_pipeline_operator_materializer_parity PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_pipeline_operator_materializer_parity PRIVATE
+    cyxwiz-backend
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    duckdb
+    nlohmann_json::nlohmann_json
+    ${OpenCV_LIBS}
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_pipeline_operator_materializer_parity PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_pipeline_operator_materializer_parity PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: DataConvert upstream dataset input =====
 add_executable(test_data_convert_pipeline_input
     tests/test_data_convert_pipeline_input.cpp
@@ -1887,6 +1968,8 @@ add_executable(test_data_convert_pipeline_input
     src/core/image_utils.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
+    src/core/pipeline_materializer.cpp
+    src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/datasets/kaggle_dataset.cpp
@@ -2907,6 +2990,7 @@ if(CYXWIZ_ENABLE_ASAN)
 
     message(STATUS "ASan memory test enabled - run test_asan_memory to verify")
 endif()
+
 
 
 

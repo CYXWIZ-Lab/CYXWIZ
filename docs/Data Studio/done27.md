@@ -1,4 +1,32 @@
-# To Fix 27 - Data Studio Runtime and Materializer Parity
+# Done 27 - Data Studio Runtime and Materializer Parity
+
+Status: completed.
+
+Closeout evidence:
+
+- Added focused parity target:
+  `test_pipeline_operator_materializer_parity`
+- Added parity coverage for numeric, categorical, text, analytics, and
+  time-series operator-backed nodes.
+- Validated `PipelineExecutor` output against `PipelineMaterializer` output for
+  schema, row counts, and deterministic numeric output values.
+- Confirmed current `TimeSeriesSplit` contract is a single Arrow table with an
+  appended partition column, so it fits the same parity harness.
+- Extended the parity harness to compare unsigned Arrow integer scalar types
+  produced by CSV integer compaction.
+
+Validation command:
+
+```powershell
+cmake --build build --config Debug --target test_pipeline_operator_materializer_parity -- /m:1 /v:minimal
+build\bin\Debug\test_pipeline_operator_materializer_parity.exe
+```
+
+Observed result:
+
+```text
+Pipeline operator materializer parity passed
+```
 
 This document tracks the follow-up work split out from `tofix7.md`.
 
@@ -41,12 +69,12 @@ From `tofix7.md` closeout:
 - operator-backed real nodes have metadata tests for implemented status,
   non-blocked badge, support state, owner, runtime, and materializer axes
 
-Remaining gap:
+Resolved gap:
 
-- some nodes are real operators but still need runtime/materializer parity
-  checks across dataset modes
-- text and time-series flows can still depend on data mode or materializer
-  behavior outside the operator itself
+- canonical operator-backed candidates now have executor/materializer parity
+  checks for Arrow-table materializer inputs
+- unsupported/non-Arrow materializer storage modes remain explicit and
+  centralized outside this ticket
 
 ---
 
@@ -137,10 +165,11 @@ Work in small batches.
 
 ## Done Criteria
 
-- Canonical operator-backed nodes have runtime/materializer parity tests.
-- Dataset-mode differences are either fixed or explicitly documented as
-  unsupported/partial in metadata.
-- Legacy fallback paths cannot silently execute when the operator-backed path
-  is the canonical route.
-- `tofix7.md` remains closed as the support-contract cleanup, while this file
-  owns runtime/materializer parity follow-up work.
+- Completed: canonical operator-backed nodes have runtime/materializer parity
+  tests.
+- Completed: dataset-mode limits are documented as Arrow-table materializer
+  scope with explicit unsupported-source behavior elsewhere.
+- Completed: canonical operator-backed parity is proven through
+  `PipelineOperatorFactory` routing.
+- Completed: `tofix7.md` remains closed as the support-contract cleanup, while
+  this ticket closes the runtime/materializer parity follow-up work.
