@@ -1,4 +1,5 @@
 #include "graph_compiler.h"
+#include "error_codes.h"
 #include "backend_placement_capabilities.h"
 #include "data_registry.h"
 #include "arrow_dataset.h"
@@ -34,12 +35,16 @@ namespace {
 
 void AddIssue(TrainingConfiguration& config, IssueLevel level,
               const std::string& message, int node_id = -1,
-              const std::string& node_name = "") {
+              const std::string& node_name = "",
+              const std::string& error_code = "") {
     ValidationIssue issue;
     issue.level = level;
     issue.message = message;
     issue.node_id = node_id;
     issue.node_name = node_name;
+    issue.error_code = error_code.empty()
+        ? errors::Compiler::GenericIssue
+        : error_code;
     config.issues.push_back(std::move(issue));
 }
 
@@ -109,21 +114,29 @@ std::string FormatBytesForIssue(long double bytes) {
     return oss.str();
 }
 
-void ValidateTFIDFMaterializerMemory(
+std::string TextVectorizerName(gui::NodeType type) {
+    if (type == gui::NodeType::CountVectorizer) {
+        return "CountVectorizer";
+    }
+    return "TFIDFVectorizer";
+}
+
+void ValidateDenseTextVectorizerMaterializerMemory(
     TrainingConfiguration& config,
     const std::vector<gui::MLNode>& nodes) {
     if (config.dataset_name.empty()) {
         return;
     }
 
-    const gui::MLNode* tfidf_node = nullptr;
+    const gui::MLNode* vectorizer_node = nullptr;
     for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::TFIDFVectorizer) {
-            tfidf_node = &node;
+        if (node.type == gui::NodeType::TFIDFVectorizer ||
+            node.type == gui::NodeType::CountVectorizer) {
+            vectorizer_node = &node;
             break;
         }
     }
-    if (!tfidf_node) {
+    if (!vectorizer_node) {
         return;
     }
 
@@ -143,12 +156,20 @@ void ValidateTFIDFMaterializerMemory(
             sample_count = static_cast<size_t>(pq_ds->GetNumRows());
         }
     }
-    if (sample_count == 0 || full_vocab_size == 0) {
+    if (sample_count == 0) {
         return;
     }
 
     const size_t max_features =
-        ParsePositiveSizeParam(*tfidf_node, "max_features", 2000);
+        ParsePositiveSizeParam(*vectorizer_node, "max_features", 2000);
+    const std::string ngram_range =
+        vectorizer_node->parameters.count("ngram_range")
+            ? vectorizer_node->parameters.at("ngram_range")
+            : "1,1";
+    const std::string stop_words =
+        vectorizer_node->parameters.count("stop_words")
+            ? vectorizer_node->parameters.at("stop_words")
+            : "english";
     constexpr long double kLargeBoundedOutputBytes =
         2.0L * 1024.0L * 1024.0L * 1024.0L;
     constexpr long double kElementBytes = 4.0L;
@@ -162,16 +183,25 @@ void ValidateTFIDFMaterializerMemory(
     }
 
     std::ostringstream msg;
-    msg << "TFIDFVectorizer bounded output is large: rows=" << sample_count
-        << ", full_vocab=" << full_vocab_size
+    msg << TextVectorizerName(vectorizer_node->type)
+        << " dense output is large: rows=" << sample_count;
+    if (full_vocab_size > 0) {
+        msg << ", full_vocab=" << full_vocab_size;
+    } else {
+        msg << ", full_vocab=unknown";
+    }
+    msg
         << ", max_features=" << max_features
+        << ", ngram_range=" << ngram_range
+        << ", stop_words=" << stop_words
         << ", estimated Arrow feature allocation="
         << FormatBytesForIssue(estimated_bytes)
-        << ". The TF-IDF materializer is bounded by max_features, but this "
-           "wide table may still pressure host memory. Lower max_features or "
-           "train on a smaller sampled dataset if materialization is slow.";
+        << ". Dense text vectorizers are bounded by max_features, but this "
+           "wide table may still pressure host memory before training starts. "
+           "Lower max_features, use a sampled dataset, or wait for the sparse "
+           "feature path before scaling this graph.";
     AddIssue(config, IssueLevel::Warning, msg.str(),
-             tfidf_node->id, tfidf_node->name);
+             vectorizer_node->id, vectorizer_node->name);
 }
 
 bool IsLossNodeType(gui::NodeType type) {
@@ -350,7 +380,8 @@ void ValidateCrossEntropyWeightParams(
                     IssueLevel::Error,
                     "CrossEntropy class_weight=manual requires class_weights.",
                     loss_node.id,
-                    loss_node.name);
+                    loss_node.name,
+                    errors::Compiler::InvalidParameter);
                 return;
             }
         } else if (!explicit_weights) {
@@ -371,7 +402,8 @@ void ValidateCrossEntropyWeightParams(
             IssueLevel::Error,
             "CrossEntropy class_weights parse error: " + error,
             loss_node.id,
-            loss_node.name);
+            loss_node.name,
+            errors::Compiler::InvalidParameter);
         return;
     }
 
@@ -388,7 +420,8 @@ void ValidateCrossEntropyWeightParams(
                 ") does not match class/output count (" +
                 std::to_string(expected_classes) + ")",
             loss_node.id,
-            loss_node.name);
+            loss_node.name,
+            errors::Compiler::LabelOutputShapeMismatch);
     }
 }
 
@@ -415,7 +448,8 @@ void ValidateCrossEntropyLabelSmoothing(
             IssueLevel::Error,
             "CrossEntropy label_smoothing must be a finite float in [0, 1).",
             loss_node.id,
-            loss_node.name);
+            loss_node.name,
+            errors::Compiler::InvalidParameter);
     }
 }
 
@@ -441,7 +475,8 @@ void ValidateBCEWithLogitsPosWeight(
             IssueLevel::Error,
             "BCEWithLogits pos_weight must be a positive finite float.",
             loss_node.id,
-            loss_node.name);
+            loss_node.name,
+            errors::Compiler::InvalidParameter);
     }
 }
 
@@ -1348,6 +1383,9 @@ std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
         first = false;
         if (!i.node_name.empty()) {
             out << "[" << i.node_name << "] ";
+        }
+        if (!i.error_code.empty()) {
+            out << "[" << i.error_code << "] ";
         }
         out << i.message;
     }
@@ -2390,7 +2428,8 @@ void ValidateTrainingPathImplementationStatus(
                    "encoder-memory contract, shifted-token targets, causal "
                    "mask ownership, and inference/generation semantics before "
                    "it can compile truthfully.";
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                     node.name, errors::Compiler::UnsupportedTrainingNode);
             continue;
         }
 
@@ -2403,7 +2442,8 @@ void ValidateTrainingPathImplementationStatus(
                 << target_design_key
                 << "'. This graph needs first-class sequence/NER nodes and "
                    "cannot be compiled as a Dense layer.";
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                     node.name, errors::Compiler::UnsupportedTrainingNode);
             continue;
         }
 
@@ -2418,7 +2458,8 @@ void ValidateTrainingPathImplementationStatus(
                    "shifted-token targets, token-level CrossEntropy, tokenizer "
                    "packaging, and the greedy generation path before marking "
                    "the graph as a supported generation workflow.";
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                     node.name, errors::Compiler::UnsupportedTrainingNode);
             continue;
         }
 
@@ -2433,7 +2474,8 @@ void ValidateTrainingPathImplementationStatus(
                    "mapping, shape validation, freeze/unfreeze ownership, "
                    "optimizer-state compatibility, and tokenizer/preprocessor "
                    "packaging before it can compile truthfully.";
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                     node.name, errors::Compiler::UnsupportedTrainingNode);
             continue;
         }
 
@@ -2448,7 +2490,8 @@ void ValidateTrainingPathImplementationStatus(
                    "stepping loop, rollout/replay buffer schema, policy/value "
                    "loss contracts, target-network handling, and episodic "
                    "metrics before it can compile truthfully.";
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                     node.name, errors::Compiler::UnsupportedTrainingNode);
             continue;
         }
 
@@ -2543,7 +2586,8 @@ void ValidateTrainingPathImplementationStatus(
             std::ostringstream msg;
             msg << "Node '" << node.name << "' is "
                 << training_support.reason;
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                     node.name, errors::Compiler::UnsupportedTrainingNode);
             continue;
         }
 
@@ -2565,7 +2609,8 @@ void ValidateTrainingPathImplementationStatus(
         if (!metadata->brief_description.empty()) {
             msg << " (" << metadata->brief_description << ")";
         }
-        AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+        AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                 node.name, errors::Compiler::UnsupportedTrainingNode);
     }
 }
 
@@ -2584,7 +2629,8 @@ void ValidateUnsupportedTrainingControlNodes(
 
         std::ostringstream msg;
         msg << "Node '" << node.name << "' is " << training_support.reason;
-        AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+        AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                 node.name, errors::Compiler::UnsupportedTrainingNode);
     }
 }
 
@@ -2689,19 +2735,33 @@ TrainingConfiguration GraphCompiler::Compile(
     const gui::MLNode* optimizer_node = FindOptimizerNode(nodes);
 
     if (nodes.empty()) {
-        AddIssue(config, IssueLevel::Error, "Graph is empty - add nodes to create a model");
+        AddIssue(config,
+                 IssueLevel::Error,
+                 "Graph is empty - add nodes to create a model",
+                 -1,
+                 "",
+                 errors::Compiler::MissingTrainingPathNode);
     } else {
         if (!dataset_node) {
             AddIssue(config, IssueLevel::Error,
-                     "Graph must have a DataInput or DatasetInput node");
+                     "Graph must have a DataInput or DatasetInput node",
+                     -1,
+                     "",
+                     errors::Compiler::MissingTrainingPathNode);
         }
         if (!loss_node) {
             AddIssue(config, IssueLevel::Error,
-                     "Graph must have a loss function (MSELoss, CrossEntropyLoss, etc.)");
+                     "Graph must have a loss function (MSELoss, CrossEntropyLoss, etc.)",
+                     -1,
+                     "",
+                     errors::Compiler::MissingTrainingPathNode);
         }
         if (!optimizer_node) {
             AddIssue(config, IssueLevel::Error,
-                     "Graph must have an optimizer (SGD, Adam, AdamW, RMSprop, Adagrad, or NAdam)");
+                     "Graph must have an optimizer (SGD, Adam, AdamW, RMSprop, Adagrad, or NAdam)",
+                     -1,
+                     "",
+                     errors::Compiler::MissingTrainingPathNode);
         }
         bool has_model_layer = false;
         for (const auto& node : nodes) {
@@ -2709,11 +2769,17 @@ TrainingConfiguration GraphCompiler::Compile(
         }
         if (!has_model_layer) {
             AddIssue(config, IssueLevel::Error,
-                     "Graph must have at least one model layer (Dense, Conv2D, etc.)");
+                     "Graph must have at least one model layer (Dense, Conv2D, etc.)",
+                     -1,
+                     "",
+                     errors::Compiler::MissingTrainingPathNode);
         }
         if (HasCycle(nodes, links)) {
             AddIssue(config, IssueLevel::Error,
-                     "Graph contains a cycle - remove circular connections");
+                     "Graph contains a cycle - remove circular connections",
+                     -1,
+                     "",
+                     errors::Compiler::InvalidConnectivity);
         }
 
         // Pin-connectivity checks. The runtime currently ignores pin
@@ -3227,7 +3293,8 @@ TrainingConfiguration GraphCompiler::Compile(
                                                    error);
                 }
                 if (!ok) {
-                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                    AddIssue(config, IssueLevel::Error, error, node->id,
+                             node->name, errors::Compiler::TensorShapeMismatch);
                     layer.output_shape = current_shape;
                 }
             } else if (node->type == gui::NodeType::TensorPow ||
@@ -3236,7 +3303,8 @@ TrainingConfiguration GraphCompiler::Compile(
                 if (!ValidateTensorScalarMathParams(node->type,
                                                     layer.parameters,
                                                     error)) {
-                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                    AddIssue(config, IssueLevel::Error, error, node->id,
+                             node->name, errors::Compiler::InvalidParameter);
                 }
                 layer.output_shape = current_shape;
             } else if (node->type == gui::NodeType::TensorCompare ||
@@ -3246,11 +3314,13 @@ TrainingConfiguration GraphCompiler::Compile(
                     error = node->type == gui::NodeType::TensorCompare
                         ? "TensorCompare currently supports only scalar comparison; disconnect input B"
                         : "TensorLogicalMask currently supports only unary op=not; disconnect input B";
-                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                    AddIssue(config, IssueLevel::Error, error, node->id,
+                             node->name, errors::Compiler::InvalidParameter);
                 } else if (!ValidateTensorMaskParams(node->type,
                                                      layer.parameters,
                                                      error)) {
-                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                    AddIssue(config, IssueLevel::Error, error, node->id,
+                             node->name, errors::Compiler::InvalidParameter);
                 }
                 layer.output_shape = current_shape;
             } else if (node->type == gui::NodeType::TensorSum ||
@@ -3266,7 +3336,8 @@ TrainingConfiguration GraphCompiler::Compile(
                                                  current_shape,
                                                  layer.output_shape,
                                                  error)) {
-                    AddIssue(config, IssueLevel::Error, error, node->id, node->name);
+                    AddIssue(config, IssueLevel::Error, error, node->id,
+                             node->name, errors::Compiler::TensorShapeMismatch);
                     layer.output_shape = current_shape;
                 }
             } else if (node->type == gui::NodeType::TimeDistributed) {
@@ -3275,7 +3346,8 @@ TrainingConfiguration GraphCompiler::Compile(
                              IssueLevel::Error,
                              "TimeDistributed requires sequence input shape [seq_len, features]",
                              node->id,
-                             node->name);
+                             node->name,
+                             errors::Compiler::TensorShapeMismatch);
                     layer.output_shape = current_shape;
                 } else {
                     layer.output_shape = InferOutputShape(layer, current_shape);
@@ -3411,7 +3483,10 @@ TrainingConfiguration GraphCompiler::Compile(
                      config.GetLossName() +
                      " requires at least two prediction logits; "
                      "the selected model path outputs " +
-                     std::to_string(config.output_size));
+                     std::to_string(config.output_size),
+                     -1,
+                     "",
+                     errors::Compiler::LabelOutputShapeMismatch);
         }
 
         if (config.preprocessing.num_classes > 0 &&
@@ -3421,7 +3496,10 @@ TrainingConfiguration GraphCompiler::Compile(
                      config.GetLossName() + " class count (" +
                      std::to_string(config.preprocessing.num_classes) +
                      ") does not match the model output size (" +
-                     std::to_string(config.output_size) + ")");
+                     std::to_string(config.output_size) + ")",
+                     -1,
+                     "",
+                     errors::Compiler::LabelOutputShapeMismatch);
         }
 
         if (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss) {
@@ -3440,7 +3518,10 @@ TrainingConfiguration GraphCompiler::Compile(
                      std::string(loss_name) +
                      " requires a single prediction output for binary "
                      "classification; the selected model path outputs " +
-                     std::to_string(config.output_size));
+                     std::to_string(config.output_size),
+                     -1,
+                     "",
+                     errors::Compiler::LabelOutputShapeMismatch);
         }
         if (loss_node && loss_node->type == gui::NodeType::BCEWithLogits) {
             ValidateBCEWithLogitsPosWeight(config, *loss_node);
@@ -3468,7 +3549,10 @@ TrainingConfiguration GraphCompiler::Compile(
         }
         if (config.val_ratio < 1e-6f) {
             AddIssue(config, IssueLevel::Warning,
-                     "Validation split is 0 - training will run without validation metrics");
+                     "Validation split is 0 - training will run without validation metrics",
+                     -1,
+                     "",
+                     errors::Data::InvalidSplit);
         }
     }
 
@@ -3478,7 +3562,10 @@ TrainingConfiguration GraphCompiler::Compile(
     if (config.batch_size <= 0) {
         AddIssue(config, IssueLevel::Error,
                  "batch_size must be positive (got " +
-                 std::to_string(config.batch_size) + ")");
+                 std::to_string(config.batch_size) + ")",
+                 -1,
+                 "",
+                 errors::Compiler::InvalidParameter);
     } else if (dataset_node && !config.dataset_name.empty()) {
         auto& reg = DataRegistry::Instance();
         int64_t total_rows = 0;
@@ -3493,17 +3580,23 @@ TrainingConfiguration GraphCompiler::Compile(
                 AddIssue(config, IssueLevel::Error,
                          "batch_size (" + std::to_string(config.batch_size) +
                          ") is larger than the train split (" +
-                         std::to_string(train_rows) + " rows)");
+                         std::to_string(train_rows) + " rows)",
+                         -1,
+                         "",
+                         errors::Memory::BatchTooLarge);
             } else if (config.batch_size > train_rows / 2) {
                 AddIssue(config, IssueLevel::Warning,
                          "batch_size (" + std::to_string(config.batch_size) +
                          ") is more than half the train split (" +
-                         std::to_string(train_rows) + " rows) - few iterations per epoch");
+                         std::to_string(train_rows) + " rows) - few iterations per epoch",
+                         -1,
+                         "",
+                         errors::Memory::BatchTooLarge);
             }
         }
     }
 
-    ValidateTFIDFMaterializerMemory(config, nodes);
+    ValidateDenseTextVectorizerMaterializerMemory(config, nodes);
 
     // === Domain detection ===
     // The DataInput node carries file_category (tabular / image / audio /
@@ -3554,7 +3647,8 @@ TrainingConfiguration GraphCompiler::Compile(
                 << PreprocessingDomainLabel(config.preprocessing_domain)
                 << ". Use a matching DataInput category or replace this "
                    "preprocessing node.";
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                     node.name, errors::Data::ColumnTypeMismatch);
         }
 
         // is_image kept as a local for the image-specific checks below
@@ -3741,6 +3835,7 @@ TrainingConfiguration GraphCompiler::Compile(
         const std::string prefix =
             std::string("  [") + IssueLevelLabel(issue.level) + "] " +
             (issue.node_name.empty() ? "" : ("[" + issue.node_name + "] ")) +
+            (issue.error_code.empty() ? "" : ("[" + issue.error_code + "] ")) +
             issue.message;
         switch (issue.level) {
             case IssueLevel::Error:
@@ -4771,7 +4866,8 @@ void GraphCompiler::ValidateRequiredInputsConnected(
                 << "' on node '" << node.name
                 << "' has no incoming connection";
             AddIssue(config, IssueLevel::Error, msg.str(),
-                     node.id, node.name);
+                     node.id, node.name,
+                     errors::Compiler::InvalidConnectivity);
         }
     }
 }
@@ -4805,7 +4901,8 @@ void GraphCompiler::ValidateRequiredOutputsConnected(
                 << "' has no outgoing connection - the produced data is "
                    "never consumed";
             AddIssue(config, IssueLevel::Error, msg.str(),
-                     node.id, node.name);
+                     node.id, node.name,
+                     errors::Compiler::InvalidConnectivity);
         }
     }
 }
@@ -4948,7 +5045,8 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
                    "DataLoader.Labels). The model is being trained "
                    "against the wrong stream.";
             AddIssue(config, IssueLevel::Error, msg.str(),
-                     node.id, node.name);
+                     node.id, node.name,
+                     errors::Compiler::InvalidConnectivity);
         }
     }
 }
@@ -5083,7 +5181,8 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
                    "wired by mistake, or a raw DataInput tensor with "
                    "no model in between).";
             AddIssue(config, IssueLevel::Error, msg.str(),
-                     node.id, node.name);
+                     node.id, node.name,
+                     errors::Compiler::InvalidConnectivity);
         }
     }
 }
@@ -5218,7 +5317,8 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
                    "backprop from a non-loss tensor — training is "
                    "meaningless.";
             AddIssue(config, IssueLevel::Error, msg.str(),
-                     node.id, node.name);
+                     node.id, node.name,
+                     errors::Compiler::InvalidConnectivity);
         }
     }
 }

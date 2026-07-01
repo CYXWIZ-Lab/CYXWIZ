@@ -14,6 +14,7 @@
 #include <fstream>
 #include <limits>
 #include <numeric>
+#include <sstream>
 
 namespace cyxwiz {
 
@@ -24,6 +25,28 @@ bool IsSequenceMetricName(const std::string& name) {
            name == "Val Token Accuracy" ||
            name == "Train Entity F1" ||
            name == "Val Entity F1";
+}
+
+std::string FormatTraceBytes(uint64_t bytes) {
+    std::ostringstream out;
+    out.setf(std::ios::fixed);
+    if (bytes >= 1024ull * 1024ull * 1024ull) {
+        out.precision(2);
+        out << static_cast<double>(bytes) /
+                   static_cast<double>(1024ull * 1024ull * 1024ull)
+            << " GB";
+    } else if (bytes >= 1024ull * 1024ull) {
+        out.precision(1);
+        out << static_cast<double>(bytes) /
+                   static_cast<double>(1024ull * 1024ull)
+            << " MB";
+    } else if (bytes >= 1024ull) {
+        out.precision(1);
+        out << static_cast<double>(bytes) / 1024.0 << " KB";
+    } else {
+        out << bytes << " B";
+    }
+    return out.str();
 }
 
 const char* ClassifyTrainingWarning(const std::string& text) {
@@ -112,6 +135,7 @@ void TrainingPlotPanel::Render() {
     // Render training status (always visible)
     RenderTrainingStatus();
     RenderActiveTaskSummary();
+    RenderMaterializationSummary();
     RenderTrainingWarningSummary();
 
     ImGui::Separator();
@@ -279,6 +303,10 @@ void TrainingPlotPanel::Clear() {
     val_accuracy_.epochs.clear();
     val_accuracy_.values.clear();
     custom_metrics_.clear();
+    materialization_events_.clear();
+    materialization_output_dataset_.clear();
+    materialization_status_.clear();
+    materialization_operators_applied_ = 0;
 
     // Reset training state
     is_training_ = false;
@@ -298,11 +326,18 @@ void TrainingPlotPanel::SetTrainingState(bool is_training, int current_epoch, in
     is_training_ = is_training;
     if (is_training) {
         is_preparing_ = false;
+        preparation_failed_ = false;
         preparation_status_message_.clear();
+        preparation_error_message_.clear();
         preparation_progress_ = 0.0f;
+        terminal_status_.clear();
+        terminal_reason_.clear();
+        total_training_time_ = 0.0f;
     }
     current_epoch_ = current_epoch;
-    total_epochs_ = total_epochs;
+    if (total_epochs > 0) {
+        total_epochs_ = total_epochs;
+    }
     last_epoch_time_ = epoch_time_seconds;
     samples_per_second_ = samples_per_second;
 
@@ -326,6 +361,11 @@ void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds,
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     is_training_ = false;
+    is_preparing_ = false;
+    preparation_failed_ = false;
+    preparation_status_message_.clear();
+    preparation_error_message_.clear();
+    preparation_progress_ = 0.0f;
     total_training_time_ = total_time_seconds;
     terminal_status_ = terminal_status;
     terminal_reason_ = terminal_reason;
@@ -346,6 +386,12 @@ void TrainingPlotPanel::SetBatchProgress(int current_epoch, int current_batch,
     // Advance epoch counter as soon as the first batch of that epoch fires,
     // so the UI doesn't show "Epoch 0/N" while batch N of epoch 1 is running.
     // Don't regress the counter (epoch_callback may have already set it higher).
+    is_training_ = true;
+    is_preparing_ = false;
+    preparation_failed_ = false;
+    preparation_status_message_.clear();
+    preparation_error_message_.clear();
+    preparation_progress_ = 0.0f;
     if (current_epoch > current_epoch_) {
         current_epoch_ = current_epoch;
     }
@@ -435,6 +481,10 @@ void TrainingPlotPanel::SetPreparationFailed(
     const std::string& error_message) {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
+    if (is_training_) {
+        return;
+    }
+
     is_preparing_ = false;
     is_training_ = false;
     preparation_failed_ = true;
@@ -446,15 +496,73 @@ void TrainingPlotPanel::SetPreparationFailed(
     terminal_reason_ = error_message;
 }
 
+void TrainingPlotPanel::RecordMaterializationProgress(
+    const std::string& stage,
+    const std::string& message,
+    float progress,
+    uint64_t estimated_memory_bytes,
+    uint64_t processed_items,
+    uint64_t total_items,
+    int node_id,
+    const std::string& node_name) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+
+    MaterializationProgress event;
+    event.stage = stage.empty() ? "Materializing" : stage;
+    event.message = message.empty() ? event.stage : message;
+    event.node_name = node_name;
+    event.node_id = node_id;
+    event.progress = std::clamp(progress, 0.0f, 1.0f);
+    event.estimated_memory_bytes = estimated_memory_bytes;
+    event.processed_items = processed_items;
+    event.total_items = total_items;
+
+    if (!materialization_events_.empty() &&
+        materialization_events_.back().stage == event.stage) {
+        materialization_events_.back() = std::move(event);
+    } else {
+        materialization_events_.push_back(std::move(event));
+        if (materialization_events_.size() > 24) {
+            materialization_events_.erase(materialization_events_.begin());
+        }
+    }
+}
+
+void TrainingPlotPanel::SetMaterializationComplete(
+    const std::string& output_dataset,
+    int operators_applied,
+    const std::string& status) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+
+    materialization_output_dataset_ = output_dataset;
+    materialization_status_ = status.empty() ? "completed" : status;
+    materialization_operators_applied_ = operators_applied;
+
+    MaterializationProgress event;
+    event.stage = "Complete";
+    event.message = "Materialization completed";
+    event.progress = 1.0f;
+    materialization_events_.push_back(std::move(event));
+    if (materialization_events_.size() > 24) {
+        materialization_events_.erase(materialization_events_.begin());
+    }
+}
+
 void TrainingPlotPanel::RenderLossPlot() {
-    // Calculate plot height based on available space (at least 300px, or half available minus some padding)
+    // Keep loss and accuracy visible together during active training. If both
+    // plots are enabled, each plot shrinks instead of pushing the other below
+    // the fold; the user needs both curves to judge overfitting.
     float available_height = ImGui::GetContentRegionAvail().y;
-    float plot_height = std::max(300.0f, (available_height - 100.0f) / 2.0f);
+    const bool show_pair =
+        show_accuracy_plot_ && !train_accuracy_.values.empty();
+    float plot_height = show_pair
+        ? std::clamp((available_height - 36.0f) * 0.50f, 300.0f, 420.0f)
+        : std::max(340.0f, available_height - 90.0f);
 
     if (ImPlot::BeginPlot("Loss", ImVec2(-1, plot_height))) {
         ImPlot::SetupAxes("Epoch", "Loss", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
 
-        if (auto_scale_ && !train_loss_.epochs.empty()) {
+        if (auto_scale_ && follow_current_epoch_ && !train_loss_.epochs.empty()) {
             const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_loss_);
             ImPlot::SetupAxisLimits(ImAxis_X1, min_epoch, max_epoch, ImGuiCond_Always);
 
@@ -465,6 +573,10 @@ void TrainingPlotPanel::RenderLossPlot() {
                 std::max(0.0, range.min - padding),
                 range.max + padding,
                 ImGuiCond_Always);
+        } else if (auto_scale_ && !train_loss_.epochs.empty()) {
+            const double max_epoch = std::max(1.0, train_loss_.epochs.back());
+            ImPlot::SetupAxisLimits(
+                ImAxis_X1, 0.0, max_epoch + 1.0, ImGuiCond_Once);
         }
 
         // Plot training loss
@@ -510,14 +622,19 @@ void TrainingPlotPanel::RenderLossPlot() {
 }
 
 void TrainingPlotPanel::RenderAccuracyPlot() {
-    // Calculate plot height based on available space (at least 300px, or remaining available space)
+    // Share the dashboard area with the loss plot instead of requiring a tall
+    // window before accuracy becomes visible.
     float available_height = ImGui::GetContentRegionAvail().y;
-    float plot_height = std::max(300.0f, available_height - 80.0f);
+    const bool show_pair =
+        show_loss_plot_ && !train_loss_.values.empty();
+    float plot_height = show_pair
+        ? std::clamp(available_height - 40.0f, 300.0f, 420.0f)
+        : std::max(340.0f, available_height - 90.0f);
 
     if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, plot_height))) {
         ImPlot::SetupAxes("Epoch", "Accuracy (%)", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
 
-        if (auto_scale_ && !train_accuracy_.epochs.empty()) {
+        if (auto_scale_ && follow_current_epoch_ && !train_accuracy_.epochs.empty()) {
             const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_accuracy_);
             ImPlot::SetupAxisLimits(ImAxis_X1, min_epoch, max_epoch, ImGuiCond_Always);
 
@@ -528,6 +645,10 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
                 std::max(0.0, range.min - padding),
                 std::min(100.0, range.max + padding),
                 ImGuiCond_Always);
+        } else if (auto_scale_ && !train_accuracy_.epochs.empty()) {
+            const double max_epoch = std::max(1.0, train_accuracy_.epochs.back());
+            ImPlot::SetupAxisLimits(
+                ImAxis_X1, 0.0, max_epoch + 1.0, ImGuiCond_Once);
         }
 
         // Plot training accuracy
@@ -1015,6 +1136,97 @@ void TrainingPlotPanel::RenderActiveTaskSummary() {
 #endif
 }
 
+void TrainingPlotPanel::RenderMaterializationSummary() {
+    if (materialization_events_.empty()) {
+        return;
+    }
+
+    ImGui::Spacing();
+    if (!ImGui::CollapsingHeader("Materialization",
+                                 ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
+
+    const auto& latest = materialization_events_.back();
+    ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.0f, 1.0f),
+                       "Latest stage: %s", latest.stage.c_str());
+
+    if (!latest.node_name.empty()) {
+        ImGui::TextWrapped("Node: %s", latest.node_name.c_str());
+    }
+
+    if (!materialization_status_.empty()) {
+        const ImVec4 color = materialization_status_ == "completed"
+            ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
+            : ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
+        ImGui::TextColored(color, "Status: %s", materialization_status_.c_str());
+    }
+    if (!materialization_output_dataset_.empty()) {
+        ImGui::TextWrapped("Output dataset: %s",
+                           materialization_output_dataset_.c_str());
+    }
+    if (materialization_operators_applied_ > 0) {
+        ImGui::Text("Operators: %d applied",
+                    materialization_operators_applied_);
+    }
+
+    ImGui::TextWrapped("Message: %s", latest.message.c_str());
+    ImGui::ProgressBar(latest.progress, ImVec2(-1.0f, 0.0f));
+
+    if (latest.estimated_memory_bytes > 0 ||
+        latest.total_items > 0 ||
+        latest.processed_items > 0) {
+        if (latest.estimated_memory_bytes > 0) {
+            ImGui::Text("Estimated memory: %s",
+                        FormatTraceBytes(latest.estimated_memory_bytes).c_str());
+        }
+        if (latest.total_items > 0) {
+            ImGui::Text("Work: %llu / %llu",
+                        static_cast<unsigned long long>(latest.processed_items),
+                        static_cast<unsigned long long>(latest.total_items));
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Stages");
+    ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
+    int stage_index = 1;
+    for (const auto& event : materialization_events_) {
+        ImGui::PushID(stage_index);
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.85f, 0.92f, 1.0f, 1.0f),
+                           "%d. %s", stage_index, event.stage.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%.0f%%)", event.progress * 100.0f);
+
+        if (!event.node_name.empty()) {
+            ImGui::TextWrapped("Node: %s", event.node_name.c_str());
+        }
+        if (event.estimated_memory_bytes > 0) {
+            ImGui::Text("Estimated memory: %s",
+                        FormatTraceBytes(event.estimated_memory_bytes).c_str());
+        }
+        if (event.total_items > 0 || event.processed_items > 0) {
+            if (event.total_items > 0) {
+                ImGui::Text("Work: %llu / %llu",
+                            static_cast<unsigned long long>(event.processed_items),
+                            static_cast<unsigned long long>(event.total_items));
+            } else {
+                ImGui::Text("Processed: %llu",
+                            static_cast<unsigned long long>(event.processed_items));
+            }
+        }
+        if (!event.message.empty()) {
+            ImGui::TextWrapped("Message: %s", event.message.c_str());
+        }
+        ImGui::ProgressBar(event.progress, ImVec2(-1.0f, 0.0f));
+        ImGui::Separator();
+        ImGui::PopID();
+        ++stage_index;
+    }
+    ImGui::PopTextWrapPos();
+}
+
 void TrainingPlotPanel::RenderTrainingWarningSummary() {
 #ifndef CYXWIZ_PLOTTING_MODULE
     const auto trace = TrainingTraceCollector::Instance().Snapshot();
@@ -1212,17 +1424,17 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     ImGui::BeginGroup();
 
     // Status indicator
-    if (preparation_failed_) {
+    if (is_training_) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
+        ImGui::Text("TRAINING");
+        ImGui::PopStyleColor();
+    } else if (preparation_failed_) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.30f, 1.0f));
         ImGui::Text("PREPARATION FAILED");
         ImGui::PopStyleColor();
     } else if (is_preparing_) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.75f, 1.0f, 1.0f));
         ImGui::Text("PREPARING");
-        ImGui::PopStyleColor();
-    } else if (is_training_) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
-        ImGui::Text("TRAINING");
         ImGui::PopStyleColor();
     } else if (total_training_time_ > 0) {
         const bool early_stopped = terminal_status_ == "early_stopped";
@@ -1271,9 +1483,15 @@ void TrainingPlotPanel::RenderTrainingStatus() {
             ImGui::Text("Final epoch state: %d / %d",
                         current_epoch_, total_epochs_);
         } else {
-            ImGui::Text("Epoch %d / %d", current_epoch_, total_epochs_);
+            const int display_epoch = std::max(1, current_epoch_);
+            const int remaining_epochs =
+                std::max(0, total_epochs_ - display_epoch);
+            ImGui::Text("Epoch %d / %d (%d remaining)",
+                        display_epoch, total_epochs_, remaining_epochs);
         }
         ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f));
+    } else if (is_training_) {
+        ImGui::Text("Epoch %d / ?", std::max(1, current_epoch_));
     }
 
     if (!is_training_ && total_training_time_ > 0) {

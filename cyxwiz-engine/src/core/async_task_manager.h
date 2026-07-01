@@ -91,7 +91,9 @@ protected:
     bool ShouldStop() const { return cancel_requested_.load(); }
 
     // Mark task as complete or failed
-    void MarkCompleted();
+    void MarkCompleted(
+        const std::string& message = "Completed",
+        const std::string& status = "completed");
     void MarkFailed(const std::string& error);
 
 private:

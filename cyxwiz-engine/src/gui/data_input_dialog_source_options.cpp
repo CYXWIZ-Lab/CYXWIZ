@@ -45,7 +45,7 @@ void DataInputDialog::RenderSourceSelector() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
 
-    ImGui::TextColored(accent, "DATA SOURCE");
+    ImGui::TextColored(accent, "Data source");
     ImGui::Spacing();
 
     // Source type radio buttons in a row
@@ -84,7 +84,9 @@ void DataInputDialog::RenderFileSource() {
     ImVec4 info_color = style.Colors[ImGuiCol_TextDisabled];
 
     // File category selector
-    ImGui::TextColored(accent, "File Type");
+    ImGui::TextColored(accent, "File type");
+    ImGui::TextColored(info_color,
+                       "Pick the data contract this node should expose to the training graph.");
     ImGui::Spacing();
 
     int cat_idx = static_cast<int>(file_category_);
@@ -119,8 +121,6 @@ void DataInputDialog::RenderFileSource() {
     }
 
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
 
     // Single-file path section — shown for Tabular and for Text in
     // SingleFile layout mode. In CorpusSubdirs mode Text uses a folder
@@ -135,15 +135,20 @@ void DataInputDialog::RenderFileSource() {
         (file_category_ == FileCategory::Text &&
          text_layout_ == TextLayout::SingleFile);
     if (show_file_picker) {
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, style.FrameRounding);
-        if (ImGui::BeginChild("FileSelection", ImVec2(0, 100), true)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.08f, 0.14f, 0.60f));
+        if (ImGui::BeginChild("FileSelection", ImVec2(0, 118), false,
+                              ImGuiWindowFlags_NoScrollbar |
+                                  ImGuiWindowFlags_NoScrollWithMouse)) {
             ImGui::TextColored(accent, "Input File");
-            ImGui::Separator();
+            ImGui::SameLine();
+            ImGui::TextColored(info_color, "Select the source file used by materialization and training.");
             ImGui::Spacing();
 
             // File path input
             ImGui::Text("Path:");
-            ImGui::SameLine(60);
+            ImGui::SameLine(68);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
             if (ImGui::InputText("##filepath", file_path_, sizeof(file_path_))) {
@@ -176,7 +181,8 @@ void DataInputDialog::RenderFileSource() {
             }
         }
         ImGui::EndChild();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
     }
 
     ImGui::Spacing();

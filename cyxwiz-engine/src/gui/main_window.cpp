@@ -17,6 +17,7 @@
 #include "dock_style.h"
 #include "icons.h"
 #include "theme.h"
+#include "../core/error_codes.h"
 #include "../core/keyboard_shortcuts.h"
 #include "../core/sequence_arrow_batcher.h"
 #include "panels/toolbar.h"
@@ -2989,7 +2990,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             const cyxwiz::IssueLevel lvl = strict
                 ? cyxwiz::IssueLevel::Error
                 : cyxwiz::IssueLevel::Warning;
-            compile_result_issues_.push_back({lvl, -1, "", msg});
+            compile_result_issues_.push_back(
+                {lvl, -1, "", msg, cyxwiz::errors::Ui::InvalidWorkflowState});
             if (strict) {
                 compile_result_success_ = false;
                 compile_result_mode_ = CompileResultMode::BlockedTrain;
@@ -3114,6 +3116,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             issue.message = launch_result.status_detail.empty()
                 ? launch_result.error_message
                 : launch_result.status_detail;
+            issue.error_code = cyxwiz::errors::Training::InvalidTrainingSetup;
             compile_result_issues_.push_back(std::move(issue));
             show_compile_result_popup_ = true;
         }
@@ -3138,6 +3141,13 @@ void MainWindow::CompileGraphAndReport() {
         compile_result_message_ = "Node editor is not available.";
         compile_result_summary_.clear();
         compile_result_issues_.clear();
+        compile_result_issues_.push_back({
+            cyxwiz::IssueLevel::Error,
+            -1,
+            "",
+            compile_result_message_,
+            cyxwiz::errors::Ui::InvalidWorkflowState
+        });
         compile_result_backend_placements_.clear();
         show_compile_result_popup_ = true;
         return;
@@ -3157,6 +3167,13 @@ void MainWindow::LocalDebugGraphAndReport() {
         compile_result_message_ = "Node editor is not available.";
         compile_result_summary_.clear();
         compile_result_issues_.clear();
+        compile_result_issues_.push_back({
+            cyxwiz::IssueLevel::Error,
+            -1,
+            "",
+            compile_result_message_,
+            cyxwiz::errors::Ui::InvalidWorkflowState
+        });
         compile_result_backend_placements_.clear();
         show_compile_result_popup_ = true;
         return;
@@ -3191,7 +3208,8 @@ void MainWindow::LocalDebugGraphAndReport() {
     } catch (const std::exception& e) {
         compile_result_issues_.push_back(
             {cyxwiz::IssueLevel::Error, -1, "",
-             std::string("Recompile threw: ") + e.what()});
+             std::string("Recompile threw: ") + e.what(),
+             cyxwiz::errors::Compiler::InvariantViolation});
         compile_result_success_ = false;
         compile_result_mode_ = CompileResultMode::BlockedDebug;
         show_compile_result_popup_ = true;
@@ -3413,7 +3431,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     } catch (const std::exception& e) {
         session.failure_summary = std::string("Compile threw: ") + e.what();
         session.success = false;
-        session.issues.push_back({cyxwiz::IssueLevel::Error, -1, "", session.failure_summary});
+        session.issues.push_back({
+            cyxwiz::IssueLevel::Error,
+            -1,
+            "",
+            session.failure_summary,
+            cyxwiz::errors::Compiler::InvariantViolation
+        });
         compile_summary = session.failure_summary;
     }
 
@@ -3594,7 +3618,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     } catch (const std::exception& e) {
         session.failure_summary = std::string("Debug run threw: ") + e.what();
         session.success = false;
-        session.issues.push_back({cyxwiz::IssueLevel::Error, -1, "", session.failure_summary});
+        session.issues.push_back({
+            cyxwiz::IssueLevel::Error,
+            -1,
+            "",
+            session.failure_summary,
+            cyxwiz::errors::Training::TrainingExecutionFailed
+        });
         session.studio_events.push_back({
             run_id, "", session.graph_hash, -1,
             "LocalDebug", "failed", session.failure_summary
@@ -3772,6 +3802,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         cyxwiz::ValidationIssue exc_issue;
         exc_issue.level = cyxwiz::IssueLevel::Error;
         exc_issue.message = std::string("Compilation threw an exception: ") + e.what();
+        exc_issue.error_code = cyxwiz::errors::Compiler::InvariantViolation;
         compile_result_issues_.push_back(std::move(exc_issue));
         spdlog::error("BuildCompileResult exception: {}", e.what());
     } catch (...) {
@@ -3779,6 +3810,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         cyxwiz::ValidationIssue exc_issue;
         exc_issue.level = cyxwiz::IssueLevel::Error;
         exc_issue.message = "Compilation threw an unknown exception";
+        exc_issue.error_code = cyxwiz::errors::Compiler::InvariantViolation;
         compile_result_issues_.push_back(std::move(exc_issue));
         spdlog::error("BuildCompileResult unknown exception");
     }
@@ -3927,6 +3959,10 @@ void MainWindow::RenderCompileResultPopup() {
                         if (!issue.node_name.empty()) {
                             ImGui::SameLine();
                             ImGui::TextDisabled("%s", issue.node_name.c_str());
+                        }
+                        if (!issue.error_code.empty()) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("%s", issue.error_code.c_str());
                         }
                         ImGui::TextWrapped("%s", issue.message.c_str());
                         ImGui::Spacing();

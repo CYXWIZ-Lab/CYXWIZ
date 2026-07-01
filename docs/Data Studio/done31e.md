@@ -1,8 +1,8 @@
-# tofix31e - Import dialog inspection-only controls
+# done31e - Import dialog inspection-only controls
 
 ## Scope
 
-This is the fifth small ticket extracted from `tofix31.md`.
+This is the fifth completed small ticket extracted from `tofix31.md`.
 
 The goal is to remove remaining UI affordances that imply the import dialog can
 load trainable checkpoint state. The dialog remains an inspection and

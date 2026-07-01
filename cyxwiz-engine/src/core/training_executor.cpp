@@ -1,6 +1,7 @@
 #include "training_executor.h"
 #include "checkpoint_manager.h"
 #include "crash_run_recorder.h"
+#include "error_codes.h"
 #include <cyxwiz/debug_hooks.h>
 #include "training_trace_collector.h"
 #include "model_builder.h"
@@ -168,27 +169,43 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     if (config_.sequence_batch.enabled &&
         mode_ != DatasetMode::SequenceExternal) {
         spdlog::error("TrainingExecutor: {}",
-                      SequenceBatchRuntimeUnsupportedMessage());
+                      errors::FormatError(
+                          errors::Runtime::UnsupportedNode,
+                          SequenceBatchRuntimeUnsupportedMessage()));
         return false;
     }
     if (mode_ == DatasetMode::SequenceExternal) {
         if (!config_.sequence_batch.enabled) {
-            spdlog::error("TrainingExecutor: sequence batch config is not enabled");
+            spdlog::error("TrainingExecutor: {}",
+                          errors::FormatError(
+                              errors::Training::InvalidTrainingSetup,
+                              "sequence batch config is not enabled"));
             return false;
         }
         if (!sequence_batcher_) {
-            spdlog::error("TrainingExecutor: sequence batcher is null");
+            spdlog::error("TrainingExecutor: {}",
+                          errors::FormatError(
+                              errors::Training::InvalidTrainingSetup,
+                              "sequence batcher is null"));
             return false;
         }
         if (sequence_id_to_label_.empty()) {
-            spdlog::error("TrainingExecutor: sequence label vocabulary is empty");
+            spdlog::error("TrainingExecutor: {}",
+                          errors::FormatError(
+                              errors::Data::RequiredLabelColumnMissing,
+                              "sequence label vocabulary is empty"));
             return false;
         }
     }
 
     auto built = BuildExecutableFromConfig(config_);
     if (!built.ok()) {
-        spdlog::error("TrainingExecutor: Failed to build model from config");
+        spdlog::error("TrainingExecutor: {}",
+                      built.error_message.empty()
+                          ? errors::FormatError(
+                                errors::Training::ModelBuildFailed,
+                                "Failed to build model from config")
+                          : built.error_message);
         return false;
     }
     model_ = std::move(built.model);
@@ -216,7 +233,10 @@ void TrainingExecutor::Train(
     try {
         // Initialize
         if (!Initialize(batch_size)) {
-            spdlog::error("TrainingExecutor: Failed to initialize");
+            spdlog::error("TrainingExecutor: {}",
+                          errors::FormatError(
+                              errors::Training::InvalidTrainingSetup,
+                              "Failed to initialize"));
             is_training_.store(false);
             return;
         }
@@ -452,8 +472,15 @@ void TrainingExecutor::Train(
         }
     });
     const auto last_run = CrashRunRecorder::LoadLastRun();
-    TrainingTraceCollector::Instance().StartRun(
-        last_run ? last_run->run_id : "training-run");
+    const auto trace_snapshot = TrainingTraceCollector::Instance().Snapshot();
+    if (!trace_snapshot.available || trace_snapshot.status != "running") {
+        TrainingTraceCollector::Instance().StartRun(
+            last_run ? last_run->run_id : "training-run");
+    } else {
+        TrainingTraceCollector::Instance().RecordRuntimeEvent(
+            "TrainingLoop",
+            "Training loop attached to existing setup trace");
+    }
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
 
@@ -836,18 +863,25 @@ void TrainingExecutor::Train(
 
     spdlog::info("TrainingExecutor: Training complete");
     } catch (const std::exception& e) {
-        CrashRunRecorder::Instance().MarkFailed(e.what());
+        const std::string coded_error = errors::FormatError(
+            errors::Training::TrainingExecutionFailed,
+            "Training failed",
+            e.what());
+        CrashRunRecorder::Instance().MarkFailed(coded_error);
         TrainingTraceCollector::Instance().FinishRun("failed");
         BackendDebugHooks::SetDebugEventCallback({});
         is_training_.store(false);
-        spdlog::error("TrainingExecutor: Training failed: {}", e.what());
+        spdlog::error("TrainingExecutor: {}", coded_error);
         throw;
     } catch (...) {
-        CrashRunRecorder::Instance().MarkFailed("unknown native exception");
+        const std::string coded_error = errors::FormatError(
+            errors::Training::TrainingExecutionFailed,
+            "Training failed with unknown native exception");
+        CrashRunRecorder::Instance().MarkFailed(coded_error);
         TrainingTraceCollector::Instance().FinishRun("failed");
         BackendDebugHooks::SetDebugEventCallback({});
         is_training_.store(false);
-        spdlog::error("TrainingExecutor: Training failed with unknown exception");
+        spdlog::error("TrainingExecutor: {}", coded_error);
         throw;
     }
 }

@@ -88,14 +88,16 @@ void AsyncTask::ReportProgress(float progress, const std::string& message) {
         "running");
 }
 
-void AsyncTask::MarkCompleted() {
+void AsyncTask::MarkCompleted(
+    const std::string& message,
+    const std::string& status) {
     state_.store(TaskState::Completed);
     progress_.store(1.0f);
     end_time_ = std::chrono::steady_clock::now();
 
     {
         std::lock_guard<std::mutex> lock(message_mutex_);
-        status_message_ = "Completed";
+        status_message_ = message;
     }
 
     TrainingTraceCollector::Instance().RecordTaskProgress(
@@ -103,9 +105,9 @@ void AsyncTask::MarkCompleted() {
         name_,
         "TaskCompleted",
         1.0f,
-        "Completed",
-        "completed");
-    spdlog::info("Task '{}' (ID: {}) completed", name_, id_);
+        message,
+        status);
+    spdlog::info("Task '{}' (ID: {}) completed: {}", name_, id_, message);
 }
 
 void AsyncTask::MarkFailed(const std::string& error) {

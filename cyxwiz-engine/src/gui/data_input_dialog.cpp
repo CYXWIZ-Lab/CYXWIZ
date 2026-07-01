@@ -272,6 +272,20 @@ void DataInputDialog::RenderContent() {
     // it to the dialog/node state. Cheap when no load is in flight.
     PollAsyncLoadResult();
 
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+    const ImVec4 muted = style.Colors[ImGuiCol_TextDisabled];
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 8.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
+
+    ImGui::TextColored(accent, "Connect data");
+    ImGui::TextColored(muted,
+        "Choose a source, inspect the contract, then apply it to this DataInput node.");
+    ImGui::Spacing();
+    RenderSourceSelector();
+    ImGui::Spacing();
+
     // KNIME-style tab bar at TOP based on source type
     if (source_type_ == SourceType::File) {
         if (ImGui::BeginTabBar("DataInputTabs", ImGuiTabBarFlags_None)) {
@@ -344,7 +358,6 @@ void DataInputDialog::RenderContent() {
     //   3. otherwise -> nothing
     if (is_loading_async_) {
         ImGui::Spacing();
-        ImGui::Separator();
         ImGui::Spacing();
 
         ImVec4 loading_color(0.3f, 0.6f, 1.0f, 1.0f);
@@ -372,7 +385,6 @@ void DataInputDialog::RenderContent() {
                             "the load continues in the background.");
     } else if (apply_status_timer_ > 0.0f) {
         ImGui::Spacing();
-        ImGui::Separator();
         ImGui::Spacing();
 
         // Fade out effect
@@ -400,21 +412,15 @@ void DataInputDialog::RenderContent() {
 
     // Dataset summary
     ImGui::Spacing();
-    ImGui::Separator();
     ImGui::Spacing();
     RenderDatasetSummaryPanel();
 
     // Preview section
     ImGui::Spacing();
-    ImGui::Separator();
     ImGui::Spacing();
     RenderPreviewPanel();
-
-    // Source type selector at BOTTOM
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    RenderSourceSelector();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
 }
 
 void DataInputDialog::UnloadDataset() {

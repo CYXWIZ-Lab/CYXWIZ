@@ -1,6 +1,7 @@
 #include "text_preprocessing_tracer.h"
 
 #include "data_registry.h"
+#include "error_codes.h"
 #include "formats/text_dataset.h"
 #include <algorithm>
 #include <spdlog/spdlog.h>
@@ -140,7 +141,16 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         record.status = "failed";
         record.node_name = "TextDataset";
         record.node_type = "TextDataset";
-        record.payload["message"] = "Text dataset is not registered: " + config.dataset_name;
+        record.payload["message"] =
+            "Text dataset is not registered: " + config.dataset_name;
+        record.payload["error_code"] = errors::Runtime::InputDatasetMissing;
+        record.issues.push_back({
+            IssueLevel::Error,
+            -1,
+            "TextDataset",
+            record.payload["message"].get<std::string>(),
+            errors::Runtime::InputDatasetMissing
+        });
         traces.push_back(std::move(record));
         return traces;
     }
@@ -157,6 +167,14 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
             record.node_name = "TextDataset";
             record.node_type = "TextDataset";
             record.payload["message"] = "Text dataset has no samples.";
+            record.payload["error_code"] = errors::Data::RowCountMismatch;
+            record.issues.push_back({
+                IssueLevel::Error,
+                -1,
+                "TextDataset",
+                "Text dataset has no samples.",
+                errors::Data::RowCountMismatch
+            });
             traces.push_back(std::move(record));
             return traces;
         }
@@ -170,8 +188,16 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
             record.node_type = "TextDataset";
             record.payload["message"] =
                 "Selected sample index is outside the text dataset.";
+            record.payload["error_code"] = errors::Runtime::InvalidParameter;
             record.payload["sample_index"] = sample_index;
             record.payload["dataset_size"] = dataset.Size();
+            record.issues.push_back({
+                IssueLevel::Error,
+                -1,
+                "TextDataset",
+                "Selected sample index is outside the text dataset.",
+                errors::Runtime::InvalidParameter
+            });
             traces.push_back(std::move(record));
             return traces;
         }
@@ -247,7 +273,8 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
                 IssueLevel::Warning,
                 vocab_record.node_id,
                 vocab_record.node_name,
-                "High unknown-token ratio in selected text sample."
+                "High unknown-token ratio in selected text sample.",
+                errors::Data::VocabularyCoverageWarning
             });
         }
         traces.push_back(std::move(vocab_record));
@@ -269,7 +296,8 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
                 IssueLevel::Warning,
                 padding_record.node_id,
                 padding_record.node_name,
-                "Selected text sample was truncated."
+                "Selected text sample was truncated.",
+                errors::Compiler::InvalidParameter
             });
         } else if (pad_ratio > 0.8f) {
             padding_record.payload["note"] =
@@ -286,6 +314,14 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         record.node_name = "TextPreprocessing";
         record.node_type = "TextPreprocessing";
         record.payload["message"] = e.what();
+        record.payload["error_code"] = errors::Data::MaterializationFailed;
+        record.issues.push_back({
+            IssueLevel::Error,
+            -1,
+            "TextPreprocessing",
+            e.what(),
+            errors::Data::MaterializationFailed
+        });
         traces.push_back(std::move(record));
     }
 

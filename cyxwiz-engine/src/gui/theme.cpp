@@ -20,6 +20,7 @@ const char* Theme::GetPresetName(ThemePreset preset) {
         // CyxWiz branded
         case ThemePreset::CyxWizDark:      return "CyxWiz Dark";
         case ThemePreset::CyxWizLight:     return "CyxWiz Light";
+        case ThemePreset::CyxWizLaunch:    return "CyxWiz Launch";
         // Classic IDE
         case ThemePreset::VSCodeDark:      return "VS Code Dark";
         case ThemePreset::UnrealEngine:    return "Unreal Engine";
@@ -48,6 +49,7 @@ std::vector<ThemePreset> Theme::GetAvailablePresets() {
         // CyxWiz branded
         ThemePreset::CyxWizDark,
         ThemePreset::CyxWizLight,
+        ThemePreset::CyxWizLaunch,
         // Classic IDE
         ThemePreset::VSCodeDark,
         ThemePreset::UnrealEngine,
@@ -77,6 +79,7 @@ void Theme::ApplyPreset(ThemePreset preset) {
         // CyxWiz branded
         case ThemePreset::CyxWizDark:      ApplyCyxWizDark(); break;
         case ThemePreset::CyxWizLight:     ApplyCyxWizLight(); break;
+        case ThemePreset::CyxWizLaunch:    ApplyCyxWizLaunch(); break;
         // Classic IDE
         case ThemePreset::VSCodeDark:      ApplyVSCodeDark(); break;
         case ThemePreset::UnrealEngine:    ApplyUnrealEngine(); break;

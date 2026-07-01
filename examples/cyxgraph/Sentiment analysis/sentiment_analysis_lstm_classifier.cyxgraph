@@ -1,0 +1,398 @@
+﻿{
+    "id":  "sentiment_analysis_lstm_classifier",
+    "name":  "Sentiment Analysis LSTM Classifier (GPU-fit baseline v13)",
+    "description":  "Train a stronger supported sentiment-analysis baseline on D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv. This graph targets a safer LSTM GPU-placement attempt using TextTokenizer -\\u003e Embedding -\\u003e single-direction LSTM -\\u003e Dense classifier -\\u003e CrossEntropy -\\u003e AdamW. LSTM is preferred for this test because current CyxWiz has bounded LSTM CUDA preflight placement support. Recommended target: first confirm compile placement and learning trend; use TF-IDF + Dense MLP as the stronger accuracy baseline if recurrent training remains slow or weak.",
+    "category":  "Training Pipeline",
+    "tags":  [
+                 "text",
+                 "sentiment",
+                 "mental-health",
+                 "nlp",
+                 "classification",
+                 "lstm",
+                 "training",
+                 "demo"
+             ],
+    "parameters":  [
+                       {
+                           "name":  "batch_size",
+                           "type":  "int",
+                           "default_value":  "64",
+                           "description":  "Training batch size",
+                           "min_value":  "1",
+                           "max_value":  "256"
+                       },
+                       {
+                           "name":  "epochs",
+                           "type":  "int",
+                           "default_value":  "20",
+                           "description":  "Training epochs; early stopping should stop before this if validation stalls",
+                           "min_value":  "1",
+                           "max_value":  "50"
+                       },
+                       {
+                           "name":  "learning_rate",
+                           "type":  "float",
+                           "default_value":  "0.001",
+                           "description":  "AdamW learning rate for the accuracy baseline",
+                           "min_value":  "0.00001",
+                           "max_value":  "0.01"
+                       },
+                       {
+                           "name": "max_length",
+                           "type":  "int",
+                           "default_value": "64",
+                           "description":  "Maximum token sequence length; longer context improves sentiment/status classification",
+                           "min_value":  "32",
+                           "max_value":  "512"
+                       },
+                       {
+                           "name":  "vocab_size",
+                           "type":  "int",
+                           "default_value":  "10000",
+                           "description":  "Vocabulary cap including special tokens",
+                           "min_value":  "1000",
+                           "max_value":  "50000"
+                       },
+                       {
+                           "name":  "min_word_freq",
+                           "type":  "int",
+                           "default_value":  "5",
+                           "description":  "Minimum frequency for tokens included in the vocabulary",
+                           "min_value":  "1",
+                           "max_value":  "100"
+                       },
+                       {
+                           "name": "embedding_dim",
+                           "type":  "int",
+                           "default_value": "64",
+                           "description":  "Token embedding vector size",
+                           "min_value":  "8",
+                           "max_value":  "256"
+                       },
+                       {
+                           "name": "hidden_size",
+                           "type":  "int",
+                           "default_value": "32",
+                           "description":  "LSTM hidden state size for GPU-fit baseline",
+                           "min_value":  "8",
+                           "max_value":  "512"
+                       },
+                       {
+                           "name":  "dropout_rate",
+                           "type":  "float",
+                           "default_value":  "0.25",
+                           "description":  "Dropout rate for classifier regularization",
+                           "min_value":  "0.0",
+                           "max_value":  "0.7"
+                       },
+                       {
+                           "name":  "num_classes",
+                           "type":  "int",
+                           "default_value":  "7",
+                           "description":  "Dataset label count",
+                           "min_value":  "2",
+                           "max_value":  "32"
+                       }
+                   ],
+    "template":  {
+                     "nodes":  [
+                                   {
+                                       "id":  "data_input",
+                                       "type":  "DataInput",
+                                       "name":  "Sentiment CSV",
+                                       "pos":  [
+                                                   0,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "source_type":  "file",
+                                                      "file_category":  "text",
+                                                      "file_path":  "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+                                                      "text_column":  "statement",
+                                                      "text_label_column":  "status",
+                                                      "text_tokenizer_type":  "1",
+                                                      "text_max_length":  "$max_length",
+                                                      "text_lowercase":  "true",
+                                                      "text_min_freq":  "$min_word_freq",
+                                                      "text_max_vocab_size":  "$vocab_size"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "text_tokenizer",
+                                       "type":  "TextTokenizer",
+                                       "name":  "Tokenizer (word)",
+                                       "pos":  [
+                                                   250,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "tokenizer_type":  "1",
+                                                      "max_length": "$max_length",
+                                                      "lowercase":  "true",
+                                                      "min_freq":  "$min_word_freq",
+                                                      "max_vocab_size":  "$vocab_size",
+                                                      "text_col":  "statement",
+                                                      "label_col":  "status",
+                                                      "source_csv":  "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+                                                      "min_word_freq":  "$min_word_freq",
+                                                      "vocab_file":  "D:/demo/mrcj/datasets/sentiment analysis/sentiment_analysis_vocab.txt",
+                                                      "vocab_build_if_missing":  "true",
+                                                      "padding":  "true",
+                                                      "truncation":  "true",
+                                                      "pad_value":  "0"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "data_split",
+                                       "type":  "DataSplit",
+                                       "name":  "Split 80/10/10",
+                                       "pos":  [
+                                                   1000,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "train_ratio":  "0.8",
+                                                      "val_ratio":  "0.1",
+                                                      "test_ratio":  "0.1",
+                                                      "stratified":  "true",
+                                                      "seed":  "42"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "data_loader",
+                                       "type":  "DataLoader",
+                                       "name":  "DataLoader",
+                                       "pos":  [
+                                                   1250,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "batch_size":  "$batch_size",
+                                                      "epochs":  "$epochs",
+                                                      "shuffle":  "true",
+                                                      "drop_last":  "false",
+                                                      "num_workers":  "4",
+                                                      "seed":  "42",
+                                                      "validation_freq":  "1"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "embedding",
+                                       "type":  "Embedding",
+                                       "name":  "Embedding",
+                                       "pos":  [
+                                                   1500,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "num_embeddings":  "$vocab_size",
+                                                      "embedding_dim": "$embedding_dim",
+                                                      "padding_idx":  "0",
+                                                      "max_norm":  "0",
+                                                      "freeze":  "false",
+                                                      "init_mode":  "normal",
+                                                      "weights_file":  "",
+                                                      "embedding_weights_file":  "",
+                                                      "output_weights_file":  ""
+                                                  }
+                                   },
+                                   {
+                                       "id": "lstm",
+                                       "type": "LSTM",
+                                       "name": "LSTM (last state, placement-probed)",
+                                       "pos":  [
+                                                   1750,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "hidden_size": "$hidden_size",
+                                                      "num_layers":  "1",
+                                                      "bidirectional":  "false",
+                                                      "return_sequences":  "false"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "fc1",
+                                       "type":  "Dense",
+                                       "name":  "Dense 64",
+                                       "pos":  [
+                                                   2000,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "units":  "64"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "relu1",
+                                       "type":  "ReLU",
+                                       "name":  "ReLU",
+                                       "pos":  [
+                                                   2250,
+                                                   300
+                                               ]
+                                   },
+                                   {
+                                       "id":  "drop1",
+                                       "type":  "Dropout",
+                                       "name":  "Dropout",
+                                       "pos":  [
+                                                   2500,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "rate":  "$dropout_rate"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "fc_out",
+                                       "type":  "Dense",
+                                       "name":  "Dense 7",
+                                       "pos":  [
+                                                   2750,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "units":  "$num_classes"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "loss",
+                                       "type":  "CrossEntropyLoss",
+                                       "name":  "CrossEntropy",
+                                       "pos":  [
+                                                   3500,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "reduction":  "mean",
+                                                      "label_smoothing":  "0.05"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "optimizer",
+                                       "type":  "AdamW",
+                                       "name":  "AdamW",
+                                       "pos":  [
+                                                   3750,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "learning_rate":  "$learning_rate",
+                                                      "weight_decay":  "0.01",
+                                                      "beta1":  "0.9",
+                                                      "beta2":  "0.999",
+                                                      "epsilon":  "1e-8"
+                                                  }
+                                   },
+                                   {
+                                       "id":  "output",
+                                       "type":  "Output",
+                                       "name":  "Output",
+                                       "pos":  [
+                                                   4000,
+                                                   300
+                                               ],
+                                       "params":  {
+                                                      "classes":  "$num_classes"
+                                                  }
+                                   }
+                               ],
+                     "links":  [
+                                   {
+                                       "from":  "data_input",
+                                       "to":  "text_tokenizer",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "text_tokenizer",
+                                       "to":  "data_split",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "data_input",
+                                       "to":  "data_split",
+                                       "from_pin":  1,
+                                       "to_pin":  1
+                                   },
+                                   {
+                                       "from":  "data_split",
+                                       "to":  "data_loader",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "data_split",
+                                       "to":  "data_loader",
+                                       "from_pin":  1,
+                                       "to_pin":  1
+                                   },
+                                   {
+                                       "from":  "data_loader",
+                                       "to":  "embedding",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "embedding",
+                                       "to": "lstm",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from": "lstm",
+                                       "to":  "fc1",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "fc1",
+                                       "to":  "relu1",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "relu1",
+                                       "to":  "drop1",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "drop1",
+                                       "to":  "fc_out",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "fc_out",
+                                       "to":  "loss",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "data_loader",
+                                       "to":  "loss",
+                                       "from_pin":  1,
+                                       "to_pin":  1
+                                   },
+                                   {
+                                       "from":  "loss",
+                                       "to":  "optimizer",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   },
+                                   {
+                                       "from":  "optimizer",
+                                       "to":  "output",
+                                       "from_pin":  0,
+                                       "to_pin":  0
+                                   }
+                               ]
+                 }
+}
+
+
+

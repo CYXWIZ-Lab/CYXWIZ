@@ -135,6 +135,123 @@ void Theme::ApplyCyxWizDark() {
 }
 
 // ============================================================================
+// CyxWiz Launch Theme - UX.md inspired onboarding/dashboard theme
+// ============================================================================
+void Theme::ApplyCyxWizLaunch() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    ImVec4 bg_deep       = ImVec4(0.02f, 0.04f, 0.08f, 1.00f);
+    ImVec4 bg_navy       = ImVec4(0.04f, 0.07f, 0.13f, 1.00f);
+    ImVec4 panel         = ImVec4(0.06f, 0.10f, 0.17f, 1.00f);
+    ImVec4 panel_lift    = ImVec4(0.08f, 0.14f, 0.23f, 1.00f);
+    ImVec4 field         = ImVec4(0.07f, 0.12f, 0.20f, 1.00f);
+    ImVec4 border        = ImVec4(0.10f, 0.26f, 0.44f, 0.32f);
+    ImVec4 text          = ImVec4(0.91f, 0.96f, 1.00f, 1.00f);
+    ImVec4 text_dim      = ImVec4(0.55f, 0.66f, 0.78f, 1.00f);
+    ImVec4 accent        = ImVec4(0.02f, 0.36f, 0.92f, 1.00f);
+    ImVec4 accent_hover  = ImVec4(0.06f, 0.50f, 1.00f, 1.00f);
+    ImVec4 accent_active = ImVec4(0.01f, 0.26f, 0.74f, 1.00f);
+    ImVec4 cyan          = ImVec4(0.20f, 0.78f, 1.00f, 1.00f);
+    ImVec4 success       = ImVec4(0.20f, 0.78f, 0.50f, 1.00f);
+    ImVec4 warning       = ImVec4(1.00f, 0.73f, 0.24f, 1.00f);
+    ImVec4 error_col     = ImVec4(1.00f, 0.34f, 0.34f, 1.00f);
+
+    colors[ImGuiCol_Text]                   = text;
+    colors[ImGuiCol_TextDisabled]           = text_dim;
+
+    colors[ImGuiCol_WindowBg]               = bg_navy;
+    colors[ImGuiCol_ChildBg]                = ImVec4(panel.x, panel.y, panel.z, 0.62f);
+    colors[ImGuiCol_PopupBg]                = ImVec4(bg_deep.x, bg_deep.y, bg_deep.z, 0.98f);
+
+    colors[ImGuiCol_Border]                 = border;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+
+    colors[ImGuiCol_FrameBg]                = field;
+    colors[ImGuiCol_FrameBgHovered]         = panel_lift;
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(0.10f, 0.18f, 0.30f, 1.00f);
+
+    colors[ImGuiCol_TitleBg]                = bg_deep;
+    colors[ImGuiCol_TitleBgActive]          = ImVec4(0.04f, 0.09f, 0.18f, 1.00f);
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg_deep.x, bg_deep.y, bg_deep.z, 0.82f);
+    colors[ImGuiCol_MenuBarBg]              = bg_deep;
+
+    colors[ImGuiCol_ScrollbarBg]            = ImVec4(bg_deep.x, bg_deep.y, bg_deep.z, 0.86f);
+    colors[ImGuiCol_ScrollbarGrab]          = ImVec4(0.14f, 0.25f, 0.38f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabHovered]   = ImVec4(0.20f, 0.36f, 0.54f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive]    = accent_hover;
+
+    colors[ImGuiCol_CheckMark]              = cyan;
+    colors[ImGuiCol_SliderGrab]             = accent_hover;
+    colors[ImGuiCol_SliderGrabActive]       = cyan;
+
+    colors[ImGuiCol_Button]                 = ImVec4(accent.x, accent.y, accent.z, 0.82f);
+    colors[ImGuiCol_ButtonHovered]          = accent_hover;
+    colors[ImGuiCol_ButtonActive]           = accent_active;
+
+    colors[ImGuiCol_Header]                 = ImVec4(accent.x, accent.y, accent.z, 0.24f);
+    colors[ImGuiCol_HeaderHovered]          = ImVec4(accent.x, accent.y, accent.z, 0.46f);
+    colors[ImGuiCol_HeaderActive]           = ImVec4(accent_hover.x, accent_hover.y, accent_hover.z, 0.66f);
+
+    colors[ImGuiCol_Separator]              = ImVec4(0.10f, 0.22f, 0.36f, 0.28f);
+    colors[ImGuiCol_SeparatorHovered]       = cyan;
+    colors[ImGuiCol_SeparatorActive]        = accent_hover;
+
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(accent.x, accent.y, accent.z, 0.16f);
+    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(accent.x, accent.y, accent.z, 0.48f);
+    colors[ImGuiCol_ResizeGripActive]       = accent_hover;
+
+    colors[ImGuiCol_Tab]                    = panel;
+    colors[ImGuiCol_TabHovered]             = ImVec4(accent.x, accent.y, accent.z, 0.72f);
+    colors[ImGuiCol_TabActive]              = ImVec4(0.08f, 0.20f, 0.36f, 1.00f);
+    colors[ImGuiCol_TabUnfocused]           = ImVec4(0.04f, 0.08f, 0.14f, 1.00f);
+    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(0.06f, 0.14f, 0.25f, 1.00f);
+
+    colors[ImGuiCol_DockingPreview]         = ImVec4(accent_hover.x, accent_hover.y, accent_hover.z, 0.72f);
+    colors[ImGuiCol_DockingEmptyBg]         = bg_deep;
+
+    colors[ImGuiCol_PlotLines]              = cyan;
+    colors[ImGuiCol_PlotLinesHovered]       = accent_hover;
+    colors[ImGuiCol_PlotHistogram]          = success;
+    colors[ImGuiCol_PlotHistogramHovered]   = ImVec4(0.32f, 0.90f, 0.62f, 1.00f);
+
+    colors[ImGuiCol_TableHeaderBg]          = panel_lift;
+    colors[ImGuiCol_TableBorderStrong]      = border;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(border.x, border.y, border.z, 0.20f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(0.24f, 0.58f, 1.00f, 0.035f);
+
+    colors[ImGuiCol_TextSelectedBg]         = ImVec4(accent.x, accent.y, accent.z, 0.38f);
+    colors[ImGuiCol_DragDropTarget]         = cyan;
+    colors[ImGuiCol_NavHighlight]           = cyan;
+    colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(0.72f, 0.90f, 1.00f, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.24f);
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.01f, 0.03f, 0.68f);
+
+    accent_color_ = accent_hover;
+
+    config_.window_rounding = 12.0f;
+    config_.frame_rounding = 8.0f;
+    config_.popup_rounding = 10.0f;
+    config_.scrollbar_rounding = 10.0f;
+    config_.grab_rounding = 8.0f;
+    config_.tab_rounding = 8.0f;
+    config_.window_border_size = 0.0f;
+    config_.frame_border_size = 0.0f;
+    config_.popup_border_size = 1.0f;
+    config_.window_padding = ImVec2(12.0f, 10.0f);
+    config_.frame_padding = ImVec2(9.0f, 6.0f);
+    config_.item_spacing = ImVec2(10.0f, 7.0f);
+    config_.item_inner_spacing = ImVec2(6.0f, 5.0f);
+    config_.scrollbar_size = 12.0f;
+    config_.grab_min_size = 12.0f;
+    config_.indent_spacing = 22.0f;
+
+    (void)warning;
+    (void)error_col;
+}
+
+// ============================================================================
 // CyxWiz Light Theme
 // ============================================================================
 void Theme::ApplyCyxWizLight() {

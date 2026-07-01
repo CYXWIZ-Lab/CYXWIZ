@@ -1,4 +1,5 @@
 #include "model_exporter.h"
+#include "error_codes.h"
 #include "training_executor.h"
 #include "node_executors/tree_model_artifact.h"
 #include <spdlog/spdlog.h>
@@ -456,7 +457,9 @@ ExportResult ModelExporter::Export(
 
         default:
             result.success = false;
-            result.error_message = "Unknown or unsupported export format";
+            result.error_message = errors::FormatError(
+                errors::Serialization::ExportFormatUnavailable,
+                "Unknown or unsupported export format");
             return result;
     }
 
@@ -673,7 +676,9 @@ ExportResult ModelExporter::ExportCyxModel(
 
         if (!success) {
             result.success = false;
-            result.error_message = cyxmodel.GetLastError();
+            result.error_message = errors::FormatError(
+                errors::Serialization::ModelSaveFailed,
+                cyxmodel.GetLastError());
             last_error_ = result.error_message;
             return result;
         }
@@ -702,7 +707,10 @@ ExportResult ModelExporter::ExportCyxModel(
 
     } catch (const std::exception& e) {
         result.success = false;
-        result.error_message = std::string("Export failed: ") + e.what();
+        result.error_message = errors::FormatError(
+            errors::Serialization::ModelSaveFailed,
+            "Export failed",
+            e.what());
         last_error_ = result.error_message;
         spdlog::error("Model export failed: {}", e.what());
     }
@@ -721,7 +729,9 @@ ExportResult ModelExporter::ExportONNX(
 
 #ifndef CYXWIZ_HAS_ONNX_EXPORT
     result.success = false;
-    result.error_message = "ONNX export support not compiled. Build with CYXWIZ_ENABLE_ONNX=ON and ensure onnx package is installed.";
+    result.error_message = errors::FormatError(
+        errors::Serialization::ExportFormatNotCompiled,
+        "ONNX export support not compiled. Build with CYXWIZ_ENABLE_ONNX=ON and ensure onnx package is installed.");
     last_error_ = result.error_message;
     return result;
 #else

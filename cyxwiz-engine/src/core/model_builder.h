@@ -16,6 +16,7 @@ struct BuiltModel {
     std::unique_ptr<SequentialModel> model;
     std::unique_ptr<Loss>            loss;
     std::unique_ptr<Optimizer>       optimizer;
+    std::string                      error_message;
 
     bool ok() const { return model != nullptr; }
 };
@@ -24,6 +25,7 @@ struct BuiltExecutableModel {
     std::unique_ptr<IExecutableModel> model;
     std::unique_ptr<Loss>             loss;
     std::unique_ptr<Optimizer>        optimizer;
+    std::string                       error_message;
 
     bool ok() const { return model != nullptr; }
 };

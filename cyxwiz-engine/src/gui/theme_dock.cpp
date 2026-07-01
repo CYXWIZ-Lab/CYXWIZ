@@ -24,13 +24,17 @@ void Theme::ApplyDockStyle() {
             break;
 
         case ThemePreset::CyxWizDark:
+        case ThemePreset::CyxWizLaunch:
         case ThemePreset::ModernDark: {
             // Use Unreal-style but with CyxWiz blue accent
             dock_style.ApplyPreset(DockStylePreset::UnrealEngine);
 
             // Override with CyxWiz blue accent
             DockTabStyle style = dock_style.GetStyle();
-            style.active_indicator_color = ImVec4(0.20f, 0.55f, 0.85f, 1.0f);  // CyxWiz blue
+            style.active_indicator_color =
+                current_preset_ == ThemePreset::CyxWizLaunch
+                    ? ImVec4(0.04f, 0.48f, 1.00f, 1.0f)
+                    : ImVec4(0.20f, 0.55f, 0.85f, 1.0f);
             dock_style.SetStyle(style);
             break;
         }

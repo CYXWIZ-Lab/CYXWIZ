@@ -1281,9 +1281,131 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
 
     ImGui::EndChild();
 
+    RenderMaterializationTrace(trace);
     RenderRuntimeTimeline(trace);
     RenderMemoryTrace(trace);
     RenderLayerTimingBreakdown(trace);
+}
+
+void StudioDebuggerPanel::RenderMaterializationTrace(
+    const TrainingTraceSummary& trace) {
+    ImGui::Spacing();
+    ImGui::Text("Materialization Breakdown");
+    ImGui::BeginChild("StudioDebuggerMaterializationTrace",
+                      ImVec2(0, 260),
+                      true,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    if (trace.materialization_events.empty()) {
+        ImGui::TextDisabled(
+            "No materializer stage breakdown captured for this run.");
+        ImGui::EndChild();
+        return;
+    }
+
+    const auto& latest = trace.materialization_events.back();
+    ImGui::Text("Latest stage: %s",
+                latest.task_stage.empty()
+                    ? latest.stage.c_str()
+                    : latest.task_stage.c_str());
+    if (!latest.node_name.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("Node: %s (%d)",
+                            latest.node_name.c_str(),
+                            latest.node_id);
+    }
+    ImGui::Text("Status: %s", latest.status.c_str());
+    ImGui::SameLine(180);
+    ImGui::TextDisabled("Progress: %.0f%%", latest.task_progress * 100.0f);
+    if (latest.estimated_memory_bytes > 0) {
+        ImGui::SameLine(340);
+        ImGui::TextDisabled("Memory estimate: %s",
+                            FormatBytesCompact(
+                                latest.estimated_memory_bytes).c_str());
+    }
+    if (!latest.message.empty()) {
+        ImGui::TextWrapped("%s", latest.message.c_str());
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled(
+        "Generic materializer truth: source read -> parse/feature extraction -> "
+        "statistics/planning -> output matrix/table construction -> Arrow dataset.");
+
+    if (ImGui::BeginTable("StudioDebuggerMaterializationStages",
+                          6,
+                          ImGuiTableFlags_BordersInnerV |
+                          ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Stage", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("Node", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+        ImGui::TableSetupColumn("Progress", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupColumn("Work", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+        ImGui::TableSetupColumn("Memory", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+        ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableHeadersRow();
+
+        const size_t max_rows = 64;
+        const size_t start = trace.materialization_events.size() > max_rows
+            ? trace.materialization_events.size() - max_rows
+            : 0;
+        for (size_t i = start; i < trace.materialization_events.size(); ++i) {
+            const auto& event = trace.materialization_events[i];
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            const std::string stage = event.task_stage.empty()
+                ? event.stage
+                : event.task_stage;
+            ImGui::TextWrapped("%s", stage.c_str());
+
+            ImGui::TableSetColumnIndex(1);
+            if (!event.node_name.empty()) {
+                ImGui::TextWrapped("%s (%d)",
+                                   event.node_name.c_str(),
+                                   event.node_id);
+            } else if (event.node_id >= 0) {
+                ImGui::Text("%d", event.node_id);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%.0f%%", event.task_progress * 100.0f);
+
+            ImGui::TableSetColumnIndex(3);
+            if (event.total_items > 0) {
+                ImGui::Text("%llu / %llu",
+                            static_cast<unsigned long long>(
+                                event.processed_items),
+                            static_cast<unsigned long long>(
+                                event.total_items));
+            } else if (event.processed_items > 0) {
+                ImGui::Text("%llu",
+                            static_cast<unsigned long long>(
+                                event.processed_items));
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableSetColumnIndex(4);
+            if (event.estimated_memory_bytes > 0) {
+                ImGui::Text("%s",
+                            FormatBytesCompact(
+                                event.estimated_memory_bytes).c_str());
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableSetColumnIndex(5);
+            ImGui::TextWrapped("%s", event.message.c_str());
+        }
+
+        ImGui::EndTable();
+    }
+
+    ImGui::EndChild();
 }
 
 void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trace) {
@@ -2000,6 +2122,10 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
             ImGui::Text("Trace issues");
             for (const auto& issue : trace.issues) {
                 ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(issue.level));
+                if (!issue.error_code.empty()) {
+                    ImGui::TextUnformatted(issue.error_code.c_str());
+                    ImGui::SameLine();
+                }
                 ImGui::TextWrapped("%s", issue.message.c_str());
                 ImGui::PopStyleColor();
             }
@@ -2096,6 +2222,10 @@ void StudioDebuggerPanel::RenderIssueList() {
         ImGui::TextUnformatted(issue.node_name.empty() ? "[issue]" : issue.node_name.c_str());
         ImGui::PopStyleColor();
         ImGui::SameLine();
+        if (!issue.error_code.empty()) {
+            ImGui::TextDisabled("%s", issue.error_code.c_str());
+            ImGui::SameLine();
+        }
         ImGui::TextWrapped("%s", issue.message.c_str());
     }
     ImGui::EndChild();

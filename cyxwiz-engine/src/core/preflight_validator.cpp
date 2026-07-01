@@ -1,4 +1,5 @@
 #include "preflight_validator.h"
+#include "error_codes.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -10,8 +11,16 @@ namespace {
 
 void AddIssue(DebugPreflightResult& result, IssueLevel level,
               const std::string& message, int node_id = -1,
-              const std::string& node_name = "") {
-    result.issues.push_back({level, node_id, node_name, message});
+              const std::string& node_name = "",
+              const std::string& error_code = "") {
+    result.issues.push_back({
+        level,
+        node_id,
+        node_name,
+        message,
+        error_code.empty() ? errors::Training::InvalidTrainingSetup
+                           : error_code
+    });
 }
 
 const char* DomainName(PreprocessingDomain domain) {
@@ -55,30 +64,36 @@ DebugPreflightResult PreflightValidator::Validate(
     }
 
     if (nodes.empty()) {
-        AddIssue(result, IssueLevel::Error, "Graph is empty.");
+        AddIssue(result, IssueLevel::Error, "Graph is empty.",
+                 -1, "", errors::Compiler::MissingTrainingPathNode);
     }
 
     if (config.dataset_name.empty()) {
-        AddIssue(result, IssueLevel::Error, "No dataset is selected or loaded.");
+        AddIssue(result, IssueLevel::Error, "No dataset is selected or loaded.",
+                 -1, "", errors::Runtime::InputDatasetMissing);
     }
 
     if (config.layers.empty()) {
-        AddIssue(result, IssueLevel::Error, "No executable model layers were compiled.");
+        AddIssue(result, IssueLevel::Error, "No executable model layers were compiled.",
+                 -1, "", errors::Compiler::MissingTrainingPathNode);
     }
 
     if (config.input_size == 0 && config.input_shape.empty()) {
-        AddIssue(result, IssueLevel::Error, "Model input shape is unknown.");
+        AddIssue(result, IssueLevel::Error, "Model input shape is unknown.",
+                 -1, "", errors::Compiler::TensorShapeMismatch);
     }
 
     if (config.output_size == 0) {
-        AddIssue(result, IssueLevel::Error, "Model output size is unknown.");
+        AddIssue(result, IssueLevel::Error, "Model output size is unknown.",
+                 -1, "", errors::Compiler::LabelOutputShapeMismatch);
     }
 
     if (config.loss_type == gui::NodeType::CrossEntropyLoss &&
         config.preprocessing.num_classes == 0 &&
         config.output_size == 0) {
         AddIssue(result, IssueLevel::Error,
-                 "CrossEntropy requires a known class count.");
+                 "CrossEntropy requires a known class count.",
+                 -1, "", errors::Compiler::LabelOutputShapeMismatch);
     }
 
     if (config.preprocessing_domain == PreprocessingDomain::Text) {
@@ -91,7 +106,8 @@ DebugPreflightResult PreflightValidator::Validate(
                     AddIssue(result, IssueLevel::Error,
                              "TextVocabulary vocab_file does not exist: " +
                              vocab_file->second,
-                             node.id, node.name);
+                             node.id, node.name,
+                             errors::File::NotFound);
                 }
 
                 int max_vocab_size = -1;
@@ -99,7 +115,8 @@ DebugPreflightResult PreflightValidator::Validate(
                     max_vocab_size == 0) {
                     AddIssue(result, IssueLevel::Warning,
                              "TextVocabulary max_vocab_size is zero; vocabulary may be unusable.",
-                             node.id, node.name);
+                             node.id, node.name,
+                             errors::Compiler::InvalidParameter);
                 }
             } else if (node.type == gui::NodeType::TextPadding) {
                 int max_length = 0;
@@ -107,7 +124,8 @@ DebugPreflightResult PreflightValidator::Validate(
                     max_length <= 0) {
                     AddIssue(result, IssueLevel::Error,
                              "TextPadding max_length must be greater than zero.",
-                             node.id, node.name);
+                             node.id, node.name,
+                             errors::Compiler::InvalidParameter);
                 }
             }
         }

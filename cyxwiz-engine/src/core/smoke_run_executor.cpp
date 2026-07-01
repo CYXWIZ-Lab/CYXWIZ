@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "data_registry.h"
+#include "error_codes.h"
 #include "label_column_resolver.h"
 #include "model_builder.h"
 #include "pipeline_materializer.h"
@@ -164,7 +165,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     if (config.sequence_batch.enabled) {
         result.summary = SequenceBatchRuntimeUnsupportedMessage();
         result.issues.push_back({
-            IssueLevel::Error, -1, "SequenceBatch", result.summary
+            IssueLevel::Error, -1, "SequenceBatch", result.summary,
+            errors::Runtime::UnsupportedNode
         });
         return result;
     }
@@ -180,7 +182,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         if (!materialized.success) {
             result.summary = materialized.error_message;
             result.issues.push_back({
-                IssueLevel::Error, -1, "PipelineMaterializer", result.summary
+                IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
+                errors::Data::MaterializationFailed
             });
             return result;
         }
@@ -192,7 +195,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
                 result.summary = "Materialized Arrow text table is unavailable: " +
                                  materialized.effective_dataset_name;
                 result.issues.push_back({
-                    IssueLevel::Error, -1, "PipelineMaterializer", result.summary
+                    IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
+                    errors::Data::MaterializationFailed
                 });
                 return result;
             }
@@ -202,7 +206,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             if (label_idx < 0) {
                 result.summary = "Materialized Arrow text table has no label column.";
                 result.issues.push_back({
-                    IssueLevel::Error, -1, "ArrowDataset", result.summary
+                    IssueLevel::Error, -1, "ArrowDataset", result.summary,
+                    errors::Data::RequiredLabelColumnMissing
                 });
                 return result;
             }
@@ -236,7 +241,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         const auto* entry = registry.GetTextDatasetEntry(config.dataset_name);
         if (!entry) {
             result.summary = "Text dataset is not registered: " + config.dataset_name;
-            result.issues.push_back({IssueLevel::Error, -1, "TextDataset", result.summary});
+            result.issues.push_back({IssueLevel::Error, -1, "TextDataset",
+                                     result.summary,
+                                     errors::Runtime::InputDatasetMissing});
             return result;
         }
 
@@ -264,7 +271,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     if (batcher->GetNumSamples() == 0) {
         result.summary = "Text dataset has no training samples.";
-        result.issues.push_back({IssueLevel::Error, -1, "TextDataset", result.summary});
+        result.issues.push_back({IssueLevel::Error, -1, "TextDataset",
+                                 result.summary,
+                                 errors::Data::RowCountMismatch});
         return result;
     }
 
@@ -280,8 +289,12 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     BuiltModel built = BuildSequentialFromConfig(config);
     if (!built.ok() || !built.loss || !built.optimizer) {
-        result.summary = "Smoke Run failed to build model/loss/optimizer.";
-        result.issues.push_back({IssueLevel::Error, -1, "ModelBuilder", result.summary});
+        result.summary = built.error_message.empty()
+            ? "Smoke Run failed to build model/loss/optimizer."
+            : built.error_message;
+        result.issues.push_back({IssueLevel::Error, -1, "ModelBuilder",
+                                 result.summary,
+                                 errors::Training::ModelBuildFailed});
         return result;
     }
 
@@ -316,7 +329,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         if (pred_bad) {
             result.issues.push_back({
                 IssueLevel::Error, model_node_id, "SmokeRun",
-                "Smoke Run predictions contain NaN or Inf."
+                "Smoke Run predictions contain NaN or Inf.",
+                errors::Training::TrainingExecutionFailed
             });
         }
 
@@ -326,7 +340,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         if (!loss_ok) {
             result.issues.push_back({
                 IssueLevel::Error, model_node_id, "SmokeRun",
-                "Smoke Run loss is not finite."
+                "Smoke Run loss is not finite.",
+                errors::Training::TrainingExecutionFailed
             });
         } else {
             loss_sum += loss;
@@ -378,7 +393,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         if (grad_count == 0) {
             result.issues.push_back({
                 IssueLevel::Warning, model_node_id, "SmokeRun",
-                "Smoke Run did not observe parameter gradients."
+                "Smoke Run did not observe parameter gradients.",
+                errors::Training::TrainingExecutionFailed
             });
         }
     }

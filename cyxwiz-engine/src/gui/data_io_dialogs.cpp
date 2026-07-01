@@ -86,27 +86,66 @@ int DataFormatIndexFromName(const std::string& value) {
     const std::string normalized = LowerAscii(value);
     if (normalized == "csv") return 1;
     if (normalized == "tsv") return 2;
-    if (normalized == "parquet" || normalized == "pq") return 3;
-    if (normalized == "feather" || normalized == "fea") return 4;
-    if (normalized == "arrow") return 5;
-    if (normalized == "ipc") return 6;
+    if (normalized == "json" || normalized == "jsonl" || normalized == "ndjson") return 3;
+    if (normalized == "txt" || normalized == "text") return 4;
+    if (normalized == "arff") return 5;
+    if (normalized == "npy") return 6;
+    if (normalized == "h5" || normalized == "hdf5" || normalized == "hdf") return 7;
+    if (normalized == "parquet" || normalized == "pq") return 8;
+    if (normalized == "feather" || normalized == "fea") return 9;
+    if (normalized == "arrow") return 10;
+    if (normalized == "ipc") return 11;
     return 0;
 }
 
 const char* DataFormatNameFromIndex(int index) {
     static const char* kFormats[] = {
-        "auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"
+        "auto", "csv", "tsv", "jsonl", "txt", "arff", "npy", "hdf5", "parquet", "feather", "arrow", "ipc"
     };
-    if (index < 0 || index >= 7) return "auto";
+    if (index < 0 || index >= 12) return "auto";
     return kFormats[index];
 }
 
 const char* DataFormatExtensionFromIndex(int index) {
     static const char* kExtensions[] = {
-        ".parquet", ".csv", ".tsv", ".parquet", ".feather", ".arrow", ".ipc"
+        ".parquet", ".csv", ".tsv", ".jsonl", ".txt", ".arff", ".npy", ".h5", ".parquet", ".feather", ".arrow", ".ipc"
     };
-    if (index < 0 || index >= 7) return ".parquet";
+    if (index < 0 || index >= 12) return ".parquet";
     return kExtensions[index];
+}
+
+bool DataFormatExtensionMatchesIndex(const std::filesystem::path& path,
+                                     int format_index) {
+    if (format_index == 0 || path.empty()) return true;
+    std::string extension = LowerAscii(path.extension().string());
+    switch (format_index) {
+        case 1:
+            return extension == ".csv";
+        case 2:
+            return extension == ".tsv";
+        case 3:
+            return extension == ".json" || extension == ".jsonl" ||
+                   extension == ".ndjson";
+        case 4:
+            return extension == ".txt" || extension == ".text";
+        case 5:
+            return extension == ".arff";
+        case 6:
+            return extension == ".npy";
+        case 7:
+            return extension == ".h5" || extension == ".hdf5" ||
+                   extension == ".hdf";
+        case 8:
+            return extension == ".parquet" || extension == ".pq";
+        case 9:
+            return extension == ".feather" || extension == ".fea";
+        case 10:
+            return extension == ".arrow";
+        case 11:
+            return extension == ".ipc";
+        default:
+            return true;
+    }
 }
 
 std::string DelimiterLabel(char delimiter) {
@@ -126,8 +165,13 @@ bool BrowseDataInput(char* destination, std::size_t destination_size) {
     CopyToBuffer(file, sizeof(file), destination);
     ofn.lStructSize = sizeof(ofn);
     ofn.lpstrFilter =
-        "Supported Data Files\0*.csv;*.tsv;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc\0"
+        "Supported Data Files\0*.csv;*.tsv;*.json;*.jsonl;*.ndjson;*.txt;*.text;*.arff;*.npy;*.h5;*.hdf5;*.hdf;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc\0"
         "CSV/TSV Files\0*.csv;*.tsv\0"
+        "JSON Lines Files\0*.json;*.jsonl;*.ndjson\0"
+        "Text Files\0*.txt;*.text\0"
+        "ARFF Files\0*.arff\0"
+        "NumPy Files\0*.npy\0"
+        "HDF5 Files\0*.h5;*.hdf5;*.hdf\0"
         "Parquet Files\0*.parquet;*.pq\0"
         "Arrow IPC/Feather Files\0*.feather;*.fea;*.arrow;*.ipc\0"
         "All Files\0*.*\0";
@@ -154,9 +198,14 @@ bool BrowseDataOutput(char* destination,
     CopyToBuffer(file, sizeof(file), destination);
     ofn.lStructSize = sizeof(ofn);
     ofn.lpstrFilter =
-        "Supported Data Files\0*.csv;*.tsv;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc\0"
+        "Supported Data Files\0*.csv;*.tsv;*.json;*.jsonl;*.ndjson;*.txt;*.text;*.arff;*.npy;*.h5;*.hdf5;*.hdf;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc\0"
         "CSV Files\0*.csv\0"
         "TSV Files\0*.tsv\0"
+        "JSON Lines Files\0*.json;*.jsonl;*.ndjson\0"
+        "Text Files\0*.txt;*.text\0"
+        "ARFF Files\0*.arff\0"
+        "NumPy Files\0*.npy\0"
+        "HDF5 Files\0*.h5;*.hdf5;*.hdf\0"
         "Parquet Files\0*.parquet;*.pq\0"
         "Arrow IPC/Feather Files\0*.feather;*.fea;*.arrow;*.ipc\0"
         "All Files\0*.*\0";
@@ -386,7 +435,7 @@ void DataConvertDialog::Apply() {
         create_parent_dirs_ ? "true" : "false";
     node_->parameters["write_manifest"] = write_manifest_ ? "true" : "false";
     node_->parameters["configured"] =
-        (input_path_[0] != '\0' && output_path_[0] != '\0') ? "true" : "false";
+        (output_path_[0] != '\0') ? "true" : "false";
     node_->parameters["status"] = status_message_;
     if (last_result_.ok) {
         node_->parameters["rows_written"] =
@@ -468,12 +517,12 @@ void DataConvertDialog::RenderSourceTab() {
 
     ImGui::Spacing();
     const char* formats[] = {
-        "Auto", "CSV", "TSV", "Parquet", "Feather", "Arrow", "IPC"
+        "Auto", "CSV", "TSV", "JSONL", "Text", "ARFF", "NumPy", "HDF5", "Parquet", "Feather", "Arrow", "IPC"
     };
     ImGui::Text("Input format");
     ImGui::SameLine(130.0f);
     ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::Combo("##input_format", &input_format_, formats, 7)) {
+    if (ImGui::Combo("##input_format", &input_format_, formats, 12)) {
         has_changes_ = true;
     }
     ImGui::SameLine();
@@ -562,12 +611,17 @@ void DataConvertDialog::RenderOutputTab() {
 
     ImGui::Spacing();
     const char* formats[] = {
-        "Auto", "CSV", "TSV", "Parquet", "Feather", "Arrow", "IPC"
+        "Auto", "CSV", "TSV", "JSONL", "Text", "ARFF", "NumPy", "HDF5", "Parquet", "Feather", "Arrow", "IPC"
     };
     ImGui::Text("Output format");
     ImGui::SameLine(130.0f);
     ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::Combo("##output_format", &output_format_, formats, 7)) {
+    if (ImGui::Combo("##output_format", &output_format_, formats, 12)) {
+        if (output_format_ != 0 && output_path_[0] != '\0') {
+            std::filesystem::path out(output_path_);
+            out.replace_extension(DataFormatExtensionFromIndex(output_format_));
+            CopyToBuffer(output_path_, sizeof(output_path_), out.string());
+        }
         has_changes_ = true;
     }
 
@@ -578,6 +632,15 @@ void DataConvertDialog::RenderOutputTab() {
             CopyToBuffer(output_path_, sizeof(output_path_), in.string());
             has_changes_ = true;
         }
+    }
+
+    if (output_format_ != 0 && output_path_[0] != '\0' &&
+        !DataFormatExtensionMatchesIndex(std::filesystem::path(output_path_),
+                                         output_format_)) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.20f, 1.0f),
+                           "Output extension does not match the selected format. Expected %s.",
+                           DataFormatExtensionFromIndex(output_format_));
     }
 
     ImGui::Spacing();

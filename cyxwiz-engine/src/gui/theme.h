@@ -41,6 +41,7 @@ enum class ThemePreset {
     CyxOSTuiClassic, // Green phosphor IBM 3278 terminal
     CyxOSTuiMatrix,  // The Matrix digital rain aesthetic
     CyxOSTuiAmber,   // Amber CRT P3 phosphor terminal
+    CyxWizLaunch,    // UX.md launch/dashboard theme
 
     COUNT
 };
@@ -115,6 +116,7 @@ private:
     // Theme application methods
     void ApplyCyxWizDark();
     void ApplyCyxWizLight();
+    void ApplyCyxWizLaunch();
     void ApplyVSCodeDark();
     void ApplyUnrealEngine();
     void ApplyModernDark();

@@ -13,6 +13,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -350,6 +351,18 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
          callback = std::move(node_editor_callback),
          dispatch = std::move(dispatch)](cyxwiz::LambdaTask& task) mutable {
             CYXWIZ_PROFILE_ZONE("CyxWiz Prepare Graph Training");
+            const auto now = std::chrono::system_clock::now().time_since_epoch();
+            const auto run_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+            cyxwiz::TrainingTraceCollector::Instance().StartRun(
+                "train-" + std::to_string(run_ms));
+            cyxwiz::TrainingTraceCollector::Instance().RecordTaskProgress(
+                task.GetId(),
+                task.GetName(),
+                "TrainingSetup",
+                0.0f,
+                "Preparing graph materialization and training loaders...",
+                "running");
             task.ReportProgress(0.05f, "Preparing graph training launch...");
             if (auto panel = plot_panel.lock()) {
                 panel->SetPreparationState(
@@ -393,6 +406,15 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                             event.total_items);
                         if (auto panel = plot_panel.lock()) {
                             panel->SetPreparationState(true, message, task_progress);
+                            panel->RecordMaterializationProgress(
+                                event.stage,
+                                message,
+                                task_progress,
+                                event.estimated_memory_bytes,
+                                event.processed_items,
+                                event.total_items,
+                                event.node_id,
+                                event.node_name);
                         }
                     });
             }
@@ -401,6 +423,14 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                     "Materializer failed for dataset '" +
                     effective_dataset_name + "': " +
                     materialize_result.error_message);
+            }
+            if (auto panel = plot_panel.lock()) {
+                panel->SetMaterializationComplete(
+                    materialize_result.effective_dataset_name.empty()
+                        ? effective_dataset_name
+                        : materialize_result.effective_dataset_name,
+                    materialize_result.operators_applied,
+                    "completed");
             }
 
             if (materialize_result.skipped_unsupported_source) {
@@ -471,6 +501,12 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
 
             task.ReportProgress(1.0f, "Training started");
             if (auto panel = plot_panel.lock()) {
+                if (materialize_result.operators_applied > 0) {
+                    panel->SetMaterializationComplete(
+                        effective_dataset_name,
+                        materialize_result.operators_applied,
+                        "completed");
+                }
                 panel->SetPreparationState(false);
             }
         });

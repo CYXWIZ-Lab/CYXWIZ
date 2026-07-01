@@ -109,6 +109,39 @@ std::shared_ptr<cyxwiz::ArrowDataset> MakeStratifiedDataset() {
         table, "batcher_setup_stratified");
 }
 
+std::shared_ptr<cyxwiz::ArrowDataset> MakeWideStratifiedDataset(
+    int64_t rows = 64,
+    size_t features = 8000) {
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> columns;
+    fields.reserve(features + 1);
+    columns.reserve(features + 1);
+
+    std::vector<float> values(static_cast<size_t>(rows), 0.0f);
+    for (size_t feature = 0; feature < features; ++feature) {
+        for (int64_t row = 0; row < rows; ++row) {
+            values[static_cast<size_t>(row)] =
+                static_cast<float>((row + static_cast<int64_t>(feature)) % 17) /
+                17.0f;
+        }
+        fields.push_back(arrow::field(
+            "x" + std::to_string(feature), arrow::float32()));
+        columns.push_back(FinishFloatArray(values));
+    }
+
+    std::vector<int32_t> labels(static_cast<size_t>(rows), 0);
+    for (int64_t row = 0; row < rows; ++row) {
+        labels[static_cast<size_t>(row)] = row % 4 == 0 ? 1 : 0;
+    }
+    fields.push_back(arrow::field("label", arrow::int32()));
+    columns.push_back(FinishIntArray(labels));
+
+    auto table = arrow::Table::Make(
+        arrow::schema(fields), columns, rows);
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "batcher_setup_wide_stratified");
+}
+
 std::shared_ptr<cyxwiz::ArrowDataset> MakeTimeSeriesDataset() {
     auto schema = arrow::schema({
         arrow::field("x0", arrow::float32()),
@@ -510,6 +543,32 @@ int main() {
     }
     Check(weighted_minority_count > 1,
           "weighted sampler should sample minority class rows with replacement");
+
+    auto wide_sampler_config = MakeConfig();
+    wide_sampler_config.train_ratio = 0.8f;
+    wide_sampler_config.val_ratio = 0.1f;
+    wide_sampler_config.test_ratio = 0.1f;
+    wide_sampler_config.has_data_split = true;
+    wide_sampler_config.stratified = true;
+    wide_sampler_config.shuffle = true;
+    wide_sampler_config.split_seed = 42;
+    wide_sampler_config.balance_classes = true;
+    wide_sampler_config.balance_mode = "weighted_sampler";
+    wide_sampler_config.balance_target = "median";
+    wide_sampler_config.balance_seed = 42;
+    wide_sampler_config.prefetch_factor = 0;
+    auto wide_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        wide_sampler_config,
+        MakeWideStratifiedDataset(),
+        "label",
+        /*batch_size=*/8);
+    Check(wide_batchers.num_train_samples > 0,
+          "wide weighted sampler should create train samples");
+    Check(wide_batchers.num_val_samples > 0,
+          "wide weighted sampler should create validation samples");
+    auto wide_first_batch = wide_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(wide_first_batch, 8, 8000, 2,
+                               "wide weighted sampler first batch");
 
     auto balanced_loss_config = MakeConfig();
     balanced_loss_config.train_ratio = 0.75f;

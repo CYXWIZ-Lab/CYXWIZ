@@ -1,4 +1,5 @@
 #include "model_importer.h"
+#include "error_codes.h"
 #include "graph_compiler.h"
 #include "model_builder.h"
 #include <cyxwiz/sequential.h>
@@ -22,93 +23,6 @@ static bool IsCyxwBinaryFormat(const std::string& path);
 static bool IsTrainingOnlyParameter(const std::string& name) {
     return name.find("grad_") != std::string::npos ||
            name.find(".grad") != std::string::npos;
-}
-
-static std::string GetStringParam(const CompiledLayer& layer,
-                                  const std::string& key,
-                                  const std::string& fallback = "") {
-    auto it = layer.parameters.find(key);
-    return it == layer.parameters.end() ? fallback : it->second;
-}
-
-static bool GetBoolParam(const CompiledLayer& layer,
-                         const std::string& key,
-                         bool fallback = false) {
-    auto it = layer.parameters.find(key);
-    if (it == layer.parameters.end()) {
-        return fallback;
-    }
-    return it->second == "true" || it->second == "1";
-}
-
-static int GetIntParam(const CompiledLayer& layer,
-                       const std::string& key,
-                       int fallback = 0) {
-    auto it = layer.parameters.find(key);
-    if (it == layer.parameters.end()) {
-        return fallback;
-    }
-    try {
-        return std::stoi(it->second);
-    } catch (...) {
-        return fallback;
-    }
-}
-
-static float GetFloatParam(const CompiledLayer& layer,
-                           const std::string& key,
-                           float fallback = 0.0f) {
-    auto it = layer.parameters.find(key);
-    if (it == layer.parameters.end()) {
-        return fallback;
-    }
-    try {
-        return std::stof(it->second);
-    } catch (...) {
-        return fallback;
-    }
-}
-
-static Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
-                                           size_t expected_rows,
-                                           size_t expected_cols) {
-    std::ifstream in(path);
-    if (!in.is_open()) {
-        throw std::runtime_error("could not open embedding weights file: " + path);
-    }
-
-    std::vector<float> values;
-    size_t rows = 0;
-    size_t cols = 0;
-    std::string line;
-    while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        std::replace(line.begin(), line.end(), ',', ' ');
-        std::istringstream iss(line);
-        std::vector<float> row;
-        float value = 0.0f;
-        while (iss >> value) {
-            row.push_back(value);
-        }
-        if (row.empty()) continue;
-        if (cols == 0) {
-            cols = row.size();
-        } else if (row.size() != cols) {
-            throw std::runtime_error("embedding weights file has inconsistent row widths");
-        }
-        values.insert(values.end(), row.begin(), row.end());
-        ++rows;
-    }
-
-    if (rows != expected_rows || cols != expected_cols) {
-        std::ostringstream msg;
-        msg << "embedding weights shape mismatch: expected "
-            << expected_rows << " x " << expected_cols
-            << ", got " << rows << " x " << cols;
-        throw std::runtime_error(msg.str());
-    }
-
-    return Tensor({rows, cols}, values.data(), DataType::Float32);
 }
 
 // Helper: Build model architecture from graph JSON
@@ -180,7 +94,9 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
     // Check file exists
     if (!std::filesystem::exists(input_path)) {
         result.valid = false;
-        result.error_message = "File not found: " + input_path;
+        result.error_message = errors::FormatError(
+            errors::File::NotFound,
+            "File not found: " + input_path);
         return result;
     }
 
@@ -189,7 +105,9 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
 
     if (result.format == ModelFormat::Unknown) {
         result.valid = false;
-        result.error_message = "Unknown model format";
+        result.error_message = errors::FormatError(
+            errors::File::UnsupportedFormat,
+            "Unknown model format");
         return result;
     }
 
@@ -220,7 +138,9 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
             std::ifstream file(input_path, std::ios::binary);
             if (!file) {
                 result.valid = false;
-                result.error_message = "Failed to open file";
+                result.error_message = errors::FormatError(
+                    errors::File::ReadFailed,
+                    "Failed to open file");
                 return result;
             }
 
@@ -230,7 +150,9 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
 
             if (header_size > 100 * 1024 * 1024) {  // Sanity check: 100MB max header
                 result.valid = false;
-                result.error_message = "Invalid header size";
+                result.error_message = errors::FormatError(
+                    errors::Serialization::ModelLoadFailed,
+                    "Invalid header size");
                 return result;
             }
 
@@ -277,7 +199,10 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
 
             } catch (const std::exception& e) {
                 result.valid = false;
-                result.error_message = std::string("Failed to parse header: ") + e.what();
+                result.error_message = errors::FormatError(
+                    errors::Serialization::ModelLoadFailed,
+                    "Failed to parse header",
+                    e.what());
             }
             break;
         }
@@ -285,12 +210,16 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
         case ModelFormat::ONNX:
         case ModelFormat::GGUF:
             result.valid = false;
-            result.error_message = "Probing not yet implemented for this format";
+            result.error_message = errors::FormatError(
+                errors::Serialization::ExportFormatUnavailable,
+                "Probing not yet implemented for this format");
             break;
 
         default:
             result.valid = false;
-            result.error_message = "Unknown format";
+            result.error_message = errors::FormatError(
+                errors::File::UnsupportedFormat,
+                "Unknown format");
             break;
     }
 

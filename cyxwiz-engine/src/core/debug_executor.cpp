@@ -1,4 +1,5 @@
 #include "debug_executor.h"
+#include "error_codes.h"
 #include "model_builder.h"
 #include "synthetic_batch.h"
 
@@ -103,10 +104,12 @@ DebugResult DebugExecutor::Run() {
                      config_.layers.size());
         auto built = BuildSequentialFromConfig(config_);
         if (!built.ok()) {
-            result.failure_summary = "Model build failed (no layers "
-                                     "produced or invalid config)";
+            result.failure_summary = built.error_message.empty()
+                ? "Model build failed (no layers produced or invalid config)"
+                : built.error_message;
             result.issues.push_back({IssueLevel::Error, -1, "",
-                                     result.failure_summary});
+                                     result.failure_summary,
+                                     errors::Training::ModelBuildFailed});
             return result;
         }
         model_     = std::move(built.model);
@@ -156,11 +159,13 @@ DebugResult DebugExecutor::Run() {
             if (has_nan) {
                 result.issues.push_back({IssueLevel::Error,
                                          trace.node_id, trace.name,
-                                         "Forward output contains NaN"});
+                                         "Forward output contains NaN",
+                                         errors::Training::TrainingExecutionFailed});
             } else if (has_inf) {
                 result.issues.push_back({IssueLevel::Error,
                                          trace.node_id, trace.name,
-                                         "Forward output contains Inf"});
+                                         "Forward output contains Inf",
+                                         errors::Training::TrainingExecutionFailed});
             }
 
             result.layer_traces.push_back(std::move(trace));
@@ -178,7 +183,8 @@ DebugResult DebugExecutor::Run() {
             result.failure_summary = "Loss is not finite";
             result.issues.push_back({IssueLevel::Error, -1, "",
                                      "Loss is not finite (value=" +
-                                     std::to_string(result.loss_value) + ")"});
+                                     std::to_string(result.loss_value) + ")",
+                                     errors::Training::TrainingExecutionFailed});
             return result;
         }
 
@@ -231,11 +237,13 @@ DebugResult DebugExecutor::Run() {
                 if (gnan) {
                     result.issues.push_back({IssueLevel::Error, -1,
                                              param_name,
-                                             "Gradient contains NaN"});
+                                             "Gradient contains NaN",
+                                             errors::Training::TrainingExecutionFailed});
                 } else if (ginf) {
                     result.issues.push_back({IssueLevel::Error, -1,
                                              param_name,
-                                             "Gradient contains Inf"});
+                                             "Gradient contains Inf",
+                                             errors::Training::TrainingExecutionFailed});
                 }
                 if (!entry.is_zero) {
                     layer_any_nonzero[layer_idx] = true;
@@ -260,7 +268,8 @@ DebugResult DebugExecutor::Run() {
                                          "layer" + std::to_string(layer_idx),
                                          "All gradients are zero for this "
                                          "layer (possible dead subgraph or "
-                                         "vanishing gradient at init)"});
+                                         "vanishing gradient at init)",
+                                         errors::Training::TrainingExecutionFailed});
             }
         }
 
@@ -291,14 +300,16 @@ DebugResult DebugExecutor::Run() {
             std::string("Exception during ") + StageName(result.reached) +
             ": " + e.what();
         result.issues.push_back({IssueLevel::Error, -1, "",
-                                 result.failure_summary});
+                                 result.failure_summary,
+                                 errors::Training::TrainingExecutionFailed});
         spdlog::error("DebugExecutor: {}", result.failure_summary);
     } catch (...) {
         result.failure_summary =
             std::string("Unknown exception during ") +
             StageName(result.reached);
         result.issues.push_back({IssueLevel::Error, -1, "",
-                                 result.failure_summary});
+                                 result.failure_summary,
+                                 errors::Training::TrainingExecutionFailed});
         spdlog::error("DebugExecutor: {}", result.failure_summary);
     }
 

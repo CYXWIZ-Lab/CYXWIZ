@@ -1,4 +1,4 @@
-# tofix37 - Backend Placement Follow-up: Runtime Writers, Persistent Probes, and Native Recurrent CUDA
+﻿# tofix37 - Backend Placement Follow-up: Runtime Writers, Persistent Probes, and Native Recurrent CUDA
 
 ## Purpose
 
@@ -10,7 +10,7 @@ past its core compiler/runtime contract.
 - compiler-owned backend placement reports,
 - recurrent CPU/GPU placement policy,
 - per-device placement observation cache,
-- bounded LSTM CUDA preflight probe,
+- first bounded LSTM CUDA preflight probe,
 - structured backend fallback reason codes,
 - generic active-device observation helpers,
 - Dense runtime fallback observation writing,
@@ -75,7 +75,38 @@ Cache key should include:
 The compiler should trust persistent failures conservatively but should not
 treat a successful synthetic probe as full safety proof.
 
-### 4. Deep preflight mode
+### 4. General JIT preflight safety framework
+
+The current bounded LSTM CUDA probe is the first proof point, not the final
+architecture. Preflight should become a general safety framework for GPU/JIT
+placement, while each executable probe remains operator-specific.
+
+Add a shared JIT safety layer that owns:
+
+- cache keys by device, backend, op type, dtype, and stable shape signature,
+- structured probe outcomes: safe, unsafe, timeout, unsupported, inconclusive,
+- structured failure reasons shared with runtime fallback observations,
+- timeout and budget enforcement,
+- conservative CPU routing when a matching unsafe observation exists,
+- debugger-visible probe decisions and details.
+
+Probe bodies must stay operator-specific because ArrayFire/CUDA generated-kernel
+failure depends on the actual op graph, not just tensor allocation size.
+
+Initial operator probe priorities:
+
+- GRU recurrent probe, because sentiment training currently CPU-routes GRU after
+  observed CUDA generated-kernel formal-parameter overflow,
+- LSTM probe hardening and coverage for more sequence shapes,
+- linear/matmul probe for dense tensor workloads,
+- embedding probe for text models,
+- convolution probe for vision models.
+
+Do not treat a successful synthetic probe as a guarantee that the full training
+step is safe. Runtime fallback observations must still write back into the same
+cache so real failures teach future compiles.
+
+### 5. Deep preflight mode
 
 Keep normal compile fast. Add an explicit deep preflight mode for users who want
 stronger GPU/JIT checks before a long training run.
@@ -83,12 +114,12 @@ stronger GPU/JIT checks before a long training run.
 Deep preflight may:
 
 - run more representative synthetic probes,
-- probe selected tensor ops beyond LSTM,
+- probe selected tensor ops beyond the initial LSTM probe,
 - report per-op probe duration,
 - stop probing when a timeout budget is exceeded,
 - write failures to the persistent cache.
 
-### 5. Native/fused recurrent CUDA path
+### 6. Native/fused recurrent CUDA path
 
 ArrayFire JIT recurrent loops remain the weak point. The long-term fix is not
 more string classification; it is controlled kernel boundaries.
@@ -102,10 +133,11 @@ Investigate:
 - timeout protection,
 - benchmark and profiler coverage.
 
-GRU, BiGRU, and BiLSTM should stay conservatively CPU-routed until this path is
-proven.
+GRU, BiGRU, and BiLSTM should stay conservatively CPU-routed until either a
+bounded GRU-specific preflight probe proves safe for the target shape/device, or
+this native/fused path is proven.
 
-### 6. Debugger/UI surfacing
+### 7. Debugger/UI surfacing
 
 This overlaps with `tofix32`.
 
@@ -117,17 +149,48 @@ Expose placement observations in the Studio debugger:
 - device signature,
 - shape signature,
 - source: runtime fallback vs preflight probe,
+- probe scope: normal compile vs deep preflight,
+- probe outcome: safe, unsafe, timeout, unsupported, inconclusive,
 - "not VRAM" explanation for CUDA formal-parameter overflow.
 
 The debugger should make backend fallback understandable without requiring users
 to read raw ArrayFire/NVRTC logs.
+
+### 8. Pinned host-memory transfer backend
+
+`DataLoader.pin_memory` is currently serialized for compatibility and surfaced
+truthfully as unsupported. That boundary was intentional: current batchers do
+not allocate pinned/page-locked host memory, and the runtime does not have an
+explicit pinned CPU-to-GPU transfer path.
+
+Add the real backend only when it changes actual data movement:
+
+- backend/runtime pinned host allocator and free path,
+- batcher-owned pinned staging buffers,
+- fallback to regular host memory when pinned allocation is unavailable,
+- explicit host-to-device transfer points that can be profiled,
+- CUDA/ArrayFire backend checks before using pinned memory,
+- cleanup/shutdown ownership so pinned pages are not leaked,
+- benchmark comparing regular host memory vs pinned memory on at least one
+  real GPU workload.
+
+This is GPU-pipeline work, not recurrent-kernel work. It should improve input
+transfer throughput once the engine has explicit CPU-to-GPU staging, but it will
+not fix CUDA generated-kernel formal-parameter overflow in GRU/LSTM recurrent
+JIT paths.
 
 ## Acceptance Criteria
 
 - At least three more non-recurrent runtime paths record placement observations.
 - Compiler consumes cached observations through the generic tensor-layer path.
 - Shape signatures are helper-built and shared between compiler/runtime.
+- JIT preflight has a general framework with operator-specific probe bodies.
+- GRU is represented explicitly as the next recurrent probe target rather than
+  hidden behind the LSTM-only probe.
 - Deep preflight is opt-in and bounded by timeout/budget.
 - Persistent cache format is documented and versioned.
 - Debugger follow-up is linked to `tofix32` rather than duplicated.
+- pin_memory=true changes a real pinned host-memory transfer path, or remains
+  visibly unsupported.
+
 

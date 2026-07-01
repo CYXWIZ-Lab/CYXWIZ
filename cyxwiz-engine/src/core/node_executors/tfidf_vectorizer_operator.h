@@ -31,6 +31,7 @@ namespace cyxwiz {
  *   text_col          (required)        — string column with raw text
  *   label_col         (optional)        — column to use as label
  *   max_features      (default 2000)    — top-N terms by IDF (>= 1)
+ *   min_df            (default 1)       — keep terms seen in >= N docs
  *   use_idf           (default true)    — multiply TF by IDF
  *   smooth_idf        (default true)    — add 1 to doc frequencies
  *   norm              (default "l2")    — "l1" / "l2" / "none"
@@ -53,9 +54,14 @@ private:
     std::string text_col_;
     std::string label_col_;
     int max_features_ = 2000;
+    int min_df_ = 1;
+    int ngram_min_ = 1;
+    int ngram_max_ = 1;
     bool use_idf_ = true;
     bool smooth_idf_ = true;
     std::string norm_ = "l2";
+    std::string stop_words_ = "english";
+    std::string output_format_ = "dense";
     PipelineOperatorProgressCallback progress_callback_;
 };
 

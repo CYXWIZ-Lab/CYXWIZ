@@ -47,34 +47,36 @@ void Theme::ApplyImNodesStyle() {
     // Theme-specific colors
     switch (current_preset_) {
         case ThemePreset::CyxWizDark:
+        case ThemePreset::CyxWizLaunch:
         case ThemePreset::ModernDark: {
             // Dark blue-accented theme
-            ImVec4 node_bg = ImVec4(0.15f, 0.15f, 0.18f, 1.0f);
-            ImVec4 node_bg_hover = ImVec4(0.18f, 0.18f, 0.22f, 1.0f);
-            ImVec4 node_bg_selected = ImVec4(0.20f, 0.20f, 0.25f, 1.0f);
-            ImVec4 title_bar = ImVec4(0.20f, 0.55f, 0.85f, 1.0f);  // Blue accent
-            ImVec4 title_bar_hover = ImVec4(0.25f, 0.60f, 0.90f, 1.0f);
-            ImVec4 title_bar_selected = ImVec4(0.30f, 0.65f, 0.95f, 1.0f);
-            ImVec4 link_color = ImVec4(0.45f, 0.70f, 0.95f, 1.0f);
-            ImVec4 pin_color = ImVec4(0.50f, 0.75f, 1.00f, 1.0f);
+            const bool launch = current_preset_ == ThemePreset::CyxWizLaunch;
+            ImVec4 node_bg = launch ? ImVec4(0.06f, 0.10f, 0.17f, 1.0f) : ImVec4(0.15f, 0.15f, 0.18f, 1.0f);
+            ImVec4 node_bg_hover = launch ? ImVec4(0.08f, 0.14f, 0.23f, 1.0f) : ImVec4(0.18f, 0.18f, 0.22f, 1.0f);
+            ImVec4 node_bg_selected = launch ? ImVec4(0.10f, 0.18f, 0.30f, 1.0f) : ImVec4(0.20f, 0.20f, 0.25f, 1.0f);
+            ImVec4 title_bar = launch ? ImVec4(0.02f, 0.34f, 0.92f, 1.0f) : ImVec4(0.20f, 0.55f, 0.85f, 1.0f);
+            ImVec4 title_bar_hover = launch ? ImVec4(0.06f, 0.48f, 1.00f, 1.0f) : ImVec4(0.25f, 0.60f, 0.90f, 1.0f);
+            ImVec4 title_bar_selected = launch ? ImVec4(0.14f, 0.58f, 1.00f, 1.0f) : ImVec4(0.30f, 0.65f, 0.95f, 1.0f);
+            ImVec4 link_color = launch ? ImVec4(0.24f, 0.72f, 1.00f, 1.0f) : ImVec4(0.45f, 0.70f, 0.95f, 1.0f);
+            ImVec4 pin_color = launch ? ImVec4(0.36f, 0.82f, 1.00f, 1.0f) : ImVec4(0.50f, 0.75f, 1.00f, 1.0f);
 
             style.Colors[ImNodesCol_NodeBackground] = ColorToU32(node_bg);
             style.Colors[ImNodesCol_NodeBackgroundHovered] = ColorToU32(node_bg_hover);
             style.Colors[ImNodesCol_NodeBackgroundSelected] = ColorToU32(node_bg_selected);
-            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(ImVec4(0.30f, 0.30f, 0.35f, 1.0f));
+            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(launch ? ImVec4(0.10f, 0.28f, 0.48f, 0.85f) : ImVec4(0.30f, 0.30f, 0.35f, 1.0f));
             style.Colors[ImNodesCol_TitleBar] = ColorToU32(title_bar);
             style.Colors[ImNodesCol_TitleBarHovered] = ColorToU32(title_bar_hover);
             style.Colors[ImNodesCol_TitleBarSelected] = ColorToU32(title_bar_selected);
             style.Colors[ImNodesCol_Link] = ColorToU32(link_color);
-            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(ImVec4(0.55f, 0.80f, 1.00f, 1.0f));
-            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(ImVec4(0.65f, 0.85f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(launch ? ImVec4(0.40f, 0.86f, 1.00f, 1.0f) : ImVec4(0.55f, 0.80f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(launch ? ImVec4(0.58f, 0.92f, 1.00f, 1.0f) : ImVec4(0.65f, 0.85f, 1.00f, 1.0f));
             style.Colors[ImNodesCol_Pin] = ColorToU32(pin_color);
-            style.Colors[ImNodesCol_PinHovered] = ColorToU32(ImVec4(0.70f, 0.90f, 1.00f, 1.0f));
-            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(ImVec4(0.20f, 0.55f, 0.85f, 0.30f));
-            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(ImVec4(0.20f, 0.55f, 0.85f, 1.0f));
-            style.Colors[ImNodesCol_GridBackground] = ColorToU32(ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
-            style.Colors[ImNodesCol_GridLine] = ColorToU32(ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
-            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(ImVec4(0.20f, 0.20f, 0.25f, 1.0f));
+            style.Colors[ImNodesCol_PinHovered] = ColorToU32(launch ? ImVec4(0.64f, 0.94f, 1.00f, 1.0f) : ImVec4(0.70f, 0.90f, 1.00f, 1.0f));
+            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(launch ? ImVec4(0.04f, 0.48f, 1.00f, 0.28f) : ImVec4(0.20f, 0.55f, 0.85f, 0.30f));
+            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(launch ? ImVec4(0.04f, 0.48f, 1.00f, 1.0f) : ImVec4(0.20f, 0.55f, 0.85f, 1.0f));
+            style.Colors[ImNodesCol_GridBackground] = ColorToU32(launch ? ImVec4(0.03f, 0.06f, 0.11f, 1.0f) : ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
+            style.Colors[ImNodesCol_GridLine] = ColorToU32(launch ? ImVec4(0.07f, 0.12f, 0.20f, 1.0f) : ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(launch ? ImVec4(0.10f, 0.18f, 0.30f, 1.0f) : ImVec4(0.20f, 0.20f, 0.25f, 1.0f));
             break;
         }
 

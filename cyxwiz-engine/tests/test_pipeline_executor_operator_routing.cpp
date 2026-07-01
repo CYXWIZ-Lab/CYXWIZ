@@ -323,6 +323,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_convert.parquet";
     const fs::path data_convert_export_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_convert_export.csv";
+    const fs::path data_convert_from_dataset_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_convert_from_dataset.parquet";
     const fs::path save_dataset_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_save_dataset.csv";
     const fs::path save_dataset_file_type_parquet_path =
@@ -356,6 +358,8 @@ int main() {
     fs::remove(data_convert_parquet_path);
     fs::remove(data_convert_parquet_path.string() + ".manifest.json");
     fs::remove(data_convert_export_csv_path);
+    fs::remove(data_convert_from_dataset_parquet_path);
+    fs::remove(data_convert_from_dataset_parquet_path.string() + ".manifest.json");
     fs::remove(save_dataset_csv_path);
     fs::remove(save_dataset_file_type_parquet_path);
     fs::remove(missing_csv_path);
@@ -414,7 +418,7 @@ int main() {
         std::ofstream csv(string_csv_path);
         csv << "phrase\n";
         csv << "tea cup\n";
-        csv << "blue mug\n";
+        csv << "tea mug\n";
     }
     {
         std::ofstream csv(mixed_csv_path);
@@ -3275,6 +3279,31 @@ int main() {
     Check(data_convert_dataset->GetNumRows() == 3,
           "DataConvert registered dataset should preserve row count");
 
+    const std::string data_convert_from_dataset_json =
+        R"({"nodes":[)"
+        R"({"id":376,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":377,"type":"DataConvert","name":"Convert","parameters":{)"
+        R"("output_path":")" +
+        JsonEscapePath(data_convert_from_dataset_parquet_path.string()) +
+        R"(","output_format":"parquet","overwrite":"true","write_manifest":"true"}})"
+        R"(],"links":[{"start_node":376,"end_node":377}]})";
+
+    cyxwiz::PipelineExecutor data_convert_from_dataset_executor;
+    Check(data_convert_from_dataset_executor.ExecutePipeline(
+              data_convert_from_dataset_json),
+          "DataConvert should accept an upstream dataset without input_path: " +
+              data_convert_from_dataset_executor.GetLastError());
+    Check(fs::exists(data_convert_from_dataset_parquet_path),
+          "DataConvert upstream dataset pipeline should create Parquet output");
+    auto data_convert_from_dataset =
+        registry.GetArrowDataset("ds_dataconvert_377");
+    Check(data_convert_from_dataset != nullptr,
+          "DataConvert upstream dataset pipeline should register output dataset");
+    Check(data_convert_from_dataset->GetNumRows() == 3,
+          "DataConvert upstream dataset output should preserve row count");
+
     const std::string column_appender_json =
         R"({"nodes":[)"
         R"({"id":33,"type":"DataInput","name":"Left","parameters":{)"
@@ -5019,43 +5048,39 @@ int main() {
           "TextVectorize unsupported norm error should be specific: " +
               bad_text_vectorize_method_executor.GetLastError());
 
-    const std::string bad_text_vectorize_max_features_json =
+    const std::string text_vectorize_ngram_json =
         R"({"nodes":[)"
         R"({"id":213,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":214,"type":"TextVectorize","name":"IgnoredMaxFeatures","parameters":{)"
+        R"({"id":214,"type":"TextVectorize","name":"TextVectorizeNGram","parameters":{)"
         R"("text_col":"phrase","ngram_range":"1,2"}})"
         R"(],"links":[{"start_node":213,"end_node":214}]})";
 
-    cyxwiz::PipelineExecutor bad_text_vectorize_max_features_executor;
-    Check(!bad_text_vectorize_max_features_executor.ExecutePipeline(
-              bad_text_vectorize_max_features_json),
-          "TextVectorize unsupported ngram_range should fail closed");
-    Check(bad_text_vectorize_max_features_executor.GetLastError().find(
-              "CountVectorizer: ngram_range values other than '1,1'") !=
-              std::string::npos,
-          "TextVectorize ngram_range error should be specific: " +
-              bad_text_vectorize_max_features_executor.GetLastError());
+    cyxwiz::PipelineExecutor text_vectorize_ngram_executor;
+    Check(text_vectorize_ngram_executor.ExecutePipeline(
+              text_vectorize_ngram_json),
+          "TextVectorize ngram_range=1,2 should be supported: " +
+              text_vectorize_ngram_executor.GetLastError());
+    check_operator_field("ds_operator_TextVectorize_214", "count_0",
+                         "TextVectorize ngram_range=1,2");
 
     const std::string count_vectorizer_binary_json =
         R"({"nodes":[)"
         R"({"id":215,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":216,"type":"CountVectorizer","name":"BadCountVectorizer","parameters":{)"
+        R"({"id":216,"type":"CountVectorizer","name":"CountVectorizerBinary","parameters":{)"
         R"("text_col":"phrase","binary":"true"}})"
         R"(],"links":[{"start_node":215,"end_node":216}]})";
 
     cyxwiz::PipelineExecutor count_vectorizer_binary_executor;
-    Check(!count_vectorizer_binary_executor.ExecutePipeline(
+    Check(count_vectorizer_binary_executor.ExecutePipeline(
               count_vectorizer_binary_json),
-          "CountVectorizer binary=true should fail closed");
-    Check(count_vectorizer_binary_executor.GetLastError().find(
-              "CountVectorizer: binary counts are not supported") !=
-              std::string::npos,
-          "CountVectorizer binary error should be specific: " +
+          "CountVectorizer binary=true should execute: " +
               count_vectorizer_binary_executor.GetLastError());
+    check_operator_field("ds_operator_CountVectorizer_216", "count_0",
+                         "CountVectorizer binary=true");
 
     const std::string count_vectorizer_bad_binary_json =
         R"({"nodes":[)"
@@ -5071,29 +5096,43 @@ int main() {
               count_vectorizer_bad_binary_json),
           "CountVectorizer malformed binary should fail validation");
     Check(count_vectorizer_bad_binary_executor.GetLastError().find(
-              "CountVectorizer: 'binary' must be 'true' or 'false'") !=
+              "CountVectorizer binary 'maybe' is not supported") !=
               std::string::npos,
           "CountVectorizer malformed binary error should be specific: " +
               count_vectorizer_bad_binary_executor.GetLastError());
+
+    const std::string count_vectorizer_sparse_json =
+        R"({"nodes":[)"
+        R"({"id":221,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":224,"type":"CountVectorizer","name":"SparseCountVectorizer","parameters":{)"
+        R"("text_col":"phrase","output_format":"sparse"}})"
+        R"(],"links":[{"start_node":221,"end_node":224}]})";
+
+    cyxwiz::PipelineExecutor count_vectorizer_sparse_executor;
+    Check(!count_vectorizer_sparse_executor.ExecutePipeline(
+              count_vectorizer_sparse_json),
+          "CountVectorizer output_format=sparse should fail validation");
+    Check(count_vectorizer_sparse_executor.GetLastError().find(
+              "CountVectorizer output_format 'sparse' is not supported") !=
+              std::string::npos,
+          "CountVectorizer sparse output validation should be specific: " +
+              count_vectorizer_sparse_executor.GetLastError());
 
     const std::string tfidf_vectorizer_min_df_json =
         R"({"nodes":[)"
         R"({"id":217,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":218,"type":"TFIDFVectorizer","name":"BadTfidfVectorizer","parameters":{)"
+        R"({"id":218,"type":"TFIDFVectorizer","name":"TfidfVectorizerMinDf","parameters":{)"
         R"("text_col":"phrase","min_df":"2"}})"
         R"(],"links":[{"start_node":217,"end_node":218}]})";
 
     cyxwiz::PipelineExecutor tfidf_vectorizer_min_df_executor;
-    Check(!tfidf_vectorizer_min_df_executor.ExecutePipeline(
+    Check(tfidf_vectorizer_min_df_executor.ExecutePipeline(
               tfidf_vectorizer_min_df_json),
-          "TFIDFVectorizer min_df should fail closed when unsupported");
-    Check(tfidf_vectorizer_min_df_executor.GetLastError().find(
-              "TFIDFVectorizer: min_df values other than 1 are not supported") !=
-              std::string::npos,
-          "TFIDFVectorizer min_df error should be specific: " +
-              tfidf_vectorizer_min_df_executor.GetLastError());
+          "TFIDFVectorizer min_df=2 should be supported");
 
     const std::string tfidf_vectorizer_bad_bool_json =
         R"({"nodes":[)"

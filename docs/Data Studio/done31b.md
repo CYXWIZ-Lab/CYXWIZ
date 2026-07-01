@@ -1,8 +1,8 @@
-# tofix31b - TransformerDecoder runtime contract
+# done31b - TransformerDecoder runtime contract
 
 ## Scope
 
-This is the second small ticket extracted from `tofix31.md`.
+This is the second completed small ticket extracted from `tofix31.md`.
 
 The goal is not to implement full seq2seq or pretrained generation support yet.
 The goal is to make the current TransformerDecoder boundary explicit and

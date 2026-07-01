@@ -1,6 +1,6 @@
-# Data Studio tofix31a - LSTM ArrayFire performance phase 2 benchmark
+# Data Studio done31a - LSTM ArrayFire performance phase 2 benchmark
 
-Status: current scoped ticket extracted from `tofix31.md`.
+Status: completed scoped ticket extracted from `tofix31.md`.
 
 Goal: make recurrent performance work measurement-gated before changing LSTM
 runtime behavior again.

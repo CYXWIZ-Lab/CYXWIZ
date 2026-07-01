@@ -58,6 +58,7 @@ struct TrainingTraceSummary {
     float latest_loss = 0.0f;
     float latest_accuracy = 0.0f;
     std::vector<TrainingTraceEvent> recent_events;
+    std::vector<TrainingTraceEvent> materialization_events;
     std::vector<std::string> warnings;
 };
 
@@ -131,6 +132,7 @@ private:
     std::string run_id_;
     std::string status_ = "idle";
     std::deque<TrainingTraceEvent> events_;
+    std::deque<TrainingTraceEvent> materialization_events_;
     std::vector<std::string> warnings_;
     TrainingTraceSettings settings_;
     size_t events_since_write_ = 0;

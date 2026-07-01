@@ -103,6 +103,7 @@ private:
     void RenderGraphTraceView();
     void RenderLastRun();
     void RenderTrainingTrace();
+    void RenderMaterializationTrace(const TrainingTraceSummary& trace);
     void RenderRuntimeTimeline(const TrainingTraceSummary& trace);
     void RenderMemoryTrace(const TrainingTraceSummary& trace);
     void RenderLayerTimingBreakdown(const TrainingTraceSummary& trace);

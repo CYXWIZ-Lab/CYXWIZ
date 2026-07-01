@@ -12,7 +12,9 @@
 #include "../src/core/debug_windows_crash_importer.h"
 #include "../src/core/annotation_manager.h"
 #include "../src/core/data_registry.h"
+#include "../src/core/error_codes.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
+#include "../src/core/preflight_validator.h"
 #include "../src/core/text_preprocessing_tracer.h"
 
 #include <arrow/api.h>
@@ -85,6 +87,16 @@ bool HasRecommendation(const std::vector<cyxwiz::DebugRecommendation>& recs,
                        const std::string& title) {
     for (const auto& rec : recs) {
         if (rec.title == title) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HasIssueCode(const std::vector<cyxwiz::ValidationIssue>& issues,
+                  const std::string& code) {
+    for (const auto& issue : issues) {
+        if (issue.error_code == code) {
             return true;
         }
     }
@@ -206,17 +218,29 @@ void TestNodeTraceContract() {
     Check(trace.payload["error_count"].get<size_t>() == 0,
           "node trace should start with zero errors");
 
-    cyxwiz::DebugNodeTraceContract::AddWarning(trace, "CPU fallback used");
+    cyxwiz::DebugNodeTraceContract::AddWarning(
+        trace,
+        "CPU fallback used",
+        cyxwiz::errors::Gpu::KernelExecutionFailed);
     Check(trace.issues.size() == 1,
           "node trace warning should append an issue");
+    Check(trace.issues[0].error_code ==
+              cyxwiz::errors::Gpu::KernelExecutionFailed,
+          "node trace warning should preserve error code");
     Check(trace.payload["warning_count"].get<size_t>() == 1,
           "node trace warning should update warning count");
     Check(trace.status == "ok",
           "node trace warning should not fail the trace");
 
-    cyxwiz::DebugNodeTraceContract::AddError(trace, "Shape mismatch");
+    cyxwiz::DebugNodeTraceContract::AddError(
+        trace,
+        "Shape mismatch",
+        cyxwiz::errors::Compiler::TensorShapeMismatch);
     Check(trace.issues.size() == 2,
           "node trace error should append an issue");
+    Check(trace.issues[1].error_code ==
+              cyxwiz::errors::Compiler::TensorShapeMismatch,
+          "node trace error should preserve error code");
     Check(trace.payload["error_count"].get<size_t>() == 1,
           "node trace error should update error count");
     Check(trace.status == "failed",
@@ -624,7 +648,8 @@ void TestSupportBundleContract() {
         cyxwiz::IssueLevel::Error,
         5,
         "Tokenizer",
-        "[CW-D-0101] required column missing"
+        "[CW-D-0101] required column missing",
+        "CW-D-0101"
     });
 
     cyxwiz::DebugTraceRecord trace =
@@ -643,6 +668,13 @@ void TestSupportBundleContract() {
     trace.payload["raw_text_preview"] = "private dataset row";
     trace.payload["source_path"] = "C:/Users/private/data.csv";
     trace.payload["error_code"] = "CW-D-0101";
+    trace.issues.push_back({
+        cyxwiz::IssueLevel::Error,
+        5,
+        "Tokenizer",
+        "required column missing",
+        "CW-D-0101"
+    });
     record.traces.push_back(std::move(trace));
 
     record.studio_events.push_back({
@@ -732,6 +764,12 @@ void TestSupportBundleContract() {
     Check(bundle["debug_run"]["traces"][0]["payload"]["error_code"].get<std::string>() ==
               "CW-D-0101",
           "support bundle should keep structured error codes");
+    Check(bundle["debug_run"]["issues"][0]["error_code"].get<std::string>() ==
+              "CW-D-0101",
+          "support bundle should keep record issue error codes");
+    Check(bundle["debug_run"]["traces"][0]["issues"][0]["error_code"].get<std::string>() ==
+              "CW-D-0101",
+          "support bundle should keep trace issue error codes");
     Check(bundle["crash_run"]["dataset_name"].get<std::string>() ==
               "[REDACTED]",
           "support bundle should redact dataset names");
@@ -1017,7 +1055,8 @@ void TestSmokeRunResultValueContract() {
         cyxwiz::IssueLevel::Error,
         -1,
         "SmokeRun",
-        result.summary
+        result.summary,
+        cyxwiz::errors::Runtime::UnsupportedNode
     });
 
     Check(result.supported, "supported smoke result should expose support flag");
@@ -1025,6 +1064,33 @@ void TestSmokeRunResultValueContract() {
     Check(!result.summary.empty(), "blocked smoke result should explain status");
     Check(result.issues.size() == 1,
           "blocked smoke result should carry issue details");
+    Check(result.issues[0].error_code ==
+              cyxwiz::errors::Runtime::UnsupportedNode,
+          "blocked smoke result should preserve issue code");
+}
+
+void TestPreflightIssueCodeContract() {
+    cyxwiz::TrainingConfiguration config;
+    std::vector<gui::MLNode> nodes;
+    std::vector<gui::NodeLink> links;
+
+    cyxwiz::PreflightValidator preflight;
+    const auto preflight_result = preflight.Validate(config, nodes, links, 0xBADC0DE);
+
+    Check(!preflight_result.ready,
+          "empty preflight should be blocked");
+    Check(HasIssueCode(preflight_result.issues,
+                       cyxwiz::errors::Compiler::MissingTrainingPathNode),
+          "empty preflight should expose missing training-path code");
+    Check(HasIssueCode(preflight_result.issues,
+                       cyxwiz::errors::Runtime::InputDatasetMissing),
+          "empty preflight should expose missing dataset code");
+    Check(HasIssueCode(preflight_result.issues,
+                       cyxwiz::errors::Compiler::TensorShapeMismatch),
+          "empty preflight should expose unknown input-shape code");
+    Check(HasIssueCode(preflight_result.issues,
+                       cyxwiz::errors::Compiler::LabelOutputShapeMismatch),
+          "empty preflight should expose unknown output-shape code");
 }
 
 void TestDebugRunStoreContract() {
@@ -1046,7 +1112,8 @@ void TestDebugRunStoreContract() {
         cyxwiz::IssueLevel::Warning,
         7,
         "DebugNode",
-        "Contract warning"
+        "Contract warning",
+        "CW-C-0103"
     });
 
     cyxwiz::DebugTraceRecord trace;
@@ -1063,6 +1130,13 @@ void TestDebugRunStoreContract() {
     trace.status = "ok";
     trace.payload["backend"] = "CPU";
     trace.payload["max_abs"] = 0.75;
+    trace.issues.push_back({
+        cyxwiz::IssueLevel::Warning,
+        7,
+        "DebugNode",
+        "Trace warning",
+        "CW-C-0103"
+    });
     record.traces.push_back(std::move(trace));
 
     record.studio_events.push_back({
@@ -1103,14 +1177,17 @@ void TestDebugRunStoreContract() {
     Check(loaded->summary.recommendation_count == 1,
           "loaded recommendation count should match persisted recommendation count");
     Check(loaded->issues.size() == 1 &&
-              loaded->issues[0].message == "Contract warning",
-          "issue payload should round-trip");
+              loaded->issues[0].message == "Contract warning" &&
+              loaded->issues[0].error_code == "CW-C-0103",
+          "issue payload and error code should round-trip");
     Check(loaded->traces.size() == 1 &&
               loaded->traces[0].role == cyxwiz::DebugTraceRole::Activation &&
               loaded->traces[0].input_shape == std::vector<size_t>{2, 3} &&
               loaded->traces[0].output_shape == std::vector<size_t>{2, 4} &&
-              loaded->traces[0].payload["backend"].get<std::string>() == "CPU",
-          "trace payload should round-trip");
+              loaded->traces[0].payload["backend"].get<std::string>() == "CPU" &&
+              loaded->traces[0].issues.size() == 1 &&
+              loaded->traces[0].issues[0].error_code == "CW-C-0103",
+          "trace payload and issue error code should round-trip");
     Check(loaded->studio_events.size() == 1 &&
               loaded->studio_events[0].action == "StudioDebugger.SelectTrace",
           "Studio event payload should round-trip");
@@ -1238,6 +1315,17 @@ void TestTextPreprocessingTraceContract() {
           "padding payload should include truncation flag");
 
     cyxwiz::DataRegistry::Instance().UnregisterTextDataset(dataset_name);
+    const auto missing_traces =
+        tracer.TraceSample(config, nodes, "missing-text-trace-run", 0);
+    Check(missing_traces.size() == 1,
+          "text preprocessing tracer should report missing dataset trace");
+    Check(missing_traces[0].payload["error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::InputDatasetMissing,
+          "missing text dataset trace should expose runtime input code");
+    Check(!missing_traces[0].issues.empty() &&
+              missing_traces[0].issues[0].error_code ==
+                  cyxwiz::errors::Runtime::InputDatasetMissing,
+          "missing text dataset issue should expose runtime input code");
     std::filesystem::remove_all(test_root);
 }
 
@@ -1257,6 +1345,7 @@ int main() {
     TestSmokeSampleSelectionContract();
     TestRecommendationContract();
     TestSmokeRunResultValueContract();
+    TestPreflightIssueCodeContract();
     TestDebugRunStoreContract();
     TestTextPreprocessingTraceContract();
     std::cout << "Debugger contract tests passed\n";

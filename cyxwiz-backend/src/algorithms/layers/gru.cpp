@@ -13,6 +13,7 @@
 #include <string>
 
 #include <spdlog/spdlog.h>
+#include <cyxwiz/error_codes.h>
 
 #ifdef max
 #undef max
@@ -311,9 +312,14 @@ Tensor GRULayer::Forward(const Tensor& input) {
                 fallback_message += ".";
                 BackendDebugHooks::EmitDebugEvent(
                     "GRULayer::Forward",
-                    fallback_message +
+                    errors::FormatWarning(
+                        errors::Gpu::PathDisabledByPolicy,
+                        fallback_message) +
                     (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-                spdlog::warn("{}", fallback_message);
+                spdlog::warn("{}",
+                             errors::FormatWarning(
+                                 errors::Gpu::PathDisabledByPolicy,
+                                 fallback_message));
             }
         } else {
             const bool log_fallback =
@@ -327,9 +333,14 @@ Tensor GRULayer::Forward(const Tensor& input) {
             if (log_fallback) {
                 BackendDebugHooks::EmitDebugEvent(
                     "GRULayer::Forward",
-                    fallback_message +
+                    errors::FormatWarning(
+                        errors::Gpu::KernelExecutionFailed,
+                        fallback_message) +
                     (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-                spdlog::warn("{}", fallback_message);
+                spdlog::warn("{}",
+                             errors::FormatWarning(
+                                 errors::Gpu::KernelExecutionFailed,
+                                 fallback_message));
             }
         }
     }

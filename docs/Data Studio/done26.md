@@ -119,6 +119,7 @@ should keep this simple.
 
 | Code | Meaning | Example |
 |---|---|---|
+| `CW-C-0001` | generic compiler issue fallback | legacy compiler warning without narrower classification |
 | `CW-C-0101` | missing required training path node | graph has model but no loss |
 | `CW-C-0102` | unsupported training node | `Conv2D` selected before backend support exists |
 | `CW-C-0103` | graph connectivity invalid | loss is not connected to selected model output |
@@ -168,6 +169,7 @@ should keep this simple.
 | `CW-D-0301` | column type mismatch | text column passed to numeric scaler |
 | `CW-D-0302` | feature/label row count mismatch | batcher sees inconsistent dataset size |
 | `CW-D-0303` | class-label mismatch | labels outside expected class range |
+| `CW-D-0304` | vocabulary coverage warning | selected text sample has high unknown-token ratio |
 | `CW-D-0401` | invalid data split | train/val/test ratios invalid |
 | `CW-D-0501` | dataset materialization failed | Arrow table registration failed |
 
@@ -331,6 +333,160 @@ this document.
 ---
 
 ## Implementation Strategy
+
+## Implementation Progress
+
+### Batch 1/2 first slice - central catalog and formatting
+
+Status: implemented.
+
+- Added a small central error-code catalog in `cyxwiz-backend/include/cyxwiz/error_codes.h`.
+- Kept `cyxwiz-engine/src/core/error_codes.h` as a forwarding include for engine code.
+- Added `FormatError` and `FormatWarning` helpers.
+- Kept the implementation header-only to avoid introducing a larger error framework.
+- Added a focused `test_error_codes` target that locks representative stable code strings and formatting behavior.
+
+### Batch 3 compiler preparation
+
+Status: partially implemented.
+
+- `ValidationIssue` now has an optional `error_code` field.
+- `GraphCompiler` issue creation accepts an optional stable error code.
+- Existing compiler issue messages remain readable and unchanged.
+- Graph-level missing training path issues now carry `CW-C-0101`.
+- Cycle/connectivity compile issues now carry `CW-C-0103`.
+- Invalid compiler parameter issues now carry `CW-C-0401`.
+- Invalid split warnings now carry `CW-D-0401`.
+- Batch-too-large issues now carry `CW-M-0703`.
+- Broad compiler-code assignment remains future rollout work to avoid noisy mass edits.
+
+### Batch 4 runtime first slice
+
+Status: partially implemented.
+
+- `PipelineExecutor` parse and validation failures now use stable `CW-R-*` runtime codes.
+- Existing human-readable `last_error_` messages are preserved after the code prefix.
+- Unsupported runtime node, missing input dataset, invalid parameter, malformed graph, and invalid runtime state paths now produce searchable codes.
+
+Remaining rollout work:
+
+- Assign more compiler codes to high-value `GraphCompiler` issues.
+- Wire `ModelBuilder` and training launch/runtime.
+- Surface structured codes in the GUI error panels and Studio debugger where currently only strings are shown.
+- Add support-bundle structured error record collection once more subsystems emit codes.
+
+### Batch 5 GPU/backend first slice
+
+Status: partially implemented.
+
+- Linear ArrayFire fallback warnings now use `CW-G-0501`.
+- LSTM/GRU ArrayFire fallback warnings now use `CW-G-0501`.
+- LSTM/GRU CUDA/JIT policy-routed fallback warnings now use `CW-G-0201`.
+- Backend debug hook messages receive the same code-prefixed warning text.
+
+### Batch 5 file/data/export first slice
+
+Status: partially implemented.
+
+- DataConvert public preview/convert/load-table boundary now prefixes common file/input/output failures with `CW-F-*`.
+- DataConvert adapter read/write failures are normalized at the public boundary as `CW-F-0501` or `CW-F-0502`.
+- Model export unsupported/failed save paths now use `CW-S-*`.
+- ONNX-not-compiled export now uses `CW-S-0202`.
+- Model import probing now prefixes missing file, unsupported format, read failure, and invalid artifact-header failures.
+
+### Batch 5 training/model-builder first slice
+
+Status: partially implemented.
+
+- `BuiltModel` and `BuiltExecutableModel` now carry an optional coded `error_message`.
+- `ModelBuilder` converts model/loss/optimizer setup failures into `CW-T-*` messages.
+- Empty/unsupported trainable layer build failures now use `CW-C-0102`.
+- Graph-executable construction failures now use `CW-T-0102`.
+- `TrainingExecutor::Initialize` logs coded training setup failures instead of dropping builder reasons.
+- Sequence training setup guardrails now log coded runtime/data/training errors.
+- Training execution exceptions recorded by crash-run tracking now use `CW-T-0501`.
+
+### Batch 6 UI/debugger surfacing first slice
+
+Status: partially implemented.
+
+- `GraphCompiler` error aggregation now includes `[CW-*]` codes for coded issues.
+- `GraphCompiler` logs now print issue codes beside node names and readable messages.
+- Compile result popup shows the issue code beside the issue level/node name when present.
+- Studio Debugger trace issue and session issue panels show the issue code when present.
+- Existing `ValidationIssue::message` text is left unchanged for compatibility.
+
+### Batch 7 compiler high-value validation codes
+
+Status: partially implemented.
+
+- Selected training-path template/deferred nodes now use `CW-C-0102`.
+- Unsupported sequential model layers and unsupported training-control nodes now use `CW-C-0102`.
+- Tensor shape-operation failures now use `CW-C-0301`.
+- CrossEntropy/Focal class/output mismatches, BCE output-size mismatches, and manual class-weight count mismatches now use `CW-C-0302`.
+- Invalid loss/tensor scalar parameters such as `label_smoothing`, `pos_weight`, `class_weight=manual` without weights, and scalar tensor math parameters now use `CW-C-0401`.
+- Required-pin and semantic training-chain wiring validators now use `CW-C-0103`.
+- Preprocessing/domain mismatches now use `CW-D-0301`.
+- Focused compiler contract tests now assert representative stable codes for unsupported nodes, label/output mismatches, invalid parameters, and preprocessing/domain mismatches.
+
+### Batch 8 debugger/support-bundle structured propagation
+
+Status: implemented.
+
+- `DebugRunStore` now persists `ValidationIssue.error_code` for session-level issues and trace-level issues.
+- Old debug run JSON files remain loadable because missing `error_code` fields default to empty.
+- `DebugSupportBundleBuilder` now includes structured `error_code` fields for record issues and trace issues.
+- Support-bundle redaction still preserves `CW-*` codes while redacting paths, dataset names, previews, and secrets.
+- Focused debugger contract tests now assert error-code round-trip through debug-run save/load and support-bundle export.
+
+### Batch 9 preflight/smoke/local-debug issue codes
+
+Status: implemented.
+
+- `PreflightValidator` now emits codes for empty graphs, missing datasets, missing compiled layers, unknown model shapes, missing CrossEntropy class count, missing text vocabulary files, and invalid text preprocessing parameters.
+- `SmokeRunExecutor` now emits codes for unsupported sequence smoke runs, materialization failures, missing materialized labels, missing/unregistered datasets, empty training splits, model build failures, non-finite predictions/loss, and missing gradients.
+- `DebugExecutor` now emits codes for model build failure, non-finite forward/loss/gradient values, dead-gradient warnings, and dry-run exceptions.
+- Existing readable messages are preserved; the code is carried structurally in `ValidationIssue.error_code` for GUI/debugger/support-bundle consumers.
+
+### Batch 10 GUI workflow boundary codes
+
+Status: implemented.
+
+- Main-window Train/Debug popup fallback issues now carry stable codes.
+- Missing node-editor workflow state now uses `CW-U-0101`.
+- Debug-before-train stale/missing Local Debug warnings now use `CW-U-0101`.
+- Training launch blocked popup issues now use `CW-T-0101`.
+- Recompile/compile exception popup issues and Studio Debugger compile exception records now use `CW-C-0901`.
+- Studio Debugger local-debug exception records now use `CW-T-0501`.
+
+### Batch 11 trace-level debugger issue codes
+
+Status: implemented.
+
+- `DebugNodeTraceContract::AddWarning` and `AddError` now accept optional structured `error_code` values.
+- `TextPreprocessingTracer` now emits codes for unregistered text datasets, empty text datasets, invalid sample selections, preprocessing trace exceptions, high unknown-token ratio warnings, and truncation warnings.
+- Added `CW-D-0304` for vocabulary coverage warnings so text tracing does not misuse column type or class-label mismatch codes.
+
+### Batch 12 debugger diagnostic-code test coverage
+
+Status: implemented.
+
+- `test_debugger_contracts` now links the small `PreflightValidator` implementation so it can test actual preflight error-code emission.
+- Added test coverage for empty-graph preflight codes: missing training path, missing dataset, unknown input shape, and unknown output shape.
+- Added structural smoke-result coverage to ensure blocked smoke results preserve `ValidationIssue.error_code`.
+- Existing trace-helper and text-preprocessing trace tests now cover structured trace issue codes.
+- `test_error_codes` now locks `CW-D-0304` so the vocabulary coverage warning code remains stable.
+
+### Batch 13 final structural coverage hardening
+
+Status: implemented.
+
+- Added `CW-C-0001` as the generic compiler issue fallback for legacy/uncategorized compiler diagnostics.
+- `GraphCompiler` now guarantees every issue it emits has a non-empty `error_code`; specific call sites keep their precise codes, otherwise `CW-C-0001` is applied.
+- `DebugNodeTraceContract::AddWarning` and `AddError` now default uncoded trace issues to `CW-R-0501`.
+- `PreflightValidator` now defaults uncoded helper calls to `CW-T-0101`.
+- Compiler contract tests now assert representative compile results have codes on every issue, including warning-only valid compiles.
+- `test_error_codes` now locks `CW-C-0001`.
 
 ### Batch 1. Define the code catalog
 

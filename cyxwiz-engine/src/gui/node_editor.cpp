@@ -242,8 +242,11 @@ NodeEditor::~NodeEditor() {
 void NodeEditor::Render() {
     if (!show_window_) return;
 
+    const bool training_animation_active =
+        is_training_ || cyxwiz::TrainingManager::Instance().IsTrainingActive();
+
     // Update training animation time
-    if (is_training_) {
+    if (training_animation_active) {
         training_animation_time_ += ImGui::GetIO().DeltaTime;
     }
 
@@ -2827,11 +2830,14 @@ void NodeEditor::RenderNodes() {
         }
     }
 
+    const bool training_animation_active =
+        is_training_ || cyxwiz::TrainingManager::Instance().IsTrainingActive();
+
     // Render all links with color based on link type (and training animation if active)
     for (const auto& link : links_) {
         ImU32 link_color, link_hovered, link_selected;
 
-        if (is_training_) {
+        if (training_animation_active) {
             // Create pulsing amber/green effect during training
             // Pulse frequency: ~2 Hz (full cycle every 0.5 seconds)
             float pulse = (std::sin(training_animation_time_ * 12.0f + link.id * 0.5f) + 1.0f) * 0.5f;

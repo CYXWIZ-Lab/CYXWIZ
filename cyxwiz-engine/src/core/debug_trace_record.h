@@ -1,5 +1,6 @@
 #pragma once
 
+#include "error_codes.h"
 #include "graph_compiler.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -97,23 +98,31 @@ struct DebugNodeTraceContract {
     }
 
     static void AddWarning(DebugTraceRecord& trace,
-                           const std::string& message) {
+                           const std::string& message,
+                           const std::string& error_code = "") {
         trace.issues.push_back({
             IssueLevel::Warning,
             trace.node_id,
             trace.node_name,
-            message
+            message,
+            error_code.empty()
+                ? errors::Runtime::ExecutionFailed
+                : error_code
         });
         trace.payload["warning_count"] = CountIssues(trace, IssueLevel::Warning);
     }
 
     static void AddError(DebugTraceRecord& trace,
-                         const std::string& message) {
+                         const std::string& message,
+                         const std::string& error_code = "") {
         trace.issues.push_back({
             IssueLevel::Error,
             trace.node_id,
             trace.node_name,
-            message
+            message,
+            error_code.empty()
+                ? errors::Runtime::ExecutionFailed
+                : error_code
         });
         trace.status = "failed";
         trace.payload["error_count"] = CountIssues(trace, IssueLevel::Error);

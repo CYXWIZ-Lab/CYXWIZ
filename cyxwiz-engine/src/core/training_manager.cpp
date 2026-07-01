@@ -6,12 +6,14 @@
 #include "audio_dataset_batcher.h"
 #include "text_dataset_batcher.h"
 #include "training_batcher_setup.h"
+#include "training_trace_collector.h"
 #include "training_run_comparison.h"
 #include "worker_defaults.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 
 namespace cyxwiz {
 
@@ -78,8 +80,29 @@ bool TrainingManager::StartTrainingCommon(
         panel->SetVisible(true);
     }
 
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const auto run_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    const auto trace_snapshot = TrainingTraceCollector::Instance().Snapshot();
+    if (!trace_snapshot.available || trace_snapshot.status != "running") {
+        TrainingTraceCollector::Instance().StartRun(
+            "train-" + std::to_string(run_ms));
+    } else {
+        TrainingTraceCollector::Instance().RecordRuntimeEvent(
+            "TrainingSetup",
+            "Training manager attached to existing preparation trace");
+    }
+    TrainingTraceCollector::Instance().RecordTaskProgress(
+        0,
+        task_name,
+        "TrainingSetup",
+        0.0f,
+        start_msg,
+        "running");
+
     // Tasks-panel progress tracker. Poll loop reads TrainingManager
     // state — the actual training work lives in TrainingThreadFunc.
+    spdlog::info("TrainingManager: submitting task '{}'", task_name);
     current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
         task_name,
         [](LambdaTask& task) {
@@ -97,11 +120,24 @@ bool TrainingManager::StartTrainingCommon(
                     " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            task.MarkCompleted();
+            const auto final_metrics =
+                TrainingManager::Instance().GetCurrentMetrics();
+            if (final_metrics.terminal_status == "early_stopped") {
+                const std::string reason = final_metrics.terminal_reason.empty()
+                    ? "early stopping condition reached"
+                    : final_metrics.terminal_reason;
+                task.MarkCompleted("Early stopped: " + reason, "early_stopped");
+            } else if (final_metrics.terminal_status == "cancelled") {
+                task.MarkCompleted("Cancelled: user_cancelled", "cancelled");
+            } else {
+                task.MarkCompleted();
+            }
         },
         nullptr,
         nullptr
     ));
+    spdlog::info("TrainingManager: task '{}' submitted with id {}",
+                 task_name, current_task_id_.load());
 
     if (on_training_start_) {
         on_training_start_(start_msg);
@@ -111,9 +147,12 @@ bool TrainingManager::StartTrainingCommon(
     // it. Done here (inside the mutex) so two concurrent starts can't
     // race over training_thread_.
     if (training_thread_ && training_thread_->joinable()) {
+        spdlog::info("TrainingManager: joining previous training thread before starting '{}'",
+                     task_name);
         training_thread_->join();
     }
 
+    spdlog::info("TrainingManager: creating training thread for '{}'", task_name);
     training_thread_ = std::make_unique<std::thread>(
         &TrainingManager::TrainingThreadFunc, this,
         std::move(executor), epochs, batch_size, plot_panel, node_editor_callback
@@ -212,14 +251,18 @@ bool TrainingManager::StartTrainingArrow(
     }
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
+    spdlog::info("TrainingManager: resolving Arrow class-weight/balancing hints");
     TryApplyBalancedClassWeightsFromArrowTable(
         config,
         arrow_dataset ? arrow_dataset->GetArrowTable() : nullptr,
         label_column,
         /*partition_column=*/"",
         "TrainingManager Arrow");
+    spdlog::info("TrainingManager: Arrow class-weight/balancing hint resolution complete");
 
+    spdlog::info("TrainingManager: creating Arrow TrainingExecutor");
     auto executor = std::make_unique<TrainingExecutor>(std::move(config), arrow_dataset, label_column);
+    spdlog::info("TrainingManager: Arrow TrainingExecutor created");
     return StartTrainingCommon(
         std::move(executor), epochs, batch_size, plot_panel,
         std::move(node_editor_callback),

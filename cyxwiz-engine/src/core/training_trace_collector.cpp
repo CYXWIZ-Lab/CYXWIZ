@@ -134,6 +134,7 @@ void TrainingTraceCollector::StartRun(const std::string& run_id) {
     run_id_ = run_id;
     status_ = "running";
     events_.clear();
+    materialization_events_.clear();
     warnings_.clear();
     events_since_write_ = 0;
     if (settings_.persist_enabled) {
@@ -172,6 +173,12 @@ void TrainingTraceCollector::RecordStage(TrainingTraceStage stage,
     events_.push_back(event);
     while (events_.size() > settings_.max_recent_events) {
         events_.pop_front();
+    }
+    if (event.node_id >= 0) {
+        materialization_events_.push_back(event);
+        while (materialization_events_.size() > settings_.max_recent_events) {
+            materialization_events_.pop_front();
+        }
     }
 
     if (status != "ok" && !message.empty()) {
@@ -450,6 +457,8 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
     summary.status = status_;
     summary.warnings = warnings_;
     summary.recent_events.assign(events_.begin(), events_.end());
+    summary.materialization_events.assign(
+        materialization_events_.begin(), materialization_events_.end());
     if (!events_.empty()) {
         const auto& latest = events_.back();
         summary.latest_stage = latest.stage;
@@ -484,6 +493,19 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
                 summary.recent_events.push_back(EventFromJson(item));
             }
         }
+        if (j.contains("materialization_events") &&
+            j["materialization_events"].is_array()) {
+            for (const auto& item : j["materialization_events"]) {
+                summary.materialization_events.push_back(EventFromJson(item));
+            }
+        } else {
+            for (const auto& event : summary.recent_events) {
+                if (event.node_id >= 0 &&
+                    (event.metric_scope == "task" || event.task_id != 0)) {
+                    summary.materialization_events.push_back(event);
+                }
+            }
+        }
         if (!summary.recent_events.empty()) {
             const auto& latest = summary.recent_events.back();
             summary.latest_stage = latest.stage;
@@ -507,10 +529,15 @@ void TrainingTraceCollector::WriteLocked() const {
         for (const auto& event : events_) {
             events.push_back(EventToJson(event));
         }
+        nlohmann::json materialization_events = nlohmann::json::array();
+        for (const auto& event : materialization_events_) {
+            materialization_events.push_back(EventToJson(event));
+        }
         nlohmann::json j = {
             {"run_id", run_id_},
             {"status", status_},
             {"events", events},
+            {"materialization_events", materialization_events},
             {"warnings", warnings_}
         };
         std::ofstream file(CurrentTracePath(), std::ios::trunc);

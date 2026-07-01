@@ -62,6 +62,9 @@ struct DataConvertResult {
 
 class DataConvertService {
 public:
+    static std::shared_ptr<arrow::Table> LoadTable(
+        const DataConvertOptions& options,
+        std::string& error);
     static DataConvertPreview Preview(const DataConvertOptions& options);
     static DataConvertResult Convert(const DataConvertOptions& options);
 

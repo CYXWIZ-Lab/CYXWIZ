@@ -67,6 +67,7 @@ gui::NodeType TypeFromString(const std::string& type) {
         {"DataSplit", gui::NodeType::DataSplit},
         {"DataLoader", gui::NodeType::DataLoader},
         {"TextTokenizer", gui::NodeType::TextTokenizer},
+        {"TFIDFVectorizer", gui::NodeType::TFIDFVectorizer},
         {"TextVocabulary", gui::NodeType::TextVocabulary},
         {"TextPadding", gui::NodeType::TextPadding},
         {"Normalize", gui::NodeType::Normalize},
@@ -80,6 +81,7 @@ gui::NodeType TypeFromString(const std::string& type) {
         {"TransformerEncoder", gui::NodeType::TransformerEncoder},
         {"CrossEntropyLoss", gui::NodeType::CrossEntropyLoss},
         {"Adam", gui::NodeType::Adam},
+        {"AdamW", gui::NodeType::AdamW},
         {"Output", gui::NodeType::Output},
     };
     auto it = types.find(type);
@@ -153,6 +155,9 @@ gui::MLNode MakeNode(int id, int& next_pin_id, gui::NodeType type,
         case gui::NodeType::TextTokenizer:
             one_in_out("Text Data", "Token IDs");
             break;
+        case gui::NodeType::TFIDFVectorizer:
+            one_in_out("Text Data", "TF-IDF Features");
+            break;
         case gui::NodeType::TextVocabulary:
             one_in_out("Text Data", "Vocabulary");
             break;
@@ -181,6 +186,7 @@ gui::MLNode MakeNode(int id, int& next_pin_id, gui::NodeType type,
                                        "Loss", false));
             break;
         case gui::NodeType::Adam:
+        case gui::NodeType::AdamW:
             node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Loss,
                                       "Loss", true));
             node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Optimizer,
@@ -203,7 +209,9 @@ gui::MLNode MakeNode(int id, int& next_pin_id, gui::NodeType type,
 std::map<std::string, std::string> ParamsFromJson(const json& node_json,
                                                   const json& root) {
     std::map<std::string, std::string> params;
-    if (!node_json.contains("params")) return params;
+    if (!node_json.contains("params") && !node_json.contains("parameters")) {
+        return params;
+    }
 
     std::unordered_map<std::string, std::string> defaults;
     if (root.contains("parameters")) {
@@ -212,7 +220,11 @@ std::map<std::string, std::string> ParamsFromJson(const json& node_json,
         }
     }
 
-    for (const auto& item : node_json["params"].items()) {
+    const auto& param_json = node_json.contains("params")
+        ? node_json["params"]
+        : node_json["parameters"];
+
+    for (const auto& item : param_json.items()) {
         std::string value;
         if (item.value().is_string()) {
             value = item.value().get<std::string>();
@@ -234,25 +246,44 @@ std::map<std::string, std::string> ParamsFromJson(const json& node_json,
     return params;
 }
 
+gui::NodeType TypeFromJson(const json& node_json) {
+    if (node_json["type"].is_string()) {
+        return TypeFromString(node_json.value("type", ""));
+    }
+    return static_cast<gui::NodeType>(node_json.value("type", 0));
+}
+
 Graph LoadPatternGraph(const std::filesystem::path& path) {
     const std::string content = ReadFile(path);
     CheckAscii(path, content);
     auto root = json::parse(content);
-    Check(root.contains("template"), "missing template in " + path.string());
 
     Graph graph;
     std::unordered_map<std::string, int> id_by_name;
     int next_node_id = 1;
     int next_pin_id = 1;
 
-    for (const auto& node_json : root["template"]["nodes"]) {
-        const std::string string_id = node_json.value("id", "");
-        const auto type = TypeFromString(node_json.value("type", ""));
-        auto node = MakeNode(next_node_id++, next_pin_id, type,
-                             node_json.value("name", string_id),
-                             ParamsFromJson(node_json, root));
-        id_by_name[string_id] = node.id;
-        graph.nodes.push_back(std::move(node));
+    if (root.contains("template")) {
+        for (const auto& node_json : root["template"]["nodes"]) {
+            const std::string string_id = node_json.value("id", "");
+            const auto type = TypeFromJson(node_json);
+            auto node = MakeNode(next_node_id++, next_pin_id, type,
+                                 node_json.value("name", string_id),
+                                 ParamsFromJson(node_json, root));
+            id_by_name[string_id] = node.id;
+            graph.nodes.push_back(std::move(node));
+        }
+    } else {
+        Check(root.contains("nodes"), "missing nodes in " + path.string());
+        for (const auto& node_json : root["nodes"]) {
+            const int node_id = node_json.value("id", next_node_id++);
+            next_node_id = std::max(next_node_id, node_id + 1);
+            const auto type = TypeFromJson(node_json);
+            auto node = MakeNode(node_id, next_pin_id, type,
+                                 node_json.value("name", ""),
+                                 ParamsFromJson(node_json, root));
+            graph.nodes.push_back(std::move(node));
+        }
     }
 
     auto node_by_id = [&](int id) -> const gui::MLNode* {
@@ -263,25 +294,57 @@ Graph LoadPatternGraph(const std::filesystem::path& path) {
     };
 
     int next_link_id = 1;
-    for (const auto& link_json : root["template"]["links"]) {
-        const std::string from = link_json.value("from", "");
-        const std::string to = link_json.value("to", "");
-        Check(id_by_name.count(from) > 0, "unknown link source: " + from);
-        Check(id_by_name.count(to) > 0, "unknown link target: " + to);
+    if (root.contains("template")) {
+        for (const auto& link_json : root["template"]["links"]) {
+            const std::string from = link_json.value("from", "");
+            const std::string to = link_json.value("to", "");
+            Check(id_by_name.count(from) > 0, "unknown link source: " + from);
+            Check(id_by_name.count(to) > 0, "unknown link target: " + to);
 
-        const auto* from_node = node_by_id(id_by_name.at(from));
-        const auto* to_node = node_by_id(id_by_name.at(to));
-        const int from_pin_idx = link_json.value("from_pin", 0);
-        const int to_pin_idx = link_json.value("to_pin", 0);
+            const auto* from_node = node_by_id(id_by_name.at(from));
+            const auto* to_node = node_by_id(id_by_name.at(to));
+            const int from_pin_idx = link_json.value("from_pin", 0);
+            const int to_pin_idx = link_json.value("to_pin", 0);
+            Check(from_pin_idx >= 0 &&
+                  from_pin_idx < static_cast<int>(from_node->outputs.size()),
+                  "from_pin out of range for " + from);
+            Check(to_pin_idx >= 0 &&
+                  to_pin_idx < static_cast<int>(to_node->inputs.size()),
+                  "to_pin out of range for " + to);
+
+            gui::NodeLink link;
+            link.id = next_link_id++;
+            link.from_node = from_node->id;
+            link.to_node = to_node->id;
+            link.from_pin = from_node->outputs[from_pin_idx].id;
+            link.to_pin = to_node->inputs[to_pin_idx].id;
+            graph.links.push_back(link);
+        }
+        return graph;
+    }
+
+    Check(root.contains("links"), "missing links in " + path.string());
+    for (const auto& link_json : root["links"]) {
+        const int from_id = link_json.value("from_node", -1);
+        const int to_id = link_json.value("to_node", -1);
+        const auto* from_node = node_by_id(from_id);
+        const auto* to_node = node_by_id(to_id);
+        Check(from_node != nullptr,
+              "unknown link source node: " + std::to_string(from_id));
+        Check(to_node != nullptr,
+              "unknown link target node: " + std::to_string(to_id));
+
+        const int from_pin_idx = link_json.value("from_pin_index", 0);
+        const int to_pin_idx = link_json.value("to_pin_index", 0);
         Check(from_pin_idx >= 0 &&
               from_pin_idx < static_cast<int>(from_node->outputs.size()),
-              "from_pin out of range for " + from);
+              "from_pin_index out of range for " + from_node->name);
         Check(to_pin_idx >= 0 &&
               to_pin_idx < static_cast<int>(to_node->inputs.size()),
-              "to_pin out of range for " + to);
+              "to_pin_index out of range for " + to_node->name);
 
         gui::NodeLink link;
-        link.id = next_link_id++;
+        link.id = link_json.value("id", next_link_id++);
         link.from_node = from_node->id;
         link.to_node = to_node->id;
         link.from_pin = from_node->outputs[from_pin_idx].id;
@@ -391,8 +454,9 @@ void ValidateSemanticFlows(const Graph& graph, const std::string& name) {
                               return pin.type == gui::PinType::Labels;
                           }),
                   name + ": loss targets do not reach a Labels pin");
-        } else if (node.type == gui::NodeType::Adam) {
-            Check(!node.inputs.empty(), name + ": Adam loss pin missing");
+        } else if (node.type == gui::NodeType::Adam ||
+                   node.type == gui::NodeType::AdamW) {
+            Check(!node.inputs.empty(), name + ": optimizer loss pin missing");
             Check(reaches(node.inputs[0].id,
                           [](const gui::NodePin& pin, const gui::MLNode&) {
                               return pin.type == gui::PinType::Loss;
@@ -409,6 +473,17 @@ void ValidateSemanticFlows(const Graph& graph, const std::string& name) {
             Check(min_word_freq != node.parameters.end() &&
                   !min_word_freq->second.empty(),
                   name + ": TextTokenizer missing min_word_freq");
+        } else if (node.type == gui::NodeType::TFIDFVectorizer) {
+            auto text_col = node.parameters.find("text_col");
+            auto label_col = node.parameters.find("label_col");
+            auto max_features = node.parameters.find("max_features");
+            Check(text_col != node.parameters.end() && !text_col->second.empty(),
+                  name + ": TFIDFVectorizer missing text_col");
+            Check(label_col != node.parameters.end() && !label_col->second.empty(),
+                  name + ": TFIDFVectorizer missing label_col");
+            Check(max_features != node.parameters.end() &&
+                  !max_features->second.empty(),
+                  name + ": TFIDFVectorizer missing max_features");
         }
     }
 }
@@ -422,6 +497,7 @@ int main() {
         root / "examples/cyxgraph/mental_health_sentiment_classifier.cyxgraph",
         root / "examples/cyxgraph/mental_health_sentiment_classifier_v2.cyxgraph",
         root / "examples/cyxgraph/Sentiment analysis/sentiment_analysis_gru_classifier.cyxgraph",
+        root / "examples/cyxgraph/Sentiment analysis/sentiment_analysis_tfidf_mlp_classifier.cyxgraph",
         root / "examples/cyxgraph/text/test_02_sentiment_lstm.cyxgraph",
         root / "examples/cyxgraph/text/test_05_sentiment_transformer_mini.cyxgraph",
     };

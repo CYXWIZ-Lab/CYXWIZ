@@ -14,6 +14,7 @@
 #include <string>
 
 #include <spdlog/spdlog.h>
+#include <cyxwiz/error_codes.h>
 
 #ifdef max
 #undef max
@@ -518,9 +519,14 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
                 fallback_message += ".";
                 BackendDebugHooks::EmitDebugEvent(
                     "LSTMLayer::Forward",
-                    fallback_message +
+                    errors::FormatWarning(
+                        errors::Gpu::PathDisabledByPolicy,
+                        fallback_message) +
                     (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-                spdlog::warn("{}", fallback_message);
+                spdlog::warn("{}",
+                             errors::FormatWarning(
+                                 errors::Gpu::PathDisabledByPolicy,
+                                 fallback_message));
             }
         } else {
             const bool log_fallback =
@@ -534,9 +540,14 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
             if (log_fallback) {
                 BackendDebugHooks::EmitDebugEvent(
                     "LSTMLayer::Forward",
-                    fallback_message +
+                    errors::FormatWarning(
+                        errors::Gpu::KernelExecutionFailed,
+                        fallback_message) +
                     (bidirectional_ ? " [bidirectional=true]" : " [bidirectional=false]"));
-                spdlog::warn("{}", fallback_message);
+                spdlog::warn("{}",
+                             errors::FormatWarning(
+                                 errors::Gpu::KernelExecutionFailed,
+                                 fallback_message));
             }
         }
     }

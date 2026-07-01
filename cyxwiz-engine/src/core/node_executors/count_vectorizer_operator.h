@@ -46,7 +46,12 @@ private:
     std::string text_col_;
     std::string label_col_;
     int max_features_ = 2000;
+    int ngram_min_ = 1;
+    int ngram_max_ = 1;
+    bool binary_ = false;
     std::string norm_ = "l2";
+    std::string stop_words_ = "english";
+    std::string output_format_ = "dense";
     PipelineOperatorProgressCallback progress_callback_;
 };
 

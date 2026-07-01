@@ -1,4 +1,4 @@
-# CyxGraph Examples
+﻿# CyxGraph Examples
 
 Example graph files (`.cyxgraph`) for CyxWiz Engine.
 
@@ -81,3 +81,169 @@ DataInput -> Split -> Normalize -> Conv2D(32) -> ReLU -> MaxPool
 ```
 
 Not yet updated for the new DataLoader/DataSplit wiring. Use the MLP version until this is refreshed.
+## Model choice: LSTM vs TF-IDF + Dense MLP
+
+The current supported neural sequence baseline is:
+
+```text
+TextTokenizer
+-> Embedding
+-> single-direction LSTM
+-> Dense classifier
+-> CrossEntropy
+-> AdamW
+```
+
+For the GPU-fit LSTM profile, use conservative dimensions first:
+
+```text
+max_length=64
+embedding_dim=64
+hidden_size=32
+batch_size=64
+```
+
+This reduces ArrayFire/CUDA generated-kernel pressure. Larger profiles such as
+`max_length=128`, `embedding_dim=128`, and `hidden_size=64` may train, but the
+compiler can CPU-route the LSTM when the generated CUDA kernel formal-parameter
+estimate exceeds the current safe limit.
+
+If the goal is best practical sentiment accuracy, the stronger baseline is
+usually:
+
+```text
+DataInput
+-> TFIDFVectorizer
+-> DataSplit
+-> DataLoader
+-> Dense 256
+-> ReLU
+-> Dropout
+-> Dense 128
+-> ReLU
+-> Dropout
+-> Dense 7
+-> CrossEntropy
+-> AdamW
+```
+
+### What TFIDFVectorizer does
+
+`TFIDFVectorizer` turns raw text into normal numeric feature columns that a Dense
+network can train on directly.
+
+It does two things:
+
+1. It builds a vocabulary from the text column.
+2. It converts every row of text into a fixed-size vector of word-importance
+   scores.
+
+TF-IDF means **term frequency - inverse document frequency**.
+
+Term frequency asks:
+
+```text
+How often does this word appear in this document?
+```
+
+Inverse document frequency asks:
+
+```text
+How rare is this word across the whole dataset?
+```
+
+The combined score is high when a word appears in the current document but is
+not common everywhere. That makes it useful for classification.
+
+Example:
+
+```text
+Text: "I feel anxious and hopeless every night"
+```
+
+Common words such as `I`, `and`, `every` usually get low value. More
+class-informative words such as `anxious`, `hopeless`, or `night` can get higher
+value if they help distinguish one label from another.
+
+A vectorized row may conceptually become:
+
+```text
+tfidf_anxious=0.42
+tfidf_hopeless=0.51
+tfidf_sleep=0.00
+tfidf_angry=0.00
+tfidf_happy=0.00
+...
+y=<class id>
+```
+
+In the actual engine schema, the columns are usually named generically:
+
+```text
+tfidf_0, tfidf_1, tfidf_2, ..., tfidf_N, y
+```
+
+`max_features` controls how many TF-IDF columns are kept. For example,
+`max_features=2000` means each text row becomes a 2000-feature numeric vector.
+
+### Why Dense MLP works well after TF-IDF
+
+After TF-IDF, the model is no longer processing a token sequence. It is
+processing a regular numeric feature vector.
+
+That means the classifier can be a standard feed-forward network:
+
+```text
+Dense 256 -> ReLU -> Dropout -> Dense 128 -> ReLU -> Dense 7
+```
+
+The first Dense layer learns combinations of useful words. For example, it can
+learn that groups of terms related to anxiety, sleep, depression, stress, or
+positive affect push the prediction toward different classes.
+
+This often works very well for sentiment/status classification because many
+labels are strongly tied to discriminative words and short phrases.
+
+### Why TF-IDF can beat LSTM/GRU here
+
+LSTM and GRU learn from ordered token sequences:
+
+```text
+word_1 -> word_2 -> word_3 -> ... -> prediction
+```
+
+That is powerful, but in the current engine recurrent CUDA placement is still
+limited. Large recurrent shapes may route to CPU because ArrayFire generated CUDA
+kernels can exceed the formal-parameter limit.
+
+TF-IDF avoids that recurrent bottleneck:
+
+```text
+raw text -> fixed numeric vector -> Dense GPU-friendly classifier
+```
+
+For this dataset, TF-IDF + Dense MLP may be the most pragmatic route toward an
+80% accuracy target because it is simpler, faster, and easier to optimize.
+
+Tradeoffs:
+
+- LSTM can model token order and context, but recurrent CUDA placement is still
+  constrained in the current engine.
+- GRU is conservatively CPU-routed until a GRU-specific JIT probe or fused/native
+  recurrent CUDA path is implemented.
+- TF-IDF + Dense MLP ignores most word order, but trains faster and avoids the
+  recurrent-kernel bottleneck.
+- For an 80% accuracy target, try TF-IDF + Dense MLP on a build where the
+  training compiler maps `TFIDFVectorizer.max_features` to the model input
+  width and the Arrow materializer runs the TF-IDF operator before batching.
+
+Recommended workflow:
+
+1. Use the GPU-fit LSTM graph to validate the current neural text path.
+2. Watch compile placement for `cuda_jit_param_overflow_risk`.
+3. If LSTM remains CPU-routed or validation accuracy stalls, switch to the
+   TF-IDF + Dense MLP architecture.
+4. Keep validation/test data unresampled; class balancing belongs to the
+   DataLoader training sampler only.
+
+

@@ -1,4 +1,5 @@
 #include "model_builder.h"
+#include "error_codes.h"
 #include "graph_executable_model.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -1215,17 +1216,46 @@ Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
 BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
     BuiltModel out;
 
-    out.model = std::make_unique<SequentialModel>();
-    if (!BuildSequential(*out.model, config)) {
+    try {
+        out.model = std::make_unique<SequentialModel>();
+        if (!BuildSequential(*out.model, config)) {
+            out.error_message = errors::FormatError(
+                errors::Compiler::UnsupportedTrainingNode,
+                "ModelBuilder could not add any supported trainable layers");
+            out.model.reset();
+            return out;
+        }
+
+        out.loss = BuildLossFromConfig(config);
+        out.optimizer =
+            CreateOptimizer(config.GetOptimizerType(), config.learning_rate);
+        if (!out.loss) {
+            out.error_message = errors::FormatError(
+                errors::Training::LossSetupFailed,
+                "ModelBuilder failed to create loss");
+            out.model.reset();
+            return out;
+        }
+        if (!out.optimizer) {
+            out.error_message = errors::FormatError(
+                errors::Training::OptimizerSetupFailed,
+                "ModelBuilder failed to create optimizer");
+            out.model.reset();
+            out.loss.reset();
+            return out;
+        }
+
+        spdlog::info("TrainingExecutor: Using {} optimizer with lr={}",
+                     config.GetOptimizerName(), config.learning_rate);
+    } catch (const std::exception& e) {
+        out.error_message = errors::FormatError(
+            errors::Training::ModelBuildFailed,
+            "ModelBuilder failed to build model/loss/optimizer",
+            e.what());
         out.model.reset();
-        return out;
+        out.loss.reset();
+        out.optimizer.reset();
     }
-
-    out.loss = BuildLossFromConfig(config);
-
-    out.optimizer = CreateOptimizer(config.GetOptimizerType(), config.learning_rate);
-    spdlog::info("TrainingExecutor: Using {} optimizer with lr={}",
-                 config.GetOptimizerName(), config.learning_rate);
 
     return out;
 }
@@ -1238,6 +1268,7 @@ BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& conf
     BuiltExecutableModel out;
     BuiltModel sequential = BuildSequentialFromConfig(config);
     if (!sequential.ok()) {
+        out.error_message = sequential.error_message;
         return out;
     }
 
@@ -1264,8 +1295,11 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
         if (!GraphExecutableModel::CanRunLinearPlan(config.graph_plan,
                                                    layer_node_ids,
                                                    &reason)) {
-            spdlog::warn("GraphExecutableModel: cannot build graph executable: {}",
-                         reason);
+            out.error_message = errors::FormatError(
+                errors::Training::ModelBuildFailed,
+                "GraphExecutableModel cannot build graph executable",
+                reason);
+            spdlog::warn("{}", out.error_message);
             return out;
         }
     }
@@ -1274,13 +1308,28 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
     if (!config.layers.empty()) {
         sequential = BuildSequentialFromConfig(config);
         if (!sequential.ok()) {
+            out.error_message = sequential.error_message;
             return out;
         }
     } else {
-        sequential.model = std::make_unique<SequentialModel>();
-        sequential.loss = BuildLossFromConfig(config);
-        sequential.optimizer = CreateOptimizer(config.GetOptimizerType(),
-                                               config.learning_rate);
+        try {
+            sequential.model = std::make_unique<SequentialModel>();
+            sequential.loss = BuildLossFromConfig(config);
+            sequential.optimizer = CreateOptimizer(config.GetOptimizerType(),
+                                                   config.learning_rate);
+        } catch (const std::exception& e) {
+            out.error_message = errors::FormatError(
+                errors::Training::ModelBuildFailed,
+                "GraphExecutableModel failed to build loss/optimizer",
+                e.what());
+            return out;
+        }
+        if (!sequential.loss || !sequential.optimizer) {
+            out.error_message = errors::FormatError(
+                errors::Training::ModelBuildFailed,
+                "GraphExecutableModel failed to create loss or optimizer");
+            return out;
+        }
         spdlog::info("TrainingExecutor: Using {} optimizer with lr={}",
                      config.GetOptimizerName(), config.learning_rate);
     }

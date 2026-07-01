@@ -15,6 +15,7 @@
 #include <memory>
 #include <new>
 #include <numeric>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -60,6 +61,123 @@ void NormalizeDenseRow(std::vector<float>& values, const std::string& norm) {
     }
 }
 
+std::string JoinNGram(const std::vector<std::string>& tokens,
+                      size_t start,
+                      size_t n) {
+    std::string out;
+    for (size_t i = 0; i < n; ++i) {
+        if (i > 0) {
+            out += " ";
+        }
+        out += tokens[start + i];
+    }
+    return out;
+}
+
+std::vector<std::string> BuildNGramFeatures(
+    const std::vector<std::string>& tokens,
+    int ngram_min,
+    int ngram_max) {
+    std::vector<std::string> features;
+    if (tokens.empty()) {
+        return features;
+    }
+
+    const int safe_min = std::max(1, ngram_min);
+    const int safe_max = std::max(safe_min, ngram_max);
+    size_t total = 0;
+    for (int n = safe_min; n <= safe_max; ++n) {
+        if (tokens.size() >= static_cast<size_t>(n)) {
+            total += tokens.size() - static_cast<size_t>(n) + 1;
+        }
+    }
+    features.reserve(total);
+
+    for (int n = safe_min; n <= safe_max; ++n) {
+        const size_t width = static_cast<size_t>(n);
+        if (tokens.size() < width) {
+            continue;
+        }
+        for (size_t i = 0; i + width <= tokens.size(); ++i) {
+            if (width == 1) {
+                features.push_back(tokens[i]);
+            } else {
+                features.push_back(JoinNGram(tokens, i, width));
+            }
+        }
+    }
+    return features;
+}
+
+bool ParseNGramRange(const std::map<std::string, std::string>& params,
+                     const std::string& operator_name,
+                     int& ngram_min,
+                     int& ngram_max,
+                     std::string& error) {
+    ngram_min = 1;
+    ngram_max = 1;
+
+    auto parse_positive = [&](const char* key, int& out) -> bool {
+        auto it = params.find(key);
+        if (it == params.end() || it->second.empty()) {
+            return true;
+        }
+        try {
+            out = std::stoi(it->second);
+        } catch (...) {
+            error = operator_name + ": '" + key +
+                    "' is not a valid integer: " + it->second;
+            return false;
+        }
+        if (out < 1) {
+            error = operator_name + ": '" + key +
+                    "' must be >= 1 (got " + std::to_string(out) + ")";
+            return false;
+        }
+        return true;
+    };
+
+    auto range = params.find("ngram_range");
+    const bool has_range = range != params.end() && !range->second.empty();
+    if (has_range) {
+        std::string value = range->second;
+        std::replace(value.begin(), value.end(), ';', ',');
+        const size_t comma = value.find(',');
+        if (comma == std::string::npos) {
+            error = operator_name +
+                    ": ngram_range must be formatted as 'min,max' (got '" +
+                    range->second + "')";
+            return false;
+        }
+        try {
+            ngram_min = std::stoi(value.substr(0, comma));
+            ngram_max = std::stoi(value.substr(comma + 1));
+        } catch (...) {
+            error = operator_name +
+                    ": ngram_range must contain integer values (got '" +
+                    range->second + "')";
+            return false;
+        }
+    }
+
+    if (!has_range) {
+        if (!parse_positive("ngram_min", ngram_min)) return false;
+        if (!parse_positive("ngram_max", ngram_max)) return false;
+    }
+    if (ngram_min > ngram_max) {
+        error = operator_name + ": ngram_min must be <= ngram_max (got " +
+                std::to_string(ngram_min) + "," +
+                std::to_string(ngram_max) + ")";
+        return false;
+    }
+    if (ngram_max > 3) {
+        error = operator_name + ": ngram_max > 3 is not supported yet (got " +
+                std::to_string(ngram_max) + ")";
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool TFIDFVectorizerOperator::Configure(
@@ -69,9 +187,14 @@ bool TFIDFVectorizerOperator::Configure(
     text_col_.clear();
     label_col_.clear();
     max_features_ = 2000;
+    min_df_ = 1;
+    ngram_min_ = 1;
+    ngram_max_ = 1;
     use_idf_ = true;
     smooth_idf_ = true;
     norm_ = "l2";
+    stop_words_ = "english";
+    output_format_ = "dense";
 
     auto it = params.find("text_col");
     if (it == params.end() || it->second.empty()) {
@@ -102,6 +225,12 @@ bool TFIDFVectorizerOperator::Configure(
     if (max_features_ < 1) {
         error = "TFIDFVectorizer: max_features must be >= 1 (got " +
                 std::to_string(max_features_) + ")";
+        return false;
+    }
+    if (!read_int("min_df", 1, min_df_)) return false;
+    if (min_df_ < 1) {
+        error = "TFIDFVectorizer: min_df must be >= 1 (got " +
+                std::to_string(min_df_) + ")";
         return false;
     }
 
@@ -139,37 +268,28 @@ bool TFIDFVectorizerOperator::Configure(
         norm_ = "l2";
     }
 
-    auto ngram_range = params.find("ngram_range");
-    if (ngram_range != params.end() && !ngram_range->second.empty() &&
-        ngram_range->second != "1,1") {
-        error = "TFIDFVectorizer: ngram_range values other than '1,1' "
-                "are not supported by this operator";
-        return false;
+    auto sw = params.find("stop_words");
+    if (sw != params.end() && !sw->second.empty()) {
+        stop_words_ = NormalizeTextParameterChoice(sw->second);
+        if (stop_words_ != "english" && stop_words_ != "none") {
+            error = "TFIDFVectorizer: 'stop_words' must be 'english' / 'none' (got '" +
+                    stop_words_ + "')";
+            return false;
+        }
     }
 
-    auto ngram_min = params.find("ngram_min");
-    if (ngram_min != params.end() && !ngram_min->second.empty() &&
-        ngram_min->second != "1") {
-        error = "TFIDFVectorizer: ngram_min values other than 1 "
-                "are not supported by this operator";
-        return false;
+    auto output_format = params.find("output_format");
+    if (output_format != params.end() && !output_format->second.empty()) {
+        output_format_ = NormalizeTextParameterChoice(output_format->second);
+        if (output_format_ != "dense") {
+            error = "TFIDFVectorizer: output_format='" + output_format_ +
+                    "' is not supported yet; current engine supports dense output only";
+            return false;
+        }
     }
 
-    auto ngram_max = params.find("ngram_max");
-    if (ngram_max != params.end() && !ngram_max->second.empty() &&
-        ngram_max->second != "1") {
-        error = "TFIDFVectorizer: ngram_max values other than 1 "
-                "are not supported by this operator";
-        return false;
-    }
-
-    auto min_df = params.find("min_df");
-    if (min_df != params.end() && !min_df->second.empty() &&
-        min_df->second != "1") {
-        error = "TFIDFVectorizer: min_df values other than 1 "
-                "are not supported by this operator";
-        return false;
-    }
+    if (!ParseNGramRange(params, "TFIDFVectorizer",
+                         ngram_min_, ngram_max_, error)) return false;
 
     return true;
 }
@@ -249,8 +369,11 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     tokenized.error_message);
             }
 
-            auto tokens =
-                TextProcessing::RemoveStopwords(tokenized.tokens, "english");
+            auto base_tokens = stop_words_ == "english"
+                ? TextProcessing::RemoveStopwords(tokenized.tokens, "english")
+                : tokenized.tokens;
+            auto tokens = BuildNGramFeatures(
+                base_tokens, ngram_min_, ngram_max_);
             doc_token_counts.push_back(tokens.size());
 
             std::unordered_map<std::string, int> counts;
@@ -298,7 +421,7 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     report_progress(
         "Selecting vocabulary",
         "Selecting bounded vocabulary from " + std::to_string(full_vocab) +
-            " terms...",
+            " terms with min_df=" + std::to_string(min_df_) + "...",
         0.45f,
         initial_memory_estimate,
         static_cast<uint64_t>(full_vocab),
@@ -306,6 +429,9 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     all_terms.reserve(full_vocab);
     for (auto& pair : term_stats_by_name) {
         auto stats = std::move(pair.second);
+        if (stats.doc_freq < min_df_) {
+            continue;
+        }
         if (use_idf_) {
             const double df = smooth_idf_
                 ? static_cast<double>(stats.doc_freq + 1)
@@ -319,19 +445,25 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         }
         all_terms.push_back(std::move(stats));
     }
+    if (all_terms.empty()) {
+        return arrow::Status::Invalid(
+            "TFIDFVectorizer: empty vocabulary after applying min_df=" +
+            std::to_string(min_df_));
+    }
 
     std::sort(all_terms.begin(), all_terms.end(),
               [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
                   return a.term < b.term;
               });
 
+    const size_t filtered_vocab = all_terms.size();
     const size_t kept =
-        std::min(full_vocab, static_cast<size_t>(max_features_));
+        std::min(filtered_vocab, static_cast<size_t>(max_features_));
     const uint64_t bounded_memory_estimate =
         static_cast<uint64_t>(n) *
         static_cast<uint64_t>(std::max<size_t>(1, kept)) *
         static_cast<uint64_t>(sizeof(float));
-    if (full_vocab > kept) {
+    if (filtered_vocab > kept) {
         std::partial_sort(
             all_terms.begin(),
             all_terms.begin() + kept,
@@ -482,9 +614,13 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     auto out_schema = arrow::schema(fields);
     auto out_table = arrow::Table::Make(out_schema, arrays, static_cast<int64_t>(n));
 
-    spdlog::info("TFIDFVectorizer: {} docs x {} features (capped from {}), "
-                 "use_idf={}, smooth_idf={}, norm={}, classes={}, bounded=true",
-                 n, kept, full_vocab, use_idf_, smooth_idf_, norm_,
+    spdlog::info("TFIDFVectorizer: {} docs x {} features (capped from {}, "
+                 "filtered from {} with min_df={}), use_idf={}, "
+                 "smooth_idf={}, norm={}, stop_words={}, ngram_range={},{} classes={}, bounded=true",
+                 n, kept, filtered_vocab, full_vocab, min_df_,
+                 use_idf_, smooth_idf_, norm_,
+                 stop_words_,
+                 ngram_min_, ngram_max_,
                  class_names.size());
     report_progress(
         "TF-IDF materialization complete",

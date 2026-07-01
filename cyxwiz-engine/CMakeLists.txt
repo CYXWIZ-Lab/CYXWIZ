@@ -1873,6 +1873,83 @@ set_target_properties(test_pipeline_executor_operator_routing PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: DataConvert upstream dataset input =====
+add_executable(test_data_convert_pipeline_input
+    tests/test_data_convert_pipeline_input.cpp
+    src/core/arrow_dataset.cpp
+    src/core/data_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/data_convert_service.cpp
+    src/core/data_analyzer.cpp
+    src/core/dataset_base.cpp
+    src/core/duckdb_connector.cpp
+    src/core/image_utils.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/pipeline_executor.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/datasets/kaggle_dataset.cpp
+    src/core/datasets/streaming_dataset.cpp
+    src/core/node_executors/pipeline_operator_factory.cpp
+    src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/tree_model_artifact.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/decision_tree_trainer.cpp
+    src/core/node_executors/decision_tree_operator.cpp
+    src/core/node_executors/random_forest_model.cpp
+    src/core/node_executors/random_forest_trainer.cpp
+    src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/node_executors/gradient_boosting_trainer.cpp
+    src/core/node_executors/gradient_boosting_operator.cpp
+    src/core/node_executors/tree_model_predictor_operator.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/differencing_operator.cpp
+    src/core/node_executors/log_transform_operator.cpp
+    src/core/node_executors/pca_operator.cpp
+    src/core/node_executors/preprocessing_operators.cpp
+    src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/sentiment_analyzer_operator.cpp
+    src/core/node_executors/signal_processing_operators.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/node_executors/time_series_features_operator.cpp
+    src/core/node_executors/time_series_split_operator.cpp
+    src/core/node_executors/time_series_window_operator.cpp
+    src/data/data_table.cpp
+    src/plotting/stb_image_impl.cpp
+    src/plugin/registries/plugin_data_loader_registry.cpp
+)
+
+target_include_directories(test_data_convert_pipeline_input PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_data_convert_pipeline_input PRIVATE
+    cyxwiz-backend
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    duckdb
+    nlohmann_json::nlohmann_json
+    ${OpenCV_LIBS}
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_data_convert_pipeline_input PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_data_convert_pipeline_input PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Data Studio typed execution plan =====
 add_executable(test_data_studio_execution_plan
     tests/test_data_studio_execution_plan.cpp
@@ -2492,6 +2569,7 @@ add_executable(test_data_convert_service
 
 target_include_directories(test_data_convert_service PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
 )
 
 target_link_libraries(test_data_convert_service PRIVATE
@@ -2502,6 +2580,11 @@ target_link_libraries(test_data_convert_service PRIVATE
     nlohmann_json::nlohmann_json
 )
 
+if(HighFive_FOUND)
+    target_link_libraries(test_data_convert_service PRIVATE HighFive)
+    target_compile_definitions(test_data_convert_service PRIVATE CYXWIZ_HAS_HDF5)
+endif()
+
 if(WIN32)
     target_compile_definitions(test_data_convert_service PRIVATE
         _CRT_SECURE_NO_WARNINGS
@@ -2510,6 +2593,28 @@ if(WIN32)
 endif()
 
 set_target_properties(test_data_convert_service PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Stable error-code catalog and formatting =====
+add_executable(test_error_codes
+    tests/test_error_codes.cpp
+)
+
+target_include_directories(test_error_codes PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+
+if(WIN32)
+    target_compile_definitions(test_error_codes PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_error_codes PROPERTIES
+    CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
@@ -2696,6 +2801,7 @@ add_executable(test_debugger_contracts
     src/core/debug_recommendation_engine.cpp
     src/core/debug_run_store.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/preflight_validator.cpp
     src/core/text_preprocessing_tracer.cpp
     src/core/formats/text_dataset.cpp
     src/core/dataset_base.cpp

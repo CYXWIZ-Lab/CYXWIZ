@@ -53,6 +53,17 @@ public:
                              const std::string& status_message = "",
                              float progress = 0.0f);
     void SetPreparationFailed(const std::string& error_message);
+    void RecordMaterializationProgress(const std::string& stage,
+                                       const std::string& message,
+                                       float progress,
+                                       uint64_t estimated_memory_bytes = 0,
+                                       uint64_t processed_items = 0,
+                                       uint64_t total_items = 0,
+                                       int node_id = -1,
+                                       const std::string& node_name = "");
+    void SetMaterializationComplete(const std::string& output_dataset,
+                                    int operators_applied,
+                                    const std::string& status = "completed");
     void SetTrainingComplete(float total_time_seconds,
                              const std::string& terminal_status = "completed",
                              const std::string& terminal_reason = "",
@@ -96,6 +107,17 @@ private:
         bool has_values = false;
     };
 
+    struct MaterializationProgress {
+        std::string stage;
+        std::string message;
+        std::string node_name;
+        int node_id = -1;
+        float progress = 0.0f;
+        uint64_t estimated_memory_bytes = 0;
+        uint64_t processed_items = 0;
+        uint64_t total_items = 0;
+    };
+
     // Plot IDs
     std::string loss_plot_id_;
     std::string accuracy_plot_id_;
@@ -108,17 +130,21 @@ private:
     MetricSeries val_accuracy_;
     std::vector<MetricSeries> custom_metrics_;
     std::vector<TrainingRunComparisonRecord> run_comparison_records_;
+    std::vector<MaterializationProgress> materialization_events_;
+    std::string materialization_output_dataset_;
+    std::string materialization_status_;
+    int materialization_operators_applied_ = 0;
 
     // UI state
     bool show_loss_plot_ = true;
     bool show_accuracy_plot_ = true;
     bool show_custom_metrics_ = false;
     bool auto_scale_ = true;
-    bool follow_current_epoch_ = true;
+    bool follow_current_epoch_ = false;
     bool show_smoothed_curves_ = false;
     int smoothing_window_ = 5;
-    int visible_epoch_window_ = 10;
-    size_t max_points_ = 1000;
+    int visible_epoch_window_ = 30;
+    size_t max_points_ = 100000;
 
     // Training state
     bool is_training_ = false;
@@ -159,6 +185,7 @@ private:
     void RenderCurveSummary();
     void RenderSequenceMetricsSummary();
     void RenderActiveTaskSummary();
+    void RenderMaterializationSummary();
     void RenderTrainingWarningSummary();
     void RenderRunComparisonTable();
     void RenderStatistics();

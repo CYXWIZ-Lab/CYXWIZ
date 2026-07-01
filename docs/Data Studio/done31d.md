@@ -1,8 +1,8 @@
-# tofix31d - Pinned-memory boundary
+# done31d - Pinned-memory boundary
 
 ## Scope
 
-This is the fourth small ticket extracted from `tofix31.md`.
+This is the fourth completed small ticket extracted from `tofix31.md`.
 
 The goal is to keep `DataLoader.pin_memory` truthful. This ticket does not add
 real pinned host-memory transfers. It makes the current unsupported behavior

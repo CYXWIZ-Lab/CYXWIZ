@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <spdlog/spdlog.h>
+#include <cyxwiz/error_codes.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -174,18 +175,18 @@ Tensor LinearLayer::Forward(const Tensor& input) {
         try {
             af::array input_gpu;
             if (is_batched) {
-                input_gpu = input.GetArrayRowMajor2D();
+                input_gpu = input.GetArrayRowMajor2D().as(af::dtype::f32);
             } else {
-                input_gpu = af::moddims(input.GetArray(), 1, static_cast<dim_t>(in_features));
+                input_gpu = af::moddims(input.GetArray(), 1, static_cast<dim_t>(in_features)).as(af::dtype::f32);
             }
 
-            af::array weight_gpu = weight_.GetArrayRowMajor2D();
+            af::array weight_gpu = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
             af::array output_gpu = af::matmul(input_gpu, weight_gpu, AF_MAT_NONE, AF_MAT_TRANS);
             output_gpu.eval();
 
             // Add bias if present
             if (use_bias_) {
-                af::array bias_gpu = af::moddims(bias_.GetArray(), 1, static_cast<dim_t>(out_features_));
+                af::array bias_gpu = af::moddims(bias_.GetArray(), 1, static_cast<dim_t>(out_features_)).as(af::dtype::f32);
                 output_gpu = output_gpu + af::tile(bias_gpu, static_cast<unsigned int>(batch_size), 1);
                 output_gpu.eval();
             }
@@ -208,10 +209,12 @@ Tensor LinearLayer::Forward(const Tensor& input) {
                     "LinearLayer::Forward", reason, context);
             if (log_fallback) {
                 spdlog::warn("{}",
-                             BuildArrayFireBackendFallbackMessage(
-                                 "LinearLayer::Forward", reason,
-                                 reason != BackendFallbackReason::CudaJitParamOverflow,
-                                 e.what(), context));
+                             errors::FormatWarning(
+                                 errors::Gpu::KernelExecutionFailed,
+                                 BuildArrayFireBackendFallbackMessage(
+                                     "LinearLayer::Forward", reason,
+                                     reason != BackendFallbackReason::CudaJitParamOverflow,
+                                     e.what(), context)));
             }
         }
     }
@@ -278,14 +281,14 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
             af::array input_gpu;
 
             if (is_batched) {
-                grad_gpu = grad_output.GetArrayRowMajor2D();
-                input_gpu = input_cache_.GetArrayRowMajor2D();
+                grad_gpu = grad_output.GetArrayRowMajor2D().as(af::dtype::f32);
+                input_gpu = input_cache_.GetArrayRowMajor2D().as(af::dtype::f32);
             } else {
-                grad_gpu = af::moddims(grad_output.GetArray(), 1, static_cast<dim_t>(out_features_));
-                input_gpu = af::moddims(input_cache_.GetArray(), 1, static_cast<dim_t>(in_features_));
+                grad_gpu = af::moddims(grad_output.GetArray(), 1, static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+                input_gpu = af::moddims(input_cache_.GetArray(), 1, static_cast<dim_t>(in_features_)).as(af::dtype::f32);
             }
 
-            af::array weight_gpu = weight_.GetArrayRowMajor2D();
+            af::array weight_gpu = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
 
             af::array weight_grad_gpu = af::matmul(grad_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
             weight_grad_gpu.eval();

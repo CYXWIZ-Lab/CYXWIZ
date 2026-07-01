@@ -3307,7 +3307,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.name = "Input";
             input_pin.is_input = true;
             input_pin.description =
-                "Optional input table. File conversion runs from the configured input path.";
+                "Optional input table. If connected, it replaces the configured input path.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -5158,18 +5158,20 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
             // Tool-to-Node canonical params read by TFIDFVectorizerOperator.
             // text_col + label_col are required when this node runs as a real
-            // Cat-1 operator on an Arrow source. Legacy ngram_range / min_df
-            // params kept for back-compat with the floating panel; operator
-            // ignores them in v1.
+            // Cat-1 operator on an Arrow source. ngram_range / ngram_min /
+            // ngram_max / stop_words are real operator parameters.
             node.parameters["text_col"] = "";
             node.parameters["label_col"] = "";
             node.parameters["max_features"] = "2000";
             node.parameters["use_idf"] = "true";
             node.parameters["smooth_idf"] = "true";
             node.parameters["norm"] = "l2";
-            // Legacy floating-panel params (operator ignores).
             node.parameters["ngram_range"] = "1,1";
+            node.parameters["ngram_min"] = "1";
+            node.parameters["ngram_max"] = "1";
             node.parameters["min_df"] = "1";
+            node.parameters["stop_words"] = "english";
+            node.parameters["output_format"] = "dense";
             break;
         }
 
@@ -5190,15 +5192,18 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
             // Tool-to-Node canonical params read by CountVectorizerOperator.
             // text_col + label_col are required when this node runs as a real
-            // Cat-1 operator on an Arrow source. Legacy ngram_range param
-            // kept for back-compat with the floating panel; operator ignores
-            // it in v1.
+            // Cat-1 operator on an Arrow source. ngram_range / ngram_min /
+            // ngram_max / stop_words are real operator parameters.
             node.parameters["text_col"] = "";
             node.parameters["label_col"] = "";
             node.parameters["max_features"] = "2000";
             node.parameters["norm"] = "l2";
-            // Legacy floating-panel param (operator ignores).
             node.parameters["ngram_range"] = "1,1";
+            node.parameters["ngram_min"] = "1";
+            node.parameters["ngram_max"] = "1";
+            node.parameters["stop_words"] = "english";
+            node.parameters["binary"] = "false";
+            node.parameters["output_format"] = "dense";
             break;
         }
 

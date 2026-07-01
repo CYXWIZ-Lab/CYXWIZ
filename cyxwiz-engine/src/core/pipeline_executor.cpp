@@ -1,4 +1,5 @@
 #include "pipeline_executor.h"
+#include "error_codes.h"
 #include "duckdb_connector.h"
 #include "data_registry.h"
 #include "arrow_dataset.h"
@@ -21,6 +22,7 @@
 #include <queue>
 #include <regex>
 #include <sstream>
+#include <iomanip>
 #include <future>
 #include <thread>
 #include <chrono>
@@ -73,6 +75,83 @@ std::string ToLowerAscii(std::string value) {
     return value;
 }
 
+size_t PositiveSizeParameterOrDefault(
+    const std::map<std::string, std::string>& parameters,
+    const char* key,
+    size_t fallback) {
+    auto it = parameters.find(key);
+    if (it == parameters.end() || it->second.empty()) {
+        return fallback;
+    }
+    try {
+        const long long parsed = std::stoll(it->second);
+        return parsed > 0 ? static_cast<size_t>(parsed) : fallback;
+    } catch (...) {
+        return fallback;
+    }
+}
+
+std::string FormatBytesForLog(long double bytes) {
+    constexpr long double kGiB =
+        1024.0L * 1024.0L * 1024.0L;
+    constexpr long double kMiB = 1024.0L * 1024.0L;
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(1);
+    if (bytes >= kGiB) {
+        oss << static_cast<double>(bytes / kGiB) << " GiB";
+    } else {
+        oss << static_cast<double>(bytes / kMiB) << " MiB";
+    }
+    return oss.str();
+}
+
+void WarnIfDenseTextVectorizerMaterializationIsLarge(
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const std::shared_ptr<arrow::Table>& input_table) {
+    if (!input_table) {
+        return;
+    }
+    if (node_type != "TFIDFVectorizer" &&
+        node_type != "CountVectorizer" &&
+        node_type != "TextVectorize") {
+        return;
+    }
+
+    constexpr long double kLargeBoundedOutputBytes =
+        2.0L * 1024.0L * 1024.0L * 1024.0L;
+    constexpr long double kElementBytes = 4.0L;
+    const int64_t rows = input_table->num_rows();
+    if (rows <= 0) {
+        return;
+    }
+    const size_t max_features =
+        PositiveSizeParameterOrDefault(parameters, "max_features", 2000);
+    const long double estimated_bytes =
+        static_cast<long double>(rows) *
+        static_cast<long double>(max_features) *
+        kElementBytes;
+    if (estimated_bytes <= kLargeBoundedOutputBytes) {
+        return;
+    }
+
+    const std::string ngram_range =
+        ParameterOrDefault(parameters, "ngram_range", "1,1");
+    const std::string stop_words =
+        ParameterOrDefault(parameters, "stop_words", "english");
+    spdlog::warn(
+        "[Data Studio] {} dense materialization may pressure host memory: "
+        "rows={}, max_features={}, ngram_range={}, stop_words={}, "
+        "estimated feature allocation={}. Lower max_features, sample rows, "
+        "or use the future sparse path before scaling this graph.",
+        node_type,
+        rows,
+        max_features,
+        ngram_range,
+        stop_words,
+        FormatBytesForLog(estimated_bytes));
+}
+
 std::string DetectFormatNameFromPath(const std::string& path) {
     std::filesystem::path file_path(path);
     std::string extension = file_path.extension().string();
@@ -90,15 +169,20 @@ std::shared_ptr<ArrowDataset> LoadDataConvertOutputDataset(
     if (format.empty() || format == "auto") {
         format = DetectFormatNameFromPath(output_path);
     }
-    if (format == "tsv") {
-        auto read_options = arrow::csv::ReadOptions::Defaults();
-        auto parse_options = arrow::csv::ParseOptions::Defaults();
-        parse_options.delimiter = '\t';
-        return ArrowDataset::FromCSV(output_path, dataset_name,
-                                     read_options, parse_options,
-                                     arrow::csv::ConvertOptions::Defaults());
+
+    DataConvertOptions load_options;
+    load_options.input_path = output_path;
+    load_options.input_format = format;
+    load_options.has_header = true;
+    load_options.auto_detect_delimiter = true;
+    std::string error;
+    auto table = DataConvertService::LoadTable(load_options, error);
+    if (!table) {
+        spdlog::warn("DataConvert output reload failed for '{}': {}",
+                     output_path, error);
+        return nullptr;
     }
-    return ArrowDataset::FromFile(output_path, dataset_name);
+    return std::make_shared<ArrowDataset>(table, dataset_name);
 }
 
 std::string ToUpperAscii(std::string value) {
@@ -2185,9 +2269,6 @@ const char* MissingRequiredParameter(
     }
 
     if (node_type == "DataConvert") {
-        if (!HasNonEmptyParameter(parameters, "input_path")) {
-            return "input_path";
-        }
         if (!HasNonEmptyParameter(parameters, "output_path")) {
             return "output_path";
         }
@@ -2913,7 +2994,9 @@ PipelineExecutor::~PipelineExecutor() = default;
 
 bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
     if (executing_) {
-        last_error_ = "Pipeline is already executing";
+        last_error_ = errors::FormatError(
+            errors::Runtime::InvalidState,
+            "Pipeline is already executing");
         return false;
     }
 
@@ -3032,13 +3115,17 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
                                       [end_node](const Node& n) { return n.id == end_node; });
 
             if (start_it == nodes.end()) {
-                last_error_ = "Link references missing start node id: " +
-                              std::to_string(start_node);
+                last_error_ = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Link references missing start node id: " +
+                        std::to_string(start_node));
                 return false;
             }
             if (end_it == nodes.end()) {
-                last_error_ = "Link references missing end node id: " +
-                              std::to_string(end_node);
+                last_error_ = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Link references missing end node id: " +
+                        std::to_string(end_node));
                 return false;
             }
 
@@ -3049,7 +3136,10 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
         return true;
 
     } catch (const std::exception& e) {
-        last_error_ = std::string("JSON parse error: ") + e.what();
+        last_error_ = errors::FormatError(
+            errors::Runtime::PipelineMalformed,
+            "JSON parse error",
+            e.what());
         return false;
     }
 }
@@ -3068,14 +3158,19 @@ PipelineExecutor::ResolveNodeRuntimeSupport(const Node& node) const {
 bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
     // Check that there's at least one node
     if (nodes.empty()) {
-        last_error_ = "Pipeline is empty";
+        last_error_ = errors::FormatError(
+            errors::Runtime::PipelineMalformed,
+            "Pipeline is empty");
         return false;
     }
 
     std::set<int> ids;
     for (const auto& node : nodes) {
         if (!ids.insert(node.id).second) {
-            last_error_ = "Pipeline contains duplicate node id: " + std::to_string(node.id);
+            last_error_ = errors::FormatError(
+                errors::Runtime::PipelineMalformed,
+                "Pipeline contains duplicate node id: " +
+                    std::to_string(node.id));
             return false;
         }
     }
@@ -3083,54 +3178,82 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
     for (const auto& node : nodes) {
         for (int input_id : node.inputs) {
             if (ids.find(input_id) == ids.end()) {
-                last_error_ = "Node '" + node.name + "' has missing input node id: " +
-                              std::to_string(input_id);
+                last_error_ = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Node '" + node.name + "' has missing input node id: " +
+                        std::to_string(input_id));
                 return false;
             }
             if (input_id == node.id) {
-                last_error_ = "Node '" + node.name + "' cannot connect to itself";
+                last_error_ = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Node '" + node.name + "' cannot connect to itself");
                 return false;
             }
         }
 
         for (int output_id : node.outputs) {
             if (ids.find(output_id) == ids.end()) {
-                last_error_ = "Node '" + node.name + "' has missing output node id: " +
-                              std::to_string(output_id);
+                last_error_ = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Node '" + node.name + "' has missing output node id: " +
+                        std::to_string(output_id));
                 return false;
             }
             if (output_id == node.id) {
-                last_error_ = "Node '" + node.name + "' cannot connect to itself";
+                last_error_ = errors::FormatError(
+                    errors::Runtime::PipelineMalformed,
+                    "Node '" + node.name + "' cannot connect to itself");
                 return false;
             }
         }
 
         const auto runtime_support = ResolveNodeRuntimeSupport(node);
         const bool is_source = runtime_support.source_node;
+        const bool is_data_convert = node.type == "DataConvert";
         const auto required_input_count =
             runtime_support.required_input_count;
 
-        if (is_source && !node.inputs.empty()) {
-            last_error_ = "Source node '" + node.name + "' must not have input connections";
+        if (is_data_convert && node.inputs.empty() &&
+            !HasNonEmptyParameter(node.parameters, "input_path")) {
+            last_error_ = errors::FormatError(
+                errors::Runtime::InputDatasetMissing,
+                "DataConvert node '" + node.name +
+                    "' requires either input_path or one input connection");
+            return false;
+        }
+
+        if (is_source && !node.inputs.empty() && !is_data_convert) {
+            last_error_ = errors::FormatError(
+                errors::Runtime::PipelineMalformed,
+                "Source node '" + node.name +
+                    "' must not have input connections");
             return false;
         }
 
         if (!is_source && node.inputs.empty()) {
-            last_error_ = "Node '" + node.name + "' requires an input connection";
+            last_error_ = errors::FormatError(
+                errors::Runtime::InputDatasetMissing,
+                "Node '" + node.name + "' requires an input connection");
             return false;
         }
 
         if (required_input_count.has_value() &&
             static_cast<int>(node.inputs.size()) != *required_input_count) {
-            last_error_ = "Node '" + node.name + "' requires exactly " +
-                          std::to_string(*required_input_count) +
-                          " input connections";
+            last_error_ = errors::FormatError(
+                errors::Runtime::PipelineMalformed,
+                "Node '" + node.name + "' requires exactly " +
+                    std::to_string(*required_input_count) +
+                    " input connections");
             return false;
         }
 
         if (!required_input_count.has_value() && node.inputs.size() > 1) {
-            last_error_ = "Node '" + node.name + "' has multiple inputs, but node type '" +
-                          node.type + "' does not define multi-input execution";
+            last_error_ = errors::FormatError(
+                errors::Runtime::PipelineMalformed,
+                "Node '" + node.name +
+                    "' has multiple inputs, but node type '" + node.type +
+                    "' does not define multi-input execution");
             return false;
         }
 
@@ -3138,8 +3261,11 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                 MissingRequiredParameter(node.type, node.parameters,
                                          runtime_support.required_parameters);
             missing_parameter != nullptr) {
-            last_error_ = "Node '" + node.name + "' of type '" + node.type +
-                          "' is missing required parameter '" + missing_parameter + "'";
+            last_error_ = errors::FormatError(
+                errors::Runtime::InvalidParameter,
+                "Node '" + node.name + "' of type '" + node.type +
+                    "' is missing required parameter '" + missing_parameter +
+                    "'");
             return false;
         }
 
@@ -3151,23 +3277,31 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                 runtime_support.integer_parameters,
                 runtime_support.float_parameters,
                 parameter_error)) {
-            last_error_ = "Node '" + node.name + "': " + parameter_error;
+            last_error_ = errors::FormatError(
+                errors::Runtime::InvalidParameter,
+                "Node '" + node.name + "': " + parameter_error);
             return false;
         }
 
         if (runtime_support.mode == PipelineRuntimeSupportMode::Unknown) {
-            last_error_ = "Node '" + node.name + "' has unsupported node type '" +
-                          node.type + "' for PipelineExecutor";
+            last_error_ = errors::FormatError(
+                errors::Runtime::UnsupportedNode,
+                "Node '" + node.name + "' has unsupported node type '" +
+                    node.type + "' for PipelineExecutor");
             return false;
         }
 
         if (!runtime_support.pipeline_executor_supported) {
-            last_error_ = "Node '" + node.name + "' of type '" + node.type +
-                          "' is not supported by PipelineExecutor";
+            std::string message =
+                "Node '" + node.name + "' of type '" + node.type +
+                "' is not supported by PipelineExecutor";
             if (runtime_support.fail_closed_reason != nullptr) {
-                last_error_ += ": ";
-                last_error_ += runtime_support.fail_closed_reason;
+                message += ": ";
+                message += runtime_support.fail_closed_reason;
             }
+            last_error_ = errors::FormatError(
+                errors::Runtime::UnsupportedNode,
+                message);
             return false;
         }
     }
@@ -3651,10 +3785,38 @@ bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ct
     options.write_manifest = OptionalBooleanParameterOrDefault(
         node.parameters, "write_manifest", true);
 
-    spdlog::info("[Pipeline] DataConvert converting '{}' -> '{}'",
-                 options.input_path, options.output_path);
-
     try {
+        std::string input_label = options.input_path;
+        if (!node.inputs.empty()) {
+            std::string input_dataset_name = GetInputDatasetName(node, ctx);
+            if (input_dataset_name.empty()) {
+                ReportError("DataConvert: input dataset connection could not be resolved");
+                return false;
+            }
+
+            auto input_dataset =
+                DataRegistry::Instance().GetArrowDataset(input_dataset_name);
+            if (!input_dataset) {
+                ReportError("DataConvert: input dataset '" + input_dataset_name +
+                            "' is not an in-memory Arrow dataset");
+                return false;
+            }
+
+            options.input_table = input_dataset->GetArrowTable();
+            if (!options.input_table) {
+                ReportError("DataConvert: input dataset '" + input_dataset_name +
+                            "' has no Arrow table");
+                return false;
+            }
+            input_label = input_dataset_name;
+        } else if (options.input_path.empty()) {
+            ReportError("DataConvert: missing input_path. Connect an upstream dataset or select an input file.");
+            return false;
+        }
+
+        spdlog::info("[Pipeline] DataConvert converting '{}' -> '{}'",
+                     input_label, options.output_path);
+
         auto result = DataConvertService::Convert(options);
         if (!result.ok) {
             ReportError("DataConvert: " + result.error);
@@ -4590,6 +4752,9 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         ReportError(schema_error);
         return false;
     }
+
+    WarnIfDenseTextVectorizerMaterializationIsLarge(
+        node.type, node.parameters, input_table);
 
     auto result = op->Apply(input_table);
     if (!result.ok()) {

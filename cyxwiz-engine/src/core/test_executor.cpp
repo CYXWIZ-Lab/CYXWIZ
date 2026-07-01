@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <numeric>
 #include <sstream>
+#include <stdexcept>
 
 namespace cyxwiz {
 
@@ -658,6 +659,21 @@ void TestExecutor::Test(
 
     spdlog::info("TestExecutor: Starting testing with batch_size={}, {} batches",
                  batch_size, total_batches);
+
+    if (total_batches == 0) {
+        const std::string message =
+            "Testing has no test batches. Check that the trained dataset has a "
+            "non-empty test split and that Tools > Test uses the same effective "
+            "dataset/materialized dataset that training used.";
+        UpdateMetrics([&message](TestingMetrics& m) {
+            m.is_testing = false;
+            m.is_complete = false;
+            m.status_message = message;
+        });
+        is_testing_.store(false);
+        spdlog::error("TestExecutor: {}", message);
+        throw std::runtime_error(message);
+    }
 
     // Set model to evaluation mode (disables dropout, etc.)
     model_->SetTraining(false);

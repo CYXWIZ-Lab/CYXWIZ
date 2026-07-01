@@ -61,6 +61,17 @@ std::shared_ptr<arrow::Table> MakeTextTable() {
     }, 3);
 }
 
+std::shared_ptr<arrow::Table> MakeRepeatedTextTable() {
+    auto schema = arrow::schema({
+        arrow::field("text", arrow::utf8()),
+    });
+    return arrow::Table::Make(schema, {
+        FinishStringArray({
+            "alpha alpha beta",
+        }),
+    }, 1);
+}
+
 std::shared_ptr<arrow::Table> MakeTimeSeriesTable() {
     auto schema = arrow::schema({
         arrow::field("value", arrow::float32()),
@@ -99,6 +110,65 @@ void TestCountVectorizerResetsOptionalLabelAndMaxFeatures() {
           "second count-vectorizer configure should clear stale label_col");
     Check(second_table->num_columns() > 1,
           "second count-vectorizer configure should restore default max_features");
+}
+
+void TestCountVectorizerPrefersNGramRangeWhenDefaultsArePresent() {
+    const auto input = MakeTextTable();
+    std::string error;
+
+    cyxwiz::CountVectorizerOperator count_op;
+    Check(count_op.Configure({
+        {"text_col", "text"},
+        {"max_features", "20"},
+        {"norm", "none"},
+        {"stop_words", "none"},
+        {"ngram_range", "1,2"},
+        {"ngram_min", "1"},
+        {"ngram_max", "1"},
+    }, error), error);
+    auto count_result = count_op.Apply(input);
+    Check(count_result.ok(), count_result.status().ToString());
+    Check(count_result.ValueOrDie()->num_columns() == 8,
+          "CountVectorizer should honor ngram_range=1,2 over stale ngram_max=1");
+}
+
+void TestCountVectorizerBinaryModeEmitsPresenceValues() {
+    cyxwiz::CountVectorizerOperator op;
+    const auto input = MakeRepeatedTextTable();
+    std::string error;
+
+    Check(op.Configure({
+        {"text_col", "text"},
+        {"max_features", "3"},
+        {"norm", "none"},
+        {"stop_words", "none"},
+        {"binary", "true"},
+    }, error), error);
+    auto result = op.Apply(input);
+    Check(result.ok(), result.status().ToString());
+    auto table = result.ValueOrDie();
+    Check(table->num_columns() == 2,
+          "binary CountVectorizer should emit alpha and beta features");
+
+    auto count_0 = std::static_pointer_cast<arrow::FloatArray>(
+        table->GetColumnByName("count_0")->chunk(0));
+    auto count_1 = std::static_pointer_cast<arrow::FloatArray>(
+        table->GetColumnByName("count_1")->chunk(0));
+    Check(count_0->Value(0) == 1.0f,
+          "binary CountVectorizer should set repeated alpha to presence 1");
+    Check(count_1->Value(0) == 1.0f,
+          "binary CountVectorizer should set beta to presence 1");
+}
+
+void TestCountVectorizerRejectsSparseOutputFormat() {
+    cyxwiz::CountVectorizerOperator op;
+    std::string error;
+    Check(!op.Configure({
+        {"text_col", "text"},
+        {"output_format", "sparse"},
+    }, error), "CountVectorizer output_format=sparse should fail closed");
+    Check(error.find("supports dense output only") != std::string::npos,
+          "CountVectorizer sparse output error should be specific: " + error);
 }
 
 void TestTimeSeriesFeaturesClearsStaleFeatureLists() {
@@ -165,6 +235,9 @@ void TestTimeSeriesWindowClearsOptionalFeatureAndTimeColumns() {
 
 int main() {
     TestCountVectorizerResetsOptionalLabelAndMaxFeatures();
+    TestCountVectorizerPrefersNGramRangeWhenDefaultsArePresent();
+    TestCountVectorizerBinaryModeEmitsPresenceValues();
+    TestCountVectorizerRejectsSparseOutputFormat();
     TestTimeSeriesFeaturesClearsStaleFeatureLists();
     TestTimeSeriesWindowClearsOptionalFeatureAndTimeColumns();
     std::cout << "Operator Configure reset regressions passed\n";

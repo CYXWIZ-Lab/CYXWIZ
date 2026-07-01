@@ -234,6 +234,7 @@ struct ValidationIssue {
     int node_id = -1;                  // -1 == graph-level
     std::string node_name;             // empty for graph-level
     std::string message;
+    std::string error_code;            // optional stable CW-* code
 };
 
 namespace BackendPlacementStatus {

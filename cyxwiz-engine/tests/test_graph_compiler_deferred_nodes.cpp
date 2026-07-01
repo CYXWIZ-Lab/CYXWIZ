@@ -1,4 +1,5 @@
 #include "../src/core/graph_compiler.h"
+#include "../src/core/error_codes.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/loaders/data_loader.h"
 
@@ -91,6 +92,25 @@ bool HasIssueText(const cyxwiz::TrainingConfiguration& config,
     return false;
 }
 
+bool HasIssueCode(const cyxwiz::TrainingConfiguration& config,
+                  const std::string& code) {
+    for (const auto& issue : config.issues) {
+        if (issue.error_code == code) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool AllIssuesHaveCodes(const cyxwiz::TrainingConfiguration& config) {
+    for (const auto& issue : config.issues) {
+        if (issue.error_code.empty()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool HasMetricLearningBlocker(const cyxwiz::TrainingConfiguration& config,
                               const std::string& text) {
     for (const auto& blocker : config.metric_learning_graph.blockers) {
@@ -149,6 +169,18 @@ const cyxwiz::BackendPlacementEntry* FindPlacement(
 } // namespace
 
 int main() {
+    {
+        cyxwiz::GraphCompiler compiler;
+        const auto empty_config = compiler.Compile({}, {}, true);
+        Check(!empty_config.is_valid,
+              "empty graph should fail compile");
+        Check(HasIssueCode(empty_config,
+                           cyxwiz::errors::Compiler::MissingTrainingPathNode),
+              "empty graph should expose stable missing-training-path code");
+        Check(AllIssuesHaveCodes(empty_config),
+              "empty graph compile should code every issue");
+    }
+
     auto data = Node(1,
                      gui::NodeType::DataInput,
                      "Data",
@@ -202,6 +234,11 @@ int main() {
           "compile should report template/deferred status");
     Check(HasIssueText(config, "Deferred BatchMatMul"),
           "compile issue should name the deferred node");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Compiler::UnsupportedTrainingNode),
+          "selected deferred training node should expose unsupported-node code");
+    Check(AllIssuesHaveCodes(config),
+          "deferred-node compile should code every issue");
 
     auto side_dot = batch_matmul;
     side_dot.id = 6;
@@ -230,6 +267,8 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "deferred node outside selected training path should not block compile");
+    Check(AllIssuesHaveCodes(config),
+          "valid compile warnings should still carry codes");
     Check(!HasIssueText(config, "Disconnected Deferred BatchMatMul"),
           "compile should not report side deferred node");
     Check(config.layers.size() == 1,
@@ -341,6 +380,9 @@ int main() {
                       cyxwiz::BackendPlacementReason::
                           UnsupportedSequentialModelLayer,
               "unsupported layer placement should use central reason code");
+        Check(HasIssueCode(config,
+                           cyxwiz::errors::Compiler::UnsupportedTrainingNode),
+              "unsupported sequential layer should expose unsupported-node code");
         if (unsupported_case.node_type == gui::NodeType::PolicyNetwork ||
             unsupported_case.node_type == gui::NodeType::ValueNetwork) {
             Check(HasIssueText(config, "reinforcement-learning training"),
@@ -1633,6 +1675,9 @@ int main() {
           "CrossEntropy manual class_weights length mismatch should be invalid");
     Check(HasIssueText(config, "class_weights size"),
           "class_weights length mismatch should report a clear diagnostic");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Compiler::LabelOutputShapeMismatch),
+          "class_weights length mismatch should expose label/output code");
 
     auto invalid_smoothed_loss = weighted_loss;
     invalid_smoothed_loss.parameters["label_smoothing"] = "1.0";
@@ -1649,6 +1694,9 @@ int main() {
           "CrossEntropy label_smoothing >= 1 should be invalid");
     Check(HasIssueText(config, "label_smoothing"),
           "invalid label_smoothing should report a clear diagnostic");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Compiler::InvalidParameter),
+          "invalid label_smoothing should expose invalid-parameter code");
 
     auto focal_loss = Node(33,
                            gui::NodeType::FocalLoss,
@@ -1784,6 +1832,9 @@ int main() {
           "CrossEntropy class count mismatch should be invalid");
     Check(HasIssueText(config, "class count"),
           "CrossEntropy loss should report class/output mismatch");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Compiler::LabelOutputShapeMismatch),
+          "CrossEntropy class/output mismatch should expose stable code");
 
     auto sequence_tag_output = Node(
         18,
@@ -1834,6 +1885,9 @@ int main() {
           "image preprocessing on a tabular data path should be invalid");
     Check(HasIssueText(config, "is for image data"),
           "compile should report preprocessing/domain mismatch");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Data::ColumnTypeMismatch),
+          "preprocessing/domain mismatch should expose data contract code");
 
     std::cout << "Graph compiler deferred node guard and graph plan passed\n";
     return 0;

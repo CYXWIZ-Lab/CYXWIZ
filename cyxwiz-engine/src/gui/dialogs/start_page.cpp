@@ -255,16 +255,28 @@ bool StartPage::Render() {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 9.0f);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.95f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.045f, 0.070f, 0.120f, 0.86f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.18f, 0.34f, 0.52f, 0.55f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.07f, 0.11f, 0.18f, 0.96f));
 
+    // Professional centered content width. The background stays full-screen,
+    // while the launcher content sits centered like a product start surface.
+    const float page_margin_x = 64.0f;
+    const float page_available_width =
+        std::max(640.0f, win_size.x - page_margin_x * 2.0f);
+    const float content_width = std::min(1240.0f, page_available_width);
+    const float content_x = (win_size.x - content_width) * 0.5f;
+    const float gap_width = 72.0f;
+    const float left_width = content_width * 0.60f;
+    const float right_width = content_width - left_width - gap_width;
+
     // Title
-    ImGui::SetCursorPos(ImVec2(40, 30));
+    ImGui::SetCursorPos(ImVec2(content_x, 30));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     ImGui::SetWindowFontScale(2.1f);
     ImGui::TextColored(ImVec4(0.92f, 0.97f, 1.0f, 1.0f), "Get started");
     ImGui::SetWindowFontScale(1.0f);
+    ImGui::SetCursorPosX(content_x);
     ImGui::TextColored(ImVec4(0.45f, 0.74f, 1.0f, 1.0f),
                        "Build, train, debug, and export ML workflows from one engine workspace.");
     ImGui::PopStyleVar();
@@ -272,13 +284,12 @@ bool StartPage::Render() {
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
 
     // Two-column layout
-    float window_width = ImGui::GetContentRegionAvail().x;
-    float left_width = window_width * 0.65f;
-    float right_width = window_width * 0.30f;
-
+    ImGui::SetCursorPosX(content_x);
     ImGui::BeginGroup();
     {
-        ImGui::BeginChild("LeftColumn", ImVec2(left_width, -60), true, ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("LeftColumn", ImVec2(left_width, -60), false,
+                          ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoScrollWithMouse);
         {
             RenderSearchBar();
             ImGui::Spacing();
@@ -291,11 +302,14 @@ bool StartPage::Render() {
     ImGui::EndGroup();
 
     ImGui::SameLine();
-    ImGui::SetCursorPosX(40 + left_width + 40);
+    ImGui::SetCursorPosX(content_x + left_width + gap_width);
 
     ImGui::BeginGroup();
     {
-        ImGui::BeginChild("RightColumn", ImVec2(right_width, -60), true);
+        ImGui::SetCursorPosX(content_x + left_width + gap_width + 8.0f);
+        ImGui::BeginChild("RightColumn", ImVec2(right_width - 8.0f, -60), false,
+                          ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoScrollWithMouse);
         {
             RenderActionCards();
         }
@@ -319,7 +333,7 @@ bool StartPage::Render() {
 
 void StartPage::RenderSearchBar() {
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.08f, 0.13f, 0.21f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.18f, 0.45f, 0.72f, 0.75f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 10));
 
     ImGui::SetNextItemWidth(-1);
@@ -347,8 +361,10 @@ void StartPage::RenderStarterGraphs() {
     ImGui::TextWrapped("Open a real CyxGraph template by prediction task.");
     ImGui::PopStyleColor();
 
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.035f, 0.055f, 0.095f, 0.58f));
-    ImGui::BeginChild("##StarterGraphs", ImVec2(0, 230), true);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::BeginChild("##StarterGraphs", ImVec2(0, 230), false,
+                      ImGuiWindowFlags_NoScrollbar |
+                      ImGuiWindowFlags_NoScrollWithMouse);
 
     const float button_width = 96.0f;
     const float row_height = 54.0f;
@@ -389,7 +405,7 @@ void StartPage::RenderStarterGraphs() {
             ImGui::SetTooltip("%s", starter.path.c_str());
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::PopID();
     }
 
@@ -398,8 +414,11 @@ void StartPage::RenderStarterGraphs() {
 }
 
 void StartPage::RenderRecentProjects() {
-    ImGui::SeparatorText("Recent Projects");
-    ImGui::BeginChild("##RecentProjects", ImVec2(0, 0), false);
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.92f, 0.97f, 1.0f, 1.0f), "Recent Projects");
+    ImGui::BeginChild("##RecentProjects", ImVec2(0, 0), false,
+                      ImGuiWindowFlags_NoScrollbar |
+                      ImGuiWindowFlags_NoScrollWithMouse);
 
     // This week
     if (!this_week_.empty()) {
@@ -547,13 +566,13 @@ void StartPage::RenderActionCards() {
 
     ImGui::Spacing();
 
-    ImGui::SeparatorText("Workflow lanes");
+    ImGui::TextColored(ImVec4(0.58f, 0.70f, 0.82f, 1.0f), "Workflow lanes");
     RenderProjectTemplateButton(ICON_FA_CHART_LINE " Classic ML workflow", 1);
     RenderProjectTemplateButton(ICON_FA_NETWORK_WIRED " Deep Learning workflow", 2);
 
     ImGui::Spacing();
 
-    ImGui::SeparatorText("Domain starters");
+    ImGui::TextColored(ImVec4(0.58f, 0.70f, 0.82f, 1.0f), "Domain starters");
     RenderProjectTemplateButton(ICON_FA_TABLE " Tabular project", 3);
     RenderProjectTemplateButton(ICON_FA_IMAGE " Vision project", 4);
     RenderProjectTemplateButton(ICON_FA_COMMENTS " NLP project", 5);
@@ -561,7 +580,7 @@ void StartPage::RenderActionCards() {
     ImGui::Spacing();
 
     // Open project
-    ImGui::SeparatorText("File actions");
+    ImGui::TextColored(ImVec4(0.58f, 0.70f, 0.82f, 1.0f), "File actions");
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.13f, 0.21f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.20f, 0.32f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.06f, 0.10f, 0.18f, 1.0f));

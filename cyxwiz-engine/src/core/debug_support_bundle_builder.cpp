@@ -41,6 +41,7 @@ nlohmann::json IssueToJson(const ValidationIssue& issue) {
         {"level", IssueLevelName(issue.level)},
         {"node_id", issue.node_id},
         {"node_name", issue.node_name},
+        {"error_code", issue.error_code},
         {"message", issue.message}
     };
 }

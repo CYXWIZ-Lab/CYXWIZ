@@ -1,13 +1,13 @@
-# tofix24 - DataConvert Node Reopened
+# done24_reopened - DataConvert Node Reopened
 
 ## Status
 
-`done24.md` was not actually complete. The node existed, but it was still a
-Phase 1 `CSV/TSV -> Parquet` implementation in the service, PipelineExecutor,
-runtime capabilities, node metadata, dialog text, and properties panel.
+Closed after the DataConvert reopen work was finished and verified.
 
-This task is reopened as `tofix24.md` until the remaining DataConvert work is
-finished and verified.
+The original `done24.md` had not actually completed the full DataConvert table
+contract. The node existed, but it was still a Phase 1 `CSV/TSV -> Parquet`
+implementation in the service, PipelineExecutor, runtime capabilities, node
+metadata, dialog text, and properties panel.
 
 ## Implemented In This Reopen
 

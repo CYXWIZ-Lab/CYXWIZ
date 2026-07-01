@@ -2,6 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <iomanip>
+#include <exception>
 #include <nlohmann/json.hpp>
 
 namespace cyxwiz {
@@ -75,7 +76,13 @@ bool TestManager::StartTesting(
                     " - Acc: " + std::to_string(static_cast<int>(metrics.test_accuracy * 100)) + "%");
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            task.MarkCompleted();
+            const auto final_metrics = TestManager::Instance().GetCurrentMetrics();
+            if (!final_metrics.is_complete &&
+                final_metrics.status_message.rfind("Testing failed", 0) == 0) {
+                task.MarkCompleted(final_metrics.status_message, "failed");
+            } else {
+                task.MarkCompleted();
+            }
         },
         nullptr,  // progress callback
         nullptr   // completion callback
@@ -144,7 +151,13 @@ bool TestManager::StartTestingText(
                     " - Acc: " + std::to_string(static_cast<int>(metrics.test_accuracy * 100)) + "%");
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            task.MarkCompleted();
+            const auto final_metrics = TestManager::Instance().GetCurrentMetrics();
+            if (!final_metrics.is_complete &&
+                final_metrics.status_message.rfind("Testing failed", 0) == 0) {
+                task.MarkCompleted(final_metrics.status_message, "failed");
+            } else {
+                task.MarkCompleted();
+            }
         },
         nullptr,
         nullptr
@@ -238,13 +251,29 @@ void TestManager::TestingThreadFunc(
                 }
             };
 
-            exec->Test(
-                batch_size,
-                batch_callback,
-                [this, &final_metrics](const TestingMetrics& metrics) {
-                    final_metrics = metrics;
-                }
-            );
+            try {
+                exec->Test(
+                    batch_size,
+                    batch_callback,
+                    [this, &final_metrics](const TestingMetrics& metrics) {
+                        final_metrics = metrics;
+                    }
+                );
+            } catch (const std::exception& ex) {
+                spdlog::error("TestManager: Testing failed: {}", ex.what());
+                final_metrics = exec->GetMetrics();
+                final_metrics.is_testing = false;
+                final_metrics.is_complete = false;
+                final_metrics.status_message =
+                    std::string("Testing failed: ") + ex.what();
+            } catch (...) {
+                spdlog::error("TestManager: Testing failed with unknown error");
+                final_metrics = exec->GetMetrics();
+                final_metrics.is_testing = false;
+                final_metrics.is_complete = false;
+                final_metrics.status_message =
+                    "Testing failed with unknown error";
+            }
         }
     }
 
@@ -406,3 +435,4 @@ bool TestManager::ExportResultsToJSON(const std::string& filepath) {
 }
 
 } // namespace cyxwiz
+

@@ -1,8 +1,8 @@
-# tofix31c - Pretrained/import truthfulness boundary
+# done31c - Pretrained/import truthfulness boundary
 
 ## Scope
 
-This is the third small ticket extracted from `tofix31.md`.
+This is the third completed small ticket extracted from `tofix31.md`.
 
 The goal is to keep Studio truthful about model import and pretrained
 fine-tuning. This ticket does not implement pretrained transformer import,
