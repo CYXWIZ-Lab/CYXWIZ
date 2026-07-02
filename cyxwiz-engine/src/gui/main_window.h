@@ -121,6 +121,7 @@ class WordFrequencyPanel;
 class TFIDFPanel;
 class EmbeddingsPanel;
 class SentimentPanel;
+class LanguageModelGenerationPanel;
 // Utilities panels (Phase 12)
 class CalculatorPanel;
 class UnitConverterPanel;
@@ -413,6 +414,7 @@ private:
     std::unique_ptr<cyxwiz::TFIDFPanel> tfidf_panel_;
     std::unique_ptr<cyxwiz::EmbeddingsPanel> embeddings_panel_;
     std::unique_ptr<cyxwiz::SentimentPanel> sentiment_panel_;
+    std::unique_ptr<cyxwiz::LanguageModelGenerationPanel> language_model_generation_panel_;
 
     // Utilities panels (Phase 12)
     std::unique_ptr<cyxwiz::CalculatorPanel> calculator_panel_;

@@ -241,7 +241,7 @@ int main() {
     Check(library.LoadPatternFromFile(WritePattern("guard_batch_matmul", "TensorBatchMatMul").string()),
           "failed to load template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_multihead_attention", "MultiHeadAttention").string()),
-          "failed to load attention template-node pattern");
+          "failed to load implemented attention-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_cosine_scheduler", "CosineAnnealing").string()),
           "failed to load scheduler template-node pattern");
     Check(library.LoadPatternFromFile(WritePattern("guard_typo", "DefinitelyNotANode").string()),
@@ -310,11 +310,12 @@ int main() {
 
     nodes.clear();
     links.clear();
-    Check(!library.InstantiatePatternWithCreator(
+    Check(library.InstantiatePatternWithCreator(
               "guard_multihead_attention", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
-          "template MultiHeadAttention pattern should be rejected");
-    Check(nodes.empty() && links.empty(), "attention template rejection should leave no partial graph");
-    Check(creator_calls == 4, "attention template rejection should not call node creator");
+          "implemented MultiHeadAttention pattern should instantiate");
+    Check(creator_calls == 5, "MultiHeadAttention pattern should call node creator once");
+    Check(nodes.size() == 1 && nodes.front().type == gui::NodeType::MultiHeadAttention,
+          "MultiHeadAttention pattern created wrong node type");
 
     nodes.clear();
     links.clear();
@@ -322,7 +323,7 @@ int main() {
               "guard_cosine_scheduler", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "template CosineAnnealing pattern should be rejected");
     Check(nodes.empty() && links.empty(), "scheduler template rejection should leave no partial graph");
-    Check(creator_calls == 4, "scheduler template rejection should not call node creator");
+    Check(creator_calls == 5, "scheduler template rejection should not call node creator");
 
     nodes.clear();
     links.clear();
@@ -330,14 +331,14 @@ int main() {
               "guard_typo", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "unknown node pattern should be rejected");
     Check(nodes.empty() && links.empty(), "unknown rejection should leave no partial graph");
-    Check(creator_calls == 4, "unknown rejection should not call node creator");
+    Check(creator_calls == 5, "unknown rejection should not call node creator");
 
     int next_pin_id = 2000;
     Check(!library.InstantiatePatternWithCreator(
               "guard_ner_name", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "Dense-encoded NER placeholder-name pattern should be rejected");
     Check(nodes.empty() && links.empty(), "Dense-encoded NER name rejection should leave no partial graph");
-    Check(creator_calls == 4, "Dense-encoded NER name rejection should not call node creator");
+    Check(creator_calls == 5, "Dense-encoded NER name rejection should not call node creator");
 
     Check(!library.InstantiatePattern(
               "guard_ner_name", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),

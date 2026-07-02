@@ -1467,6 +1467,10 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                 }
                 continue;
             }
+            case backend_placement::LayerCapabilityKind::CpuBackedModelLayer:
+                config.backend_placements.push_back(
+                    backend_placement::BuildCpuBackedModelLayerPlacement(layer));
+                continue;
             case backend_placement::LayerCapabilityKind::UnsupportedSequentialModelLayer:
                 config.backend_placements.push_back(
                     backend_placement::BuildUnsupportedSequentialModelPlacement(
@@ -2433,6 +2437,36 @@ void ValidateTrainingPathImplementationStatus(
             continue;
         }
 
+        if (node.type == gui::NodeType::MultiHeadAttention &&
+            (HasConnectedSelectedInputPinNamed(
+                 node,
+                 links,
+                 training_path_ids,
+                 "Key") ||
+             HasConnectedSelectedInputPinNamed(
+                 node,
+                 links,
+                 training_path_ids,
+                 "Value") ||
+             HasConnectedSelectedInputPinNamed(
+                 node,
+                 links,
+                 training_path_ids,
+                 "Context"))) {
+            std::ostringstream msg;
+            msg << "MultiHeadAttention node '" << node.name
+                << "' has a connected Key/Value/Context input on the selected "
+                   "training path, but Studio currently supports only "
+                   "single-input self-attention through "
+                   "MultiHeadAttentionModule. Cross-attention needs a "
+                   "graph-level multi-input tensor contract, mask ownership, "
+                   "export/load metadata, and inference semantics before it "
+                   "can compile truthfully.";
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id,
+                     node.name, errors::Compiler::UnsupportedTrainingNode);
+            continue;
+        }
+
         std::string target_design_key;
         if (gui::detail::IsDenseEncodedSequencePlaceholder(node,
                                                            target_design_key)) {
@@ -2933,10 +2967,42 @@ TrainingConfiguration GraphCompiler::Compile(
             }
         }
 
-        // Calculate flattened input size
-        config.input_size = 1;
-        for (size_t dim : config.input_shape) {
-            config.input_size *= dim;
+        // Calculate input size. Plain datasets use flattened feature width.
+        // Sequence language-model datasets keep input_size as per-token
+        // feature width while input_shape preserves [seq_len, features] for
+        // downstream sequence wrappers such as TimeDistributed.
+        const bool sequence_lm_input =
+            ParseBoolParam(dataset_node->parameters,
+                           "create_causal_lm_targets",
+                           false) ||
+            ParseBoolParam(dataset_node->parameters,
+                           "sequence_create_causal_lm_targets",
+                           false);
+        size_t sequence_length =
+            ParseSizeParam(dataset_node->parameters,
+                           "max_sequence_length",
+                           0);
+        if (sequence_length == 0) {
+            sequence_length =
+                ParseSizeParam(dataset_node->parameters,
+                               "sequence_max_sequence_length",
+                               0);
+        }
+        if (sequence_lm_input && !config.input_shape.empty()) {
+            if (config.input_shape.size() == 1 && sequence_length > 0) {
+                const size_t feature_width = config.input_shape[0];
+                config.input_shape = {sequence_length, feature_width};
+                config.input_size = feature_width;
+            } else if (config.input_shape.size() >= 2) {
+                config.input_size = config.input_shape.back();
+            } else {
+                config.input_size = config.input_shape[0];
+            }
+        } else {
+            config.input_size = 1;
+            for (size_t dim : config.input_shape) {
+                config.input_size *= dim;
+            }
         }
     }
 
@@ -4100,6 +4166,8 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::TensorStd:
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
+        case gui::NodeType::LayerNorm:
+        case gui::NodeType::MultiHeadAttention:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:

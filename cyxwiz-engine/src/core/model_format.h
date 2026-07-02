@@ -171,6 +171,9 @@ struct ProbeResult {
     ModelFormat format = ModelFormat::Unknown;
     std::string format_version;
     std::string model_name;
+    std::string model_family;
+    bool supports_generation = false;
+    std::string generation_output_contract;
     std::string author;
     std::string description;
 
@@ -293,6 +296,9 @@ struct ModelManifest {
     // Model info
     std::string model_name;
     std::string model_type;         // "SequentialModel", etc.
+    std::string model_family;       // e.g., "causal_lm", "classifier"
+    bool supports_generation = false;
+    std::string generation_output_contract;
     int num_parameters = 0;
     int num_layers = 0;
 

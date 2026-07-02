@@ -349,6 +349,72 @@ std::unique_ptr<Module> CreateModule(
             return std::make_unique<BatchNormModule>(num_features, eps, momentum);
         }
 
+        case ModuleType::LayerNorm: {
+            std::vector<int> normalized_shape;
+            float eps = 1e-5f;
+            bool elementwise_affine = true;
+
+            if (params.count("normalized_shape")) {
+                normalized_shape.push_back(std::stoi(params.at("normalized_shape")));
+            }
+            if (params.count("features")) {
+                normalized_shape = {std::stoi(params.at("features"))};
+            }
+            if (params.count("eps")) {
+                eps = std::stof(params.at("eps"));
+            }
+            if (params.count("epsilon")) {
+                eps = std::stof(params.at("epsilon"));
+            }
+            if (params.count("elementwise_affine")) {
+                elementwise_affine = params.at("elementwise_affine") != "false" &&
+                                     params.at("elementwise_affine") != "0";
+            }
+
+            if (normalized_shape.empty()) {
+                spdlog::error("CreateModule: LayerNorm requires normalized_shape");
+                return nullptr;
+            }
+
+            return std::make_unique<LayerNormModule>(
+                normalized_shape, eps, elementwise_affine);
+        }
+
+        case ModuleType::MultiHeadAttention: {
+            size_t embed_dim = 0;
+            size_t num_heads = 1;
+            float dropout = 0.0f;
+            bool use_bias = true;
+
+            if (params.count("embed_dim")) {
+                embed_dim = std::stoul(params.at("embed_dim"));
+            }
+            if (params.count("d_model")) {
+                embed_dim = std::stoul(params.at("d_model"));
+            }
+            if (params.count("num_heads")) {
+                num_heads = std::stoul(params.at("num_heads"));
+            }
+            if (params.count("heads")) {
+                num_heads = std::stoul(params.at("heads"));
+            }
+            if (params.count("dropout")) {
+                dropout = std::stof(params.at("dropout"));
+            }
+            if (params.count("use_bias")) {
+                use_bias = params.at("use_bias") != "false" &&
+                           params.at("use_bias") != "0";
+            }
+
+            if (embed_dim == 0) {
+                spdlog::error("CreateModule: MultiHeadAttention requires embed_dim");
+                return nullptr;
+            }
+
+            return std::make_unique<MultiHeadAttentionModule>(
+                embed_dim, num_heads, dropout, use_bias);
+        }
+
         case ModuleType::LeakyReLU: {
             float negative_slope = 0.01f;
             if (params.count("negative_slope")) {

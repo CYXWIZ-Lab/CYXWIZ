@@ -10,6 +10,7 @@ namespace cyxwiz::backend_placement {
 
 enum class LayerCapabilityKind {
     ArrayFireTensor,
+    CpuBackedModelLayer,
     Recurrent,
     TimeDistributedSequenceWrapper,
     UnsupportedSequentialModelLayer,
@@ -56,6 +57,11 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::TensorStd: return "TensorStd";
         case gui::NodeType::Dropout: return "Dropout";
         case gui::NodeType::BatchNorm: return "BatchNorm";
+        case gui::NodeType::LayerNorm: return "LayerNorm";
+        case gui::NodeType::MultiHeadAttention: return "MultiHeadAttention";
+        case gui::NodeType::SelfAttention: return "SelfAttention";
+        case gui::NodeType::CrossAttention: return "CrossAttention";
+        case gui::NodeType::LinearAttention: return "LinearAttention";
         case gui::NodeType::ConvTranspose2D: return "ConvTranspose2D";
         case gui::NodeType::Upsample: return "Upsample";
         case gui::NodeType::PixelShuffle: return "PixelShuffle";
@@ -151,11 +157,20 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
     }
 }
 
+inline bool IsKnownCpuBackedModelLayer(gui::NodeType type) {
+    return type == gui::NodeType::LayerNorm ||
+           type == gui::NodeType::MultiHeadAttention ||
+           type == gui::NodeType::TransformerEncoder ||
+           type == gui::NodeType::TransformerDecoder;
+}
+
 inline LayerCapability ClassifyLayer(gui::NodeType type) {
     LayerCapability capability;
     capability.type_name = LayerTypeName(type);
     if (IsPipelineUnsupportedSequentialModelLayer(type)) {
         capability.kind = LayerCapabilityKind::UnsupportedSequentialModelLayer;
+    } else if (IsKnownCpuBackedModelLayer(type)) {
+        capability.kind = LayerCapabilityKind::CpuBackedModelLayer;
     } else if (IsKnownArrayFireTensorLayer(type)) {
         capability.kind = LayerCapabilityKind::ArrayFireTensor;
     } else if (IsRecurrentLayer(type)) {
@@ -166,6 +181,45 @@ inline LayerCapability ClassifyLayer(gui::NodeType type) {
         capability.kind = LayerCapabilityKind::Unclassified;
     }
     return capability;
+}
+
+inline BackendPlacementEntry BuildCpuBackedModelLayerPlacement(
+    const CompiledLayer& layer) {
+    BackendPlacementEntry placement;
+    placement.node_id = layer.node_id;
+    placement.node_name = layer.name;
+    placement.node_type = LayerTypeName(layer.type);
+    placement.requested_backend = "auto";
+    placement.expected_backend = "CPU";
+    placement.fallback_backend = "CPU";
+    placement.status = BackendPlacementStatus::Cpu;
+    placement.reason_code = BackendPlacementReason::GraphRuntimeCpuBacked;
+    placement.explanation =
+        std::string(placement.node_type) +
+        " is supported by ModelBuilder/SequentialModel, but the current "
+        "module implementation is CPU-backed. Training is correct, but this "
+        "layer should not be counted as GPU-resident until a focused ArrayFire "
+        "implementation and residency/parity test are added.";
+    if (layer.type == gui::NodeType::MultiHeadAttention) {
+        placement.suggested_action =
+            "No correctness action needed for single-input self-attention. "
+            "For performance-sensitive transformer graphs, add and test a "
+            "focused ArrayFire MultiHeadAttention path before claiming GPU "
+            "support. Keep connected Key/Value/Context cross-attention "
+            "blocked until its graph/runtime/export contract is proven.";
+    } else if (layer.type == gui::NodeType::LayerNorm) {
+        placement.suggested_action =
+            "No correctness action needed. For performance-sensitive "
+            "transformer graphs, add and test an ArrayFire LayerNorm path "
+            "before claiming GPU support.";
+    } else {
+        placement.suggested_action =
+            "No correctness action needed. For performance-sensitive "
+            "transformer graphs, add and test a focused ArrayFire "
+            "implementation plus residency/parity coverage for this layer "
+            "before claiming GPU support.";
+    }
+    return placement;
 }
 
 inline BackendPlacementEntry BuildArrayFireTensorPlacement(

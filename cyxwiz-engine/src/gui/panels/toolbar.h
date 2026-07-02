@@ -274,6 +274,7 @@ public:
     void SetOpenTFIDFCallback(std::function<void()> cb) { open_tfidf_callback_ = cb; }
     void SetOpenEmbeddingsCallback(std::function<void()> cb) { open_embeddings_callback_ = cb; }
     void SetOpenSentimentCallback(std::function<void()> cb) { open_sentiment_callback_ = cb; }
+    void SetOpenLanguageModelGenerationCallback(std::function<void()> cb) { open_language_model_generation_callback_ = cb; }
 
     // Utilities callbacks (Phase 12)
     void SetOpenCalculatorCallback(std::function<void()> cb) { open_calculator_callback_ = cb; }
@@ -679,6 +680,7 @@ private:
     std::function<void()> open_tfidf_callback_;
     std::function<void()> open_embeddings_callback_;
     std::function<void()> open_sentiment_callback_;
+    std::function<void()> open_language_model_generation_callback_;
 
     // Utilities callbacks (Phase 12)
     std::function<void()> open_calculator_callback_;

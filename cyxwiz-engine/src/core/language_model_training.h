@@ -144,4 +144,7 @@ std::vector<int64_t> GenerateGreedyTokenIds(
     size_t max_new_tokens,
     int64_t eos_token_id = -1);
 
+// Prefer GenerateTokenIdsWithConfig from language_model_generation.h for new
+// code that needs temperature/top-k/top-p controls.
+
 } // namespace cyxwiz

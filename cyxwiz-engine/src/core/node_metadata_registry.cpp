@@ -1812,7 +1812,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"Output", PinType::Tensor, true, "Normalized"}},
         {{"normalized_shape", "int", "128", "Normalized shape", {}, ""},
          {"eps", "float", "1e-5", "Epsilon", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GroupNorm, NodeCategory::Normalization, "GroupNorm", ICON_FA_SCALE_BALANCED,
         {"groupnorm", "normalization"}, 0, false, "Group normalization", "", "",
@@ -1831,10 +1831,13 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::MultiHeadAttention, NodeCategory::Attention, "Multi-Head Attention", ICON_FA_BULLSEYE,
         {"attention", "transformer"}, 0, false, "Multi-head attention", "", "",
-        {{"Query", PinType::Tensor, true, "Query"}, {"Key", PinType::Tensor, false, "Key"}},
+        {{"Query", PinType::Tensor, true, "Query"},
+         {"Key", PinType::Tensor, false, "Optional; currently blocked when connected"},
+         {"Value", PinType::Tensor, false, "Optional; currently blocked when connected"},
+         {"Mask", PinType::Tensor, false, "Optional; not compiled for standalone MHA yet"}},
         {{"Output", PinType::Tensor, true, "Output"}},
         {{"embed_dim", "int", "512", "Dim", {}, ""}, {"num_heads", "int", "8", "Heads", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SelfAttention, NodeCategory::Attention, "Self Attention", ICON_FA_BULLSEYE,
         {"attention", "self_attention", "transformer"}, 0, false, "Self attention", "", "",

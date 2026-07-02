@@ -10,6 +10,7 @@
 #include "../src/core/model_builder.h"
 #include "../src/core/synthetic_batch.h"
 #include "../src/core/graph_compiler.h"
+#include "../src/core/checkpoint_manager.h"
 
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
@@ -126,6 +127,49 @@ TrainingConfiguration MakeTransformerTextConfig() {
     return cfg;
 }
 
+TrainingConfiguration MakeLayerNormConfig() {
+    TrainingConfiguration cfg;
+    cfg.input_size = 4;
+    cfg.output_size = 2;
+    cfg.preprocessing_domain = PreprocessingDomain::Tabular;
+
+    CompiledLayer norm;
+    norm.type = gui::NodeType::LayerNorm;
+    norm.parameters["normalized_shape"] = "4";
+    norm.parameters["epsilon"] = "1e-5";
+    norm.parameters["elementwise_affine"] = "true";
+    cfg.layers.push_back(norm);
+
+    CompiledLayer dense;
+    dense.type = gui::NodeType::Dense;
+    dense.units = 2;
+    cfg.layers.push_back(dense);
+
+    cfg.loss_type = gui::NodeType::MSELoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    cfg.learning_rate = 0.001f;
+    return cfg;
+}
+
+TrainingConfiguration MakeMultiHeadAttentionConfig() {
+    TrainingConfiguration cfg;
+    cfg.input_size = 4;
+    cfg.output_size = 4;
+    cfg.preprocessing_domain = PreprocessingDomain::Text;
+
+    CompiledLayer mha;
+    mha.type = gui::NodeType::MultiHeadAttention;
+    mha.parameters["embed_dim"] = "4";
+    mha.parameters["num_heads"] = "2";
+    mha.parameters["dropout"] = "0";
+    cfg.layers.push_back(mha);
+
+    cfg.loss_type = gui::NodeType::MSELoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    cfg.learning_rate = 0.001f;
+    return cfg;
+}
+
 TrainingConfiguration MakeSentimentConfig(size_t num_layers = 1) {
     TrainingConfiguration cfg;
     cfg.input_size  = 128;
@@ -207,6 +251,227 @@ void TestBuildSequentialTabular() {
     // are filtered out by the builder.
     ExpectEq(built.model->Size(), 3, "model.Size()");
     spdlog::info("  OK: model has {} modules", built.model->Size());
+}
+
+void TestBuildSequentialLayerNorm() {
+    spdlog::info("--- TestBuildSequentialLayerNorm ---");
+    auto built = BuildSequentialFromConfig(MakeLayerNormConfig());
+    if (!built.ok()) {
+        std::cerr << "FAIL: LayerNorm BuildSequentialFromConfig returned !ok()\n";
+        std::exit(1);
+    }
+    ExpectEq(built.model->Size(), 2, "LayerNorm model.Size()");
+
+    const float x_values[] = {
+        1.0f, 2.0f, 3.0f, 4.0f,
+        -1.0f, 0.0f, 1.0f, 2.0f,
+    };
+    Tensor input({2, 4}, x_values, DataType::Float32);
+    Tensor output = built.model->Forward(input);
+    ExpectEq(output.Shape().size(), 2, "LayerNorm output ndim");
+    ExpectEq(output.Shape()[0], 2, "LayerNorm output batch");
+    ExpectEq(output.Shape()[1], 2, "LayerNorm output features");
+
+    const float grad_values[] = {
+        0.1f, -0.2f,
+        0.3f, 0.4f,
+    };
+    Tensor grad({2, 2}, grad_values, DataType::Float32);
+    (void)built.model->Backward(grad);
+
+    const auto grads = built.model->GetGradients();
+    ExpectTrue(grads.count("layer0.gamma") == 1,
+               "LayerNorm gamma gradient is exposed");
+    ExpectTrue(grads.count("layer0.beta") == 1,
+               "LayerNorm beta gradient is exposed");
+    spdlog::info("  OK: LayerNorm builds, runs, and exposes gradients");
+}
+
+void TestBuildSequentialMultiHeadAttention() {
+    spdlog::info("--- TestBuildSequentialMultiHeadAttention ---");
+    auto built = BuildSequentialFromConfig(MakeMultiHeadAttentionConfig());
+    if (!built.ok()) {
+        std::cerr << "FAIL: MultiHeadAttention BuildSequentialFromConfig returned !ok(): "
+                  << built.error_message << "\n";
+        std::exit(1);
+    }
+    ExpectEq(built.model->Size(), 1, "MultiHeadAttention model.Size()");
+
+    const float x_values[] = {
+        0.1f, -0.2f, 0.3f, 0.4f,
+        -0.5f, 0.6f, -0.7f, 0.8f,
+    };
+    Tensor input({1, 2, 4}, x_values, DataType::Float32);
+    Tensor output = built.model->Forward(input);
+    ExpectEq(output.Shape().size(), 3, "MultiHeadAttention output ndim");
+    ExpectEq(output.Shape()[0], 1, "MultiHeadAttention output batch");
+    ExpectEq(output.Shape()[1], 2, "MultiHeadAttention output seq_len");
+    ExpectEq(output.Shape()[2], 4, "MultiHeadAttention output embed_dim");
+
+    const float grad_values[] = {
+        0.01f, -0.02f, 0.03f, -0.04f,
+        0.05f, -0.06f, 0.07f, -0.08f,
+    };
+    Tensor grad({1, 2, 4}, grad_values, DataType::Float32);
+    Tensor input_grad = built.model->Backward(grad);
+    ExpectEq(input_grad.Shape().size(), 3, "MultiHeadAttention grad_input ndim");
+    ExpectEq(input_grad.Shape()[0], 1, "MultiHeadAttention grad_input batch");
+    ExpectEq(input_grad.Shape()[1], 2, "MultiHeadAttention grad_input seq_len");
+    ExpectEq(input_grad.Shape()[2], 4, "MultiHeadAttention grad_input embed_dim");
+
+    const auto grads = built.model->GetGradients();
+    ExpectTrue(grads.count("layer0.W_q") == 1,
+               "MultiHeadAttention W_q gradient is exposed");
+    ExpectTrue(grads.count("layer0.W_k") == 1,
+               "MultiHeadAttention W_k gradient is exposed");
+    ExpectTrue(grads.count("layer0.W_v") == 1,
+               "MultiHeadAttention W_v gradient is exposed");
+    ExpectTrue(grads.count("layer0.W_o") == 1,
+               "MultiHeadAttention W_o gradient is exposed");
+    spdlog::info("  OK: MultiHeadAttention builds, runs, and exposes gradients");
+}
+
+void TestLayerNormCheckpointRoundTrip() {
+    spdlog::info("--- TestLayerNormCheckpointRoundTrip ---");
+    auto source = BuildSequentialFromConfig(MakeLayerNormConfig());
+    auto target = BuildSequentialFromConfig(MakeLayerNormConfig());
+    ExpectTrue(source.ok() && source.model != nullptr,
+               "source LayerNorm model should build");
+    ExpectTrue(target.ok() && target.model != nullptr,
+               "target LayerNorm model should build");
+
+    const float gamma_values[] = {0.5f, 1.5f, -0.25f, 2.0f};
+    const float beta_values[] = {0.1f, -0.2f, 0.3f, -0.4f};
+    std::map<std::string, Tensor> source_params = source.model->GetParameters();
+    source_params["layer0.gamma"] = Tensor({4}, gamma_values, DataType::Float32);
+    source_params["layer0.beta"] = Tensor({4}, beta_values, DataType::Float32);
+    source.model->SetParameters(source_params);
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_layernorm_checkpoint_test";
+    std::filesystem::remove_all(root);
+    CheckpointManager manager(root.string());
+
+    TrainingMetrics metrics;
+    metrics.current_epoch = 3;
+    metrics.optimizer_step_count = 7;
+    metrics.train_loss = 0.25f;
+    metrics.val_loss = 0.2f;
+    metrics.has_validation_metrics = true;
+
+    const std::string saved =
+        manager.SaveCheckpoint(*source.model, nullptr, metrics, "layernorm");
+    ExpectTrue(!saved.empty(), "LayerNorm checkpoint should save");
+
+    const auto loaded =
+        manager.LoadCheckpoint(*target.model, nullptr, "layernorm");
+    ExpectTrue(loaded.has_value(), "LayerNorm checkpoint should load");
+    ExpectEq(static_cast<size_t>(loaded->epoch), 3,
+             "LayerNorm checkpoint epoch");
+
+    const auto target_params = target.model->GetParameters();
+    ExpectTrue(target_params.count("layer0.gamma") == 1,
+               "loaded LayerNorm gamma should exist");
+    ExpectTrue(target_params.count("layer0.beta") == 1,
+               "loaded LayerNorm beta should exist");
+    const float* loaded_gamma = target_params.at("layer0.gamma").Data<float>();
+    const float* loaded_beta = target_params.at("layer0.beta").Data<float>();
+    for (size_t i = 0; i < 4; ++i) {
+        ExpectNear(loaded_gamma[i], gamma_values[i], 1e-6f,
+                   "LayerNorm checkpoint gamma round-trip");
+        ExpectNear(loaded_beta[i], beta_values[i], 1e-6f,
+                   "LayerNorm checkpoint beta round-trip");
+    }
+
+    std::filesystem::remove_all(root);
+    spdlog::info("  OK: LayerNorm checkpoint parameters round-trip");
+}
+
+void TestTransformerDecoderCheckpointRoundTrip() {
+    spdlog::info("--- TestTransformerDecoderCheckpointRoundTrip ---");
+
+    SequentialModel source;
+    source.Add<TransformerDecoderModule>(4, 2, 8, 0.0f, false);
+    source.Add<LinearModule>(16, 2, true);
+
+    SequentialModel target;
+    target.Add<TransformerDecoderModule>(4, 2, 8, 0.0f, false);
+    target.Add<LinearModule>(16, 2, true);
+
+    auto source_params = source.GetParameters();
+    ExpectTrue(!source_params.empty(),
+               "TransformerDecoder checkpoint source params should exist");
+
+    const float wq_values[] = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const float norm_values[] = {1.0f, 1.1f, 0.9f, 1.2f};
+    const float head_values[] = {
+        0.20f, -0.10f, 0.05f, 0.30f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.05f, 0.15f, -0.20f, 0.10f,
+        0.30f, -0.05f, 0.25f, -0.10f,
+        -0.10f, 0.20f, 0.15f, 0.05f,
+        0.12f, -0.08f, 0.06f, 0.14f,
+        -0.04f, 0.11f, -0.13f, 0.07f,
+    };
+
+    source_params["layer0.self_attn.W_q"] =
+        Tensor({4, 4}, wq_values, DataType::Float32);
+    source_params["layer0.norm1.gamma"] =
+        Tensor({4}, norm_values, DataType::Float32);
+    source_params["layer1.weight"] =
+        Tensor({2, 16}, head_values, DataType::Float32);
+    source.SetParameters(source_params);
+    source_params = source.GetParameters();
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_transformer_decoder_checkpoint_test";
+    std::filesystem::remove_all(root);
+    CheckpointManager manager(root.string());
+
+    TrainingMetrics metrics;
+    metrics.current_epoch = 4;
+    metrics.current_batch = 11;
+    metrics.train_loss = 0.33f;
+    metrics.val_loss = 0.29f;
+    metrics.has_validation_metrics = true;
+
+    const std::string saved =
+        manager.SaveCheckpoint(source, nullptr, metrics, "decoder");
+    ExpectTrue(!saved.empty(), "TransformerDecoder checkpoint should save");
+
+    const auto loaded =
+        manager.LoadCheckpoint(target, nullptr, "decoder");
+    ExpectTrue(loaded.has_value(),
+               "TransformerDecoder checkpoint should load");
+    ExpectEq(static_cast<size_t>(loaded->epoch), 4,
+             "TransformerDecoder checkpoint epoch");
+
+    const auto target_params = target.GetParameters();
+    ExpectEq(target_params.size(), source_params.size(),
+             "TransformerDecoder checkpoint parameter count");
+    for (const auto& [name, expected] : source_params) {
+        ExpectTrue(target_params.count(name) == 1,
+                   ("loaded TransformerDecoder parameter missing: " + name).c_str());
+        const Tensor& actual = target_params.at(name);
+        ExpectTrue(actual.Shape() == expected.Shape(),
+                   ("TransformerDecoder checkpoint shape mismatch: " + name).c_str());
+        const float* actual_data = actual.Data<float>();
+        const float* expected_data = expected.Data<float>();
+        for (size_t i = 0; i < expected.NumElements(); ++i) {
+            ExpectNear(actual_data[i], expected_data[i], 1e-6f,
+                       "TransformerDecoder checkpoint parameter round-trip");
+        }
+    }
+
+    std::filesystem::remove_all(root);
+    spdlog::info("  OK: TransformerDecoder checkpoint parameters round-trip");
 }
 
 void TestSyntheticBatchTabular() {
@@ -862,6 +1127,10 @@ int main() {
             std::getenv("CYXWIZ_RUN_SLOW_DEBUG_TESTS") != nullptr;
 
         TestBuildSequentialTabular();
+        TestBuildSequentialLayerNorm();
+        TestBuildSequentialMultiHeadAttention();
+        TestLayerNormCheckpointRoundTrip();
+        TestTransformerDecoderCheckpointRoundTrip();
         TestSyntheticBatchTabular();
         TestSyntheticBatchText();
         TestMseLossLabelsAreFloat();

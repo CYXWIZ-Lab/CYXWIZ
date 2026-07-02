@@ -485,7 +485,9 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                     if (nt == gui::NodeType::LSTM ||
                         nt == gui::NodeType::GRU  ||
                         nt == gui::NodeType::RNN  ||
+                        nt == gui::NodeType::LayerNorm ||
                         nt == gui::NodeType::PositionalEncoding ||
+                        nt == gui::NodeType::MultiHeadAttention ||
                         nt == gui::NodeType::TransformerEncoder ||
                         nt == gui::NodeType::TransformerDecoder ||
                         nt == gui::NodeType::TimeDistributed) {
@@ -633,6 +635,8 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                     next_is_transformer =
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
+                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
 
@@ -643,6 +647,51 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                              current_sequence_length, d_model);
                 current_input_size = next_is_transformer
                     ? d_model
+                    : downstream_features;
+                break;
+            }
+
+            case gui::NodeType::MultiHeadAttention: {
+                const size_t embed_dim = current_input_size > 0
+                    ? current_input_size
+                    : ParseSizeParam(layer_cfg, "embed_dim",
+                                     ParseSizeParam(layer_cfg, "d_model", 64));
+                size_t num_heads = ParseSizeParam(layer_cfg, "num_heads",
+                                                  ParseSizeParam(layer_cfg, "heads", 1));
+                float dropout = ParseFloatParam(layer_cfg, "dropout",
+                                                ParseFloatParam(layer_cfg, "dropout_rate", 0.0f));
+                const bool use_bias = ParseBoolParam(layer_cfg, "use_bias", true);
+
+                const size_t requested_embed_dim =
+                    ParseSizeParam(layer_cfg, "embed_dim",
+                                   ParseSizeParam(layer_cfg, "d_model", embed_dim));
+                if (requested_embed_dim != embed_dim) {
+                    spdlog::warn("  [{}] MultiHeadAttention embed_dim={} does "
+                                 "not match incoming feature size {}; using {}",
+                                 i, requested_embed_dim, embed_dim, embed_dim);
+                }
+
+                model.Add<MultiHeadAttentionModule>(embed_dim, num_heads,
+                                                    dropout, use_bias);
+
+                bool next_is_sequence_layer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_sequence_layer =
+                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
+                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
+                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
+                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
+                }
+
+                const size_t downstream_features =
+                    current_sequence_length * embed_dim;
+                spdlog::info("  [{}] MultiHeadAttention(embed_dim={}, heads={}, "
+                             "dropout={}) - self-attention output [batch, {}, {}]",
+                             i, embed_dim, num_heads, dropout,
+                             current_sequence_length, embed_dim);
+                current_input_size = next_is_sequence_layer
+                    ? embed_dim
                     : downstream_features;
                 break;
             }
@@ -694,6 +743,8 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                     next_is_transformer =
                         config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
                         config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
+                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
                         config.layers[i + 1].type == gui::NodeType::TimeDistributed;
                 }
 
@@ -973,6 +1024,47 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 float momentum = layer_cfg.momentum > 0 ? layer_cfg.momentum : 0.1f;
                 model.Add<BatchNormModule>(current_input_size, eps, momentum);
                 spdlog::info("  [{}] BatchNorm({})", i, current_input_size);
+                break;
+            }
+
+            case gui::NodeType::LayerNorm: {
+                std::vector<int> normalized_shape =
+                    ParseIntListParam(layer_cfg, "normalized_shape");
+                if (normalized_shape.empty()) {
+                    normalized_shape.push_back(
+                        static_cast<int>(current_input_size > 0
+                                             ? current_input_size
+                                             : 1));
+                }
+                for (int& dim : normalized_shape) {
+                    if (dim <= 0) {
+                        dim = static_cast<int>(current_input_size > 0
+                                                   ? current_input_size
+                                                   : 1);
+                    }
+                }
+                const float eps = ParseFloatParam(
+                    layer_cfg, "epsilon", ParseFloatParam(layer_cfg, "eps", 1e-5f));
+                const bool elementwise_affine =
+                    ParseBoolParam(layer_cfg, "elementwise_affine", true);
+                model.Add<LayerNormModule>(
+                    normalized_shape, eps, elementwise_affine);
+                spdlog::info("  [{}] LayerNorm(normalized_shape={}, eps={}, affine={})",
+                             i, normalized_shape.front(), eps,
+                             elementwise_affine);
+                bool next_is_sequence_layer = false;
+                if (i + 1 < config.layers.size()) {
+                    next_is_sequence_layer =
+                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
+                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
+                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
+                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
+                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
+                }
+                if (config.preprocessing_domain == PreprocessingDomain::Text &&
+                    !next_is_sequence_layer) {
+                    current_input_size = current_sequence_length * current_input_size;
+                }
                 break;
             }
 

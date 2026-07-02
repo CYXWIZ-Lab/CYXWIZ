@@ -393,6 +393,77 @@ int main() {
         }
     }
 
+    auto standalone_mha = Node(37,
+                               gui::NodeType::MultiHeadAttention,
+                               "Standalone MHA",
+                               {Pin(3701, gui::PinType::Tensor, "Query", true),
+                                Pin(3702, gui::PinType::Tensor, "Key", true)},
+                               {Pin(3703, gui::PinType::Tensor, "Output", false)});
+    standalone_mha.parameters["embed_dim"] = "4";
+    standalone_mha.parameters["num_heads"] = "2";
+
+    nodes = {data, standalone_mha, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 37, 3701),
+        Link(2, 1, 101, 37, 3702),
+        Link(3, 37, 3703, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "connected-key MultiHeadAttention should stay blocked until cross-attention contract exists");
+    Check(!HasIssueText(config, "Graph must have at least one model layer"),
+          "standalone MultiHeadAttention should count as a model layer for validation");
+    Check(HasIssueText(config, "Standalone MHA"),
+          "standalone MultiHeadAttention blocker should name the graph node");
+    Check(HasIssueText(config, "supports only single-input self-attention"),
+          "connected-key MultiHeadAttention blocker should report cross-attention gap");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Compiler::UnsupportedTrainingNode),
+          "standalone MultiHeadAttention should expose unsupported-node code");
+    {
+        const auto* mha_placement = FindPlacement(config, 37);
+        Check(mha_placement != nullptr,
+              "standalone MultiHeadAttention should produce backend placement truth");
+        Check(mha_placement->node_type == "MultiHeadAttention",
+              "standalone MultiHeadAttention placement should name the node type");
+        Check(mha_placement->status ==
+                  cyxwiz::BackendPlacementStatus::Cpu,
+              "self-attention-capable MultiHeadAttention placement should be CPU-backed");
+        Check(mha_placement->reason_code ==
+                  cyxwiz::BackendPlacementReason::
+                      GraphRuntimeCpuBacked,
+              "standalone MultiHeadAttention placement should use CPU-backed reason");
+    }
+
+    auto self_mha = Node(38,
+                         gui::NodeType::MultiHeadAttention,
+                         "Self MHA",
+                         {Pin(3801, gui::PinType::Tensor, "Query", true)},
+                         {Pin(3803, gui::PinType::Tensor, "Output", false)});
+    self_mha.parameters["embed_dim"] = "4";
+    self_mha.parameters["num_heads"] = "2";
+
+    auto self_mha_data = data;
+    self_mha_data.parameters["input_shape"] = "[2,4]";
+    nodes = {self_mha_data, self_mha, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 38, 3801),
+        Link(2, 38, 3803, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "single-input MultiHeadAttention self-attention should compile");
+    Check(config.layers.size() == 1,
+          "single-input MultiHeadAttention should produce one compiled layer");
+    Check(config.layers.front().type == gui::NodeType::MultiHeadAttention,
+          "single-input MultiHeadAttention compiled layer should preserve node type");
+
     auto sequence_data = data;
     sequence_data.name = "NER Sentence CSV";
     sequence_data.parameters["file_category"] = "sequence_text";
@@ -621,12 +692,10 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
           "decoder-only TransformerDecoder path should compile under current engine support");
-    Check(HasIssueText(config, "TransformerDecoder"),
-          "decoder-only TransformerDecoder path should still report current backend capability status");
-    Check(HasIssueText(config, "backend capability"),
-          "decoder-only TransformerDecoder path should report unclassified backend placement until placement is precise");
-    Check(config.SummarizeBackendPlacements().unknown == 1,
-          "decoder-only TransformerDecoder path should currently carry one unknown backend placement");
+    Check(config.SummarizeBackendPlacements().cpu == 1,
+          "decoder-only TransformerDecoder path should carry one CPU-backed placement");
+    Check(config.SummarizeBackendPlacements().unknown == 0,
+          "decoder-only TransformerDecoder path should not carry unknown backend placement");
 
     auto decoder_side_output = Node(27,
                                     gui::NodeType::Output,

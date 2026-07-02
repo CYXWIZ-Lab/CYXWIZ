@@ -215,6 +215,7 @@ set(ENGINE_SOURCES
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/model_analyzer.cpp
+    src/core/language_model_generation.cpp
     src/core/language_model_training.cpp
     src/core/model_converter.cpp
     src/core/file_dialogs.cpp
@@ -418,6 +419,7 @@ set(ENGINE_SOURCES
     src/gui/panels/tfidf_panel.cpp
     src/gui/panels/embeddings_panel.cpp
     src/gui/panels/sentiment_panel.cpp
+    src/gui/panels/language_model_generation_panel.cpp
     src/gui/panels/calculator_panel.cpp
     src/gui/panels/unit_converter_panel.cpp
     src/gui/panels/random_generator_panel.cpp
@@ -692,6 +694,7 @@ set(ENGINE_HEADERS
     src/gui/panels/tfidf_panel.h
     src/gui/panels/embeddings_panel.h
     src/gui/panels/sentiment_panel.h
+    src/gui/panels/language_model_generation_panel.h
     src/gui/panels/calculator_panel.h
     src/gui/panels/unit_converter_panel.h
     src/gui/panels/random_generator_panel.h
@@ -1160,6 +1163,7 @@ add_executable(test_debug_executor
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/model_builder.cpp
+    src/core/checkpoint_manager.cpp
     src/core/training_batcher_setup.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
@@ -1497,6 +1501,71 @@ if(WIN32)
 endif()
 
 set_target_properties(test_computation_truth_tfidf_loss PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Computation Truth - Transformer Primitive Parity =====
+add_executable(test_computation_truth_transformer_primitives
+    tests/computation_truth/test_computation_truth_transformer_primitives.cpp
+    src/core/language_model_training.cpp
+    src/core/transformer_primitive_contracts.cpp
+)
+
+target_include_directories(test_computation_truth_transformer_primitives PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_computation_truth_transformer_primitives PRIVATE
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_computation_truth_transformer_primitives PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+if(CYXWIZ_HAS_PYTORCH)
+    target_link_libraries(test_computation_truth_transformer_primitives PRIVATE
+        ${TORCH_LIBRARIES}
+    )
+    target_include_directories(test_computation_truth_transformer_primitives PRIVATE
+        ${TORCH_INCLUDE_DIRS}
+    )
+    target_compile_definitions(test_computation_truth_transformer_primitives PRIVATE
+        CYXWIZ_HAS_PYTORCH
+    )
+endif()
+
+set_target_properties(test_computation_truth_transformer_primitives PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Language Model Generation Controls =====
+add_executable(test_language_model_generation
+    tests/test_language_model_generation.cpp
+    src/core/language_model_generation.cpp
+)
+
+target_include_directories(test_language_model_generation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_language_model_generation PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_language_model_generation PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_language_model_generation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
@@ -2129,6 +2198,45 @@ set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Graph Compiler Causal LM Shape Contract =====
+add_executable(test_graph_compiler_causal_lm_shape
+    tests/test_graph_compiler_causal_lm_shape.cpp
+    src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+)
+
+target_include_directories(test_graph_compiler_causal_lm_shape PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_graph_compiler_causal_lm_shape PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_graph_compiler_causal_lm_shape PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_graph_compiler_causal_lm_shape PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Recurrent Backend Placement Preflight =====
 add_executable(test_recurrent_backend_placement
     tests/test_recurrent_backend_placement.cpp
@@ -2545,6 +2653,291 @@ if(WIN32)
 endif()
 
 set_target_properties(test_cyxmodel_sequence_assets PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: CyxModel Generation Metadata =====
+add_executable(test_cyxmodel_generation_metadata
+    tests/test_cyxmodel_generation_metadata.cpp
+    src/core/formats/cyxmodel_format.cpp
+)
+
+target_include_directories(test_cyxmodel_generation_metadata PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_cyxmodel_generation_metadata PRIVATE
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_cyxmodel_generation_metadata PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_cyxmodel_generation_metadata PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: CyxModel Exporter Generation Metadata =====
+add_executable(test_cyxmodel_exporter_generation_metadata
+    tests/test_cyxmodel_exporter_generation_metadata.cpp
+    src/core/model_exporter.cpp
+    src/core/formats/cyxmodel_format.cpp
+)
+
+target_include_directories(test_cyxmodel_exporter_generation_metadata PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_cyxmodel_exporter_generation_metadata PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_cyxmodel_exporter_generation_metadata PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_cyxmodel_exporter_generation_metadata PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: CyxModel LayerNorm Graph Round Trip =====
+add_executable(test_cyxmodel_layernorm_roundtrip
+    tests/test_cyxmodel_layernorm_roundtrip.cpp
+    src/core/model_exporter.cpp
+    src/core/model_importer.cpp
+    src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+    src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/inference/text_inference_input.cpp
+)
+
+target_include_directories(test_cyxmodel_layernorm_roundtrip PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_cyxmodel_layernorm_roundtrip PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_cyxmodel_layernorm_roundtrip PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_cyxmodel_layernorm_roundtrip PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: CyxModel MultiHeadAttention Graph Round Trip =====
+add_executable(test_cyxmodel_mha_roundtrip
+    tests/test_cyxmodel_mha_roundtrip.cpp
+    src/core/model_exporter.cpp
+    src/core/model_importer.cpp
+    src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+    src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/inference/text_inference_input.cpp
+)
+
+target_include_directories(test_cyxmodel_mha_roundtrip PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_cyxmodel_mha_roundtrip PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_cyxmodel_mha_roundtrip PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_cyxmodel_mha_roundtrip PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: CyxModel TransformerEncoder Graph Round Trip =====
+add_executable(test_cyxmodel_transformer_encoder_roundtrip
+    tests/test_cyxmodel_transformer_encoder_roundtrip.cpp
+    src/core/model_exporter.cpp
+    src/core/model_importer.cpp
+    src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+    src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/formats/cyxmodel_format.cpp
+)
+
+target_include_directories(test_cyxmodel_transformer_encoder_roundtrip PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_cyxmodel_transformer_encoder_roundtrip PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_cyxmodel_transformer_encoder_roundtrip PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_cyxmodel_transformer_encoder_roundtrip PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: CyxModel TransformerDecoder Graph Round Trip =====
+add_executable(test_cyxmodel_transformer_decoder_roundtrip
+    tests/test_cyxmodel_transformer_decoder_roundtrip.cpp
+    src/core/model_exporter.cpp
+    src/core/model_importer.cpp
+    src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+    src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/formats/cyxmodel_format.cpp
+)
+
+target_include_directories(test_cyxmodel_transformer_decoder_roundtrip PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_cyxmodel_transformer_decoder_roundtrip PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_cyxmodel_transformer_decoder_roundtrip PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_cyxmodel_transformer_decoder_roundtrip PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: CyxModel Causal LM Generation Round Trip =====
+add_executable(test_cyxmodel_causal_lm_generation_roundtrip
+    tests/test_cyxmodel_causal_lm_generation_roundtrip.cpp
+    src/core/model_exporter.cpp
+    src/core/model_importer.cpp
+    src/core/model_builder.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+    src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/inference/text_inference_input.cpp
+)
+
+target_include_directories(test_cyxmodel_causal_lm_generation_roundtrip PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_cyxmodel_causal_lm_generation_roundtrip PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_cyxmodel_causal_lm_generation_roundtrip PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_cyxmodel_causal_lm_generation_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

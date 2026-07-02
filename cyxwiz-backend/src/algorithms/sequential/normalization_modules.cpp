@@ -293,5 +293,71 @@ std::string BatchNormModule::GetName() const {
     return "BatchNorm(" + std::to_string(num_features_) + ")";
 }
 
-} // namespace cyxwiz
+// ============================================================================
+// LayerNormModule Implementation
+// ============================================================================
 
+LayerNormModule::LayerNormModule(const std::vector<int>& normalized_shape,
+                                 float eps,
+                                 bool elementwise_affine)
+    : layer_(std::make_unique<LayerNormLayer>(normalized_shape,
+                                              eps,
+                                              elementwise_affine))
+    , normalized_shape_(normalized_shape)
+    , eps_(eps)
+    , elementwise_affine_(elementwise_affine) {
+    spdlog::debug("LayerNormModule initialized");
+}
+
+Tensor LayerNormModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return layer_->Forward(input);
+}
+
+Tensor LayerNormModule::Backward(const Tensor& grad_output) {
+    return layer_->Backward(grad_output);
+}
+
+std::map<std::string, Tensor> LayerNormModule::GetParameters() {
+    if (!elementwise_affine_) {
+        return {};
+    }
+    auto params = layer_->GetParameters();
+    params.erase("grad_gamma");
+    params.erase("grad_beta");
+    return params;
+}
+
+void LayerNormModule::SetParameters(
+    const std::map<std::string, Tensor>& params) {
+    layer_->SetParameters(params);
+}
+
+std::map<std::string, Tensor> LayerNormModule::GetGradients() {
+    if (!elementwise_affine_) {
+        return {};
+    }
+    auto params = layer_->GetParameters();
+    std::map<std::string, Tensor> grads;
+    if (params.count("grad_gamma")) {
+        grads["gamma"] = params.at("grad_gamma");
+    }
+    if (params.count("grad_beta")) {
+        grads["beta"] = params.at("grad_beta");
+    }
+    return grads;
+}
+
+std::string LayerNormModule::GetName() const {
+    std::string shape = "[";
+    for (size_t i = 0; i < normalized_shape_.size(); ++i) {
+        if (i > 0) {
+            shape += ",";
+        }
+        shape += std::to_string(normalized_shape_[i]);
+    }
+    shape += "]";
+    return "LayerNorm(" + shape + ")";
+}
+
+} // namespace cyxwiz

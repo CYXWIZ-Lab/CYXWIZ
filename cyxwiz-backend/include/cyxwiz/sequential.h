@@ -6,6 +6,8 @@
 #include "activation.h"
 #include "optimizer.h"
 #include "layers/linear.h"
+#include "layers/normalization.h"
+#include "layers/attention.h"
 #include "activations/relu.h"
 #include "activations/sigmoid.h"
 #include "activations/tanh.h"
@@ -37,7 +39,9 @@ enum class ModuleType {
     Embedding,
     PositionalEncoding,
     TransformerEncoder,
-    TransformerDecoder
+    TransformerDecoder,
+    LayerNorm,
+    MultiHeadAttention
 };
 
 enum class TensorUnaryOp {
@@ -449,6 +453,36 @@ private:
 };
 
 /**
+ * @brief Wrapper around MultiHeadAttentionLayer for self-attention.
+ *
+ * Consumes and returns `[batch, seq_len, embed_dim]` tensors. Multi-input
+ * cross-attention is intentionally not exposed through SequentialModel yet;
+ * graph/compiler support must define that contract first.
+ */
+class CYXWIZ_API MultiHeadAttentionModule : public Module {
+public:
+    MultiHeadAttentionModule(size_t embed_dim, size_t num_heads,
+                             float dropout = 0.0f,
+                             bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    void SetTraining(bool training) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<MultiHeadAttentionLayer> layer_;
+    size_t embed_dim_;
+    size_t num_heads_;
+    float dropout_;
+    bool use_bias_;
+};
+
+/**
  * @brief Wrapper for ReLU activation
  */
 class CYXWIZ_API ReLUModule : public Module {
@@ -786,6 +820,31 @@ private:
     // Gradients
     Tensor grad_gamma_;
     Tensor grad_beta_;
+};
+
+/**
+ * @brief LayerNorm module for transformer and sequence activations.
+ * Normalizes over the last normalized_shape dimensions for each sample.
+ */
+class CYXWIZ_API LayerNormModule : public Module {
+public:
+    LayerNormModule(const std::vector<int>& normalized_shape,
+                    float eps = 1e-5f,
+                    bool elementwise_affine = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return elementwise_affine_; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<LayerNormLayer> layer_;
+    std::vector<int> normalized_shape_;
+    float eps_;
+    bool elementwise_affine_;
 };
 
 /**

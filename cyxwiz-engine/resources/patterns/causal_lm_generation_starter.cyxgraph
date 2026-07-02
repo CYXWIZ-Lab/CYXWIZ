@@ -1,9 +1,9 @@
 {
-  "id": "transformer_decoder",
-  "name": "Causal Decoder Starter (CPU-backed)",
-  "description": "Small decoder-only causal transformer starter using the tested CPU-backed path. Useful for controlled next-token/logit-head experiments; full GPT-style text generation controls are still roadmap work.",
+  "id": "causal_lm_generation_starter",
+  "name": "Causal LM Generation Starter",
+  "description": "Decoder-only causal language-model starter that keeps sequence logits shaped [batch, seq, vocab] through a TimeDistributed token head. CPU-backed transformer path; intended for prompt-generation runtime experiments.",
   "category": "Transformer",
-  "tags": ["transformer", "attention", "decoder", "causal", "gpt", "language-model", "cpu-backed"],
+  "tags": ["transformer", "decoder", "causal", "language-model", "generation", "time-distributed", "cpu-backed"],
   "parameters": [
     {
       "name": "d_model",
@@ -33,9 +33,17 @@
       "name": "vocab_size",
       "type": "int",
       "default_value": "5000",
-      "description": "Vocabulary size",
+      "description": "Vocabulary size and token-logit head width",
       "min_value": "100",
       "max_value": "100000"
+    },
+    {
+      "name": "max_sequence_length",
+      "type": "int",
+      "default_value": "128",
+      "description": "Prompt/training sequence length",
+      "min_value": "2",
+      "max_value": "4096"
     },
     {
       "name": "dropout_rate",
@@ -48,17 +56,15 @@
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Token Input", "pos": [0, 200]},
+      {"id": "input", "type": "DatasetInput", "name": "Token IDs", "pos": [0, 200], "params": {"shape": "[1]", "create_causal_lm_targets": "true", "max_sequence_length": "$max_sequence_length"}},
       {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [220, 200], "params": {"vocab_size": "$vocab_size", "embedding_dim": "$d_model"}},
       {"id": "pos_enc", "type": "PositionalEncoding", "name": "Positional Encoding", "pos": [440, 200], "params": {"d_model": "$d_model"}},
       {"id": "dropout1", "type": "Dropout", "name": "Dropout", "pos": [660, 200], "params": {"rate": "$dropout_rate"}},
       {"id": "dec1", "type": "TransformerDecoder", "name": "Causal Decoder 1", "pos": [880, 200], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
       {"id": "dec2", "type": "TransformerDecoder", "name": "Causal Decoder 2", "pos": [1100, 200], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "dim_feedforward": "$ff_dim", "dropout": "$dropout_rate"}},
       {"id": "ln", "type": "LayerNorm", "name": "Layer Norm", "pos": [1320, 200]},
-      {"id": "flatten", "type": "Flatten", "name": "Flatten Sequence", "pos": [1540, 200]},
-      {"id": "output_layer", "type": "Dense", "name": "Logit Head", "pos": [1760, 200], "params": {"units": "$vocab_size"}},
-      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [1980, 200]},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [2200, 200]}
+      {"id": "token_head", "type": "TimeDistributed", "name": "Token Logit Head", "pos": [1540, 200], "params": {"units": "$vocab_size"}},
+      {"id": "output", "type": "Output", "name": "Sequence Logits", "pos": [1760, 200], "params": {"num_classes": "$vocab_size"}}
     ],
     "links": [
       {"from": "input", "to": "embed"},
@@ -67,10 +73,8 @@
       {"from": "dropout1", "to": "dec1"},
       {"from": "dec1", "to": "dec2"},
       {"from": "dec2", "to": "ln"},
-      {"from": "ln", "to": "flatten"},
-      {"from": "flatten", "to": "output_layer"},
-      {"from": "output_layer", "to": "softmax"},
-      {"from": "softmax", "to": "output"}
+      {"from": "ln", "to": "token_head"},
+      {"from": "token_head", "to": "output"}
     ]
   }
 }

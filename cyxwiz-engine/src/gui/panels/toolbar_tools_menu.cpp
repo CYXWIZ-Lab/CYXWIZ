@@ -635,6 +635,13 @@ void ToolbarPanel::RenderToolsMenu() {
                     ImGui::SetTooltip("Analyze text sentiment with polarity and subjectivity scores");
                 }
 
+                if (ImGui::MenuItem(ICON_FA_WAND_MAGIC_SPARKLES " Language Model Generation")) {
+                    if (open_language_model_generation_callback_) open_language_model_generation_callback_();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Generate token IDs from the last trained causal language model");
+                }
+
                 ImGui::EndMenu();
             }
 

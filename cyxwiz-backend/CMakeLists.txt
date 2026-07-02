@@ -123,6 +123,7 @@ set(BACKEND_SOURCES
     src/algorithms/sequential/recurrent_modules.cpp
     src/algorithms/sequential/regularization_shape_modules.cpp
     src/algorithms/sequential/tensor_modules.cpp
+    src/algorithms/sequential/attention_modules.cpp
     src/algorithms/sequential/transformer_modules.cpp
     src/algorithms/sequential/normalization_modules.cpp
     src/algorithms/sequential/model_io.cpp

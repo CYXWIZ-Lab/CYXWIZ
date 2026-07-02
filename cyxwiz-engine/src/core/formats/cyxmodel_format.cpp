@@ -40,6 +40,10 @@ nlohmann::json CyxModelFormat::ManifestToJson(const ModelManifest& manifest) {
 
     j["model"]["name"] = manifest.model_name;
     j["model"]["type"] = manifest.model_type;
+    j["model"]["family"] = manifest.model_family;
+    j["model"]["supports_generation"] = manifest.supports_generation;
+    j["model"]["generation_output_contract"] =
+        manifest.generation_output_contract;
     j["model"]["num_parameters"] = manifest.num_parameters;
     j["model"]["num_layers"] = manifest.num_layers;
 
@@ -102,6 +106,11 @@ ModelManifest CyxModelFormat::JsonToManifest(const nlohmann::json& j) {
     if (j.contains("model")) {
         manifest.model_name = j["model"].value("name", "");
         manifest.model_type = j["model"].value("type", "");
+        manifest.model_family = j["model"].value("family", "");
+        manifest.supports_generation =
+            j["model"].value("supports_generation", false);
+        manifest.generation_output_contract =
+            j["model"].value("generation_output_contract", "");
         manifest.num_parameters = j["model"].value("num_parameters", 0);
         manifest.num_layers = j["model"].value("num_layers", 0);
     }
@@ -721,10 +730,13 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
         ModelManifest manifest = JsonToManifest(j);
 
         result.valid = true;
-        result.format_version = manifest.version;
-        result.model_name = manifest.model_name;
-        result.author = manifest.author;
-        result.description = manifest.description;
+    result.format_version = manifest.version;
+    result.model_name = manifest.model_name;
+    result.model_family = manifest.model_family;
+    result.supports_generation = manifest.supports_generation;
+    result.generation_output_contract = manifest.generation_output_contract;
+    result.author = manifest.author;
+    result.description = manifest.description;
         result.num_parameters = manifest.num_parameters;
         result.num_layers = manifest.num_layers;
         result.epochs_trained = manifest.epochs_trained;

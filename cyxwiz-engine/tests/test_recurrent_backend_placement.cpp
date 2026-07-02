@@ -299,6 +299,45 @@ int main() {
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::GRU).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::Recurrent,
           "GRU capability kind should be Recurrent");
+    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
+              gui::NodeType::LayerNorm),
+          "LayerNorm should not be classified as direct ArrayFire tensor-capable");
+    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
+              gui::NodeType::LayerNorm),
+          "LayerNorm should be classified as a known CPU-backed model layer");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::LayerNorm).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
+          "LayerNorm capability kind should be CpuBackedModelLayer");
+    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
+              gui::NodeType::MultiHeadAttention),
+          "MultiHeadAttention should not be classified as direct ArrayFire tensor-capable");
+    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
+              gui::NodeType::MultiHeadAttention),
+          "MultiHeadAttention should be classified as a known CPU-backed model layer");
+    Check(cyxwiz::backend_placement::ClassifyLayer(
+              gui::NodeType::MultiHeadAttention).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
+          "MultiHeadAttention capability kind should be CpuBackedModelLayer");
+    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
+              gui::NodeType::TransformerEncoder),
+          "TransformerEncoder should not be classified as direct ArrayFire tensor-capable");
+    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
+              gui::NodeType::TransformerEncoder),
+          "TransformerEncoder should be classified as a known CPU-backed model layer");
+    Check(cyxwiz::backend_placement::ClassifyLayer(
+              gui::NodeType::TransformerEncoder).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
+          "TransformerEncoder capability kind should be CpuBackedModelLayer");
+    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
+              gui::NodeType::TransformerDecoder),
+          "TransformerDecoder should not be classified as direct ArrayFire tensor-capable");
+    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
+              gui::NodeType::TransformerDecoder),
+          "TransformerDecoder should be classified as a known CPU-backed model layer");
+    Check(cyxwiz::backend_placement::ClassifyLayer(
+              gui::NodeType::TransformerDecoder).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
+          "TransformerDecoder capability kind should be CpuBackedModelLayer");
     Check(cyxwiz::backend_placement::ClassifyLayer(
               gui::NodeType::TimeDistributed).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::TimeDistributedSequenceWrapper,

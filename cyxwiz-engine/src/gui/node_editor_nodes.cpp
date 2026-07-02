@@ -1382,7 +1382,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             key_pin.type = PinType::Tensor;
             key_pin.name = "Key";
             key_pin.is_input = true;
-            key_pin.is_required = true;
+            key_pin.is_required = node.type != NodeType::MultiHeadAttention;
             key_pin.description =
                 "Key tensor [batch, kv_len, embed_dim]. Determines "
                 "what positions Query attends over.";
@@ -1393,7 +1393,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             value_pin.type = PinType::Tensor;
             value_pin.name = "Value";
             value_pin.is_input = true;
-            value_pin.is_required = true;
+            value_pin.is_required = node.type != NodeType::MultiHeadAttention;
             value_pin.description =
                 "Value tensor [batch, kv_len, embed_dim] — what gets "
                 "weighted-summed by the attention scores. Same kv_len "

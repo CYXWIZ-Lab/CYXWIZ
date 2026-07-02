@@ -111,6 +111,7 @@
 #include "panels/tfidf_panel.h"
 #include "panels/embeddings_panel.h"
 #include "panels/sentiment_panel.h"
+#include "panels/language_model_generation_panel.h"
 // Utilities panels (Phase 12)
 #include "panels/calculator_panel.h"
 #include "panels/unit_converter_panel.h"
@@ -426,6 +427,8 @@ MainWindow::MainWindow()
     tfidf_panel_ = std::make_unique<cyxwiz::TFIDFPanel>();
     embeddings_panel_ = std::make_unique<cyxwiz::EmbeddingsPanel>();
     sentiment_panel_ = std::make_unique<cyxwiz::SentimentPanel>();
+    language_model_generation_panel_ =
+        std::make_unique<cyxwiz::LanguageModelGenerationPanel>();
 
     // Utilities panels (Phase 12)
     calculator_panel_ = std::make_unique<cyxwiz::CalculatorPanel>();
@@ -1442,6 +1445,12 @@ MainWindow::MainWindow()
         if (sentiment_panel_) {
             sentiment_panel_->SetVisible(true);
             spdlog::info("Opened Sentiment Analysis panel");
+        }
+    });
+    toolbar_->SetOpenLanguageModelGenerationCallback([this]() {
+        if (language_model_generation_panel_) {
+            language_model_generation_panel_->SetVisible(true);
+            spdlog::info("Opened Language Model Generation panel");
         }
     });
 
@@ -2467,6 +2476,7 @@ void MainWindow::Render() {
     if (tfidf_panel_) tfidf_panel_->Render();
     if (embeddings_panel_) embeddings_panel_->Render();
     if (sentiment_panel_) sentiment_panel_->Render();
+    if (language_model_generation_panel_) language_model_generation_panel_->Render();
 
     // Render Utilities panels (Phase 12)
     if (calculator_panel_) calculator_panel_->Render();
@@ -2930,6 +2940,7 @@ void MainWindow::SetDefaultPanelVisibility() {
     if (tfidf_panel_) tfidf_panel_->SetVisible(false);
     if (embeddings_panel_) embeddings_panel_->SetVisible(false);
     if (sentiment_panel_) sentiment_panel_->SetVisible(false);
+    if (language_model_generation_panel_) language_model_generation_panel_->SetVisible(false);
 
     // Utilities panels (Phase 12)
     if (calculator_panel_) calculator_panel_->SetVisible(false);

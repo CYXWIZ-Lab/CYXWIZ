@@ -381,6 +381,61 @@ void TestRuntimeBackendClassificationContract() {
     Check(trace.payload["warning_count"].get<size_t>() == 0,
           "healthy backend placement should not add warnings");
 
+    cyxwiz::BackendPlacementEntry mha_cpu;
+    mha_cpu.node_id = 88;
+    mha_cpu.node_name = "Self MHA";
+    mha_cpu.node_type = "MultiHeadAttention";
+    mha_cpu.requested_backend = "auto";
+    mha_cpu.expected_backend = "CPU";
+    mha_cpu.fallback_backend = "CPU";
+    mha_cpu.status = cyxwiz::BackendPlacementStatus::Cpu;
+    mha_cpu.reason_code = cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked;
+    mha_cpu.explanation =
+        "MultiHeadAttention is supported as CPU-backed self-attention.";
+    mha_cpu.suggested_action =
+        "No correctness action needed for single-input self-attention.";
+
+    const auto mha_classification = classifier.Classify(mha_cpu);
+    Check(mha_classification.proven,
+          "MHA CPU-backed placement should be marked proven");
+    Check(mha_classification.status == cyxwiz::BackendPlacementStatus::Cpu,
+          "MHA CPU-backed placement should preserve CPU status");
+    Check(mha_classification.reason_code ==
+              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
+          "MHA CPU-backed placement should preserve CPU-backed reason");
+    Check(mha_classification.needs_attention,
+          "MHA CPU-backed self-attention should require debugger attention");
+
+    cyxwiz::DebugTraceRecord mha_trace =
+        cyxwiz::DebugNodeTraceContract::Make(
+            "backend-classification-run",
+            88,
+            "Self MHA",
+            "MultiHeadAttention",
+            "Forward",
+            cyxwiz::DebugTraceRole::Activation,
+            {1, 4, 4},
+            {1, 4, 4},
+            "float32",
+            "CPU",
+            "ok");
+
+    classifier.AttachToTrace(mha_trace, mha_cpu);
+    Check(mha_trace.payload["backend_status"].get<std::string>() ==
+              cyxwiz::BackendPlacementStatus::Cpu,
+          "MHA backend trace payload should expose CPU status");
+    Check(mha_trace.payload["backend_reason_code"].get<std::string>() ==
+              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
+          "MHA backend trace payload should expose CPU-backed reason");
+    Check(mha_trace.payload["backend_proven"].get<bool>(),
+          "MHA backend trace payload should expose proven status");
+    Check(mha_trace.payload["backend_needs_attention"].get<bool>(),
+          "MHA backend trace payload should request attention");
+    Check(mha_trace.payload["warning_count"].get<size_t>() == 1,
+          "MHA CPU-backed placement should add one debugger warning");
+    Check(mha_trace.status == "ok",
+          "MHA CPU-backed attention warning should not fail execution trace");
+
     cyxwiz::BackendPlacementEntry unknown;
     unknown.node_id = 7;
     unknown.node_name = "CustomNode";

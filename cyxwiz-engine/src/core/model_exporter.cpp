@@ -544,6 +544,11 @@ ExportResult ModelExporter::ExportCyxModel(
         // 1. Create manifest
         ModelManifest manifest = CreateManifest(model, training_metrics,
                                                 resolved_options);
+        if (resolved_options.sequence_create_causal_lm_targets) {
+            manifest.model_family = "causal_lm";
+            manifest.supports_generation = true;
+            manifest.generation_output_contract = "Float32[1,seq,vocab]";
+        }
         manifest.has_tokenizer =
             !resolved_options.text_tokenizer_config_json.empty();
         manifest.has_vocabulary =
@@ -1266,6 +1271,9 @@ ModelManifest ModelExporter::CreateManifest(
     // Model info
     manifest.model_name = options.model_name.empty() ? "Untitled Model" : options.model_name;
     manifest.model_type = "SequentialModel";
+    manifest.model_family = "";
+    manifest.supports_generation = false;
+    manifest.generation_output_contract = "";
     manifest.num_parameters = CountParameters(model);
     manifest.num_layers = static_cast<int>(model.Size());
 
@@ -1280,6 +1288,21 @@ ModelManifest ModelExporter::CreateManifest(
     manifest.author = options.author;
     manifest.description = options.description;
     manifest.custom_metadata = options.custom_metadata;
+    auto family_it = manifest.custom_metadata.find("model_family");
+    if (family_it != manifest.custom_metadata.end()) {
+        manifest.model_family = family_it->second;
+    }
+    auto supports_generation_it =
+        manifest.custom_metadata.find("supports_generation");
+    if (supports_generation_it != manifest.custom_metadata.end()) {
+        const std::string value = supports_generation_it->second;
+        manifest.supports_generation = value == "true" || value == "1";
+    }
+    auto contract_it =
+        manifest.custom_metadata.find("generation_output_contract");
+    if (contract_it != manifest.custom_metadata.end()) {
+        manifest.generation_output_contract = contract_it->second;
+    }
     if (options.include_tokenizer_assets &&
         !options.text_tokenizer_config_json.empty()) {
         manifest.custom_metadata["text_tokenizer"] = "packaged";
