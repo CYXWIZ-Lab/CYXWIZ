@@ -7,6 +7,38 @@
 
 namespace cyxwiz {
 
+namespace {
+
+std::string Trim(std::string value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return "";
+    }
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+bool StartsWith(const std::string& value, const std::string& prefix) {
+    return value.rfind(prefix, 0) == 0;
+}
+
+std::string AnimatedDots() {
+    const int phase = static_cast<int>(ImGui::GetTime() * 3.0) % 4;
+    return std::string(static_cast<size_t>(phase), '.');
+}
+
+std::string FormatAssistantSlashHelp() {
+    return R"(Assistant slash commands:
+  /ask <question>
+  /find-source <query>
+  /explain-trace [question]
+  /explain-training [question]
+
+Plain input still runs as Python. Assistant commands require the assistant plugin to be loaded.)";
+}
+
+} // namespace
+
 CommandWindowPanel::CommandWindowPanel()
     : Panel("Command Window", true)
     , history_position_(-1)
@@ -41,6 +73,11 @@ void CommandWindowPanel::SetScriptingEngine(std::shared_ptr<scripting::Scripting
     scripting_engine_ = engine;
 }
 
+void CommandWindowPanel::SetAssistantCommandHandler(
+    std::function<plugin::AssistantCommandResponse(const plugin::AssistantCommandRequest&)> handler) {
+    assistant_command_handler_ = std::move(handler);
+}
+
 void CommandWindowPanel::Render() {
     if (!visible_) return;
 
@@ -54,7 +91,7 @@ void CommandWindowPanel::Render() {
 
     ImGui::Separator();
 
-    // Show "Running..." indicator and Stop button if command is executing
+    // Show "Running..." indicator and Stop button if Python command is executing
     if (command_executing_) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Running...");
         ImGui::SameLine();
@@ -62,7 +99,11 @@ void CommandWindowPanel::Render() {
             StopAsyncCommand();
         }
     } else {
-        // Input area (bottom) - only show when not executing
+        if (assistant_command_executing_) {
+            const std::string status =
+                "Assistant thinking" + AnimatedDots() + "  " + executing_assistant_command_;
+            ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.0f, 1.0f), "%s", status.c_str());
+        }
         RenderInputArea();
     }
 
@@ -79,28 +120,65 @@ void CommandWindowPanel::RenderOutputArea() {
     const float footer_height = ImGui::GetStyle().ItemSpacing.y * 3
                               + line_height  // prompt line
                               + 3.0f * line_height + ImGui::GetStyle().FramePadding.y * 2  // multiline input (min 3 lines)
-                              + line_height; // hint line
+                              + line_height  // hint line
+                              + (assistant_command_executing_ ? line_height + ImGui::GetStyle().ItemSpacing.y : 0.0f);
     ImGui::BeginChild("OutputRegion", ImVec2(0, -footer_height), false, ImGuiWindowFlags_HorizontalScrollbar);
 
+    if (ImGui::Button("Copy output")) {
+        const std::string transcript = BuildOutputTranscript();
+        ImGui::SetClipboardText(transcript.c_str());
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Copy selected") && selected_output_index_ >= 0 &&
+        selected_output_index_ < static_cast<int>(output_.size())) {
+        ImGui::SetClipboardText(output_[selected_output_index_].text.c_str());
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) {
+        ClearOutput();
+        ImGui::EndChild();
+        return;
+    }
+    ImGui::Separator();
+
     // Render each output entry
-    for (const auto& entry : output_) {
+    for (int i = 0; i < static_cast<int>(output_.size()); ++i) {
+        const auto& entry = output_[i];
+        ImGui::PushID(i);
+        const bool selected = (selected_output_index_ == i);
         switch (entry.type) {
             case OutputEntry::Type::Command:
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 1.0f, 0.5f, 1.0f)); // Green
-                ImGui::TextUnformatted(entry.text.c_str());
+                if (ImGui::Selectable(entry.text.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick)) {
+                    selected_output_index_ = i;
+                }
                 ImGui::PopStyleColor();
                 break;
 
             case OutputEntry::Type::Result:
-                ImGui::TextUnformatted(entry.text.c_str());
+                if (ImGui::Selectable(entry.text.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick)) {
+                    selected_output_index_ = i;
+                }
                 break;
 
             case OutputEntry::Type::Error:
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f)); // Red
-                ImGui::TextUnformatted(entry.text.c_str());
+                if (ImGui::Selectable(entry.text.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick)) {
+                    selected_output_index_ = i;
+                }
                 ImGui::PopStyleColor();
                 break;
         }
+        if (ImGui::BeginPopupContextItem()) {
+            if (ImGui::MenuItem("Copy line")) {
+                ImGui::SetClipboardText(entry.text.c_str());
+            }
+            if (ImGui::MenuItem("Select line")) {
+                selected_output_index_ = i;
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
     }
 
     // Auto-scroll to bottom when new output is added
@@ -248,23 +326,29 @@ void CommandWindowPanel::RenderInputArea() {
 }
 
 void CommandWindowPanel::ExecuteCommand(const std::string& command) {
+    const std::string trimmed_command = Trim(command);
+
+    if (trimmed_command.empty()) {
+        return;
+    }
+
     // Add command to output
     OutputEntry cmd_entry;
     cmd_entry.type = OutputEntry::Type::Command;
-    cmd_entry.text = "fx:>> " + command;
+    cmd_entry.text = "fx:>> " + trimmed_command;
     output_.push_back(cmd_entry);
 
     // Add to history
-    AddToHistory(command);
+    AddToHistory(trimmed_command);
 
     // Handle special commands
-    if (command == "clear") {
+    if (trimmed_command == "clear") {
         ClearOutput();
         scroll_to_bottom_ = true;
         return;
     }
 
-    if (command == "help" || command == "help()") {
+    if (trimmed_command == "help" || trimmed_command == "help()") {
         OutputEntry help;
         help.type = OutputEntry::Type::Result;
         help.text = R"(CyxWiz Command Window Help
@@ -273,6 +357,7 @@ void CommandWindowPanel::ExecuteCommand(const std::string& command) {
 COMMANDS:
   clear       - Clear output window
   help()      - Show this help message
+  /assistant-help - Show assistant slash commands
 
 DUCKDB (SQL Analytics):
   sql(query)       - Run SQL query on in-memory database
@@ -319,9 +404,16 @@ Type any Python code to execute.
         return;
     }
 
+    if (StartsWith(trimmed_command, "/")) {
+        if (TryExecuteAssistantCommand(trimmed_command)) {
+            scroll_to_bottom_ = true;
+            return;
+        }
+    }
+
     // Execute Python command asynchronously
     if (scripting_engine_) {
-        StartAsyncCommand(command);
+        StartAsyncCommand(trimmed_command);
     } else {
         OutputEntry error;
         error.type = OutputEntry::Type::Error;
@@ -332,14 +424,81 @@ Type any Python code to execute.
     scroll_to_bottom_ = true;
 }
 
+bool CommandWindowPanel::TryExecuteAssistantCommand(const std::string& command) {
+    plugin::AssistantCommandRequest request;
+    if (command == "/assistant-help" || command == "/help") {
+        OutputEntry help;
+        help.type = OutputEntry::Type::Result;
+        help.text = FormatAssistantSlashHelp();
+        output_.push_back(help);
+        return true;
+    }
+
+    auto parse_with_text = [&command](const std::string& prefix,
+                                      const std::string& name,
+                                      plugin::AssistantCommandRequest& out) {
+        if (command != prefix &&
+            !StartsWith(command, prefix + " ")) {
+            return false;
+        }
+        out.command_name = name;
+        out.user_text = Trim(command.substr(prefix.size()));
+        return true;
+    };
+
+    if (!parse_with_text("/ask", "ask", request) &&
+        !parse_with_text("/find-source", "find_source", request) &&
+        !parse_with_text("/explain-trace", "explain_trace", request) &&
+        !parse_with_text("/explain-training", "explain_training", request)) {
+        OutputEntry error;
+        error.type = OutputEntry::Type::Error;
+        error.text = "Unknown slash command. Type /assistant-help for assistant commands.";
+        output_.push_back(error);
+        return true;
+    }
+
+    if (!assistant_command_handler_) {
+        OutputEntry error;
+        error.type = OutputEntry::Type::Error;
+        error.text = "Assistant command handler is not configured.";
+        output_.push_back(error);
+        return true;
+    }
+
+    if (assistant_command_executing_) {
+        OutputEntry info;
+        info.type = OutputEntry::Type::Result;
+        info.text = "Assistant is still working on: " + executing_assistant_command_;
+        output_.push_back(info);
+        return true;
+    }
+
+    StartAsyncAssistantCommand(request, command);
+    OutputEntry info;
+    info.type = OutputEntry::Type::Result;
+    info.text = "Assistant request submitted. Working in background...";
+    output_.push_back(info);
+    return true;
+}
+
 void CommandWindowPanel::ClearOutput() {
     output_.clear();
+    selected_output_index_ = -1;
 
     // Re-add welcome message
     OutputEntry welcome;
     welcome.type = OutputEntry::Type::Result;
     welcome.text = "Output cleared.\n";
     output_.push_back(welcome);
+}
+
+std::string CommandWindowPanel::BuildOutputTranscript() const {
+    std::string text;
+    for (const auto& entry : output_) {
+        text += entry.text;
+        text += '\n';
+    }
+    return text;
 }
 
 void CommandWindowPanel::DisplayScriptOutput(const std::string& script_name, const std::string& output, bool is_error) {
@@ -563,8 +722,32 @@ void CommandWindowPanel::StartAsyncCommand(const std::string& command) {
     scripting_engine_->ExecuteCommandAsync(command);
 }
 
+void CommandWindowPanel::StartAsyncAssistantCommand(
+    const plugin::AssistantCommandRequest& request,
+    const std::string& display_command) {
+    if (assistant_command_executing_) {
+        return;
+    }
+
+    executing_assistant_command_ = display_command;
+    assistant_command_executing_ = true;
+    assistant_command_finished_ = false;
+
+    auto handler = assistant_command_handler_;
+    assistant_command_thread_ = std::make_unique<std::thread>(
+        [this, handler, request]() mutable {
+            auto response = handler ? handler(request) : plugin::AssistantCommandResponse{};
+            {
+                std::lock_guard lock(assistant_result_mutex_);
+                async_assistant_result_ = std::move(response);
+            }
+            assistant_command_finished_ = true;
+        });
+}
+
 void CommandWindowPanel::CheckAsyncCompletion() {
     if (!command_executing_ || !scripting_engine_) {
+        CheckAsyncAssistantCompletion();
         return;
     }
 
@@ -601,6 +784,58 @@ void CommandWindowPanel::CheckAsyncCompletion() {
         executing_command_.clear();
         focus_input_ = true;
     }
+
+    CheckAsyncAssistantCompletion();
+}
+
+void CommandWindowPanel::CheckAsyncAssistantCompletion() {
+    if (!assistant_command_executing_ || !assistant_command_finished_) {
+        return;
+    }
+
+    if (assistant_command_thread_ && assistant_command_thread_->joinable()) {
+        assistant_command_thread_->join();
+    }
+
+    std::optional<plugin::AssistantCommandResponse> result_opt;
+    {
+        std::lock_guard lock(assistant_result_mutex_);
+        result_opt = async_assistant_result_;
+        async_assistant_result_.reset();
+    }
+
+    OutputEntry entry;
+    entry.type = OutputEntry::Type::Result;
+    if (result_opt) {
+        const auto& result = *result_opt;
+        if (!result.handled) {
+            entry.type = OutputEntry::Type::Error;
+            entry.text = result.error.empty()
+                ? "No assistant provider plugin is loaded."
+                : result.error;
+        } else if (result.success) {
+            entry.text = result.output.empty() ? "Assistant command completed." : result.output;
+        } else {
+            entry.type = OutputEntry::Type::Error;
+            entry.text = result.error.empty()
+                ? "Assistant command failed."
+                : result.error;
+            if (!result.output.empty()) {
+                entry.text += "\n\n" + result.output;
+            }
+        }
+    } else {
+        entry.type = OutputEntry::Type::Error;
+        entry.text = "Assistant command finished without a response.";
+    }
+
+    output_.push_back(entry);
+    scroll_to_bottom_ = true;
+    assistant_command_executing_ = false;
+    assistant_command_finished_ = false;
+    executing_assistant_command_.clear();
+    focus_input_ = true;
+    assistant_command_thread_.reset();
 }
 
 void CommandWindowPanel::StopAsyncCommand() {

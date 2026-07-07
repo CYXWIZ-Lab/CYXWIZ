@@ -885,6 +885,9 @@ public:
     // Access to graph data for compilation
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
+    int GetSelectedNodeId() const { return selected_node_id_; }
+    const std::string& GetCurrentFilePath() const { return current_file_path_; }
+    std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
 
     // Training callback - set by MainWindow to trigger training from node graph
     using TrainCallback = std::function<void(const std::vector<MLNode>&, const std::vector<NodeLink>&)>;

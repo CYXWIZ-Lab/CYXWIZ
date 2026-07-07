@@ -1,0 +1,8 @@
+{
+  "schema": "cyxwiz.assistant.knowledge_pack.diagnostics.v1",
+  "warnings": [],
+  "notes": [
+    "Initial lexical knowledge pack generated from Phase 1A chunking.",
+    "Diagnostics metadata is reserved for future structured trace/operator records."
+  ]
+}

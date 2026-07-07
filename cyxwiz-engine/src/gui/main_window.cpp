@@ -127,6 +127,7 @@
 #include "panels/plugin_manager_panel.h"
 #include "data_studio/data_studio_panel.h"
 #include "../plugin/plugin_manager.h"
+#include "../plugin/plugin_context.h"
 #include "../plugin/registries/plugin_panel_registry.h"
 #include "tutorial/tutorial_system.h"
 #include "../core/async_task_manager.h"
@@ -238,6 +239,96 @@ uint64_t HashGraphStructure(const std::vector<MLNode>& nodes,
         HashFnvMix(h, std::string(1, '>'));
     }
     return h;
+}
+
+std::string JsonEscape(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char c : value) {
+        switch (c) {
+            case '"': escaped += "\\\""; break;
+            case '\\': escaped += "\\\\"; break;
+            case '\b': escaped += "\\b"; break;
+            case '\f': escaped += "\\f"; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    escaped += ' ';
+                } else {
+                    escaped += c;
+                }
+                break;
+        }
+    }
+    return escaped;
+}
+
+std::string BuildAssistantGraphContextJson(NodeEditor& editor) {
+    const auto& nodes = editor.GetNodes();
+    const auto& links = editor.GetLinks();
+    const int selected_node_id = editor.GetSelectedNodeId();
+
+    std::ostringstream out;
+    out << "{";
+    out << "\"node_count\":" << nodes.size() << ",";
+    out << "\"link_count\":" << links.size() << ",";
+    out << "\"graph_hash\":\"" << HashGraphStructure(nodes, links) << "\",";
+    out << "\"selected_node\":";
+
+    const auto selected = std::find_if(nodes.begin(), nodes.end(),
+        [selected_node_id](const MLNode& node) { return node.id == selected_node_id; });
+    if (selected == nodes.end()) {
+        out << "null";
+    } else {
+        out << "{";
+        out << "\"id\":" << selected->id << ",";
+        out << "\"name\":\"" << JsonEscape(selected->name) << "\",";
+        out << "\"type\":\"" << JsonEscape(editor.GetNodeTypeDisplayName(selected->type)) << "\"";
+        out << "}";
+    }
+
+    out << "}";
+    return out.str();
+}
+
+cyxwiz::plugin::AssistantContextSnapshot BuildAssistantContextSnapshot(
+    NodeEditor* node_editor,
+    cyxwiz::StudioDebuggerPanel* studio_debugger_panel) {
+    cyxwiz::plugin::AssistantContextSnapshot assistant_context;
+    assistant_context.engine_version = "dev";
+    assistant_context.build_id = "local";
+    assistant_context.selected_panel = "MainWindow";
+
+    auto& project_manager = cyxwiz::ProjectManager::Instance();
+    if (project_manager.HasActiveProject()) {
+        assistant_context.workspace_root = project_manager.GetProjectRoot();
+    }
+    if (node_editor) {
+        assistant_context.active_graph_path = node_editor->GetCurrentFilePath();
+        const int selected_node_id = node_editor->GetSelectedNodeId();
+        if (selected_node_id >= 0) {
+            assistant_context.selected_node_id = std::to_string(selected_node_id);
+        }
+        assistant_context.debugger_context_json =
+            "{\"schema\":\"cyxwiz.assistant.context_bundle.v1\",\"graph\":" +
+            BuildAssistantGraphContextJson(*node_editor) +
+            ",\"debugger\":null}";
+    }
+    if (studio_debugger_panel) {
+        assistant_context.selected_trace_id =
+            studio_debugger_panel->GetSelectedTraceIdForAssistant();
+        assistant_context.debugger_context_json =
+            "{\"schema\":\"cyxwiz.assistant.context_bundle.v1\",\"graph\":" +
+            (node_editor ? BuildAssistantGraphContextJson(*node_editor) : std::string("null")) +
+            ",\"debugger\":" +
+            studio_debugger_panel->BuildAssistantDebuggerContextJson() +
+            "}";
+        assistant_context.training_context_json =
+            studio_debugger_panel->BuildAssistantTrainingContextJson();
+    }
+    return assistant_context;
 }
 
 std::string NowLocalTimestampForDebugStore() {
@@ -490,6 +581,10 @@ MainWindow::MainWindow()
 
     // Set scripting engine for command window and script editor
     command_window_->SetScriptingEngine(scripting_engine_);
+    command_window_->SetAssistantCommandHandler(
+        [](const cyxwiz::plugin::AssistantCommandRequest& request) {
+            return cyxwiz::plugin::PluginManager::Instance().RunAssistantCommand(request);
+        });
     script_editor_->SetScriptingEngine(scripting_engine_);
 
     // Expose TrainingPlotPanel to Python scripts through the scripting engine
@@ -2337,6 +2432,9 @@ void MainWindow::Render() {
     HandleGlobalShortcuts();
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+
+    cyxwiz::plugin::PluginManager::Instance().SetAssistantContextSnapshotForAll(
+        BuildAssistantContextSnapshot(node_editor_.get(), studio_debugger_panel_.get()));
 
     // Check if we need to connect P2PClient to monitoring panel
     if (!monitoring_job_id_.empty() && job_manager_ && p2p_training_panel_) {

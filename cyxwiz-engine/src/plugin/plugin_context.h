@@ -13,6 +13,19 @@ class IDataProvider;
 class ITrainingHook;
 class IAnalyticsProvider;
 
+struct AssistantContextSnapshot {
+    std::string engine_version;
+    std::string build_id;
+    std::string workspace_root;
+    std::string active_graph_path;
+    std::string selected_run_id;
+    std::string selected_node_id;
+    std::string selected_trace_id;
+    std::string selected_panel;
+    std::string debugger_context_json;
+    std::string training_context_json;
+};
+
 // ============================================================================
 // PluginContext - The sole API surface for plugins to interact with the engine.
 // Phase 1: Logging + identity.
@@ -21,8 +34,9 @@ class IAnalyticsProvider;
 
 class PluginContext {
 public:
-    PluginContext(const std::string& plugin_id, IPlugin* plugin)
-        : plugin_id_(plugin_id), plugin_(plugin) {}
+    PluginContext(const std::string& plugin_id, IPlugin* plugin,
+                  std::filesystem::path plugin_dir = {})
+        : plugin_id_(plugin_id), plugin_(plugin), plugin_dir_(std::move(plugin_dir)) {}
 
     ~PluginContext() = default;
 
@@ -30,13 +44,16 @@ public:
     PluginContext(const PluginContext&) = delete;
     PluginContext& operator=(const PluginContext&) = delete;
     PluginContext(PluginContext&& other) noexcept
-        : plugin_id_(std::move(other.plugin_id_)), plugin_(other.plugin_) {
+        : plugin_id_(std::move(other.plugin_id_)),
+          plugin_(other.plugin_),
+          assistant_context_(std::move(other.assistant_context_)) {
         other.plugin_ = nullptr;
     }
     PluginContext& operator=(PluginContext&& other) noexcept {
         if (this != &other) {
             plugin_id_ = std::move(other.plugin_id_);
             plugin_ = other.plugin_;
+            assistant_context_ = std::move(other.assistant_context_);
             other.plugin_ = nullptr;
         }
         return *this;
@@ -44,6 +61,15 @@ public:
 
     // === Identity ===
     const std::string& GetPluginId() const { return plugin_id_; }
+    const std::filesystem::path& GetPluginDir() const { return plugin_dir_; }
+
+    // === Assistant context ===
+    void SetAssistantContextSnapshot(const AssistantContextSnapshot& snapshot) {
+        assistant_context_ = snapshot;
+    }
+    const AssistantContextSnapshot& GetAssistantContextSnapshot() const {
+        return assistant_context_;
+    }
 
     // === Logging ===
     void LogInfo(const std::string& message) {
@@ -80,6 +106,8 @@ public:
 private:
     std::string plugin_id_;
     IPlugin* plugin_;  // Non-owning
+    std::filesystem::path plugin_dir_;
+    AssistantContextSnapshot assistant_context_;
 
     // Permission check helper
     bool CheckPermission(PluginPermission required, const char* action) const;

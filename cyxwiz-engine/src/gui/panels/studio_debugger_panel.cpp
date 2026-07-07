@@ -347,6 +347,115 @@ void StudioDebuggerPanel::Clear() {
     selected_trace_index_ = -1;
 }
 
+std::string StudioDebuggerPanel::GetSelectedTraceIdForAssistant() const {
+    if (!has_session_ ||
+        selected_trace_index_ < 0 ||
+        selected_trace_index_ >= static_cast<int>(session_.traces.size())) {
+        return "";
+    }
+    return session_.run_id + ":" + std::to_string(selected_trace_index_);
+}
+
+std::string StudioDebuggerPanel::BuildAssistantDebuggerContextJson() const {
+    nlohmann::json context;
+    context["schema"] = "cyxwiz.assistant.debugger_context.v1";
+    context["has_session"] = has_session_;
+    context["run_id"] = session_.run_id;
+    context["graph_hash"] = session_.graph_hash;
+    context["node_count"] = session_.node_count;
+    context["link_count"] = session_.link_count;
+    context["trace_count"] = session_.traces.size();
+    context["issue_count"] = session_.issues.size();
+    context["recommendation_count"] = session_.recommendations.size();
+    context["failure_summary"] = session_.failure_summary;
+    context["selected_trace_index"] = selected_trace_index_;
+    context["active_lens"] = ActiveLensName();
+
+    if (has_session_ &&
+        selected_trace_index_ >= 0 &&
+        selected_trace_index_ < static_cast<int>(session_.traces.size())) {
+        const auto& trace = session_.traces[selected_trace_index_];
+        nlohmann::json selected;
+        selected["trace_id"] = GetSelectedTraceIdForAssistant();
+        selected["run_id"] = trace.run_id;
+        selected["node_id"] = trace.node_id;
+        selected["node_name"] = trace.node_name;
+        selected["node_type"] = trace.node_type;
+        selected["phase"] = trace.phase;
+        selected["role"] = DebugTraceRoleName(trace.role);
+        selected["input_shape"] = trace.input_shape;
+        selected["output_shape"] = trace.output_shape;
+        selected["dtype"] = trace.dtype;
+        selected["duration_ms"] = trace.duration_ms;
+        selected["status"] = trace.status;
+        selected["issue_count"] = trace.issues.size();
+        if (!trace.issues.empty()) {
+            nlohmann::json issues = nlohmann::json::array();
+            for (size_t i = 0; i < std::min<size_t>(trace.issues.size(), 5); ++i) {
+                const auto& issue = trace.issues[i];
+                issues.push_back({
+                    {"node_id", issue.node_id},
+                    {"node_name", issue.node_name},
+                    {"message", issue.message},
+                    {"error_code", issue.error_code}
+                });
+            }
+            selected["issues"] = issues;
+        }
+        context["selected_trace"] = selected;
+    }
+
+    return context.dump();
+}
+
+std::string StudioDebuggerPanel::BuildAssistantTrainingContextJson() const {
+    TrainingTraceSummary trace = session_.training_trace;
+    if (!trace.available) {
+        if (auto latest = TrainingTraceCollector::LoadLastTrace()) {
+            trace = *latest;
+        }
+    }
+
+    nlohmann::json context;
+    context["schema"] = "cyxwiz.assistant.training_context.v1";
+    context["available"] = trace.available;
+    context["run_id"] = trace.run_id;
+    context["status"] = trace.status;
+    context["latest_stage"] = trace.latest_stage;
+    context["latest_timestamp"] = trace.latest_timestamp;
+    context["latest_epoch"] = trace.latest_epoch;
+    context["latest_batch"] = trace.latest_batch;
+    context["latest_total_batches"] = trace.latest_total_batches;
+    context["latest_loss"] = trace.latest_loss;
+    context["latest_accuracy"] = trace.latest_accuracy;
+    context["recent_event_count"] = trace.recent_events.size();
+    context["materialization_event_count"] = trace.materialization_events.size();
+    context["warnings"] = trace.warnings;
+
+    const TrainingTraceEvent* terminal = nullptr;
+    for (auto it = trace.recent_events.rbegin(); it != trace.recent_events.rend(); ++it) {
+        if (!it->terminal_reason.empty()) {
+            terminal = &(*it);
+            break;
+        }
+    }
+    if (terminal) {
+        context["terminal_event"] = {
+            {"timestamp", terminal->timestamp},
+            {"run_id", terminal->run_id},
+            {"stage", terminal->stage},
+            {"status", terminal->status},
+            {"terminal_reason", terminal->terminal_reason},
+            {"message", terminal->message},
+            {"epoch", terminal->epoch},
+            {"loss", terminal->loss},
+            {"accuracy", terminal->accuracy}
+        };
+    }
+
+    return context.dump();
+}
+
 std::string StudioDebuggerPanel::FormatShape(const std::vector<size_t>& shape) {
     if (shape.empty()) return "[]";
     std::string out = "[";

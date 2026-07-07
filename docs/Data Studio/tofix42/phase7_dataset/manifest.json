@@ -1,0 +1,54 @@
+{
+  "schema": "cyxwiz.tofix42.phase7.dataset_prep.v1",
+  "ok": true,
+  "input": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase6_reviewed_corrections.jsonl",
+  "output_dir": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase7_dataset",
+  "train_path": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase7_dataset\\train.chat.jsonl",
+  "validation_path": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase7_dataset\\validation.chat.jsonl",
+  "input_record_count": 20,
+  "reviewed_record_count": 20,
+  "train_record_count": 16,
+  "validation_record_count": 4,
+  "unique_case_id_count": 19,
+  "validation_groups_per_family": 1,
+  "families": [
+    "phase1a.manual",
+    "phase2.direct_completion",
+    "phase2.probe",
+    "phase3",
+    "phase4",
+    "phase5"
+  ],
+  "split_notes": {
+    "phase1a.manual": [
+      "validation_case_ids=phase1a.manual.timeout.training_trace_event_definition",
+      "train_case_ids=phase1a.manual.timeout.debug_run_store_definition"
+    ],
+    "phase2.direct_completion": [
+      "validation_case_ids=phase2.direct_completion.training_trace_terminal_reason",
+      "train_case_ids=phase2.direct_completion.dataloader_pin_memory_truth,phase2.direct_completion.debug_trace_record_definition,phase2.direct_completion.tfidf_min_df_validation,phase2.direct_completion.tfidf_sentiment_graph"
+    ],
+    "phase2.probe": [
+      "validation_case_ids=phase2.probe.training_trace_terminal_reason",
+      "train_case_ids=phase2.probe.dataloader_pin_memory_truth,phase2.probe.debug_trace_record_definition,phase2.probe.tfidf_min_df_validation,phase2.probe.tfidf_sentiment_graph"
+    ],
+    "phase3": [
+      "singleton_family_kept_in_train"
+    ],
+    "phase4": [
+      "singleton_family_kept_in_train"
+    ],
+    "phase5": [
+      "validation_case_ids=phase5.suggest_packet.timeout.read_only_suggestions",
+      "train_case_ids=phase5.audit_packet.timeout.graph_audit,phase5.draft_plan_packet.timeout.text_classification_tfidf_mlp,phase5.packet.timeout.selected_node,phase5.path_packet.timeout.dataset_to_loss"
+    ]
+  },
+  "system_prompt": "You are the local CyxWiz source-aware assistant.\nAnswer from retrieved CyxWiz evidence.\nCopy cited file paths exactly when you name them.\nDo not invent unsupported engine behavior.\nReturn ONLY this structure in order:\nAnswer: ...\nEvidence: ...\nUnknowns: ...\nUnsupported or not implemented: ...",
+  "format": "openai_chat_jsonl",
+  "guardrails": [
+    "retrieval_remains_mandatory",
+    "citations_remain_mandatory",
+    "no_unreviewed_outputs",
+    "no_graph_or_source_mutation_examples"
+  ]
+}

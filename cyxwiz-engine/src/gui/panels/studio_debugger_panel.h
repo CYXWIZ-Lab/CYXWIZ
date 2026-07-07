@@ -84,6 +84,9 @@ public:
     void Clear();
 
     bool HasSession() const { return has_session_; }
+    std::string GetSelectedTraceIdForAssistant() const;
+    std::string BuildAssistantDebuggerContextJson() const;
+    std::string BuildAssistantTrainingContextJson() const;
 
 private:
     struct AsyncRunState {

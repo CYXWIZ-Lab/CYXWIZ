@@ -2,6 +2,8 @@
 
 #include "../panel.h"
 #include "../../scripting/scripting_engine.h"
+#include "../../plugin/interfaces/i_assistant_provider.h"
+#include <functional>
 #include <string>
 #include <vector>
 #include <memory>
@@ -25,6 +27,8 @@ public:
 
     // Set scripting engine (shared with other panels)
     void SetScriptingEngine(std::shared_ptr<scripting::ScriptingEngine> engine);
+    void SetAssistantCommandHandler(
+        std::function<plugin::AssistantCommandResponse(const plugin::AssistantCommandRequest&)> handler);
 
     // Public method to display output from other panels (e.g., Script Editor)
     void DisplayScriptOutput(const std::string& script_name, const std::string& output, bool is_error = false);
@@ -45,9 +49,11 @@ private:
     // Rendering functions
     void RenderOutputArea();
     void RenderInputArea();
+    std::string BuildOutputTranscript() const;
 
     // Command execution
     void ExecuteCommand(const std::string& command);
+    bool TryExecuteAssistantCommand(const std::string& command);
     void ClearOutput();
 
     // Command history navigation
@@ -61,6 +67,8 @@ private:
 
     // Data
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
+    std::function<plugin::AssistantCommandResponse(const plugin::AssistantCommandRequest&)>
+        assistant_command_handler_;
     std::vector<OutputEntry> output_;
     std::vector<std::string> command_history_;
     int history_position_;
@@ -75,11 +83,15 @@ private:
     char input_buffer_[4096];  // Larger buffer for multi-line input
     bool scroll_to_bottom_;
     bool focus_input_;
+    int selected_output_index_ = -1;
 
     // Async command execution
     void StartAsyncCommand(const std::string& command);
     void CheckAsyncCompletion();
     void StopAsyncCommand();
+    void StartAsyncAssistantCommand(const plugin::AssistantCommandRequest& request,
+                                    const std::string& display_command);
+    void CheckAsyncAssistantCompletion();
 
     std::unique_ptr<std::thread> command_thread_;
     std::atomic<bool> command_executing_{false};
@@ -87,6 +99,12 @@ private:
     std::mutex result_mutex_;
     std::optional<scripting::ExecutionResult> async_result_;
     std::string executing_command_;  // Command being executed (for display)
+    std::unique_ptr<std::thread> assistant_command_thread_;
+    std::atomic<bool> assistant_command_executing_{false};
+    std::atomic<bool> assistant_command_finished_{false};
+    std::mutex assistant_result_mutex_;
+    std::optional<plugin::AssistantCommandResponse> async_assistant_result_;
+    std::string executing_assistant_command_;
 };
 
 } // namespace cyxwiz

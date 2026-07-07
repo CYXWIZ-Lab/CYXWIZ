@@ -13,6 +13,7 @@
 #include "interfaces/i_training_hook.h"
 #include "interfaces/i_data_provider.h"
 #include "interfaces/i_analytics_provider.h"
+#include "interfaces/i_assistant_provider.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <queue>
@@ -183,7 +184,7 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
     }
 
     // Create PluginContext for this plugin
-    auto ctx = std::make_unique<PluginContext>(plugin_id, plugin->instance);
+    auto ctx = std::make_unique<PluginContext>(plugin_id, plugin->instance, plugin->plugin_dir);
 
     // Share engine's ImGui context with the DLL so plugin UI rendering works
     plugin->instance->SetImGuiContext(ImGui::GetCurrentContext());
@@ -391,6 +392,7 @@ void PluginManager::ShutdownAll() {
 }
 
 void PluginManager::UnloadPlugin(const std::string& plugin_id) {
+    std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
 
     // Clear any pending permission requests for this plugin
@@ -520,6 +522,52 @@ PluginContext* PluginManager::GetContext(const std::string& plugin_id) const {
     auto it = contexts_.find(plugin_id);
     if (it == contexts_.end()) return nullptr;
     return it->second.get();
+}
+
+void PluginManager::SetAssistantContextSnapshotForAll(
+    const AssistantContextSnapshot& snapshot) {
+    std::lock_guard lock(mutex_);
+    for (auto& [id, context] : contexts_) {
+        if (context) {
+            context->SetAssistantContextSnapshot(snapshot);
+        }
+    }
+}
+
+AssistantCommandResponse PluginManager::RunAssistantCommand(
+    const AssistantCommandRequest& request) {
+    std::lock_guard assistant_lock(assistant_command_mutex_);
+
+    IAssistantProvider* provider = nullptr;
+    {
+        std::lock_guard lock(mutex_);
+        for (const auto& [plugin_id, plugin] : plugins_) {
+            if (!plugin || !plugin->instance) {
+                continue;
+            }
+            if (plugin->state != PluginState::Initialized &&
+                plugin->state != PluginState::Active) {
+                continue;
+            }
+            provider = static_cast<IAssistantProvider*>(
+                plugin->instance->QueryInterface("IAssistantProvider"));
+            if (provider) {
+                break;
+            }
+        }
+    }
+
+    if (!provider) {
+        AssistantCommandResponse response;
+        response.handled = false;
+        response.success = false;
+        response.error = "No assistant provider plugin is loaded.";
+        return response;
+    }
+
+    auto response = provider->RunAssistantCommand(request);
+    response.handled = true;
+    return response;
 }
 
 // ============================================================================

@@ -1,0 +1,24 @@
+{
+  "schema": "cyxwiz.assistant.knowledge_pack.v1",
+  "engine_version": "dev",
+  "build_id": "local",
+  "content_revision": "f294f39bed924e3dee929737776bda423d153852",
+  "created_at_utc": "2026-07-03T20:01:00Z",
+  "chunk_count": 4501,
+  "source_file_count": 433,
+  "source_types": [
+    "cyxgraph",
+    "cyxgraph_links",
+    "cyxgraph_node",
+    "markdown",
+    "source"
+  ],
+  "retrieval_backend": "lexical-v1",
+  "assets": {
+    "chunks": "chunks.jsonl",
+    "lexicon": "lexicon.json",
+    "postings": "postings.json",
+    "metadata": "metadata.json",
+    "diagnostics": "diagnostics.json"
+  }
+}

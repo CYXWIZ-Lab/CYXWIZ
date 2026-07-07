@@ -1868,164 +1868,6 @@ bool IsIntegerAtLeast(const std::string& value, int64_t minimum) {
     return IsIntegerAtLeastExcept(value, minimum, {});
 }
 
-std::string DescribeIntegerParameterBounds(
-    int64_t minimum,
-    const std::vector<int64_t>& forbidden_values) {
-    std::string description = "integer >= " + std::to_string(minimum);
-    if (!forbidden_values.empty()) {
-        description += " except";
-        for (size_t i = 0; i < forbidden_values.size(); ++i) {
-            description += (i == 0 ? " " : ", ") +
-                           std::to_string(forbidden_values[i]);
-        }
-    }
-    return description;
-}
-
-bool ValidateIntegerParameterAtLeast(
-    const std::map<std::string, std::string>& parameters,
-    const std::string& node_type,
-    const std::string& parameter_name,
-    int64_t minimum,
-    const std::vector<int64_t>& forbidden_values,
-    std::string& error) {
-    auto it = parameters.find(parameter_name);
-    if (it == parameters.end() || it->second.empty()) {
-        return true;
-    }
-    if (IsIntegerAtLeastExcept(it->second, minimum, forbidden_values)) {
-        return true;
-    }
-    error = node_type + " " + parameter_name + " must be an " +
-            DescribeIntegerParameterBounds(minimum, forbidden_values);
-    return false;
-}
-
-bool ValidateCommaSeparatedIntegersAtLeast(
-    const std::map<std::string, std::string>& parameters,
-    const std::string& node_type,
-    const std::string& parameter_name,
-    int64_t minimum,
-    const std::vector<int64_t>& forbidden_values,
-    std::string& error) {
-    auto it = parameters.find(parameter_name);
-    if (it == parameters.end()) {
-        return true;
-    }
-    if (it->second.empty()) {
-        error = node_type + " " + parameter_name +
-                " must be a comma-separated list of ";
-        if (forbidden_values.empty()) {
-            error += "integers >= " + std::to_string(minimum);
-        } else {
-            error += DescribeIntegerParameterBounds(minimum, forbidden_values);
-        }
-        return false;
-    }
-
-    std::stringstream values(it->second);
-    std::string value;
-    while (std::getline(values, value, ',')) {
-        if (!IsIntegerAtLeastExcept(value, minimum, forbidden_values)) {
-            error = node_type + " " + parameter_name +
-                    " must be a comma-separated list of ";
-            if (forbidden_values.empty()) {
-                error += "integers >= " + std::to_string(minimum);
-            } else {
-                error += DescribeIntegerParameterBounds(minimum, forbidden_values);
-            }
-            return false;
-        }
-    }
-    return true;
-}
-
-bool IsFloatInRange(const std::string& value,
-                    const std::optional<double>& minimum,
-                    const std::optional<double>& maximum,
-                    bool minimum_inclusive,
-                    bool maximum_inclusive) {
-    const std::string trimmed = TrimString(value);
-    if (trimmed.empty()) {
-        return false;
-    }
-
-    double parsed = 0.0;
-    const char* begin = trimmed.data();
-    const char* end = trimmed.data() + trimmed.size();
-    auto [ptr, ec] = std::from_chars(begin, end, parsed);
-    if (ec != std::errc() || ptr != end || !std::isfinite(parsed)) {
-        return false;
-    }
-
-    if (minimum.has_value()) {
-        if (minimum_inclusive) {
-            if (parsed < *minimum) {
-                return false;
-            }
-        } else if (parsed <= *minimum) {
-            return false;
-        }
-    }
-
-    if (maximum.has_value()) {
-        if (maximum_inclusive) {
-            if (parsed > *maximum) {
-                return false;
-            }
-        } else if (parsed >= *maximum) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-std::string DescribeFloatParameterBounds(
-    const std::optional<double>& minimum,
-    const std::optional<double>& maximum,
-    bool minimum_inclusive,
-    bool maximum_inclusive) {
-    if (minimum.has_value() && maximum.has_value()) {
-        return "between " + std::to_string(*minimum) + " and " +
-               std::to_string(*maximum);
-    }
-    if (minimum.has_value()) {
-        return std::string(minimum_inclusive ? "greater than or equal to "
-                                             : "greater than ") +
-               std::to_string(*minimum);
-    }
-    if (maximum.has_value()) {
-        return std::string(maximum_inclusive ? "less than or equal to "
-                                             : "less than ") +
-               std::to_string(*maximum);
-    }
-    return "finite";
-}
-
-bool ValidateFloatParameterBounds(
-    const std::map<std::string, std::string>& parameters,
-    const std::string& node_type,
-    const std::string& parameter_name,
-    const std::optional<double>& minimum,
-    const std::optional<double>& maximum,
-    bool minimum_inclusive,
-    bool maximum_inclusive,
-    std::string& error) {
-    auto it = parameters.find(parameter_name);
-    if (it == parameters.end() || it->second.empty()) {
-        return true;
-    }
-    if (IsFloatInRange(it->second, minimum, maximum, minimum_inclusive,
-                       maximum_inclusive)) {
-        return true;
-    }
-    error = node_type + " " + parameter_name + " must be a number " +
-            DescribeFloatParameterBounds(minimum, maximum, minimum_inclusive,
-                                         maximum_inclusive);
-    return false;
-}
-
 bool TryParseFiniteDouble(const std::string& value, double& out) {
     const std::string trimmed = TrimString(value);
     if (trimmed.empty()) {
@@ -2048,19 +1890,6 @@ double FloatParameterOrDefault(
     }
     double value = default_value;
     return TryParseFiniteDouble(it->second, value) ? value : default_value;
-}
-
-bool IsAllowedParameterValue(
-    const PipelineAllowedParameterValuesRuntimeCapability& capability,
-    const std::string& value) {
-    const std::string normalized_value = ToLowerAscii(TrimString(value));
-    return std::find_if(capability.allowed_values.begin(),
-                        capability.allowed_values.end(),
-                        [&normalized_value](const char* allowed) {
-                            return allowed != nullptr &&
-                                   normalized_value ==
-                                       ToLowerAscii(TrimString(allowed));
-                        }) != capability.allowed_values.end();
 }
 
 bool TryParseBooleanParameterValue(const std::string& value, bool& out) {
@@ -2294,42 +2123,15 @@ bool HasSupportedParameterValues(
     const std::vector<PipelineFloatParameterRuntimeCapability>&
         float_parameters,
     std::string& error) {
-    for (const auto& capability : allowed_parameter_values) {
-        auto it = parameters.find(capability.parameter_name);
-        const std::string value =
-            (it != parameters.end() && !it->second.empty())
-                ? it->second
-                : capability.default_value;
-        if (!IsAllowedParameterValue(capability, value)) {
-            error = node_type + " " + capability.parameter_name + " '" +
-                    value + "' is not supported by PipelineExecutor";
-            return false;
-        }
-    }
-
-    for (const auto& capability : integer_parameters) {
-        if (capability.comma_separated) {
-            if (!ValidateCommaSeparatedIntegersAtLeast(
-                    parameters, node_type, capability.parameter_name,
-                    capability.minimum, capability.forbidden_values, error)) {
-                return false;
-            }
-        } else if (!ValidateIntegerParameterAtLeast(
-                       parameters, node_type, capability.parameter_name,
-                       capability.minimum, capability.forbidden_values,
-                       error)) {
-            return false;
-        }
-    }
-
-    for (const auto& capability : float_parameters) {
-        if (!ValidateFloatParameterBounds(
-                parameters, node_type, capability.parameter_name,
-                capability.minimum, capability.maximum,
-                capability.minimum_inclusive, capability.maximum_inclusive,
-                error)) {
-            return false;
-        }
+    if (!ValidatePipelineRuntimeParameterCapabilities(
+            node_type,
+            parameters,
+            allowed_parameter_values,
+            integer_parameters,
+            float_parameters,
+            "PipelineExecutor",
+            error)) {
+        return false;
     }
 
     if (node_type == "TimeSeriesSplit") {

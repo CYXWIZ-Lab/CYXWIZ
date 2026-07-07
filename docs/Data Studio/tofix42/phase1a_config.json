@@ -1,0 +1,86 @@
+{
+  "schema": "cyxwiz.tofix42.phase1a.config.v1",
+  "source_patterns": [
+    "docs/Data Studio/*.md",
+    "docs/Data Studio/tofix42/knowledge_seed/*.md",
+    "docs/usage/*.md",
+    "examples/cyxgraph/**/*.md",
+    "examples/cyxgraph/**/*.cyxgraph",
+    "cyxwiz-engine/src/core/**/*.h",
+    "cyxwiz-engine/src/core/**/*.hpp",
+    "cyxwiz-engine/src/core/**/*.cpp",
+    "cyxwiz-engine/src/core/**/*.cc",
+    "cyxwiz-engine/src/core/**/*.cxx"
+  ],
+  "saved_queries": [
+    {
+      "name": "training_terminal",
+      "description": "Training terminal status and terminal_reason flows in source files.",
+      "query": "terminal_reason",
+      "source_types": ["source"],
+      "path_contains": ["training"]
+    },
+    {
+      "name": "pin_memory_truth",
+      "description": "Pinned host-memory truth and compiler/runtime compatibility warnings.",
+      "query": "DataLoader pin_memory unsupported current batchers compatibility",
+      "source_types": ["source", "markdown"]
+    },
+    {
+      "name": "sentiment_graphs",
+      "description": "Sentiment graph examples from cyxgraph assets.",
+      "query": "sentiment",
+      "source_types": ["cyxgraph"],
+      "path_contains": ["examples/cyxgraph"]
+    },
+    {
+      "name": "tfidf_validation",
+      "description": "TF-IDF validation and graph references.",
+      "query": "TFIDFVectorizer min_df",
+      "source_types": ["source", "cyxgraph"],
+      "tag": ["tfidf"]
+    }
+  ],
+  "success_checks": [
+    {
+      "query": "What source file defines DebugTraceRecord",
+      "expected_path": "cyxwiz-engine/src/core/debug_trace_record.h",
+      "expected_title": "DebugTraceRecord"
+    },
+    {
+      "query": "TrainingTraceEvent terminal_reason field",
+      "expected_path": "cyxwiz-engine/src/core/training_trace_collector.h",
+      "expected_title": "TrainingTraceEvent"
+    },
+    {
+      "query": "TFIDFVectorizer sentiment graph",
+      "expected_path": "examples/cyxgraph/Sentiment analysis/sentiment_analysis_tfidf_mlp_classifier.cyxgraph",
+      "expected_title": "graph:sentiment_analysis_tfidf_mlp_classifier"
+    },
+    {
+      "query": "RecordTerminalEvent terminal_reason message",
+      "expected_path": "cyxwiz-engine/src/core/training_trace_collector.cpp",
+      "expected_title": "TrainingTraceCollector::RecordTerminalEvent"
+    },
+    {
+      "query": "completed_all_epochs terminal_reason user_cancelled",
+      "expected_path": "cyxwiz-engine/src/core/training_executor.cpp",
+      "expected_title": "TrainingExecutor::Train:717-836"
+    },
+    {
+      "query": "Pinned Host Memory and GPU Transfer Backend Truth",
+      "expected_path": "docs/Data Studio/tofix41.md",
+      "expected_title": "tofix41 - Pinned Host Memory and GPU Transfer Backend Truth"
+    },
+    {
+      "query": "DataLoader pin_memory unsupported current batchers compatibility",
+      "expected_path": "cyxwiz-engine/src/core/graph_compiler.cpp",
+      "expected_title": "GraphCompiler::Compile:3049-3168"
+    },
+    {
+      "query": "TFIDFVectorizer min_df must be >= 1 Configure",
+      "expected_path": "cyxwiz-engine/src/core/node_executors/tfidf_vectorizer_operator.cpp",
+      "expected_title": "TFIDFVectorizerOperator::Configure:183-302"
+    }
+  ]
+}

@@ -30,6 +30,7 @@ option(CYXWIZ_ENABLE_GGUF "Enable GGUF/llama.cpp support for LLMs" ON)
 option(CYXWIZ_ENABLE_PYTORCH "Enable PyTorch/LibTorch support" ON)
 option(CYXWIZ_ANDROID_BUILD "Build for Android" OFF)
 option(CYXWIZ_ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
+option(CYXWIZ_BUILD_ASSISTANT_PLUGIN "Build the experimental CyxWiz assistant plugin" OFF)
 
 # Platform detection
 if(WIN32)
@@ -421,6 +422,9 @@ if(CYXWIZ_BUILD_ENGINE AND NOT CYXWIZ_ANDROID_BUILD)
     add_subdirectory(plugins/examples/mlflow_logger)
     add_subdirectory(plugins/examples/image_nodes)
     add_subdirectory(plugins/simulation/mujoco)
+    if(CYXWIZ_BUILD_ASSISTANT_PLUGIN)
+        add_subdirectory(plugins/assistant/cyxwiz_assistant)
+    endif()
 endif()
 
 # Central server is built with Rust (see cyxwiz-central-server/Cargo.toml)

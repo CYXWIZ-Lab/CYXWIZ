@@ -1,0 +1,15 @@
+{
+  "schema": "cyxwiz.tofix42.phase7.dataset_export.v1",
+  "ok": true,
+  "input_dir": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase7_dataset",
+  "source_manifest": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase7_dataset\\manifest.json",
+  "format": "instruction",
+  "output_dir": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase7_dataset",
+  "train_output": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase7_dataset\\train.instruction.jsonl",
+  "validation_output": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase7_dataset\\validation.instruction.jsonl",
+  "train_record_count": 16,
+  "validation_record_count": 4,
+  "source_train_record_count": 16,
+  "source_validation_record_count": 4,
+  "source_format": "openai_chat_jsonl"
+}

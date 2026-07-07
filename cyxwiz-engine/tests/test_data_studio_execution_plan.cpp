@@ -161,6 +161,43 @@ void CheckUnsupportedNodeFailsClosed() {
           "fail closed node should report the central capability reason");
 }
 
+void CheckCentralIntegerBoundsFailBeforeExecution() {
+    const std::vector<cyxwiz::DataStudioPlanNodeInput> nodes = {
+        {1, "DataInput", "Input", {{"source_type", "file"}, {"type", "csv"}}},
+        {2, "TextTokenizer", "Tokenizer",
+         {{"text_col", "body"}, {"max_length", "0"}}},
+    };
+    const std::vector<cyxwiz::DataStudioPlanLinkInput> links = {
+        {1, 2},
+    };
+
+    const auto plan = cyxwiz::BuildDataStudioExecutionPlan(nodes, links);
+    CheckInvalid(plan, "central integer bounds");
+    Check(plan.error_message.find("max_length") != std::string::npos,
+          "integer bound failure should name the invalid parameter");
+    Check(plan.error_message.find("integer >= 1") != std::string::npos,
+          "integer bound failure should come from central runtime capability");
+}
+
+void CheckCentralFloatBoundsFailBeforeExecution() {
+    const std::vector<cyxwiz::DataStudioPlanNodeInput> nodes = {
+        {1, "DataInput", "Input", {{"source_type", "file"}, {"type", "csv"}}},
+        {2, "TargetEncoder", "Encode",
+         {{"columns", "category"}, {"target_col", "label"}, {"smoothing", "-0.1"}}},
+    };
+    const std::vector<cyxwiz::DataStudioPlanLinkInput> links = {
+        {1, 2},
+    };
+
+    const auto plan = cyxwiz::BuildDataStudioExecutionPlan(nodes, links);
+    CheckInvalid(plan, "central float bounds");
+    Check(plan.error_message.find("smoothing") != std::string::npos,
+          "float bound failure should name the invalid parameter");
+    Check(plan.error_message.find("greater than or equal to 0.000000") !=
+              std::string::npos,
+          "float bound failure should come from central runtime capability");
+}
+
 } // namespace
 
 int main() {
@@ -169,6 +206,8 @@ int main() {
     CheckHiddenCompatibilityAliasPlan();
     CheckTrainingLaunchPlan();
     CheckUnsupportedNodeFailsClosed();
+    CheckCentralIntegerBoundsFailBeforeExecution();
+    CheckCentralFloatBoundsFailBeforeExecution();
     std::cout << "test_data_studio_execution_plan passed\n";
     return 0;
 }

@@ -1,0 +1,355 @@
+{
+  "annotations": [],
+  "execution_mode": 0,
+  "framework": 0,
+  "groups": [],
+  "links": [
+    {
+      "from_node": 1,
+      "from_pin": 1,
+      "from_pin_index": 0,
+      "id": 1,
+      "link_type": 0,
+      "to_node": 2,
+      "to_pin": 3,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 1,
+      "from_pin": 1,
+      "from_pin_index": 0,
+      "id": 2,
+      "link_type": 0,
+      "to_node": 3,
+      "to_pin": 5,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 1,
+      "from_pin": 2,
+      "from_pin_index": 1,
+      "id": 3,
+      "link_type": 0,
+      "to_node": 3,
+      "to_pin": 6,
+      "to_pin_index": 1
+    },
+    {
+      "from_node": 3,
+      "from_pin": 7,
+      "from_pin_index": 0,
+      "id": 4,
+      "link_type": 0,
+      "to_node": 4,
+      "to_pin": 13,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 3,
+      "from_pin": 8,
+      "from_pin_index": 1,
+      "id": 5,
+      "link_type": 0,
+      "to_node": 4,
+      "to_pin": 14,
+      "to_pin_index": 1
+    },
+    {
+      "from_node": 4,
+      "from_pin": 15,
+      "from_pin_index": 0,
+      "id": 6,
+      "link_type": 0,
+      "to_node": 5,
+      "to_pin": 17,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 5,
+      "from_pin": 18,
+      "from_pin_index": 0,
+      "id": 7,
+      "link_type": 0,
+      "to_node": 6,
+      "to_pin": 19,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 6,
+      "from_pin": 20,
+      "from_pin_index": 0,
+      "id": 8,
+      "link_type": 0,
+      "to_node": 7,
+      "to_pin": 21,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 7,
+      "from_pin": 22,
+      "from_pin_index": 0,
+      "id": 9,
+      "link_type": 0,
+      "to_node": 8,
+      "to_pin": 23,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 8,
+      "from_pin": 24,
+      "from_pin_index": 0,
+      "id": 10,
+      "link_type": 0,
+      "to_node": 9,
+      "to_pin": 25,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 9,
+      "from_pin": 26,
+      "from_pin_index": 0,
+      "id": 11,
+      "link_type": 0,
+      "to_node": 10,
+      "to_pin": 27,
+      "to_pin_index": 0
+    },
+    {
+      "from_node": 4,
+      "from_pin": 16,
+      "from_pin_index": 1,
+      "id": 12,
+      "link_type": 0,
+      "to_node": 10,
+      "to_pin": 28,
+      "to_pin_index": 1
+    },
+    {
+      "from_node": 10,
+      "from_pin": 29,
+      "from_pin_index": 0,
+      "id": 13,
+      "link_type": 0,
+      "to_node": 11,
+      "to_pin": 30,
+      "to_pin_index": 0
+    }
+  ],
+  "nodes": [
+    {
+      "category": 0,
+      "description": "",
+      "id": 1,
+      "name": "Token sequence CSV",
+      "parameters": {
+        "columns": "*",
+        "configured": "false",
+        "data_loaded": "false",
+        "dataset_name": "tiny_causal_lm_tokens",
+        "delimiter": ",",
+        "feature_columns": "t0,t1,t2,t3,t4,t5,t6,t7",
+        "file_category": "tabular",
+        "file_path": "D:/Dev/CyxWiz_Claude/examples/cyxgraph/text/causal_lm_tiny_token_sequences.csv",
+        "file_type": "csv",
+        "header": "true",
+        "label_column": "y0",
+        "source_type": "file",
+        "sequence_create_causal_lm_targets": "true",
+        "sequence_length": "8",
+        "sequence_target_columns": "y0,y1,y2,y3,y4,y5,y6,y7",
+        "sequence_vocab_size": "64"
+      },
+      "pos_x": -600.0,
+      "pos_y": -80.0,
+      "type": 157
+    },
+    {
+      "category": 21,
+      "description": "",
+      "id": 2,
+      "name": "Sample token rows",
+      "parameters": {
+        "sample_size": "10"
+      },
+      "pos_x": -360.0,
+      "pos_y": -220.0,
+      "type": 193
+    },
+    {
+      "category": 21,
+      "description": "",
+      "id": 3,
+      "name": "Split 80/10/10",
+      "parameters": {
+        "seed": "42",
+        "shuffle": "true",
+        "stratified": "false",
+        "test_ratio": "0.1",
+        "train_ratio": "0.8",
+        "val_ratio": "0.1"
+      },
+      "pos_x": -360.0,
+      "pos_y": -80.0,
+      "type": 106
+    },
+    {
+      "category": 21,
+      "description": "",
+      "id": 4,
+      "name": "Causal LM loader",
+      "parameters": {
+        "batch_size": "4",
+        "checkpoint_dir": "checkpoints/causal_lm_decoder_generation_experiment",
+        "drop_last": "false",
+        "early_stopping_patience": "5",
+        "epochs": "20",
+        "grad_accum_steps": "1",
+        "log_interval": "1",
+        "num_workers": "0",
+        "pin_memory": "false",
+        "save_best_checkpoint": "true",
+        "seed": "42",
+        "shuffle": "true",
+        "validation_freq": "1"
+      },
+      "pos_x": -120.0,
+      "pos_y": -80.0,
+      "type": 104
+    },
+    {
+      "category": 6,
+      "description": "",
+      "id": 5,
+      "name": "Token embedding 64x32",
+      "parameters": {
+        "embedding_dim": "32",
+        "num_embeddings": "64",
+        "padding_idx": "0",
+        "vocab_size": "64"
+      },
+      "pos_x": 120.0,
+      "pos_y": -80.0,
+      "type": 21
+    },
+    {
+      "category": 6,
+      "description": "",
+      "id": 6,
+      "name": "Position encoding 8x32",
+      "parameters": {
+        "d_model": "32",
+        "max_len": "8",
+        "max_length": "8",
+        "mode": "sinusoidal"
+      },
+      "pos_x": 360.0,
+      "pos_y": -80.0,
+      "type": 28
+    },
+    {
+      "category": 6,
+      "description": "",
+      "id": 7,
+      "name": "Decoder block 1",
+      "parameters": {
+        "d_model": "32",
+        "dim_feedforward": "128",
+        "dropout": "0.1",
+        "ff_dim": "128",
+        "nhead": "4",
+        "num_heads": "4",
+        "norm_first": "false"
+      },
+      "pos_x": 600.0,
+      "pos_y": -80.0,
+      "type": 27
+    },
+    {
+      "category": 6,
+      "description": "",
+      "id": 8,
+      "name": "Decoder block 2",
+      "parameters": {
+        "d_model": "32",
+        "dim_feedforward": "128",
+        "dropout": "0.1",
+        "ff_dim": "128",
+        "nhead": "4",
+        "num_heads": "4",
+        "norm_first": "false"
+      },
+      "pos_x": 840.0,
+      "pos_y": -80.0,
+      "type": 27
+    },
+    {
+      "category": 6,
+      "description": "",
+      "id": 9,
+      "name": "Dense vocab logits 64",
+      "parameters": {
+        "activation": "linear",
+        "units": "64",
+        "use_bias": "true"
+      },
+      "pos_x": 1080.0,
+      "pos_y": -80.0,
+      "type": 0
+    },
+    {
+      "category": 6,
+      "description": "",
+      "id": 10,
+      "name": "Causal LM output",
+      "parameters": {
+        "eos_token_id": "2",
+        "generation_enabled": "true",
+        "ignore_index": "-100",
+        "max_new_tokens": "32",
+        "model_task": "causal_lm",
+        "num_classes": "64",
+        "pad_token_id": "0",
+        "sampling_method": "greedy",
+        "sequence_create_causal_lm_targets": "true",
+        "target_mode": "shifted_next_token",
+        "temperature": "1.0",
+        "top_k": "0",
+        "top_p": "1.0",
+        "vocab_size": "64"
+      },
+      "pos_x": 1320.0,
+      "pos_y": -80.0,
+      "type": 71
+    },
+    {
+      "category": 6,
+      "description": "",
+      "id": 11,
+      "name": "Next-token cross entropy",
+      "parameters": {
+        "ignore_index": "-100",
+        "label_smoothing": "0.0",
+        "reduction": "mean"
+      },
+      "pos_x": 1560.0,
+      "pos_y": -80.0,
+      "type": 73
+    },
+    {
+      "category": 21,
+      "description": "",
+      "id": 12,
+      "name": "Adam optimizer",
+      "parameters": {
+        "beta1": "0.9",
+        "beta2": "0.999",
+        "learning_rate": "0.001",
+        "weight_decay": "0.01"
+      },
+      "pos_x": 1800.0,
+      "pos_y": -80.0,
+      "type": 81
+    }
+  ],
+  "version": "1.0"
+}

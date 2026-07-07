@@ -1,0 +1,2619 @@
+{
+  "schema": "cyxwiz.assistant.knowledge_pack.metadata.v1",
+  "repo_root": "D:\\Dev\\CyxWiz_Claude",
+  "source_patterns": [
+    "docs/Data Studio/*.md",
+    "docs/Data Studio/tofix42/knowledge_seed/*.md",
+    "docs/usage/*.md",
+    "examples/cyxgraph/**/*.md",
+    "examples/cyxgraph/**/*.cyxgraph",
+    "cyxwiz-engine/src/core/**/*.h",
+    "cyxwiz-engine/src/core/**/*.hpp",
+    "cyxwiz-engine/src/core/**/*.cpp",
+    "cyxwiz-engine/src/core/**/*.cc",
+    "cyxwiz-engine/src/core/**/*.cxx"
+  ],
+  "config_schema": "cyxwiz.tofix42.phase1a.config.v1",
+  "config_path": "D:\\Dev\\CyxWiz_Claude\\docs\\Data Studio\\tofix42\\phase1a_config.json",
+  "config_hash": "fe3784ae356f38a080be50ac6663519019a22f65693581685b4fbf4b65dc4b81",
+  "files": [
+    {
+      "path": "cyxwiz-engine/src/core/annotation_manager.cpp",
+      "source_type": "source",
+      "content_hash": "0b71814003d1e321ccc14059937f3c9f821c2a98485cc19ce06d199252a6a267",
+      "size_bytes": 28584
+    },
+    {
+      "path": "cyxwiz-engine/src/core/annotation_manager.h",
+      "source_type": "source",
+      "content_hash": "4d1cdf581756aeef0e282b46d7c52def4bd0cc0ace42e820a2686c2282412a5f",
+      "size_bytes": 10796
+    },
+    {
+      "path": "cyxwiz-engine/src/core/arrow_converters.cpp",
+      "source_type": "source",
+      "content_hash": "77f50e7adbc56737a81523d8d4d66642dd5c9dd9c3a6d315282ea85824c64b4e",
+      "size_bytes": 19675
+    },
+    {
+      "path": "cyxwiz-engine/src/core/arrow_converters.h",
+      "source_type": "source",
+      "content_hash": "fac7b2a98bff9d381eb0785c1cb75f8adfefdc12758435a4d3e878b22362993c",
+      "size_bytes": 5446
+    },
+    {
+      "path": "cyxwiz-engine/src/core/arrow_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "f3ee3b186d2d4d3509ac5ac81b7c41b42b392f3100fb5c62b4c051373b123ac9",
+      "size_bytes": 19018
+    },
+    {
+      "path": "cyxwiz-engine/src/core/arrow_dataset.h",
+      "source_type": "source",
+      "content_hash": "eee20ff83546fec6325f0245a5e11c45bd74cf7ef01f953d25481be3a28ff293",
+      "size_bytes": 5443
+    },
+    {
+      "path": "cyxwiz-engine/src/core/arrow_dataset_batcher.cpp",
+      "source_type": "source",
+      "content_hash": "922306041d13bd709a9bc852f4d609775e23d7f9f258d3f4e4ecdd1e5102714e",
+      "size_bytes": 41494
+    },
+    {
+      "path": "cyxwiz-engine/src/core/async_task_manager.cpp",
+      "source_type": "source",
+      "content_hash": "a5694d2e63b0bc911ac5e3eb1538e97422a7dcf4af7787911b33743e12165b00",
+      "size_bytes": 11601
+    },
+    {
+      "path": "cyxwiz-engine/src/core/async_task_manager.h",
+      "source_type": "source",
+      "content_hash": "703cf6c3b99c3b7eb09c2c1222e3c7f32ccf7b3bc623c0ca3786a09e0bfd3601",
+      "size_bytes": 6728
+    },
+    {
+      "path": "cyxwiz-engine/src/core/audio_dataset_batcher.cpp",
+      "source_type": "source",
+      "content_hash": "763147a58197c561b587ec6b105ebf694955b8b5590cd18df8ead48c76bb2cec",
+      "size_bytes": 13218
+    },
+    {
+      "path": "cyxwiz-engine/src/core/audio_dataset_batcher.h",
+      "source_type": "source",
+      "content_hash": "e9e5413ec5d23e43dea4b1e1ada68c1c34941f42e46d71d72bcf7b74fd8b57fa",
+      "size_bytes": 3391
+    },
+    {
+      "path": "cyxwiz-engine/src/core/backend_placement_capabilities.h",
+      "source_type": "source",
+      "content_hash": "8992c6f7cc03c3fb91595c9d08e0d38321812de17ff442b49f5d50e9421a4b84",
+      "size_bytes": 20854
+    },
+    {
+      "path": "cyxwiz-engine/src/core/checkpoint_manager.cpp",
+      "source_type": "source",
+      "content_hash": "59694f5089ec35abcbae0cde7140837949891cf7258586490cec5f356308d538",
+      "size_bytes": 18651
+    },
+    {
+      "path": "cyxwiz-engine/src/core/checkpoint_manager.h",
+      "source_type": "source",
+      "content_hash": "79005e936d90bc9ac164621620c29f6238ea24c21264a3dc7696cb676497c131",
+      "size_bytes": 5983
+    },
+    {
+      "path": "cyxwiz-engine/src/core/cloud_data_registry.cpp",
+      "source_type": "source",
+      "content_hash": "190fa749da5251de8b0e7a137995efe65b598d8ba13cf3d2371f48b534c5b4f0",
+      "size_bytes": 8380
+    },
+    {
+      "path": "cyxwiz-engine/src/core/cloud_data_registry.h",
+      "source_type": "source",
+      "content_hash": "a6653d84cfe56098734fb1048ad5db78a369e7f428fd520dd621c538361c4fc7",
+      "size_bytes": 6231
+    },
+    {
+      "path": "cyxwiz-engine/src/core/clustering.h",
+      "source_type": "source",
+      "content_hash": "b077e63737fe01f135ff2a796f1ba6dae58b8b2225660869cb023b80d20209d3",
+      "size_bytes": 13302
+    },
+    {
+      "path": "cyxwiz-engine/src/core/compiled_graph_plan.cpp",
+      "source_type": "source",
+      "content_hash": "91bf02607d993d7802baf798f1acb3f5de7495fe838731a0bb995fc18b4539d2",
+      "size_bytes": 4041
+    },
+    {
+      "path": "cyxwiz-engine/src/core/compiled_graph_plan.h",
+      "source_type": "source",
+      "content_hash": "9afdfafe34afd2d446094f56947c41f124db33d75c98907bc9eb3d025db006af",
+      "size_bytes": 1532
+    },
+    {
+      "path": "cyxwiz-engine/src/core/crash_run_recorder.cpp",
+      "source_type": "source",
+      "content_hash": "072f6eeda5e41a75aad16e0025f84f61934139f0eeb4df0bd3c2c51dc17bad50",
+      "size_bytes": 15679
+    },
+    {
+      "path": "cyxwiz-engine/src/core/crash_run_recorder.h",
+      "source_type": "source",
+      "content_hash": "0f7936e46321bfaa27b15315df8440a3157a73e562cf01734231f082a47145c7",
+      "size_bytes": 3128
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_analyzer.cpp",
+      "source_type": "source",
+      "content_hash": "2a9b5e738c42542dfb14062b02e2c2bd4d2b4162a7833aec4cd14932ba7b65ff",
+      "size_bytes": 60374
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_analyzer.h",
+      "source_type": "source",
+      "content_hash": "1bebb3262a00c675aa15ffac0a512e2c8105a852c8af356f39b45743d8b8b503",
+      "size_bytes": 19445
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_convert_service.cpp",
+      "source_type": "source",
+      "content_hash": "b9398b47e81e3ed2be4e357f326677efbfee17284e2cd8648a1e2e9141fc8793",
+      "size_bytes": 73274
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_convert_service.h",
+      "source_type": "source",
+      "content_hash": "9f3d32709864a7db67bb2c3ed5ef6883a787018579c12721d19756cfcc2f91a6",
+      "size_bytes": 2043
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_registry.cpp",
+      "source_type": "source",
+      "content_hash": "d006366584149f19899d1a5bc0a1b4c0c6372217e405af170490ea8d32a85bf7",
+      "size_bytes": 64737
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_registry.h",
+      "source_type": "source",
+      "content_hash": "9f2b72a6e27f158b82dd8f38d31a5c1f180cdc4ff615870f42e67419149077ef",
+      "size_bytes": 29717
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_registry_config.cpp",
+      "source_type": "source",
+      "content_hash": "212bc143bbb82869f717baee38196504b2f099757a3ca2ffadef5e01d03fd933",
+      "size_bytes": 8142
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_registry_core.cpp",
+      "source_type": "source",
+      "content_hash": "df79af306e5b0605348f5ddbbedd1373704899efba1d71b2f8b887577b15ad33",
+      "size_bytes": 1511
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_registry_utils.cpp",
+      "source_type": "source",
+      "content_hash": "55d20964ba951977d24f5a28fc25d21626dc43dd196940271975067b69fc3938",
+      "size_bytes": 18882
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_studio_execution_plan.cpp",
+      "source_type": "source",
+      "content_hash": "683385700f6dd452fca16e98cd87c42da27448052d60c21b35e008e82924b76a",
+      "size_bytes": 11693
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_studio_execution_plan.h",
+      "source_type": "source",
+      "content_hash": "ac111cb9a81447bd6987035c5ec88ae41a9acada5616367b1b81c11cea290b93",
+      "size_bytes": 1742
+    },
+    {
+      "path": "cyxwiz-engine/src/core/data_transform.h",
+      "source_type": "source",
+      "content_hash": "3133fb1a0e1ac894682d50db929cf242ce2c8262d6f5d727dc6a8330f0080ee9",
+      "size_bytes": 6881
+    },
+    {
+      "path": "cyxwiz-engine/src/core/dataset_audit.cpp",
+      "source_type": "source",
+      "content_hash": "fcabcfb7c843e088b8a3fdfb0337269923dfd8c3a6dbc29866d5bbc82287c379",
+      "size_bytes": 45786
+    },
+    {
+      "path": "cyxwiz-engine/src/core/dataset_audit.h",
+      "source_type": "source",
+      "content_hash": "f11b41367d898155f2936da5e2d21a9f638195d708e041aa06402081425d8041",
+      "size_bytes": 1961
+    },
+    {
+      "path": "cyxwiz-engine/src/core/dataset_base.cpp",
+      "source_type": "source",
+      "content_hash": "92e6bfba6ffd757c29bf9b8560e30122bcf3740e1e516fced4b9a04582f3d155",
+      "size_bytes": 4630
+    },
+    {
+      "path": "cyxwiz-engine/src/core/dataset_base.h",
+      "source_type": "source",
+      "content_hash": "d368948d04550f0e16016d48fc6ef5ff3be29f51c9abf54867b37905129521dd",
+      "size_bytes": 2422
+    },
+    {
+      "path": "cyxwiz-engine/src/core/dataset_batcher.cpp",
+      "source_type": "source",
+      "content_hash": "2ba9f7e10c45ea0cc11e0a4783e375e43057ec75a70bdda31416febb15d0cebf",
+      "size_bytes": 20426
+    },
+    {
+      "path": "cyxwiz-engine/src/core/dataset_batcher.h",
+      "source_type": "source",
+      "content_hash": "565ba8e3587b8fd3d397c7b8d477ad2d21ba5d165e7b2bf1ef62fbf75e0e459a",
+      "size_bytes": 16943
+    },
+    {
+      "path": "cyxwiz-engine/src/core/dataset_types.h",
+      "source_type": "source",
+      "content_hash": "9a8de4dacb52fecc4a6e753ea77bdd2219577ca7a53e552e8bc8edfd376d436f",
+      "size_bytes": 2647
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/cifar10_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "cedf3636f24bce6104a4e364ee542ef12551ec5a75553f92518659d6c3d36815",
+      "size_bytes": 29
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/cifar10_dataset.h",
+      "source_type": "source",
+      "content_hash": "1a77951cb288a530ff4df2e83cf36970448a69e55fe9e6d12e8a9aa4367709c2",
+      "size_bytes": 3150
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/csv_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "af90425678a317ee985c8af79e624b86c4b9b81a50a4fe4483f40960ec8a6b4a",
+      "size_bytes": 25
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/csv_dataset.h",
+      "source_type": "source",
+      "content_hash": "d9e1d02f3a9ab20f1774bf479cd9c814e458ed88e16557d2dafba09cbd3850d0",
+      "size_bytes": 3952
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/custom_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "6a8320f4615caa082a4b43a3cd9b2d079419d6353b0f201c8203187f757dfcf2",
+      "size_bytes": 28
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/custom_dataset.h",
+      "source_type": "source",
+      "content_hash": "557b41e816549178118f5faa5daad36fce9a030898d956d75c3f47b62312e481",
+      "size_bytes": 24937
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/hdf5_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "696b7bdfdc32215155d0281dbb3b387d17e3b279ce56f587d245db0357b75b67",
+      "size_bytes": 21114
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/hdf5_dataset.h",
+      "source_type": "source",
+      "content_hash": "0846f348e6de813fc362b4a74a226bceaab3433f70a67d4bcf6d79a474cdf2bf",
+      "size_bytes": 4477
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/huggingface_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "51c9254ad5c562fd7439d3274d8eee789fd5ca650f12ede01677c509845eb93e",
+      "size_bytes": 33
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/huggingface_dataset.h",
+      "source_type": "source",
+      "content_hash": "a65bb5a70b0e32544c730200cd80c33b5b225e1a6f23d646af69cde880f061d9",
+      "size_bytes": 9665
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/image_csv_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "0f163a4c7920f77303e840c0b0f513340199b011f43ac8c812595908fa275057",
+      "size_bytes": 18185
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/image_csv_dataset.h",
+      "source_type": "source",
+      "content_hash": "d2a1c4133af707f010cea9af0f606de8255b4b03d18ee960595a7af8a84eb8e2",
+      "size_bytes": 3769
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/image_folder_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "93896629f74a8fa1bdb360a575f3fd0b77929e6afeb9a749d1837857dd656e40",
+      "size_bytes": 34
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/image_folder_dataset.h",
+      "source_type": "source",
+      "content_hash": "d3d28f6f53c82a3fff6377f4c11f701594af7221bf21f57ad185cb8f2adb1d39",
+      "size_bytes": 6490
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/json_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "8a0ebf9c5bbed7fdca7c8735cdb195eb9397b135c61184f24e6ed4730e19db15",
+      "size_bytes": 26
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/json_dataset.h",
+      "source_type": "source",
+      "content_hash": "452d3f89bf4f4ec2ddd18ddb351c8872e722ccf17eec9139b82664979c3961bd",
+      "size_bytes": 5020
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/kaggle_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "f7a833246f293e91b601045f13f12ca75a24f7c5a6831c3a737f0a174c8c85b2",
+      "size_bytes": 17240
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/kaggle_dataset.h",
+      "source_type": "source",
+      "content_hash": "1ad006afc6dee26a949fc4c7adf64b1e748f1ad06626f7c7f55a215967dad1d8",
+      "size_bytes": 1922
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/mnist_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "7d281d46f88a01d325827e868fd834ad41bb892f81713f53f03b8fb00a11003a",
+      "size_bytes": 27
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/mnist_dataset.h",
+      "source_type": "source",
+      "content_hash": "fa7ac673a5f53fae086e4cbdfb25d6ff6be2872bd85d209774defae6d03ed821",
+      "size_bytes": 4028
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/streaming_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "fa24409bf0d54dec12475e1e74503f006ba356062b1f7b10108f7f900dd63269",
+      "size_bytes": 8870
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/streaming_dataset.h",
+      "source_type": "source",
+      "content_hash": "bdc137477c981daa807283280f5e71b61fa2fbe7b194bbde1067ff2e7a36f409",
+      "size_bytes": 2297
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/tsv_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "10faab7995f28cc1697a3fb95970534699b3507e962286079099561b1482dbaf",
+      "size_bytes": 25
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/tsv_dataset.h",
+      "source_type": "source",
+      "content_hash": "6414bf197d2d833826de74a0003c80d5b2c49d19010bf0c4e16567973d1d4c0c",
+      "size_bytes": 3774
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/txt_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "474fc1c00fd95386b98593055aab862c48246a43637a4ad95b2d0a8b0aa666c1",
+      "size_bytes": 25
+    },
+    {
+      "path": "cyxwiz-engine/src/core/datasets/txt_dataset.h",
+      "source_type": "source",
+      "content_hash": "462f643dcbfa8ee98a45b94dffb8b2dc0810546e72f55ba165e6f37ee92ee269",
+      "size_bytes": 4337
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_executor.cpp",
+      "source_type": "source",
+      "content_hash": "3cb7cc77dbee13172c6841c0a06a808fb210461be87e77c7840b7007d85459e3",
+      "size_bytes": 13766
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_executor.h",
+      "source_type": "source",
+      "content_hash": "269ef52efc3df0ce2e0bcd7a59792065150431cc946ebef54a67e99a4cdd4f80",
+      "size_bytes": 3269
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_export_correlation_tracer.cpp",
+      "source_type": "source",
+      "content_hash": "dae3c3239bc024e436d15c77d920385859893831361dee75cb13dbce9d1c1574",
+      "size_bytes": 2025
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_export_correlation_tracer.h",
+      "source_type": "source",
+      "content_hash": "bc9abdf059ca8e36f454d3365f107785a2d89f4bc254bc830c27261468cff855",
+      "size_bytes": 798
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_graph_trace_executor.cpp",
+      "source_type": "source",
+      "content_hash": "5fcb1cc44eaf9f062ac23dc343b15d3bdf0a2d0ceab0c0e7398a22dbaeab0739",
+      "size_bytes": 1208
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_graph_trace_executor.h",
+      "source_type": "source",
+      "content_hash": "8468258d7c837ecfee7858bde2e2744e91e4b7c17538c33f5e39fd98289346f7",
+      "size_bytes": 854
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_memory_ownership_tracer.cpp",
+      "source_type": "source",
+      "content_hash": "dfd9af404cc158aebce713741728276230ebc003579c1447508a81de25fc3e3e",
+      "size_bytes": 5111
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_memory_ownership_tracer.h",
+      "source_type": "source",
+      "content_hash": "2c32d93f4773460f8de43dc387b2dd1ae86ebe81db89f9932dc67906aa4343bd",
+      "size_bytes": 1055
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_node_inspector.cpp",
+      "source_type": "source",
+      "content_hash": "7e9aafdaf04a482db3e0fd1bd006a1b45dc6bdb3f370771b5a78cb5d6026e281",
+      "size_bytes": 2534
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_node_inspector.h",
+      "source_type": "source",
+      "content_hash": "3b0c525402046b50ccdaac00016b3a867c864ce6ece3aa75ba647b4299a9413e",
+      "size_bytes": 932
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_operator_trace_adapter.cpp",
+      "source_type": "source",
+      "content_hash": "20ddf1192d7a3c778028350e86acc8051a0daabcccaa6ab58cae16ef5ac4be78",
+      "size_bytes": 1700
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_operator_trace_adapter.h",
+      "source_type": "source",
+      "content_hash": "6d066d6a20cc75b1bd091d254d681d11c6d44bb6773acabe9088f11e4b12b7c2",
+      "size_bytes": 482
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_recommendation_engine.cpp",
+      "source_type": "source",
+      "content_hash": "7a47d30a32d12705f6d1c17139f02dda6ab21c4310f22846a674a2aa7a9c0a1a",
+      "size_bytes": 8502
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_recommendation_engine.h",
+      "source_type": "source",
+      "content_hash": "186fd403c65596f0ed628f7448d500064fd24f9d84fbe98d97faa47dce77910d",
+      "size_bytes": 966
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_run_store.cpp",
+      "source_type": "source",
+      "content_hash": "2028dff796a8a41a7509c99421e62e8cac3c2df91eb7d5a5874bf2933648b9fa",
+      "size_bytes": 11232
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_run_store.h",
+      "source_type": "source",
+      "content_hash": "4411d21a879ebbb87cc3694d9fcb3b3e58ceb75f72549831765d5150844bf8a0",
+      "size_bytes": 1049
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_runtime_backend_classifier.cpp",
+      "source_type": "source",
+      "content_hash": "feaeaf814db816c29252cc06205a6808c1e5d4a6401e990456ca6e71e9f5a448",
+      "size_bytes": 2687
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_runtime_backend_classifier.h",
+      "source_type": "source",
+      "content_hash": "ff6ec4bcd9538983c105ead8b221db0ecefe2d34c6225cca797c24d050cd2fb9",
+      "size_bytes": 846
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_session.h",
+      "source_type": "source",
+      "content_hash": "41304f78724af0319e2190f94e1d459d39a31cbe9a292002f06985e6da365440",
+      "size_bytes": 1442
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_session_manager.cpp",
+      "source_type": "source",
+      "content_hash": "b5ecb7ecfaefc1479bf237e0cbf9f57f26aed8c8c45b08861cdc7c9d01c921ee",
+      "size_bytes": 3716
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_session_manager.h",
+      "source_type": "source",
+      "content_hash": "dc34fecbf9406237243c13c3694360398d7d5eb591590a6782fe39ada6888d96",
+      "size_bytes": 569
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_smoke_sample_selector.cpp",
+      "source_type": "source",
+      "content_hash": "1295add2d758de5154ea3b0e5610d8a4d659ff7245dc094fb8215be401dd5273",
+      "size_bytes": 1594
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_smoke_sample_selector.h",
+      "source_type": "source",
+      "content_hash": "fd083daf317e923028dba66af17862ea15d8e6694df72e02a2e54152f21c7654",
+      "size_bytes": 479
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_support_bundle_builder.cpp",
+      "source_type": "source",
+      "content_hash": "cb4f956fafd1af6b8edb8dbf63dee213cd6d22698c7202db1e03cd29349392d8",
+      "size_bytes": 9723
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_support_bundle_builder.h",
+      "source_type": "source",
+      "content_hash": "7ce2e242ba09ffdcc3fd5120b8743808fe4fe22474280544812438d417531e48",
+      "size_bytes": 1149
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_trace_record.h",
+      "source_type": "source",
+      "content_hash": "e4b7fc14296f3534acb3d10c090367fce64636864a7840e20110c6a1bfb78fdb",
+      "size_bytes": 5735
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_windows_crash_importer.cpp",
+      "source_type": "source",
+      "content_hash": "573648246f94acab62b0d3f44f156dc0e0a66d34a038007d374a27e5e791d5da",
+      "size_bytes": 6063
+    },
+    {
+      "path": "cyxwiz-engine/src/core/debug_windows_crash_importer.h",
+      "source_type": "source",
+      "content_hash": "d4ce78052d4b6fb24181333cf5a86f713738ba03c9737a05b9adae9d30a7f74b",
+      "size_bytes": 1134
+    },
+    {
+      "path": "cyxwiz-engine/src/core/dimensionality_reduction.h",
+      "source_type": "source",
+      "content_hash": "c0415836401683d85ec6e430923bdf77f9886d3a654ffa2b8e7e25acf21fbce8",
+      "size_bytes": 7502
+    },
+    {
+      "path": "cyxwiz-engine/src/core/duckdb_connector.cpp",
+      "source_type": "source",
+      "content_hash": "95ed993140c327cee5c9ee49f2f9260cd68f764a06136adf175759b32e25e2bf",
+      "size_bytes": 27306
+    },
+    {
+      "path": "cyxwiz-engine/src/core/duckdb_connector.h",
+      "source_type": "source",
+      "content_hash": "a9bad9ac8b4772b38e5633161b54f62e62e0d985554e864ef110669852c01e85",
+      "size_bytes": 7017
+    },
+    {
+      "path": "cyxwiz-engine/src/core/engine_config.cpp",
+      "source_type": "source",
+      "content_hash": "ba5fac72abc79b0bc346397b6e80acb76604591016f92424ed170ac2c5c5992a",
+      "size_bytes": 22860
+    },
+    {
+      "path": "cyxwiz-engine/src/core/engine_config.h",
+      "source_type": "source",
+      "content_hash": "a989e10579bb86472edce8788378fed2bd792b02dce5054793f5f8fe016e112e",
+      "size_bytes": 5278
+    },
+    {
+      "path": "cyxwiz-engine/src/core/error_codes.h",
+      "source_type": "source",
+      "content_hash": "095e19d86895c9ed8157d2f7ac5e1b6523bb0170de6dd05dff972ae779ba10fd",
+      "size_bytes": 46
+    },
+    {
+      "path": "cyxwiz-engine/src/core/executable_model.cpp",
+      "source_type": "source",
+      "content_hash": "b9808eb4c87a8dbe897afdfa8593dcf8c38cc8d708378b72b2d37da8dfd8c715",
+      "size_bytes": 1245
+    },
+    {
+      "path": "cyxwiz-engine/src/core/executable_model.h",
+      "source_type": "source",
+      "content_hash": "613257808944b367418b6084499dac0fa0cb93ebce1bca14d93ed15d444b22a3",
+      "size_bytes": 2245
+    },
+    {
+      "path": "cyxwiz-engine/src/core/feature_importance.h",
+      "source_type": "source",
+      "content_hash": "36ceb59af2111f73d6b5b00717d85e70a9c7db50e77701086bf5a036ae50861e",
+      "size_bytes": 4822
+    },
+    {
+      "path": "cyxwiz-engine/src/core/file_dialogs.cpp",
+      "source_type": "source",
+      "content_hash": "8d1519d50f94c3b197c6d835af0d493a63cc22c4196bcd98dc0881bda340d48b",
+      "size_bytes": 8750
+    },
+    {
+      "path": "cyxwiz-engine/src/core/file_dialogs.h",
+      "source_type": "source",
+      "content_hash": "396f299e24a659ff702abd87be5bae61d0055cdcbcb4102c8ddca7007d8bdd6f",
+      "size_bytes": 5027
+    },
+    {
+      "path": "cyxwiz-engine/src/core/formats/audio_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "a276eacc1767baa4049fcc396e7bf8380a6492153282950382b3dd8dbca6eaf0",
+      "size_bytes": 22435
+    },
+    {
+      "path": "cyxwiz-engine/src/core/formats/audio_dataset.h",
+      "source_type": "source",
+      "content_hash": "cba9848beedca8f655ce714ddab169cb181089be372ac8b89f7fe8ccb6cec568",
+      "size_bytes": 3860
+    },
+    {
+      "path": "cyxwiz-engine/src/core/formats/cyxmodel_format.cpp",
+      "source_type": "source",
+      "content_hash": "7d67ecc1bc5c88ddac40caa4cfe00138b0934e1ab5a98a6232501d9991088d4c",
+      "size_bytes": 38816
+    },
+    {
+      "path": "cyxwiz-engine/src/core/formats/cyxmodel_format.h",
+      "source_type": "source",
+      "content_hash": "92992d26136ed55fe7cda0a6e9b9d9321a8eb75be6a513f81a440fd16ba3eb31",
+      "size_bytes": 6799
+    },
+    {
+      "path": "cyxwiz-engine/src/core/formats/text_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "ee8957ce1b597729dd55e845c544cff0e2e3644f0ecf8c841dff94a6bbc1bad5",
+      "size_bytes": 20093
+    },
+    {
+      "path": "cyxwiz-engine/src/core/formats/text_dataset.h",
+      "source_type": "source",
+      "content_hash": "16aa76612d0af545a32e2e5f2e0b6f24246750771e0cb21188e80c919f6bd9e4",
+      "size_bytes": 2936
+    },
+    {
+      "path": "cyxwiz-engine/src/core/formats/timeseries_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "c313b834eecc10ab890cfa4398aee090998f316cb95c477c309f21ed063855a5",
+      "size_bytes": 6481
+    },
+    {
+      "path": "cyxwiz-engine/src/core/formats/timeseries_dataset.h",
+      "source_type": "source",
+      "content_hash": "a8cc0c98c79d2defad31007b740d6e19cfd06da5350e75595f0aaac8e545433d",
+      "size_bytes": 3083
+    },
+    {
+      "path": "cyxwiz-engine/src/core/graph_compiler.cpp",
+      "source_type": "source",
+      "content_hash": "0ea6dd0882474e11db8d74ebf6cc82a17a727cf1081bff3b4c655af488cc3bb6",
+      "size_bytes": 213096
+    },
+    {
+      "path": "cyxwiz-engine/src/core/graph_compiler.h",
+      "source_type": "source",
+      "content_hash": "9f1af38f11611904c4aa169de78125610d60850ba10e6f09a88100411cc182ec",
+      "size_bytes": 24316
+    },
+    {
+      "path": "cyxwiz-engine/src/core/graph_executable_model.cpp",
+      "source_type": "source",
+      "content_hash": "5affa35b35f7e0a8f2bf088f9239f76db77439a01f741a1151d23ae761a43a58",
+      "size_bytes": 27027
+    },
+    {
+      "path": "cyxwiz-engine/src/core/graph_executable_model.h",
+      "source_type": "source",
+      "content_hash": "82c9341c6229644d6d34fc29f4d037c93343e586434293e04dc1cd46cab0ecc5",
+      "size_bytes": 2308
+    },
+    {
+      "path": "cyxwiz-engine/src/core/graph_executor.cpp",
+      "source_type": "source",
+      "content_hash": "874e749ae0809daec4e67a6cb659369e04d589639fa70fee7fea00d8b7ea1b57",
+      "size_bytes": 10603
+    },
+    {
+      "path": "cyxwiz-engine/src/core/graph_executor.h",
+      "source_type": "source",
+      "content_hash": "5d55a6c8dab6391f0b5872ace76c5496eb51caa3015be12438e28b0fcb6dcec7",
+      "size_bytes": 4045
+    },
+    {
+      "path": "cyxwiz-engine/src/core/graph_topology_utils.cpp",
+      "source_type": "source",
+      "content_hash": "8ac72afc885810146262965cb20968e8a785cacca81c4ad09038a224b6f20f30",
+      "size_bytes": 2390
+    },
+    {
+      "path": "cyxwiz-engine/src/core/graph_topology_utils.h",
+      "source_type": "source",
+      "content_hash": "eccdf3008b5d14d0ee4ea3831e3390e271a2dba9c3b23df9f979d7cf0fc63233",
+      "size_bytes": 629
+    },
+    {
+      "path": "cyxwiz-engine/src/core/gym_connector.cpp",
+      "source_type": "source",
+      "content_hash": "64c8f4694abbe0750d812a94b49497caba282c1163ad0aea765eed7814c576e0",
+      "size_bytes": 11334
+    },
+    {
+      "path": "cyxwiz-engine/src/core/gym_connector.h",
+      "source_type": "source",
+      "content_hash": "bd5dbdc0ce324969508f178dcfb92e45afca8c164f079d7ba948d42f0313d978",
+      "size_bytes": 1579
+    },
+    {
+      "path": "cyxwiz-engine/src/core/hyperparam_search.cpp",
+      "source_type": "source",
+      "content_hash": "b7c0f5d3f415b51e9ff4f9723845e2a069130434d77e2f6ba2976580b8107797",
+      "size_bytes": 15906
+    },
+    {
+      "path": "cyxwiz-engine/src/core/hyperparam_search.h",
+      "source_type": "source",
+      "content_hash": "fa09356f6d8c74e1a4ac087d7cd65ecbbf22c53e13bc36bd56e85d4f2dda5ff8",
+      "size_bytes": 6674
+    },
+    {
+      "path": "cyxwiz-engine/src/core/image_dataset_batcher.cpp",
+      "source_type": "source",
+      "content_hash": "4ebc0806779d8fe161a0383efccc3bf5977c70d4e3fc3002a3678a7dcde19891",
+      "size_bytes": 9233
+    },
+    {
+      "path": "cyxwiz-engine/src/core/image_dataset_batcher.h",
+      "source_type": "source",
+      "content_hash": "4771b9e7461ddcdb10b0ec92092c8465ce544f5234b87e0c9dae4f5a27ff8e83",
+      "size_bytes": 2073
+    },
+    {
+      "path": "cyxwiz-engine/src/core/image_utils.cpp",
+      "source_type": "source",
+      "content_hash": "73c4e2b05e2495a2a55837fa7544029b35fad0472ed3681736050648e8fc3f06",
+      "size_bytes": 11918
+    },
+    {
+      "path": "cyxwiz-engine/src/core/image_utils.h",
+      "source_type": "source",
+      "content_hash": "86d0c6640bb51d8b039b9a279794dcbb2bd2abfb9f2bc2525a3f0fda8d245e37",
+      "size_bytes": 6500
+    },
+    {
+      "path": "cyxwiz-engine/src/core/keyboard_shortcuts.h",
+      "source_type": "source",
+      "content_hash": "02eb71f99d649d5134da291dd3be8b1493337d087d474229a64c1406d7108a8b",
+      "size_bytes": 4281
+    },
+    {
+      "path": "cyxwiz-engine/src/core/label_column_resolver.h",
+      "source_type": "source",
+      "content_hash": "218655d47c6d9f9dbfb63e473539eda1fd74b5a58b4e01ed7d43a0a4fdf091a1",
+      "size_bytes": 796
+    },
+    {
+      "path": "cyxwiz-engine/src/core/language_model_generation.cpp",
+      "source_type": "source",
+      "content_hash": "75f67904799eb532d857078185f380b39eb2e03213f2112730bd632886c9aa44",
+      "size_bytes": 8535
+    },
+    {
+      "path": "cyxwiz-engine/src/core/language_model_generation.h",
+      "source_type": "source",
+      "content_hash": "cfbc829a6553b3a64d5432b128200b923db17faa995f001cdd5dc34f67087317",
+      "size_bytes": 1868
+    },
+    {
+      "path": "cyxwiz-engine/src/core/language_model_training.cpp",
+      "source_type": "source",
+      "content_hash": "9cc2292f4f9f4636b81b89f1ec33004ac2ee23e66336ce86738278b84fb7d3e8",
+      "size_bytes": 23414
+    },
+    {
+      "path": "cyxwiz-engine/src/core/language_model_training.h",
+      "source_type": "source",
+      "content_hash": "0365a7b0d10b4d6e7a8bc01c32f0ad34099359f3b2c3552eafecdfbaf4cc0dd9",
+      "size_bytes": 4303
+    },
+    {
+      "path": "cyxwiz-engine/src/core/metric_learning_batch.h",
+      "source_type": "source",
+      "content_hash": "245a6d712b078df1e17ae8d9270c49c7f99a378e6540be6ab1add046d7e92ae4",
+      "size_bytes": 7914
+    },
+    {
+      "path": "cyxwiz-engine/src/core/metric_learning_batcher.h",
+      "source_type": "source",
+      "content_hash": "1ce64950233ada295845595caf4794dc93e4483600b8361c5cb32964d777121a",
+      "size_bytes": 15027
+    },
+    {
+      "path": "cyxwiz-engine/src/core/metric_learning_dataset_builder.h",
+      "source_type": "source",
+      "content_hash": "0ac6c871c32bbf0894b72ee81eb45a2e9d35334065fc01c9095aac79ee0ebb12",
+      "size_bytes": 9575
+    },
+    {
+      "path": "cyxwiz-engine/src/core/metric_learning_graph_contract.h",
+      "source_type": "source",
+      "content_hash": "6bb1248819bd4f6ba65f13a5ab017c1d620df11f578ca131275c47a78e50fd6c",
+      "size_bytes": 9750
+    },
+    {
+      "path": "cyxwiz-engine/src/core/metric_learning_inference_outputs.h",
+      "source_type": "source",
+      "content_hash": "e48adef1498246473ce1d5f301ae5b80c1309a29dfdcc4f7feee508f51493229",
+      "size_bytes": 9922
+    },
+    {
+      "path": "cyxwiz-engine/src/core/metric_learning_losses.h",
+      "source_type": "source",
+      "content_hash": "933d52e91a0ff7e5876c65346d4f65711a7dde55959c8c90ad585fe550927e5a",
+      "size_bytes": 6911
+    },
+    {
+      "path": "cyxwiz-engine/src/core/metric_learning_metrics.h",
+      "source_type": "source",
+      "content_hash": "ead043db1e32ed97d64e81a902ab1b6d30640c792061285aaf9149e729b70d7d",
+      "size_bytes": 8551
+    },
+    {
+      "path": "cyxwiz-engine/src/core/metric_learning_shared_encoder.h",
+      "source_type": "source",
+      "content_hash": "2f78e963a7bff37a7fb6854db725fbd675d743d10d1ea46f7b10759c33721011",
+      "size_bytes": 9746
+    },
+    {
+      "path": "cyxwiz-engine/src/core/metric_learning_training_step.h",
+      "source_type": "source",
+      "content_hash": "a071e664ac836596ec2039ae34bde9c490166675fd40aeedc66d28f56f2e4ddb",
+      "size_bytes": 3193
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_analyzer.cpp",
+      "source_type": "source",
+      "content_hash": "5ff8fb6ea5b1232e15e80d835a557e6e20530a1337d74801adc7baf02b1abddb",
+      "size_bytes": 37778
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_analyzer.h",
+      "source_type": "source",
+      "content_hash": "d7939bb09a63654057f536d1baecea83f1d129240eb4f3dc6efdfab9160b220f",
+      "size_bytes": 6282
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_builder.cpp",
+      "source_type": "source",
+      "content_hash": "b6ebaf4652f7bd53434e6d819e69f53896385208dd5795c3affe03b722084fc8",
+      "size_bytes": 62382
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_builder.h",
+      "source_type": "source",
+      "content_hash": "bd60a000c4a1510183198d0c273e67328247a5ffb8e817e0d88b3bd643bfc350",
+      "size_bytes": 1758
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_converter.cpp",
+      "source_type": "source",
+      "content_hash": "303fc56b7b818954f948d576547d898e3ff6cae295d1fd25ea52aaa084a6a85b",
+      "size_bytes": 30746
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_converter.h",
+      "source_type": "source",
+      "content_hash": "4edba50ef1f2f19be50dd3eaff6eae83f59cb7e16911c7daf1ba10d54400c596",
+      "size_bytes": 2028
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_evaluation.h",
+      "source_type": "source",
+      "content_hash": "51be4bc9138236e8e2fe9f18590c701ec5397028b3ffb5824d97824f1d234cdf",
+      "size_bytes": 6498
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_exporter.cpp",
+      "source_type": "source",
+      "content_hash": "fc90d166c86f90913f43b1f5241dbe29d5240725e8acfcdd016d7d6400fcea06",
+      "size_bytes": 51106
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_exporter.h",
+      "source_type": "source",
+      "content_hash": "10b4d854ab60f938ac07053d50c86e63054914f56997b5e3a2d356f13ccbb228",
+      "size_bytes": 4816
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_format.h",
+      "source_type": "source",
+      "content_hash": "d541b8f6812f58d2fb84c8a86d4b1cbbeacef886705e78de3bc337a815c8a785",
+      "size_bytes": 12971
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_importer.cpp",
+      "source_type": "source",
+      "content_hash": "e9cfe41ce5cf553c8776bec96be064968ef96075a2ea9b6d5a29cf4ff86faf70",
+      "size_bytes": 37904
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_importer.h",
+      "source_type": "source",
+      "content_hash": "34f2ea68256a139174801a4837b8bde6189e13218c2c1720adf9b280e687c9e3",
+      "size_bytes": 5077
+    },
+    {
+      "path": "cyxwiz-engine/src/core/model_interpretability.h",
+      "source_type": "source",
+      "content_hash": "7412aa20361405d1becb239a0cff5068aec09751a21e56c3d7bc3a509693b34f",
+      "size_bytes": 5727
+    },
+    {
+      "path": "cyxwiz-engine/src/core/nas_evaluator.cpp",
+      "source_type": "source",
+      "content_hash": "b91cc4e9850394893de4f3ac996711b51bd667968c487ba8a370a9401040df0f",
+      "size_bytes": 34096
+    },
+    {
+      "path": "cyxwiz-engine/src/core/nas_evaluator.h",
+      "source_type": "source",
+      "content_hash": "ac6ecc6c4891b85b3799c21894d35ad98fd0b9dd37f3faa1005ff960fa5ad5c8",
+      "size_bytes": 8332
+    },
+    {
+      "path": "cyxwiz-engine/src/core/ner_sequence_builder.h",
+      "source_type": "source",
+      "content_hash": "5228290f7e4d4c748e60a0b474e59635dc71bb55df222caf700e09ccbc9ec889",
+      "size_bytes": 6734
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/clustering_operators.cpp",
+      "source_type": "source",
+      "content_hash": "5f8213002a398a15342ac5248b6bd1b47007c5954b770aa39e3cf8fccfccf736",
+      "size_bytes": 16557
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/clustering_operators.h",
+      "source_type": "source",
+      "content_hash": "37aafb23c99aa0cffdfcbea7a501642e9a5e67018aec34b778da38752e57858d",
+      "size_bytes": 5381
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/count_vectorizer_operator.cpp",
+      "source_type": "source",
+      "content_hash": "2e1ea6d1bf0e655cb7abac6bd9153817f15eb07106e09e68ef7e6c776ba72304",
+      "size_bytes": 19086
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/count_vectorizer_operator.h",
+      "source_type": "source",
+      "content_hash": "386a3f5fe8e8eec5f8705e902ad1fc88ccf947149e2b63fb9995cdbda7f71fb4",
+      "size_bytes": 2103
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/decision_tree_model.cpp",
+      "source_type": "source",
+      "content_hash": "e40e2ccb0eddc0df5e97a2acba09150d72ae5541e93a72d82270d29267cf6234",
+      "size_bytes": 2071
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/decision_tree_model.h",
+      "source_type": "source",
+      "content_hash": "14fb56fbb27b581ad172a88d161782e42c3d3cf00fa3a35d3b3d6613e4f1b36f",
+      "size_bytes": 1310
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/decision_tree_operator.cpp",
+      "source_type": "source",
+      "content_hash": "7ea50c99a99ab8969e967339c59e68962cc1743d38088d834f9a1ec4415c2414",
+      "size_bytes": 8266
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/decision_tree_operator.h",
+      "source_type": "source",
+      "content_hash": "9a2eb25688092c70206005beccfc275138b6f31fa2a59c78ff1c8e88812be52a",
+      "size_bytes": 1082
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/decision_tree_trainer.cpp",
+      "source_type": "source",
+      "content_hash": "796509a5183fd807607ed106cd30de7b40abf70068e0329e01bb55dba7595d44",
+      "size_bytes": 9641
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/decision_tree_trainer.h",
+      "source_type": "source",
+      "content_hash": "b3f826228ef726efa874226ac0472b7be03872a9fbc839a38ff1044a89c32fd9",
+      "size_bytes": 1819
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/differencing_operator.cpp",
+      "source_type": "source",
+      "content_hash": "c2dfdc9d63783e80676fd007b67a849f6ecb641500062cf6e26fa8127a45e7db",
+      "size_bytes": 5500
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/differencing_operator.h",
+      "source_type": "source",
+      "content_hash": "5866e8a38dd32d580ec5f4d3d520e383b96795a507660bff30322289bc6493ac",
+      "size_bytes": 1519
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/feature_matrix_utils.h",
+      "source_type": "source",
+      "content_hash": "f59a241382bb8ea146afcaff9dafd3cc59f78864996c2e3ac3bf2048e471a562",
+      "size_bytes": 6196
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/gradient_boosting_model.cpp",
+      "source_type": "source",
+      "content_hash": "76a64be5f32522a709bbbcfccf1d98b98b9d29fac8d4876892fbe389d6c40160",
+      "size_bytes": 3629
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/gradient_boosting_model.h",
+      "source_type": "source",
+      "content_hash": "ccc4d607f03411c102d3ecf76810e9a9f366e437cc0aada2bb4d2f3846b11208",
+      "size_bytes": 2035
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/gradient_boosting_operator.cpp",
+      "source_type": "source",
+      "content_hash": "423fd4da95b5146087a1af1f947f9d737738b5aaedc23392ca5fc7d39c53f463",
+      "size_bytes": 8624
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/gradient_boosting_operator.h",
+      "source_type": "source",
+      "content_hash": "aa010cfb7fb4d727a7fdf559f212b3ba298c19fe1670aeab38d45e61b0335a7b",
+      "size_bytes": 1065
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/gradient_boosting_trainer.cpp",
+      "source_type": "source",
+      "content_hash": "9e43d61ea1c545e84655f4bd51d7f759e3c8731dc4f50ff6f4a3105188fbc64d",
+      "size_bytes": 8957
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/gradient_boosting_trainer.h",
+      "source_type": "source",
+      "content_hash": "297955cc72b1069821236cd9a09d6d1c0a6b68e1171a0934b588c24116bb3e0d",
+      "size_bytes": 1846
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/identity_operator.h",
+      "source_type": "source",
+      "content_hash": "5aa899336af26b6f6a1b5a4b20f42e3b1977faeebb8bb037852d20878ec9cec9",
+      "size_bytes": 1988
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/kmeans_executor.cpp",
+      "source_type": "source",
+      "content_hash": "ea8f5f0215b92a601bb4bfb7b600f951c58c7b93251ecdc550856990accd3122",
+      "size_bytes": 15378
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/kmeans_executor.h",
+      "source_type": "source",
+      "content_hash": "c8732ba1946091a0de9d2f3f6a9986c7d26cdb4a30da9c75b08fe8f0a4b7f79a",
+      "size_bytes": 2571
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/log_transform_operator.cpp",
+      "source_type": "source",
+      "content_hash": "58cba9eb7cef5b8e62dade8b3655c9769aa08b9e844ea5c8c0c60540aa0f49fe",
+      "size_bytes": 3553
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/log_transform_operator.h",
+      "source_type": "source",
+      "content_hash": "27b28fc8096280e03eae3bde1b9fc7a5ea8c2eec218abc1b4bf296c39f488868",
+      "size_bytes": 1202
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/node_executor.h",
+      "source_type": "source",
+      "content_hash": "2067a9a3b801ecc9ba9db119c5631eb4ccde08314961ac5c026a5ccd7dc9c13f",
+      "size_bytes": 3047
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/node_executor_factory.h",
+      "source_type": "source",
+      "content_hash": "a96facfff29d1e835799dba04f44e266a7a3013eecaba8c61bfe645c0f1dae37",
+      "size_bytes": 3407
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/pca_operator.cpp",
+      "source_type": "source",
+      "content_hash": "d5c50d7fe587818602ed68ba1068e47004529fef36db7d22d80ac6a8e5f74836",
+      "size_bytes": 15088
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/pca_operator.h",
+      "source_type": "source",
+      "content_hash": "585b8ddf8016adc430ff3f87f73abc23918543006dc69b0faed113c068c16c18",
+      "size_bytes": 2438
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/pipeline_operator.h",
+      "source_type": "source",
+      "content_hash": "b4e3d10e95a2857963714bdbff16e4363f87a86376df7f339159b2041e5b581b",
+      "size_bytes": 4125
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/pipeline_operator_factory.cpp",
+      "source_type": "source",
+      "content_hash": "be94bf0ecaaaf4c0f0e871d41d47d1ae9f19dd61f42d28abf5ad7e222156da17",
+      "size_bytes": 8043
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/pipeline_operator_factory.h",
+      "source_type": "source",
+      "content_hash": "b641a8c0b9e8438c9dc6454f6ead68212b9dea737ae2994affc52abcc391a3d6",
+      "size_bytes": 1658
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/preprocessing_operators.cpp",
+      "source_type": "source",
+      "content_hash": "11553fd93a212bf608217489dea1d249881b753fd746cfffcec1acc0eca6fe0c",
+      "size_bytes": 34780
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/preprocessing_operators.h",
+      "source_type": "source",
+      "content_hash": "a785d103d6e7091a3aa1799f242b0deadd3277dec814e55e1f1553ceb2eacee5",
+      "size_bytes": 9489
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/random_forest_model.cpp",
+      "source_type": "source",
+      "content_hash": "e6aafbd883ff449ee5c5b5369924da11c5424cc4c8c6b7e9106af7b19baf46d3",
+      "size_bytes": 1977
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/random_forest_model.h",
+      "source_type": "source",
+      "content_hash": "73eae300194d313e6f665e21b6527bceb2ca4e45114c271180ca13b17b97a884",
+      "size_bytes": 1148
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/random_forest_operator.cpp",
+      "source_type": "source",
+      "content_hash": "8130ef9fff4795743b37fdb99bc50841862419c46c777bf89b00d0616e5a4408",
+      "size_bytes": 9274
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/random_forest_operator.h",
+      "source_type": "source",
+      "content_hash": "4f47a8271c10e3b646cc4787a353388b84840c2dcbd9ccb9ee095905af733932",
+      "size_bytes": 1049
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/random_forest_trainer.cpp",
+      "source_type": "source",
+      "content_hash": "d5509da2f20baca87f5c2240d4ba01356f9601a1dab2aabcbacac2fca18752ef",
+      "size_bytes": 4645
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/random_forest_trainer.h",
+      "source_type": "source",
+      "content_hash": "9b8be08e5872b1599c17e370945e8c748655fd0f14258016dcb1eb0eb3c54044",
+      "size_bytes": 1196
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/regression_operators.cpp",
+      "source_type": "source",
+      "content_hash": "f3872dbdc338fc0c2ad5c78d8a220489d7b3b88f1884b6ac6ab04bee45646c26",
+      "size_bytes": 11361
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/regression_operators.h",
+      "source_type": "source",
+      "content_hash": "f7076138bf5354e263555d41ce33e51adc3ca4da78dfdd6cf96023f08de4b8c6",
+      "size_bytes": 3206
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/sentiment_analyzer_operator.cpp",
+      "source_type": "source",
+      "content_hash": "b31d6640edd66fa3ff214398efdd6a30d2e1bd38d2e93931da551a862aa61101",
+      "size_bytes": 9514
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/sentiment_analyzer_operator.h",
+      "source_type": "source",
+      "content_hash": "b38695f1f3e2b7da8649e962321b2a1ec84b985a5591174be0a4a859d80b6925",
+      "size_bytes": 2034
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/signal_processing_operators.cpp",
+      "source_type": "source",
+      "content_hash": "0db88b8bec96b27d7cb48eb8b5e3428f3f3a68ea0dc3fd4cb4969803b7957ae1",
+      "size_bytes": 18573
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/signal_processing_operators.h",
+      "source_type": "source",
+      "content_hash": "06c4213a1fcdc0ad53fde63e70a685960ac494f71bb21aba18fde336fb36170a",
+      "size_bytes": 5219
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/text_column_utils.h",
+      "source_type": "source",
+      "content_hash": "12ee9ed10e93d53f2471cb54a5e64fad30596d611986c9bba8182b30822593a5",
+      "size_bytes": 6548
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/text_tokenizer_operator.cpp",
+      "source_type": "source",
+      "content_hash": "6dbfb21fe54c3c7dad71818911a0fa0da6438bb687afa48e03853542518987ad",
+      "size_bytes": 14421
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/text_tokenizer_operator.h",
+      "source_type": "source",
+      "content_hash": "8b9fffadf4a0f280ed3740c65fe691218bab8df39017f2d5a5fcc5325745ce06",
+      "size_bytes": 3266
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/tfidf_vectorizer_operator.cpp",
+      "source_type": "source",
+      "content_hash": "974a3a9cd2bd96ca1c1ddf93ea87dcdafe24fe0c9a5caae7fb4779ba2c4e0be9",
+      "size_bytes": 22141
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/tfidf_vectorizer_operator.h",
+      "source_type": "source",
+      "content_hash": "737f72e4c9ac6f0fa516d5427a0185d45dfa4326c372727489fe2d8db2246a1d",
+      "size_bytes": 2663
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/time_series_analysis_operators.cpp",
+      "source_type": "source",
+      "content_hash": "889612d8c1675d3b7056741f369725f3d611ec9679dd05dbd936e7555bbbdaef",
+      "size_bytes": 32855
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/time_series_analysis_operators.h",
+      "source_type": "source",
+      "content_hash": "3875114dc111c7b0e3a30b164b48a992fa597b0ca6bcf3699202d9803d58a326",
+      "size_bytes": 8508
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/time_series_features_operator.cpp",
+      "source_type": "source",
+      "content_hash": "d411ec78efa838672439884ea7f076cea5469ee73813f09fc28525f771d4d826",
+      "size_bytes": 14369
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/time_series_features_operator.h",
+      "source_type": "source",
+      "content_hash": "21471526f29698092ef0e28b4c7d8a64bf4b0977a85ea31b0d41d18802fe3414",
+      "size_bytes": 2180
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/time_series_split_operator.cpp",
+      "source_type": "source",
+      "content_hash": "acaf123971a41ed9ad9cb37c9dc7c966083205f58b9200f908b66469a1fbec44",
+      "size_bytes": 6805
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/time_series_split_operator.h",
+      "source_type": "source",
+      "content_hash": "cb6991a7082ff6f41a57b055da51bd0a1f778fefc9e11b8744f9d316f124a844",
+      "size_bytes": 2527
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/time_series_window_operator.cpp",
+      "source_type": "source",
+      "content_hash": "b234246abb5dad6ed93239bb1aca868a87c5368b8d799f2f517c1c336627e7ff",
+      "size_bytes": 15447
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/time_series_window_operator.h",
+      "source_type": "source",
+      "content_hash": "96e4e58a8cf313c8466f473d8289a9dd2e3560fcf6677e0cd66e93080c8570e4",
+      "size_bytes": 3655
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/tree_classification_utils.cpp",
+      "source_type": "source",
+      "content_hash": "dcdeae2e16836b4e7c00f949d7922ac0978be7cf2c7cc4618822d9bbaa8868c2",
+      "size_bytes": 7928
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/tree_classification_utils.h",
+      "source_type": "source",
+      "content_hash": "c0e314bca5c08243911b6ed12043bbd62de7194a121b6ac8e83461227b03e505",
+      "size_bytes": 1299
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/tree_model_artifact.cpp",
+      "source_type": "source",
+      "content_hash": "0f427e6884bb88defc09eea3449b7aadfd9099f61a8a75817ed27efb241df7a6",
+      "size_bytes": 11894
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/tree_model_artifact.h",
+      "source_type": "source",
+      "content_hash": "e5aa66b2e13465f4ac2bf85db7703c53ffefc1a43cc008966f5f90b53c93b627",
+      "size_bytes": 1487
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/tree_model_predictor_operator.cpp",
+      "source_type": "source",
+      "content_hash": "9d9e897b1528cf3b144f306f034b200d5d82aecbab6c99a4868be462ed35a15b",
+      "size_bytes": 9216
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/tree_model_predictor_operator.h",
+      "source_type": "source",
+      "content_hash": "a627f2f6aebec173206821dbf35d57d3078a6f52c8e08e4f872fbc11693f5448",
+      "size_bytes": 935
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_executors/ts_column_utils.h",
+      "source_type": "source",
+      "content_hash": "968d2c7077073036f97a211c77a336cc10fb6588f238d080bbe216a67e5246fd",
+      "size_bytes": 6409
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_metadata.h",
+      "source_type": "source",
+      "content_hash": "8599ac2dbf54ae68a74652229e2b0c0a0aa3a19530e64c3fd509d282de52f05d",
+      "size_bytes": 5818
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_metadata_registry.cpp",
+      "source_type": "source",
+      "content_hash": "28f5fa4da47c1606bf31666aeb80dc43da2f9af3b27fd72bb32f9ab9b237d5ad",
+      "size_bytes": 196592
+    },
+    {
+      "path": "cyxwiz-engine/src/core/node_metadata_registry.h",
+      "source_type": "source",
+      "content_hash": "1737453c7fdbe55e773d69397cb23cd40b750a47dc6a58bb7a8626a837d0dd5a",
+      "size_bytes": 5902
+    },
+    {
+      "path": "cyxwiz-engine/src/core/parquet_arrow_batcher.cpp",
+      "source_type": "source",
+      "content_hash": "40968fbc9b10ff3a9e1431ec1f71493342f9a857ace493209e3e917494b99b80",
+      "size_bytes": 31838
+    },
+    {
+      "path": "cyxwiz-engine/src/core/parquet_arrow_batcher.h",
+      "source_type": "source",
+      "content_hash": "1139127881edbbcd026e7d66f2e7c81102d6ec86ce6236fc0cb454fe23ebaa73",
+      "size_bytes": 5409
+    },
+    {
+      "path": "cyxwiz-engine/src/core/parquet_backed_dataset.cpp",
+      "source_type": "source",
+      "content_hash": "4ab1aeea96c3cda18f1a0ba1327ccb9cd9fb544945ab786c607a0ade9fe97522",
+      "size_bytes": 23143
+    },
+    {
+      "path": "cyxwiz-engine/src/core/parquet_backed_dataset.h",
+      "source_type": "source",
+      "content_hash": "209ef056a2e26a8bbd3f14788af8e36f6354a62fbb6073c6cb07e26f9f8d13d4",
+      "size_bytes": 6463
+    },
+    {
+      "path": "cyxwiz-engine/src/core/pipeline_executor.cpp",
+      "source_type": "source",
+      "content_hash": "0ba02075f249a2ed9ba76cf140b0169dfddf2394310f22b6b3c6503fec3a695c",
+      "size_bytes": 359350
+    },
+    {
+      "path": "cyxwiz-engine/src/core/pipeline_executor.h",
+      "source_type": "source",
+      "content_hash": "1f713f8daa6f05dca21f6b2ba1c65b1e04de5bbf61cc708e5176a308f00c4cf8",
+      "size_bytes": 11176
+    },
+    {
+      "path": "cyxwiz-engine/src/core/pipeline_materializer.cpp",
+      "source_type": "source",
+      "content_hash": "b39e25b470d77c93008de3e42c1816b887020035102548dbf3954fbe16bbdedd",
+      "size_bytes": 5613
+    },
+    {
+      "path": "cyxwiz-engine/src/core/pipeline_materializer.h",
+      "source_type": "source",
+      "content_hash": "c033e972ea9d09af61880d759ec11cc81991ff958aa20f6b3fc6cf67b5c59335",
+      "size_bytes": 3693
+    },
+    {
+      "path": "cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp",
+      "source_type": "source",
+      "content_hash": "52a3fdaaf7feeaf8120f117aae335c68ae6c6f344a078e8659b2b05fca0e846c",
+      "size_bytes": 75106
+    },
+    {
+      "path": "cyxwiz-engine/src/core/pipeline_runtime_capabilities.h",
+      "source_type": "source",
+      "content_hash": "b55b014dde2d5e9e7db6155e728a7eef3abe97c1b99e5b8a726d87f52db6eb15",
+      "size_bytes": 9576
+    },
+    {
+      "path": "cyxwiz-engine/src/core/pipeline_table_materializer.cpp",
+      "source_type": "source",
+      "content_hash": "5af734c8a2320023edc2c5f9309aacd80b1e8a6f44e59261567c344e4e793b3b",
+      "size_bytes": 12909
+    },
+    {
+      "path": "cyxwiz-engine/src/core/prefetch_batcher.h",
+      "source_type": "source",
+      "content_hash": "cc80c685ca00de5bed2c539abbe9c6af410108b4ca067c475bd68c7929a825da",
+      "size_bytes": 4309
+    },
+    {
+      "path": "cyxwiz-engine/src/core/preflight_validator.cpp",
+      "source_type": "source",
+      "content_hash": "57ca82a53cf7a7924dede65401ec102f6fc2e99de9504ea9050c17d69f386d7f",
+      "size_bytes": 5721
+    },
+    {
+      "path": "cyxwiz-engine/src/core/preflight_validator.h",
+      "source_type": "source",
+      "content_hash": "10a36b94b95ed62d00424e97bd1dd6d2c652cb96ffe8d23111ffe97cbe8bc41d",
+      "size_bytes": 408
+    },
+    {
+      "path": "cyxwiz-engine/src/core/profiler_trace.h",
+      "source_type": "source",
+      "content_hash": "917a7db5d4d6051d95483a4195cb0acd29901413c3ef16d7aaace4dfa429bccf",
+      "size_bytes": 216
+    },
+    {
+      "path": "cyxwiz-engine/src/core/project_manager.cpp",
+      "source_type": "source",
+      "content_hash": "d08b0f64504ac175bde19061a6fea2f97bf856800c058a60f541571192b7cfed",
+      "size_bytes": 31919
+    },
+    {
+      "path": "cyxwiz-engine/src/core/project_manager.h",
+      "source_type": "source",
+      "content_hash": "c558d413e625f9752767ce6d18649d925a5d2f43c1ef007c5fb6113a133277a0",
+      "size_bytes": 5642
+    },
+    {
+      "path": "cyxwiz-engine/src/core/python_detector.cpp",
+      "source_type": "source",
+      "content_hash": "0cc865a385705cd85e4acbf52fa7b906e5cd72aa5e7b4dbe24c53f691e9d7ab2",
+      "size_bytes": 10728
+    },
+    {
+      "path": "cyxwiz-engine/src/core/python_detector.h",
+      "source_type": "source",
+      "content_hash": "588f3e464248d4acf29128ebf60d3a902fa4aec9a55f5ba8267dc96d56a364c4",
+      "size_bytes": 4044
+    },
+    {
+      "path": "cyxwiz-engine/src/core/rl_script_generator.cpp",
+      "source_type": "source",
+      "content_hash": "73559c2e6ff7ee6959ee900a6e97e5b510df8f034c26ea475024b5846a89247d",
+      "size_bytes": 10276
+    },
+    {
+      "path": "cyxwiz-engine/src/core/rl_script_generator.h",
+      "source_type": "source",
+      "content_hash": "65dd836b95eccb0fce2ef30ed27dbf307b3732d64f7bf854afaea2b12f72dce8",
+      "size_bytes": 408
+    },
+    {
+      "path": "cyxwiz-engine/src/core/rl_training_executor.cpp",
+      "source_type": "source",
+      "content_hash": "575d0312170f1d65749ff0cdb4415043af9447c49dc434b28b2ad3a093d7ef1e",
+      "size_bytes": 12001
+    },
+    {
+      "path": "cyxwiz-engine/src/core/rl_training_executor.h",
+      "source_type": "source",
+      "content_hash": "e609f590f58156a6a9f89164ffbb3c00f2f8a11356f25297e25dac844946c035",
+      "size_bytes": 3034
+    },
+    {
+      "path": "cyxwiz-engine/src/core/sequence_arrow_batcher.cpp",
+      "source_type": "source",
+      "content_hash": "df6a5df4f2588d47a345c350da12f09fce3db06aa5c5138bf91a824ba42f2754",
+      "size_bytes": 15007
+    },
+    {
+      "path": "cyxwiz-engine/src/core/sequence_arrow_batcher.h",
+      "source_type": "source",
+      "content_hash": "66bd945da1acb0cc5d7ee8ed900e6216cc4ea6f0c617e6ab507e31f81ac3c1ff",
+      "size_bytes": 944
+    },
+    {
+      "path": "cyxwiz-engine/src/core/sequence_batcher.h",
+      "source_type": "source",
+      "content_hash": "eb08d0d7e797636309cf654545f960160e79c466b9f76434b36177e847dad4ce",
+      "size_bytes": 9563
+    },
+    {
+      "path": "cyxwiz-engine/src/core/sequence_inference_response.h",
+      "source_type": "source",
+      "content_hash": "a22e33532a0b5ce49283236bddb4d5d9c4544f64cffd83bfafe65976b62be9d5",
+      "size_bytes": 2883
+    },
+    {
+      "path": "cyxwiz-engine/src/core/sequence_model_input.h",
+      "source_type": "source",
+      "content_hash": "e23e480f0be56f264069987fb36185ea28bbe2cedf9a7c4eb3e8750678e08561",
+      "size_bytes": 3390
+    },
+    {
+      "path": "cyxwiz-engine/src/core/sequence_tag_metrics.h",
+      "source_type": "source",
+      "content_hash": "d6c6f14a25b2984085d9d22ddb988e2986dfcbd1074d5af78df91e999b596308",
+      "size_bytes": 9146
+    },
+    {
+      "path": "cyxwiz-engine/src/core/sequence_training_step.h",
+      "source_type": "source",
+      "content_hash": "18d09d2eeb2255141e211aa1382da8d1532d6bdfa5876b9cd2a3f246f57a4e33",
+      "size_bytes": 4833
+    },
+    {
+      "path": "cyxwiz-engine/src/core/sequence_vocabulary.h",
+      "source_type": "source",
+      "content_hash": "93df65e2b28fde9e58e228e0d9682e5af1d4aa39eecefbf1d11f55300bd4ecce",
+      "size_bytes": 5539
+    },
+    {
+      "path": "cyxwiz-engine/src/core/smoke_run_executor.cpp",
+      "source_type": "source",
+      "content_hash": "ac018dca5990e8ca1696bece07205ba6d455af022047e4269d69edd5a0d85bc3",
+      "size_bytes": 15484
+    },
+    {
+      "path": "cyxwiz-engine/src/core/smoke_run_executor.h",
+      "source_type": "source",
+      "content_hash": "6ce6d840477fbc7800055af4d2547af1ea84c87e9ef4a950431ede7befdbcd23",
+      "size_bytes": 795
+    },
+    {
+      "path": "cyxwiz-engine/src/core/split_partitioning.h",
+      "source_type": "source",
+      "content_hash": "90e18f00401b6b17b8f244443c50af564ab2b4171da52d02c8a140e3f387f19e",
+      "size_bytes": 9195
+    },
+    {
+      "path": "cyxwiz-engine/src/core/synthetic_batch.cpp",
+      "source_type": "source",
+      "content_hash": "2d5cd28cdc25fedd69c5972a25486400cd1a21ee19d282c5d0d18effe19b2298",
+      "size_bytes": 5237
+    },
+    {
+      "path": "cyxwiz-engine/src/core/synthetic_batch.h",
+      "source_type": "source",
+      "content_hash": "826965a4152d5ca507a2bcadda6facfa58eb1a0622d78a41b22857f9145f7a94",
+      "size_bytes": 1477
+    },
+    {
+      "path": "cyxwiz-engine/src/core/test_executor.cpp",
+      "source_type": "source",
+      "content_hash": "62c7735d04a75b37128fbe1ae0811eb534845c64103b3502470fb2d604b9afcc",
+      "size_bytes": 34269
+    },
+    {
+      "path": "cyxwiz-engine/src/core/test_executor.h",
+      "source_type": "source",
+      "content_hash": "7ffbad60071cc57df83aff1b77bb5819c6a24f80884739de179b5400df53ad1a",
+      "size_bytes": 5763
+    },
+    {
+      "path": "cyxwiz-engine/src/core/test_manager.cpp",
+      "source_type": "source",
+      "content_hash": "171f6f5fdb4d36af76451df4ff6e7a0a241fb96741c2b16821ad9be58eb1f526",
+      "size_bytes": 14004
+    },
+    {
+      "path": "cyxwiz-engine/src/core/test_manager.h",
+      "source_type": "source",
+      "content_hash": "fbe5eea9bbc8c9be887bd3b8e11ab7fc7d56cf189c40d025feee516ce51b2d3c",
+      "size_bytes": 4091
+    },
+    {
+      "path": "cyxwiz-engine/src/core/text_arrow_adapter.cpp",
+      "source_type": "source",
+      "content_hash": "860bceda2ccf6acb41aad0a8ac24a8d6ee18d73ec36d81890f56978704405f44",
+      "size_bytes": 1985
+    },
+    {
+      "path": "cyxwiz-engine/src/core/text_arrow_adapter.h",
+      "source_type": "source",
+      "content_hash": "35803220b0107df627a61dfdb777031510a0b7d7edde28e6778925f34512dea2",
+      "size_bytes": 746
+    },
+    {
+      "path": "cyxwiz-engine/src/core/text_dataset_batcher.cpp",
+      "source_type": "source",
+      "content_hash": "64dd87e5213f468d3a9f362ba0e02c0484d2ccc2bbb95e33eb68fba4219e63ec",
+      "size_bytes": 10574
+    },
+    {
+      "path": "cyxwiz-engine/src/core/text_dataset_batcher.h",
+      "source_type": "source",
+      "content_hash": "30e3973cab07568d5c47ee503da07be401058c6cb816642ee73157d632cef26c",
+      "size_bytes": 2847
+    },
+    {
+      "path": "cyxwiz-engine/src/core/text_preprocessing_tracer.cpp",
+      "source_type": "source",
+      "content_hash": "2a0ce4fb079ce451a9f46a7a82820e37c7f16eeb4a8aa3e1447baddb688532ab",
+      "size_bytes": 12710
+    },
+    {
+      "path": "cyxwiz-engine/src/core/text_preprocessing_tracer.h",
+      "source_type": "source",
+      "content_hash": "3f223ab53b995bd825d3b987a9bd8b2155a4c60f257939249cd8ce7427af40cc",
+      "size_bytes": 626
+    },
+    {
+      "path": "cyxwiz-engine/src/core/texture_manager.cpp",
+      "source_type": "source",
+      "content_hash": "6183f9f9e099504a0c1c7a6b4d7be2052a866937c4229c0f31d7c043d1b083b1",
+      "size_bytes": 9588
+    },
+    {
+      "path": "cyxwiz-engine/src/core/texture_manager.h",
+      "source_type": "source",
+      "content_hash": "2d6eda3a6b8167548382a158113f5b4111bc188773ca4d02fbb903aefb362f2b",
+      "size_bytes": 4682
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_batcher_setup.cpp",
+      "source_type": "source",
+      "content_hash": "a1c876b2a8fd1e342e6a0ef24dc57b3e473fd3d86f1a68568c4eb2d2af9f2846",
+      "size_bytes": 20453
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_batcher_setup.h",
+      "source_type": "source",
+      "content_hash": "df335dfec97d70874136c553aa65aaf8e70e0bd1f1753be378ac436c7b4bcee8",
+      "size_bytes": 1883
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_executor.cpp",
+      "source_type": "source",
+      "content_hash": "62c08b4d290526f11189ae4565790cf29ef60b152aa9e6e80d1b6a579f308f37",
+      "size_bytes": 83865
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_executor.h",
+      "source_type": "source",
+      "content_hash": "b0d6e90e64b1a8032488d8b34ec32f084f3ec9fa678fc956fbf93447c10bc993",
+      "size_bytes": 11239
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_manager.cpp",
+      "source_type": "source",
+      "content_hash": "f62b859fe2493436f51c7b413f12717735fcf5ab5aa8eb7e0e8760c5456230d0",
+      "size_bytes": 36721
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_manager.h",
+      "source_type": "source",
+      "content_hash": "9d91cde317c6cab01bb87fce383ad4e094569ed1c8ab5ff71b806e1e83d26be7",
+      "size_bytes": 9399
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_run_comparison.h",
+      "source_type": "source",
+      "content_hash": "31fc6cd86c5daf8ddf17f34a0fb4e5d288777fe0ee78c97f8eebf669cfea34f6",
+      "size_bytes": 13847
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_run_comparison_record.h",
+      "source_type": "source",
+      "content_hash": "20ce4d0f8978ba5046bc26a9b1320856a7c6e068e3f46f0b9804f5dc77256273",
+      "size_bytes": 1312
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_trace_collector.cpp",
+      "source_type": "source",
+      "content_hash": "0a281ad403212557320588a1b6eb4b373275f666b536481fb5f6a06e7cf5f5e2",
+      "size_bytes": 19193
+    },
+    {
+      "path": "cyxwiz-engine/src/core/training_trace_collector.h",
+      "source_type": "source",
+      "content_hash": "1eaedc9964ecdca932585c790ec37fcd397577c52a1671d0e27c671558878d25",
+      "size_bytes": 4852
+    },
+    {
+      "path": "cyxwiz-engine/src/core/transformer_primitive_contracts.cpp",
+      "source_type": "source",
+      "content_hash": "35236d751b95e24fda00d336dfe51461ece96fe286af23b8453045885f6bf9a8",
+      "size_bytes": 5534
+    },
+    {
+      "path": "cyxwiz-engine/src/core/transformer_primitive_contracts.h",
+      "source_type": "source",
+      "content_hash": "1cd39ca4922e469018e88c5132eef728809adad1599e4310a6f3c02a5b707e4e",
+      "size_bytes": 727
+    },
+    {
+      "path": "cyxwiz-engine/src/core/window_manager.cpp",
+      "source_type": "source",
+      "content_hash": "a1cdace4ae73a00c8e3d4e14b8a93929ed8b37eb1048d45f3463fce225804c3c",
+      "size_bytes": 7874
+    },
+    {
+      "path": "cyxwiz-engine/src/core/window_manager.h",
+      "source_type": "source",
+      "content_hash": "3f5962ee062a9b871fd8eaee5403118adfd97d68d205820a6f3055822c0f705c",
+      "size_bytes": 3462
+    },
+    {
+      "path": "cyxwiz-engine/src/core/worker_defaults.h",
+      "source_type": "source",
+      "content_hash": "7c152b64639aee1215e0c83f86006e3494a92e8a4ba34382567635402a620e7c",
+      "size_bytes": 529
+    },
+    {
+      "path": "docs/Data Studio/AGENT_INTEGRATION_GUIDE.md",
+      "source_type": "markdown",
+      "content_hash": "9c6762c49a09493f2a44e6713635286bacffa05b63ba6541877e553c6d183536",
+      "size_bytes": 12619
+    },
+    {
+      "path": "docs/Data Studio/cyxwiz_studio_upgrade_design.md",
+      "source_type": "markdown",
+      "content_hash": "ecf96e6deba5f1f8092fc79e1d624d7c91dc15efca4f8768169c4f9216aece25",
+      "size_bytes": 44417
+    },
+    {
+      "path": "docs/Data Studio/data_pipeline.md",
+      "source_type": "markdown",
+      "content_hash": "94d8bf211c0eff28161093238184a351ba6b113e50f3eb1a1bca1d02ac135d54",
+      "size_bytes": 11778
+    },
+    {
+      "path": "docs/Data Studio/DATASTUDIO_AGENT_SPECIFICATION.md",
+      "source_type": "markdown",
+      "content_hash": "7c867581b35a19a73c4c355acf6c1b5e26a16adcf3a2efcaa57200220893ecb8",
+      "size_bytes": 20665
+    },
+    {
+      "path": "docs/Data Studio/design_patterns_and_edge_cases.md",
+      "source_type": "markdown",
+      "content_hash": "b259f802ec660d443742402994d55a37655351ea8145a7bf89f7b98a24e8013c",
+      "size_bytes": 27899
+    },
+    {
+      "path": "docs/Data Studio/done.md",
+      "source_type": "markdown",
+      "content_hash": "9fbae07c1f67c306c1ff23c96b36769092ebf7217d6b077268a34bb6f0485a7c",
+      "size_bytes": 1422
+    },
+    {
+      "path": "docs/Data Studio/done1.md",
+      "source_type": "markdown",
+      "content_hash": "6097b458f5a526ac7dd77494523a746054601ebff1503b23fd3dd55704d29206",
+      "size_bytes": 47623
+    },
+    {
+      "path": "docs/Data Studio/done10.md",
+      "source_type": "markdown",
+      "content_hash": "162d86c4f0b7bdc9b085d95df34cb6274f6150cfca947f5256571098451b69f1",
+      "size_bytes": 7942
+    },
+    {
+      "path": "docs/Data Studio/done11.md",
+      "source_type": "markdown",
+      "content_hash": "e2d99e57ca992f938bf36d569d992e04bcb3af97c07ff79280735e4c4db52615",
+      "size_bytes": 3218
+    },
+    {
+      "path": "docs/Data Studio/done12.md",
+      "source_type": "markdown",
+      "content_hash": "9d0596a88faf503d9500e56b488c3ade0aee285c6d58cb45471c15afc876356f",
+      "size_bytes": 16062
+    },
+    {
+      "path": "docs/Data Studio/done13.md",
+      "source_type": "markdown",
+      "content_hash": "517e8b1ec72624897f0bb8b26643cc07fc9b9447f1506d272c42f4554e4242fb",
+      "size_bytes": 73710
+    },
+    {
+      "path": "docs/Data Studio/done14.md",
+      "source_type": "markdown",
+      "content_hash": "a36c47a3bb845054f3ccca204e5248e8e37a62eb68b68fcea5ba2913a31bcacb",
+      "size_bytes": 62358
+    },
+    {
+      "path": "docs/Data Studio/done15.md",
+      "source_type": "markdown",
+      "content_hash": "96edfafe5e1da909fdbd9635ea6737e33364842b4e9ad08a9cce4e7bbc8c4f62",
+      "size_bytes": 7620
+    },
+    {
+      "path": "docs/Data Studio/done16.md",
+      "source_type": "markdown",
+      "content_hash": "2d0e8480c7c8172731fd3b9f06de6bd4e2f2cb2ab1132e1332d58f7f8194a32c",
+      "size_bytes": 12897
+    },
+    {
+      "path": "docs/Data Studio/done17.md",
+      "source_type": "markdown",
+      "content_hash": "e0765b131668555caa5e002f2b3bb988d8f092b7e95611579d2ead592464c466",
+      "size_bytes": 29584
+    },
+    {
+      "path": "docs/Data Studio/done18.md",
+      "source_type": "markdown",
+      "content_hash": "64bd9f07e4881961ee68f76d7440bcde49d6ffe825934a129e8de883313d5b36",
+      "size_bytes": 3360
+    },
+    {
+      "path": "docs/Data Studio/done19.md",
+      "source_type": "markdown",
+      "content_hash": "884e8ebbd3b9d800cb610236917f3554389295e93fb5f35aff91b7fb5c20fb87",
+      "size_bytes": 32349
+    },
+    {
+      "path": "docs/Data Studio/done2.md",
+      "source_type": "markdown",
+      "content_hash": "f540ceaa241d084f39fb4ba70d6a2a8fc5a30aa25bf75fb7a0d3e9ea0bc4aaad",
+      "size_bytes": 54669
+    },
+    {
+      "path": "docs/Data Studio/done20.md",
+      "source_type": "markdown",
+      "content_hash": "6c2b9cb062a45ce82bf48c1ea2877f76abec2ed6dda324f7c8e8ab1342f87a24",
+      "size_bytes": 11364
+    },
+    {
+      "path": "docs/Data Studio/done21.md",
+      "source_type": "markdown",
+      "content_hash": "3110c51f585af27459ab99222b450739b40a9e74268b0b5611e03e223c3e1a9f",
+      "size_bytes": 13444
+    },
+    {
+      "path": "docs/Data Studio/done22.md",
+      "source_type": "markdown",
+      "content_hash": "b15dda7b24ebd5860c525aef936f4021d67b0e293d2bd96f0595b3f857e22182",
+      "size_bytes": 10993
+    },
+    {
+      "path": "docs/Data Studio/done24.md",
+      "source_type": "markdown",
+      "content_hash": "3851b39ff2e79ad2b653613393c99e8f7a89c3f33aa9b38828492e173ab5a96b",
+      "size_bytes": 9517
+    },
+    {
+      "path": "docs/Data Studio/done24_reopened.md",
+      "source_type": "markdown",
+      "content_hash": "bd7957027a35be3db0b70572a2f22320ecf9188256eb1259d7360b6fa11ae696",
+      "size_bytes": 6981
+    },
+    {
+      "path": "docs/Data Studio/done25.md",
+      "source_type": "markdown",
+      "content_hash": "d91c300f3595a8a2d1b726bc7c3f613fdd37e57a0e456eb2d0cd30b58f3190ef",
+      "size_bytes": 26197
+    },
+    {
+      "path": "docs/Data Studio/done26.md",
+      "source_type": "markdown",
+      "content_hash": "d7810844e2bc8910e164d1114697d205185babfd5bae417441941f8bfdbc4f30",
+      "size_bytes": 24052
+    },
+    {
+      "path": "docs/Data Studio/done27.md",
+      "source_type": "markdown",
+      "content_hash": "ee25b4f355164aab7d6f2440c29ea487c0d48e993da2381e7f5013c862291ceb",
+      "size_bytes": 6642
+    },
+    {
+      "path": "docs/Data Studio/done28.md",
+      "source_type": "markdown",
+      "content_hash": "1be06774e144b1ed3afa8d34bc316044ec83ab7f358c86b24e22258bee6d5476",
+      "size_bytes": 12235
+    },
+    {
+      "path": "docs/Data Studio/done3.md",
+      "source_type": "markdown",
+      "content_hash": "03580dfafeeefb7fc31b654795594310c76ff4bf3e12ca62da9eaafdd4cf0164",
+      "size_bytes": 48792
+    },
+    {
+      "path": "docs/Data Studio/done30.md",
+      "source_type": "markdown",
+      "content_hash": "0e3da0dfa080e8fc74d62e17d7f16e40920a616b1311ecca9ef66c5e8429a723",
+      "size_bytes": 15516
+    },
+    {
+      "path": "docs/Data Studio/done31.md",
+      "source_type": "markdown",
+      "content_hash": "f65933b03f5106d99584f148707d78038a68e49092a849819bfef95f485f4e6c",
+      "size_bytes": 6126
+    },
+    {
+      "path": "docs/Data Studio/done31_status.md",
+      "source_type": "markdown",
+      "content_hash": "ac0d6efd1b22c6f404559adb2117f4bd23fd7b390bc575299519a9948b295940",
+      "size_bytes": 3302
+    },
+    {
+      "path": "docs/Data Studio/done31a.md",
+      "source_type": "markdown",
+      "content_hash": "2208bc10b9becdae0257587cf34bce019bd0c71a25b2b8d98bc73951adbf47c6",
+      "size_bytes": 6765
+    },
+    {
+      "path": "docs/Data Studio/done31b.md",
+      "source_type": "markdown",
+      "content_hash": "86c23b85c8cfc0a8f3da47ba508c4e60e85210e4ed41444b6c6533d5694428b6",
+      "size_bytes": 3046
+    },
+    {
+      "path": "docs/Data Studio/done31c.md",
+      "source_type": "markdown",
+      "content_hash": "db4e5c9f0494064453fa43f3c1b4790749e3f01b6b90305ac2114bd9ae758699",
+      "size_bytes": 2318
+    },
+    {
+      "path": "docs/Data Studio/done31d.md",
+      "source_type": "markdown",
+      "content_hash": "46bf6b5cf3197b30f4d20c773441139f768c27d46fd9de6562415cccbcf2b396",
+      "size_bytes": 2044
+    },
+    {
+      "path": "docs/Data Studio/done31e.md",
+      "source_type": "markdown",
+      "content_hash": "cc743a27def18249ea765e939ccfa967e38616044a7891430ba63ebdb5b47dc3",
+      "size_bytes": 1625
+    },
+    {
+      "path": "docs/Data Studio/done35.md",
+      "source_type": "markdown",
+      "content_hash": "1cc15529aaceca7a55ced24efb12fb56d48a476560c152eb25a6c8ab27c7edf8",
+      "size_bytes": 28334
+    },
+    {
+      "path": "docs/Data Studio/done4.md",
+      "source_type": "markdown",
+      "content_hash": "8e35cf53c3a9ab15a364e3cbc4e7d230ba5fe3dcd9f5f5dafdc5709a491dcd45",
+      "size_bytes": 80769
+    },
+    {
+      "path": "docs/Data Studio/done40.md",
+      "source_type": "markdown",
+      "content_hash": "ac84c0e5123fd67359f5692ffe5b51a29a6edecb0a11ba8a8e733a7e10a21a86",
+      "size_bytes": 25633
+    },
+    {
+      "path": "docs/Data Studio/done44.md",
+      "source_type": "markdown",
+      "content_hash": "b82dadde8c817c14f07dd647a2d32d21e7caaec9c307967fb7b7629f2ac19b32",
+      "size_bytes": 6504
+    },
+    {
+      "path": "docs/Data Studio/done5.md",
+      "source_type": "markdown",
+      "content_hash": "d97c027068bfe800eb00ca23feb4b507193965ebb4f15bd2a575898040de561d",
+      "size_bytes": 76456
+    },
+    {
+      "path": "docs/Data Studio/done6.md",
+      "source_type": "markdown",
+      "content_hash": "dd8403ae3c6616a91bb24d888f6cf9b9e6eefcc7486939dff81706697937f3ad",
+      "size_bytes": 29030
+    },
+    {
+      "path": "docs/Data Studio/done7.md",
+      "source_type": "markdown",
+      "content_hash": "92e8f6178f1770214684942316224f043e7aa68643897cce205feffa426391f0",
+      "size_bytes": 23175
+    },
+    {
+      "path": "docs/Data Studio/done8.md",
+      "source_type": "markdown",
+      "content_hash": "1a5d933697e55775549e14d5377fc4f0d06a91b318948703e11937ce8a1b28a0",
+      "size_bytes": 9597
+    },
+    {
+      "path": "docs/Data Studio/done9.md",
+      "source_type": "markdown",
+      "content_hash": "ae9f0ff445ca7b564e72bbda8d79b8096d2f021a6618f9faf7638c5c9f15f41c",
+      "size_bytes": 40193
+    },
+    {
+      "path": "docs/Data Studio/donetrack22.md",
+      "source_type": "markdown",
+      "content_hash": "846646a0ecd9088d3ef815ddfd9d237449986ee8feec3c40b8bfe554a3404113",
+      "size_bytes": 26154
+    },
+    {
+      "path": "docs/Data Studio/e2epipeline_training.md",
+      "source_type": "markdown",
+      "content_hash": "207f90cae51bb461e39d5f62aa19086b011b5e4e059acf556171468533c9480d",
+      "size_bytes": 33006
+    },
+    {
+      "path": "docs/Data Studio/frontend_state_ownership.md",
+      "source_type": "markdown",
+      "content_hash": "7e09ba8243f1382829f9285e3e65a45b8c2482a26f0239d0cfe230561ac39c95",
+      "size_bytes": 5033
+    },
+    {
+      "path": "docs/Data Studio/future_examples.md",
+      "source_type": "markdown",
+      "content_hash": "9528cdc33e3a74158c481157772dcd92d1f65beca0c890eb71f411bbfd56a51f",
+      "size_bytes": 35958
+    },
+    {
+      "path": "docs/Data Studio/implementation_roadmap.md",
+      "source_type": "markdown",
+      "content_hash": "455e1fb413c2de8fbd4b8d00d19c6d90e400ff4f4ca00ee09cee904a3582dafa",
+      "size_bytes": 40656
+    },
+    {
+      "path": "docs/Data Studio/knime_comparison.md",
+      "source_type": "markdown",
+      "content_hash": "267e7d704dd064f033db79b21f47c0ee133dc6d2bbb022757ad70e50acce689d",
+      "size_bytes": 23742
+    },
+    {
+      "path": "docs/Data Studio/multi_format_data_pipeline_design.md",
+      "source_type": "markdown",
+      "content_hash": "46169739e0a8b79bceb735b79f55138a9582c7aeff5fa076677926ac713fe00d",
+      "size_bytes": 41782
+    },
+    {
+      "path": "docs/Data Studio/node_browser_user_guide.md",
+      "source_type": "markdown",
+      "content_hash": "9ce235f34226d6a2ef1dfc6222a6f6577fbddfac702b4f8b57af4ef9ff1868a1",
+      "size_bytes": 5831
+    },
+    {
+      "path": "docs/Data Studio/node_editor_handoff_usage.md",
+      "source_type": "markdown",
+      "content_hash": "683ec04304cdbcf1722c81241c6649219075625e22cf359e6b4bfb11e19a416d",
+      "size_bytes": 8422
+    },
+    {
+      "path": "docs/Data Studio/node_editor_workflow_contract.md",
+      "source_type": "markdown",
+      "content_hash": "f53c4e18011845ad5c5d88b65671d13b11e32cfce8d6e85d03239ce69b2bb030",
+      "size_bytes": 5024
+    },
+    {
+      "path": "docs/Data Studio/node_executor_architecture.md",
+      "source_type": "markdown",
+      "content_hash": "f9ae3ff95043465b27221dbe8e8fe0d877adc7b132c025c6e72366e17683c90b",
+      "size_bytes": 17765
+    },
+    {
+      "path": "docs/Data Studio/properties_panel_enhancement_design.md",
+      "source_type": "markdown",
+      "content_hash": "042d823364eee20d64de52b45674570894e5c8ca21abcb219c03041c24cc27d5",
+      "size_bytes": 25542
+    },
+    {
+      "path": "docs/Data Studio/README.md",
+      "source_type": "markdown",
+      "content_hash": "3387ca21df2a18525e33abda321d6855361bec9e1b3f29d0788d1bb3ff6520a4",
+      "size_bytes": 11272
+    },
+    {
+      "path": "docs/Data Studio/SYSTEM_DEBUGGER_ARCHI.md",
+      "source_type": "markdown",
+      "content_hash": "e6009ada19824c19759735951c24b2453945080d3e0b0d2a39e135bcd8aa7049",
+      "size_bytes": 23657
+    },
+    {
+      "path": "docs/Data Studio/tofix23.md",
+      "source_type": "markdown",
+      "content_hash": "85b017982e658396ef24ab68bf60a9d4d4b4b1fc7db2665d943343a6c8a8ad95",
+      "size_bytes": 7271
+    },
+    {
+      "path": "docs/Data Studio/tofix29.md",
+      "source_type": "markdown",
+      "content_hash": "b99996187dcf4164d01a5e01a4deeca9945fbae83d50ffccc61ebcb28346e5e8",
+      "size_bytes": 3786
+    },
+    {
+      "path": "docs/Data Studio/tofix32.md",
+      "source_type": "markdown",
+      "content_hash": "2f356dc395cf4fb79165a80ae13988bfe3721bd4d0a32be146a942ee27e98bd8",
+      "size_bytes": 29494
+    },
+    {
+      "path": "docs/Data Studio/tofix33.md",
+      "source_type": "markdown",
+      "content_hash": "8be25e6b9a78a8cb6dd3388388d9cbcf84149bb43618575b9ca3388864367600",
+      "size_bytes": 6409
+    },
+    {
+      "path": "docs/Data Studio/tofix34.md",
+      "source_type": "markdown",
+      "content_hash": "683a22df6129eb2eeef897c34b2f6c5e7c0cd8baaab84ef05721c3a60915fe11",
+      "size_bytes": 8598
+    },
+    {
+      "path": "docs/Data Studio/tofix36.md",
+      "source_type": "markdown",
+      "content_hash": "d8c02440650fc4c5e4b8a296c9e43be72dbad4d9efa48a398efece7a1f8be7b5",
+      "size_bytes": 6491
+    },
+    {
+      "path": "docs/Data Studio/tofix37.md",
+      "source_type": "markdown",
+      "content_hash": "70fd61025ff1f74157b23a7379d9e047a7c2b6467c92e75edd0eef92cb767353",
+      "size_bytes": 7159
+    },
+    {
+      "path": "docs/Data Studio/tofix38.md",
+      "source_type": "markdown",
+      "content_hash": "9dc03d2bf2e3d7f8346fa90a8d28509b8e31fd4a690a2c47da04b756adb742d3",
+      "size_bytes": 7362
+    },
+    {
+      "path": "docs/Data Studio/tofix39.md",
+      "source_type": "markdown",
+      "content_hash": "480f059c85ebdf02bfc64ad2f616073d1cc8a24c7530823ce6daa54f34be7cc8",
+      "size_bytes": 12524
+    },
+    {
+      "path": "docs/Data Studio/tofix41.md",
+      "source_type": "markdown",
+      "content_hash": "d3d6a7acaa9dff25c0cd40e7db14774539497cc7229529216a026950f9946815",
+      "size_bytes": 3892
+    },
+    {
+      "path": "docs/Data Studio/tofix42/knowledge_seed/cyxwiz_engine_overview.md",
+      "source_type": "markdown",
+      "content_hash": "0efd27abec2057cbf33400876a82b468f2ed774850019d20954e664b49297ba4",
+      "size_bytes": 1276
+    },
+    {
+      "path": "docs/Data Studio/tofix43.md",
+      "source_type": "markdown",
+      "content_hash": "7f81baa06b838eab98f7eec55ea325c4e23a6f8daa0f589e9370736d660a0d09",
+      "size_bytes": 6835
+    },
+    {
+      "path": "docs/Data Studio/tofix44.md",
+      "source_type": "markdown",
+      "content_hash": "b82dadde8c817c14f07dd647a2d32d21e7caaec9c307967fb7b7629f2ac19b32",
+      "size_bytes": 6504
+    },
+    {
+      "path": "docs/Data Studio/tofix45.md",
+      "source_type": "markdown",
+      "content_hash": "1e67a8fdf759d605037e84e13fcf5528b961ed3d2563ceac2d8f2369c3bfbdb6",
+      "size_bytes": 5111
+    },
+    {
+      "path": "docs/Data Studio/tofix46.md",
+      "source_type": "markdown",
+      "content_hash": "94955c06360df5c841bd27807889c75addc2d6756ad10f132b89e0c30507cafd",
+      "size_bytes": 3103
+    },
+    {
+      "path": "docs/Data Studio/tofix47.md",
+      "source_type": "markdown",
+      "content_hash": "0db9d7f836295cdb698eeaaa8a39dec4a728a229e289ae1f0d83bb76aa686fe2",
+      "size_bytes": 9675
+    },
+    {
+      "path": "docs/Data Studio/tofix48.md",
+      "source_type": "markdown",
+      "content_hash": "bfea349b128a53a47c7c13919a24d585cb5bbb2a71985c0ed4ffcc469f5f4aba",
+      "size_bytes": 5882
+    },
+    {
+      "path": "docs/Data Studio/tofix49.md",
+      "source_type": "markdown",
+      "content_hash": "f844a66f2c49394c7fbcd302e46a17c1d7bf151ebffbd7173d46107d562720e4",
+      "size_bytes": 2311
+    },
+    {
+      "path": "docs/Data Studio/tofix50.md",
+      "source_type": "markdown",
+      "content_hash": "2299ea0d0b3826760f7a7a8e3488f376beb6361755c2606f56f3856634176762",
+      "size_bytes": 1897
+    },
+    {
+      "path": "docs/Data Studio/tofix51.md",
+      "source_type": "markdown",
+      "content_hash": "8d3c27a8d12b35ffcdb23a42024c65fad52e9c5fe80b9fc8e28b0a350cf7f651",
+      "size_bytes": 1811
+    },
+    {
+      "path": "docs/Data Studio/tofix52.md",
+      "source_type": "markdown",
+      "content_hash": "377a0f27a0508963f77ff0bf38cfdbee6b4202de4d3a025a7f18dee3c6aef93a",
+      "size_bytes": 1822
+    },
+    {
+      "path": "docs/Data Studio/tofix53.md",
+      "source_type": "markdown",
+      "content_hash": "245f32b343d7d1dfc8f5e365f15230ab2db10ef18aa518f64200ffe63e431a35",
+      "size_bytes": 1801
+    },
+    {
+      "path": "docs/Data Studio/tofix54.md",
+      "source_type": "markdown",
+      "content_hash": "fa55d5038e14133abce26da57acf4dc81067b12d51e4938184a6f6cd1c8a3df6",
+      "size_bytes": 1392
+    },
+    {
+      "path": "docs/Data Studio/tofix55.md",
+      "source_type": "markdown",
+      "content_hash": "205447338f6bb5855014943ee222c9ccaa4ccb6763fcbd6385c5e1918da7f2dd",
+      "size_bytes": 1430
+    },
+    {
+      "path": "docs/Data Studio/tofix56.md",
+      "source_type": "markdown",
+      "content_hash": "fd65a4f48d425bebbf4a30f8f7d4e6a7f315d9e93cab5c9f9a1aec662724f7b6",
+      "size_bytes": 10003
+    },
+    {
+      "path": "docs/Data Studio/tofix_doc_truth_audit.md",
+      "source_type": "markdown",
+      "content_hash": "4dbaaaad4d30c8a36a9376948193604f385fd7a974c231e59e2c07681713a788",
+      "size_bytes": 26793
+    },
+    {
+      "path": "docs/Data Studio/tofix_parallel_workflow.md",
+      "source_type": "markdown",
+      "content_hash": "25d26e9f016d5228c4b4d00140ed739b3f69771cbcb24387861054620a6cea5c",
+      "size_bytes": 2618
+    },
+    {
+      "path": "docs/Data Studio/tool_panel_graph_migration_plan.md",
+      "source_type": "markdown",
+      "content_hash": "9cfdc6800c9512a03b625bd67810f8fff9461d5072994120c7d0a2669db9ba85",
+      "size_bytes": 5024
+    },
+    {
+      "path": "docs/Data Studio/track14.md",
+      "source_type": "markdown",
+      "content_hash": "fa0c4b914b72ae9efa8b40fe194c7730f35ce3f9ffb06c0874869f0e432f1a05",
+      "size_bytes": 19125
+    },
+    {
+      "path": "docs/Data Studio/track27.md",
+      "source_type": "markdown",
+      "content_hash": "82b0bc7ff3a50e9baa9a1066f2f86228b7aa1d4dfb3d7c91112083dd8a56d04a",
+      "size_bytes": 6351
+    },
+    {
+      "path": "docs/Data Studio/track28_done.md",
+      "source_type": "markdown",
+      "content_hash": "02cb520c3a067373f58ecd0a2090834f296a3903eba9fd9404ee01ae9b065035",
+      "size_bytes": 22344
+    },
+    {
+      "path": "docs/Data Studio/tracker13.md",
+      "source_type": "markdown",
+      "content_hash": "4455777539e0e5c6fad55652121f80d3bdf2cd27210ad402659655ed1d7b0b22",
+      "size_bytes": 12396
+    },
+    {
+      "path": "docs/Data Studio/tracker8_done.md",
+      "source_type": "markdown",
+      "content_hash": "3b65dd22840bfabd257f4a2e62a06f7dfa53562199b72d027998e64cd223dc30",
+      "size_bytes": 11312
+    },
+    {
+      "path": "docs/Data Studio/tracker9_done.md",
+      "source_type": "markdown",
+      "content_hash": "11b4baedffc8b9e17dd6bbd8fce3951cb31b509611862fac0c950adb43de09e5",
+      "size_bytes": 8452
+    },
+    {
+      "path": "docs/Data Studio/ui_specification.md",
+      "source_type": "markdown",
+      "content_hash": "8dfd68c8a233fd0047bfb3bd85bf4e2c4194dfbb8fea2b7932fc9f91dc6eb21b",
+      "size_bytes": 36681
+    },
+    {
+      "path": "docs/Data Studio/ux.md",
+      "source_type": "markdown",
+      "content_hash": "a392c1ec8409ebb4e052aa88ef680fffb3bd97acd891f88ce455ebbde36a5434",
+      "size_bytes": 5105
+    },
+    {
+      "path": "docs/usage/error_codes_and_diagnostics.md",
+      "source_type": "markdown",
+      "content_hash": "7e7c75f894abcd4215d7bf2b6b49fe6ca5c41b558da0f363e16c16bd06921f32",
+      "size_bytes": 7922
+    },
+    {
+      "path": "docs/usage/sentiment_text_classification.md",
+      "source_type": "markdown",
+      "content_hash": "38136a8ada9d72cb737132325257b00828e645353c9389fef162b631f33583cf",
+      "size_bytes": 1470
+    },
+    {
+      "path": "docs/usage/text_vectorizers.md",
+      "source_type": "markdown",
+      "content_hash": "b7fe3d7da1537014d0d0aecd3aa580101f41e4a4add7f520dfc8384e161759b9",
+      "size_bytes": 4142
+    },
+    {
+      "path": "docs/usage/training_checkpoints_and_early_stopping.md",
+      "source_type": "markdown",
+      "content_hash": "2f40d608b7443fb92a6cfe35d56b6813a69e947a5c194ae39d40875fa7a02593",
+      "size_bytes": 3612
+    },
+    {
+      "path": "docs/usage/transformer_nlp_blocks.md",
+      "source_type": "markdown",
+      "content_hash": "da3eb2f7538ead2ee8a68c6be020a1d43da7dbcadb9a2cf4de1b83598b293c34",
+      "size_bytes": 9358
+    },
+    {
+      "path": "examples/cyxgraph/audio/test_01_fallback_mode.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "c55738dcd6288b416d59c2624825828d816556374e31259fe6f4728089ac1f01",
+      "size_bytes": 3540
+    },
+    {
+      "path": "examples/cyxgraph/audio/test_02_mel_spectrogram.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "0a3c6fa6f51159b87d5cec77cc9f1cbffa11c5d899be5fc662cb7231c9e92e28",
+      "size_bytes": 4132
+    },
+    {
+      "path": "examples/cyxgraph/audio/test_03_mfcc.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "e122ab76ff8210c27873a3684f0afae87043c9c48dbd9ebf133c1ec248f4a49d",
+      "size_bytes": 4251
+    },
+    {
+      "path": "examples/cyxgraph/audio/test_04_spectrogram.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "44710fb28617800f50d3cf9f59024884bc1178318c2d7432a60a1705e0a1b562",
+      "size_bytes": 4369
+    },
+    {
+      "path": "examples/cyxgraph/audio/test_05_audio_augmentation.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "3167d7227ec67e61380d46c34bc97941c68b1c8f11fe3b0f185aef37f8ed46a3",
+      "size_bytes": 4683
+    },
+    {
+      "path": "examples/cyxgraph/audio/test_06_high_resolution_mel.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "6def34efb67345163ee0119e8523c4f05ce0015a30c4b21611629ab5d9a84e73",
+      "size_bytes": 4741
+    },
+    {
+      "path": "examples/cyxgraph/call_center_sentiment.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "c78359e1f7c6977b93be9f834f23b54111600d5ea047ab424a98062ebefeb58e",
+      "size_bytes": 5765
+    },
+    {
+      "path": "examples/cyxgraph/cats_dogs_classifier.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "0cfab35789d2994c0560d58fa2d0cc1bd74380d8f95d362f852488945dcd8c06",
+      "size_bytes": 3255
+    },
+    {
+      "path": "examples/cyxgraph/cats_dogs_classifier_demo.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "3381b87fc9345524510325740c1f15611ba653bc1c64d0a94f3d1d1256a31ad8",
+      "size_bytes": 4716
+    },
+    {
+      "path": "examples/cyxgraph/cats_dogs_classifier_v2.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "7542b3bd8c812d92ea1fb30b55c9a640daaa6651623a6f5572ae3dd29b579184",
+      "size_bytes": 5909
+    },
+    {
+      "path": "examples/cyxgraph/code_lang_feedback/codefeedback_lang_classifier_char.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "7c5521bf128d6ee58c3b258f244d84e68ca955925616775756dbc665eb714e20",
+      "size_bytes": 6869
+    },
+    {
+      "path": "examples/cyxgraph/code_lang_feedback/README_codefeedback_demo.md",
+      "source_type": "markdown",
+      "content_hash": "ec64e66409f3c13c70bfcd8cc90f45d659eb60ac8b17f96d565dad3ce983adbe",
+      "size_bytes": 8814
+    },
+    {
+      "path": "examples/cyxgraph/drone_sound_detector.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "ab05a78aad690fde8b97ba738519c0dad59bb913efb5f1f87a20ef7d8a13cfc8",
+      "size_bytes": 4668
+    },
+    {
+      "path": "examples/cyxgraph/mental_health_sentiment_classifier.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "137963e960acc4901d90c1530812663a5cb7f0f5f382538ea6adea241294d8e4",
+      "size_bytes": 8220
+    },
+    {
+      "path": "examples/cyxgraph/mental_health_sentiment_classifier_v2.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "91d42a865fccd68d77221093c6e546e291892dc9e3037b2bac8d2dbf81767155",
+      "size_bytes": 9404
+    },
+    {
+      "path": "examples/cyxgraph/mnist_classifier.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "cb2ab2d55f0786b20a116effcb27c03928965a1cd7a00cb3d8f640ac9817cac0",
+      "size_bytes": 3794
+    },
+    {
+      "path": "examples/cyxgraph/mnist_mlp.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "394e0082ab1669658b1f4fb972e2fd933f76f8a02ed6ddd75ff6449e6e980dfd",
+      "size_bytes": 4532
+    },
+    {
+      "path": "examples/cyxgraph/NER/ner_bilstm_sequence_tagger.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "ccbc266f87261229dd90251cb298a46d3b940c28c5d2ae0855886ca17370cb54",
+      "size_bytes": 13975
+    },
+    {
+      "path": "examples/cyxgraph/NER/README.md",
+      "source_type": "markdown",
+      "content_hash": "0c03ddc5fa74373f74bf011aeaba31f240f9f23abe95eafb12155d4d32be2302",
+      "size_bytes": 6008
+    },
+    {
+      "path": "examples/cyxgraph/Sentiment analysis/model.cyxmodel/graph.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "111d62b0b38d67bfc886920ca5bd010f5812d9aad298c2faaa119c651e994b10",
+      "size_bytes": 10851
+    },
+    {
+      "path": "examples/cyxgraph/Sentiment analysis/model.cyxmodel/model.cyxmodel/graph.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "f2e3decfcfe0a7e6c8d483cbb40ea7eddd488012fdae4e6731fa029179c92552",
+      "size_bytes": 10910
+    },
+    {
+      "path": "examples/cyxgraph/Sentiment analysis/README.md",
+      "source_type": "markdown",
+      "content_hash": "2265b7a6d6e3ce6be8acc6c62eafaa4b95de76e429674a283ee8d8c09facf3ed",
+      "size_bytes": 8226
+    },
+    {
+      "path": "examples/cyxgraph/Sentiment analysis/sentiment_analysis_gru_classifier.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "404c0c23279b75dc29d0dec1e3b7323fb7ff0f7a81c6af2513ee920da7cb7be2",
+      "size_bytes": 21826
+    },
+    {
+      "path": "examples/cyxgraph/Sentiment analysis/sentiment_analysis_lstm_classifier.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "06e11c42a78062b967bd3d99866c7c65d65247556fd85d92ba2218fc1795cab6",
+      "size_bytes": 21827
+    },
+    {
+      "path": "examples/cyxgraph/Sentiment analysis/sentiment_analysis_tfidf_mlp_classifier.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "a6eb2ec00c5cc2ee5ffa365c98438aa481db9e00a417477954758b5108ba80b3",
+      "size_bytes": 16351
+    },
+    {
+      "path": "examples/cyxgraph/Sentiment analysis/sentiment_analysis_tfidf_mlp_classifier_unigram_bigram_candidate.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "07afcd68eaf01fb1320974ceae58a182f74e745b742fac6efd0c82a6cbdae809",
+      "size_bytes": 16609
+    },
+    {
+      "path": "examples/cyxgraph/Sentiment analysis/sentiment_model.cyxmodel/graph.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "9820c395be752e5f2d43ecc0c97d4f757b419a1b19f0039ab01f52cca565c5ec",
+      "size_bytes": 11132
+    },
+    {
+      "path": "examples/cyxgraph/speech_command_classifier.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "8a9773b1de0424d3ef6d64ad5b6f772bfd58ba3ce81858c244634288b8d47bb8",
+      "size_bytes": 3998
+    },
+    {
+      "path": "examples/cyxgraph/test_pin_connectivity/01_targets_disconnected.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "f895b6b62bf3d48e0432237a6edace351b6aee81c196dd802b8a09b949495687",
+      "size_bytes": 3436
+    },
+    {
+      "path": "examples/cyxgraph/test_pin_connectivity/02_targets_wrong_source.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "308bde5b7f68b0034eb8ebbeb316b75b2e1ee6a16e9cb0e78da9d5c8cb42b0fb",
+      "size_bytes": 3536
+    },
+    {
+      "path": "examples/cyxgraph/test_pin_connectivity/03_predictions_wrong_source.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "e570b4f3b616fe074ac5a41e54b0ed40edea59c4c439356f467796a1b5aa73a2",
+      "size_bytes": 3553
+    },
+    {
+      "path": "examples/cyxgraph/test_pin_connectivity/04_optimizer_loss_wrong_source.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "f7b04f494e801c9d539a2d93ef0b4893ced6e100a756cb964c6013996d1ee68b",
+      "size_bytes": 3540
+    },
+    {
+      "path": "examples/cyxgraph/test_pin_connectivity/README.md",
+      "source_type": "markdown",
+      "content_hash": "a7b9d4dceeca45c7288da959992792839c6a0fd15720ec286e6671571a86aa11",
+      "size_bytes": 4105
+    },
+    {
+      "path": "examples/cyxgraph/text/causal_lm_decoder_generation_experiment.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "d3c814b271f970981ae564ed8b42c8ede20494e90a0279c654cb500f59169f72",
+      "size_bytes": 7622
+    },
+    {
+      "path": "examples/cyxgraph/text/test_01_sentiment_basic.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "ede2ea02229cf13b6b117eccbd4d950ea71b55a8685198377269584142ce0784",
+      "size_bytes": 6259
+    },
+    {
+      "path": "examples/cyxgraph/text/test_02_sentiment_lstm.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "edf478e6ad2b967269c2a02059713a30a0a17d614b120e4c85e4de571ddba54e",
+      "size_bytes": 9408
+    },
+    {
+      "path": "examples/cyxgraph/text/test_03_sentiment_lstm_mini.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "c902b78eb98a028c6616b996185eb1bc62f0ce6ffec32ae1c2156fd5d7aa71ea",
+      "size_bytes": 4348
+    },
+    {
+      "path": "examples/cyxgraph/text/test_04_sentiment_gru_mini.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "19069dabe11a5861a490e4bab7a98891309aee4bfade86e6ff89ff077061bcc1",
+      "size_bytes": 4030
+    },
+    {
+      "path": "examples/cyxgraph/text/test_05_sentiment_transformer_mini.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "bf57ffcc6461a68ae7417b1e6a3d4c18386eaa00c58703df263e15145842e129",
+      "size_bytes": 7029
+    },
+    {
+      "path": "examples/cyxgraph/timeseries/airline_passengers_dense.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "5953ebaf64b4efa3816e1fff1c86c7b672db14e6070688b017eb50cdb3bcaeb7",
+      "size_bytes": 4714
+    },
+    {
+      "path": "examples/cyxgraph/timeseries/airline_passengers_dense_v2.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "26114a468a200884bd9d6ac9fd9adecdcf6b29c49557b79c5364a6fd169e1c62",
+      "size_bytes": 5411
+    },
+    {
+      "path": "examples/cyxgraph/timeseries/airline_passengers_dense_v3.cyxgraph",
+      "source_type": "cyxgraph",
+      "content_hash": "7e5dfb308e69b675b6794057514a7bd1fb513e5b8f45f0e2b749447d1a7f3349",
+      "size_bytes": 5860
+    }
+  ]
+}

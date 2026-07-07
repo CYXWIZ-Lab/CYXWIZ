@@ -1,0 +1,64 @@
+{
+    "tensors": [
+        {
+            "dtype": 0,
+            "name": "layer0.bias",
+            "offset": 0,
+            "shape": [
+                128
+            ],
+            "size_bytes": 528
+        },
+        {
+            "dtype": 0,
+            "name": "layer0.weight",
+            "offset": 0,
+            "shape": [
+                128,
+                8000
+            ],
+            "size_bytes": 4096024
+        },
+        {
+            "dtype": 0,
+            "name": "layer3.bias",
+            "offset": 0,
+            "shape": [
+                64
+            ],
+            "size_bytes": 272
+        },
+        {
+            "dtype": 0,
+            "name": "layer3.weight",
+            "offset": 0,
+            "shape": [
+                64,
+                128
+            ],
+            "size_bytes": 32792
+        },
+        {
+            "dtype": 0,
+            "name": "layer6.bias",
+            "offset": 0,
+            "shape": [
+                7
+            ],
+            "size_bytes": 44
+        },
+        {
+            "dtype": 0,
+            "name": "layer6.weight",
+            "offset": 0,
+            "shape": [
+                7,
+                64
+            ],
+            "size_bytes": 1816
+        }
+    ],
+    "total_bytes": 4131476,
+    "total_tensors": 6,
+    "version": "1.0"
+}

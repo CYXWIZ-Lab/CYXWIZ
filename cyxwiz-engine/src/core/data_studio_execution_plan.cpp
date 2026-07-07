@@ -33,12 +33,6 @@ bool HasNonEmptyParameter(const std::map<std::string, std::string>& parameters,
     return it != parameters.end() && !Trim(it->second).empty();
 }
 
-bool HasAllowedValue(const PipelineAllowedParameterValuesRuntimeCapability& rule,
-                     const std::string& value) {
-    return std::find(rule.allowed_values.begin(), rule.allowed_values.end(),
-                     value) != rule.allowed_values.end();
-}
-
 bool IsSinkNode(gui::NodeType node_type) {
     switch (node_type) {
     case gui::NodeType::DataOutput:
@@ -130,17 +124,15 @@ bool ValidateParameters(const DataStudioPlanNodeInput& node,
         }
     }
 
-    for (const auto& rule : support.allowed_parameter_values) {
-        const auto it = node.parameters.find(rule.parameter_name);
-        if (it == node.parameters.end() || Trim(it->second).empty()) {
-            continue;
-        }
-        if (!HasAllowedValue(rule, it->second)) {
-            error = NodeLabel(node.id, node.type) +
-                    " has unsupported value '" + it->second +
-                    "' for parameter '" + rule.parameter_name + "'";
-            return false;
-        }
+    if (!ValidatePipelineRuntimeParameterCapabilities(
+            NodeLabel(node.id, node.type),
+            node.parameters,
+            support.allowed_parameter_values,
+            support.integer_parameters,
+            support.float_parameters,
+            "Data Studio execution plan",
+            error)) {
+        return false;
     }
 
     return true;

@@ -15,6 +15,9 @@ namespace cyxwiz::plugin {
 
 // Forward declarations
 class PluginContext;
+struct AssistantContextSnapshot;
+struct AssistantCommandRequest;
+struct AssistantCommandResponse;
 
 // ============================================================================
 // PluginManager - Singleton managing plugin discovery, loading, and lifecycle
@@ -97,6 +100,12 @@ public:
     // Get context for plugin
     PluginContext* GetContext(const std::string& plugin_id) const;
 
+    // Publish assistant context to all initialized plugin contexts.
+    void SetAssistantContextSnapshotForAll(const AssistantContextSnapshot& snapshot);
+
+    // Run a slash-command request through the first loaded assistant provider.
+    AssistantCommandResponse RunAssistantCommand(const AssistantCommandRequest& request);
+
     // ===== Dependency Resolution =====
 
     // Get load order respecting dependencies (topological sort)
@@ -122,6 +131,7 @@ private:
 
     // Thread safety
     mutable std::recursive_mutex mutex_;
+    mutable std::mutex assistant_command_mutex_;
 
     // Permission approval dialog
     security::PermissionDialog permission_dialog_;

@@ -1,8 +1,250 @@
 #include "pipeline_runtime_capabilities.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cctype>
+#include <cmath>
+#include <sstream>
 
 namespace cyxwiz {
+namespace {
+
+std::string TrimRuntimeValue(const std::string& value) {
+    const auto first = std::find_if_not(value.begin(), value.end(),
+        [](unsigned char c) { return std::isspace(c) != 0; });
+    const auto last = std::find_if_not(value.rbegin(), value.rend(),
+        [](unsigned char c) { return std::isspace(c) != 0; }).base();
+    if (first >= last) {
+        return {};
+    }
+    return std::string(first, last);
+}
+
+std::string ToLowerRuntimeValue(const std::string& value) {
+    std::string lowered = TrimRuntimeValue(value);
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return lowered;
+}
+
+bool TryParseRuntimeInteger(const std::string& value, int64_t& parsed) {
+    const std::string trimmed = TrimRuntimeValue(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+    const char* begin = trimmed.data();
+    const char* end = trimmed.data() + trimmed.size();
+    auto [ptr, ec] = std::from_chars(begin, end, parsed);
+    return ec == std::errc() && ptr == end;
+}
+
+bool IsForbiddenRuntimeIntegerValue(
+    int64_t value,
+    const std::vector<int64_t>& forbidden_values) {
+    return std::find(forbidden_values.begin(), forbidden_values.end(), value) !=
+           forbidden_values.end();
+}
+
+bool IsRuntimeIntegerInBounds(
+    const std::string& value,
+    int64_t minimum,
+    const std::vector<int64_t>& forbidden_values) {
+    int64_t parsed = 0;
+    return TryParseRuntimeInteger(value, parsed) && parsed >= minimum &&
+           !IsForbiddenRuntimeIntegerValue(parsed, forbidden_values);
+}
+
+std::string DescribeRuntimeIntegerBounds(
+    int64_t minimum,
+    const std::vector<int64_t>& forbidden_values) {
+    std::string description = "integer >= " + std::to_string(minimum);
+    if (!forbidden_values.empty()) {
+        description += " except";
+        for (size_t i = 0; i < forbidden_values.size(); ++i) {
+            description += (i == 0 ? " " : ", ") +
+                           std::to_string(forbidden_values[i]);
+        }
+    }
+    return description;
+}
+
+std::string DescribeRuntimeCommaIntegerBounds(
+    int64_t minimum,
+    const std::vector<int64_t>& forbidden_values) {
+    if (forbidden_values.empty()) {
+        return "integers >= " + std::to_string(minimum);
+    }
+    return DescribeRuntimeIntegerBounds(minimum, forbidden_values);
+}
+
+bool IsRuntimeFloatInBounds(const std::string& value,
+                            const std::optional<double>& minimum,
+                            const std::optional<double>& maximum,
+                            bool minimum_inclusive,
+                            bool maximum_inclusive) {
+    const std::string trimmed = TrimRuntimeValue(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    double parsed = 0.0;
+    const char* begin = trimmed.data();
+    const char* end = trimmed.data() + trimmed.size();
+    auto [ptr, ec] = std::from_chars(begin, end, parsed);
+    if (ec != std::errc() || ptr != end || !std::isfinite(parsed)) {
+        return false;
+    }
+
+    if (minimum.has_value()) {
+        if (minimum_inclusive) {
+            if (parsed < *minimum) {
+                return false;
+            }
+        } else if (parsed <= *minimum) {
+            return false;
+        }
+    }
+    if (maximum.has_value()) {
+        if (maximum_inclusive) {
+            if (parsed > *maximum) {
+                return false;
+            }
+        } else if (parsed >= *maximum) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::string DescribeRuntimeFloatBounds(
+    const std::optional<double>& minimum,
+    const std::optional<double>& maximum,
+    bool minimum_inclusive,
+    bool maximum_inclusive) {
+    if (minimum.has_value() && maximum.has_value()) {
+        return "between " + std::to_string(*minimum) + " and " +
+               std::to_string(*maximum);
+    }
+    if (minimum.has_value()) {
+        return std::string(minimum_inclusive ? "greater than or equal to "
+                                             : "greater than ") +
+               std::to_string(*minimum);
+    }
+    if (maximum.has_value()) {
+        return std::string(maximum_inclusive ? "less than or equal to "
+                                             : "less than ") +
+               std::to_string(*maximum);
+    }
+    return "finite";
+}
+
+bool IsRuntimeAllowedParameterValue(
+    const PipelineAllowedParameterValuesRuntimeCapability& capability,
+    const std::string& value) {
+    const std::string normalized_value = ToLowerRuntimeValue(value);
+    return std::find_if(capability.allowed_values.begin(),
+                        capability.allowed_values.end(),
+                        [&normalized_value](const char* allowed) {
+                            return allowed != nullptr &&
+                                   normalized_value ==
+                                       ToLowerRuntimeValue(allowed);
+                        }) != capability.allowed_values.end();
+}
+
+} // namespace
+
+bool ValidatePipelineRuntimeParameterCapabilities(
+    const std::string& subject,
+    const std::map<std::string, std::string>& parameters,
+    const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
+        allowed_parameter_values,
+    const std::vector<PipelineIntegerParameterRuntimeCapability>&
+        integer_parameters,
+    const std::vector<PipelineFloatParameterRuntimeCapability>&
+        float_parameters,
+    const char* unsupported_context,
+    std::string& error) {
+    const std::string context =
+        unsupported_context != nullptr ? unsupported_context : "runtime";
+
+    for (const auto& capability : allowed_parameter_values) {
+        auto it = parameters.find(capability.parameter_name);
+        const std::string value =
+            (it != parameters.end() && !it->second.empty())
+                ? it->second
+                : capability.default_value;
+        if (!IsRuntimeAllowedParameterValue(capability, value)) {
+            error = subject + " " + capability.parameter_name + " '" + value +
+                    "' is not supported by " + context;
+            return false;
+        }
+    }
+
+    for (const auto& capability : integer_parameters) {
+        const auto it = parameters.find(capability.parameter_name);
+        if (it == parameters.end()) {
+            continue;
+        }
+        if (it->second.empty()) {
+            error = subject + " " + capability.parameter_name +
+                    " must not be empty";
+            return false;
+        }
+
+        const auto bounds = DescribeRuntimeIntegerBounds(
+            capability.minimum, capability.forbidden_values);
+        if (capability.comma_separated) {
+            const auto comma_bounds = DescribeRuntimeCommaIntegerBounds(
+                capability.minimum, capability.forbidden_values);
+            std::stringstream values(it->second);
+            std::string value;
+            while (std::getline(values, value, ',')) {
+                if (!IsRuntimeIntegerInBounds(
+                        value, capability.minimum,
+                        capability.forbidden_values)) {
+                    error = subject + " " + capability.parameter_name +
+                            " must be a comma-separated list of " +
+                            comma_bounds;
+                    return false;
+                }
+            }
+            continue;
+        }
+
+        if (!IsRuntimeIntegerInBounds(
+                it->second, capability.minimum,
+                capability.forbidden_values)) {
+            error = subject + " " + capability.parameter_name +
+                    " must be an " + bounds;
+            return false;
+        }
+    }
+
+    for (const auto& capability : float_parameters) {
+        const auto it = parameters.find(capability.parameter_name);
+        if (it == parameters.end() || it->second.empty()) {
+            continue;
+        }
+        if (!IsRuntimeFloatInBounds(it->second,
+                                    capability.minimum,
+                                    capability.maximum,
+                                    capability.minimum_inclusive,
+                                    capability.maximum_inclusive)) {
+            error = subject + " " + capability.parameter_name +
+                    " must be a number " +
+                    DescribeRuntimeFloatBounds(capability.minimum,
+                                               capability.maximum,
+                                               capability.minimum_inclusive,
+                                               capability.maximum_inclusive);
+            return false;
+        }
+    }
+
+    return true;
+}
 
 const std::vector<PipelineOperatorRuntimeCapability>&
 GetPipelineOperatorRuntimeCapabilities() {

@@ -3,6 +3,7 @@
 #include "../gui/node_editor.h"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -290,6 +291,18 @@ ResolvePipelineIntegerParameters(const std::string& legacy_type_name);
 
 std::vector<PipelineFloatParameterRuntimeCapability>
 ResolvePipelineFloatParameters(const std::string& legacy_type_name);
+
+bool ValidatePipelineRuntimeParameterCapabilities(
+    const std::string& subject,
+    const std::map<std::string, std::string>& parameters,
+    const std::vector<PipelineAllowedParameterValuesRuntimeCapability>&
+        allowed_parameter_values,
+    const std::vector<PipelineIntegerParameterRuntimeCapability>&
+        integer_parameters,
+    const std::vector<PipelineFloatParameterRuntimeCapability>&
+        float_parameters,
+    const char* unsupported_context,
+    std::string& error);
 
 const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType node_type);
 

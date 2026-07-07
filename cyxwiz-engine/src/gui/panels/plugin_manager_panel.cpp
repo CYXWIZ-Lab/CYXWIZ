@@ -2,6 +2,7 @@
 #include "../icons.h"
 #include "../../plugin/plugin_manager.h"
 #include "../../plugin/security/permission_store.h"
+#include "../../core/async_task_manager.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -45,6 +46,22 @@ static const char* StateLabel(plugin::PluginState state) {
         case plugin::PluginState::Unloaded:    return "Unloaded";
         default:                               return "Unknown";
     }
+}
+
+static std::string TrimCopy(std::string value) {
+    value.erase(0, value.find_first_not_of(" \t\n\r"));
+    if (!value.empty()) {
+        value.erase(value.find_last_not_of(" \t\n\r") + 1);
+    }
+    return value;
+}
+
+static void ShowInstallSpinner(const std::string& status) {
+    float time = static_cast<float>(ImGui::GetTime());
+    const char* spinner_chars[] = {"|", "/", "-", "\\"};
+    int spinner_idx = static_cast<int>(time * 8) % 4;
+    ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s %s",
+                       spinner_chars[spinner_idx], status.c_str());
 }
 
 PluginManagerPanel::PluginManagerPanel()
@@ -353,8 +370,17 @@ void PluginManagerPanel::RenderInstallPopup() {
         ImGui::Text("Enter the path to a plugin directory (containing plugin.json):");
         ImGui::Spacing();
 
+        if (is_installing_plugin_) {
+            ImGui::BeginDisabled();
+        }
+
         ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##InstallPath", install_path_buf_, sizeof(install_path_buf_));
+        bool enter_pressed = ImGui::InputTextWithHint(
+            "##InstallPath",
+            "D:\\path\\to\\plugin",
+            install_path_buf_,
+            sizeof(install_path_buf_),
+            ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::Spacing();
 
@@ -363,54 +389,122 @@ void PluginManagerPanel::RenderInstallPopup() {
         float total = button_width * 2 + spacing;
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total) * 0.5f);
 
-        if (ImGui::Button("Install", ImVec2(button_width, 0))) {
-            std::string path_str(install_path_buf_);
-            // Trim whitespace (HIGH-3)
-            path_str.erase(0, path_str.find_first_not_of(" \t\n\r"));
-            if (!path_str.empty())
-                path_str.erase(path_str.find_last_not_of(" \t\n\r") + 1);
+        auto start_install = [this]() -> bool {
+            if (is_installing_plugin_) {
+                return false;
+            }
 
+            std::string path_str = TrimCopy(install_path_buf_);
             if (path_str.empty()) {
                 install_error_ = "Please enter a path.";
                 show_install_error_ = true;
-            } else {
-                std::filesystem::path dir(path_str);
-                std::error_code ec;
+                return false;
+            }
 
-                // Validate path exists (HIGH-3)
-                if (!std::filesystem::exists(dir, ec)) {
-                    install_error_ = "Path does not exist: " + path_str;
-                    show_install_error_ = true;
-                } else if (!std::filesystem::is_directory(dir, ec)) {
-                    install_error_ = "Not a directory: " + path_str;
-                    show_install_error_ = true;
-                } else if (!std::filesystem::exists(dir / "plugin.json", ec)) {
-                    install_error_ = "No plugin.json found in: " + path_str;
-                    show_install_error_ = true;
-                } else {
+            std::filesystem::path dir(path_str);
+            std::error_code ec;
+            if (!std::filesystem::exists(dir, ec)) {
+                install_error_ = "Path does not exist: " + path_str;
+                show_install_error_ = true;
+                return false;
+            }
+            if (!std::filesystem::is_directory(dir, ec)) {
+                install_error_ = "Not a directory: " + path_str;
+                show_install_error_ = true;
+                return false;
+            }
+            if (!std::filesystem::exists(dir / "plugin.json", ec)) {
+                install_error_ = "No plugin.json found in: " + path_str;
+                show_install_error_ = true;
+                return false;
+            }
+
+            is_installing_plugin_ = true;
+            install_status_ = "Installing...";
+            const std::string task_name = "Installing plugin: " + dir.filename().string();
+
+            install_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+                task_name,
+                [dir, path_str](cyxwiz::LambdaTask& task) {
+                    task.ReportProgress(0.15f, "Loading plugin...");
+                    if (task.ShouldStop()) return;
+
                     auto& mgr = plugin::PluginManager::Instance();
-                    if (mgr.LoadPlugin(dir)) {
-                        // Initialize only the plugin we just loaded by matching directory (CRITICAL-2)
-                        for (const auto* p : mgr.GetAllPlugins()) {
-                            if (p && p->plugin_dir == dir) {
-                                mgr.InitializePlugin(p->manifest.id);
-                                break;
-                            }
+                    if (!mgr.LoadPlugin(dir)) {
+                        task.MarkFailed("Failed to load plugin from " + path_str);
+                        return;
+                    }
+
+                    task.ReportProgress(0.65f, "Initializing plugin...");
+                    if (task.ShouldStop()) return;
+
+                    bool initialized = false;
+                    for (const auto* p : mgr.GetAllPlugins()) {
+                        if (p && p->plugin_dir == dir) {
+                            initialized = mgr.InitializePlugin(p->manifest.id);
+                            break;
                         }
+                    }
+
+                    if (!initialized) {
+                        task.MarkFailed("Plugin loaded but could not be initialized: " + path_str);
+                        return;
+                    }
+
+                    task.MarkCompleted("Plugin installed");
+                },
+                nullptr,
+                [this, path_str](bool success, const std::string& error) {
+                    is_installing_plugin_ = false;
+                    install_task_id_ = 0;
+                    install_status_.clear();
+
+                    if (success) {
                         spdlog::info("PluginManagerPanel: Installed plugin from {}", path_str);
                     } else {
-                        install_error_ = "Failed to load plugin. Check console for details.";
+                        install_error_ = error.empty()
+                            ? "Failed to install plugin. Check console for details."
+                            : error;
                         show_install_error_ = true;
                     }
                 }
-            }
-            ImGui::CloseCurrentPopup();
+            );
+            return true;
+        };
+
+        if (enter_pressed) {
+            start_install();
+        }
+
+        if (is_installing_plugin_) {
+            ImGui::BeginDisabled();
+        }
+
+        if (ImGui::Button(is_installing_plugin_ ? ICON_FA_SPINNER " Installing..." : "Install", ImVec2(button_width, 0))) {
+            start_install();
+        }
+
+        if (is_installing_plugin_) {
+            ImGui::EndDisabled();
         }
 
         ImGui::SameLine();
 
-        if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
-            ImGui::CloseCurrentPopup();
+        if (ImGui::Button(is_installing_plugin_ ? "Cancel" : "Close", ImVec2(button_width, 0))) {
+            if (is_installing_plugin_) {
+                install_status_ = "Cancelling...";
+                if (install_task_id_ != 0) {
+                    cyxwiz::AsyncTaskManager::Instance().Cancel(install_task_id_);
+                }
+            } else {
+                ImGui::CloseCurrentPopup();
+            }
+        }
+
+        if (is_installing_plugin_) {
+            ImGui::Spacing();
+            ShowInstallSpinner(install_status_.empty() ? "Installing plugin..." : install_status_);
+            ImGui::TextDisabled("The engine stays responsive while the install runs.");
         }
 
         ImGui::EndPopup();
