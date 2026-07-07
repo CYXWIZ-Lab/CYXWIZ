@@ -10,9 +10,41 @@ NER proof and visual metric-learning runtime work moved to `tofix58.md`.
 
 ## Purpose
 
-`done14.md` closed the main Track 14 implementation slice. This archive records
-the follow-up truth as of `tofix34.md`; the remaining queue now lives in
+`done14.md` closed the main Track 14 implementation slice. `tofix34.md` was a
+mixed follow-up document: it contained one narrow sequence-runtime gap and a
+larger set of visual metric-learning runtime phases. This archive records the
+slice completed from that document and points the unfinished queue at
 `tofix58.md`.
+
+## Archive Resolution
+
+Done here:
+
+- Phase 2 attention-mask consumption for sequence model input construction.
+- Training path now consumes `attention_mask` through `BuildSequenceModelInput`.
+- Packaged local inference now uses the same sequence input builder instead of
+  parsing `attention_mask` and discarding it.
+- Masked word/POS positions are normalized to configured pad ids before forward.
+- Mask shape mismatches fail before model execution.
+- Regression coverage was added in `test_cyxmodel_sequence_assets`.
+
+Moved to `tofix58.md`:
+
+- Phase 1 deployed `examples/cyxgraph/NER/ner_inference.py` endpoint proof.
+- Generic `FeatureConcat` scope decision.
+- Phase 3 visual metric-learning compiler slice.
+- Phase 4 visual pair-training runtime.
+- Phase 5 visual metric-learning outputs.
+- Phase 6 stateful shared-encoder snapshots.
+
+Verification completed before archive:
+
+- `cmake --build build --config Debug --target test_cyxmodel_sequence_assets test_saved_ner_sequence_smoke -- /m:1 /v:minimal`
+- `cmake --build build --config Debug --target cyxwiz-engine -- /m:1 /v:minimal`
+- `cmake --build build --config Release --target cyxwiz-engine -- /m:1 /v:minimal`
+- `build\bin\Debug\test_cyxmodel_sequence_assets.exe`
+- `build\bin\Debug\test_saved_ner_sequence_smoke.exe`
+- `git diff --check`
 
 ## Current Code Truth
 
@@ -34,7 +66,7 @@ Implemented:
 - Local sequence inference/importer support for named `word_ids` and `pos_ids`
   on packaged sequence models.
 
-Still open:
+Moved to `tofix58.md`:
 
 - Validate `examples/cyxgraph/NER/ner_inference.py` against a real deployed
   model endpoint.
@@ -70,7 +102,7 @@ Implemented:
 - Passive compiler graph contract that records detected metric-learning intent
   while keeping execution disabled.
 
-Still open:
+Moved to `tofix58.md`:
 
 - Visual graph compiler/runtime support for executable shared-encoder Siamese
   graphs.
@@ -79,130 +111,12 @@ Still open:
 - Activation snapshots for training-mode stateful modules such as Dropout and
   BatchNorm before they can be used safely in multi-branch shared encoders.
 
-## Recommended Implementation Order
+## Remaining Work
 
-### Phase 1 - Deployed NER Inference Proof
-
-Goal: prove the packaged sequence model can be served and queried through the
-real helper script.
-
-Tasks:
-
-- [ ] Build or reuse a tiny packaged NER model artifact from the saved graph
-  smoke path.
-- [ ] Start the embedded/local inference server with that model.
-- [ ] Run `examples/cyxgraph/NER/ner_inference.py` without `--dry-run`.
-- [ ] Verify returned token/tag pairs preserve max length, vocabulary order,
-  and optional POS input behavior.
-- [ ] Add a focused automated smoke if the server lifecycle can be made stable
-  in CI.
-
-Acceptance:
-
-- `ner_inference.py` can query a real local/deployed model endpoint and decode
-  readable BIO tags.
-- Missing or mismatched sequence vocab metadata still fails with a clear error.
-
-### Phase 2 - Attention Mask Consumption
-
-Goal: make sequence models respect the existing attention mask contract where
-that mask is semantically required.
-
-Tasks:
-
-- [ ] Audit recurrent and sequence-head modules for where masked timesteps
-  should be ignored.
-- [ ] Keep padding-label ignore behavior in the loss path.
-- [ ] Add model-side attention-mask behavior only where it changes forward or
-  metric semantics.
-- [ ] Add regression coverage proving masked padded timesteps do not affect
-  sequence outputs or metrics beyond the already ignored loss positions.
-
-Acceptance:
-
-- The sequence batch `attention_mask` is not just transported; it is consumed by
-  supported sequence model paths where appropriate.
-
-### Phase 3 - Visual Metric-Learning Compiler Slice
-
-Goal: turn the passive metric-learning graph contract into a narrow executable
-compiler/runtime plan without broad graph rewrites.
-
-Tasks:
-
-- [ ] Define the exact selected-path shape for one pair-training graph:
-  pair dataset builder -> shared encoder -> pair branches -> metric loss ->
-  optimizer.
-- [ ] Map visual node IDs to the internal `PairBatch`, `SharedEncoderRuntime`,
-  and metric-loss adapter contracts.
-- [ ] Keep unsupported triplet, retrieval, or pair-score paths rejected until
-  pair training is proven.
-- [ ] Add compiler tests showing the pair-training graph moves from structured
-  blocker to executable plan only for the supported shape.
-
-Acceptance:
-
-- One minimal visual pair-training graph compiles into an executable internal
-  metric-learning plan.
-- Unsupported metric-learning sketches still fail closed with structured
-  blockers.
-
-### Phase 4 - Visual Pair Training Runtime
-
-Goal: execute the narrow pair-training plan through the existing internal
-metric-learning helpers.
-
-Tasks:
-
-- [ ] Build the selected visual pair dataset into a `PairBatcher`.
-- [ ] Instantiate one shared encoder object from the visual encoder subtree.
-- [ ] Route pair branches through `SharedEncoderRuntime`.
-- [ ] Run the selected metric loss and one optimizer update per batch.
-- [ ] Report pair metrics through the training result surface.
-- [ ] Add an end-to-end saved-graph smoke for tiny visual pair training.
-
-Acceptance:
-
-- A tiny saved visual pair-training graph runs a bounded training pass and
-  proves distance movement on similar/dissimilar pairs.
-
-### Phase 5 - Metric-Learning Outputs
-
-Goal: wire the visual output nodes to the already implemented inference
-contracts.
-
-Tasks:
-
-- [ ] Wire `EmbeddingOutput` visual graphs to `/v1/embeddings`.
-- [ ] Wire `PairScoreOutput` visual graphs to `/v1/pair-score`.
-- [ ] Preserve sample/class metadata in responses.
-- [ ] Keep score modes explicit: distance and similarity must not masquerade as
-  class probabilities.
-
-Acceptance:
-
-- Visual metric-learning inference graphs can return stable embedding and
-  pair-score JSON responses using the internal contracts added in Track 14.
-
-### Phase 6 - Stateful Shared-Encoder Snapshots
-
-Goal: safely support training-mode stateful modules in multi-branch shared
-encoders.
-
-Tasks:
-
-- [ ] Identify modules whose backward pass depends on branch-specific forward
-  state, including Dropout and BatchNorm.
-- [ ] Add branch activation/state snapshots or a backend-level replay contract
-  that preserves equivalent semantics.
-- [ ] Keep the current guard rejecting unsupported stateful training paths until
-  snapshot coverage is proven.
-- [ ] Add regression tests for pair and triplet branches with stateful modules.
-
-Acceptance:
-
-- Training-mode stateful `SequentialModel` encoders are either safely supported
-  with snapshots or still rejected with a clear diagnostic.
+No open checklist is tracked in this archive. Continue from `tofix58.md`, which
+contains the deployed NER proof, `FeatureConcat` decision, visual
+metric-learning compiler/runtime phases, metric-learning outputs, and stateful
+shared-encoder snapshot work.
 
 ## Non-Goals
 
