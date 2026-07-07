@@ -362,6 +362,8 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
         result.token_vocabulary_size = build.token_vocabulary.Size();
         result.pos_vocabulary_size = build.pos_vocabulary.Size();
         result.tag_vocabulary_size = build.tag_vocabulary.Size();
+        result.word_pad_id = build.batcher_config.word_pad_id;
+        result.pos_pad_id = build.batcher_config.pos_pad_id;
         result.batcher = std::make_unique<SequenceBatcher>(
             std::move(build.samples), build.batcher_config);
     } catch (const std::exception& ex) {
@@ -381,6 +383,8 @@ void ApplySequenceBatcherBuildResultToTrainingConfig(
     if (build.tag_vocabulary_size > 0) {
         config.output_size = build.tag_vocabulary_size;
     }
+    config.sequence_batch.word_pad_id = build.word_pad_id;
+    config.sequence_batch.pos_pad_id = build.pos_pad_id;
 
     bool embedding_vocab_applied = false;
     int last_time_distributed = -1;

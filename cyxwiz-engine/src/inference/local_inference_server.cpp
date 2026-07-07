@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -650,8 +651,10 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
     // Parse input tensor
     Tensor input_tensor;
     Tensor sequence_pos_tensor;
+    Tensor sequence_attention_tensor;
     bool is_sequence_input = false;
     bool has_sequence_pos_input = false;
+    bool has_sequence_attention_input = false;
     std::vector<int64_t> sequence_lengths;
     try {
         const auto& input_json = request_body["input"];
@@ -694,6 +697,9 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
                     throw std::runtime_error(
                         "input.attention_mask shape must match input.word_ids");
                 }
+                sequence_attention_tensor =
+                    Tensor(shape, optional_data.data(), DataType::Int64);
+                has_sequence_attention_input = true;
             }
             if (input_json.contains("sequence_lengths")) {
                 ParseIntIdVector(input_json["sequence_lengths"],
@@ -777,13 +783,29 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
         if (!model_) {
             throw std::runtime_error("Model unloaded during request");
         }
-        if (is_sequence_input && ModelUsesSequenceFeatureFusion(*model_)) {
-            if (!has_sequence_pos_input) {
-                throw std::runtime_error(
-                    "sequence feature fusion requires input.pos_ids");
+        if (is_sequence_input) {
+            SequenceBatch sequence_batch;
+            sequence_batch.word_ids = input_tensor;
+            if (has_sequence_pos_input) {
+                sequence_batch.pos_ids = sequence_pos_tensor;
             }
-            input_tensor = BuildPackedWordPosSequenceInput(
-                input_tensor, sequence_pos_tensor);
+            if (has_sequence_attention_input) {
+                sequence_batch.attention_mask = sequence_attention_tensor;
+            }
+            sequence_batch.size = input_tensor.Shape()[0];
+            sequence_batch.sequence_length = input_tensor.Shape()[1];
+
+            TrainingConfiguration sequence_config;
+            sequence_config.sequence_batch.word_pad_id = sequence_word_pad_id_;
+            sequence_config.sequence_batch.pos_pad_id = sequence_pos_pad_id_;
+            if (ModelUsesSequenceFeatureFusion(*model_)) {
+                CompiledLayer fusion_layer;
+                fusion_layer.type = gui::NodeType::Concatenate;
+                fusion_layer.parameters["sequence_feature_fusion"] = "true";
+                sequence_config.layers.push_back(std::move(fusion_layer));
+            }
+            input_tensor =
+                BuildSequenceModelInput(sequence_batch, sequence_config);
         }
         output_tensor = model_->Forward(input_tensor);
         request_count_++;

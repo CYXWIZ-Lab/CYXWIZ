@@ -2,6 +2,7 @@
 #include "../src/core/sequence_inference_response.h"
 #include "../src/core/sequence_model_input.h"
 
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -24,6 +25,15 @@ void WriteTextFile(const std::filesystem::path& path, const std::string& text) {
     std::ofstream file(path, std::ios::binary);
     Check(file.is_open(), "could not create " + path.string());
     file << text;
+}
+
+std::vector<int64_t> TensorToInt64Vector(const cyxwiz::Tensor& tensor) {
+    std::vector<int64_t> values(tensor.NumElements());
+    const int64_t* data = tensor.Data<int64_t>();
+    for (size_t i = 0; i < values.size(); ++i) {
+        values[i] = data[i];
+    }
+    return values;
 }
 
 } // namespace
@@ -194,6 +204,56 @@ int main() {
     Check(std::vector<int64_t>(packed_ids, packed_ids + packed.NumElements()) ==
               std::vector<int64_t>({2, 1, 3, 2, 0, 0, 4, 3}),
           "packed sequence inference input should interleave word/POS ids");
+
+    const std::vector<int64_t> mask_data = {1, 0, 0, 1};
+    cyxwiz::SequenceBatch masked_batch;
+    masked_batch.word_ids = word_tensor;
+    masked_batch.pos_ids = pos_tensor;
+    masked_batch.attention_mask = cyxwiz::Tensor(
+        {2, 2}, mask_data.data(), cyxwiz::DataType::Int64);
+    masked_batch.size = 2;
+    masked_batch.sequence_length = 2;
+
+    cyxwiz::TrainingConfiguration word_only_config;
+    word_only_config.sequence_batch.word_pad_id = 99;
+    const cyxwiz::Tensor masked_words =
+        cyxwiz::BuildSequenceModelInput(masked_batch, word_only_config);
+    Check(TensorToInt64Vector(masked_words) ==
+              std::vector<int64_t>({2, 99, 99, 4}),
+          "sequence attention mask should normalize word-only padded tokens");
+    Check(TensorToInt64Vector(masked_batch.word_ids) == word_ids,
+          "sequence attention mask should not mutate the source word tensor");
+
+    cyxwiz::TrainingConfiguration fused_config;
+    fused_config.sequence_batch.word_pad_id = 9;
+    fused_config.sequence_batch.pos_pad_id = 7;
+    cyxwiz::CompiledLayer fusion_layer;
+    fusion_layer.type = gui::NodeType::Concatenate;
+    fusion_layer.parameters["sequence_feature_fusion"] = "true";
+    fused_config.layers.push_back(fusion_layer);
+    const cyxwiz::Tensor masked_packed =
+        cyxwiz::BuildSequenceModelInput(masked_batch, fused_config);
+    Check(masked_packed.Shape() == std::vector<size_t>({2, 2, 2}),
+          "masked fused sequence input should keep [batch, seq, 2] shape");
+    Check(TensorToInt64Vector(masked_packed) ==
+              std::vector<int64_t>({2, 1, 9, 7, 9, 7, 4, 3}),
+          "sequence attention mask should normalize word/POS padded tokens");
+
+    const std::vector<int64_t> bad_mask_data = {1, 0, 1};
+    cyxwiz::SequenceBatch bad_mask_batch = masked_batch;
+    bad_mask_batch.attention_mask = cyxwiz::Tensor(
+        {1, 3}, bad_mask_data.data(), cyxwiz::DataType::Int64);
+    bool mask_shape_failed = false;
+    try {
+        (void)cyxwiz::BuildSequenceModelInput(
+            bad_mask_batch, word_only_config);
+    } catch (const std::exception& e) {
+        mask_shape_failed =
+            std::string(e.what()).find("attention mask shape") !=
+            std::string::npos;
+    }
+    Check(mask_shape_failed,
+          "sequence attention mask should reject shape mismatches");
 
     bool pos_shape_failed = false;
     try {

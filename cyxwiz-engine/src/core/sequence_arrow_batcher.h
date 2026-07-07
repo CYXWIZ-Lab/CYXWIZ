@@ -20,6 +20,8 @@ struct SequenceArrowBatcherBuildResult {
     size_t token_vocabulary_size = 0;
     size_t pos_vocabulary_size = 0;
     size_t tag_vocabulary_size = 0;
+    int64_t word_pad_id = 0;
+    int64_t pos_pad_id = 0;
 
     bool success() const {
         return batcher != nullptr && error_message.empty();

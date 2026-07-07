@@ -1,4 +1,4 @@
-# To Fix 33 - Runtime Architecture Follow-Up After Track 22
+# Done 33 - Runtime Architecture Follow-Up After Track 22
 
 **Created:** 2026-06-25
 **Source:** Follow-up carried forward after completing `donetrack22.md` and the
@@ -6,11 +6,24 @@ current `done22.md` implementation slice.
 
 ## Status
 
-Track 22 is complete for the current runtime-architecture hardening pass.
+Archived after the 2026-07-07 follow-up slice.
 
-This document does not reopen Track 22. It is the next maintenance and
-expansion queue for work that should build on the Track 22 contracts without
-creating duplicate runtime truth.
+Track 22 is complete for the current runtime-architecture hardening pass.
+This document records the completed source queue. Remaining follow-up work is
+carried forward in `tofix57.md` so this archive does not continue to look like
+the active queue.
+
+Completed slice:
+
+- `DataStudioExecutionPlan` now validates central enum, integer, and float
+  runtime parameter capabilities before execution.
+- `PipelineExecutor` and `DataStudioExecutionPlan` share
+  `ValidatePipelineRuntimeParameterCapabilities` instead of owning duplicate
+  bounds and enum validation logic.
+- `test_data_studio_execution_plan` covers representative integer and float
+  failures before execution.
+- `test_pipeline_executor_operator_routing` preserves existing executor
+  diagnostics for central validation failures.
 
 ## Current Code Truth
 

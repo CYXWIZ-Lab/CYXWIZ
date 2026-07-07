@@ -1,15 +1,18 @@
-# To Fix 34 - Track 14 Follow-Up: Visual Metric Learning And Sequence Runtime Gaps
+# Done 34 - Track 14 Follow-Up: Visual Metric Learning And Sequence Runtime Gaps
 
 Created: 2026-06-27
 Source: Follow-up from `done14.md` and `track14.md` after commit
 `135d7993 Track 14 NER and metric learning execution contracts`.
 
+Archived: 2026-07-07 after the attention-mask consumption slice was
+implemented for sequence training and packaged inference. Remaining deployed
+NER proof and visual metric-learning runtime work moved to `tofix58.md`.
+
 ## Purpose
 
-`done14.md` closed the main Track 14 implementation slice. The engine now has
-real NER sequence-tagging execution contracts and internal metric-learning
-runtime contracts. This document keeps the remaining work out of the completed
-Track 14 archive and makes the next targets explicit.
+`done14.md` closed the main Track 14 implementation slice. This archive records
+the follow-up truth as of `tofix34.md`; the remaining queue now lives in
+`tofix58.md`.
 
 ## Current Code Truth
 
@@ -35,10 +38,13 @@ Still open:
 
 - Validate `examples/cyxgraph/NER/ner_inference.py` against a real deployed
   model endpoint.
-- Consume `attention_mask` inside the sequence model path instead of only
-  carrying it through the batch contract.
 - Decide whether generic `FeatureConcat` should become a real runtime graph
   node or stay out of scope in favor of task-specific feature fusion.
+
+Moved to done in this archive:
+
+- Consume `attention_mask` inside the sequence model path instead of only
+  carrying it through the batch contract.
 
 ### Siamese / Metric Learning
 

@@ -7,6 +7,7 @@
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/layer.h>
 #include <cyxwiz/optimizer.h>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <map>
@@ -203,6 +204,8 @@ struct SequenceBatchConfig {
     bool create_attention_mask = false;
     bool create_causal_lm_targets = false;
     int max_sequence_length = 0;
+    int64_t word_pad_id = 0;
+    int64_t pos_pad_id = 0;
     int ignore_index = -100;
     int target_ignore_index = -100;
 };
