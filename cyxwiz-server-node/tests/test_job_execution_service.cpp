@@ -15,6 +15,27 @@ using namespace cyxwiz::protocol;
 // Test constants
 static const std::string TEST_SECRET = "test_p2p_secret";
 static const std::string TEST_NODE_ID = "test_node";
+static constexpr int TEST_RPC_DEADLINE_SECONDS = 12;
+
+void SetRpcDeadline(grpc::ClientContext& context,
+                    int seconds = TEST_RPC_DEADLINE_SECONDS) {
+    context.set_deadline(
+        std::chrono::system_clock::now() + std::chrono::seconds(seconds));
+}
+
+void SetStreamJobId(grpc::ClientContext& context,
+                    const std::string& job_id) {
+    context.AddMetadata("x-job-id", job_id);
+}
+
+bool SendReservationEnd(
+    grpc::ClientReaderWriter<TrainingCommand, TrainingUpdate>* stream) {
+    TrainingCommand end_cmd;
+    end_cmd.set_reservation_end(true);
+    const bool wrote = stream->Write(end_cmd);
+    stream->WritesDone();
+    return wrote;
+}
 
 // Helper function to generate valid JWT tokens for testing
 std::string GenerateTestJwt(const std::string& job_id,
@@ -68,6 +89,27 @@ public:
     std::unique_ptr<JobExecutionService::Stub> stub;
 };
 
+bool CompleteTrainingReservation(JobExecutionServiceTest& test,
+                                 const std::string& job_id) {
+    grpc::ClientContext stream_ctx;
+    SetRpcDeadline(stream_ctx);
+    SetStreamJobId(stream_ctx, job_id);
+    auto stream = test.stub->StreamTrainingMetrics(&stream_ctx);
+
+    const bool reservation_end_written = SendReservationEnd(stream.get());
+    bool got_completion = false;
+
+    TrainingUpdate update;
+    while (stream->Read(&update)) {
+        if (update.has_complete()) {
+            got_completion = update.complete().success();
+        }
+    }
+
+    grpc::Status status = stream->Finish();
+    return reservation_end_written && got_completion && status.ok();
+}
+
 // ========== Test Cases ==========
 
 TEST_CASE("JobExecutionService - Server Startup", "[p2p][service]") {
@@ -97,6 +139,7 @@ TEST_CASE("JobExecutionService - ConnectToNode", "[p2p][connect]") {
 
         ConnectResponse response;
         grpc::ClientContext context;
+        SetRpcDeadline(context);
 
         grpc::Status status = test.stub->ConnectToNode(&context, request, &response);
 
@@ -115,6 +158,7 @@ TEST_CASE("JobExecutionService - ConnectToNode", "[p2p][connect]") {
 
         ConnectResponse response;
         grpc::ClientContext context;
+        SetRpcDeadline(context);
 
         grpc::Status status = test.stub->ConnectToNode(&context, request, &response);
 
@@ -131,6 +175,7 @@ TEST_CASE("JobExecutionService - ConnectToNode", "[p2p][connect]") {
 
         ConnectResponse response;
         grpc::ClientContext context;
+        SetRpcDeadline(context);
 
         test.stub->ConnectToNode(&context, request, &response);
 
@@ -153,6 +198,7 @@ TEST_CASE("JobExecutionService - SendJob", "[p2p][job]") {
 
     ConnectResponse conn_resp;
     grpc::ClientContext conn_ctx;
+    SetRpcDeadline(conn_ctx);
     test.stub->ConnectToNode(&conn_ctx, conn_req, &conn_resp);
 
     SECTION("Send job with inline dataset") {
@@ -172,6 +218,7 @@ TEST_CASE("JobExecutionService - SendJob", "[p2p][job]") {
 
         SendJobResponse response;
         grpc::ClientContext context;
+        SetRpcDeadline(context);
 
         grpc::Status status = test.stub->SendJob(&context, request, &response);
 
@@ -195,6 +242,7 @@ TEST_CASE("JobExecutionService - SendJob", "[p2p][job]") {
 
         SendJobResponse response;
         grpc::ClientContext context;
+        SetRpcDeadline(context);
 
         grpc::Status status = test.stub->SendJob(&context, request, &response);
 
@@ -215,6 +263,7 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
 
     ConnectResponse conn_resp;
     grpc::ClientContext conn_ctx;
+    SetRpcDeadline(conn_ctx);
     test.stub->ConnectToNode(&conn_ctx, conn_req, &conn_resp);
 
     // Send job
@@ -228,67 +277,85 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
 
     SendJobResponse job_resp;
     grpc::ClientContext job_ctx;
-    test.stub->SendJob(&job_ctx, job_req, &job_resp);
+    SetRpcDeadline(job_ctx);
+    grpc::Status job_status = test.stub->SendJob(&job_ctx, job_req, &job_resp);
+
+    REQUIRE(job_status.ok());
+    REQUIRE(job_resp.accepted());
 
     SECTION("Receive training progress updates") {
         grpc::ClientContext stream_ctx;
+        SetRpcDeadline(stream_ctx);
+        SetStreamJobId(stream_ctx, "test_job_stream");
         auto stream = test.stub->StreamTrainingMetrics(&stream_ctx);
 
         int progress_updates = 0;
         int checkpoint_updates = 0;
         bool got_completion = false;
+        bool updates_are_valid = true;
+        bool reservation_end_written = SendReservationEnd(stream.get());
 
         // Read updates
         TrainingUpdate update;
         while (stream->Read(&update)) {
-            REQUIRE(update.job_id() == "test_job_stream");
-            REQUIRE(update.timestamp() > 0);
+            updates_are_valid =
+                updates_are_valid &&
+                update.job_id() == "test_job_stream" &&
+                update.timestamp() > 0;
 
             if (update.has_progress()) {
                 progress_updates++;
                 auto& prog = update.progress();
 
-                REQUIRE(prog.current_epoch() > 0);
-                REQUIRE(prog.total_epochs() == 3);
-                REQUIRE(prog.progress_percentage() >= 0.0);
-                REQUIRE(prog.progress_percentage() <= 1.0);
-                REQUIRE(prog.metrics().count("loss") > 0);
-                REQUIRE(prog.metrics().count("accuracy") > 0);
-                REQUIRE(prog.gpu_usage() >= 0.0);
-                REQUIRE(prog.gpu_usage() <= 1.0);
+                updates_are_valid =
+                    updates_are_valid &&
+                    prog.current_epoch() > 0 &&
+                    prog.total_epochs() == 3 &&
+                    prog.progress_percentage() >= 0.0 &&
+                    prog.progress_percentage() <= 1.0 &&
+                    prog.metrics().count("loss") > 0 &&
+                    prog.metrics().count("accuracy") > 0 &&
+                    prog.gpu_usage() >= 0.0 &&
+                    prog.gpu_usage() <= 1.0;
             }
             else if (update.has_checkpoint()) {
                 checkpoint_updates++;
                 auto& ckpt = update.checkpoint();
-                REQUIRE(ckpt.epoch() > 0);
-                REQUIRE_FALSE(ckpt.checkpoint_hash().empty());
+                updates_are_valid =
+                    updates_are_valid &&
+                    ckpt.epoch() > 0 &&
+                    !ckpt.checkpoint_hash().empty();
             }
             else if (update.has_complete()) {
                 got_completion = true;
                 auto& complete = update.complete();
-                REQUIRE(complete.success());
-                REQUIRE_FALSE(complete.result_hash().empty());
-                REQUIRE(complete.total_epochs_completed() == 3);
-                break;  // Training done
+                updates_are_valid =
+                    updates_are_valid &&
+                    complete.success() &&
+                    !complete.weights_location().empty() &&
+                    complete.total_epochs_completed() == 3;
             }
         }
 
-        stream->WritesDone();
         grpc::Status status = stream->Finish();
 
+        REQUIRE(reservation_end_written);
         REQUIRE(status.ok());
+        REQUIRE(updates_are_valid);
         REQUIRE(progress_updates > 0);
         REQUIRE(got_completion);
     }
 
     SECTION("Send pause command") {
         grpc::ClientContext stream_ctx;
+        SetRpcDeadline(stream_ctx);
+        SetStreamJobId(stream_ctx, "test_job_stream");
         auto stream = test.stub->StreamTrainingMetrics(&stream_ctx);
 
         // Send pause command
         TrainingCommand pause_cmd;
         pause_cmd.set_pause(true);
-        REQUIRE(stream->Write(pause_cmd));
+        bool pause_written = stream->Write(pause_cmd);
 
         // Wait a bit
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -296,51 +363,54 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
         // Send resume command
         TrainingCommand resume_cmd;
         resume_cmd.set_pause(false);
-        REQUIRE(stream->Write(resume_cmd));
+        bool resume_written = stream->Write(resume_cmd);
+        bool reservation_end_written = SendReservationEnd(stream.get());
 
         // Read some updates
         TrainingUpdate update;
         int updates_received = 0;
-        while (stream->Read(&update) && updates_received < 10) {
+        while (stream->Read(&update)) {
             updates_received++;
         }
 
-        REQUIRE(updates_received > 0);
+        grpc::Status status = stream->Finish();
 
-        stream->WritesDone();
-        stream->Finish();
+        REQUIRE(pause_written);
+        REQUIRE(resume_written);
+        REQUIRE(reservation_end_written);
+        REQUIRE(status.ok());
+        REQUIRE(updates_received > 0);
     }
 
     SECTION("Send stop command") {
         grpc::ClientContext stream_ctx;
+        SetRpcDeadline(stream_ctx);
+        SetStreamJobId(stream_ctx, "test_job_stream");
         auto stream = test.stub->StreamTrainingMetrics(&stream_ctx);
-
-        // Read a few updates
-        TrainingUpdate update;
-        for (int i = 0; i < 5; i++) {
-            stream->Read(&update);
-        }
 
         // Send stop command
         TrainingCommand stop_cmd;
         stop_cmd.set_stop(true);
-        REQUIRE(stream->Write(stop_cmd));
+        bool stop_written = stream->Write(stop_cmd);
+        bool reservation_end_written = SendReservationEnd(stream.get());
 
         // Training should end
+        TrainingUpdate update;
         bool stream_ended = false;
         while (stream->Read(&update)) {
             // May receive a few more updates before stopping
             if (update.has_complete()) {
                 stream_ended = true;
-                break;
             }
         }
 
-        stream->WritesDone();
         auto status = stream->Finish();
 
         // Stream should close cleanly
+        REQUIRE(stop_written);
+        REQUIRE(reservation_end_written);
         REQUIRE(status.ok());
+        REQUIRE(stream_ended);
     }
 }
 
@@ -355,6 +425,7 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
 
     ConnectResponse conn_resp;
     grpc::ClientContext conn_ctx;
+    SetRpcDeadline(conn_ctx);
     test.stub->ConnectToNode(&conn_ctx, conn_req, &conn_resp);
 
     SendJobRequest job_req;
@@ -366,7 +437,12 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
 
     SendJobResponse job_resp;
     grpc::ClientContext job_ctx;
-    test.stub->SendJob(&job_ctx, job_req, &job_resp);
+    SetRpcDeadline(job_ctx);
+    grpc::Status job_status = test.stub->SendJob(&job_ctx, job_req, &job_resp);
+
+    REQUIRE(job_status.ok());
+    REQUIRE(job_resp.accepted());
+    REQUIRE(CompleteTrainingReservation(test, "test_job_weights"));
 
     SECTION("Download weights in chunks") {
         DownloadRequest request;
@@ -375,6 +451,7 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
         request.set_chunk_size(1024 * 1024);  // 1MB chunks
 
         grpc::ClientContext context;
+        SetRpcDeadline(context);
         auto reader = test.stub->DownloadWeights(&context, request);
 
         size_t total_bytes = 0;
@@ -413,12 +490,17 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
         request1.set_chunk_size(1024 * 1024);
 
         grpc::ClientContext context1;
+        SetRpcDeadline(context1);
         auto reader1 = test.stub->DownloadWeights(&context1, request1);
 
         WeightsChunk first_chunk;
         REQUIRE(reader1->Read(&first_chunk));
         size_t first_chunk_size = first_chunk.data().size();
-        reader1->Finish();
+
+        WeightsChunk drain_chunk;
+        while (reader1->Read(&drain_chunk)) {
+        }
+        REQUIRE(reader1->Finish().ok());
 
         // Resume from offset
         DownloadRequest request2;
@@ -427,13 +509,16 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
         request2.set_chunk_size(1024 * 1024);
 
         grpc::ClientContext context2;
+        SetRpcDeadline(context2);
         auto reader2 = test.stub->DownloadWeights(&context2, request2);
 
         WeightsChunk second_chunk;
         REQUIRE(reader2->Read(&second_chunk));
         REQUIRE(second_chunk.offset() == first_chunk_size);
 
-        reader2->Finish();
+        while (reader2->Read(&drain_chunk)) {
+        }
+        REQUIRE(reader2->Finish().ok());
     }
 }
 
@@ -456,6 +541,7 @@ TEST_CASE("JobExecutionService - Multiple Concurrent Jobs", "[p2p][concurrent]")
 
             ConnectResponse conn_resp;
             grpc::ClientContext conn_ctx;
+            SetRpcDeadline(conn_ctx);
             test.stub->ConnectToNode(&conn_ctx, conn_req, &conn_resp);
 
             // Send job
@@ -468,6 +554,7 @@ TEST_CASE("JobExecutionService - Multiple Concurrent Jobs", "[p2p][concurrent]")
 
             SendJobResponse job_resp;
             grpc::ClientContext job_ctx;
+            SetRpcDeadline(job_ctx);
             auto status = test.stub->SendJob(&job_ctx, job_req, &job_resp);
 
             if (status.ok() && job_resp.accepted()) {

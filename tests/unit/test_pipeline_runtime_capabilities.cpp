@@ -13,6 +13,7 @@ TEST_CASE("Training capability registry exposes tested causal LM building blocks
         NodeType::PositionalEncoding,
         NodeType::TransformerEncoder,
         NodeType::TransformerDecoder,
+        NodeType::MultiHeadAttention,
         NodeType::TimeDistributed
     };
 
@@ -28,14 +29,13 @@ TEST_CASE("Training capability registry exposes tested causal LM building blocks
         NodeType::CrossEntropyLoss));
 }
 
-TEST_CASE("Training capability registry keeps standalone attention blocked",
+TEST_CASE("Training capability registry keeps unsupported attention variants blocked",
           "[pipeline][capabilities][language_model]") {
     using cyxwiz::PipelineTrainingBackendSupportMode;
     using cyxwiz::ResolvePipelineTrainingBackendSupport;
     using gui::NodeType;
 
     const NodeType unsupported_nodes[] = {
-        NodeType::MultiHeadAttention,
         NodeType::SelfAttention,
         NodeType::CrossAttention,
         NodeType::LinearAttention

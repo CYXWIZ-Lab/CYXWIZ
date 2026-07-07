@@ -114,6 +114,15 @@ BackendFallbackReason ClassifyArrayFireBackendFallbackReason(
         return BackendFallbackReason::BackendCompileTimeout;
     }
     if (ContainsAny(text, {
+            "device lost",
+            "device reset",
+            "gpu device",
+            "cuda_error_unknown",
+            "cuda_error_launch_failure",
+            "af_err_device"})) {
+        return BackendFallbackReason::GpuBackendException;
+    }
+    if (ContainsAny(text, {
             "nvrtc",
             "jit",
             "compile",

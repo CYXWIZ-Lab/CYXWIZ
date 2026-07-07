@@ -23,24 +23,24 @@ CYXWIZ_API bool IsCudaJitFormalParameterOverflow(const char* message);
 CYXWIZ_API BackendFallbackReason ClassifyArrayFireBackendFallbackReason(
     const char* message);
 
-std::string BuildTensorShapeContext(
+CYXWIZ_API std::string BuildTensorShapeContext(
     const char* tensor_name,
     const std::vector<size_t>& shape);
-std::string CurrentArrayFireBackendName();
-std::string BuildArrayFireBackendFallbackContext(
+CYXWIZ_API std::string CurrentArrayFireBackendName();
+CYXWIZ_API std::string BuildArrayFireBackendFallbackContext(
     const std::string& shape_or_node_context,
     const std::string& backend_name = CurrentArrayFireBackendName());
-std::string BuildArrayFireBackendFallbackMessage(
+CYXWIZ_API std::string BuildArrayFireBackendFallbackMessage(
     const char* operation_name,
     BackendFallbackReason reason,
     bool include_error_text,
     const char* error_message,
     const std::string& context = {});
-bool ShouldLogArrayFireBackendFallbackOnce(
+CYXWIZ_API bool ShouldLogArrayFireBackendFallbackOnce(
     const char* operation_name,
     BackendFallbackReason reason,
     const std::string& context = {});
-bool ShouldForceArrayFireBackendFallbackForTesting(
+CYXWIZ_API bool ShouldForceArrayFireBackendFallbackForTesting(
     const char* operation_name);
 
 } // namespace cyxwiz

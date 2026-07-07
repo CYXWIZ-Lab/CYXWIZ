@@ -407,6 +407,10 @@ if(CYXWIZ_BUILD_TESTS)
         jwt-cpp::jwt-cpp
     )
 
+    target_compile_definitions(test_job_execution_service PRIVATE
+        CYXWIZ_P2P_TEST_SHORT_DISCONNECT_WAIT
+    )
+
     if(WIN32)
         target_compile_definitions(test_job_execution_service PRIVATE
             NOMINMAX
@@ -560,20 +564,16 @@ if(CYXWIZ_BUILD_TESTS)
             Threads::Threads
         )
 
-        # Link ONNX protobuf for test model creation
-        if(CYXWIZ_HAS_ONNX_EXPORT)
-            find_package(ONNX CONFIG QUIET)
-            if(ONNX_FOUND)
-                # Use namespaced targets: ONNX::onnx already includes ONNX::onnx_proto
-                target_link_libraries(test_onnx_loader PRIVATE ONNX::onnx)
-                target_compile_definitions(test_onnx_loader PRIVATE
-                    CYXWIZ_HAS_ONNX_EXPORT
-                    ONNX_ML  # Required for vcpkg ONNX headers
-                )
-            endif()
-        endif()
+        target_compile_definitions(test_onnx_loader PRIVATE
+            CYXWIZ_HAS_ONNX
+            "CYXWIZ_ONNX_TEST_MODEL_PATH=\"${CMAKE_SOURCE_DIR}/mnist.onnx\""
+        )
 
-        target_compile_definitions(test_onnx_loader PRIVATE CYXWIZ_HAS_ONNX)
+        add_custom_command(TARGET test_onnx_loader POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:onnxruntime::onnxruntime>
+                $<TARGET_FILE_DIR:test_onnx_loader>
+        )
 
         if(WIN32)
             target_compile_definitions(test_onnx_loader PRIVATE

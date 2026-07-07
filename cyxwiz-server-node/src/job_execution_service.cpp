@@ -495,10 +495,14 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 session->engine_connected = false;
                 session->engine_disconnect_time = now;
 
-                // Wait for reservation timer to expire
-                // In production, this would be a background task that checks periodically
-                // For now, we sleep until the timer expires
+                // Wait for reservation timer to expire.
+                // Tests cap this path so failed/cancelled streams cannot hang the suite
+                // for the production reservation window.
+#ifdef CYXWIZ_P2P_TEST_SHORT_DISCONNECT_WAIT
+                std::this_thread::sleep_for(std::min(remaining, std::chrono::seconds(1)));
+#else
                 std::this_thread::sleep_for(remaining);
+#endif
 
                 spdlog::info("[HOTEL ROOM] Reservation timer expired. Proceeding with cleanup.");
             } else {
@@ -1184,7 +1188,6 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
     // Reset session state for potential new job
     ResetJobSession(session);
-    session->jobs_completed_in_reservation++;
 
     // Send "ready for new job" message to Engine
     {
@@ -1315,6 +1318,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     session->is_running = false;
 
     // Report reservation end and trigger payment
+    const std::string reservation_id = session->reservation_id;
     int jobs_completed = session->jobs_completed_in_reservation.load();
     if (engine_disconnected) {
         spdlog::warn("[ENGINE DISCONNECT] Engine disconnected from P2P stream.");
@@ -1323,7 +1327,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
     spdlog::info("[CENTRAL SERVER] Reporting reservation end to Central Server...");
     spdlog::info("  This will mark node as FREE and release payment");
-    ReportReservationEnd(session->reservation_id, jobs_completed);
+    ReportReservationEnd(reservation_id, jobs_completed);
 
     // Final cleanup - removes job from StateManager so GUI shows node as idle
     spdlog::info("[CLEANUP] Removing job from active tracking...");
@@ -1340,7 +1344,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
     spdlog::info("========================================");
     spdlog::info("[RESERVATION COMPLETE]");
-    spdlog::info("  Reservation: {}", session->reservation_id);
+    spdlog::info("  Reservation: {}", reservation_id);
     spdlog::info("  Jobs completed: {}", jobs_completed);
     spdlog::info("  Node status: FREE (ready for new reservations)");
     spdlog::info("========================================");

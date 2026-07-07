@@ -25,7 +25,6 @@ add_executable(cyxwiz-tests
     unit/test_language_model_training.cpp
     unit/test_sequence_batcher.cpp
     unit/test_pipeline_runtime_capabilities.cpp
-    ../cyxwiz-backend/src/algorithms/arrayfire_backend_utils.cpp
     ../cyxwiz-engine/src/core/formats/cyxmodel_format.cpp
     ../cyxwiz-engine/src/core/language_model_training.cpp
     ../cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp
