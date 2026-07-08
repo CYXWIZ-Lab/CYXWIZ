@@ -3773,6 +3773,9 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
     compile_result_message_.clear();
     compile_result_backend_placements_.clear();
     compile_result_success_ = false;
+    if (properties_) {
+        properties_->ClearBackendPlacementFacts();
+    }
 
     try {
         cyxwiz::GraphCompiler compiler;
@@ -3781,6 +3784,23 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         compile_result_issues_ = config.issues;
         compile_result_backend_placements_ = config.backend_placements;
         compile_result_success_ = config.is_valid;
+        if (properties_) {
+            std::vector<properties_truth::BackendPlacementTruthFact> facts;
+            facts.reserve(compile_result_backend_placements_.size());
+            for (const auto& placement : compile_result_backend_placements_) {
+                properties_truth::BackendPlacementTruthFact fact;
+                fact.node_id = placement.node_id;
+                fact.node_type = placement.node_type;
+                fact.expected_backend = placement.expected_backend;
+                fact.fallback_backend = placement.fallback_backend;
+                fact.status = placement.status;
+                fact.reason_code = placement.reason_code;
+                fact.explanation = placement.explanation;
+                fact.suggested_action = placement.suggested_action;
+                facts.push_back(std::move(fact));
+            }
+            properties_->SetBackendPlacementFacts(std::move(facts));
+        }
 
         // Build the architecture summary text. Even when the graph has
         // errors, the partial summary is informative - it shows what the

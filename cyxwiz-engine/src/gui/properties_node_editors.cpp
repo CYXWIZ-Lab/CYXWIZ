@@ -1,5 +1,6 @@
 #include "properties_node_editors.h"
 #include "node_editor.h"
+#include "properties_truth.h"
 #include <imgui.h>
 #include <implot.h>
 #include <cmath>
@@ -541,8 +542,10 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
         }
 
         case NodeType::Output: {
-            std::string& classes = node.parameters["classes"];
-            if (classes.empty()) classes = "10";
+            std::string classes = ParamOr(
+                node,
+                "num_classes",
+                ParamOr(node, "classes", "10").c_str());
             char c_buffer[16];
             strncpy(c_buffer, classes.c_str(), sizeof(c_buffer) - 1);
             c_buffer[sizeof(c_buffer) - 1] = '\0';
@@ -551,7 +554,8 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120.0f);
             if (ImGui::InputText("##classes", c_buffer, sizeof(c_buffer), ImGuiInputTextFlags_CharsDecimal)) {
-                classes = c_buffer;
+                properties_truth::WriteCanonicalAndAliases(
+                    node, "num_classes", c_buffer);
                 context.invalidate_shapes();
             }
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Number of output classes");

@@ -10,6 +10,7 @@
 #include "node_config_dialog.h"
 #include "properties_node_editors.h"
 #include "properties_shape_info.h"
+#include "properties_truth.h"
 
 namespace gui {
 
@@ -41,11 +42,16 @@ public:
     // Force recomputation of shapes (call when graph changes)
     void InvalidateShapes() { shapes_valid_ = false; }
 
+    void SetBackendPlacementFacts(
+        std::vector<properties_truth::BackendPlacementTruthFact> facts);
+    void ClearBackendPlacementFacts();
+
 private:
     void RenderNodeProperties(MLNode& node);
 
     // Enhanced property sections (Phase 3)
     void RenderGeneralSection(MLNode& node);
+    void RenderTruthSummarySection(MLNode& node);
     void RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadata* metadata);
     void RenderPresetsSection(MLNode& node);
 
@@ -61,6 +67,7 @@ private:
     // Shape caching
     bool shapes_valid_ = false;
     std::map<int, NodeShapeInfo> cached_shapes_;
+    std::vector<properties_truth::BackendPlacementTruthFact> backend_placement_facts_;
 
     // Scope data buffers (node_id -> time/value ring buffer)
     std::map<int, properties_node_editors::ScopeBuffer> scope_buffers_;

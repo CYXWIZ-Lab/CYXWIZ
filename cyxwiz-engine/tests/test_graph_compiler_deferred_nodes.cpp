@@ -1905,6 +1905,17 @@ int main() {
                        cyxwiz::errors::Compiler::LabelOutputShapeMismatch),
           "CrossEntropy class/output mismatch should expose stable code");
 
+    output.parameters.clear();
+    output.parameters["num_classes"] = "2";
+    nodes = {data, class_dense, output, class_loss, optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "Output num_classes should be accepted as classes fallback");
+    Check(config.preprocessing.num_classes == 2,
+          "Output num_classes fallback should drive CrossEntropy class count");
+    Check(!HasIssueText(config, "class count"),
+          "Output num_classes fallback should satisfy class-count validation");
+
     auto sequence_tag_output = Node(
         18,
         gui::NodeType::SequenceTagOutput,

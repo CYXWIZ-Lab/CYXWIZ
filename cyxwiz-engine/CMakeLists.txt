@@ -251,6 +251,7 @@ set(ENGINE_SOURCES
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_presets.cpp
     src/gui/properties_shape_info.cpp
+    src/gui/properties_truth.cpp
     src/gui/node_config_dialog.cpp
     src/gui/data_input_capabilities.cpp
     src/gui/data_input_preview.cpp
@@ -3354,6 +3355,31 @@ if(WIN32)
 endif()
 
 set_target_properties(test_label_column_resolver PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Properties Truth Resolver =====
+add_executable(test_properties_truth
+    tests/test_properties_truth.cpp
+    src/gui/properties_truth.cpp
+)
+
+target_include_directories(test_properties_truth PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_properties_truth PRIVATE
+    imgui::imgui
+)
+
+if(WIN32)
+    target_compile_definitions(test_properties_truth PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_properties_truth PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

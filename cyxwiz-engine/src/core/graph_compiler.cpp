@@ -3511,7 +3511,7 @@ TrainingConfiguration GraphCompiler::Compile(
             config.preprocessing.has_onehot = true;
         }
 
-        // Try to get num_classes from Output node's "classes" parameter
+        // Try to get num_classes from Output node's class-count parameters.
         const gui::MLNode* output_node = FindFirstReachableNodeOfType(
             nodes, training_path_ids, gui::NodeType::Output);
         if (!output_node) {
@@ -3526,6 +3526,10 @@ TrainingConfiguration GraphCompiler::Compile(
                 output_node->type == gui::NodeType::SequenceTagOutput
                     ? "num_tags"
                     : "classes");
+            if (output_node->type == gui::NodeType::Output &&
+                it == output_node->parameters.end()) {
+                it = output_node->parameters.find("num_classes");
+            }
             if (it != output_node->parameters.end() && !it->second.empty()) {
                 try {
                     config.preprocessing.num_classes = std::stoul(it->second);
