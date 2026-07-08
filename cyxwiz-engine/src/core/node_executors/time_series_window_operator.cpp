@@ -1,4 +1,5 @@
 #include "time_series_window_operator.h"
+#include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 #include "ts_column_utils.h"
 
@@ -7,6 +8,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -29,6 +31,43 @@ void ParseColList(const std::string& s, std::vector<std::string>& out) {
         if (start == std::string::npos) continue;
         out.push_back(token.substr(start, end - start + 1));
     }
+}
+
+const char* MaterializationMemoryProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
+}
+
+std::string BuildWindowMemoryPreflightMessage(
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision,
+    uint64_t output_columns) {
+    std::ostringstream ss;
+    ss << "TimeSeriesWindow memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", rows=" << estimate.rows
+       << ", output_columns=" << output_columns
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: reduce input_width, feature_cols, source rows, "
+          "or use a future chunked materialization path.";
+    return ss.str();
 }
 
 } // namespace
@@ -151,6 +190,7 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = std::move(stage);
         event.message = std::move(message);
+        event.status = "running";
         event.progress = static_cast<float>(progress);
         event.processed_items = processed;
         event.total_items = total;
@@ -165,9 +205,68 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "TimeSeriesWindow: column '" + value_col_ + "' not found in input table");
     }
 
+    const int64_t planned_input_rows = column->length();
+    const int64_t planned_span = static_cast<int64_t>(input_width_) + shift_;
+    const int64_t planned_windows =
+        (planned_input_rows >= planned_span)
+            ? (planned_input_rows - planned_span + 1)
+            : 0;
+    if (planned_windows <= 0) {
+        return arrow::Status::Invalid(
+            "TimeSeriesWindow: not enough rows to build any window. "
+            "Have " + std::to_string(planned_input_rows) +
+            " values, need at least " + std::to_string(planned_span) +
+            " (input_width=" + std::to_string(input_width_) +
+            " + shift=" + std::to_string(shift_) + ")");
+    }
+
+    const size_t planned_feature_groups = 1 + feature_cols_.size();
+    const size_t planned_x_cols = planned_feature_groups * input_width_;
+    const size_t planned_output_columns =
+        planned_x_cols + 1 + (time_col_.empty() ? 0 : 1);
+    const uint64_t planned_bytes_per_value = time_col_.empty()
+        ? static_cast<uint64_t>(sizeof(float))
+        : static_cast<uint64_t>(sizeof(double));
+    const auto preflight_estimate = EstimateDenseMaterializationMemory(
+        static_cast<uint64_t>(planned_windows),
+        static_cast<uint64_t>(planned_output_columns),
+        planned_bytes_per_value);
+    const auto preflight_decision = EvaluateMaterializationMemory(
+        preflight_estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message = BuildWindowMemoryPreflightMessage(
+        preflight_estimate, preflight_decision,
+        static_cast<uint64_t>(planned_output_columns));
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(static_cast<uint64_t>(planned_windows),
+                       static_cast<uint64_t>(planned_output_columns),
+                       planned_cells)) {
+        planned_cells = std::numeric_limits<uint64_t>::max();
+    }
+    if (progress_callback_) {
+        PipelineOperatorProgress event;
+        event.stage = "TimeSeriesWindow memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(
+            preflight_decision.risk);
+        event.progress = 0.03f;
+        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(
+            preflight_decision.risk);
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        progress_callback_(event);
+    }
+    if (preflight_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+
     report_progress("Reading value column",
                     "Reading time-series value column '" + value_col_ + "'",
-                    0.05);
+                    0.05,
+                    0,
+                    static_cast<uint64_t>(planned_input_rows),
+                    preflight_estimate.estimated_peak_bytes);
 
     std::vector<float> values;
     std::string bad_type;
@@ -249,25 +348,13 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     const int64_t n = static_cast<int64_t>(values.size());
-    const int64_t span = static_cast<int64_t>(input_width_) + shift_;
-    const int64_t num_windows = (n >= span) ? (n - span + 1) : 0;
-
-    if (num_windows <= 0) {
-        return arrow::Status::Invalid(
-            "TimeSeriesWindow: not enough rows to build any window. "
-            "Have " + std::to_string(n) + " values, need at least " +
-            std::to_string(span) +
-            " (input_width=" + std::to_string(input_width_) +
-            " + shift=" + std::to_string(shift_) + ")");
-    }
+    const int64_t num_windows = planned_windows;
 
     // Total columns in output: value_col windows + feature_col windows + 1 label.
     const size_t num_features = 1 + feature_cols_.size();
     const size_t total_x_cols = num_features * input_width_;
     const uint64_t estimated_window_matrix_bytes =
-        static_cast<uint64_t>(num_windows) *
-        static_cast<uint64_t>(total_x_cols + 1 + (time_col_.empty() ? 0 : 1)) *
-        sizeof(float);
+        preflight_estimate.estimated_peak_bytes;
     report_progress("Planning windows",
                     "Planning " + std::to_string(num_windows) +
                     " windows x " + std::to_string(total_x_cols) +

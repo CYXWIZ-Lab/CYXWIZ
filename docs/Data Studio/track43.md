@@ -112,3 +112,24 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+## Slice 5 - TimeSeriesWindow Memory Guard
+
+Status: complete.
+
+Added dense materialization preflight to TimeSeriesWindow. The guard estimates
+window output before reading source values into local vectors or reserving Arrow
+builders, using planned input rows, `input_width`, `shift`, feature column
+count, label column, and optional time metadata column.
+
+The operator now emits structured `status` and `memory_risk_level` on the first
+progress event and blocks unsafe window materialization before the dense output
+path starts.
+
+Kept this slice narrow: no compiler-wide planner, no streaming window writer,
+and no new user-facing configuration knobs.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

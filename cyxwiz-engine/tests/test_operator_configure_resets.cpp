@@ -228,8 +228,27 @@ void TestTimeSeriesWindowClearsOptionalFeatureAndTimeColumns() {
         {"time_col", "time"},
         {"input_width", "2"},
     }, error), error);
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
     auto first = op.Apply(input);
     Check(first.ok(), first.status().ToString());
+    Check(!progress_events.empty(),
+          "TimeSeriesWindow should emit materialization progress events");
+    Check(progress_events.front().stage == "TimeSeriesWindow memory preflight",
+          "TimeSeriesWindow first progress event should be memory preflight");
+    Check(progress_events.front().status == "running",
+          "safe TimeSeriesWindow preflight should stay in running status");
+    Check(progress_events.front().memory_risk_level == "safe",
+          "safe TimeSeriesWindow preflight should report safe risk");
+    Check(progress_events.front().estimated_memory_bytes >
+              4ULL * 6ULL * static_cast<uint64_t>(sizeof(float)),
+          "TimeSeriesWindow preflight should include peak allocation overhead");
+    Check(progress_events.front().message.find("Suggestion:") !=
+              std::string::npos,
+          "TimeSeriesWindow preflight message should include mitigation guidance");
     Check(first.ValueOrDie()->GetColumnByName("extra_x_0") != nullptr,
           "first time-series window configure should emit extra feature block");
     Check(first.ValueOrDie()->GetColumnByName("__window_start_time") != nullptr,
