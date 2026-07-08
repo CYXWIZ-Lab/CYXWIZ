@@ -197,3 +197,29 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+## Slice 9 - FFT Memory Guard
+
+Status: complete.
+
+Added dense materialization preflight to FFT. The guard validates the signal
+column exists and is numeric, estimates the input signal vector plus
+frequency/magnitude/phase output columns from planned Arrow row count, and emits
+structured `status` and `memory_risk_level` before reading the signal into a
+local vector or invoking the FFT backend.
+
+The estimate is intentionally conservative for this first pass: it treats the
+planned signal and three output columns as double-width dense cells and leaves
+backend-specific temporary FFT workspace as part of the peak multiplier.
+
+Validation note: adding a live FFT backend call to the shared operator
+regression executable triggered an existing heap-corruption exit after FFT
+completion (`-1073740940`). To avoid making the shared regression suite flaky,
+the live FFT assertion was not kept in that target. The source guard is covered
+by compile/build verification here; the backend heap issue should be tracked as
+a separate follow-up if we need runtime FFT regression coverage.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

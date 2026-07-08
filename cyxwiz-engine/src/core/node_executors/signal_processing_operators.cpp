@@ -1,4 +1,5 @@
 #include "signal_processing_operators.h"
+#include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 #include "feature_matrix_utils.h"
 #include "ts_column_utils.h"
@@ -13,6 +14,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -33,6 +35,7 @@ void ReportProgress(const PipelineOperatorProgressCallback& callback,
     PipelineOperatorProgress event;
     event.stage = std::move(stage);
     event.message = std::move(message);
+    event.status = "running";
     event.progress = static_cast<float>(progress);
     event.processed_items = processed;
     event.total_items = total;
@@ -89,6 +92,42 @@ arrow::Result<int64_t> CheckedSizeForArrow(size_t size, const std::string& conte
     return static_cast<int64_t>(size);
 }
 
+const char* MaterializationMemoryProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
+}
+
+std::string BuildFftMemoryPreflightMessage(
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision) {
+    std::ostringstream ss;
+    ss << "FFT memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", samples=" << estimate.rows
+       << ", planned_columns=" << estimate.output_features
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: reduce signal rows, window the signal first, "
+          "or use a future chunked/sampled FFT materialization path.";
+    return ss.str();
+}
+
 } // namespace
 
 // ============================================================================
@@ -131,18 +170,68 @@ FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid("FFT: input table is null");
 
-    ReportProgress(progress_callback_, "Reading signal",
-                   "Reading FFT signal column '" + signal_col_ + "'",
-                   0.10);
-    std::vector<double> signal;
-    int col_idx = -1;
-    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, signal_col_, "FFT", signal, col_idx));
-
-    if (signal.empty()) {
+    int col_idx = input->schema()->GetFieldIndex(signal_col_);
+    if (col_idx < 0) {
+        return arrow::Status::KeyError(
+            "FFT: signal column '" + signal_col_ + "' not found");
+    }
+    auto signal_column = input->column(col_idx);
+    if (!IsNumericChunked(signal_column)) {
+        std::string got = signal_column && signal_column->num_chunks() > 0
+            ? signal_column->chunk(0)->type()->ToString()
+            : "<empty>";
+        return arrow::Status::TypeError(
+            "FFT: signal column '" + signal_col_ +
+            "' must be numeric (got '" + got + "')");
+    }
+    const uint64_t planned_samples =
+        static_cast<uint64_t>(std::max<int64_t>(0, signal_column->length()));
+    if (planned_samples == 0) {
         return arrow::Status::Invalid("FFT: signal column is empty");
     }
+    const uint64_t planned_columns = 4;
+    const auto preflight_estimate = EstimateDenseMaterializationMemory(
+        planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
+    const auto preflight_decision = EvaluateMaterializationMemory(
+        preflight_estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message = BuildFftMemoryPreflightMessage(
+        preflight_estimate, preflight_decision);
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(planned_samples, planned_columns, planned_cells)) {
+        planned_cells = std::numeric_limits<uint64_t>::max();
+    }
+    if (progress_callback_) {
+        PipelineOperatorProgress event;
+        event.stage = "FFT memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(
+            preflight_decision.risk);
+        event.progress = 0.03f;
+        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(
+            preflight_decision.risk);
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        progress_callback_(event);
+    }
+    if (preflight_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading FFT signal column '" + signal_col_ + "'",
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
+    std::vector<double> signal;
+    int read_col_idx = -1;
+    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, signal_col_, "FFT", signal, read_col_idx));
+    col_idx = read_col_idx;
+
     const uint64_t estimated_signal_bytes =
-        static_cast<uint64_t>(signal.size()) * sizeof(double);
+        preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Computing FFT",
                    "Computing FFT over " + std::to_string(signal.size()) +
                    " samples",
@@ -170,8 +259,10 @@ FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             ", freq=" + std::to_string(result.frequencies.size()) + ")");
     }
 
+    const auto output_memory_plan = EstimateDenseMaterializationMemory(
+        static_cast<uint64_t>(nbins), 3, static_cast<uint64_t>(sizeof(double)));
     const uint64_t estimated_output_bytes =
-        static_cast<uint64_t>(nbins) * 3 * sizeof(double);
+        output_memory_plan.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Building Arrow table",
                    "Building FFT frequency-domain output table",
                    0.70,
