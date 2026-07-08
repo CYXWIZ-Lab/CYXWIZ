@@ -290,6 +290,11 @@ int main() {
         Check(HasStatus(*pin_memory,
                         gui::properties_truth::TruthStatus::RequiresDialog),
               "pin_memory remains configured through the DataLoader dialog");
+        Check(pin_memory->message.find("GPU host-to-device transfer") !=
+                  std::string::npos,
+              "pin_memory truth should describe the actual transfer scope");
+        Check(pin_memory->message.find("materialization") != std::string::npos,
+              "pin_memory truth should not imply materialization acceleration");
         Check(report.has_issue,
               "unsupported pin_memory should mark the truth report as issue");
     }

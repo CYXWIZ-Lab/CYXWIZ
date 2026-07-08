@@ -685,7 +685,7 @@ Common bottlenecks by stage:
 | Tensor conversion    | row-major copy, dtype cast, unsupported types |
 | CPU preprocessing    | normalization, tokenization, image transforms |
 | Dataloader           | no prefetch, too few workers, shuffle cost    |
-| CPU->GPU transfer    | small batches, repeated copies, pinned memory |
+| CPU->GPU transfer    | small batches, repeated copies, no pinned backend yet |
 | Model forward        | slow layer kernels, CPU fallback, shape layout|
 | Backward             | activation caches, gradient memory, BPTT cost |
 | Optimizer            | many small tensors, optimizer state memory    |
@@ -716,7 +716,7 @@ Target mitigations:
 - add typed feature encoders
 - separate features and labels before training
 - prefetch batches
-- use pinned CPU memory for GPU transfer
+- add a real pinned CPU-memory backend for GPU transfer
 - cache GPU arrays when tensor CPU data has not changed
 - record timing per stage
 

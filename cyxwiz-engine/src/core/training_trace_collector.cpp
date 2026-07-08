@@ -80,7 +80,12 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"node_name", event.node_name},
         {"estimated_memory_bytes", event.estimated_memory_bytes},
         {"processed_items", event.processed_items},
-        {"total_items", event.total_items}
+        {"total_items", event.total_items},
+        {"pin_memory_requested", event.pin_memory_requested},
+        {"transfer_mode", event.transfer_mode},
+        {"transfer_reason", event.transfer_reason},
+        {"transfer_backend", event.transfer_backend},
+        {"transfer_batch_size", event.transfer_batch_size}
     };
 }
 
@@ -119,6 +124,11 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
     event.estimated_memory_bytes = j.value("estimated_memory_bytes", uint64_t{0});
     event.processed_items = j.value("processed_items", uint64_t{0});
     event.total_items = j.value("total_items", uint64_t{0});
+    event.pin_memory_requested = j.value("pin_memory_requested", false);
+    event.transfer_mode = j.value("transfer_mode", "");
+    event.transfer_reason = j.value("transfer_reason", "");
+    event.transfer_backend = j.value("transfer_backend", "");
+    event.transfer_batch_size = j.value("transfer_batch_size", 0);
     return event;
 }
 
@@ -230,6 +240,61 @@ void TrainingTraceCollector::RecordRuntimeEvent(const std::string& stage,
     event.thread_id = ThreadIdString();
     event.status = status.empty() ? "ok" : status;
     event.message = message;
+    if (!events_.empty()) {
+        const auto& latest = events_.back();
+        event.epoch = latest.epoch;
+        event.batch = latest.batch;
+        event.total_batches = latest.total_batches;
+        event.loss = latest.loss;
+        event.accuracy = latest.accuracy;
+    }
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordPinMemoryTransferStatus(
+    const PinMemoryTransferStatus& status,
+    const std::string& message,
+    const std::string& severity) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    const std::string event_status = severity.empty() ? "ok" : severity;
+    if (event_status != "ok") {
+        std::string warning = "DataLoader.PinMemoryTransfer";
+        if (!message.empty()) {
+            warning += ": " + message;
+        }
+        warnings_.push_back(warning);
+        if (warnings_.size() > 50) {
+            warnings_.erase(warnings_.begin());
+        }
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = "DataLoader.PinMemoryTransfer";
+    event.thread_id = ThreadIdString();
+    event.status = event_status;
+    event.message = message;
+    event.node_id = status.node_id;
+    event.node_name = status.node_name;
+    event.pin_memory_requested = status.requested;
+    event.transfer_mode = status.effective_mode;
+    event.transfer_reason = status.reason_code;
+    event.transfer_backend = status.backend;
+    event.transfer_batch_size = status.batch_size;
     if (!events_.empty()) {
         const auto& latest = events_.back();
         event.epoch = latest.epoch;

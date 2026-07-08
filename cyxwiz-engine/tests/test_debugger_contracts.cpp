@@ -812,8 +812,17 @@ void TestSupportBundleContract() {
     cyxwiz::TrainingTraceEvent event;
     event.run_id = "support-run";
     event.stage = "Forward";
+    event.node_id = 19;
+    event.node_name = "Sequence DataLoader token=secret-token";
     event.message = "operator failed token=secret-token";
     event.cpu_allocated_bytes = 1024;
+    event.pin_memory_requested = true;
+    event.transfer_mode =
+        cyxwiz::PinMemoryTransferMode::PinnedRequestedButUnsupported;
+    event.transfer_reason =
+        cyxwiz::PinMemoryTransferReason::BackendUnavailable;
+    event.transfer_backend = "auto";
+    event.transfer_batch_size = 32;
     training.recent_events.push_back(event);
 
     cyxwiz::DebugSupportBundleInput input;
@@ -914,6 +923,26 @@ void TestSupportBundleContract() {
     Check(bundle["training_trace"]["recent_events"][0]["message"].get<std::string>() ==
               "operator failed token=[REDACTED]",
           "support bundle should redact tokens in event messages");
+    Check(bundle["training_trace"]["recent_events"][0]["node_id"].get<int>() ==
+              19,
+          "support bundle should export training trace node id");
+    Check(bundle["training_trace"]["recent_events"][0]["node_name"].get<std::string>() ==
+              "Sequence DataLoader token=[REDACTED]",
+          "support bundle should export redacted training trace node name");
+    Check(bundle["training_trace"]["recent_events"][0]["pin_memory_requested"].get<bool>(),
+          "support bundle should export pin_memory request state");
+    Check(bundle["training_trace"]["recent_events"][0]["transfer_mode"].get<std::string>() ==
+              cyxwiz::PinMemoryTransferMode::PinnedRequestedButUnsupported,
+          "support bundle should export transfer mode");
+    Check(bundle["training_trace"]["recent_events"][0]["transfer_reason"].get<std::string>() ==
+              cyxwiz::PinMemoryTransferReason::BackendUnavailable,
+          "support bundle should export transfer reason");
+    Check(bundle["training_trace"]["recent_events"][0]["transfer_backend"].get<std::string>() ==
+              "auto",
+          "support bundle should export transfer backend");
+    Check(bundle["training_trace"]["recent_events"][0]["transfer_batch_size"].get<int>() ==
+              32,
+          "support bundle should export transfer batch size");
     Check(bundle["recent_logs"][0].get<std::string>() ==
               "failed with token=[REDACTED]",
           "support bundle should redact tokens in recent logs");

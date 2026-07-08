@@ -568,7 +568,7 @@ public:
         int num_workers = 4;
         int prefetch_factor = 2;
         int batch_size = 32;
-        bool pin_memory = true;  // For GPU transfer
+        bool pin_memory = false;  // GPU transfer request; unsupported today
     };
 
     ParallelDataLoader(Dataset* dataset, const Config& config);

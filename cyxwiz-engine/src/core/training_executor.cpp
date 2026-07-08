@@ -70,6 +70,40 @@ void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
     }
 }
 
+std::string DescribePinMemoryTransferStatus(
+    const PinMemoryTransferStatus& status) {
+    return fmt::format(
+        "pin_memory requested={}, effective_mode={}, reason={}, backend={}, "
+        "batch_size={}, node_id={}, node_name='{}': {}",
+        status.requested ? "true" : "false",
+        status.effective_mode,
+        status.reason_code,
+        status.backend,
+        status.batch_size,
+        status.node_id,
+        status.node_name,
+        status.message);
+}
+
+void ReportPinMemoryTransferStatus(const TrainingConfiguration& config) {
+    const auto& status = config.pin_memory_transfer;
+    if (!status.requested) {
+        return;
+    }
+
+    const std::string detail = DescribePinMemoryTransferStatus(status);
+    const std::string severity = status.NeedsUserWarning() ? "warning" : "ok";
+    if (status.NeedsUserWarning()) {
+        spdlog::warn("TrainingExecutor: {}", detail);
+    } else {
+        spdlog::info("TrainingExecutor: {}", detail);
+    }
+    TrainingTraceCollector::Instance().RecordPinMemoryTransferStatus(
+        status,
+        detail,
+        severity);
+}
+
 bool ShouldLogTrainingBatch(const TrainingConfiguration& config, int batch_num) {
     if (batch_num <= 1) {
         return true;
@@ -481,6 +515,7 @@ void TrainingExecutor::Train(
             "TrainingLoop",
             "Training loop attached to existing setup trace");
     }
+    ReportPinMemoryTransferStatus(config_);
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
 

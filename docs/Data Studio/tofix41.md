@@ -2,7 +2,13 @@
 
 ## Status
 
-Open.
+Implemented through the structured fallback path.
+
+The runtime still does not provide a real pinned host-memory allocator. This
+ticket is satisfied by making `pin_memory=true` non-silent: compiler, training
+trace, support bundles, Training Dashboard, Studio Debugger, and properties
+truth now report whether the request is unsupported, not applicable, or
+available for a future backend.
 
 ## Problem
 

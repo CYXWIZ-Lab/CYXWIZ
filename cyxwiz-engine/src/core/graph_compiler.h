@@ -323,6 +323,44 @@ struct BackendPlacementSummary {
     }
 };
 
+namespace PinMemoryTransferMode {
+inline constexpr const char* RegularHostMemory = "regular_host_memory";
+inline constexpr const char* PinnedHostMemory = "pinned_host_memory";
+inline constexpr const char* PinnedRequestedButUnsupported =
+    "pinned_requested_but_unsupported";
+inline constexpr const char* PinnedRequestedButNotApplicable =
+    "pinned_requested_but_not_applicable";
+} // namespace PinMemoryTransferMode
+
+namespace PinMemoryTransferReason {
+inline constexpr const char* NotRequested = "pin_memory_not_requested";
+inline constexpr const char* BackendUnavailable =
+    "pinned_host_memory_backend_unavailable";
+inline constexpr const char* CpuBackendNotApplicable =
+    "pin_memory_cpu_backend_not_applicable";
+inline constexpr const char* Active = "pinned_host_memory_active";
+} // namespace PinMemoryTransferReason
+
+struct PinMemoryTransferStatus {
+    bool requested = false;
+    int node_id = -1;
+    std::string node_name;
+    std::string backend = "auto";
+    int batch_size = 0;
+    std::vector<size_t> feature_shape;
+    std::string effective_mode = PinMemoryTransferMode::RegularHostMemory;
+    std::string reason_code = PinMemoryTransferReason::NotRequested;
+    std::string message =
+        "pin_memory was not requested; regular host memory will be used.";
+
+    bool NeedsUserWarning() const {
+        return effective_mode ==
+                   PinMemoryTransferMode::PinnedRequestedButUnsupported ||
+               effective_mode ==
+                   PinMemoryTransferMode::PinnedRequestedButNotApplicable;
+    }
+};
+
 /**
  * Complete training configuration extracted from graph
  */
@@ -382,6 +420,7 @@ struct TrainingConfiguration {
     bool save_best_checkpoint = true;   // keep best validation epoch
     int early_stopping_patience = 5;    // stop after this many non-improving epochs
     std::string checkpoint_dir;         // optional override, defaults to run-local path
+    PinMemoryTransferStatus pin_memory_transfer;
 
     // Preprocessing — tabular config (backward-compatible)
     GraphPreprocessingConfig preprocessing;

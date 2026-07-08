@@ -748,8 +748,10 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
                 AddStatus(pin_memory, TruthStatus::Unsupported);
                 AddStatus(pin_memory, TruthStatus::RequiresDialog);
                 pin_memory.message =
-                    "pin_memory=true is ignored because current batchers do not "
-                    "provide a pinned host-memory transfer backend.";
+                    "pin_memory=true is a GPU host-to-device transfer "
+                    "optimization request, not a data materialization "
+                    "accelerator. Current batchers report the effective "
+                    "runtime transfer mode after compile/training.";
             }
             report.properties.push_back(std::move(pin_memory));
         }

@@ -464,6 +464,41 @@ int main() {
     Check(config.layers.front().type == gui::NodeType::MultiHeadAttention,
           "single-input MultiHeadAttention compiled layer should preserve node type");
 
+    auto cpu_loader = Node(39,
+                           gui::NodeType::DataLoader,
+                           "CPU DataLoader",
+                           {Pin(3901, gui::PinType::Dataset, "Dataset", true)},
+                           {Pin(3902, gui::PinType::Tensor, "Batch", false)});
+    cpu_loader.parameters["batch_size"] = "8";
+    cpu_loader.parameters["pin_memory"] = "true";
+
+    nodes = {self_mha_data, cpu_loader, self_mha, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 39, 3901),
+        Link(2, 39, 3902, 38, 3801),
+        Link(3, 38, 3803, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "CPU-only pin_memory graph should compile with a warning");
+    Check(HasIssueText(config, "pin_memory=true is not applicable"),
+          "CPU-only pin_memory request should surface a not-applicable warning");
+    Check(config.pin_memory_transfer.requested,
+          "CPU-only pin_memory request should be preserved");
+    Check(config.pin_memory_transfer.backend == "CPU",
+          "CPU-only pin_memory status should identify CPU backend");
+    Check(config.pin_memory_transfer.effective_mode ==
+              cyxwiz::PinMemoryTransferMode::PinnedRequestedButNotApplicable,
+          "CPU-only pin_memory status should expose not-applicable mode");
+    Check(config.pin_memory_transfer.reason_code ==
+              cyxwiz::PinMemoryTransferReason::CpuBackendNotApplicable,
+          "CPU-only pin_memory status should expose not-applicable reason");
+    Check(config.pin_memory_transfer.NeedsUserWarning(),
+          "CPU-only pin_memory status should require user warning");
+
     auto sequence_data = data;
     sequence_data.name = "NER Sentence CSV";
     sequence_data.parameters["file_category"] = "sequence_text";
@@ -555,6 +590,20 @@ int main() {
           "DataLoader should preserve checkpoint directory");
     Check(HasIssueText(config, "pin_memory=true is unsupported"),
           "DataLoader should surface unsupported pin_memory as a compiler warning");
+    Check(config.pin_memory_transfer.requested,
+          "DataLoader should preserve pin_memory as a runtime capability request");
+    Check(config.pin_memory_transfer.node_id == 19,
+          "pin_memory transfer status should identify the DataLoader node");
+    Check(config.pin_memory_transfer.batch_size == 32,
+          "pin_memory transfer status should include compiled batch size");
+    Check(config.pin_memory_transfer.effective_mode ==
+              cyxwiz::PinMemoryTransferMode::PinnedRequestedButUnsupported,
+          "pin_memory transfer status should expose unsupported effective mode");
+    Check(config.pin_memory_transfer.reason_code ==
+              cyxwiz::PinMemoryTransferReason::BackendUnavailable,
+          "pin_memory transfer status should expose unsupported reason code");
+    Check(config.pin_memory_transfer.NeedsUserWarning(),
+          "unsupported pin_memory transfer status should require user warning");
 
     auto sequence_builder = Node(22,
                                  gui::NodeType::NERSequenceBuilder,

@@ -10,6 +10,8 @@
 
 namespace cyxwiz {
 
+struct PinMemoryTransferStatus;
+
 struct TrainingTraceEvent {
     std::string timestamp;
     std::string run_id;
@@ -44,6 +46,11 @@ struct TrainingTraceEvent {
     uint64_t estimated_memory_bytes = 0;
     uint64_t processed_items = 0;
     uint64_t total_items = 0;
+    bool pin_memory_requested = false;
+    std::string transfer_mode;
+    std::string transfer_reason;
+    std::string transfer_backend;
+    int transfer_batch_size = 0;
 };
 
 struct TrainingTraceSummary {
@@ -87,6 +94,10 @@ public:
     void RecordRuntimeEvent(const std::string& stage,
                             const std::string& message,
                             const std::string& status = "ok");
+    void RecordPinMemoryTransferStatus(
+        const PinMemoryTransferStatus& status,
+        const std::string& message,
+        const std::string& severity);
     void RecordTaskProgress(uint64_t task_id,
                             const std::string& task_name,
                             const std::string& task_stage,

@@ -302,7 +302,9 @@ public:
                                    size_t bytes,
                                    int dst_device, int src_device);
 
-    // Pinned (page-locked) memory for faster transfers
+    // Future pinned (page-locked) memory API for faster transfers.
+    // Current training batchers report pinned requests as unsupported unless a
+    // real backend allocator is added.
     static void* AllocatePinned(size_t bytes);
     static void FreePinned(void* ptr);
 };
@@ -401,7 +403,8 @@ if cyx.device.is_backend_available('cuda'):
 
 1. **Monitor memory usage**: Prevent OOM errors
 2. **Clear cache periodically**: `Device::GarbageCollect()`
-3. **Use pinned memory**: For large CPU-GPU transfers
+3. **Request pinned memory only with a supported backend**: Current training
+   batchers report unsupported requests and fall back to regular host memory
 4. **Pre-allocate tensors**: Avoid allocation during training
 
 ### Multi-GPU

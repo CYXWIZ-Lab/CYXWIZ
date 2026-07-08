@@ -254,6 +254,8 @@ nlohmann::json DebugSupportBundleBuilder::TrainingTraceToJson(
             {"run_id", event.run_id},
             {"stage", event.stage},
             {"thread_id", event.thread_id},
+            {"node_id", event.node_id},
+            {"node_name", RedactString(event.node_name)},
             {"epoch", event.epoch},
             {"batch", event.batch},
             {"total_batches", event.total_batches},
@@ -267,7 +269,12 @@ nlohmann::json DebugSupportBundleBuilder::TrainingTraceToJson(
             {"af_alloc_buffers", event.af_alloc_buffers},
             {"af_lock_buffers", event.af_lock_buffers},
             {"status", event.status},
-            {"message", RedactString(event.message)}
+            {"message", RedactString(event.message)},
+            {"pin_memory_requested", event.pin_memory_requested},
+            {"transfer_mode", event.transfer_mode},
+            {"transfer_reason", event.transfer_reason},
+            {"transfer_backend", event.transfer_backend},
+            {"transfer_batch_size", event.transfer_batch_size}
         });
     }
 

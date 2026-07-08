@@ -111,6 +111,18 @@ int CountRecommendationSeverity(const StudioDebuggerSnapshot& session,
     return count;
 }
 
+const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
+    const TrainingTraceSummary& trace) {
+    for (auto it = trace.recent_events.rbegin();
+         it != trace.recent_events.rend();
+         ++it) {
+        if (it->pin_memory_requested || !it->transfer_mode.empty()) {
+            return &(*it);
+        }
+    }
+    return nullptr;
+}
+
 bool IsPreprocessingTrace(const DebugTraceRecord& trace) {
     return trace.role == DebugTraceRole::RawInput ||
         trace.role == DebugTraceRole::PreprocessingOutput ||
@@ -1270,6 +1282,7 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
     const TrainingTraceEvent* latest_validation = nullptr;
     const TrainingTraceEvent* latest_checkpoint = nullptr;
     const TrainingTraceEvent* latest_terminal = nullptr;
+    const TrainingTraceEvent* latest_transfer = FindLatestPinMemoryTransferEvent(trace);
     for (const auto& event : trace.recent_events) {
         if (event.metric_scope == "task" || event.task_id != 0) {
             latest_task = &event;
@@ -1322,9 +1335,30 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
     }
 
     if (latest_task || latest_validation || latest_checkpoint ||
+        latest_transfer ||
         latest_terminal) {
         ImGui::Separator();
         ImGui::Text("Training Truth Summary");
+        if (latest_transfer) {
+            ImGui::Text("Pin-memory transfer: %s",
+                        latest_transfer->transfer_mode.empty()
+                            ? "unknown"
+                            : latest_transfer->transfer_mode.c_str());
+            ImGui::SameLine(330);
+            ImGui::TextDisabled("reason=%s backend=%s batch=%d",
+                                latest_transfer->transfer_reason.empty()
+                                    ? "unknown"
+                                    : latest_transfer->transfer_reason.c_str(),
+                                latest_transfer->transfer_backend.empty()
+                                    ? "unknown"
+                                    : latest_transfer->transfer_backend.c_str(),
+                                latest_transfer->transfer_batch_size);
+            if (!latest_transfer->node_name.empty()) {
+                ImGui::TextDisabled("DataLoader: %s (%d)",
+                                    latest_transfer->node_name.c_str(),
+                                    latest_transfer->node_id);
+            }
+        }
         if (latest_task) {
             ImGui::Text("Task: %s", latest_task->task_name.empty()
                 ? latest_task->stage.c_str()
@@ -1610,6 +1644,20 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
                 ImGui::Text("Epoch %d batch %d/%d", event.epoch, event.batch, event.total_batches);
                 ImGui::Text("Duration: %.2f ms", event.duration_ms);
                 ImGui::Text("Status: %s", event.status.c_str());
+                if (event.pin_memory_requested ||
+                    !event.transfer_mode.empty()) {
+                    ImGui::Text("Transfer: mode=%s reason=%s backend=%s batch=%d",
+                                event.transfer_mode.empty()
+                                    ? "unknown"
+                                    : event.transfer_mode.c_str(),
+                                event.transfer_reason.empty()
+                                    ? "unknown"
+                                    : event.transfer_reason.c_str(),
+                                event.transfer_backend.empty()
+                                    ? "unknown"
+                                    : event.transfer_backend.c_str(),
+                                event.transfer_batch_size);
+                }
                 if (!event.message.empty()) {
                     ImGui::Separator();
                     ImGui::TextWrapped("%s", event.message.c_str());

@@ -592,7 +592,7 @@ struct DataLoaderConfig {
     bool shuffle = true;
     bool drop_last = false;
     int num_workers = 4;
-    bool pin_memory = true;
+    bool pin_memory = false;  // GPU pinned transfer request; unsupported today
     size_t prefetch_factor = 2;
 };
 
@@ -1367,11 +1367,16 @@ cyxwiz-engine/src/
   "batch_size": 32,
   "shuffle": true,
   "num_workers": 4,
-  "pin_memory": true,
+  "pin_memory": false,
   "drop_last": true,
   "prefetch_factor": 2
 }
 ```
+
+`pin_memory=true` is accepted as a compatibility/runtime capability request, but
+current CyxWiz batchers do not allocate pinned host memory. Compile/training
+diagnostics report whether the request is unsupported, not applicable, or
+honored by a future backend.
 
 ---
 

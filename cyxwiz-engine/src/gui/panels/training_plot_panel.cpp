@@ -77,6 +77,24 @@ const char* ClassifyTrainingWarning(const std::string& text) {
     return "Warning";
 }
 
+#ifndef CYXWIZ_PLOTTING_MODULE
+const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
+    const TrainingTraceSummary& trace) {
+    for (auto it = trace.recent_events.rbegin();
+         it != trace.recent_events.rend();
+         ++it) {
+        if (it->pin_memory_requested || !it->transfer_mode.empty()) {
+            return &(*it);
+        }
+    }
+    return nullptr;
+}
+
+bool IsPinMemoryTransferWarning(const std::string& warning) {
+    return warning.rfind("DataLoader.PinMemoryTransfer", 0) == 0;
+}
+#endif
+
 } // namespace
 
 TrainingPlotPanel::TrainingPlotPanel()
@@ -1230,20 +1248,54 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
 void TrainingPlotPanel::RenderTrainingWarningSummary() {
 #ifndef CYXWIZ_PLOTTING_MODULE
     const auto trace = TrainingTraceCollector::Instance().Snapshot();
-    if (!trace.available || trace.warnings.empty()) {
+    if (!trace.available) {
+        return;
+    }
+
+    const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace);
+    if (!transfer && trace.warnings.empty()) {
         return;
     }
 
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
-                       "Training warnings:");
-    const int start =
-        std::max(0, static_cast<int>(trace.warnings.size()) - 3);
-    for (int i = start; i < static_cast<int>(trace.warnings.size()); ++i) {
-        const auto& warning = trace.warnings[i];
-        ImGui::BulletText("%s", ClassifyTrainingWarning(warning));
+    if (transfer) {
+        const ImVec4 color = transfer->status == "warning"
+            ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
+            : ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+        ImGui::TextColored(color, "Pin-memory transfer:");
         ImGui::SameLine(170);
-        ImGui::TextWrapped("%s", warning.c_str());
+        ImGui::TextWrapped(
+            "mode=%s reason=%s backend=%s batch=%d",
+            transfer->transfer_mode.empty()
+                ? "unknown"
+                : transfer->transfer_mode.c_str(),
+            transfer->transfer_reason.empty()
+                ? "unknown"
+                : transfer->transfer_reason.c_str(),
+            transfer->transfer_backend.empty()
+                ? "unknown"
+                : transfer->transfer_backend.c_str(),
+            transfer->transfer_batch_size);
+    }
+
+    bool rendered_warning_header = false;
+    if (!trace.warnings.empty()) {
+        const int start =
+            std::max(0, static_cast<int>(trace.warnings.size()) - 3);
+        for (int i = start; i < static_cast<int>(trace.warnings.size()); ++i) {
+            const auto& warning = trace.warnings[i];
+            if (transfer && IsPinMemoryTransferWarning(warning)) {
+                continue;
+            }
+            if (!rendered_warning_header) {
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                                   "Training warnings:");
+                rendered_warning_header = true;
+            }
+            ImGui::BulletText("%s", ClassifyTrainingWarning(warning));
+            ImGui::SameLine(170);
+            ImGui::TextWrapped("%s", warning.c_str());
+        }
     }
 #endif
 }

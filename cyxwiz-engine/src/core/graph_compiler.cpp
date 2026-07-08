@@ -1647,6 +1647,47 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
     }
 }
 
+void FinalizePinMemoryTransferStatus(TrainingConfiguration& config) {
+    auto& status = config.pin_memory_transfer;
+    if (!status.requested) {
+        return;
+    }
+
+    const auto summary = config.SummarizeBackendPlacements();
+    const bool cpu_only =
+        summary.total > 0 && summary.cpu == summary.total;
+    if (cpu_only) {
+        status.backend = "CPU";
+        status.effective_mode =
+            PinMemoryTransferMode::PinnedRequestedButNotApplicable;
+        status.reason_code =
+            PinMemoryTransferReason::CpuBackendNotApplicable;
+        status.message =
+            "DataLoader pin_memory=true is not applicable because the compiled "
+            "training placement is CPU-only; regular host memory will be used";
+    } else {
+        status.backend =
+            (summary.gpu > 0 || summary.mixed > 0 || summary.risk > 0)
+                ? "gpu"
+                : "auto";
+        status.effective_mode =
+            PinMemoryTransferMode::PinnedRequestedButUnsupported;
+        status.reason_code =
+            PinMemoryTransferReason::BackendUnavailable;
+        status.message =
+            "DataLoader pin_memory=true is unsupported by current batchers and "
+            "will be ignored; serialized for compatibility only until a pinned "
+            "host-memory transfer backend exists";
+    }
+
+    spdlog::warn("GraphCompiler: {}", status.message);
+    AddIssue(config,
+             IssueLevel::Warning,
+             status.message,
+             status.node_id,
+             status.node_name);
+}
+
 bool ParseFloatParam(const std::map<std::string, std::string>& params,
                      const std::string& key,
                      float fallback,
@@ -3135,16 +3176,12 @@ TrainingConfiguration GraphCompiler::Compile(
                 (config.balance_mode.empty() || config.balance_mode == "none")) {
                 config.balance_mode = "oversample";
             }
+            config.pin_memory_transfer.node_id = loader_node->id;
+            config.pin_memory_transfer.node_name = loader_node->name;
+            config.pin_memory_transfer.batch_size = config.batch_size;
             if (loader_node->parameters.count("pin_memory") &&
                 loader_node->parameters.at("pin_memory") == "true") {
-                const std::string msg =
-                    "DataLoader pin_memory=true is unsupported by current "
-                    "batchers and will be ignored; serialized for "
-                    "compatibility only until a pinned host-memory transfer "
-                    "backend exists";
-                spdlog::warn("GraphCompiler: {}", msg);
-                AddIssue(config, IssueLevel::Warning, msg,
-                         loader_node->id, loader_node->name);
+                config.pin_memory_transfer.requested = true;
             }
             if (loader_node->parameters.count("save_best_checkpoint"))
                 config.save_best_checkpoint = (loader_node->parameters.at("save_best_checkpoint") == "true");
@@ -3642,6 +3679,7 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     AddBackendPlacementReports(config);
+    FinalizePinMemoryTransferStatus(config);
 
     // DataSplit ratios should sum to ~1.0. Drift > 0.05 is almost
     // certainly a typo or stale state from the user adjusting one
