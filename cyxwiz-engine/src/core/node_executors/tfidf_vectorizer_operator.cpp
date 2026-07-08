@@ -1,6 +1,7 @@
 #include "tfidf_vectorizer_operator.h"
 #include "text_column_utils.h"
 
+#include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 
 #include <cyxwiz/text_processing.h>
@@ -178,6 +179,42 @@ bool ParseNGramRange(const std::map<std::string, std::string>& params,
     return true;
 }
 
+bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
+                        std::string& bad_type) {
+    if (!column) {
+        return false;
+    }
+    for (int c = 0; c < column->num_chunks(); ++c) {
+        auto chunk = column->chunk(c);
+        if (chunk->type_id() != arrow::Type::STRING &&
+            chunk->type_id() != arrow::Type::LARGE_STRING) {
+            bad_type = chunk->type()->ToString();
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string BuildTfidfMemoryPreflightMessage(
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision) {
+    std::ostringstream ss;
+    ss << "TF-IDF memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", rows=" << estimate.rows
+       << ", max_features=" << estimate.output_features
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: " << decision.suggestion;
+    return ss.str();
+}
+
 } // namespace
 
 bool TFIDFVectorizerOperator::Configure(
@@ -326,8 +363,45 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "TFIDFVectorizer: text column '" + text_col_ + "' not found");
     }
 
-    std::vector<std::string> texts;
     std::string bad_type;
+    if (!IsStringLikeColumn(text_column, bad_type)) {
+        return arrow::Status::TypeError(
+            "TFIDFVectorizer: text column '" + text_col_ +
+            "' must be string/large_string, got '" + bad_type + "'");
+    }
+
+    const uint64_t planned_rows =
+        static_cast<uint64_t>(std::max<int64_t>(0, text_column->length()));
+    if (planned_rows == 0) {
+        return arrow::Status::Invalid(
+            "TFIDFVectorizer: empty corpus");
+    }
+    const uint64_t planned_features =
+        static_cast<uint64_t>(std::max(1, max_features_));
+    const auto preflight_estimate = EstimateDenseMaterializationMemory(
+        planned_rows, planned_features, static_cast<uint64_t>(sizeof(float)));
+    const auto preflight_decision = EvaluateMaterializationMemory(
+        preflight_estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message =
+        BuildTfidfMemoryPreflightMessage(
+            preflight_estimate, preflight_decision);
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(planned_rows, planned_features, planned_cells)) {
+        planned_cells = std::numeric_limits<uint64_t>::max();
+    }
+    report_progress(
+        "TF-IDF memory preflight",
+        preflight_message,
+        0.03f,
+        preflight_estimate.estimated_peak_bytes,
+        0,
+        planned_cells);
+    if (preflight_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+
+    std::vector<std::string> texts;
     if (!ReadColumnAsStrings(text_column, texts, bad_type)) {
         return arrow::Status::TypeError(
             "TFIDFVectorizer: text column '" + text_col_ +
@@ -340,9 +414,7 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "TFIDFVectorizer: empty corpus");
     }
     const uint64_t initial_memory_estimate =
-        static_cast<uint64_t>(n) *
-        static_cast<uint64_t>(std::max(1, max_features_)) *
-        static_cast<uint64_t>(sizeof(float));
+        preflight_estimate.estimated_peak_bytes;
     report_progress(
         "Tokenizing text",
         "Tokenizing text and building term counts...",
@@ -459,10 +531,12 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const size_t filtered_vocab = all_terms.size();
     const size_t kept =
         std::min(filtered_vocab, static_cast<size_t>(max_features_));
+    const auto bounded_memory_plan = EstimateDenseMaterializationMemory(
+        static_cast<uint64_t>(n),
+        static_cast<uint64_t>(std::max<size_t>(1, kept)),
+        static_cast<uint64_t>(sizeof(float)));
     const uint64_t bounded_memory_estimate =
-        static_cast<uint64_t>(n) *
-        static_cast<uint64_t>(std::max<size_t>(1, kept)) *
-        static_cast<uint64_t>(sizeof(float));
+        bounded_memory_plan.estimated_peak_bytes;
     if (filtered_vocab > kept) {
         std::partial_sort(
             all_terms.begin(),

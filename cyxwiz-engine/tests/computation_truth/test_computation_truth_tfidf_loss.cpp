@@ -1,4 +1,5 @@
 #include "../../src/core/node_executors/tfidf_vectorizer_operator.h"
+#include "../../src/core/materialization_memory_guard.h"
 
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
@@ -10,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -89,6 +91,51 @@ float ReferenceCrossEntropyMean(const std::vector<float>& logits,
     return total / static_cast<float>(batch);
 }
 
+void TestMaterializationMemoryGuardThresholds() {
+    const auto estimate = cyxwiz::EstimateDenseMaterializationMemory(
+        10, 10, static_cast<uint64_t>(sizeof(float)));
+    Check(estimate.raw_output_bytes == 400,
+          "dense estimate should report raw float matrix bytes");
+    Check(estimate.temporary_bytes == 800,
+          "dense estimate should include conservative temporary bytes");
+    Check(estimate.arrow_overhead_bytes == 50,
+          "dense estimate should include Arrow overhead bytes");
+    Check(estimate.estimated_peak_bytes == 1250,
+          "dense estimate should report conservative peak bytes");
+
+    cyxwiz::MaterializationMemorySnapshot snapshot;
+    snapshot.detected = true;
+    snapshot.available_bytes = 10000;
+    auto decision = cyxwiz::EvaluateMaterializationMemory(estimate, snapshot);
+    Check(decision.risk == cyxwiz::MaterializationMemoryRisk::Safe,
+          "small estimate should be safe");
+    Check(!decision.blocked, "safe estimate should not block");
+
+    snapshot.available_bytes = 2000;
+    decision = cyxwiz::EvaluateMaterializationMemory(estimate, snapshot);
+    Check(decision.risk == cyxwiz::MaterializationMemoryRisk::Warning,
+          "estimate above warning threshold should warn");
+    Check(!decision.blocked, "warning estimate should not block");
+
+    snapshot.available_bytes = 1600;
+    decision = cyxwiz::EvaluateMaterializationMemory(estimate, snapshot);
+    Check(decision.risk == cyxwiz::MaterializationMemoryRisk::Risky,
+          "estimate above risky threshold should be risky");
+    Check(!decision.blocked, "risky estimate is visible but not blocked yet");
+
+    snapshot.available_bytes = 1300;
+    decision = cyxwiz::EvaluateMaterializationMemory(estimate, snapshot);
+    Check(decision.risk == cyxwiz::MaterializationMemoryRisk::Blocked,
+          "estimate above blocked threshold should block");
+    Check(decision.blocked, "blocked estimate should stop materialization");
+
+    const auto overflow = cyxwiz::EstimateDenseMaterializationMemory(
+        std::numeric_limits<uint64_t>::max(), 2, sizeof(float));
+    Check(overflow.overflow, "overflowing estimate should be marked");
+    decision = cyxwiz::EvaluateMaterializationMemory(overflow, snapshot);
+    Check(decision.blocked, "overflowing estimate should block");
+}
+
 void TestBoundedTFIDFMaterialization() {
     auto text = FinishStringArray({
         "apple banana apple",
@@ -113,11 +160,27 @@ void TestBoundedTFIDFMaterialization() {
         {"norm", "none"},
     };
 
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+
     std::string error;
     Check(op.Configure(params, error), error);
     auto result = op.Apply(input);
     Check(result.ok(), result.status().ToString());
     auto output = result.ValueOrDie();
+    Check(!progress_events.empty(), "TF-IDF should emit materialization progress");
+    Check(progress_events.front().stage == "TF-IDF memory preflight",
+          "first TF-IDF progress event should be memory preflight");
+    Check(progress_events.front().estimated_memory_bytes > 3 * 2 * sizeof(float),
+          "preflight should report conservative peak memory, not raw bytes");
+    Check(progress_events.front().message.find("risk=safe") != std::string::npos,
+          "small TF-IDF preflight should report safe risk");
+    Check(progress_events.front().message.find("Suggestion:") != std::string::npos,
+          "TF-IDF preflight should include actionable suggestion");
+
     Check(output != nullptr, "TF-IDF output table is null");
     Check(output->num_rows() == 3, "TF-IDF output should preserve row count");
     Check(output->num_columns() == 3,
@@ -323,6 +386,7 @@ void TestAdamWOneStepParity() {
 } // namespace
 
 int main() {
+    TestMaterializationMemoryGuardThresholds();
     TestBoundedTFIDFMaterialization();
     TestTFIDFNGramMaterialization();
     TestCrossEntropyParity();
