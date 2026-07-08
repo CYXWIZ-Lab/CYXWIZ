@@ -154,3 +154,24 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+## Slice 7 - TextTokenizer Memory Guard
+
+Status: complete.
+
+Added dense materialization preflight to TextTokenizer. The guard estimates the
+wide padded token output from planned input rows, `max_length`, and optional
+label output before copying the Arrow text column into local strings or running
+vocabulary training and token encoding.
+
+The operator now emits structured `status` and `memory_risk_level` on the first
+progress event and blocks unsafe token-table materialization before the
+allocation-heavy path starts.
+
+Kept this slice narrow: no tokenizer streaming rewrite, no sparse token output,
+and no new user-facing configuration knobs.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_text_tokenizer_operator`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_text_tokenizer_operator.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

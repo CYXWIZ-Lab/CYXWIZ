@@ -1,4 +1,5 @@
 #include "text_tokenizer_operator.h"
+#include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 #include "text_column_utils.h"
 
@@ -8,13 +9,72 @@
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
 namespace cyxwiz {
+
+namespace {
+
+bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
+                        std::string& bad_type) {
+    if (!column) {
+        return false;
+    }
+    for (int c = 0; c < column->num_chunks(); ++c) {
+        auto chunk = column->chunk(c);
+        if (chunk->type_id() != arrow::Type::STRING &&
+            chunk->type_id() != arrow::Type::LARGE_STRING) {
+            bad_type = chunk->type()->ToString();
+            return false;
+        }
+    }
+    return true;
+}
+
+const char* MaterializationMemoryProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
+}
+
+std::string BuildTokenizerMemoryPreflightMessage(
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision) {
+    std::ostringstream ss;
+    ss << "TextTokenizer memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", rows=" << estimate.rows
+       << ", output_columns=" << estimate.output_features
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: reduce max_length, source rows, or use a future "
+          "chunked tokenization path.";
+    return ss.str();
+}
+
+} // namespace
 
 bool TextTokenizerOperator::Configure(
     const std::map<std::string, std::string>& params,
@@ -129,6 +189,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = std::move(stage);
         event.message = std::move(message);
+        event.status = "running";
         event.progress = static_cast<float>(progress);
         event.processed_items = processed;
         event.total_items = total;
@@ -142,12 +203,56 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "TextTokenizer: text column '" + text_col_ + "' not found");
     }
 
+    std::string bad_type;
+    if (!IsStringLikeColumn(text_column, bad_type)) {
+        return arrow::Status::TypeError(
+            "TextTokenizer: text column '" + text_col_ +
+            "' must be string/large_string, got '" + bad_type + "'");
+    }
+
+    const uint64_t planned_rows =
+        static_cast<uint64_t>(std::max<int64_t>(0, text_column->length()));
+    const uint64_t planned_output_columns =
+        static_cast<uint64_t>(max_length_ + (label_col_.empty() ? 0 : 1));
+    const auto preflight_estimate = EstimateDenseMaterializationMemory(
+        planned_rows,
+        planned_output_columns,
+        static_cast<uint64_t>(sizeof(float)));
+    const auto preflight_decision = EvaluateMaterializationMemory(
+        preflight_estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message = BuildTokenizerMemoryPreflightMessage(
+        preflight_estimate, preflight_decision);
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(planned_rows, planned_output_columns, planned_cells)) {
+        planned_cells = std::numeric_limits<uint64_t>::max();
+    }
+    if (progress_callback_) {
+        PipelineOperatorProgress event;
+        event.stage = "TextTokenizer memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(
+            preflight_decision.risk);
+        event.progress = 0.03f;
+        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(
+            preflight_decision.risk);
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        progress_callback_(event);
+    }
+    if (preflight_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+
     report_progress("Reading text",
                     "Reading text column '" + text_col_ + "'",
-                    0.05);
+                    0.05,
+                    0,
+                    planned_rows,
+                    preflight_estimate.estimated_peak_bytes);
 
     std::vector<std::string> texts;
-    std::string bad_type;
     if (!ReadColumnAsStrings(text_column, texts, bad_type)) {
         return arrow::Status::TypeError(
             "TextTokenizer: text column '" + text_col_ +
@@ -155,7 +260,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
     const uint64_t total_rows = static_cast<uint64_t>(texts.size());
     const uint64_t estimated_token_matrix_bytes =
-        total_rows * static_cast<uint64_t>(max_length_) * sizeof(float);
+        preflight_estimate.estimated_peak_bytes;
     report_progress("Planning token matrix",
                     "Planning " + std::to_string(total_rows) +
                     " rows x " + std::to_string(max_length_) +

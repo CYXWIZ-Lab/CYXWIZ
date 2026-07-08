@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -73,8 +74,27 @@ int main() {
     std::string error;
     Check(op.Configure(params, error), error);
 
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
     auto result = op.Apply(input);
     Check(result.ok(), result.status().ToString());
+    Check(!progress_events.empty(),
+          "TextTokenizer should emit materialization progress events");
+    Check(progress_events.front().stage == "TextTokenizer memory preflight",
+          "TextTokenizer first progress event should be memory preflight");
+    Check(progress_events.front().status == "running",
+          "safe TextTokenizer preflight should stay in running status");
+    Check(progress_events.front().memory_risk_level == "safe",
+          "safe TextTokenizer preflight should report safe risk");
+    Check(progress_events.front().estimated_memory_bytes >
+              3ULL * 5ULL * static_cast<uint64_t>(sizeof(float)),
+          "TextTokenizer preflight should include peak allocation overhead");
+    Check(progress_events.front().message.find("Suggestion:") !=
+              std::string::npos,
+          "TextTokenizer preflight message should include mitigation guidance");
     Check(op.GetLastVocabSize() > 0,
           "operator should report trained vocabulary size");
 
