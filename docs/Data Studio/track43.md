@@ -223,3 +223,25 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+## Slice 10 - Signal Replacement Memory Guards
+
+Status: complete.
+
+Added dense materialization preflight to Convolve1D and FilterDesigner. Both
+operators now validate the signal column, estimate input/backend/output signal
+memory from planned Arrow row count, and emit structured `status` plus
+`memory_risk_level` before reading the signal into a local vector or invoking
+the signal backend.
+
+The estimate is intentionally conservative for this first pass: one double-width
+input signal, one backend result signal, and one replacement output column.
+
+Runtime signal-backend regression coverage remains deferred because the live FFT
+backend call added during Slice 9 exposed an existing heap-corruption exit. This
+slice is compile/build verified and covered indirectly by the shared
+materializer regression suite remaining stable.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`

@@ -128,6 +128,28 @@ std::string BuildFftMemoryPreflightMessage(
     return ss.str();
 }
 
+std::string BuildSignalReplacementMemoryPreflightMessage(
+    const std::string& op_name,
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision) {
+    std::ostringstream ss;
+    ss << op_name << " memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", samples=" << estimate.rows
+       << ", planned_columns=" << estimate.output_features
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: reduce signal rows, filter a sampled/windowed "
+          "signal first, or use a future chunked signal materialization path.";
+    return ss.str();
+}
+
 } // namespace
 
 // ============================================================================
@@ -349,19 +371,70 @@ Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid("Convolve1D: input table is null");
 
-    ReportProgress(progress_callback_, "Reading signal",
-                   "Reading Convolve1D signal column '" + signal_col_ + "'",
-                   0.10);
-    std::vector<double> signal;
-    int col_idx = -1;
-    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(
-        input, signal_col_, "Convolve1D", signal, col_idx));
-
-    if (signal.empty()) {
+    int col_idx = input->schema()->GetFieldIndex(signal_col_);
+    if (col_idx < 0) {
+        return arrow::Status::KeyError(
+            "Convolve1D: signal column '" + signal_col_ + "' not found");
+    }
+    auto signal_column = input->column(col_idx);
+    if (!IsNumericChunked(signal_column)) {
+        std::string got = signal_column && signal_column->num_chunks() > 0
+            ? signal_column->chunk(0)->type()->ToString()
+            : "<empty>";
+        return arrow::Status::TypeError(
+            "Convolve1D: signal column '" + signal_col_ +
+            "' must be numeric (got '" + got + "')");
+    }
+    const uint64_t planned_samples =
+        static_cast<uint64_t>(std::max<int64_t>(0, signal_column->length()));
+    if (planned_samples == 0) {
         return arrow::Status::Invalid("Convolve1D: signal column is empty");
     }
+    const uint64_t planned_columns = 3;
+    const auto preflight_estimate = EstimateDenseMaterializationMemory(
+        planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
+    const auto preflight_decision = EvaluateMaterializationMemory(
+        preflight_estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message =
+        BuildSignalReplacementMemoryPreflightMessage(
+            "Convolve1D", preflight_estimate, preflight_decision);
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(planned_samples, planned_columns, planned_cells)) {
+        planned_cells = std::numeric_limits<uint64_t>::max();
+    }
+    if (progress_callback_) {
+        PipelineOperatorProgress event;
+        event.stage = "Convolve1D memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(
+            preflight_decision.risk);
+        event.progress = 0.03f;
+        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(
+            preflight_decision.risk);
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        progress_callback_(event);
+    }
+    if (preflight_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading Convolve1D signal column '" + signal_col_ + "'",
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
+    std::vector<double> signal;
+    int read_col_idx = -1;
+    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(
+        input, signal_col_, "Convolve1D", signal, read_col_idx));
+    col_idx = read_col_idx;
+
     const uint64_t estimated_signal_bytes =
-        static_cast<uint64_t>(signal.size()) * sizeof(double);
+        preflight_estimate.estimated_peak_bytes;
 
     // "same" mode keeps row count aligned with all other input columns.
     ReportProgress(progress_callback_, "Convolving signal",
@@ -511,19 +584,70 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid("FilterDesigner: input table is null");
 
-    ReportProgress(progress_callback_, "Reading signal",
-                   "Reading FilterDesigner signal column '" + signal_col_ + "'",
-                   0.10);
-    std::vector<double> signal;
-    int col_idx = -1;
-    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(
-        input, signal_col_, "FilterDesigner", signal, col_idx));
-
-    if (signal.empty()) {
+    int col_idx = input->schema()->GetFieldIndex(signal_col_);
+    if (col_idx < 0) {
+        return arrow::Status::KeyError(
+            "FilterDesigner: signal column '" + signal_col_ + "' not found");
+    }
+    auto signal_column = input->column(col_idx);
+    if (!IsNumericChunked(signal_column)) {
+        std::string got = signal_column && signal_column->num_chunks() > 0
+            ? signal_column->chunk(0)->type()->ToString()
+            : "<empty>";
+        return arrow::Status::TypeError(
+            "FilterDesigner: signal column '" + signal_col_ +
+            "' must be numeric (got '" + got + "')");
+    }
+    const uint64_t planned_samples =
+        static_cast<uint64_t>(std::max<int64_t>(0, signal_column->length()));
+    if (planned_samples == 0) {
         return arrow::Status::Invalid("FilterDesigner: signal column is empty");
     }
+    const uint64_t planned_columns = 3;
+    const auto preflight_estimate = EstimateDenseMaterializationMemory(
+        planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
+    const auto preflight_decision = EvaluateMaterializationMemory(
+        preflight_estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message =
+        BuildSignalReplacementMemoryPreflightMessage(
+            "FilterDesigner", preflight_estimate, preflight_decision);
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(planned_samples, planned_columns, planned_cells)) {
+        planned_cells = std::numeric_limits<uint64_t>::max();
+    }
+    if (progress_callback_) {
+        PipelineOperatorProgress event;
+        event.stage = "FilterDesigner memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(
+            preflight_decision.risk);
+        event.progress = 0.03f;
+        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(
+            preflight_decision.risk);
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        progress_callback_(event);
+    }
+    if (preflight_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+
+    ReportProgress(progress_callback_, "Reading signal",
+                   "Reading FilterDesigner signal column '" + signal_col_ + "'",
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
+    std::vector<double> signal;
+    int read_col_idx = -1;
+    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(
+        input, signal_col_, "FilterDesigner", signal, read_col_idx));
+    col_idx = read_col_idx;
+
     const uint64_t estimated_signal_bytes =
-        static_cast<uint64_t>(signal.size()) * sizeof(double);
+        preflight_estimate.estimated_peak_bytes;
 
     ReportProgress(progress_callback_, "Designing filter",
                    "Designing " + filter_type_ + " filter",
