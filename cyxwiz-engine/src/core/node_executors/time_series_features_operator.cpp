@@ -1,4 +1,5 @@
 #include "time_series_features_operator.h"
+#include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 #include "ts_column_utils.h"
 
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <string>
@@ -102,6 +104,43 @@ bool ParseIntList(const std::string& s, std::vector<int>& out,
     return true;
 }
 
+const char* MaterializationMemoryProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
+}
+
+std::string BuildFeaturesMemoryPreflightMessage(
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision) {
+    std::ostringstream ss;
+    ss << "TimeSeriesFeatures memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", rows=" << estimate.rows
+       << ", engineered_columns=" << estimate.output_features
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: reduce lag_values, rolling_windows, "
+          "rolling_aggregations, source rows, or use a future chunked "
+          "materialization path.";
+    return ss.str();
+}
+
 } // namespace
 
 bool TimeSeriesFeaturesOperator::Configure(
@@ -183,6 +222,7 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = std::move(stage);
         event.message = std::move(message);
+        event.status = "running";
         event.progress = static_cast<float>(progress);
         event.processed_items = processed;
         event.total_items = total;
@@ -196,10 +236,70 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "TimeSeriesFeatures: column '" + value_col_ + "' not found");
     }
 
+    const int64_t planned_input_rows = column->length();
+    int planned_max_lag = lags_.empty()
+        ? 0
+        : *std::max_element(lags_.begin(), lags_.end());
+    int planned_max_window = rolling_windows_.empty()
+        ? 0
+        : *std::max_element(rolling_windows_.begin(), rolling_windows_.end());
+    const int64_t planned_rows_to_drop = std::max(
+        static_cast<int64_t>(planned_max_lag),
+        static_cast<int64_t>(planned_max_window - 1));
+    const int64_t planned_out_rows = planned_input_rows - planned_rows_to_drop;
+    if (planned_out_rows <= 0) {
+        return arrow::Status::Invalid(
+            "TimeSeriesFeatures: not enough rows (" +
+            std::to_string(planned_input_rows) + ") for max_lag=" +
+            std::to_string(planned_max_lag) + " / max_window=" +
+            std::to_string(planned_max_window));
+    }
+
+    const size_t planned_lag_columns = lags_.size();
+    const size_t planned_rolling_columns =
+        rolling_windows_.size() * rolling_aggregations_.size();
+    const size_t planned_engineered_columns =
+        planned_lag_columns + planned_rolling_columns;
+    const auto preflight_estimate = EstimateDenseMaterializationMemory(
+        static_cast<uint64_t>(planned_out_rows),
+        static_cast<uint64_t>(planned_engineered_columns),
+        static_cast<uint64_t>(sizeof(float)));
+    const auto preflight_decision = EvaluateMaterializationMemory(
+        preflight_estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message = BuildFeaturesMemoryPreflightMessage(
+        preflight_estimate, preflight_decision);
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(static_cast<uint64_t>(planned_out_rows),
+                       static_cast<uint64_t>(planned_engineered_columns),
+                       planned_cells)) {
+        planned_cells = std::numeric_limits<uint64_t>::max();
+    }
+    if (progress_callback_) {
+        PipelineOperatorProgress event;
+        event.stage = "TimeSeriesFeatures memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(
+            preflight_decision.risk);
+        event.progress = 0.03f;
+        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(
+            preflight_decision.risk);
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        progress_callback_(event);
+    }
+    if (preflight_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+
     report_progress("Reading value column",
                     "Reading time-series feature source column '" +
                     value_col_ + "'",
-                    0.05);
+                    0.05,
+                    0,
+                    static_cast<uint64_t>(planned_input_rows),
+                    preflight_estimate.estimated_peak_bytes);
 
     std::vector<float> values;
     std::string bad_type;
@@ -220,29 +320,12 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     // Rows to drop = max needed history.
     // lag_k needs index i - k >= 0, so i >= k    → drops first `max_lag` rows.
     // roll_w needs indices [i - w + 1, i] >= 0, so i >= w - 1 → drops first `max_window - 1` rows.
-    int max_lag = lags_.empty() ? 0 : *std::max_element(lags_.begin(), lags_.end());
-    int max_window = rolling_windows_.empty()
-        ? 0 : *std::max_element(rolling_windows_.begin(), rolling_windows_.end());
-    int64_t rows_to_drop = std::max(
-        static_cast<int64_t>(max_lag),
-        static_cast<int64_t>(max_window - 1));
-    const int64_t out_rows = n - rows_to_drop;
+    int64_t rows_to_drop = planned_rows_to_drop;
+    const int64_t out_rows = planned_out_rows;
 
-    if (out_rows <= 0) {
-        return arrow::Status::Invalid(
-            "TimeSeriesFeatures: not enough rows (" + std::to_string(n) +
-            ") for max_lag=" + std::to_string(max_lag) +
-            " / max_window=" + std::to_string(max_window));
-    }
-
-    const size_t lag_columns = lags_.size();
-    const size_t rolling_columns =
-        rolling_windows_.size() * rolling_aggregations_.size();
-    const size_t engineered_columns = lag_columns + rolling_columns;
+    const size_t engineered_columns = planned_engineered_columns;
     const uint64_t estimated_engineered_bytes =
-        static_cast<uint64_t>(out_rows) *
-        static_cast<uint64_t>(engineered_columns) *
-        sizeof(float);
+        preflight_estimate.estimated_peak_bytes;
     report_progress("Planning features",
                     "Planning " + std::to_string(engineered_columns) +
                     " engineered columns over " +

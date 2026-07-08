@@ -133,3 +133,24 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+## Slice 6 - TimeSeriesFeatures Memory Guard
+
+Status: complete.
+
+Added dense materialization preflight to TimeSeriesFeatures. The guard estimates
+engineered lag and rolling-aggregation columns from planned input rows,
+`lag_values`, `rolling_windows`, and `rolling_aggregations` before reading the
+source column into a local vector or reserving Arrow builders.
+
+The operator now emits structured `status` and `memory_risk_level` on the first
+progress event and blocks unsafe engineered-feature materialization before the
+allocation-heavy path starts.
+
+Kept this slice narrow: no compiler-wide planner, no chunked feature writer,
+and no new user-facing configuration knobs.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

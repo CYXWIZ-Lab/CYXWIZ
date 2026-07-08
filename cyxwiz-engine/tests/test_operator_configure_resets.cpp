@@ -199,8 +199,27 @@ void TestTimeSeriesFeaturesClearsStaleFeatureLists() {
         {"value_col", "value"},
         {"lag_values", "2"},
     }, error), error);
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
     auto first = op.Apply(input);
     Check(first.ok(), first.status().ToString());
+    Check(!progress_events.empty(),
+          "TimeSeriesFeatures should emit materialization progress events");
+    Check(progress_events.front().stage == "TimeSeriesFeatures memory preflight",
+          "TimeSeriesFeatures first progress event should be memory preflight");
+    Check(progress_events.front().status == "running",
+          "safe TimeSeriesFeatures preflight should stay in running status");
+    Check(progress_events.front().memory_risk_level == "safe",
+          "safe TimeSeriesFeatures preflight should report safe risk");
+    Check(progress_events.front().estimated_memory_bytes >
+              4ULL * static_cast<uint64_t>(sizeof(float)),
+          "TimeSeriesFeatures preflight should include peak allocation overhead");
+    Check(progress_events.front().message.find("Suggestion:") !=
+              std::string::npos,
+          "TimeSeriesFeatures preflight message should include mitigation guidance");
     Check(first.ValueOrDie()->GetColumnByName("value_lag_2") != nullptr,
           "first time-series features configure should emit lag column");
 
