@@ -73,3 +73,24 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_debugger_contracts`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_debugger_contracts.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+## Slice 3 - Decision Status Propagation
+
+Status: complete.
+
+Added `PipelineOperatorProgress::status` so materializer operators can report
+structured decisions independently from message text. TF-IDF preflight maps
+memory decisions to:
+
+- `running` for safe
+- `warning` for warning
+- `risky` for risky
+- `blocked` for blocked
+
+Graph training launch now forwards that status into `TrainingTraceEvent`, and
+Training Dashboard shows non-running decision status beside memory risk.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_computation_truth_tfidf_loss`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_computation_truth_tfidf_loss.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

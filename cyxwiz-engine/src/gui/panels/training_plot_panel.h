@@ -61,7 +61,8 @@ public:
                                        uint64_t total_items = 0,
                                        int node_id = -1,
                                        const std::string& node_name = "",
-                                       const std::string& memory_risk_level = "");
+                                       const std::string& memory_risk_level = "",
+                                       const std::string& status = "running");
     void SetMaterializationComplete(const std::string& output_dataset,
                                     int operators_applied,
                                     const std::string& status = "completed");
@@ -111,6 +112,7 @@ private:
     struct MaterializationProgress {
         std::string stage;
         std::string message;
+        std::string status = "running";
         std::string node_name;
         int node_id = -1;
         float progress = 0.0f;

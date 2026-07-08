@@ -34,6 +34,7 @@ struct PipelineOperatorProgress {
     std::string node_name;
     std::string stage;
     std::string message;
+    std::string status = "running";
     float progress = 0.0f;
     uint64_t estimated_memory_bytes = 0;
     std::string memory_risk_level;

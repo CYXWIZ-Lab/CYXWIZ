@@ -398,7 +398,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                             event.stage.empty() ? "Materializing" : event.stage,
                             task_progress,
                             message,
-                            "running",
+                            event.status.empty() ? "running" : event.status,
                             event.node_id,
                             event.node_name,
                             event.estimated_memory_bytes,
@@ -416,7 +416,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                                 event.total_items,
                                 event.node_id,
                                 event.node_name,
-                                event.memory_risk_level);
+                                event.memory_risk_level,
+                                event.status);
                         }
                     });
             }

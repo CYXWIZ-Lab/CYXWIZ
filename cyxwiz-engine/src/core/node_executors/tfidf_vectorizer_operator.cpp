@@ -195,6 +195,21 @@ bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
     return true;
 }
 
+const char* MaterializationMemoryProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
+}
+
 std::string BuildTfidfMemoryPreflightMessage(
     const MaterializationMemoryEstimate& estimate,
     const MaterializationMemoryDecision& decision) {
@@ -350,6 +365,7 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = stage;
         event.message = message;
+        event.status = "running";
         event.progress = progress;
         event.estimated_memory_bytes = estimated_memory_bytes;
         event.processed_items = processed_items;
@@ -393,6 +409,8 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "TF-IDF memory preflight";
         event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(
+            preflight_decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
         event.memory_risk_level = MaterializationMemoryRiskName(

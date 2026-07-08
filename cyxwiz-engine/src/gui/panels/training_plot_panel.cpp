@@ -523,12 +523,14 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     uint64_t total_items,
     int node_id,
     const std::string& node_name,
-    const std::string& memory_risk_level) {
+    const std::string& memory_risk_level,
+    const std::string& status) {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     MaterializationProgress event;
     event.stage = stage.empty() ? "Materializing" : stage;
     event.message = message.empty() ? event.stage : message;
+    event.status = status.empty() ? "running" : status;
     event.node_name = node_name;
     event.node_id = node_id;
     event.progress = std::clamp(progress, 0.0f, 1.0f);
@@ -1203,6 +1205,9 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         if (!latest.memory_risk_level.empty()) {
             ImGui::Text("Memory risk: %s", latest.memory_risk_level.c_str());
         }
+        if (!latest.status.empty() && latest.status != "running") {
+            ImGui::Text("Decision status: %s", latest.status.c_str());
+        }
         if (latest.total_items > 0) {
             ImGui::Text("Work: %llu / %llu",
                         static_cast<unsigned long long>(latest.processed_items),
@@ -1231,6 +1236,9 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         }
         if (!event.memory_risk_level.empty()) {
             ImGui::Text("Memory risk: %s", event.memory_risk_level.c_str());
+        }
+        if (!event.status.empty() && event.status != "running") {
+            ImGui::Text("Decision status: %s", event.status.c_str());
         }
         if (event.total_items > 0 || event.processed_items > 0) {
             if (event.total_items > 0) {
