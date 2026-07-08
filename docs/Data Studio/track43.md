@@ -175,3 +175,25 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_text_tokenizer_operator`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_text_tokenizer_operator.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+## Slice 8 - PCA Memory Guard
+
+Status: complete.
+
+Added dense materialization preflight to PCA. The guard runs after numeric
+feature resolution and before reading feature columns into local vectors or
+packing the row-major double matrix for the PCA backend.
+
+The estimate covers planned source feature columns, requested output
+components, and optional label passthrough using a conservative double-width
+cell estimate. PCA now emits structured `status` and `memory_risk_level` on the
+preflight progress event and blocks unsafe matrix materialization before the
+allocation-heavy path starts.
+
+Kept this slice narrow: no compiler-wide planner, no streaming PCA rewrite,
+and no new user-facing configuration knobs.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

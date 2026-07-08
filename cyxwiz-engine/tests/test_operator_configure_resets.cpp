@@ -1,4 +1,5 @@
 #include "../src/core/node_executors/count_vectorizer_operator.h"
+#include "../src/core/node_executors/pca_operator.h"
 #include "../src/core/node_executors/time_series_features_operator.h"
 #include "../src/core/node_executors/time_series_window_operator.h"
 
@@ -190,6 +191,51 @@ void TestCountVectorizerRejectsSparseOutputFormat() {
           "CountVectorizer sparse output error should be specific: " + error);
 }
 
+void TestPcaEmitsMemoryPreflight() {
+    cyxwiz::PCAOperator op;
+    const auto input = MakeTimeSeriesTable();
+    std::string error;
+
+    Check(op.Configure({
+        {"feature_cols", "value,extra,time"},
+        {"n_components", "2"},
+        {"center", "true"},
+        {"scale", "false"},
+    }, error), error);
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+    auto result = op.Apply(input);
+    Check(result.ok(), result.status().ToString());
+    Check(!progress_events.empty(),
+          "PCA should emit materialization progress events");
+    Check(progress_events.front().stage == "Resolving features",
+          "PCA should resolve features before preflight");
+    Check(progress_events.size() > 1,
+          "PCA should emit memory preflight after feature resolution");
+    Check(progress_events[1].stage == "Features resolved",
+          "PCA should report resolved features before preflight");
+    Check(progress_events.size() > 2,
+          "PCA should emit memory preflight before reading feature columns");
+    Check(progress_events[2].stage == "PCA memory preflight",
+          "PCA third progress event should be memory preflight");
+    Check(progress_events[2].status == "running",
+          "safe PCA preflight should stay in running status");
+    Check(progress_events[2].memory_risk_level == "safe",
+          "safe PCA preflight should report safe risk");
+    Check(progress_events[2].estimated_memory_bytes >
+              6ULL * 5ULL * static_cast<uint64_t>(sizeof(double)),
+          "PCA preflight should include peak allocation overhead");
+    Check(progress_events[2].message.find("Suggestion:") !=
+              std::string::npos,
+          "PCA preflight message should include mitigation guidance");
+    auto table = result.ValueOrDie();
+    Check(table->num_rows() == 6, "PCA should preserve sample count");
+    Check(table->num_columns() == 2, "PCA should emit requested components");
+}
+
 void TestTimeSeriesFeaturesClearsStaleFeatureLists() {
     cyxwiz::TimeSeriesFeaturesOperator op;
     const auto input = MakeTimeSeriesTable();
@@ -295,6 +341,7 @@ int main() {
     TestCountVectorizerPrefersNGramRangeWhenDefaultsArePresent();
     TestCountVectorizerBinaryModeEmitsPresenceValues();
     TestCountVectorizerRejectsSparseOutputFormat();
+    TestPcaEmitsMemoryPreflight();
     TestTimeSeriesFeaturesClearsStaleFeatureLists();
     TestTimeSeriesWindowClearsOptionalFeatureAndTimeColumns();
     std::cout << "Operator Configure reset regressions passed\n";

@@ -1,4 +1,5 @@
 #include "pca_operator.h"
+#include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 #include "text_column_utils.h"  // ReadLabelColumnAsInt
 #include "ts_column_utils.h"    // ReadColumnAsFloat
@@ -9,7 +10,9 @@
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -75,6 +78,45 @@ bool ReadBoolParam(const std::map<std::string, std::string>& params,
     return false;
 }
 
+const char* MaterializationMemoryProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
+}
+
+std::string BuildPcaMemoryPreflightMessage(
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision,
+    uint64_t source_features,
+    uint64_t output_components) {
+    std::ostringstream ss;
+    ss << "PCA memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", rows=" << estimate.rows
+       << ", source_features=" << source_features
+       << ", output_components=" << output_components
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: reduce feature_cols, source rows, n_components, "
+          "or use a future chunked PCA/materialization path.";
+    return ss.str();
+}
+
 } // namespace
 
 bool PCAOperator::Configure(
@@ -134,6 +176,7 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = std::move(stage);
         event.message = std::move(message);
+        event.status = "running";
         event.progress = static_cast<float>(progress);
         event.processed_items = processed;
         event.total_items = total;
@@ -184,6 +227,44 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     static_cast<uint64_t>(resolved_features.size()),
                     static_cast<uint64_t>(resolved_features.size()));
 
+    const uint64_t planned_rows =
+        static_cast<uint64_t>(std::max<int64_t>(0, input->num_rows()));
+    const uint64_t planned_features =
+        static_cast<uint64_t>(resolved_features.size());
+    const uint64_t planned_components =
+        static_cast<uint64_t>(std::max(1, n_components_));
+    const uint64_t planned_columns =
+        planned_features + planned_components + (label_col_.empty() ? 0ULL : 1ULL);
+    const auto preflight_estimate = EstimateDenseMaterializationMemory(
+        planned_rows, planned_columns, static_cast<uint64_t>(sizeof(double)));
+    const auto preflight_decision = EvaluateMaterializationMemory(
+        preflight_estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message = BuildPcaMemoryPreflightMessage(
+        preflight_estimate, preflight_decision,
+        planned_features, planned_components);
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(planned_rows, planned_columns, planned_cells)) {
+        planned_cells = std::numeric_limits<uint64_t>::max();
+    }
+    if (progress_callback_) {
+        PipelineOperatorProgress event;
+        event.stage = "PCA memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(
+            preflight_decision.risk);
+        event.progress = 0.17f;
+        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(
+            preflight_decision.risk);
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        progress_callback_(event);
+    }
+    if (preflight_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+
     // Read each feature column to a parallel float vector.
     const size_t n_features = resolved_features.size();
     std::vector<std::vector<float>> feat_cols(n_features);
@@ -195,7 +276,8 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                         0.20 + (0.20 * static_cast<double>(f) /
                                 static_cast<double>(n_features)),
                         static_cast<uint64_t>(f),
-                        static_cast<uint64_t>(n_features));
+                        static_cast<uint64_t>(n_features),
+                        preflight_estimate.estimated_peak_bytes);
         auto col = input->GetColumnByName(resolved_features[f]);
         std::string bad_type;
         if (!ReadColumnAsFloat(col, feat_cols[f], bad_type)) {
@@ -213,13 +295,13 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     const uint64_t estimated_input_matrix_bytes =
-        static_cast<uint64_t>(n_samples) *
-        static_cast<uint64_t>(n_features) *
-        sizeof(double);
+        preflight_estimate.estimated_peak_bytes;
+    const auto output_memory_plan = EstimateDenseMaterializationMemory(
+        static_cast<uint64_t>(n_samples),
+        static_cast<uint64_t>(n_components_ + (label_col_.empty() ? 0 : 1)),
+        static_cast<uint64_t>(sizeof(float)));
     const uint64_t estimated_output_matrix_bytes =
-        static_cast<uint64_t>(n_samples) *
-        static_cast<uint64_t>(n_components_) *
-        sizeof(float);
+        output_memory_plan.estimated_peak_bytes;
     report_progress("Planning PCA matrix",
                     "Planning PCA matrix " + std::to_string(n_samples) +
                     " samples x " + std::to_string(n_features) +
