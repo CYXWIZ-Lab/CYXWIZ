@@ -106,9 +106,34 @@ void TestDecisionTreeArtifactInference(const std::filesystem::path& root) {
         {"model_path", path.string()},
         {"prediction_col", "tree_pred"},
     }, error), error);
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
 
     auto result = op.Apply(MakeInferenceTable());
     Check(result.ok(), result.status().ToString());
+    const cyxwiz::PipelineOperatorProgress* preflight = nullptr;
+    for (const auto& event : progress_events) {
+        if (event.stage == "TreeModelPredictor memory preflight") {
+            preflight = &event;
+            break;
+        }
+    }
+    Check(preflight != nullptr,
+          "TreeModelPredictor should emit memory preflight progress");
+    Check(preflight->status == "running",
+          "safe TreeModelPredictor preflight should stay in running status");
+    Check(preflight->memory_risk_level == "safe",
+          "safe TreeModelPredictor preflight should report safe risk");
+    Check(preflight->estimated_memory_bytes >
+              4ULL * 3ULL * static_cast<uint64_t>(sizeof(double)),
+          "TreeModelPredictor preflight should include peak allocation overhead");
+    Check(preflight->total_items == 4ULL * 3ULL,
+          "TreeModelPredictor preflight should report planned matrix and output cells");
+    Check(preflight->message.find("Suggestion:") != std::string::npos,
+          "TreeModelPredictor preflight should include mitigation guidance");
     auto output = result.ValueOrDie();
     Check(output->num_columns() == 3, "predictor appends one column");
     Check(ReadDoubleValue(output, "tree_pred", 0) == 0.0,

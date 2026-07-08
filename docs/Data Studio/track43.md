@@ -287,3 +287,22 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+
+## Slice 13 - Tree Model Predictor Memory Guard
+
+Status: complete.
+
+Added dense materialization preflight to TreeModelPredictor. The guard runs
+after model feature resolution and before `ReadFeatureMatrix`, estimates the
+prediction feature matrix plus appended prediction column, emits structured
+`status` and `memory_risk_level`, and blocks unsafe prediction materialization
+before copying table data into local row-major vectors.
+
+Kept this slice narrow: no training memory model, no artifact-level planner, no
+chunked prediction rewrite, and no new user-facing configuration knobs.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_tree_model_predictor_operator`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_tree_model_predictor_operator.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

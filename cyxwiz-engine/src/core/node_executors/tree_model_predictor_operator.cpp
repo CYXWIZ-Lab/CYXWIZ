@@ -1,4 +1,5 @@
 #include "tree_model_predictor_operator.h"
+#include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 #include "decision_tree_model.h"
 #include "feature_matrix_utils.h"
@@ -10,13 +11,100 @@
 #include <arrow/api.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 
 namespace cyxwiz {
 
 namespace {
+
+const char* MaterializationMemoryProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
+}
+
+std::string BuildPredictorMemoryPreflightMessage(
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision) {
+    std::ostringstream ss;
+    ss << "TreeModelPredictor memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", samples=" << estimate.rows
+       << ", planned_columns=" << estimate.output_features
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: reduce prediction rows or feature columns, predict on a sample first, "
+          "or use a future chunked prediction materialization path.";
+    return ss.str();
+}
+
+arrow::Result<MaterializationMemoryEstimate> EmitPredictorMemoryPreflight(
+    const std::shared_ptr<arrow::Table>& input,
+    const std::vector<std::string>& resolved_features,
+    const PipelineOperatorProgressCallback& callback) {
+    const uint64_t planned_samples =
+        static_cast<uint64_t>(std::max<int64_t>(0, input->num_rows()));
+    if (planned_samples == 0) {
+        return arrow::Status::Invalid(
+            "TreeModelPredictor: input table has no rows");
+    }
+    if (resolved_features.empty()) {
+        return arrow::Status::Invalid(
+            "TreeModelPredictor: no numeric feature columns resolved");
+    }
+
+    const uint64_t planned_columns =
+        static_cast<uint64_t>(resolved_features.size()) + 1ULL;
+    const auto estimate = EstimateDenseMaterializationMemory(
+        planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
+    const auto decision = EvaluateMaterializationMemory(
+        estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message =
+        BuildPredictorMemoryPreflightMessage(estimate, decision);
+
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(planned_samples, planned_columns, planned_cells)) {
+        planned_cells = (std::numeric_limits<uint64_t>::max)();
+    }
+
+    if (callback) {
+        PipelineOperatorProgress event;
+        event.stage = "TreeModelPredictor memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(decision.risk);
+        event.progress = 0.40f;
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        event.estimated_memory_bytes = estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(decision.risk);
+        callback(event);
+    }
+    if (decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+    return estimate;
+}
 
 template <typename ModelT>
 arrow::Result<std::shared_ptr<arrow::Table>> PredictWithLoadedModel(
@@ -38,6 +126,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> PredictWithLoadedModel(
         PipelineOperatorProgress event;
         event.stage = std::move(stage);
         event.message = std::move(message);
+        event.status = "running";
         event.progress = static_cast<float>(progress);
         event.processed_items = processed;
         event.total_items = total;
@@ -61,11 +150,16 @@ arrow::Result<std::shared_ptr<arrow::Table>> PredictWithLoadedModel(
     ARROW_RETURN_NOT_OK(ResolveFeatureColumns(
         input, requested_features, "", op_name, resolved_features));
 
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitPredictorMemoryPreflight(
+            input, resolved_features, progress_callback));
+
     report_progress("Reading feature matrix",
                     "Reading tree model prediction feature matrix",
                     0.50,
                     0,
-                    static_cast<uint64_t>(resolved_features.size()));
+                    static_cast<uint64_t>(resolved_features.size()),
+                    preflight_estimate.estimated_peak_bytes);
     std::vector<std::vector<double>> features;
     int64_t n_samples = 0;
     ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
@@ -75,9 +169,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> PredictWithLoadedModel(
     }
 
     const uint64_t estimated_matrix_bytes =
-        static_cast<uint64_t>(n_samples) *
-        static_cast<uint64_t>(resolved_features.size()) *
-        sizeof(double);
+        preflight_estimate.estimated_peak_bytes;
     report_progress("Predicting rows",
                     "Generating tree model predictions",
                     0.75,
@@ -149,6 +241,7 @@ TreeModelPredictorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = std::move(stage);
         event.message = std::move(message);
+        event.status = "running";
         event.progress = static_cast<float>(progress);
         event.processed_items = processed;
         event.total_items = total;
