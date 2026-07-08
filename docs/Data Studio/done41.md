@@ -1,4 +1,4 @@
-# tofix41 - Pinned Host Memory and GPU Transfer Backend Truth
+# done41 - Pinned Host Memory and GPU Transfer Backend Truth
 
 ## Status
 
