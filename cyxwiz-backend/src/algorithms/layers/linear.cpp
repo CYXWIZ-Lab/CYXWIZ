@@ -1,10 +1,12 @@
 #include "cyxwiz/layers/linear.h"
+#include "cyxwiz/backend_placement_observation.h"
 #include "../arrayfire_backend_utils.h"
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include <spdlog/spdlog.h>
 #include <cyxwiz/error_codes.h>
 
@@ -19,17 +21,13 @@ namespace {
 void LogLinearInitializationFallbackOnce(
     const char* error_message,
     size_t in_features,
-    size_t out_features) {
+    size_t out_features,
+    bool use_bias) {
     const BackendFallbackReason reason =
         ClassifyArrayFireBackendFallbackReason(error_message);
     const std::string context = BuildArrayFireBackendFallbackContext(
         "in_features=" + std::to_string(in_features) +
         "; out_features=" + std::to_string(out_features));
-    if (!ShouldLogArrayFireBackendFallbackOnce(
-            "LinearLayer::InitializeWeights", reason, context)) {
-        return;
-    }
-
     std::string message =
         "ArrayFire LinearLayer::InitializeWeights failed (reason=" +
         std::string(BackendFallbackReasonName(reason)) +
@@ -42,7 +40,71 @@ void LogLinearInitializationFallbackOnce(
         message += " Error: ";
         message += error_message;
     }
+    RecordBackendPlacementObservationForActiveDevice(
+        "Linear",
+        "cuda",
+        "float32",
+        BuildLinearPlacementShapeSignature(
+            {},
+            {out_features, in_features},
+            {out_features, in_features},
+            "float32",
+            use_bias),
+        BackendFallbackReasonName(reason),
+        BackendPlacementObservationSource::RuntimeFallback,
+        message);
+    if (!ShouldLogArrayFireBackendFallbackOnce(
+            "LinearLayer::InitializeWeights", reason, context)) {
+        return;
+    }
     spdlog::warn("{}", message);
+}
+
+std::string BuildLinearRuntimeFallbackDetail(
+    const char* operation_name,
+    BackendFallbackReason reason,
+    const char* error_message,
+    const std::string& context) {
+    return BuildArrayFireBackendFallbackMessage(
+        operation_name,
+        reason,
+        reason != BackendFallbackReason::CudaJitParamOverflow,
+        error_message,
+        context);
+}
+
+std::vector<size_t> BuildLinearOutputShape(size_t batch_size,
+                                           size_t out_features,
+                                           bool is_batched) {
+    return is_batched
+        ? std::vector<size_t>{batch_size, out_features}
+        : std::vector<size_t>{out_features};
+}
+
+void RecordLinearRuntimeFallback(
+    const char* operation_name,
+    BackendFallbackReason reason,
+    const char* error_message,
+    const std::string& context,
+    const std::vector<size_t>& lhs_shape,
+    const std::vector<size_t>& output_shape,
+    size_t in_features,
+    size_t out_features,
+    bool use_bias) {
+    RecordBackendPlacementObservationForActiveDevice(
+        "Linear",
+        "cuda",
+        "float32",
+        BuildLinearPlacementShapeSignature(
+            lhs_shape,
+            {out_features, in_features},
+            output_shape,
+            "float32",
+            use_bias),
+        BackendFallbackReasonName(reason),
+        BackendPlacementObservationSource::RuntimeFallback,
+        BuildLinearRuntimeFallbackDetail(
+            operation_name, reason, error_message, context));
 }
 #endif
 
@@ -128,7 +190,8 @@ void LinearLayer::InitializeWeights() {
             LogLinearInitializationFallbackOnce(
                 e.what(),
                 in_features_,
-                out_features_);
+                out_features_,
+                use_bias_);
         }
     }
 #endif
@@ -204,6 +267,16 @@ Tensor LinearLayer::Forward(const Tensor& input) {
                 "; out=" + std::to_string(out_features_) +
                 "; batch=" + std::to_string(batch_size) +
                 "; bias=" + std::string(use_bias_ ? "true" : "false"));
+            RecordLinearRuntimeFallback(
+                "LinearLayer::Forward",
+                reason,
+                e.what(),
+                context,
+                input_shape,
+                BuildLinearOutputShape(batch_size, out_features_, is_batched),
+                in_features_,
+                out_features_,
+                use_bias_);
             const bool log_fallback =
                 ShouldLogArrayFireBackendFallbackOnce(
                     "LinearLayer::Forward", reason, context);
@@ -211,10 +284,11 @@ Tensor LinearLayer::Forward(const Tensor& input) {
                 spdlog::warn("{}",
                              errors::FormatWarning(
                                  errors::Gpu::KernelExecutionFailed,
-                                 BuildArrayFireBackendFallbackMessage(
-                                     "LinearLayer::Forward", reason,
-                                     reason != BackendFallbackReason::CudaJitParamOverflow,
-                                     e.what(), context)));
+                                 BuildLinearRuntimeFallbackDetail(
+                                     "LinearLayer::Forward",
+                                     reason,
+                                     e.what(),
+                                     context)));
             }
         }
     }
@@ -318,15 +392,26 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
                 "; out=" + std::to_string(out_features_) +
                 "; batch=" + std::to_string(batch_size) +
                 "; bias=" + std::string(use_bias_ ? "true" : "false"));
+            RecordLinearRuntimeFallback(
+                "LinearLayer::Backward",
+                reason,
+                e.what(),
+                context,
+                grad_shape,
+                input_cache_.Shape(),
+                in_features_,
+                out_features_,
+                false);
             const bool log_fallback =
                 ShouldLogArrayFireBackendFallbackOnce(
                     "LinearLayer::Backward", reason, context);
             if (log_fallback) {
                 spdlog::warn("{}",
-                             BuildArrayFireBackendFallbackMessage(
-                                 "LinearLayer::Backward", reason,
-                                 reason != BackendFallbackReason::CudaJitParamOverflow,
-                                 e.what(), context));
+                             BuildLinearRuntimeFallbackDetail(
+                                 "LinearLayer::Backward",
+                                 reason,
+                                 e.what(),
+                                 context));
             }
         }
     }

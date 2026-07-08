@@ -275,6 +275,14 @@ struct BackendPlacementEntry {
     std::string reason_code;
     std::string explanation;
     std::string suggested_action;
+    std::string observation_source;
+    std::string observation_device;
+    std::string observation_dtype;
+    std::string observation_shape_signature;
+    std::string observation_detail;
+    std::string observation_timestamp;
+    std::string observation_probe_outcome;
+    std::string observation_probe_scope;
 
     bool NeedsUserAttention() const {
         return status == BackendPlacementStatus::Cpu ||
@@ -282,6 +290,17 @@ struct BackendPlacementEntry {
                status == BackendPlacementStatus::Risk ||
                status == BackendPlacementStatus::Unsupported ||
                status == BackendPlacementStatus::Unknown;
+    }
+
+    bool HasObservationMetadata() const {
+        return !observation_source.empty() ||
+               !observation_device.empty() ||
+               !observation_dtype.empty() ||
+               !observation_shape_signature.empty() ||
+               !observation_detail.empty() ||
+               !observation_timestamp.empty() ||
+               !observation_probe_outcome.empty() ||
+               !observation_probe_scope.empty();
     }
 };
 
@@ -519,7 +538,8 @@ public:
     TrainingConfiguration Compile(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
-        bool allow_unloaded_data = false
+        bool allow_unloaded_data = false,
+        const std::string& placement_observation_cache_path = {}
     );
 
     /**

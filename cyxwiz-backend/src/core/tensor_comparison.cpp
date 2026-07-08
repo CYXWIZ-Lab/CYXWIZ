@@ -1,7 +1,9 @@
 #include "cyxwiz/tensor.h"
+#include "tensor_backend_observation_utils.h"
 
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -32,6 +34,18 @@ bool CompareValues(L left, R right, CompareOp op) {
         case CompareOp::NotEqual: return left != right;
     }
     return false;
+}
+
+const char* CompareOpName(CompareOp op) {
+    switch (op) {
+        case CompareOp::Greater: return "greater";
+        case CompareOp::GreaterEqual: return "greater_equal";
+        case CompareOp::Less: return "less";
+        case CompareOp::LessEqual: return "less_equal";
+        case CompareOp::Equal: return "equal";
+        case CompareOp::NotEqual: return "not_equal";
+    }
+    return "unknown";
 }
 
 template <typename L, typename R>
@@ -119,6 +133,15 @@ Tensor ApplyScalarComparison(const Tensor& input, float scalar, CompareOp op) {
             }
             return Tensor(mask.as(u8));
         } catch (const af::exception& e) {
+            tensor_backend_observation::RecordArrayFireFallback(
+                "Tensor::CompareScalar",
+                tensor_backend_observation::DataTypeName(input.GetDataType()),
+                tensor_backend_observation::BuildTensorOpSignature(
+                    {input.Shape()},
+                    input.Shape(),
+                    input.GetDataType(),
+                    std::string("op=") + CompareOpName(op) + ";rhs=scalar"),
+                e.what());
             spdlog::warn(
                 "ArrayFire tensor scalar comparison failed, using CPU fallback: {}",
                 e.what());
@@ -177,6 +200,15 @@ Tensor CompareTensors(const Tensor& left, const Tensor& right, CompareOp op) {
             }
             return Tensor(mask.as(u8));
         } catch (const af::exception& e) {
+            tensor_backend_observation::RecordArrayFireFallback(
+                "Tensor::Compare",
+                tensor_backend_observation::DataTypeName(left_expanded.GetDataType()),
+                tensor_backend_observation::BuildTensorOpSignature(
+                    {left_expanded.Shape(), right_expanded.Shape()},
+                    out_shape,
+                    left_expanded.GetDataType(),
+                    std::string("op=") + CompareOpName(op)),
+                e.what());
             spdlog::warn(
                 "ArrayFire tensor comparison failed, using CPU fallback: {}",
                 e.what());

@@ -575,7 +575,7 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
         return AfToTensor(loss);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "CrossEntropyLoss::Forward", e.what(), predictions, "predictions");
+            "CrossEntropyLoss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuCrossEntropyForward(
@@ -652,7 +652,7 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
         return AfToTensor(grad);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "CrossEntropyLoss::Backward", e.what(), predictions, "predictions");
+            "CrossEntropyLoss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuCrossEntropyBackward(
@@ -702,7 +702,7 @@ Tensor NLLLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(loss);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "NLLLoss::Forward", e.what(), predictions, "predictions");
+            "NLLLoss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuNLLForward(predictions, targets, reduction_, ignore_index_);
@@ -750,7 +750,7 @@ Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(grad);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "NLLLoss::Backward", e.what(), predictions, "predictions");
+            "NLLLoss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuNLLBackward(predictions, targets, reduction_, ignore_index_);
@@ -787,7 +787,7 @@ Tensor FocalLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(loss);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "FocalLoss::Forward", e.what(), predictions, "predictions");
+            "FocalLoss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuFocalForward(predictions, targets, alpha_, gamma_, reduction_, &cached_probs_);
@@ -843,7 +843,7 @@ Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(grad);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "FocalLoss::Backward", e.what(), predictions, "predictions");
+            "FocalLoss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuFocalBackward(predictions, targets, alpha_, gamma_, reduction_, cached_probs_);

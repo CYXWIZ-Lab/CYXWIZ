@@ -21,6 +21,8 @@ struct RecurrentCudaPlacementRequest {
     size_t num_layers = 1;
     bool bidirectional = false;
     bool return_sequences = false;
+    bool deep_preflight = false;
+    size_t preflight_timeout_ms = 2000;
 };
 
 struct RecurrentCudaPlacementDecision {

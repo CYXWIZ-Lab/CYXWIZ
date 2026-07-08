@@ -26,6 +26,11 @@ inline constexpr const char* PreflightProbe = "preflight_probe";
 inline constexpr const char* Test = "test";
 } // namespace BackendPlacementObservationSource
 
+namespace BackendPlacementProbeScope {
+inline constexpr const char* NormalCompile = "normal_compile";
+inline constexpr const char* DeepPreflight = "deep_preflight";
+} // namespace BackendPlacementProbeScope
+
 struct BackendPlacementObservation {
     std::string op_type;
     std::string backend;
@@ -35,7 +40,29 @@ struct BackendPlacementObservation {
     std::string reason_code;
     std::string source = BackendPlacementObservationSource::RuntimeFallback;
     std::string detail;
+    std::string timestamp;
+    std::string probe_outcome;
+    std::string probe_scope;
 };
+
+enum class BackendPlacementProbeOutcome {
+    Safe,
+    Unsafe,
+    Timeout,
+    Unsupported,
+    Inconclusive,
+};
+
+struct BackendPlacementProbeResult {
+    BackendPlacementProbeOutcome outcome = BackendPlacementProbeOutcome::Inconclusive;
+    std::string reason_code;
+    std::string detail;
+    bool has_observation = false;
+    BackendPlacementObservation observation;
+};
+
+CYXWIZ_API const char* BackendPlacementProbeOutcomeName(
+    BackendPlacementProbeOutcome outcome);
 
 CYXWIZ_API std::string BuildRecurrentCudaPlacementShapeSignature(
     const RecurrentCudaPlacementRequest& request);
@@ -43,6 +70,35 @@ CYXWIZ_API std::string BuildRecurrentCudaPlacementShapeSignature(
 CYXWIZ_API std::string BuildDensePlacementShapeSignature(
     const std::vector<size_t>& input_shape,
     size_t out_features);
+
+CYXWIZ_API std::string BuildEmbeddingPlacementShapeSignature(
+    size_t num_embeddings,
+    size_t embedding_dim,
+    const std::vector<size_t>& input_shape,
+    const std::string& index_dtype);
+
+CYXWIZ_API std::string BuildActivationPlacementShapeSignature(
+    const std::vector<size_t>& input_shape,
+    const std::string& dtype);
+
+CYXWIZ_API std::string BuildLinearPlacementShapeSignature(
+    const std::vector<size_t>& lhs_shape,
+    const std::vector<size_t>& rhs_shape,
+    const std::vector<size_t>& output_shape,
+    const std::string& dtype,
+    bool use_bias);
+
+CYXWIZ_API std::string BuildLossPlacementShapeSignature(
+    const std::vector<size_t>& prediction_shape,
+    const std::vector<size_t>& target_shape,
+    const std::string& reduction,
+    const std::string& dtype);
+
+CYXWIZ_API std::string BuildTensorOpPlacementShapeSignature(
+    const std::vector<std::vector<size_t>>& input_shapes,
+    const std::vector<size_t>& output_shape,
+    const std::string& dtype,
+    const std::string& attributes);
 
 CYXWIZ_API std::string BuildTensorLayerPlacementShapeSignature(
     const std::vector<size_t>& input_shape,
@@ -92,9 +148,23 @@ CYXWIZ_API bool TryRunRecurrentCudaPreflightProbe(
     const RecurrentCudaPlacementRequest& request,
     BackendPlacementObservation& failure_observation);
 
+CYXWIZ_API BackendPlacementProbeResult RunRecurrentCudaPreflightProbe(
+    const RecurrentCudaPlacementRequest& request);
+
 CYXWIZ_API bool TryGetRecurrentCudaPlacementObservation(
     const RecurrentCudaPlacementRequest& request,
     BackendPlacementObservation& observation);
+
+CYXWIZ_API std::vector<BackendPlacementObservation>
+SnapshotBackendPlacementObservations();
+
+CYXWIZ_API bool SaveBackendPlacementObservationCache(
+    const std::string& path,
+    std::string* error_message = nullptr);
+
+CYXWIZ_API bool LoadBackendPlacementObservationCache(
+    const std::string& path,
+    std::string* error_message = nullptr);
 
 CYXWIZ_API void ClearBackendPlacementObservationCacheForTesting();
 

@@ -15,6 +15,14 @@ struct DebugRuntimeBackendClassification {
     std::string reason_code;
     std::string explanation;
     std::string suggested_action;
+    std::string observation_source;
+    std::string observation_device;
+    std::string observation_dtype;
+    std::string observation_shape_signature;
+    std::string observation_detail;
+    std::string observation_timestamp;
+    std::string observation_probe_outcome;
+    std::string observation_probe_scope;
     bool proven = false;
     bool fallback_possible = false;
     bool needs_attention = false;

@@ -1,5 +1,6 @@
 #include "cyxwiz/layers/embedding.h"
 #include "layer_arrayfire_utils.h"
+#include "cyxwiz/backend_placement_observation.h"
 #include "../arrayfire_backend_utils.h"
 
 #include <cmath>
@@ -27,18 +28,29 @@ static std::string BuildEmbeddingContext(const Tensor& tensor) {
 static void LogEmbeddingFallbackOnce(
     const char* operation_name,
     const Tensor& tensor,
+    size_t num_embeddings,
+    size_t embedding_dim,
     const char* error_message)
 {
     const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
     const std::string context = BuildEmbeddingContext(tensor);
+    const std::string message = BuildArrayFireBackendFallbackMessage(
+        operation_name,
+        reason,
+        reason != BackendFallbackReason::CudaJitParamOverflow,
+        error_message,
+        context);
+    RecordBackendPlacementObservationForActiveDevice(
+        "Embedding",
+        "cuda",
+        "int32",
+        BuildEmbeddingPlacementShapeSignature(
+            num_embeddings, embedding_dim, tensor.Shape(), "int32"),
+        BackendFallbackReasonName(reason),
+        BackendPlacementObservationSource::RuntimeFallback,
+        message);
     if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
-        spdlog::warn("{}",
-            BuildArrayFireBackendFallbackMessage(
-                operation_name,
-                reason,
-                reason != BackendFallbackReason::CudaJitParamOverflow,
-                error_message,
-                context));
+        spdlog::warn("{}", message);
     }
 }
 
@@ -176,7 +188,12 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
         output.eval();
         return AfToTensor(output);
     } catch (const af::exception& e) {
-        LogEmbeddingFallbackOnce("EmbeddingLayer::Forward", input, e.what());
+        LogEmbeddingFallbackOnce(
+            "EmbeddingLayer::Forward",
+            input,
+            static_cast<size_t>(num_embeddings_),
+            static_cast<size_t>(embedding_dim_),
+            e.what());
     }
 #endif
 
@@ -256,7 +273,12 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
         // Return empty tensor (no gradient w.r.t. integer indices)
         return Tensor();
     } catch (const af::exception& e) {
-        LogEmbeddingFallbackOnce("EmbeddingLayer::Backward", grad_output, e.what());
+        LogEmbeddingFallbackOnce(
+            "EmbeddingLayer::Backward",
+            cached_indices_,
+            static_cast<size_t>(num_embeddings_),
+            static_cast<size_t>(embedding_dim_),
+            e.what());
     }
 #endif
 

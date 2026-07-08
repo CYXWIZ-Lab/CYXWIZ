@@ -1,10 +1,12 @@
 #include "cyxwiz/tensor.h"
+#include "tensor_backend_observation_utils.h"
 #include "tensor_utils.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -146,6 +148,20 @@ Tensor Tensor::Cat(const std::vector<Tensor>& tensors, int dim) {
             }
             return Tensor::FromArrayRowMajor2D(joined);
         } catch (const af::exception& e) {
+            std::vector<std::vector<size_t>> input_shapes;
+            input_shapes.reserve(tensors.size());
+            for (const Tensor& tensor : tensors) {
+                input_shapes.push_back(tensor.Shape());
+            }
+            tensor_backend_observation::RecordArrayFireFallback(
+                "Tensor::Cat",
+                tensor_backend_observation::DataTypeName(dtype),
+                tensor_backend_observation::BuildTensorOpSignature(
+                    input_shapes,
+                    out_shape,
+                    dtype,
+                    "dim=" + std::to_string(axis)),
+                e.what());
             spdlog::warn("Tensor::Cat: ArrayFire concat failed, falling back to CPU: {}", e.what());
         }
     }

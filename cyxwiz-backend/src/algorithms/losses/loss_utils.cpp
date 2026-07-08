@@ -1,4 +1,5 @@
 #include "loss_utils.h"
+#include "cyxwiz/backend_placement_observation.h"
 #include "../arrayfire_backend_utils.h"
 
 #include <algorithm>
@@ -279,6 +280,19 @@ Tensor CpuKLDivBackward(const Tensor& predictions,
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
+const char* ReductionName(Reduction reduction) {
+    switch (reduction) {
+        case Reduction::None:
+            return "none";
+        case Reduction::Mean:
+            return "mean";
+        case Reduction::Sum:
+            return "sum";
+        default:
+            return "unknown";
+    }
+}
+
 af::array TensorToAf(const Tensor& t) {
     return t.Shape().size() == 2 ? t.GetArrayRowMajor2D() : t.GetArray();
 }
@@ -310,15 +324,68 @@ void LogArrayFireLossFallbackOnce(
     const std::string context =
         BuildArrayFireBackendFallbackContext(
             BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    const std::string message = BuildArrayFireBackendFallbackMessage(
+        operation_name,
+        reason,
+        reason != BackendFallbackReason::CudaJitParamOverflow,
+        error_message,
+        context);
+    RecordBackendPlacementObservationForActiveDevice(
+        operation_name ? operation_name : "Loss",
+        "cuda",
+        "float32",
+        BuildLossPlacementShapeSignature(
+            tensor.Shape(),
+            {},
+            "unknown",
+            "float32"),
+        BackendFallbackReasonName(reason),
+        BackendPlacementObservationSource::RuntimeFallback,
+        message);
     const bool log_fallback =
         ShouldLogArrayFireBackendFallbackOnce(
             operation_name, reason, context);
     if (log_fallback) {
-        spdlog::warn("{}",
-                     BuildArrayFireBackendFallbackMessage(
-                         operation_name, reason,
-                         reason != BackendFallbackReason::CudaJitParamOverflow,
-                         error_message, context));
+        spdlog::warn("{}", message);
+    }
+}
+
+void LogArrayFireLossFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const Tensor& predictions,
+    const Tensor& targets,
+    Reduction reduction) {
+    const BackendFallbackReason reason =
+        ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context =
+        BuildArrayFireBackendFallbackContext(
+            BuildTensorShapeContext("predictions", predictions.Shape()) +
+            "; " +
+            BuildTensorShapeContext("targets", targets.Shape()));
+    const std::string message = BuildArrayFireBackendFallbackMessage(
+        operation_name,
+        reason,
+        reason != BackendFallbackReason::CudaJitParamOverflow,
+        error_message,
+        context);
+    RecordBackendPlacementObservationForActiveDevice(
+        operation_name ? operation_name : "Loss",
+        "cuda",
+        "float32",
+        BuildLossPlacementShapeSignature(
+            predictions.Shape(),
+            targets.Shape(),
+            ReductionName(reduction),
+            "float32"),
+        BackendFallbackReasonName(reason),
+        BackendPlacementObservationSource::RuntimeFallback,
+        message);
+    const bool log_fallback =
+        ShouldLogArrayFireBackendFallbackOnce(
+            operation_name, reason, context);
+    if (log_fallback) {
+        spdlog::warn("{}", message);
     }
 }
 

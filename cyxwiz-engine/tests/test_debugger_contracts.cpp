@@ -394,6 +394,14 @@ void TestRuntimeBackendClassificationContract() {
         "MultiHeadAttention is supported as CPU-backed self-attention.";
     mha_cpu.suggested_action =
         "No correctness action needed for single-input self-attention.";
+    mha_cpu.observation_source = "preflight_probe";
+    mha_cpu.observation_device = "af_device=0;name=test";
+    mha_cpu.observation_dtype = "float32";
+    mha_cpu.observation_shape_signature = "kind=LSTM;batch=4";
+    mha_cpu.observation_detail = "simulated preflight timeout";
+    mha_cpu.observation_timestamp = "2026-07-08T00:00:00Z";
+    mha_cpu.observation_probe_outcome = "timeout";
+    mha_cpu.observation_probe_scope = "deep_preflight";
 
     const auto mha_classification = classifier.Classify(mha_cpu);
     Check(mha_classification.proven,
@@ -403,6 +411,14 @@ void TestRuntimeBackendClassificationContract() {
     Check(mha_classification.reason_code ==
               cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
           "MHA CPU-backed placement should preserve CPU-backed reason");
+    Check(mha_classification.observation_source == "preflight_probe",
+          "MHA CPU-backed placement should preserve observation source");
+    Check(mha_classification.observation_shape_signature == "kind=LSTM;batch=4",
+          "MHA CPU-backed placement should preserve observation shape");
+    Check(mha_classification.observation_probe_outcome == "timeout",
+          "MHA CPU-backed placement should preserve probe outcome");
+    Check(mha_classification.observation_probe_scope == "deep_preflight",
+          "MHA CPU-backed placement should preserve probe scope");
     Check(mha_classification.needs_attention,
           "MHA CPU-backed self-attention should require debugger attention");
 
@@ -427,6 +443,30 @@ void TestRuntimeBackendClassificationContract() {
     Check(mha_trace.payload["backend_reason_code"].get<std::string>() ==
               cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
           "MHA backend trace payload should expose CPU-backed reason");
+    Check(mha_trace.payload["backend_observation_source"].get<std::string>() ==
+              "preflight_probe",
+          "MHA backend trace payload should expose observation source");
+    Check(mha_trace.payload["backend_observation_device"].get<std::string>() ==
+              "af_device=0;name=test",
+          "MHA backend trace payload should expose observation device");
+    Check(mha_trace.payload["backend_observation_dtype"].get<std::string>() ==
+              "float32",
+          "MHA backend trace payload should expose observation dtype");
+    Check(mha_trace.payload["backend_observation_shape_signature"].get<std::string>() ==
+              "kind=LSTM;batch=4",
+          "MHA backend trace payload should expose observation shape");
+    Check(mha_trace.payload["backend_observation_detail"].get<std::string>() ==
+              "simulated preflight timeout",
+          "MHA backend trace payload should expose observation detail");
+    Check(mha_trace.payload["backend_observation_timestamp"].get<std::string>() ==
+              "2026-07-08T00:00:00Z",
+          "MHA backend trace payload should expose observation timestamp");
+    Check(mha_trace.payload["backend_observation_probe_outcome"].get<std::string>() ==
+              "timeout",
+          "MHA backend trace payload should expose probe outcome");
+    Check(mha_trace.payload["backend_observation_probe_scope"].get<std::string>() ==
+              "deep_preflight",
+          "MHA backend trace payload should expose probe scope");
     Check(mha_trace.payload["backend_proven"].get<bool>(),
           "MHA backend trace payload should expose proven status");
     Check(mha_trace.payload["backend_needs_attention"].get<bool>(),
@@ -791,6 +831,22 @@ void TestSupportBundleContract() {
         "failed with token=secret-token",
         "normal warning"
     };
+    cyxwiz::BackendPlacementObservation placement_observation;
+    placement_observation.op_type = "LSTM";
+    placement_observation.backend = "CUDA";
+    placement_observation.device = "af_device=0;name=NVIDIA";
+    placement_observation.dtype = "float32";
+    placement_observation.shape_signature = "kind=LSTM;batch=64;seq=8";
+    placement_observation.reason_code =
+        cyxwiz::BackendPlacementObservationReason::BackendCompileTimeout;
+    placement_observation.source =
+        cyxwiz::BackendPlacementObservationSource::PreflightProbe;
+    placement_observation.detail = "probe timed out token=secret-token";
+    placement_observation.timestamp = "2026-06-18T13:50:02";
+    placement_observation.probe_outcome = "timeout";
+    placement_observation.probe_scope =
+        cyxwiz::BackendPlacementProbeScope::DeepPreflight;
+    input.placement_observations.push_back(std::move(placement_observation));
     input.allow_hq_upload = true;
 
     cyxwiz::DebugSupportBundleBuilder builder;
@@ -825,6 +881,27 @@ void TestSupportBundleContract() {
     Check(bundle["debug_run"]["traces"][0]["issues"][0]["error_code"].get<std::string>() ==
               "CW-D-0101",
           "support bundle should keep trace issue error codes");
+    Check(bundle["placement_observations"].is_array() &&
+              bundle["placement_observations"].size() == 1,
+          "support bundle should export placement observations");
+    Check(bundle["placement_observations"][0]["op_type"].get<std::string>() ==
+              "LSTM",
+          "support bundle should keep placement op type");
+    Check(bundle["placement_observations"][0]["reason_code"].get<std::string>() ==
+              cyxwiz::BackendPlacementObservationReason::BackendCompileTimeout,
+          "support bundle should keep placement reason code");
+    Check(bundle["placement_observations"][0]["source"].get<std::string>() ==
+              cyxwiz::BackendPlacementObservationSource::PreflightProbe,
+          "support bundle should keep placement source");
+    Check(bundle["placement_observations"][0]["detail"].get<std::string>() ==
+              "probe timed out token=[REDACTED]",
+          "support bundle should redact placement observation detail");
+    Check(bundle["placement_observations"][0]["probe_outcome"].get<std::string>() ==
+              "timeout",
+          "support bundle should keep placement probe outcome");
+    Check(bundle["placement_observations"][0]["probe_scope"].get<std::string>() ==
+              cyxwiz::BackendPlacementProbeScope::DeepPreflight,
+          "support bundle should keep placement probe scope");
     Check(bundle["crash_run"]["dataset_name"].get<std::string>() ==
               "[REDACTED]",
           "support bundle should redact dataset names");

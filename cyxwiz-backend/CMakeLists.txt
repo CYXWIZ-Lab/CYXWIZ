@@ -20,6 +20,7 @@ endif()
 # Find other packages
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # pybind11 is optional - controlled by parent CYXWIZ_HAS_PYTHON
 if(CYXWIZ_HAS_PYTHON)
@@ -288,6 +289,7 @@ target_include_directories(cyxwiz-backend PUBLIC
 target_link_libraries(cyxwiz-backend PUBLIC
     fmt::fmt
     spdlog::spdlog
+    nlohmann_json::nlohmann_json
     cyxwiz-protocol
 )
 

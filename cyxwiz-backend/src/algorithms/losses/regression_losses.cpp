@@ -22,7 +22,7 @@ Tensor MSELoss::Forward(const Tensor& predictions, const Tensor& targets) {
         return loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
         loss_detail::LogArrayFireLossFallbackOnce(
-            "MSELoss::Forward", e.what(), predictions, "predictions");
+            "MSELoss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return loss_detail::CpuMSEForward(predictions, targets, reduction_);
@@ -47,7 +47,7 @@ Tensor MSELoss::Backward(const Tensor& predictions, const Tensor& targets) {
         return loss_detail::AfToTensor(grad);
     } catch (const af::exception& e) {
         loss_detail::LogArrayFireLossFallbackOnce(
-            "MSELoss::Backward", e.what(), predictions, "predictions");
+            "MSELoss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return loss_detail::CpuMSEBackward(predictions, targets, reduction_);
@@ -66,7 +66,7 @@ Tensor L1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
         return loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
         loss_detail::LogArrayFireLossFallbackOnce(
-            "L1Loss::Forward", e.what(), predictions, "predictions");
+            "L1Loss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return loss_detail::CpuL1Forward(predictions, targets, reduction_);
@@ -91,7 +91,7 @@ Tensor L1Loss::Backward(const Tensor& predictions, const Tensor& targets) {
         return loss_detail::AfToTensor(grad);
     } catch (const af::exception& e) {
         loss_detail::LogArrayFireLossFallbackOnce(
-            "L1Loss::Backward", e.what(), predictions, "predictions");
+            "L1Loss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return loss_detail::CpuL1Backward(predictions, targets, reduction_);
@@ -120,7 +120,7 @@ Tensor SmoothL1Loss::Forward(const Tensor& predictions, const Tensor& targets) {
         return loss_detail::AfToTensor(loss);
     } catch (const af::exception& e) {
         loss_detail::LogArrayFireLossFallbackOnce(
-            "SmoothL1Loss::Forward", e.what(), predictions, "predictions");
+            "SmoothL1Loss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return loss_detail::CpuSmoothL1Forward(predictions, targets, delta_, reduction_);
@@ -153,7 +153,7 @@ Tensor SmoothL1Loss::Backward(const Tensor& predictions, const Tensor& targets) 
         return loss_detail::AfToTensor(grad);
     } catch (const af::exception& e) {
         loss_detail::LogArrayFireLossFallbackOnce(
-            "SmoothL1Loss::Backward", e.what(), predictions, "predictions");
+            "SmoothL1Loss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return loss_detail::CpuSmoothL1Backward(predictions, targets, delta_, reduction_);

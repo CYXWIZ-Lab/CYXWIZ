@@ -111,6 +111,8 @@ nlohmann::json DebugSupportBundleBuilder::Build(
         {"debug_run", DebugRunToJson(input.debug_run)},
         {"crash_run", CrashRunToJson(input.crash_run)},
         {"training_trace", TrainingTraceToJson(input.training_trace)},
+        {"placement_observations",
+         PlacementObservationsToJson(input.placement_observations)},
         {"environment", environment},
         {"recent_logs", logs}
     };
@@ -282,6 +284,32 @@ nlohmann::json DebugSupportBundleBuilder::TrainingTraceToJson(
         {"latest_accuracy", summary.latest_accuracy},
         {"recent_events", events},
         {"warnings", summary.warnings}
+    };
+}
+
+nlohmann::json DebugSupportBundleBuilder::PlacementObservationsToJson(
+    const std::vector<BackendPlacementObservation>& observations) {
+    nlohmann::json out = nlohmann::json::array();
+    for (const auto& observation : observations) {
+        out.push_back(PlacementObservationToJson(observation));
+    }
+    return out;
+}
+
+nlohmann::json DebugSupportBundleBuilder::PlacementObservationToJson(
+    const BackendPlacementObservation& observation) {
+    return {
+        {"op_type", observation.op_type},
+        {"backend", observation.backend},
+        {"device", observation.device},
+        {"dtype", observation.dtype},
+        {"shape_signature", observation.shape_signature},
+        {"reason_code", observation.reason_code},
+        {"source", observation.source},
+        {"detail", RedactString(observation.detail)},
+        {"timestamp", observation.timestamp},
+        {"probe_outcome", observation.probe_outcome},
+        {"probe_scope", observation.probe_scope}
     };
 }
 

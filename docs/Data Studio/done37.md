@@ -1,5 +1,23 @@
 ﻿# tofix37 - Backend Placement Follow-up: Runtime Writers, Persistent Probes, and Native Recurrent CUDA
 
+## Status
+
+Done. Closed after Slice 16 acceptance audit in `track37_done.md`.
+
+Implemented scope:
+
+- additional runtime fallback observation writers,
+- shared stable shape-signature helpers,
+- persistent placement observation cache,
+- compiler consumption of cached placement evidence,
+- structured recurrent JIT preflight outcomes,
+- bounded LSTM/GRU preflight probes,
+- opt-in deep preflight,
+- debugger/UI/support-bundle surfacing for placement evidence,
+- verified visible unsupported handling for `pin_memory=true`.
+
+Remaining large follow-up work was moved to `tofix60.md`.
+
 ## Purpose
 
 Continue the GPU placement work closed in `done25` without bloating that ticket

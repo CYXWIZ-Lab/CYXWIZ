@@ -28,6 +28,16 @@ DebugRuntimeBackendClassification DebugRuntimeBackendClassifier::Classify(
     classification.reason_code = placement.reason_code;
     classification.explanation = placement.explanation;
     classification.suggested_action = placement.suggested_action;
+    classification.observation_source = placement.observation_source;
+    classification.observation_device = placement.observation_device;
+    classification.observation_dtype = placement.observation_dtype;
+    classification.observation_shape_signature =
+        placement.observation_shape_signature;
+    classification.observation_detail = placement.observation_detail;
+    classification.observation_timestamp = placement.observation_timestamp;
+    classification.observation_probe_outcome =
+        placement.observation_probe_outcome;
+    classification.observation_probe_scope = placement.observation_probe_scope;
     classification.proven = IsProvenPlacementStatus(placement.status);
     classification.fallback_possible = HasFallbackPath(placement);
     classification.needs_attention = placement.NeedsUserAttention();
@@ -51,6 +61,24 @@ void DebugRuntimeBackendClassifier::AttachToTrace(
         classification.fallback_possible;
     trace.payload["backend_needs_attention"] =
         classification.needs_attention;
+    if (placement.HasObservationMetadata()) {
+        trace.payload["backend_observation_source"] =
+            classification.observation_source;
+        trace.payload["backend_observation_device"] =
+            classification.observation_device;
+        trace.payload["backend_observation_dtype"] =
+            classification.observation_dtype;
+        trace.payload["backend_observation_shape_signature"] =
+            classification.observation_shape_signature;
+        trace.payload["backend_observation_detail"] =
+            classification.observation_detail;
+        trace.payload["backend_observation_timestamp"] =
+            classification.observation_timestamp;
+        trace.payload["backend_observation_probe_outcome"] =
+            classification.observation_probe_outcome;
+        trace.payload["backend_observation_probe_scope"] =
+            classification.observation_probe_scope;
+    }
 
     if (!trace.payload.contains("backend")) {
         trace.payload["backend"] = classification.expected_backend;

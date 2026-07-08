@@ -1542,22 +1542,38 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
             has_cached_observation &&
             cached_observation.reason_code ==
                 BackendPlacementObservationReason::CudaJitParamOverflow;
+        const bool cached_failure_observation = has_cached_observation;
         BackendPlacementEntry placement;
         placement.node_id = layer.node_id;
         placement.node_name = layer.name;
         placement.node_type = decision.layer_name;
         placement.requested_backend = "auto";
         placement.expected_backend =
-            cached_cuda_overflow ? "CPU" : decision.expected_backend;
+            cached_failure_observation ? "CPU" : decision.expected_backend;
         placement.fallback_backend = decision.fallback_backend;
-        placement.status = cached_cuda_overflow
+        placement.status = cached_failure_observation
             ? BackendPlacementStatus::Cpu
             : (decision.should_attempt_arrayfire_cuda
                    ? BackendPlacementStatus::Gpu
                    : BackendPlacementStatus::Cpu);
-        placement.reason_code = cached_cuda_overflow
-            ? RecurrentCudaPlacementReason::CudaJitParamOverflowRisk
+        placement.reason_code = cached_failure_observation
+            ? (cached_cuda_overflow
+                   ? RecurrentCudaPlacementReason::CudaJitParamOverflowRisk
+                   : cached_observation.reason_code)
             : decision.reason_code;
+        if (cached_failure_observation) {
+            placement.observation_source = cached_observation.source;
+            placement.observation_device = cached_observation.device;
+            placement.observation_dtype = cached_observation.dtype;
+            placement.observation_shape_signature =
+                cached_observation.shape_signature;
+            placement.observation_detail = cached_observation.detail;
+            placement.observation_timestamp = cached_observation.timestamp;
+            placement.observation_probe_outcome =
+                cached_observation.probe_outcome;
+            placement.observation_probe_scope =
+                cached_observation.probe_scope;
+        }
         const std::string observation_source_label =
             cached_observation.source ==
                     BackendPlacementObservationSource::PreflightProbe
@@ -1566,21 +1582,31 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                           BackendPlacementObservationSource::RuntimeFallback
                       ? "runtime fallback observation"
                       : "runtime/probe observation";
-        placement.explanation = cached_cuda_overflow
-            ? decision.layer_name +
-                  " recurrent step is expected to run on CPU because a previous " +
-                  observation_source_label + " for this exact "
-                  "backend/device/dtype/shape reported CUDA generated-kernel "
-                  "formal-parameter overflow (reason=" +
-                  cached_observation.reason_code +
-                  ", source=" + cached_observation.source +
-                  "). This is separate from VRAM capacity. Device: " +
-                  cached_observation.device + ". Shape signature: " +
-                  cached_observation.shape_signature + "."
+        placement.explanation = cached_failure_observation
+            ? (cached_cuda_overflow
+                   ? decision.layer_name +
+                         " recurrent step is expected to run on CPU because a previous " +
+                         observation_source_label + " for this exact "
+                         "backend/device/dtype/shape reported CUDA generated-kernel "
+                         "formal-parameter overflow (reason=" +
+                         cached_observation.reason_code +
+                         ", source=" + cached_observation.source +
+                         "). This is separate from VRAM capacity. Device: " +
+                         cached_observation.device + ". Shape signature: " +
+                         cached_observation.shape_signature + "."
+                   : decision.layer_name +
+                         " recurrent step is expected to run on CPU because a previous " +
+                         observation_source_label + " for this exact "
+                         "backend/device/dtype/shape reported a backend failure "
+                         "(reason=" + cached_observation.reason_code +
+                         ", source=" + cached_observation.source +
+                         "). Device: " + cached_observation.device +
+                         ". Shape signature: " +
+                         cached_observation.shape_signature + ".")
             : (decision.should_attempt_arrayfire_cuda
                    ? decision.layer_name + " recurrent step is allowed on ArrayFire CUDA by the current placement policy."
                    : decision.reason);
-        placement.suggested_action = cached_cuda_overflow
+        placement.suggested_action = cached_failure_observation
             ? "Training can continue. Use CPU for this recurrent shape until "
               "a fused/native CUDA recurrent kernel or exact successful "
               "backend probe proves the shape safe on this device."
@@ -1589,7 +1615,8 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                    : "Training can continue. To keep this recurrent step on GPU, use a future fused/native CUDA recurrent kernel or exact backend probe; reducing hidden_size, sequence length, layers, or bidirectionality may help only for LSTM estimator-limited shapes.");
         config.backend_placements.push_back(placement);
 
-        if (decision.should_attempt_arrayfire_cuda && !cached_cuda_overflow) {
+        if (decision.should_attempt_arrayfire_cuda &&
+            !cached_failure_observation) {
             continue;
         }
 
@@ -2749,7 +2776,8 @@ void CollectGraphRuntimeOpNodeIds(
 TrainingConfiguration GraphCompiler::Compile(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
-    bool allow_unloaded_data)
+    bool allow_unloaded_data,
+    const std::string& placement_observation_cache_path)
 {
     TrainingConfiguration config;
 
@@ -3602,6 +3630,17 @@ TrainingConfiguration GraphCompiler::Compile(
     // These need the values populated by the layer-extraction passes
     // above, so they live at the end of Compile().
 
+    if (!placement_observation_cache_path.empty()) {
+        std::string cache_error;
+        if (!LoadBackendPlacementObservationCache(
+                placement_observation_cache_path,
+                &cache_error)) {
+            AddIssue(config,
+                     IssueLevel::Warning,
+                     "Backend placement observation cache could not be loaded: " +
+                         cache_error);
+        }
+    }
     AddBackendPlacementReports(config);
 
     // DataSplit ratios should sum to ~1.0. Drift > 0.05 is almost

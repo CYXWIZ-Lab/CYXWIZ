@@ -46,7 +46,7 @@ Tensor BCELoss::Forward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(loss);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCELoss::Forward", e.what(), predictions, "predictions");
+            "BCELoss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuBCEForward(predictions, targets, eps_, reduction_);
@@ -75,7 +75,7 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(grad);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCELoss::Backward", e.what(), predictions, "predictions");
+            "BCELoss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuBCEBackward(predictions, targets, eps_, reduction_);
@@ -105,7 +105,7 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
         return AfToTensor(loss);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCEWithLogitsLoss::Forward", e.what(), predictions, "predictions");
+            "BCEWithLogitsLoss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuBCEWithLogitsForward(predictions, targets, reduction_, pos_weight_);
@@ -134,7 +134,7 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
         return AfToTensor(grad);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCEWithLogitsLoss::Backward", e.what(), predictions, "predictions");
+            "BCEWithLogitsLoss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuBCEWithLogitsBackward(predictions, targets, reduction_, pos_weight_);
@@ -173,7 +173,7 @@ Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(loss);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "KLDivLoss::Forward", e.what(), predictions, "predictions");
+            "KLDivLoss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuKLDivForward(predictions, targets, log_target_, reduction_);
@@ -206,7 +206,7 @@ Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(grad);
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "KLDivLoss::Backward", e.what(), predictions, "predictions");
+            "KLDivLoss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
     return CpuKLDivBackward(predictions, targets, log_target_, reduction_);

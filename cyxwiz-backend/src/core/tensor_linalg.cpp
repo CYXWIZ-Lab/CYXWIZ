@@ -1,4 +1,5 @@
 #include "cyxwiz/tensor.h"
+#include "tensor_backend_observation_utils.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -148,6 +149,15 @@ Tensor Tensor::Dot(const Tensor& other) const {
             try {
                 return DotArrayFire(*this, other);
             } catch (const af::exception& e) {
+                tensor_backend_observation::RecordArrayFireFallback(
+                    "Tensor::Dot",
+                    tensor_backend_observation::DataTypeName(dtype_),
+                    tensor_backend_observation::BuildTensorOpSignature(
+                        {shape_, other.Shape()},
+                        {1},
+                        dtype_,
+                        "mode=vector"),
+                    e.what());
                 spdlog::warn("ArrayFire Tensor::Dot failed, using CPU fallback: {}", e.what());
             }
         }
@@ -163,6 +173,15 @@ Tensor Tensor::Dot(const Tensor& other) const {
             try {
                 return RowWiseDotArrayFire(*this, other);
             } catch (const af::exception& e) {
+                tensor_backend_observation::RecordArrayFireFallback(
+                    "Tensor::Dot",
+                    tensor_backend_observation::DataTypeName(dtype_),
+                    tensor_backend_observation::BuildTensorOpSignature(
+                        {shape_, other.Shape()},
+                        {shape_[0], 1},
+                        dtype_,
+                        "mode=rowwise"),
+                    e.what());
                 spdlog::warn("ArrayFire row-wise Tensor::Dot failed, using CPU fallback: {}", e.what());
             }
         }

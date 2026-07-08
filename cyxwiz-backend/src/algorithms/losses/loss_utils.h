@@ -61,6 +61,12 @@ void LogArrayFireLossFallbackOnce(
     const char* error_message,
     const Tensor& tensor,
     const char* tensor_name);
+void LogArrayFireLossFallbackOnce(
+    const char* operation_name,
+    const char* error_message,
+    const Tensor& predictions,
+    const Tensor& targets,
+    Reduction reduction);
 af::array ApplyReduction(const af::array& loss, Reduction reduction);
 af::array StableSoftmax(const af::array& x, int axis = 0);
 af::array SignLike(const af::array& x);

@@ -222,23 +222,73 @@ inline BackendPlacementEntry BuildCpuBackedModelLayerPlacement(
     return placement;
 }
 
+inline size_t PlacementSizeParam(const CompiledLayer& layer,
+                                 const char* key,
+                                 size_t fallback) {
+    const auto it = layer.parameters.find(key);
+    if (it == layer.parameters.end()) {
+        return fallback;
+    }
+    try {
+        return static_cast<size_t>(std::stoull(it->second));
+    } catch (...) {
+        return fallback;
+    }
+}
+
+inline bool IsActivationPlacementLayer(gui::NodeType type) {
+    switch (type) {
+        case gui::NodeType::ReLU:
+        case gui::NodeType::Sigmoid:
+        case gui::NodeType::Tanh:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline std::string BuildArrayFireTensorPlacementShapeSignature(
+    const CompiledLayer& layer) {
+    if (layer.type == gui::NodeType::Dense) {
+        return BuildDensePlacementShapeSignature(
+            layer.input_shape,
+            static_cast<size_t>(layer.units));
+    }
+    if (layer.type == gui::NodeType::Embedding) {
+        return BuildEmbeddingPlacementShapeSignature(
+            PlacementSizeParam(layer, "num_embeddings", 0),
+            PlacementSizeParam(layer, "embedding_dim", 0),
+            layer.input_shape,
+            "int32");
+    }
+    if (IsActivationPlacementLayer(layer.type)) {
+        return BuildActivationPlacementShapeSignature(
+            layer.input_shape,
+            "float32");
+    }
+    return BuildTensorLayerPlacementShapeSignature(
+        layer.input_shape,
+        layer.output_shape);
+}
+
+inline const char* BuildArrayFireTensorPlacementObservationDtype(
+    const CompiledLayer& layer) {
+    return layer.type == gui::NodeType::Embedding ? "int32" : "float32";
+}
+
 inline BackendPlacementEntry BuildArrayFireTensorPlacement(
     const CompiledLayer& layer) {
     const std::string layer_type_name = LayerTypeName(layer.type);
     const std::string shape_signature =
-        layer.type == gui::NodeType::Dense
-            ? BuildDensePlacementShapeSignature(
-                  layer.input_shape,
-                  static_cast<size_t>(layer.units))
-            : BuildTensorLayerPlacementShapeSignature(
-                  layer.input_shape,
-                  layer.output_shape);
+        BuildArrayFireTensorPlacementShapeSignature(layer);
+    const std::string observation_dtype =
+        BuildArrayFireTensorPlacementObservationDtype(layer);
     BackendPlacementObservation cached_observation;
     const bool cached_fallback =
         TryGetBackendPlacementObservationForActiveDevice(
             layer_type_name,
             "cuda",
-            "float32",
+            observation_dtype,
             shape_signature,
             cached_observation);
     BackendPlacementEntry placement;
@@ -257,6 +307,16 @@ inline BackendPlacementEntry BuildArrayFireTensorPlacement(
         ? cached_observation.reason_code
         : BackendPlacementReason::ArrayFireTensorOpCapable;
     if (cached_fallback) {
+        placement.observation_source = cached_observation.source;
+        placement.observation_device = cached_observation.device;
+        placement.observation_dtype = cached_observation.dtype;
+        placement.observation_shape_signature =
+            cached_observation.shape_signature;
+        placement.observation_detail = cached_observation.detail;
+        placement.observation_timestamp = cached_observation.timestamp;
+        placement.observation_probe_outcome =
+            cached_observation.probe_outcome;
+        placement.observation_probe_scope = cached_observation.probe_scope;
         placement.explanation =
             std::string(placement.node_type) +
             " is expected to run on CPU because a previous runtime fallback "

@@ -4154,6 +4154,37 @@ void MainWindow::RenderCompileResultPopup() {
                                 !placement.suggested_action.empty()) {
                                 reason_label += ": " + placement.suggested_action;
                             }
+                            if (placement.HasObservationMetadata()) {
+                                reason_label += "\nObservation";
+                                if (!placement.observation_source.empty()) {
+                                    reason_label += " source=" +
+                                        placement.observation_source;
+                                }
+                                if (!placement.observation_dtype.empty()) {
+                                    reason_label += " dtype=" +
+                                        placement.observation_dtype;
+                                }
+                                if (!placement.observation_probe_outcome.empty()) {
+                                    reason_label += " outcome=" +
+                                        placement.observation_probe_outcome;
+                                }
+                                if (!placement.observation_probe_scope.empty()) {
+                                    reason_label += " scope=" +
+                                        placement.observation_probe_scope;
+                                }
+                                if (!placement.observation_device.empty()) {
+                                    reason_label += "\nDevice: " +
+                                        placement.observation_device;
+                                }
+                                if (!placement.observation_shape_signature.empty()) {
+                                    reason_label += "\nShape: " +
+                                        placement.observation_shape_signature;
+                                }
+                                if (!placement.observation_detail.empty()) {
+                                    reason_label += "\nDetail: " +
+                                        placement.observation_detail;
+                                }
+                            }
 
                             ImGui::TableNextRow();
                             ImGui::TableSetColumnIndex(0);

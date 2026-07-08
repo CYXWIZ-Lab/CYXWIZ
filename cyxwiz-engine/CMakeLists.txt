@@ -243,6 +243,7 @@ set(ENGINE_SOURCES
     src/gui/viewport.cpp
     src/gui/properties.cpp
     src/gui/properties_advanced.cpp
+    src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
     src/gui/properties_metadata_editor.cpp
     src/gui/properties_node_editors.cpp
@@ -1812,6 +1813,8 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_metadata_registry.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/pipeline_runtime_capabilities.cpp
+    src/gui/properties_contract.cpp
+    src/gui/properties_truth.cpp
     src/gui/data_studio/node_registry.cpp
     src/gui/data_studio/node_registry_builtin.cpp
     src/core/node_executors/clustering_operators.cpp

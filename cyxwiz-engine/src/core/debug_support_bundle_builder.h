@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cyxwiz/backend_placement_observation.h"
+
 #include "crash_run_recorder.h"
 #include "debug_run_store.h"
 #include "training_trace_collector.h"
@@ -18,6 +20,7 @@ struct DebugSupportBundleInput {
     DebugRunStoreRecord debug_run;
     CrashRunSummary crash_run;
     TrainingTraceSummary training_trace;
+    std::vector<BackendPlacementObservation> placement_observations;
     std::map<std::string, std::string> environment;
     std::vector<std::string> recent_logs;
     bool allow_hq_upload = false;
@@ -38,6 +41,10 @@ private:
     static nlohmann::json CrashRunToJson(const CrashRunSummary& summary);
     static nlohmann::json TrainingTraceToJson(
         const TrainingTraceSummary& summary);
+    static nlohmann::json PlacementObservationsToJson(
+        const std::vector<BackendPlacementObservation>& observations);
+    static nlohmann::json PlacementObservationToJson(
+        const BackendPlacementObservation& observation);
 };
 
 } // namespace cyxwiz

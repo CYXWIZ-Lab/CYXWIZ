@@ -1,4 +1,5 @@
 #include "cyxwiz/activations/sigmoid.h"
+#include "cyxwiz/backend_placement_observation.h"
 #include "../arrayfire_backend_utils.h"
 #include <cmath>
 #include <cstring>
@@ -22,15 +23,23 @@ void LogSigmoidFallbackOnce(
         ClassifyArrayFireBackendFallbackReason(error_message);
     const std::string context = BuildArrayFireBackendFallbackContext(
         BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    const std::string message = BuildArrayFireBackendFallbackMessage(
+        operation_name,
+        reason,
+        reason != BackendFallbackReason::CudaJitParamOverflow,
+        error_message,
+        context);
+    RecordBackendPlacementObservationForActiveDevice(
+        "Sigmoid",
+        "cuda",
+        "float32",
+        BuildActivationPlacementShapeSignature(tensor.Shape(), "float32"),
+        BackendFallbackReasonName(reason),
+        BackendPlacementObservationSource::RuntimeFallback,
+        message);
     if (ShouldLogArrayFireBackendFallbackOnce(
             operation_name, reason, context)) {
-        spdlog::warn("{}",
-                     BuildArrayFireBackendFallbackMessage(
-                         operation_name,
-                         reason,
-                         reason != BackendFallbackReason::CudaJitParamOverflow,
-                         error_message,
-                         context));
+        spdlog::warn("{}", message);
     }
 }
 #endif
