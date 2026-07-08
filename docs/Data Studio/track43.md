@@ -266,3 +266,24 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_time_series_analysis_operators`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_time_series_analysis_operators.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+
+## Slice 12 - Clustering Memory Guards
+
+Status: complete.
+
+Added dense materialization preflight to KMeansCluster, DBSCANCluster,
+HierarchicalCluster, and GMMCluster. The shared local helper runs after feature
+resolution and before `ReadFeatureMatrix`, estimates the dense feature matrix
+plus cluster output column, emits structured `status` and `memory_risk_level`,
+and blocks unsafe clustering materialization before copying the table into local
+row-major vectors.
+
+Kept this slice narrow: no compiler-wide planner, no backend algorithm memory
+model, no streaming clustering rewrite, and no new user-facing configuration
+knobs.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

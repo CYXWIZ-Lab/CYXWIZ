@@ -1,3 +1,4 @@
+#include "../src/core/node_executors/clustering_operators.h"
 #include "../src/core/node_executors/count_vectorizer_operator.h"
 #include "../src/core/node_executors/pca_operator.h"
 #include "../src/core/node_executors/time_series_features_operator.h"
@@ -191,6 +192,47 @@ void TestCountVectorizerRejectsSparseOutputFormat() {
           "CountVectorizer sparse output error should be specific: " + error);
 }
 
+void TestKMeansEmitsMemoryPreflight() {
+    cyxwiz::KMeansOperator op;
+    const auto input = MakeTimeSeriesTable();
+    std::string error;
+
+    Check(op.Configure({
+        {"feature_cols", "value,extra"},
+        {"n_clusters", "2"},
+        {"max_iter", "10"},
+        {"n_init", "1"},
+        {"seed", "7"},
+    }, error), error);
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+    auto result = op.Apply(input);
+    Check(result.ok(), result.status().ToString());
+    Check(!progress_events.empty(),
+          "KMeans should emit materialization progress events");
+    Check(progress_events.front().stage == "KMeansCluster memory preflight",
+          "KMeans first progress event should be memory preflight");
+    Check(progress_events.front().status == "running",
+          "safe KMeans preflight should stay in running status");
+    Check(progress_events.front().memory_risk_level == "safe",
+          "safe KMeans preflight should report safe risk");
+    Check(progress_events.front().estimated_memory_bytes >
+              6ULL * 3ULL * static_cast<uint64_t>(sizeof(double)),
+          "KMeans preflight should include peak allocation overhead");
+    Check(progress_events.front().total_items == 6ULL * 3ULL,
+          "KMeans preflight should report planned matrix and output cells");
+    Check(progress_events.front().message.find("Suggestion:") !=
+              std::string::npos,
+          "KMeans preflight message should include mitigation guidance");
+    auto table = result.ValueOrDie();
+    Check(table->num_rows() == 6, "KMeans should preserve input row count");
+    Check(table->GetColumnByName("cluster_id") != nullptr,
+          "KMeans should append cluster_id");
+}
+
 void TestPcaEmitsMemoryPreflight() {
     cyxwiz::PCAOperator op;
     const auto input = MakeTimeSeriesTable();
@@ -341,6 +383,7 @@ int main() {
     TestCountVectorizerPrefersNGramRangeWhenDefaultsArePresent();
     TestCountVectorizerBinaryModeEmitsPresenceValues();
     TestCountVectorizerRejectsSparseOutputFormat();
+    TestKMeansEmitsMemoryPreflight();
     TestPcaEmitsMemoryPreflight();
     TestTimeSeriesFeaturesClearsStaleFeatureLists();
     TestTimeSeriesWindowClearsOptionalFeatureAndTimeColumns();

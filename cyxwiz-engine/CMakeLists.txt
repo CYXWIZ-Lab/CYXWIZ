@@ -1574,6 +1574,7 @@ set_target_properties(test_language_model_generation PROPERTIES
 # ===== Test: Pipeline Operator Configure Reset Semantics =====
 add_executable(test_operator_configure_resets
     tests/test_operator_configure_resets.cpp
+    src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/time_series_features_operator.cpp
