@@ -245,3 +245,24 @@ Verified:
 
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
+
+## Slice 11 - Time-Series Analysis Memory Guards
+
+Status: complete.
+
+Added dense materialization preflight to the time-series analysis operators:
+TimeSeriesDecomposition, ARIMA, ExponentialSmoothing, ACF, PACF,
+StationarityTest, and SeasonalityDetector. The shared local helper validates the
+signal column, estimates planned signal/result scratch memory from Arrow row
+count, emits structured `status` and `memory_risk_level`, and blocks unsafe
+materialization before copying the signal into local vectors or invoking the
+analysis backend.
+
+Kept this slice narrow: no compiler-wide planner, no chunked analysis rewrite,
+and no new user-facing configuration knobs.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_time_series_analysis_operators`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_time_series_analysis_operators.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

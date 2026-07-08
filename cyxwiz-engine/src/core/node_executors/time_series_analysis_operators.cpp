@@ -1,5 +1,7 @@
 #include "time_series_analysis_operators.h"
+#include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
+#include "feature_matrix_utils.h"
 #include "ts_column_utils.h"
 
 #include <cyxwiz/time_series.h>
@@ -8,8 +10,11 @@
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -30,6 +35,7 @@ void ReportProgress(const PipelineOperatorProgressCallback& callback,
     PipelineOperatorProgress event;
     event.stage = std::move(stage);
     event.message = std::move(message);
+    event.status = "running";
     event.progress = static_cast<float>(progress);
     event.processed_items = processed;
     event.total_items = total;
@@ -173,6 +179,103 @@ std::vector<bool> MarkSignificant(int size, const std::vector<int>& lags) {
     return out;
 }
 
+const char* MaterializationMemoryProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
+}
+
+std::string BuildTimeSeriesAnalysisMemoryPreflightMessage(
+    const std::string& op_name,
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision,
+    const std::string& suggestion) {
+    std::ostringstream ss;
+    ss << op_name << " memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", samples=" << estimate.rows
+       << ", planned_columns=" << estimate.output_features
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: " << suggestion;
+    return ss.str();
+}
+
+arrow::Result<MaterializationMemoryEstimate> EmitSignalAnalysisMemoryPreflight(
+    const std::shared_ptr<arrow::Table>& input,
+    const std::string& signal_col,
+    const std::string& op_name,
+    uint64_t planned_columns,
+    const std::string& suggestion,
+    const PipelineOperatorProgressCallback& callback,
+    uint64_t& planned_samples) {
+    auto signal_column = input->GetColumnByName(signal_col);
+    if (!signal_column) {
+        return arrow::Status::KeyError(
+            op_name + ": signal column '" + signal_col + "' not found");
+    }
+    if (!IsNumericChunked(signal_column)) {
+        std::string got = signal_column->num_chunks() > 0
+            ? signal_column->chunk(0)->type()->ToString()
+            : "<empty>";
+        return arrow::Status::TypeError(
+            op_name + ": signal column '" + signal_col +
+            "' must be numeric (got '" + got + "')");
+    }
+
+    planned_samples =
+        static_cast<uint64_t>(std::max<int64_t>(0, signal_column->length()));
+    if (planned_samples == 0) {
+        return arrow::Status::Invalid(op_name + ": signal column is empty");
+    }
+
+    const auto estimate = EstimateDenseMaterializationMemory(
+        planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
+    const auto decision = EvaluateMaterializationMemory(
+        estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message =
+        BuildTimeSeriesAnalysisMemoryPreflightMessage(
+            op_name, estimate, decision, suggestion);
+
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(planned_samples, planned_columns, planned_cells)) {
+        planned_cells = (std::numeric_limits<uint64_t>::max)();
+    }
+
+    if (callback) {
+        PipelineOperatorProgress event;
+        event.stage = op_name + " memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(decision.risk);
+        event.progress = 0.03f;
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        event.estimated_memory_bytes = estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(decision.risk);
+        callback(event);
+    }
+    if (decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+    return estimate;
+}
+
 } // namespace
 
 // ============================================================================
@@ -230,9 +333,19 @@ TimeSeriesDecompositionOperator::Apply(
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    uint64_t planned_samples = 0;
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitSignalAnalysisMemoryPreflight(
+            input, signal_col_, GetName(), 4,
+            "reduce signal rows, decompose a sampled/windowed signal first, or use a future chunked decomposition path.",
+            progress_callback_, planned_samples));
+
     ReportProgress(progress_callback_, "Reading signal",
                    "Reading decomposition signal column '" + signal_col_ + "'",
-                   0.10);
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
@@ -244,7 +357,7 @@ TimeSeriesDecompositionOperator::Apply(
     }
 
     const uint64_t estimated_signal_bytes =
-        static_cast<uint64_t>(signal.size()) * sizeof(double);
+        preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Decomposing signal",
                    "Running " + algorithm_ + " time-series decomposition",
                    0.45,
@@ -319,15 +432,25 @@ ARIMAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    uint64_t planned_samples = 0;
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitSignalAnalysisMemoryPreflight(
+            input, signal_col_, GetName(), 3,
+            "reduce signal rows, fit ARIMA on a sampled/windowed signal first, or use a future chunked forecasting path.",
+            progress_callback_, planned_samples));
+
     ReportProgress(progress_callback_, "Reading signal",
                    "Reading ARIMA signal column '" + signal_col_ + "'",
-                   0.10);
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
     // horizon=0 so the backend produces in-sample fitted values only.
     const uint64_t estimated_signal_bytes =
-        static_cast<uint64_t>(signal.size()) * sizeof(double);
+        preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Fitting model",
                    "Fitting ARIMA model",
                    0.45,
@@ -435,15 +558,25 @@ ExponentialSmoothingOperator::Apply(
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    uint64_t planned_samples = 0;
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitSignalAnalysisMemoryPreflight(
+            input, signal_col_, GetName(), 3,
+            "reduce signal rows, fit smoothing on a sampled/windowed signal first, or use a future chunked forecasting path.",
+            progress_callback_, planned_samples));
+
     ReportProgress(progress_callback_, "Reading signal",
                    "Reading ExponentialSmoothing signal column '" +
                    signal_col_ + "'",
-                   0.10);
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
     const uint64_t estimated_signal_bytes =
-        static_cast<uint64_t>(signal.size()) * sizeof(double);
+        preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Fitting model",
                    "Fitting " + method_ + " exponential smoothing model",
                    0.45,
@@ -521,9 +654,19 @@ ACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    uint64_t planned_samples = 0;
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitSignalAnalysisMemoryPreflight(
+            input, signal_col_, GetName(), 5,
+            "reduce signal rows, cap max_lag, run ACF on a sampled/windowed signal first, or use a future chunked correlation path.",
+            progress_callback_, planned_samples));
+
     ReportProgress(progress_callback_, "Reading signal",
                    "Reading ACF signal column '" + signal_col_ + "'",
-                   0.10);
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
@@ -532,7 +675,7 @@ ACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    0.50,
                    0,
                    static_cast<uint64_t>(signal.size()),
-                   static_cast<uint64_t>(signal.size()) * sizeof(double));
+                   preflight_estimate.estimated_peak_bytes);
     auto result = TimeSeries::ComputeACF(signal, max_lag_);
     if (!result.success) {
         return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
@@ -593,9 +736,19 @@ PACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    uint64_t planned_samples = 0;
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitSignalAnalysisMemoryPreflight(
+            input, signal_col_, GetName(), 5,
+            "reduce signal rows, cap max_lag, run PACF on a sampled/windowed signal first, or use a future chunked correlation path.",
+            progress_callback_, planned_samples));
+
     ReportProgress(progress_callback_, "Reading signal",
                    "Reading PACF signal column '" + signal_col_ + "'",
-                   0.10);
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
@@ -604,7 +757,7 @@ PACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    0.50,
                    0,
                    static_cast<uint64_t>(signal.size()),
-                   static_cast<uint64_t>(signal.size()) * sizeof(double));
+                   preflight_estimate.estimated_peak_bytes);
     auto result = TimeSeries::ComputePACF(signal, max_lag_);
     if (!result.success) {
         return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
@@ -664,9 +817,19 @@ StationarityTestOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    uint64_t planned_samples = 0;
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitSignalAnalysisMemoryPreflight(
+            input, signal_col_, GetName(), 3,
+            "reduce signal rows, cap max_lags, test a sampled/windowed signal first, or use a future chunked stationarity path.",
+            progress_callback_, planned_samples));
+
     ReportProgress(progress_callback_, "Reading signal",
                    "Reading StationarityTest signal column '" + signal_col_ + "'",
-                   0.10);
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
@@ -675,7 +838,7 @@ StationarityTestOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    0.55,
                    0,
                    static_cast<uint64_t>(signal.size()),
-                   static_cast<uint64_t>(signal.size()) * sizeof(double));
+                   preflight_estimate.estimated_peak_bytes);
     auto result = TimeSeries::TestStationarity(signal, max_lags_);
     if (!result.success) {
         return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);
@@ -747,10 +910,20 @@ SeasonalityDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    uint64_t planned_samples = 0;
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitSignalAnalysisMemoryPreflight(
+            input, signal_col_, GetName(), 3,
+            "reduce signal rows, narrow the period search, detect seasonality on a sampled/windowed signal first, or use a future chunked seasonality path.",
+            progress_callback_, planned_samples));
+
     ReportProgress(progress_callback_, "Reading signal",
                    "Reading SeasonalityDetector signal column '" +
                    signal_col_ + "'",
-                   0.10);
+                   0.10,
+                   0,
+                   planned_samples,
+                   preflight_estimate.estimated_peak_bytes);
     std::vector<double> signal;
     ARROW_RETURN_NOT_OK(ReadSignalAsDouble(input, signal_col_, GetName(), signal));
 
@@ -759,7 +932,7 @@ SeasonalityDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    0.55,
                    0,
                    static_cast<uint64_t>(signal.size()),
-                   static_cast<uint64_t>(signal.size()) * sizeof(double));
+                   preflight_estimate.estimated_peak_bytes);
     auto result = TimeSeries::DetectSeasonality(signal, min_period_, max_period_);
     if (!result.success) {
         return arrow::Status::ExecutionError(GetName() + ": " + result.error_message);

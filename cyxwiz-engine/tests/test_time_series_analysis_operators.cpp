@@ -70,9 +70,32 @@ void TestDecomposition() {
         {"algorithm", "classical"},
     }, error), error);
 
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+
     auto input = MakeTimeSeriesTable();
     auto result = op.Apply(input);
     Check(result.ok(), result.status().ToString());
+    Check(!progress_events.empty(),
+          "TimeSeriesDecomposition should emit materialization progress events");
+    Check(progress_events.front().stage ==
+              "TimeSeriesDecomposition memory preflight",
+          "TimeSeriesDecomposition first progress event should be memory preflight");
+    Check(progress_events.front().status == "running",
+          "safe TimeSeriesDecomposition preflight should stay in running status");
+    Check(progress_events.front().memory_risk_level == "safe",
+          "safe TimeSeriesDecomposition preflight should report safe risk");
+    Check(progress_events.front().estimated_memory_bytes >
+              32ULL * 4ULL * static_cast<uint64_t>(sizeof(double)),
+          "TimeSeriesDecomposition preflight should include peak allocation overhead");
+    Check(progress_events.front().total_items == 32ULL * 4ULL,
+          "TimeSeriesDecomposition preflight should report planned materialized cells");
+    Check(progress_events.front().message.find("Suggestion:") !=
+              std::string::npos,
+          "TimeSeriesDecomposition preflight should include mitigation guidance");
     auto output = result.ValueOrDie();
     Check(output->num_rows() == input->num_rows(),
           "decomposition should preserve row count");
