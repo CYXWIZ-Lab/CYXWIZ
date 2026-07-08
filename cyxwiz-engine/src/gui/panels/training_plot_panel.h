@@ -60,7 +60,8 @@ public:
                                        uint64_t processed_items = 0,
                                        uint64_t total_items = 0,
                                        int node_id = -1,
-                                       const std::string& node_name = "");
+                                       const std::string& node_name = "",
+                                       const std::string& memory_risk_level = "");
     void SetMaterializationComplete(const std::string& output_dataset,
                                     int operators_applied,
                                     const std::string& status = "completed");
@@ -114,6 +115,7 @@ private:
         int node_id = -1;
         float progress = 0.0f;
         uint64_t estimated_memory_bytes = 0;
+        std::string memory_risk_level;
         uint64_t processed_items = 0;
         uint64_t total_items = 0;
     };

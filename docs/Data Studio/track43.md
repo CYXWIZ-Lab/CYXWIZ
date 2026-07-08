@@ -50,3 +50,26 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_pipeline_operator_metadata`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_pipeline_operator_metadata.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+## Slice 2 - Structured Risk Visibility
+
+Status: complete.
+
+Added a typed `memory_risk_level` field through:
+
+- `PipelineOperatorProgress`
+- `TrainingTraceEvent` JSON persistence/loading
+- graph training launch materialization forwarding
+- Training Dashboard materialization summary
+- Studio Debugger materialization breakdown
+- debug support bundle export
+
+TF-IDF now sets `memory_risk_level` on its preflight event. Other materializers
+can leave it empty until they adopt the memory guard.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_computation_truth_tfidf_loss`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_computation_truth_tfidf_loss.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_debugger_contracts`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_debugger_contracts.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

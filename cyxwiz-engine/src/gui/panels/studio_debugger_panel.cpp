@@ -1466,6 +1466,9 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
                             FormatBytesCompact(
                                 latest.estimated_memory_bytes).c_str());
     }
+    if (!latest.memory_risk_level.empty()) {
+        ImGui::Text("Memory risk: %s", latest.memory_risk_level.c_str());
+    }
     if (!latest.message.empty()) {
         ImGui::TextWrapped("%s", latest.message.c_str());
     }
@@ -1476,7 +1479,7 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
         "statistics/planning -> output matrix/table construction -> Arrow dataset.");
 
     if (ImGui::BeginTable("StudioDebuggerMaterializationStages",
-                          6,
+                          7,
                           ImGuiTableFlags_BordersInnerV |
                           ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable |
@@ -1486,6 +1489,7 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
         ImGui::TableSetupColumn("Progress", ImGuiTableColumnFlags_WidthFixed, 80.0f);
         ImGui::TableSetupColumn("Work", ImGuiTableColumnFlags_WidthFixed, 110.0f);
         ImGui::TableSetupColumn("Memory", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+        ImGui::TableSetupColumn("Risk", ImGuiTableColumnFlags_WidthFixed, 80.0f);
         ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch, 2.0f);
         ImGui::TableHeadersRow();
 
@@ -1542,6 +1546,13 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
             }
 
             ImGui::TableSetColumnIndex(5);
+            if (!event.memory_risk_level.empty()) {
+                ImGui::Text("%s", event.memory_risk_level.c_str());
+            } else {
+                ImGui::TextDisabled("-");
+            }
+
+            ImGui::TableSetColumnIndex(6);
             ImGui::TextWrapped("%s", event.message.c_str());
         }
 

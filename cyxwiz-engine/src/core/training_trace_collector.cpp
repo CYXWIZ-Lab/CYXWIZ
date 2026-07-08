@@ -79,6 +79,7 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"node_id", event.node_id},
         {"node_name", event.node_name},
         {"estimated_memory_bytes", event.estimated_memory_bytes},
+        {"memory_risk_level", event.memory_risk_level},
         {"processed_items", event.processed_items},
         {"total_items", event.total_items},
         {"pin_memory_requested", event.pin_memory_requested},
@@ -122,6 +123,7 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
     event.node_id = j.value("node_id", -1);
     event.node_name = j.value("node_name", "");
     event.estimated_memory_bytes = j.value("estimated_memory_bytes", uint64_t{0});
+    event.memory_risk_level = j.value("memory_risk_level", "");
     event.processed_items = j.value("processed_items", uint64_t{0});
     event.total_items = j.value("total_items", uint64_t{0});
     event.pin_memory_requested = j.value("pin_memory_requested", false);
@@ -326,7 +328,8 @@ void TrainingTraceCollector::RecordTaskProgress(
     const std::string& node_name,
     uint64_t estimated_memory_bytes,
     uint64_t processed_items,
-    uint64_t total_items) {
+    uint64_t total_items,
+    const std::string& memory_risk_level) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (run_id_.empty()) {
         return;
@@ -347,6 +350,7 @@ void TrainingTraceCollector::RecordTaskProgress(
     event.node_id = node_id;
     event.node_name = node_name;
     event.estimated_memory_bytes = estimated_memory_bytes;
+    event.memory_risk_level = memory_risk_level;
     event.processed_items = processed_items;
     event.total_items = total_items;
     if (!events_.empty()) {

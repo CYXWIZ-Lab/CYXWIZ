@@ -389,13 +389,18 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     if (!CheckedMulU64(planned_rows, planned_features, planned_cells)) {
         planned_cells = std::numeric_limits<uint64_t>::max();
     }
-    report_progress(
-        "TF-IDF memory preflight",
-        preflight_message,
-        0.03f,
-        preflight_estimate.estimated_peak_bytes,
-        0,
-        planned_cells);
+    if (progress_callback_) {
+        PipelineOperatorProgress event;
+        event.stage = "TF-IDF memory preflight";
+        event.message = preflight_message;
+        event.progress = 0.03f;
+        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(
+            preflight_decision.risk);
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        progress_callback_(event);
+    }
     if (preflight_decision.blocked) {
         return arrow::Status::CapacityError(
             "Materialization blocked: " + preflight_message);

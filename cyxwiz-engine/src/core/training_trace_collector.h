@@ -44,6 +44,7 @@ struct TrainingTraceEvent {
     int node_id = -1;
     std::string node_name;
     uint64_t estimated_memory_bytes = 0;
+    std::string memory_risk_level;
     uint64_t processed_items = 0;
     uint64_t total_items = 0;
     bool pin_memory_requested = false;
@@ -108,7 +109,8 @@ public:
                             const std::string& node_name = "",
                             uint64_t estimated_memory_bytes = 0,
                             uint64_t processed_items = 0,
-                            uint64_t total_items = 0);
+                            uint64_t total_items = 0,
+                            const std::string& memory_risk_level = "");
     void RecordValidationMetrics(int epoch,
                                  float train_loss,
                                  float train_accuracy,

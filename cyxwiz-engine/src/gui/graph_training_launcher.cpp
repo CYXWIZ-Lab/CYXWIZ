@@ -403,7 +403,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                             event.node_name,
                             event.estimated_memory_bytes,
                             event.processed_items,
-                            event.total_items);
+                            event.total_items,
+                            event.memory_risk_level);
                         if (auto panel = plot_panel.lock()) {
                             panel->SetPreparationState(true, message, task_progress);
                             panel->RecordMaterializationProgress(
@@ -414,7 +415,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                                 event.processed_items,
                                 event.total_items,
                                 event.node_id,
-                                event.node_name);
+                                event.node_name,
+                                event.memory_risk_level);
                         }
                     });
             }

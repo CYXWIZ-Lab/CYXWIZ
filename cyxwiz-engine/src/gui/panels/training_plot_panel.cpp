@@ -522,7 +522,8 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     uint64_t processed_items,
     uint64_t total_items,
     int node_id,
-    const std::string& node_name) {
+    const std::string& node_name,
+    const std::string& memory_risk_level) {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     MaterializationProgress event;
@@ -532,6 +533,7 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     event.node_id = node_id;
     event.progress = std::clamp(progress, 0.0f, 1.0f);
     event.estimated_memory_bytes = estimated_memory_bytes;
+    event.memory_risk_level = memory_risk_level;
     event.processed_items = processed_items;
     event.total_items = total_items;
 
@@ -1198,6 +1200,9 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
             ImGui::Text("Estimated memory: %s",
                         FormatTraceBytes(latest.estimated_memory_bytes).c_str());
         }
+        if (!latest.memory_risk_level.empty()) {
+            ImGui::Text("Memory risk: %s", latest.memory_risk_level.c_str());
+        }
         if (latest.total_items > 0) {
             ImGui::Text("Work: %llu / %llu",
                         static_cast<unsigned long long>(latest.processed_items),
@@ -1223,6 +1228,9 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         if (event.estimated_memory_bytes > 0) {
             ImGui::Text("Estimated memory: %s",
                         FormatTraceBytes(event.estimated_memory_bytes).c_str());
+        }
+        if (!event.memory_risk_level.empty()) {
+            ImGui::Text("Memory risk: %s", event.memory_risk_level.c_str());
         }
         if (event.total_items > 0 || event.processed_items > 0) {
             if (event.total_items > 0) {

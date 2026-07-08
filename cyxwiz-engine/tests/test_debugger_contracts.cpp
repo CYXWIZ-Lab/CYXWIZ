@@ -816,6 +816,7 @@ void TestSupportBundleContract() {
     event.node_name = "Sequence DataLoader token=secret-token";
     event.message = "operator failed token=secret-token";
     event.cpu_allocated_bytes = 1024;
+    event.memory_risk_level = "risky";
     event.pin_memory_requested = true;
     event.transfer_mode =
         cyxwiz::PinMemoryTransferMode::PinnedRequestedButUnsupported;
@@ -929,6 +930,9 @@ void TestSupportBundleContract() {
     Check(bundle["training_trace"]["recent_events"][0]["node_name"].get<std::string>() ==
               "Sequence DataLoader token=[REDACTED]",
           "support bundle should export redacted training trace node name");
+    Check(bundle["training_trace"]["recent_events"][0]["memory_risk_level"].get<std::string>() ==
+              "risky",
+          "support bundle should export materialization memory risk level");
     Check(bundle["training_trace"]["recent_events"][0]["pin_memory_requested"].get<bool>(),
           "support bundle should export pin_memory request state");
     Check(bundle["training_trace"]["recent_events"][0]["transfer_mode"].get<std::string>() ==

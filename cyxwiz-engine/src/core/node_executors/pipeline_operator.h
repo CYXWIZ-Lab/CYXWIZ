@@ -36,6 +36,7 @@ struct PipelineOperatorProgress {
     std::string message;
     float progress = 0.0f;
     uint64_t estimated_memory_bytes = 0;
+    std::string memory_risk_level;
     uint64_t processed_items = 0;
     uint64_t total_items = 0;
 };

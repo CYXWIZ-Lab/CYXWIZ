@@ -178,6 +178,8 @@ void TestBoundedTFIDFMaterialization() {
           "preflight should report conservative peak memory, not raw bytes");
     Check(progress_events.front().message.find("risk=safe") != std::string::npos,
           "small TF-IDF preflight should report safe risk");
+    Check(progress_events.front().memory_risk_level == "safe",
+          "small TF-IDF preflight should expose structured safe risk");
     Check(progress_events.front().message.find("Suggestion:") != std::string::npos,
           "TF-IDF preflight should include actionable suggestion");
 

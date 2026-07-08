@@ -270,6 +270,7 @@ nlohmann::json DebugSupportBundleBuilder::TrainingTraceToJson(
             {"af_lock_buffers", event.af_lock_buffers},
             {"status", event.status},
             {"message", RedactString(event.message)},
+            {"memory_risk_level", event.memory_risk_level},
             {"pin_memory_requested", event.pin_memory_requested},
             {"transfer_mode", event.transfer_mode},
             {"transfer_reason", event.transfer_reason},
