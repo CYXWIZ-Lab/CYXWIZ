@@ -306,3 +306,24 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_tree_model_predictor_operator`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_tree_model_predictor_operator.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+
+## Slice 14 - Preprocessing Memory Guards
+
+Status: complete.
+
+Added dense materialization preflight to StandardScaler, MinMaxScaler,
+RobustScaler, LabelEncoder, OrdinalEncoder, TargetEncoder, and
+OutlierDetector. The shared local helper estimates selected row/column work
+before full-column vector copies, replacement builders, or outlier flag output,
+emits structured `status` and `memory_risk_level`, and blocks unsafe
+preprocessing materialization before allocation-heavy work starts.
+
+Kept this slice narrow: no compiler-wide planner, no streaming preprocessing
+rewrite, no per-category memory model, and no new user-facing configuration
+knobs.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_pipeline_operator_materializer_parity`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_pipeline_operator_materializer_parity.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`

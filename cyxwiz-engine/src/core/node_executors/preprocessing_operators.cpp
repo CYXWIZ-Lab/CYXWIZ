@@ -1,4 +1,5 @@
 #include "preprocessing_operators.h"
+#include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 #include "feature_matrix_utils.h"
 #include "text_column_utils.h"
@@ -18,6 +19,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -39,6 +41,7 @@ void ReportProgress(const PipelineOperatorProgressCallback& callback,
     PipelineOperatorProgress event;
     event.stage = std::move(stage);
     event.message = std::move(message);
+    event.status = "running";
     event.progress = static_cast<float>(progress);
     event.processed_items = processed;
     event.total_items = total;
@@ -245,6 +248,92 @@ arrow::Result<std::shared_ptr<arrow::Table>> ReplaceWithInts(
     return table->SetColumn(col_idx, field, chunked);
 }
 
+const char* MaterializationMemoryProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
+}
+
+std::string BuildPreprocessingMemoryPreflightMessage(
+    const std::string& op_name,
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision,
+    const std::string& suggestion) {
+    std::ostringstream ss;
+    ss << op_name << " memory preflight: risk="
+       << MaterializationMemoryRiskName(decision.risk)
+       << ", rows=" << estimate.rows
+       << ", planned_columns=" << estimate.output_features
+       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+       << ", estimated_peak="
+       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+       << ", available="
+       << FormatMaterializationBytes(decision.available_bytes)
+       << ", safe_budget="
+       << FormatMaterializationBytes(decision.safe_budget_bytes)
+       << ". " << decision.reason
+       << ". Suggestion: " << suggestion;
+    return ss.str();
+}
+
+arrow::Result<MaterializationMemoryEstimate> EmitPreprocessingMemoryPreflight(
+    const std::shared_ptr<arrow::Table>& input,
+    const std::string& op_name,
+    uint64_t planned_columns,
+    uint64_t bytes_per_value,
+    const std::string& suggestion,
+    const PipelineOperatorProgressCallback& callback) {
+    const uint64_t planned_rows =
+        static_cast<uint64_t>(std::max<int64_t>(0, input->num_rows()));
+    if (planned_rows == 0) {
+        return arrow::Status::Invalid(op_name + ": input table has no rows");
+    }
+    if (planned_columns == 0) {
+        return arrow::Status::Invalid(
+            op_name + ": no columns selected for preprocessing");
+    }
+
+    const auto estimate = EstimateDenseMaterializationMemory(
+        planned_rows, planned_columns, bytes_per_value);
+    const auto decision = EvaluateMaterializationMemory(
+        estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message =
+        BuildPreprocessingMemoryPreflightMessage(
+            op_name, estimate, decision, suggestion);
+
+    uint64_t planned_cells = 0;
+    if (!CheckedMulU64(planned_rows, planned_columns, planned_cells)) {
+        planned_cells = (std::numeric_limits<uint64_t>::max)();
+    }
+
+    if (callback) {
+        PipelineOperatorProgress event;
+        event.stage = op_name + " memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(decision.risk);
+        event.progress = 0.12f;
+        event.processed_items = 0;
+        event.total_items = planned_cells;
+        event.estimated_memory_bytes = estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(decision.risk);
+        callback(event);
+    }
+    if (decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+    return estimate;
+}
+
 } // namespace
 
 // ============================================================================
@@ -273,9 +362,13 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::string> resolved;
     ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
         input, columns_, label_col_, GetName(), resolved));
-    const uint64_t estimated_bytes =
-        static_cast<uint64_t>(input->num_rows()) *
-        static_cast<uint64_t>(resolved.size()) * sizeof(float);
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitPreprocessingMemoryPreflight(
+            input, GetName(), static_cast<uint64_t>(resolved.size()),
+            static_cast<uint64_t>(sizeof(double)),
+            "reduce selected rows or columns, scale a sample first, or use a future chunked preprocessing path.",
+            progress_callback_));
+    const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Columns resolved",
                    "Resolved " + std::to_string(resolved.size()) +
                    " columns for StandardScaler",
@@ -361,9 +454,13 @@ MinMaxScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::string> resolved;
     ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
         input, columns_, label_col_, GetName(), resolved));
-    const uint64_t estimated_bytes =
-        static_cast<uint64_t>(input->num_rows()) *
-        static_cast<uint64_t>(resolved.size()) * sizeof(float);
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitPreprocessingMemoryPreflight(
+            input, GetName(), static_cast<uint64_t>(resolved.size()),
+            static_cast<uint64_t>(sizeof(double)),
+            "reduce selected rows or columns, scale a sample first, or use a future chunked preprocessing path.",
+            progress_callback_));
+    const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Columns resolved",
                    "Resolved " + std::to_string(resolved.size()) +
                    " columns for MinMaxScaler",
@@ -461,9 +558,13 @@ RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::string> resolved;
     ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
         input, columns_, label_col_, GetName(), resolved));
-    const uint64_t estimated_bytes =
-        static_cast<uint64_t>(input->num_rows()) *
-        static_cast<uint64_t>(resolved.size()) * sizeof(float);
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitPreprocessingMemoryPreflight(
+            input, GetName(), static_cast<uint64_t>(resolved.size()),
+            static_cast<uint64_t>(sizeof(double)),
+            "reduce selected rows or columns, scale a sample first, or use a future chunked preprocessing path.",
+            progress_callback_));
+    const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Columns resolved",
                    "Resolved " + std::to_string(resolved.size()) +
                    " columns for RobustScaler",
@@ -532,14 +633,18 @@ LabelEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     ReportProgress(progress_callback_, "Encoding column",
                    "Encoding label column '" + column_ + "'", 0.10,
-                   0, 1,
-                   static_cast<uint64_t>(input->num_rows()) * sizeof(int));
+                   0, 1);
     int idx = input->schema()->GetFieldIndex(column_);
     if (idx < 0) {
         return arrow::Status::KeyError(
             GetName() + ": column '" + column_ + "' not found");
     }
     auto col = input->column(idx);
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitPreprocessingMemoryPreflight(
+            input, GetName(), 1ULL, static_cast<uint64_t>(sizeof(int)),
+            "reduce selected rows, encode a sample first, or use a future chunked encoding path.",
+            progress_callback_));
 
     std::vector<int> codes;
     std::vector<std::string> categories;
@@ -551,7 +656,7 @@ LabelEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  column_, categories.size());
     ReportProgress(progress_callback_, "Complete",
                    "LabelEncoder materialization complete", 1.0, 1, 1,
-                   static_cast<uint64_t>(input->num_rows()) * sizeof(int));
+                   preflight_estimate.estimated_peak_bytes);
     return out;
 }
 
@@ -590,6 +695,14 @@ OrdinalEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitPreprocessingMemoryPreflight(
+            input, GetName(), static_cast<uint64_t>(columns_.size()),
+            static_cast<uint64_t>(sizeof(int)),
+            "reduce selected rows or categorical columns, encode a sample first, or use a future chunked encoding path.",
+            progress_callback_));
+    const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
+
     auto out = input;
     size_t total_categories = 0;
     for (size_t column_index = 0; column_index < columns_.size(); ++column_index) {
@@ -600,8 +713,7 @@ OrdinalEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                                static_cast<double>(columns_.size())),
                        static_cast<uint64_t>(column_index),
                        static_cast<uint64_t>(columns_.size()),
-                       static_cast<uint64_t>(input->num_rows()) *
-                       static_cast<uint64_t>(columns_.size()) * sizeof(int));
+                       estimated_bytes);
         int idx = out->schema()->GetFieldIndex(name);
         if (idx < 0) {
             return arrow::Status::KeyError(
@@ -621,8 +733,7 @@ OrdinalEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    "OrdinalEncoder materialization complete", 1.0,
                    static_cast<uint64_t>(columns_.size()),
                    static_cast<uint64_t>(columns_.size()),
-                   static_cast<uint64_t>(input->num_rows()) *
-                   static_cast<uint64_t>(columns_.size()) * sizeof(int));
+                   estimated_bytes);
     return out;
 }
 
@@ -677,11 +788,19 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitPreprocessingMemoryPreflight(
+            input, GetName(), static_cast<uint64_t>(columns_.size()) + 1ULL,
+            static_cast<uint64_t>(sizeof(double)),
+            "reduce selected rows or categorical columns, encode a sample first, or use a future chunked target-encoding path.",
+            progress_callback_));
+    const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
+
     // Read target once.
     ReportProgress(progress_callback_, "Reading target",
                    "Reading target column '" + target_col_ +
                    "' for target encoding",
-                   0.05);
+                   0.05, 0, 1, estimated_bytes);
     std::vector<double> target;
     int target_idx = -1;
     ARROW_RETURN_NOT_OK(ReadNumericDouble(input, target_col_, GetName(), target, target_idx));
@@ -696,8 +815,7 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                                static_cast<double>(columns_.size())),
                        static_cast<uint64_t>(transformed),
                        static_cast<uint64_t>(columns_.size()),
-                       static_cast<uint64_t>(input->num_rows()) *
-                       static_cast<uint64_t>(columns_.size()) * sizeof(float));
+                       estimated_bytes);
         int idx = out->schema()->GetFieldIndex(name);
         if (idx < 0) {
             return arrow::Status::KeyError(
@@ -749,8 +867,7 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    "TargetEncoder materialization complete", 1.0,
                    static_cast<uint64_t>(transformed),
                    static_cast<uint64_t>(columns_.size()),
-                   static_cast<uint64_t>(input->num_rows()) *
-                   static_cast<uint64_t>(columns_.size()) * sizeof(float));
+                   estimated_bytes);
     return out;
 }
 
@@ -817,6 +934,13 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::string> resolved;
     ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
         input, columns_, label_col_, GetName(), resolved));
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitPreprocessingMemoryPreflight(
+            input, GetName(), static_cast<uint64_t>(resolved.size()) + 1ULL,
+            static_cast<uint64_t>(sizeof(double)),
+            "reduce selected rows or feature columns, detect outliers on a sample first, or use a future chunked outlier path.",
+            progress_callback_));
+    const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
 
     const int64_t n = input->num_rows();
     std::vector<int> is_outlier(n, 0);
@@ -832,8 +956,7 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                                static_cast<double>(resolved.size())),
                        static_cast<uint64_t>(column_index),
                        static_cast<uint64_t>(resolved.size()),
-                       static_cast<uint64_t>(n) *
-                       static_cast<uint64_t>(resolved.size()) * sizeof(float));
+                       estimated_bytes);
         std::vector<double> data;
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(input, name, GetName(), data, idx));
@@ -856,7 +979,7 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    "Appending is_outlier column", 0.90,
                    static_cast<uint64_t>(resolved.size()),
                    static_cast<uint64_t>(resolved.size()),
-                   static_cast<uint64_t>(n) * sizeof(int));
+                   estimated_bytes);
     arrow::Int32Builder builder;
     ARROW_RETURN_NOT_OK(builder.Reserve(n));
     for (int v : is_outlier) ARROW_RETURN_NOT_OK(builder.Append(v));
@@ -874,7 +997,7 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     ReportProgress(progress_callback_, "Complete",
                    "OutlierDetector materialization complete", 1.0,
                    static_cast<uint64_t>(n), static_cast<uint64_t>(n),
-                   static_cast<uint64_t>(n) * sizeof(int));
+                   estimated_bytes);
     return out;
 }
 

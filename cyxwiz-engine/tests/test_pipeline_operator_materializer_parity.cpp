@@ -2,6 +2,7 @@
 #include "core/data_registry.h"
 #include "core/pipeline_executor.h"
 #include "core/pipeline_materializer.h"
+#include "core/node_executors/preprocessing_operators.h"
 
 #include <arrow/api.h>
 
@@ -35,6 +36,30 @@ std::string JsonEscapePath(std::string path) {
         }
     }
     return escaped;
+}
+
+std::shared_ptr<arrow::Array> FinishDoubleArray(
+    const std::vector<double>& values) {
+    arrow::DoubleBuilder builder;
+    for (double value : values) {
+        auto status = builder.Append(value);
+        Check(status.ok(), status.ToString());
+    }
+    std::shared_ptr<arrow::Array> array;
+    auto status = builder.Finish(&array);
+    Check(status.ok(), status.ToString());
+    return array;
+}
+
+std::shared_ptr<arrow::Table> MakePreprocessingTable() {
+    auto schema = arrow::schema({
+        arrow::field("x", arrow::float64()),
+        arrow::field("y", arrow::float64()),
+    });
+    return arrow::Table::Make(schema, {
+        FinishDoubleArray({1.0, 2.0, 3.0, 4.0}),
+        FinishDoubleArray({10.0, 20.0, 30.0, 40.0}),
+    });
 }
 
 double ReadNumericValue(const std::shared_ptr<arrow::Table>& table,
@@ -222,9 +247,53 @@ void RunParityCase(
     }
 }
 
+void TestStandardScalerEmitsMemoryPreflight() {
+    cyxwiz::StandardScalerOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"columns", "x,y"},
+        {"with_mean", "true"},
+        {"with_std", "true"},
+    }, error), error);
+
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+
+    auto result = op.Apply(MakePreprocessingTable());
+    Check(result.ok(), result.status().ToString());
+    const cyxwiz::PipelineOperatorProgress* preflight = nullptr;
+    for (const auto& event : progress_events) {
+        if (event.stage == "StandardScaler memory preflight") {
+            preflight = &event;
+            break;
+        }
+    }
+    Check(preflight != nullptr,
+          "StandardScaler should emit memory preflight progress");
+    Check(preflight->status == "running",
+          "safe StandardScaler preflight should stay in running status");
+    Check(preflight->memory_risk_level == "safe",
+          "safe StandardScaler preflight should report safe risk");
+    Check(preflight->estimated_memory_bytes >
+              4ULL * 2ULL * static_cast<uint64_t>(sizeof(double)),
+          "StandardScaler preflight should include peak allocation overhead");
+    Check(preflight->total_items == 4ULL * 2ULL,
+          "StandardScaler preflight should report planned preprocessing cells");
+    Check(preflight->message.find("Suggestion:") != std::string::npos,
+          "StandardScaler preflight should include mitigation guidance");
+    auto output = result.ValueOrDie();
+    Check(output->num_rows() == 4,
+          "StandardScaler preflight test should preserve row count");
+}
+
 } // namespace
 
 int main() {
+    TestStandardScalerEmitsMemoryPreflight();
+
     const auto csv_path = std::filesystem::temp_directory_path() /
         "cyxwiz_operator_materializer_parity.csv";
     {
