@@ -1,5 +1,6 @@
 #include "properties.h"
 #include "properties_advanced.h"
+#include "properties_contract.h"
 #include "properties_executor.h"
 #include "properties_metadata_editor.h"
 #include "properties_node_editors.h"
@@ -21,34 +22,6 @@
 namespace gui {
 
 namespace {
-
-bool IsDialogOnlyPropertiesNode(NodeType type) {
-    switch (type) {
-        case NodeType::DataInput:
-        case NodeType::DataOutput:
-        case NodeType::DataConvert:
-        case NodeType::TextTokenizer:
-        case NodeType::TextVocabulary:
-        case NodeType::TextPadding:
-        case NodeType::Embedding:
-            return true;
-        default:
-            return false;
-    }
-}
-
-bool IsCustomSequencePropertiesNode(NodeType type) {
-    switch (type) {
-        case NodeType::NERSequenceBuilder:
-        case NodeType::TokenVocabulary:
-        case NodeType::POSVocabulary:
-        case NodeType::NERTagVocabulary:
-        case NodeType::SequenceTagOutput:
-            return true;
-        default:
-            return false;
-    }
-}
 
 ImVec4 StatusColor(properties_truth::TruthStatus status) {
     switch (status) {
@@ -73,6 +46,71 @@ void RenderStatusBadges(const std::vector<properties_truth::TruthStatus>& status
         ImGui::TextColored(StatusColor(status), "[%s]",
                            properties_truth::TruthStatusName(status));
     }
+}
+
+const char* ImplementationStatusName(cyxwiz::NodeImplementationStatus status) {
+    switch (status) {
+        case cyxwiz::NodeImplementationStatus::Implemented:
+            return "Implemented";
+        case cyxwiz::NodeImplementationStatus::Template:
+            return "Planned";
+        case cyxwiz::NodeImplementationStatus::Deprecated:
+            return "Deprecated";
+        case cyxwiz::NodeImplementationStatus::External:
+            return "External";
+    }
+    return "Unknown";
+}
+
+ImVec4 ImplementationStatusColor(cyxwiz::NodeImplementationStatus status) {
+    switch (status) {
+        case cyxwiz::NodeImplementationStatus::Implemented:
+            return ImVec4(0.35f, 0.85f, 0.45f, 1.0f);
+        case cyxwiz::NodeImplementationStatus::Template:
+        case cyxwiz::NodeImplementationStatus::External:
+            return ImVec4(0.95f, 0.72f, 0.25f, 1.0f);
+        case cyxwiz::NodeImplementationStatus::Deprecated:
+            return ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+    }
+    return ImVec4(0.55f, 0.75f, 1.0f, 1.0f);
+}
+
+ImVec4 SupportAxisColor(const cyxwiz::SupportAxisDefinition& axis) {
+    return axis.supported
+        ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+        : ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+}
+
+void RenderMetadataSupportTruth(const cyxwiz::NodeMetadata& metadata) {
+    ImGui::Text("Implementation:");
+    ImGui::SameLine();
+    ImGui::TextColored(
+        ImplementationStatusColor(metadata.status),
+        "%s",
+        ImplementationStatusName(metadata.status));
+
+    if (!metadata.badge.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("[%s]", metadata.badge.c_str());
+    }
+
+    if (metadata.support_axes.empty()) {
+        return;
+    }
+
+    if (!ImGui::TreeNodeEx("Support Truth", ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
+
+    for (const auto& axis : metadata.support_axes) {
+        ImGui::Text("%s:", axis.name.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(SupportAxisColor(axis), "%s", axis.value.c_str());
+        if (!axis.reason.empty()) {
+            ImGui::TextDisabled("  %s", axis.reason.c_str());
+        }
+    }
+    ImGui::TreePop();
 }
 
 std::string ParamOrEmpty(const MLNode& node, const char* key) {
@@ -217,7 +255,8 @@ void Properties::Render() {
             // Dialog-backed nodes keep detailed settings in their dedicated
             // dialogs. The side panel stays compact and avoids duplicated,
             // partial parameter editors.
-            bool is_dialog_only = IsDialogOnlyPropertiesNode(selected_node_->type);
+            bool is_dialog_only =
+                properties_contract::IsDialogOnlyPropertiesNode(selected_node_->type);
 
             // Phase 3: Section-based rendering
             RenderGeneralSection(*selected_node_);
@@ -317,6 +356,8 @@ void Properties::RenderGeneralSection(MLNode& node) {
                 ImGui::Text("%s", metadata->icon.c_str());
                 ImGui::PopStyleColor();
             }
+
+            RenderMetadataSupportTruth(*metadata);
         }
 
         // KNIME-style "Open Dialog" button for complex nodes
@@ -420,13 +461,9 @@ void Properties::RenderTruthSummarySection(MLNode& node) {
             std::strncpy(buffer.data(), property.effective_value.c_str(), buffer.size() - 1);
             ImGui::SetNextItemWidth(150.0f);
             if (ImGui::InputText("##effective", buffer.data(), buffer.size())) {
-                if (property.canonical_key == "text_label_column" ||
-                    property.canonical_key == "label_column" ||
-                    property.canonical_key == "num_classes") {
+                if (!property.canonical_key.empty()) {
                     properties_truth::WriteCanonicalAndAliases(
                         node, property.canonical_key, buffer.data());
-                } else if (!property.canonical_key.empty()) {
-                    node.parameters[property.canonical_key] = buffer.data();
                 }
                 InvalidateShapes();
             }
@@ -490,7 +527,7 @@ void Properties::RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadat
     ImGui::SetNextItemOpen(section_parameters_open_, ImGuiCond_Once);
     if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
         section_parameters_open_ = true;
-        if (IsCustomSequencePropertiesNode(node.type)) {
+        if (properties_contract::IsCustomSequencePropertiesNode(node.type)) {
             RenderNodeProperties(node);
             return;
         }

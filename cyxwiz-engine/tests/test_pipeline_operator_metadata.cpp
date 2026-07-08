@@ -3,6 +3,8 @@
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/data_studio/pipeline_canvas.h"
 #include "../src/gui/data_studio/node_registry.h"
+#include "../src/gui/properties_contract.h"
+#include "../src/gui/properties_truth.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -94,6 +96,11 @@ bool ContainsString(const std::vector<std::string>& values,
 bool ContainsString(const std::set<std::string>& values,
                     const std::string& expected) {
     return values.find(expected) != values.end();
+}
+
+bool ContainsNodeType(const std::vector<gui::NodeType>& values,
+                      gui::NodeType expected) {
+    return std::find(values.begin(), values.end(), expected) != values.end();
 }
 
 bool SearchContainsType(cyxwiz::NodeMetadataRegistry& metadata,
@@ -281,11 +288,503 @@ std::vector<std::string> ParseCatalogEnumValues(
     return values;
 }
 
+bool IsSupportedPropertiesParameterType(const std::string& type) {
+    static const std::set<std::string> supported = {
+        "bool",
+        "directory",
+        "dropdown",
+        "enum",
+        "file",
+        "float",
+        "folder",
+        "int",
+        "multiline",
+        "password",
+        "string",
+        "text",
+    };
+    return supported.find(type) != supported.end();
+}
+
+std::optional<gui::NodeType> ResolveMetadataNodeTypeForRuntimeName(
+    const char* legacy_type_name) {
+    if (!legacy_type_name) {
+        return std::nullopt;
+    }
+    const auto support =
+        cyxwiz::ResolvePipelineRuntimeSupport(legacy_type_name);
+    if (support.metadata_node_type.has_value()) {
+        return support.metadata_node_type;
+    }
+    return support.node_type;
+}
+
+bool ShouldAuditRuntimeParametersAgainstMetadata(
+    cyxwiz::NodeMetadataRegistry& metadata,
+    const char* legacy_type_name,
+    const cyxwiz::NodeMetadata*& out_meta) {
+    if (const auto* alias =
+            cyxwiz::ResolvePipelineLegacyAliasDecision(
+                legacy_type_name ? legacy_type_name : "")) {
+        if (alias->decision ==
+            cyxwiz::PipelineLegacyAliasDecision::HiddenCompatibilityAlias) {
+            out_meta = nullptr;
+            return false;
+        }
+    }
+
+    const auto node_type = ResolveMetadataNodeTypeForRuntimeName(legacy_type_name);
+    if (!node_type.has_value()) {
+        out_meta = nullptr;
+        return false;
+    }
+
+    out_meta = metadata.GetMetadata(*node_type);
+    if (!out_meta || out_meta->status != cyxwiz::NodeImplementationStatus::Implemented) {
+        return false;
+    }
+
+    return gui::properties_contract::ClassifyPanelContractPath(
+               out_meta->type, out_meta) ==
+           gui::properties_contract::PanelContractPath::MetadataRenderer;
+}
+
+void CheckMetadataHasRuntimeParameter(
+    cyxwiz::NodeMetadataRegistry& metadata,
+    const char* legacy_type_name,
+    const char* parameter_name,
+    const char* capability_kind) {
+    Check(parameter_name != nullptr && std::string(parameter_name).size() > 1,
+          std::string("runtime parameter name is too weak: ") +
+              (legacy_type_name ? legacy_type_name : "(null)"));
+
+    const cyxwiz::NodeMetadata* meta = nullptr;
+    if (!ShouldAuditRuntimeParametersAgainstMetadata(
+            metadata, legacy_type_name, meta)) {
+        return;
+    }
+
+    Check(HasParameter(meta, parameter_name),
+          std::string("metadata-rendered node is missing ") +
+              capability_kind + " runtime parameter " +
+              legacy_type_name + "." + parameter_name +
+              " in " + TypeId(meta->type));
+}
+
+bool IsBoolAllowedValues(const std::vector<const char*>& values) {
+    return values.size() == 2 &&
+           std::find(values.begin(), values.end(), std::string("true")) !=
+               values.end() &&
+           std::find(values.begin(), values.end(), std::string("false")) !=
+               values.end();
+}
+
+bool IsMetadataEnumType(const std::string& type) {
+    return type == "enum" || type == "dropdown";
+}
+
+bool IsCommaSeparatedIntegerMetadataType(const std::string& type) {
+    return type == "string" || type == "text" || type == "multiline";
+}
+
+void CheckMetadataAllowedParameterShape(
+    cyxwiz::NodeMetadataRegistry& metadata,
+    const cyxwiz::PipelineAllowedParameterValuesRuntimeCapability& capability) {
+    CheckMetadataHasRuntimeParameter(
+        metadata,
+        capability.legacy_type_name,
+        capability.parameter_name,
+        "allowed-value");
+
+    const cyxwiz::NodeMetadata* meta = nullptr;
+    if (!ShouldAuditRuntimeParametersAgainstMetadata(
+            metadata, capability.legacy_type_name, meta)) {
+        return;
+    }
+
+    const auto* param = FindParameter(meta, capability.parameter_name);
+    Check(param != nullptr,
+          std::string("metadata-rendered node is missing allowed-value "
+                      "runtime parameter ") +
+              capability.legacy_type_name + "." + capability.parameter_name);
+
+    const bool bool_values = IsBoolAllowedValues(capability.allowed_values);
+    if (bool_values && param->type == "bool") {
+        Check(param->default_value.empty() ||
+                  param->default_value == capability.default_value,
+              std::string("metadata bool default drifts from runtime: ") +
+                  capability.legacy_type_name + "." +
+                  capability.parameter_name);
+        return;
+    }
+
+    Check(IsMetadataEnumType(param->type),
+          std::string("runtime allowed-value parameter should render as enum "
+                      "or bool: ") +
+              capability.legacy_type_name + "." + capability.parameter_name +
+              " metadata type " + param->type);
+    for (const char* value : capability.allowed_values) {
+        Check(value != nullptr && ContainsString(param->enum_values, value),
+              std::string("metadata enum is missing runtime allowed value: ") +
+                  capability.legacy_type_name + "." +
+                  capability.parameter_name + "=" + (value ? value : "(null)"));
+    }
+    Check(param->default_value.empty() ||
+              param->default_value == capability.default_value,
+          std::string("metadata enum default drifts from runtime: ") +
+              capability.legacy_type_name + "." + capability.parameter_name +
+              " metadata=" + param->default_value +
+              " runtime=" +
+              (capability.default_value ? capability.default_value : "(null)"));
+}
+
+void CheckMetadataIntegerParameterShape(
+    cyxwiz::NodeMetadataRegistry& metadata,
+    const cyxwiz::PipelineIntegerParameterRuntimeCapability& capability) {
+    CheckMetadataHasRuntimeParameter(
+        metadata,
+        capability.legacy_type_name,
+        capability.parameter_name,
+        "integer");
+
+    const cyxwiz::NodeMetadata* meta = nullptr;
+    if (!ShouldAuditRuntimeParametersAgainstMetadata(
+            metadata, capability.legacy_type_name, meta)) {
+        return;
+    }
+
+    const auto* param = FindParameter(meta, capability.parameter_name);
+    Check(param != nullptr,
+          std::string("metadata-rendered node is missing integer runtime "
+                      "parameter ") +
+              capability.legacy_type_name + "." + capability.parameter_name);
+    const bool type_matches = capability.comma_separated
+                                  ? IsCommaSeparatedIntegerMetadataType(
+                                        param->type)
+                                  : param->type == "int";
+    Check(type_matches,
+          std::string("metadata integer parameter has wrong renderer type: ") +
+              capability.legacy_type_name + "." + capability.parameter_name +
+              " metadata type " + param->type);
+}
+
+void CheckMetadataFloatParameterShape(
+    cyxwiz::NodeMetadataRegistry& metadata,
+    const cyxwiz::PipelineFloatParameterRuntimeCapability& capability) {
+    CheckMetadataHasRuntimeParameter(
+        metadata,
+        capability.legacy_type_name,
+        capability.parameter_name,
+        "float");
+
+    const cyxwiz::NodeMetadata* meta = nullptr;
+    if (!ShouldAuditRuntimeParametersAgainstMetadata(
+            metadata, capability.legacy_type_name, meta)) {
+        return;
+    }
+
+    const auto* param = FindParameter(meta, capability.parameter_name);
+    Check(param != nullptr,
+          std::string("metadata-rendered node is missing float runtime "
+                      "parameter ") +
+              capability.legacy_type_name + "." + capability.parameter_name);
+    Check(param->type == "float",
+          std::string("metadata float parameter has wrong renderer type: ") +
+              capability.legacy_type_name + "." + capability.parameter_name +
+              " metadata type " + param->type);
+}
+
+void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto& specialized =
+        gui::properties_truth::SpecializedTruthCoverageNodeTypes();
+    Check(!specialized.empty(),
+          "tofix48 specialized truth coverage inventory should not be empty");
+
+    for (const auto type : specialized) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "specialized truth coverage should map to registered metadata: " +
+                  TypeId(type));
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "specialized truth coverage should only claim implemented nodes: " +
+                  TypeId(type));
+    }
+
+    std::set<gui::NodeType> seen;
+    std::vector<std::string> implemented_nodes_missing_contract;
+    std::vector<std::string> implemented_params_with_bad_schema;
+    std::size_t dialog_only_count = 0;
+    std::size_t custom_sequence_count = 0;
+    std::size_t metadata_rendered_count = 0;
+    std::size_t custom_fallback_count = 0;
+
+    for (const auto category : metadata.GetCategories()) {
+        for (const auto* meta : metadata.GetByCategory(category, true)) {
+            if (!meta || !seen.insert(meta->type).second) {
+                continue;
+            }
+
+            std::set<std::string> param_names;
+            for (const auto& param : meta->parameters) {
+                if (param.name.empty() ||
+                    !param_names.insert(param.name).second ||
+                    !IsSupportedPropertiesParameterType(param.type)) {
+                    implemented_params_with_bad_schema.push_back(
+                        meta->name + "(" + TypeId(meta->type) + "):" +
+                        param.name + ":" + param.type);
+                }
+            }
+
+            if (meta->status != cyxwiz::NodeImplementationStatus::Implemented) {
+                continue;
+            }
+
+            const auto panel_path =
+                gui::properties_contract::ClassifyPanelContractPath(
+                    meta->type, meta);
+            switch (panel_path) {
+                case gui::properties_contract::PanelContractPath::DialogOnly:
+                    ++dialog_only_count;
+                    Check(gui::properties_contract::IsDialogOnlyPropertiesNode(meta->type),
+                          "dialog-only property path should be explicit: " +
+                              TypeId(meta->type));
+                    break;
+                case gui::properties_contract::PanelContractPath::CustomSequenceEditor:
+                    ++custom_sequence_count;
+                    Check(gui::properties_contract::IsCustomSequencePropertiesNode(meta->type),
+                          "custom sequence property path should be explicit: " +
+                              TypeId(meta->type));
+                    break;
+                case gui::properties_contract::PanelContractPath::MetadataRenderer:
+                    ++metadata_rendered_count;
+                    Check(!meta->parameters.empty(),
+                          "metadata-rendered property path requires parameters: " +
+                              TypeId(meta->type));
+                    break;
+                case gui::properties_contract::PanelContractPath::CustomFallbackEditor:
+                    ++custom_fallback_count;
+                    break;
+            }
+
+            const bool has_contract_anchor =
+                !meta->parameters.empty() ||
+                !meta->inputs.empty() ||
+                !meta->outputs.empty() ||
+                !meta->support_axes.empty() ||
+                gui::properties_truth::HasSpecializedTruthCoverage(meta->type);
+            if (!has_contract_anchor) {
+                implemented_nodes_missing_contract.push_back(
+                    meta->name + "(" + TypeId(meta->type) + ")");
+            }
+        }
+    }
+
+    Check(seen.size() == metadata.GetNodeCount(),
+          "property truth inventory should visit every metadata node");
+    Check(implemented_params_with_bad_schema.empty(),
+          "implemented metadata parameters should use unique names and "
+          "properties-supported types; first bad entry: " +
+              (implemented_params_with_bad_schema.empty()
+                   ? std::string()
+                   : implemented_params_with_bad_schema.front()));
+    Check(implemented_nodes_missing_contract.empty(),
+          "implemented metadata nodes should expose at least one property "
+          "contract anchor; first missing node: " +
+              (implemented_nodes_missing_contract.empty()
+                   ? std::string()
+                   : implemented_nodes_missing_contract.front()));
+    Check(dialog_only_count > 0,
+          "property inventory should classify dialog-only nodes");
+    Check(custom_sequence_count > 0,
+          "property inventory should classify custom sequence nodes");
+    Check(metadata_rendered_count > 0,
+          "property inventory should classify metadata-rendered nodes");
+    Check(custom_fallback_count > 0,
+          "property inventory should classify custom fallback nodes");
+
+    const std::vector<gui::NodeType> expected_specialized = {
+        gui::NodeType::DataInput,
+        gui::NodeType::DataOutput,
+        gui::NodeType::DataConvert,
+        gui::NodeType::DeployToNodeEditorNode,
+        gui::NodeType::DataLoader,
+        gui::NodeType::DataProfiler,
+        gui::NodeType::StandardScaler,
+        gui::NodeType::MinMaxScaler,
+        gui::NodeType::RobustScaler,
+        gui::NodeType::LabelEncoder,
+        gui::NodeType::OrdinalEncoder,
+        gui::NodeType::TargetEncoder,
+        gui::NodeType::OutlierDetector,
+        gui::NodeType::TFIDFVectorizer,
+        gui::NodeType::CountVectorizer,
+        gui::NodeType::TextTokenizer,
+        gui::NodeType::RegressionMetricsNode,
+        gui::NodeType::ClassificationMetricsNode,
+        gui::NodeType::ConfusionMatrixNode,
+        gui::NodeType::ROCCurveNode,
+        gui::NodeType::PRCurveNode,
+        gui::NodeType::Dense,
+        gui::NodeType::TimeDistributed,
+        gui::NodeType::Dropout,
+        gui::NodeType::BatchNorm,
+        gui::NodeType::LayerNorm,
+        gui::NodeType::ReLU,
+        gui::NodeType::Sigmoid,
+        gui::NodeType::Softmax,
+        gui::NodeType::GELU,
+        gui::NodeType::Tanh,
+        gui::NodeType::LeakyReLU,
+        gui::NodeType::Flatten,
+        gui::NodeType::Reshape,
+        gui::NodeType::View,
+        gui::NodeType::Permute,
+        gui::NodeType::Squeeze,
+        gui::NodeType::Unsqueeze,
+        gui::NodeType::LSTM,
+        gui::NodeType::GRU,
+        gui::NodeType::NERSequenceBuilder,
+        gui::NodeType::TokenVocabulary,
+        gui::NodeType::POSVocabulary,
+        gui::NodeType::NERTagVocabulary,
+        gui::NodeType::SequenceTagOutput,
+        gui::NodeType::MSELoss,
+        gui::NodeType::FocalLoss,
+        gui::NodeType::BCELoss,
+        gui::NodeType::BCEWithLogits,
+        gui::NodeType::L1Loss,
+        gui::NodeType::SmoothL1Loss,
+        gui::NodeType::HuberLoss,
+        gui::NodeType::NLLLoss,
+        gui::NodeType::SoftDiceLoss,
+        gui::NodeType::TverskyLoss,
+        gui::NodeType::JaccardLoss,
+        gui::NodeType::Adam,
+        gui::NodeType::SGD,
+        gui::NodeType::AdamW,
+        gui::NodeType::RMSprop,
+        gui::NodeType::Adagrad,
+        gui::NodeType::NAdam,
+        gui::NodeType::Output,
+        gui::NodeType::CrossEntropyLoss,
+        gui::NodeType::ExportCSV,
+        gui::NodeType::ExportParquet,
+        gui::NodeType::ExportJSON,
+        gui::NodeType::TreeModelPredictor,
+    };
+    for (const auto type : expected_specialized) {
+        Check(ContainsNodeType(specialized, type),
+              "tofix48 baseline specialized coverage missing node: " +
+                  TypeId(type));
+    }
+
+    const std::vector<gui::NodeType> representative_metadata_contracts = {
+        gui::NodeType::StandardScaler,
+        gui::NodeType::MinMaxScaler,
+        gui::NodeType::Dense,
+        gui::NodeType::Adam,
+        gui::NodeType::MSELoss,
+        gui::NodeType::ExportCSV,
+        gui::NodeType::DataValidator,
+    };
+    for (const auto type : representative_metadata_contracts) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "representative property contract metadata missing: " +
+                  TypeId(type));
+        Check(!meta->parameters.empty() || !meta->support_axes.empty(),
+              "representative property contract should expose metadata "
+              "parameters or support truth: " +
+                  TypeId(type));
+    }
+
+    Check(gui::properties_contract::ClassifyPanelContractPath(
+              gui::NodeType::DataInput,
+              metadata.GetMetadata(gui::NodeType::DataInput)) ==
+              gui::properties_contract::PanelContractPath::DialogOnly,
+          "DataInput should stay dialog-only in the side panel");
+    Check(gui::properties_contract::ClassifyPanelContractPath(
+              gui::NodeType::NERSequenceBuilder,
+              metadata.GetMetadata(gui::NodeType::NERSequenceBuilder)) ==
+              gui::properties_contract::PanelContractPath::CustomSequenceEditor,
+          "NERSequenceBuilder should use the custom sequence editor");
+    Check(gui::properties_contract::ClassifyPanelContractPath(
+              gui::NodeType::DataLoader,
+              metadata.GetMetadata(gui::NodeType::DataLoader)) ==
+              gui::properties_contract::PanelContractPath::MetadataRenderer,
+          "DataLoader should expose metadata-rendered quick parameters");
+    Check(gui::properties_contract::ClassifyPanelContractPath(
+              gui::NodeType::ReLU,
+              metadata.GetMetadata(gui::NodeType::ReLU)) ==
+              gui::properties_contract::PanelContractPath::CustomFallbackEditor,
+          "parameterless implemented nodes should route to fallback properties");
+
+    const auto* adam = metadata.GetMetadata(gui::NodeType::Adam);
+    Check(adam != nullptr, "Adam metadata should exist");
+    Check(HasParameter(adam, "learning_rate"),
+          "Adam metadata should expose canonical learning_rate");
+    Check(!HasParameter(adam, "lr"),
+          "Adam metadata should not expose legacy lr as editable");
+    const auto* sgd = metadata.GetMetadata(gui::NodeType::SGD);
+    Check(sgd != nullptr, "SGD metadata should exist");
+    Check(HasParameter(sgd, "learning_rate"),
+          "SGD metadata should expose canonical learning_rate");
+    Check(!HasParameter(sgd, "lr"),
+          "SGD metadata should not expose legacy lr as editable");
+    Check(!HasParameter(sgd, "momentum"),
+          "SGD metadata should not expose momentum until optimizer "
+          "construction applies it");
+    const auto* adamw = metadata.GetMetadata(gui::NodeType::AdamW);
+    Check(adamw != nullptr, "AdamW metadata should exist");
+    Check(!HasParameter(adamw, "weight_decay"),
+          "AdamW metadata should not expose weight_decay until optimizer "
+          "construction applies it");
+    const auto* batch_norm = metadata.GetMetadata(gui::NodeType::BatchNorm);
+    Check(batch_norm != nullptr, "BatchNorm metadata should exist");
+    Check(HasParameter(batch_norm, "eps"),
+          "BatchNorm metadata should expose compiler-consumed eps");
+    Check(!HasParameter(batch_norm, "epsilon"),
+          "BatchNorm metadata should not expose legacy epsilon as editable");
+    const auto* dense = metadata.GetMetadata(gui::NodeType::Dense);
+    Check(dense != nullptr, "Dense metadata should exist");
+    Check(!HasParameter(dense, "activation"),
+          "Dense metadata should not expose inline activation because "
+          "ModelBuilder requires explicit activation nodes");
+
+    for (const auto& capability :
+         cyxwiz::GetPipelineRequiredParameterRuntimeCapabilities()) {
+        for (const char* parameter : capability.required_parameters) {
+            CheckMetadataHasRuntimeParameter(
+                metadata,
+                capability.legacy_type_name,
+                parameter,
+                "required");
+        }
+    }
+
+    for (const auto& capability :
+         cyxwiz::GetPipelineAllowedParameterValuesRuntimeCapabilities()) {
+        CheckMetadataAllowedParameterShape(metadata, capability);
+    }
+
+    for (const auto& capability :
+         cyxwiz::GetPipelineIntegerParameterRuntimeCapabilities()) {
+        CheckMetadataIntegerParameterShape(metadata, capability);
+    }
+
+    for (const auto& capability :
+         cyxwiz::GetPipelineFloatParameterRuntimeCapabilities()) {
+        CheckMetadataFloatParameterShape(metadata, capability);
+    }
+}
+
 } // namespace
 
 int main() {
     auto& metadata = cyxwiz::NodeMetadataRegistry::Instance();
     metadata.Initialize();
+
+    CheckPropertyTruthInventory(metadata);
 
     {
         const auto* data_input = metadata.GetMetadata(gui::NodeType::DataInput);
@@ -520,6 +1019,11 @@ int main() {
         Check(export_excel->name.find("planned") != std::string::npos &&
                   export_excel->brief_description.find("not implemented") != std::string::npos,
               "ExportExcel metadata should visibly say the export is planned/not implemented");
+
+        const auto* data_profiler = metadata.GetMetadata(gui::NodeType::DataProfiler);
+        Check(data_profiler != nullptr, "DataProfiler metadata should exist");
+        Check(!HasParameter(data_profiler, "minimal"),
+              "DataProfiler metadata should not expose minimal until the executor consumes it");
     }
 
     auto& factory = cyxwiz::PipelineOperatorFactory::Instance();

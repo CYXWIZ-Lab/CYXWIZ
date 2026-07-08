@@ -3591,26 +3591,28 @@ bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ct
         std::string input_label = options.input_path;
         if (!node.inputs.empty()) {
             std::string input_dataset_name = GetInputDatasetName(node, ctx);
-            if (input_dataset_name.empty()) {
+            if (input_dataset_name.empty() && options.input_path.empty()) {
                 ReportError("DataConvert: input dataset connection could not be resolved");
                 return false;
             }
 
-            auto input_dataset =
-                DataRegistry::Instance().GetArrowDataset(input_dataset_name);
-            if (!input_dataset) {
-                ReportError("DataConvert: input dataset '" + input_dataset_name +
-                            "' is not an in-memory Arrow dataset");
-                return false;
-            }
+            if (!input_dataset_name.empty()) {
+                auto input_dataset =
+                    DataRegistry::Instance().GetArrowDataset(input_dataset_name);
+                if (!input_dataset) {
+                    ReportError("DataConvert: input dataset '" + input_dataset_name +
+                                "' is not an in-memory Arrow dataset");
+                    return false;
+                }
 
-            options.input_table = input_dataset->GetArrowTable();
-            if (!options.input_table) {
-                ReportError("DataConvert: input dataset '" + input_dataset_name +
-                            "' has no Arrow table");
-                return false;
+                options.input_table = input_dataset->GetArrowTable();
+                if (!options.input_table) {
+                    ReportError("DataConvert: input dataset '" + input_dataset_name +
+                                "' has no Arrow table");
+                    return false;
+                }
+                input_label = input_dataset_name;
             }
-            input_label = input_dataset_name;
         } else if (options.input_path.empty()) {
             ReportError("DataConvert: missing input_path. Connect an upstream dataset or select an input file.");
             return false;

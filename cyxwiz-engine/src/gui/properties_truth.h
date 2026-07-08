@@ -99,6 +99,9 @@ struct NodeTruthReport {
 const char* TruthStatusName(TruthStatus status);
 const char* TruthOwnerName(TruthOwner owner);
 
+const std::vector<NodeType>& SpecializedTruthCoverageNodeTypes();
+bool HasSpecializedTruthCoverage(NodeType type);
+
 NodeTruthReport ResolveNodeTruth(const MLNode& node,
                                  const NodeTruthContext& context = {});
 

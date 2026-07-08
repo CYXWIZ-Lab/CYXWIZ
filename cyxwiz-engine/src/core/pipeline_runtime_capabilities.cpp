@@ -889,7 +889,7 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"RandomForestClassifier", "max_depth", 1, false},
         {"RandomForestClassifier", "min_samples_split", 2, false},
         {"RandomForestClassifier", "min_samples_leaf", 1, false},
-        {"RandomForestClassifier", "seed", 0, true},
+        {"RandomForestClassifier", "seed", 0, false},
         {"GradientBoostingClassifier", "n_estimators", 1, false},
         {"GradientBoostingClassifier", "max_depth", 1, false},
         {"GradientBoostingClassifier", "min_samples_split", 2, false},

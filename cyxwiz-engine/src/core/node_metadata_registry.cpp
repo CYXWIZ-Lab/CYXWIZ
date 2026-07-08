@@ -1074,6 +1074,31 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::DataLoader, NodeCategory::DataPipeline, "Data Loader", ICON_FA_DATABASE,
+        {"batch", "loader", "dataloader", "shuffle", "epoch", "training"}, 0, false,
+        "Training batch policy for dataset iteration", "", "",
+        {{"Data", PinType::Dataset, true, "Input dataset"}},
+        {{"Batches", PinType::Dataset, true, "Training batches"}},
+        {{"epochs", "int", "10", "Training epochs", {}, "1-10000", "", "Training", false, false},
+         {"batch_size", "int", "32", "Samples per batch", {}, "1-100000", "", "Training", false, false},
+         {"shuffle", "bool", "true", "Shuffle training batches", {}, "", "", "Training", false, false},
+         {"drop_last", "bool", "false", "Drop incomplete final batch", {}, "", "", "Training", false, false},
+         {"num_workers", "int", "0", "Worker count for batch preparation", {}, "0-128", "", "Runtime", false, true},
+         {"prefetch_factor", "int", "2", "Prefetch factor when workers are active", {}, "0-64", "", "Runtime", false, true},
+         {"log_interval", "int", "10", "Training log interval in batches", {}, "0-100000", "", "Training", false, true},
+         {"validation_freq", "int", "1", "Validation frequency in epochs", {}, "1-10000", "", "Training", false, true},
+         {"seed", "int", "42", "Batching random seed", {}, "0-2147483647", "", "Training", false, true},
+         {"grad_accum_steps", "int", "1", "Gradient accumulation steps", {}, "1-10000", "", "Training", false, true},
+         {"balance_classes", "bool", "false", "Apply training-only class balancing", {}, "", "", "Balancing", false, true},
+         {"balance_mode", "enum", "none", "Class balancing mode", {"none", "oversample", "undersample", "weighted_sampler"}, "", "", "Balancing", false, true},
+         {"balance_target", "string", "max", "Class balancing target", {}, "", "", "Balancing", false, true},
+         {"balance_seed", "int", "42", "Class balancing seed", {}, "0-2147483647", "", "Balancing", false, true},
+         {"pin_memory", "bool", "false", "Serialized for compatibility; current batchers do not support pinned transfer", {}, "", "", "Runtime", false, true},
+         {"save_best_checkpoint", "bool", "true", "Save best validation checkpoint", {}, "", "", "Checkpoint", false, true},
+         {"early_stopping_patience", "int", "5", "Early stopping patience in validation checks", {}, "0-10000", "", "Checkpoint", false, true},
+         {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::DeployToNodeEditorNode, NodeCategory::DataSources, "Deploy to Node Editor", ICON_FA_FILE_EXPORT,
         {"deploy", "node", "editor", "handoff", "dataset"}, 0, false,
         "Mark a dataset ready for Node Editor deployment", "", "",
@@ -1279,21 +1304,25 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {"join", "merge", "combine"}, 0, false, "Join tables", "", "",
         {{"Left", PinType::Dataset, true, "Left"}, {"Right", PinType::Dataset, true, "Right"}},
         {{"Joined", PinType::Dataset, true, "Joined"}},
-        {{"join_type", "enum", "INNER", "Join type", {"INNER", "LEFT", "RIGHT", "OUTER"}, ""}},
+        {{"on_column", "string", "", "Join column", {}, ""},
+         {"join_type", "enum", "inner", "Join type", {"inner", "left", "right", "outer"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GroupByAggregate, NodeCategory::DataTransform, "GroupBy", ICON_FA_OBJECT_GROUP,
         {"group", "aggregate", "sum"}, 0, false, "Group and aggregate", "", "",
         {{"Table", PinType::Dataset, true, "Input"}},
         {{"Grouped", PinType::Dataset, true, "Aggregated"}},
-        {{"group_by", "string", "", "Group columns", {}, ""}},
+        {{"group_columns", "string", "", "Group columns", {}, ""},
+         {"aggregations", "string", "", "Aggregation expressions", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SortRows, NodeCategory::DataTransform, "Sorter", ICON_FA_ARROW_DOWN_LONG,
         {"sort", "order"}, 0, false, "Sort rows", "", "",
         {{"Table", PinType::Dataset, true, "Input"}},
         {{"Sorted", PinType::Dataset, true, "Sorted"}},
-        {{"sort_by", "string", "", "Sort column", {}, ""}},
+        {{"columns", "string", "", "Sort columns", {}, ""},
+         {"order", "enum", "asc", "Sort order", {"asc", "desc"}, ""},
+         {"ascending", "bool", "true", "Compatibility ascending flag", {}, "", "", "", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::FillMissingValues, NodeCategory::DataTransform, "Missing Value", ICON_FA_ERASER,
@@ -1389,7 +1418,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Labels", PinType::Labels, true, "Cluster assignments"}, {"Centroids", PinType::Dataset, true, "Cluster centers"}},
         {{"n_clusters", "int", "3", "Number of clusters", {}, "2-100"},
          {"max_iter", "int", "300", "Max iterations", {}, ""},
-         {"init", "enum", "k-means++", "Initialization", {"k-means++", "random"}, ""}},
+         {"n_init", "int", "10", "Number of centroid initializations", {}, ""},
+         {"init", "enum", "kmeans++", "Initialization", {"kmeans++", "random"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DBSCANCluster, NodeCategory::Analytics, "DBSCAN", ICON_FA_CIRCLE_NODES,
@@ -1398,7 +1428,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Data", PinType::Dataset, true, "Input data matrix"}},
         {{"Labels", PinType::Labels, true, "Cluster labels (-1 = noise)"}},
         {{"eps", "float", "0.5", "Epsilon (neighborhood radius)", {}, "0.01-10"},
-         {"min_samples", "int", "5", "Min samples per cluster", {}, ""}},
+         {"min_samples", "int", "5", "Min samples per cluster", {}, ""},
+         {"metric", "enum", "euclidean", "Distance metric", {"euclidean", "manhattan", "cosine"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::HierarchicalCluster, NodeCategory::Analytics, "Hierarchical Clustering", ICON_FA_SITEMAP,
@@ -1407,7 +1438,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Data", PinType::Dataset, true, "Input data matrix"}},
         {{"Labels", PinType::Labels, true, "Cluster assignments"}, {"Dendrogram", PinType::Dataset, true, "Linkage matrix"}},
         {{"n_clusters", "int", "3", "Number of clusters", {}, ""},
-         {"linkage", "enum", "ward", "Linkage method", {"ward", "complete", "average", "single"}, ""}},
+         {"linkage", "enum", "ward", "Linkage method", {"ward", "complete", "average", "single"}, ""},
+         {"metric", "enum", "euclidean", "Distance metric", {"euclidean", "manhattan", "cosine"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     // Dimensionality Reduction
@@ -1680,7 +1712,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Data", PinType::Dataset, true, "Input data"}},
         {{"Encoded", PinType::Dataset, true, "Encoded data"}},
         {{"columns", "string", "", "Columns to encode", {}, ""},
-         {"categories", "string", "auto", "Category ordering (auto only in v1)", {}, ""}},
+         {"categories", "enum", "auto", "Category ordering (auto only in v1)", {"auto"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TargetEncoder, NodeCategory::Preprocessing, "Target Encoder", ICON_FA_PERCENT,
@@ -1710,7 +1742,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         "Generate detailed data quality report: types, missing, distributions, correlations.", "",
         {{"Data", PinType::Dataset, true, "Input dataset"}},
         {{"Report", PinType::Dataset, true, "Profiling report"}},
-        {{"minimal", "bool", "false", "Minimal mode (faster)", {}, ""}},
+        {},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DataValidator, NodeCategory::Analytics, "Data Validator", ICON_FA_CHECK_DOUBLE,
@@ -1803,7 +1835,8 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"batchnorm", "normalization"}, 0, false, "Batch normalization", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Normalized"}},
-        {{"momentum", "float", "0.1", "Momentum", {}, ""}},
+        {{"eps", "float", "1e-5", "Epsilon", {}, ""},
+         {"momentum", "float", "0.1", "Momentum", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LayerNorm, NodeCategory::Normalization, "LayerNorm", ICON_FA_SCALE_BALANCED,
@@ -2338,7 +2371,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         "Adam optimizer", "", "",
         {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
         {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"lr", "float", "0.001", "Learning rate", {}, ""}},
+        {{"learning_rate", "float", "0.001", "Learning rate", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SGD, NodeCategory::Training, "SGD", ICON_FA_GRADUATION_CAP,
@@ -2346,7 +2379,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         0, false, "SGD optimizer", "", "",
         {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
         {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"lr", "float", "0.01", "Learning rate", {}, ""}, {"momentum", "float", "0.9", "Momentum", {}, ""}},
+        {{"learning_rate", "float", "0.01", "Learning rate", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AdamW, NodeCategory::Training, "AdamW", ICON_FA_GRADUATION_CAP,
@@ -2354,8 +2387,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         0, false, "Adam optimizer with decoupled weight decay", "", "",
         {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
         {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"learning_rate", "float", "0.001", "Learning rate", {}, ""},
-         {"weight_decay", "float", "0.01", "Weight decay", {}, ""}},
+        {{"learning_rate", "float", "0.001", "Learning rate", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RMSprop, NodeCategory::Training, "RMSprop", ICON_FA_GRADUATION_CAP,
@@ -3073,7 +3105,8 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         "Classify text sentiment (positive, negative, neutral).", "",
         {{"Text", PinType::Dataset, true, "Text data"}},
         {{"Sentiment", PinType::Labels, true, "Sentiment labels"}, {"Scores", PinType::Dataset, true, "Sentiment scores"}},
-        {{"model", "enum", "vader", "Sentiment model", {"vader", "textblob", "transformer"}, ""}},
+        {{"text_col", "string", "", "Text column", {}, ""},
+         {"method", "enum", "vader", "Sentiment method", {"simple", "vader", "afinn"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     // ===== Utility Tools (Phase 4) =====
@@ -3180,7 +3213,8 @@ void NodeMetadataRegistry::InitializeTimeSeriesAnalysisNodes() {
         {{"Data", PinType::Dataset, true, "Input table"}},
         {{"ACF", PinType::Dataset, true, "Lag table with acf and confidence bounds"}},
         {{"signal_col", "string", "", "Numeric signal column", {}, ""},
-         {"max_lag", "int", "-1", "Maximum lag (-1 auto)", {}, ""}},
+         {"max_lag", "int", "-1", "Maximum lag (-1 auto)", {}, ""},
+         {"lags", "int", "-1", "Compatibility lag count (-1 auto)", {}, "", "", "", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PACFNode, NodeCategory::TimeSeries, "PACF", ICON_FA_CHART_BAR,
@@ -3189,7 +3223,8 @@ void NodeMetadataRegistry::InitializeTimeSeriesAnalysisNodes() {
         {{"Data", PinType::Dataset, true, "Input table"}},
         {{"PACF", PinType::Dataset, true, "Lag table with pacf and confidence bounds"}},
         {{"signal_col", "string", "", "Numeric signal column", {}, ""},
-         {"max_lag", "int", "-1", "Maximum lag (-1 auto)", {}, ""}},
+         {"max_lag", "int", "-1", "Maximum lag (-1 auto)", {}, ""},
+         {"lags", "int", "-1", "Compatibility lag count (-1 auto)", {}, "", "", "", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::StationarityTest, NodeCategory::TimeSeries, "Stationarity Test", ICON_FA_SCALE_BALANCED,

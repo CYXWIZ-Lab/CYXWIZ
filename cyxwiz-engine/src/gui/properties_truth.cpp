@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <set>
 
@@ -66,12 +67,58 @@ int ParsePositiveInt(const std::string* value) {
     return static_cast<int>(parsed);
 }
 
+int ParseNonNegativeInt(const std::string* value, int invalid_value = -1) {
+    if (!value || value->empty()) {
+        return invalid_value;
+    }
+    char* end = nullptr;
+    const long parsed = std::strtol(value->c_str(), &end, 10);
+    if (end == value->c_str() || *end != '\0' || parsed < 0) {
+        return invalid_value;
+    }
+    return static_cast<int>(parsed);
+}
+
 bool ParseBoolValue(const std::string* value, bool default_value) {
     if (!value || value->empty()) {
         return default_value;
     }
     return *value == "true" || *value == "1" || *value == "yes" ||
            *value == "on";
+}
+
+bool ParseDoubleValue(const std::string& value, double& out) {
+    char* end = nullptr;
+    const double parsed = std::strtod(value.c_str(), &end);
+    if (end == value.c_str() || *end != '\0' || !std::isfinite(parsed)) {
+        return false;
+    }
+    out = parsed;
+    return true;
+}
+
+std::string TrimAscii(std::string value) {
+    const auto first = std::find_if_not(
+        value.begin(), value.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        });
+    const auto last = std::find_if_not(
+        value.rbegin(), value.rend(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        }).base();
+    if (first >= last) {
+        return {};
+    }
+    return std::string(first, last);
+}
+
+std::string NormalizeAsciiToken(std::string value) {
+    value = TrimAscii(std::move(value));
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
 }
 
 int ExtractTrailingPositiveInt(const std::string& text) {
@@ -209,6 +256,79 @@ PropertyTruth ResolveAliasedStringProperty(const MLNode& node,
     return truth;
 }
 
+PropertyTruth ResolveAliasedStringPropertyWithDefault(
+    const MLNode& node,
+    std::string label,
+    std::string canonical_key,
+    std::vector<std::string> aliases,
+    std::string default_value,
+    TruthOwner owner,
+    bool quick_editable,
+    bool requires_dialog,
+    bool required,
+    std::string message = {}) {
+    PropertyTruth truth;
+    truth.label = std::move(label);
+    truth.canonical_key = std::move(canonical_key);
+    truth.default_value = std::move(default_value);
+    truth.owner = owner;
+    truth.quick_editable = quick_editable;
+    truth.requires_dialog = requires_dialog;
+    truth.message = std::move(message);
+
+    const std::string* canonical = FindParameter(node, truth.canonical_key);
+    if (canonical && !canonical->empty()) {
+        truth.source_key = truth.canonical_key;
+        truth.effective_value = *canonical;
+    }
+
+    for (const auto& alias : aliases) {
+        const std::string* value = FindParameter(node, alias);
+        if (!value) {
+            continue;
+        }
+        truth.aliases_present.push_back({alias, *value});
+        if (truth.effective_value.empty() && !value->empty()) {
+            truth.source_key = alias;
+            truth.effective_value = *value;
+            AddStatus(truth, TruthStatus::AliasUsed);
+        } else if (!value->empty() && !truth.effective_value.empty() &&
+                   *value != truth.effective_value) {
+            AddStatus(truth, TruthStatus::Conflicting);
+            if (!truth.message.empty()) {
+                truth.message += " ";
+            }
+            truth.message += "Alias value does not match the effective value.";
+        } else {
+            AddStatus(truth, TruthStatus::AliasUsed);
+        }
+    }
+
+    if (truth.effective_value.empty() && !truth.default_value.empty()) {
+        truth.source_key = "default";
+        truth.effective_value = truth.default_value;
+        if (truth.statuses.empty()) {
+            AddStatus(truth, TruthStatus::Defaulted);
+        }
+    } else if (truth.effective_value.empty() && required) {
+        truth.source_key = truth.canonical_key;
+        AddStatus(truth, TruthStatus::Missing);
+        truth.message = truth.canonical_key + " is required.";
+    } else if (truth.effective_value.empty()) {
+        truth.source_key = "default";
+        if (truth.statuses.empty()) {
+            AddStatus(truth, TruthStatus::Defaulted);
+        }
+    } else if (truth.statuses.empty()) {
+        AddStatus(truth, TruthStatus::OK);
+    }
+
+    if (truth.requires_dialog) {
+        AddStatus(truth, TruthStatus::RequiresDialog);
+    }
+    return truth;
+}
+
 PropertyTruth ResolveIntProperty(const MLNode& node,
                                  std::string label,
                                  std::string canonical_key,
@@ -333,6 +453,1548 @@ PropertyTruth ResolveBoolProperty(const MLNode& node,
         AddStatus(truth, TruthStatus::RequiresDialog);
     }
     return truth;
+}
+
+PropertyTruth ResolveStringProperty(const MLNode& node,
+                                    std::string label,
+                                    std::string canonical_key,
+                                    std::string default_value,
+                                    TruthOwner owner,
+                                    bool quick_editable,
+                                    bool requires_dialog,
+                                    bool required,
+                                    std::string message = {}) {
+    PropertyTruth truth;
+    truth.label = std::move(label);
+    truth.canonical_key = std::move(canonical_key);
+    truth.default_value = std::move(default_value);
+    truth.owner = owner;
+    truth.quick_editable = quick_editable;
+    truth.requires_dialog = requires_dialog;
+    truth.message = std::move(message);
+
+    const std::string* value = FindParameter(node, truth.canonical_key);
+    if (value && !value->empty()) {
+        truth.source_key = truth.canonical_key;
+        truth.effective_value = *value;
+        AddStatus(truth, TruthStatus::OK);
+    } else if (!truth.default_value.empty()) {
+        truth.source_key = "default";
+        truth.effective_value = truth.default_value;
+        AddStatus(truth, TruthStatus::Defaulted);
+    } else if (required) {
+        truth.source_key = truth.canonical_key;
+        AddStatus(truth, TruthStatus::Missing);
+        truth.message = truth.canonical_key + " is required by the materializer.";
+    } else {
+        truth.source_key = "default";
+        AddStatus(truth, TruthStatus::Defaulted);
+    }
+    if (truth.requires_dialog) {
+        AddStatus(truth, TruthStatus::RequiresDialog);
+    }
+    return truth;
+}
+
+PropertyTruth ResolveFloatProperty(const MLNode& node,
+                                   std::string label,
+                                   std::string canonical_key,
+                                   std::string default_value,
+                                   TruthOwner owner,
+                                   bool quick_editable,
+                                   bool requires_dialog,
+                                   std::string message = {}) {
+    PropertyTruth truth;
+    truth.label = std::move(label);
+    truth.canonical_key = std::move(canonical_key);
+    truth.default_value = std::move(default_value);
+    truth.owner = owner;
+    truth.quick_editable = quick_editable;
+    truth.requires_dialog = requires_dialog;
+    truth.message = std::move(message);
+
+    const std::string* value = FindParameter(node, truth.canonical_key);
+    if (value && !value->empty()) {
+        truth.source_key = truth.canonical_key;
+        truth.effective_value = *value;
+        AddStatus(truth, TruthStatus::OK);
+    } else {
+        truth.source_key = "default";
+        truth.effective_value = truth.default_value;
+        AddStatus(truth, TruthStatus::Defaulted);
+    }
+    double parsed = 0.0;
+    if (!ParseDoubleValue(truth.effective_value, parsed)) {
+        truth.statuses.clear();
+        AddStatus(truth, TruthStatus::Missing);
+        truth.message = truth.canonical_key + " must be a finite number.";
+    }
+    if (truth.requires_dialog) {
+        AddStatus(truth, TruthStatus::RequiresDialog);
+    }
+    return truth;
+}
+
+void RequirePositiveInt(PropertyTruth& truth, const std::string& key) {
+    const int parsed = ParsePositiveInt(&truth.effective_value);
+    if (parsed <= 0) {
+        truth.statuses.clear();
+        AddStatus(truth, TruthStatus::Missing);
+        truth.message = key + " must be >= 1.";
+    }
+}
+
+void RequireNonNegativeInt(PropertyTruth& truth, const std::string& key) {
+    const int parsed = ParseNonNegativeInt(&truth.effective_value);
+    if (parsed < 0) {
+        truth.statuses.clear();
+        AddStatus(truth, TruthStatus::Missing);
+        truth.message = key + " must be >= 0.";
+    }
+}
+
+void AddPreprocessingScalerTruth(NodeTruthReport& report,
+                                 const MLNode& node) {
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Feature columns",
+        "columns",
+        "numeric auto-detect",
+        TruthOwner::Materializer,
+        true,
+        false,
+        false,
+        "Empty columns means the materializer auto-detects numeric columns."));
+
+    if (node.type == NodeType::StandardScaler) {
+        report.properties.push_back(ResolveBoolProperty(
+            node,
+            "Center data",
+            "with_mean",
+            true,
+            TruthOwner::Materializer,
+            true,
+            false));
+        report.properties.push_back(ResolveBoolProperty(
+            node,
+            "Scale to unit variance",
+            "with_std",
+            true,
+            TruthOwner::Materializer,
+            true,
+            false));
+        return;
+    }
+
+    if (node.type == NodeType::MinMaxScaler) {
+        auto min_value = ResolveFloatProperty(
+            node,
+            "Target minimum",
+            "min",
+            "0.0",
+            TruthOwner::Materializer,
+            true,
+            false);
+        auto max_value = ResolveFloatProperty(
+            node,
+            "Target maximum",
+            "max",
+            "1.0",
+            TruthOwner::Materializer,
+            true,
+            false);
+        double min_parsed = 0.0;
+        double max_parsed = 0.0;
+        if (ParseDoubleValue(min_value.effective_value, min_parsed) &&
+            ParseDoubleValue(max_value.effective_value, max_parsed) &&
+            max_parsed <= min_parsed) {
+            max_value.statuses.clear();
+            AddStatus(max_value, TruthStatus::Missing);
+            max_value.message = "max must be greater than min.";
+        }
+        report.properties.push_back(std::move(min_value));
+        report.properties.push_back(std::move(max_value));
+        return;
+    }
+
+    if (node.type == NodeType::RobustScaler) {
+        report.properties.push_back(ResolveBoolProperty(
+            node,
+            "Subtract median",
+            "with_centering",
+            true,
+            TruthOwner::Materializer,
+            true,
+            false));
+        report.properties.push_back(ResolveBoolProperty(
+            node,
+            "Scale by IQR",
+            "with_scaling",
+            true,
+            TruthOwner::Materializer,
+            true,
+            false));
+        auto qmin = ResolveFloatProperty(
+            node,
+            "Lower quantile",
+            "quantile_min",
+            "25",
+            TruthOwner::Materializer,
+            true,
+            false);
+        auto qmax = ResolveFloatProperty(
+            node,
+            "Upper quantile",
+            "quantile_max",
+            "75",
+            TruthOwner::Materializer,
+            true,
+            false);
+        double min_parsed = 0.0;
+        double max_parsed = 0.0;
+        if (ParseDoubleValue(qmin.effective_value, min_parsed) &&
+            (min_parsed < 0.0 || min_parsed > 100.0)) {
+            qmin.statuses.clear();
+            AddStatus(qmin, TruthStatus::Missing);
+            qmin.message = "quantile_min must be between 0 and 100.";
+        }
+        if (ParseDoubleValue(qmax.effective_value, max_parsed) &&
+            (max_parsed < 0.0 || max_parsed > 100.0)) {
+            qmax.statuses.clear();
+            AddStatus(qmax, TruthStatus::Missing);
+            qmax.message = "quantile_max must be between 0 and 100.";
+        }
+        if (ParseDoubleValue(qmin.effective_value, min_parsed) &&
+            ParseDoubleValue(qmax.effective_value, max_parsed) &&
+            max_parsed <= min_parsed) {
+            qmax.statuses.clear();
+            AddStatus(qmax, TruthStatus::Missing);
+            qmax.message = "quantile_max must be greater than quantile_min.";
+        }
+        report.properties.push_back(std::move(qmin));
+        report.properties.push_back(std::move(qmax));
+    }
+}
+
+void AddEncoderTruth(NodeTruthReport& report, const MLNode& node) {
+    if (node.type == NodeType::LabelEncoder) {
+        report.properties.push_back(ResolveStringProperty(
+            node,
+            "Encoded column",
+            "column",
+            "",
+            TruthOwner::Materializer,
+            true,
+            false,
+            true));
+        return;
+    }
+
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Encoded columns",
+        "columns",
+        "",
+        TruthOwner::Materializer,
+        true,
+        false,
+        true));
+
+    if (node.type == NodeType::OrdinalEncoder) {
+        auto categories = ResolveStringProperty(
+            node,
+            "Category ordering",
+            "categories",
+            "auto",
+            TruthOwner::Materializer,
+            true,
+            false,
+            false);
+        if (categories.effective_value != "auto") {
+            categories.statuses.clear();
+            AddStatus(categories, TruthStatus::Unsupported);
+            categories.message =
+                "OrdinalEncoder v1 only supports categories=auto.";
+        }
+        report.properties.push_back(std::move(categories));
+        return;
+    }
+
+    if (node.type == NodeType::TargetEncoder) {
+        report.properties.push_back(ResolveStringProperty(
+            node,
+            "Target column",
+            "target_col",
+            "",
+            TruthOwner::Materializer,
+            true,
+            false,
+            true));
+        auto smoothing = ResolveFloatProperty(
+            node,
+            "Smoothing",
+            "smoothing",
+            "1.0",
+            TruthOwner::Materializer,
+            true,
+            false);
+        double parsed = 0.0;
+        if (ParseDoubleValue(smoothing.effective_value, parsed) &&
+            parsed < 0.0) {
+            smoothing.statuses.clear();
+            AddStatus(smoothing, TruthStatus::Missing);
+            smoothing.message = "smoothing must be >= 0.";
+        }
+        report.properties.push_back(std::move(smoothing));
+    }
+}
+
+void AddOutlierTruth(NodeTruthReport& report, const MLNode& node) {
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Inspected columns",
+        "columns",
+        "all",
+        TruthOwner::Materializer,
+        true,
+        false,
+        false,
+        "all means the materializer auto-detects numeric columns."));
+
+    auto method = ResolveStringProperty(
+        node,
+        "Detection method",
+        "method",
+        "iqr",
+        TruthOwner::Materializer,
+        true,
+        false,
+        false);
+    if (method.effective_value != "iqr" && method.effective_value != "zscore") {
+        method.statuses.clear();
+        AddStatus(method, TruthStatus::Unsupported);
+        method.message = "OutlierDetector v1 supports only iqr and zscore.";
+    }
+    report.properties.push_back(std::move(method));
+
+    auto threshold = ResolveFloatProperty(
+        node,
+        "Threshold",
+        "threshold",
+        "1.5",
+        TruthOwner::Materializer,
+        true,
+        false);
+    double parsed = 0.0;
+    if (ParseDoubleValue(threshold.effective_value, parsed) && parsed <= 0.0) {
+        threshold.statuses.clear();
+        AddStatus(threshold, TruthStatus::Missing);
+        threshold.message = "threshold must be > 0.";
+    }
+    report.properties.push_back(std::move(threshold));
+
+    auto action = ResolveStringProperty(
+        node,
+        "Action",
+        "action",
+        "flag",
+        TruthOwner::Materializer,
+        true,
+        false,
+        false,
+        "v1 appends an is_outlier flag column.");
+    if (action.effective_value != "flag") {
+        action.statuses.clear();
+        AddStatus(action, TruthStatus::Unsupported);
+        action.message = "OutlierDetector v1 only supports action=flag.";
+    }
+    report.properties.push_back(std::move(action));
+}
+
+void AddVectorizerTruth(NodeTruthReport& report,
+                        const MLNode& node,
+                        bool count_vectorizer) {
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Text column",
+        "text_col",
+        "",
+        TruthOwner::Materializer,
+        true,
+        false,
+        true));
+
+    auto max_features = ResolveIntProperty(
+        node,
+        "Effective feature width",
+        "max_features",
+        "2000",
+        TruthOwner::Materializer,
+        true,
+        false,
+        "Dense output width is capped by max_features.");
+    RequirePositiveInt(max_features, "max_features");
+    report.properties.push_back(std::move(max_features));
+
+    if (!count_vectorizer) {
+        auto min_df = ResolveIntProperty(
+            node,
+            "Minimum document frequency",
+            "min_df",
+            "1",
+            TruthOwner::Materializer,
+            true,
+            false);
+        RequirePositiveInt(min_df, "min_df");
+        report.properties.push_back(std::move(min_df));
+    }
+
+    auto ngram_min = ResolveIntProperty(
+        node,
+        "Minimum n-gram",
+        "ngram_min",
+        "1",
+        TruthOwner::Materializer,
+        true,
+        false);
+    auto ngram_max = ResolveIntProperty(
+        node,
+        "Maximum n-gram",
+        "ngram_max",
+        "1",
+        TruthOwner::Materializer,
+        true,
+        false);
+    if (const std::string* range = FindParameter(node, "ngram_range");
+        range && !range->empty() &&
+        !HasNonEmptyParameter(node, "ngram_min") &&
+        !HasNonEmptyParameter(node, "ngram_max")) {
+        const auto comma = range->find(',');
+        if (comma == std::string::npos) {
+            ngram_max.statuses.clear();
+            AddStatus(ngram_max, TruthStatus::Missing);
+            ngram_max.message = "ngram_range must be formatted as min,max.";
+        } else {
+            ngram_min.source_key = "ngram_range";
+            ngram_min.effective_value = range->substr(0, comma);
+            ngram_min.statuses.clear();
+            AddStatus(ngram_min, TruthStatus::AliasUsed);
+            ngram_max.source_key = "ngram_range";
+            ngram_max.effective_value = range->substr(comma + 1);
+            ngram_max.statuses.clear();
+            AddStatus(ngram_max, TruthStatus::AliasUsed);
+        }
+    }
+    RequirePositiveInt(ngram_min, "ngram_min");
+    RequirePositiveInt(ngram_max, "ngram_max");
+    const int min_parsed = ParsePositiveInt(&ngram_min.effective_value);
+    const int max_parsed = ParsePositiveInt(&ngram_max.effective_value);
+    if (min_parsed > 0 && max_parsed > 0 && min_parsed > max_parsed) {
+        ngram_max.statuses.clear();
+        AddStatus(ngram_max, TruthStatus::Missing);
+        ngram_max.message = "ngram_max must be >= ngram_min.";
+    } else if (max_parsed > 3) {
+        ngram_max.statuses.clear();
+        AddStatus(ngram_max, TruthStatus::Unsupported);
+        ngram_max.message = "ngram_max > 3 is not supported yet.";
+    }
+    report.properties.push_back(std::move(ngram_min));
+    report.properties.push_back(std::move(ngram_max));
+
+    if (count_vectorizer) {
+        report.properties.push_back(ResolveBoolProperty(
+            node,
+            "Binary counts",
+            "binary",
+            false,
+            TruthOwner::Materializer,
+            true,
+            false));
+    }
+
+    auto output_format = ResolveStringProperty(
+        node,
+        "Output format",
+        "output_format",
+        "dense",
+        TruthOwner::Materializer,
+        true,
+        false,
+        false,
+        "Current materializer support is dense Arrow feature columns.");
+    if (output_format.effective_value != "dense") {
+        output_format.statuses.clear();
+        AddStatus(output_format, TruthStatus::Unsupported);
+        output_format.message = "Sparse vectorizer output is planned but not executable.";
+    }
+    report.properties.push_back(std::move(output_format));
+}
+
+void RequireFloatAtLeast(PropertyTruth& truth,
+                         const std::string& key,
+                         double minimum,
+                         bool inclusive) {
+    double parsed = 0.0;
+    if (!ParseDoubleValue(truth.effective_value, parsed) ||
+        (inclusive ? parsed < minimum : parsed <= minimum)) {
+        truth.statuses.clear();
+        AddStatus(truth, TruthStatus::Missing);
+        truth.message = key + (inclusive ? " must be >= " : " must be > ") +
+                        std::to_string(minimum) + ".";
+    }
+}
+
+void RequireFloatInRange(PropertyTruth& truth,
+                         const std::string& key,
+                         double minimum,
+                         double maximum,
+                         bool include_minimum,
+                         bool include_maximum) {
+    double parsed = 0.0;
+    if (!ParseDoubleValue(truth.effective_value, parsed)) {
+        truth.statuses.clear();
+        AddStatus(truth, TruthStatus::Missing);
+        truth.message = key + " must be a finite number.";
+        return;
+    }
+    const bool below = include_minimum ? parsed < minimum : parsed <= minimum;
+    const bool above = include_maximum ? parsed > maximum : parsed >= maximum;
+    if (below || above) {
+        truth.statuses.clear();
+        AddStatus(truth, TruthStatus::Missing);
+        truth.message = key + " must be in the supported range.";
+    }
+}
+
+PropertyTruth ResolveLearningRateTruth(const MLNode& node,
+                                       std::string default_value) {
+    PropertyTruth truth;
+    truth.label = "Learning rate";
+    truth.canonical_key = "learning_rate";
+    truth.default_value = std::move(default_value);
+    truth.owner = TruthOwner::Runtime;
+    truth.quick_editable = true;
+
+    const std::string* learning_rate = FindParameter(node, "learning_rate");
+    const std::string* lr = FindParameter(node, "lr");
+    if (learning_rate && !learning_rate->empty()) {
+        truth.source_key = "learning_rate";
+        truth.effective_value = *learning_rate;
+        AddStatus(truth, TruthStatus::OK);
+        if (lr && !lr->empty() && *lr != *learning_rate) {
+            truth.aliases_present.push_back({"lr", *lr});
+            AddStatus(truth, TruthStatus::Conflicting);
+            truth.message = "Legacy lr alias differs from learning_rate.";
+        }
+    } else if (lr && !lr->empty()) {
+        truth.source_key = "lr";
+        truth.effective_value = *lr;
+        truth.aliases_present.push_back({"lr", *lr});
+        AddStatus(truth, TruthStatus::AliasUsed);
+    } else {
+        truth.source_key = "default";
+        truth.effective_value = truth.default_value;
+        AddStatus(truth, TruthStatus::Defaulted);
+    }
+    RequireFloatAtLeast(truth, "learning_rate", 0.0, false);
+    return truth;
+}
+
+void AddUnsupportedOptimizerParameterTruth(NodeTruthReport& report,
+                                           const MLNode& node,
+                                           const std::string& key,
+                                           const std::string& label,
+                                           bool compiler_serialized) {
+    const std::string* value = FindParameter(node, key);
+    if (!value || value->empty()) {
+        return;
+    }
+    PropertyTruth truth;
+    truth.label = label;
+    truth.canonical_key = key;
+    truth.source_key = key;
+    truth.effective_value = *value;
+    truth.owner = compiler_serialized ? TruthOwner::Compiler
+                                      : TruthOwner::UI;
+    truth.quick_editable = false;
+    AddStatus(truth, TruthStatus::Unsupported);
+    truth.message = compiler_serialized
+        ? "GraphCompiler serializes this optimizer parameter, but current "
+          "optimizer construction applies only optimizer type and learning_rate."
+        : "This optimizer parameter is present on the node but is not consumed "
+          "by GraphCompiler or current optimizer construction.";
+    report.properties.push_back(std::move(truth));
+}
+
+void AddOptimizerTruth(NodeTruthReport& report, const MLNode& node) {
+    std::string default_lr = "0.001";
+    if (node.type == NodeType::SGD || node.type == NodeType::Adagrad) {
+        default_lr = "0.01";
+    } else if (node.type == NodeType::NAdam) {
+        default_lr = "0.002";
+    }
+    report.properties.push_back(ResolveLearningRateTruth(node, default_lr));
+
+    AddUnsupportedOptimizerParameterTruth(
+        report, node, "momentum", "Momentum", true);
+    AddUnsupportedOptimizerParameterTruth(
+        report, node, "beta1", "Beta1", true);
+    AddUnsupportedOptimizerParameterTruth(
+        report, node, "beta2", "Beta2", true);
+    AddUnsupportedOptimizerParameterTruth(
+        report, node, "weight_decay", "Weight decay", true);
+    AddUnsupportedOptimizerParameterTruth(
+        report, node, "epsilon", "Epsilon", false);
+    AddUnsupportedOptimizerParameterTruth(
+        report, node, "alpha", "RMSprop alpha", false);
+    AddUnsupportedOptimizerParameterTruth(
+        report, node, "lr_decay", "Learning-rate decay", false);
+}
+
+bool IsLossNode(NodeType type) {
+    return type == NodeType::MSELoss ||
+           type == NodeType::CrossEntropyLoss ||
+           type == NodeType::FocalLoss ||
+           type == NodeType::BCELoss ||
+           type == NodeType::BCEWithLogits ||
+           type == NodeType::L1Loss ||
+           type == NodeType::SmoothL1Loss ||
+           type == NodeType::HuberLoss ||
+           type == NodeType::NLLLoss ||
+           type == NodeType::SoftDiceLoss ||
+           type == NodeType::TverskyLoss ||
+           type == NodeType::JaccardLoss;
+}
+
+void AddLossTruth(NodeTruthReport& report, const MLNode& node) {
+    auto reduction = ResolveStringProperty(
+        node,
+        "Reduction",
+        "reduction",
+        "mean",
+        TruthOwner::Runtime,
+        true,
+        false,
+        false);
+    if (reduction.effective_value != "mean" &&
+        reduction.effective_value != "sum" &&
+        reduction.effective_value != "none") {
+        reduction.statuses.clear();
+        AddStatus(reduction, TruthStatus::Unsupported);
+        reduction.message = "Loss reduction must be one of mean, sum, none.";
+    }
+    report.properties.push_back(std::move(reduction));
+
+    if (node.type == NodeType::CrossEntropyLoss) {
+        auto label_smoothing = ResolveFloatProperty(
+            node,
+            "Label smoothing",
+            "label_smoothing",
+            "0.0",
+            TruthOwner::Runtime,
+            true,
+            false);
+        RequireFloatInRange(label_smoothing, "label_smoothing",
+                            0.0, 1.0, true, false);
+        report.properties.push_back(std::move(label_smoothing));
+
+        auto class_weight = ResolveStringProperty(
+            node,
+            "Class weight mode",
+            "class_weight",
+            "none",
+            TruthOwner::Runtime,
+            true,
+            false,
+            false);
+        if (class_weight.effective_value == "balanced") {
+            class_weight.statuses.clear();
+            AddStatus(class_weight, TruthStatus::Unsupported);
+            class_weight.message =
+                "class_weight=balanced is not resolved before loss construction; "
+                "training falls back to unweighted CrossEntropy.";
+        } else if (class_weight.effective_value == "manual" &&
+                   !HasNonEmptyParameter(node, "class_weights")) {
+            class_weight.statuses.clear();
+            AddStatus(class_weight, TruthStatus::Missing);
+            class_weight.message =
+                "class_weight=manual requires class_weights.";
+        }
+        report.properties.push_back(std::move(class_weight));
+        return;
+    }
+
+    if (node.type == NodeType::BCEWithLogits) {
+        auto pos_weight = ResolveFloatProperty(
+            node,
+            "Positive-class weight",
+            "pos_weight",
+            "1.0",
+            TruthOwner::Runtime,
+            true,
+            false);
+        RequireFloatAtLeast(pos_weight, "pos_weight", 0.0, false);
+        report.properties.push_back(std::move(pos_weight));
+        return;
+    }
+
+    if (node.type == NodeType::FocalLoss) {
+        auto alpha = ResolveFloatProperty(
+            node, "Alpha", "alpha", "0.25", TruthOwner::Runtime, true, false);
+        RequireFloatAtLeast(alpha, "alpha", 0.0, true);
+        report.properties.push_back(std::move(alpha));
+        auto gamma = ResolveFloatProperty(
+            node, "Gamma", "gamma", "2.0", TruthOwner::Runtime, true, false);
+        RequireFloatAtLeast(gamma, "gamma", 0.0, true);
+        report.properties.push_back(std::move(gamma));
+        return;
+    }
+
+    if (node.type == NodeType::SmoothL1Loss ||
+        node.type == NodeType::HuberLoss) {
+        auto beta = ResolveFloatProperty(
+            node, "Beta", "beta", "1.0", TruthOwner::Runtime, true, false);
+        RequireFloatAtLeast(beta, "beta", 0.0, false);
+        report.properties.push_back(std::move(beta));
+        return;
+    }
+
+    if (node.type == NodeType::SoftDiceLoss ||
+        node.type == NodeType::JaccardLoss) {
+        auto smooth = ResolveFloatProperty(
+            node, "Smooth", "smooth", "1.0", TruthOwner::Runtime, true, false);
+        RequireFloatAtLeast(smooth, "smooth", 0.0, true);
+        report.properties.push_back(std::move(smooth));
+        return;
+    }
+
+    if (node.type == NodeType::TverskyLoss) {
+        auto alpha = ResolveFloatProperty(
+            node, "Alpha", "alpha", "0.5", TruthOwner::Runtime, true, false);
+        RequireFloatAtLeast(alpha, "alpha", 0.0, true);
+        report.properties.push_back(std::move(alpha));
+        auto beta = ResolveFloatProperty(
+            node, "Beta", "beta", "0.5", TruthOwner::Runtime, true, false);
+        RequireFloatAtLeast(beta, "beta", 0.0, true);
+        report.properties.push_back(std::move(beta));
+        auto smooth = ResolveFloatProperty(
+            node, "Smooth", "smooth", "1.0", TruthOwner::Runtime, true, false);
+        RequireFloatAtLeast(smooth, "smooth", 0.0, true);
+        report.properties.push_back(std::move(smooth));
+    }
+}
+
+void AddMetricTruth(NodeTruthReport& report, const MLNode& node) {
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Actual column",
+        "actual_col",
+        "",
+        TruthOwner::Materializer,
+        true,
+        false,
+        true));
+
+    const bool score_metric = node.type == NodeType::ROCCurveNode ||
+                              node.type == NodeType::PRCurveNode;
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        score_metric ? "Score column" : "Predicted column",
+        score_metric ? "score_col" : "predicted_col",
+        "",
+        TruthOwner::Materializer,
+        true,
+        false,
+        true));
+
+    if (node.type == NodeType::RegressionMetricsNode ||
+        node.type == NodeType::ClassificationMetricsNode) {
+        report.properties.push_back(ResolveStringProperty(
+            node,
+            "Metrics",
+            "metrics",
+            node.type == NodeType::RegressionMetricsNode
+                ? "mse,rmse,mae,r2"
+                : "accuracy,precision,recall,f1,weighted_f1,count",
+            TruthOwner::Materializer,
+            true,
+            false,
+            false));
+    }
+}
+
+PropertyTruth ResolveAliasedFloatProperty(const MLNode& node,
+                                          std::string label,
+                                          std::string canonical_key,
+                                          std::vector<std::string> aliases,
+                                          std::string default_value,
+                                          TruthOwner owner,
+                                          bool quick_editable,
+                                          bool requires_dialog,
+                                          std::string message = {}) {
+    PropertyTruth truth;
+    truth.label = std::move(label);
+    truth.canonical_key = std::move(canonical_key);
+    truth.default_value = std::move(default_value);
+    truth.owner = owner;
+    truth.quick_editable = quick_editable;
+    truth.requires_dialog = requires_dialog;
+    truth.message = std::move(message);
+
+    const std::string* canonical = FindParameter(node, truth.canonical_key);
+    if (canonical && !canonical->empty()) {
+        truth.source_key = truth.canonical_key;
+        truth.effective_value = *canonical;
+    }
+
+    for (const auto& alias : aliases) {
+        const std::string* value = FindParameter(node, alias);
+        if (!value) {
+            continue;
+        }
+        truth.aliases_present.push_back({alias, *value});
+        if (truth.effective_value.empty() && !value->empty()) {
+            truth.source_key = alias;
+            truth.effective_value = *value;
+            AddStatus(truth, TruthStatus::AliasUsed);
+        } else if (!value->empty() && !truth.effective_value.empty() &&
+                   *value != truth.effective_value) {
+            AddStatus(truth, TruthStatus::Conflicting);
+            if (!truth.message.empty()) {
+                truth.message += " ";
+            }
+            truth.message += "Alias value does not match the effective value.";
+        } else {
+            AddStatus(truth, TruthStatus::AliasUsed);
+        }
+    }
+
+    if (truth.effective_value.empty()) {
+        truth.source_key = "default";
+        truth.effective_value = truth.default_value;
+        AddStatus(truth, TruthStatus::Defaulted);
+    } else if (truth.statuses.empty()) {
+        AddStatus(truth, TruthStatus::OK);
+    }
+
+    double parsed = 0.0;
+    if (!ParseDoubleValue(truth.effective_value, parsed)) {
+        truth.statuses.clear();
+        AddStatus(truth, TruthStatus::Missing);
+        truth.message = truth.canonical_key + " must be a finite number.";
+    }
+    if (truth.requires_dialog) {
+        AddStatus(truth, TruthStatus::RequiresDialog);
+    }
+    return truth;
+}
+
+bool IsActivationNode(NodeType type) {
+    return type == NodeType::ReLU ||
+           type == NodeType::Sigmoid ||
+           type == NodeType::Softmax ||
+           type == NodeType::GELU ||
+           type == NodeType::Tanh ||
+           type == NodeType::LeakyReLU;
+}
+
+bool IsShapeOpNode(NodeType type) {
+    return type == NodeType::Flatten ||
+           type == NodeType::Reshape ||
+           type == NodeType::View ||
+           type == NodeType::Permute ||
+           type == NodeType::Squeeze ||
+           type == NodeType::Unsqueeze;
+}
+
+void AddCoreLayerTruth(NodeTruthReport& report, const MLNode& node) {
+    if (node.type == NodeType::Dense ||
+        node.type == NodeType::TimeDistributed) {
+        auto units = ResolveIntProperty(
+            node,
+            node.type == NodeType::Dense ? "Output units"
+                                         : "Per-timestep output units",
+            "units",
+            node.type == NodeType::Dense ? "64" : "128",
+            TruthOwner::Compiler,
+            true,
+            false,
+            node.type == NodeType::Dense
+                ? "GraphCompiler and ModelBuilder use units as the linear output width."
+                : "GraphCompiler uses units as the per-timestep classifier width.");
+        RequirePositiveInt(units, "units");
+        report.properties.push_back(std::move(units));
+
+        const std::string* activation = FindParameter(node, "activation");
+        if (activation && !activation->empty() && *activation != "none") {
+            PropertyTruth activation_truth;
+            activation_truth.label = "Inline activation";
+            activation_truth.canonical_key = "activation";
+            activation_truth.source_key = "activation";
+            activation_truth.effective_value = *activation;
+            activation_truth.owner = TruthOwner::Compiler;
+            activation_truth.quick_editable = false;
+            AddStatus(activation_truth, TruthStatus::Unsupported);
+            activation_truth.message =
+                "Dense activation parameters are not consumed by ModelBuilder; "
+                "use an explicit activation node after Dense.";
+            report.properties.push_back(std::move(activation_truth));
+        }
+        return;
+    }
+
+    if (node.type == NodeType::Dropout) {
+        auto rate = ResolveFloatProperty(
+            node,
+            "Dropout rate",
+            "rate",
+            "0.5",
+            TruthOwner::Compiler,
+            true,
+            false,
+            "Dropout preserves tensor shape and randomly zeros activations during training.");
+        RequireFloatInRange(rate, "rate", 0.0, 1.0, true, false);
+        report.properties.push_back(std::move(rate));
+        return;
+    }
+
+    if (node.type == NodeType::BatchNorm) {
+        auto eps = ResolveAliasedFloatProperty(
+            node,
+            "Epsilon",
+            "eps",
+            {"epsilon"},
+            "1e-5",
+            TruthOwner::Compiler,
+            true,
+            false,
+            "GraphCompiler consumes eps; legacy epsilon maps to eps for truth.");
+        RequireFloatAtLeast(eps, "eps", 0.0, false);
+        report.properties.push_back(std::move(eps));
+
+        auto momentum = ResolveFloatProperty(
+            node,
+            "Momentum",
+            "momentum",
+            "0.1",
+            TruthOwner::Compiler,
+            true,
+            false);
+        RequireFloatAtLeast(momentum, "momentum", 0.0, false);
+        report.properties.push_back(std::move(momentum));
+        return;
+    }
+
+    if (node.type == NodeType::LayerNorm) {
+        auto normalized_shape = ResolveIntProperty(
+            node,
+            "Normalized shape",
+            "normalized_shape",
+            "128",
+            TruthOwner::Compiler,
+            true,
+            false,
+            "When absent, ModelBuilder falls back to current input width.");
+        RequirePositiveInt(normalized_shape, "normalized_shape");
+        report.properties.push_back(std::move(normalized_shape));
+
+        auto eps = ResolveAliasedFloatProperty(
+            node,
+            "Epsilon",
+            "eps",
+            {"epsilon"},
+            "1e-5",
+            TruthOwner::Runtime,
+            true,
+            false,
+            "ModelBuilder accepts legacy epsilon and canonical eps.");
+        RequireFloatAtLeast(eps, "eps", 0.0, false);
+        report.properties.push_back(std::move(eps));
+        return;
+    }
+
+    if (IsActivationNode(node.type)) {
+        PropertyTruth shape;
+        shape.label = "Shape effect";
+        shape.canonical_key = "shape_effect";
+        shape.source_key = "compiler";
+        shape.effective_value = "preserves input shape";
+        shape.owner = TruthOwner::Compiler;
+        shape.quick_editable = false;
+        AddStatus(shape, TruthStatus::OK);
+        report.properties.push_back(std::move(shape));
+
+        if (node.type == NodeType::LeakyReLU) {
+            auto slope = ResolveFloatProperty(
+                node,
+                "Negative slope",
+                "negative_slope",
+                "0.01",
+                TruthOwner::Compiler,
+                true,
+                false);
+            RequireFloatAtLeast(slope, "negative_slope", 0.0, true);
+            report.properties.push_back(std::move(slope));
+        }
+        return;
+    }
+
+    if (node.type == NodeType::Flatten) {
+        PropertyTruth shape;
+        shape.label = "Shape effect";
+        shape.canonical_key = "shape_effect";
+        shape.source_key = "compiler";
+        shape.effective_value = "flattens all input dimensions";
+        shape.owner = TruthOwner::Compiler;
+        shape.quick_editable = false;
+        AddStatus(shape, TruthStatus::OK);
+        report.properties.push_back(std::move(shape));
+        return;
+    }
+
+    if (node.type == NodeType::Reshape || node.type == NodeType::View) {
+        report.properties.push_back(ResolveStringProperty(
+            node,
+            "Target shape",
+            "shape",
+            "-1,256",
+            TruthOwner::Compiler,
+            true,
+            false,
+            true,
+            "One -1 entry can be inferred by the compiler."));
+        return;
+    }
+
+    if (node.type == NodeType::Permute) {
+        report.properties.push_back(ResolveStringProperty(
+            node,
+            "Dimension order",
+            "dims",
+            "0,2,1",
+            TruthOwner::Compiler,
+            true,
+            false,
+            true));
+        return;
+    }
+
+    if (node.type == NodeType::Squeeze ||
+        node.type == NodeType::Unsqueeze) {
+        auto dim = ResolveIntProperty(
+            node,
+            "Dimension",
+            "dim",
+            "0",
+            TruthOwner::Compiler,
+            true,
+            false);
+        report.properties.push_back(std::move(dim));
+    }
+}
+
+void AddSequenceVocabularyTruth(NodeTruthReport& report, const MLNode& node) {
+    const bool is_token = node.type == NodeType::TokenVocabulary;
+    const bool is_pos = node.type == NodeType::POSVocabulary;
+    const bool is_tag = node.type == NodeType::NERTagVocabulary;
+    const std::string default_column =
+        is_token ? "tokens" : (is_pos ? "pos_tags" : "ner_tags");
+
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Source column",
+        "column",
+        default_column,
+        TruthOwner::Materializer,
+        true,
+        false,
+        true,
+        "PipelineExecutor reads this sequence column from the input table."));
+
+    auto min_frequency = ResolveAliasedIntProperty(
+        node,
+        "Minimum frequency",
+        "min_frequency",
+        {"min_freq"},
+        "1",
+        TruthOwner::Materializer,
+        false,
+        false,
+        "Runtime accepts canonical min_frequency and editor alias min_freq.");
+    RequirePositiveInt(min_frequency, "min_frequency");
+    report.properties.push_back(std::move(min_frequency));
+
+    auto max_size = ResolveAliasedIntProperty(
+        node,
+        "Max vocabulary size",
+        "max_size",
+        {"max_vocab_size"},
+        "0",
+        TruthOwner::Materializer,
+        false,
+        false,
+        "0 means unlimited; runtime accepts editor alias max_vocab_size.");
+    RequireNonNegativeInt(max_size, "max_size");
+    report.properties.push_back(std::move(max_size));
+
+    if (!is_tag) {
+        report.properties.push_back(ResolveBoolProperty(
+            node,
+            "Lowercase values",
+            "lowercase",
+            is_token,
+            TruthOwner::Materializer,
+            true,
+            false));
+        report.properties.push_back(ResolveStringProperty(
+            node,
+            "Padding token",
+            "pad_token",
+            "[PAD]",
+            TruthOwner::Materializer,
+            true,
+            false,
+            false));
+        report.properties.push_back(ResolveStringProperty(
+            node,
+            "Unknown token",
+            "unk_token",
+            "[UNK]",
+            TruthOwner::Materializer,
+            true,
+            false,
+            false));
+        return;
+    }
+
+    auto outside_tag = ResolveStringProperty(
+        node,
+        "Outside tag",
+        "outside_tag",
+        "O",
+        TruthOwner::Materializer,
+        true,
+        false,
+        false,
+        "The current tag vocabulary builder orders hard-coded O first.");
+    if (outside_tag.effective_value != "O") {
+        outside_tag.statuses.clear();
+        AddStatus(outside_tag, TruthStatus::Unsupported);
+        outside_tag.message =
+            "Custom outside_tag values are not consumed by BuildSequenceVocabulary.";
+    }
+    report.properties.push_back(std::move(outside_tag));
+
+    auto bio_scheme = ResolveStringProperty(
+        node,
+        "Tag scheme",
+        "bio_scheme",
+        "BIO",
+        TruthOwner::Materializer,
+        true,
+        false,
+        false);
+    if (bio_scheme.effective_value != "BIO") {
+        bio_scheme.statuses.clear();
+        AddStatus(bio_scheme, TruthStatus::Unsupported);
+        bio_scheme.message = "Only BIO tag vocabularies are supported.";
+    }
+    report.properties.push_back(std::move(bio_scheme));
+}
+
+void AddNERSequenceBuilderTruth(NodeTruthReport& report, const MLNode& node) {
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node,
+        "Token column",
+        "token_column",
+        {"tokens_column", "token_sequence_column"},
+        "tokens",
+        TruthOwner::Materializer,
+        true,
+        false,
+        true,
+        "Compiler and materializer use this as the token sequence source."));
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node,
+        "POS column",
+        "pos_column",
+        {"pos_sequence_column"},
+        "",
+        TruthOwner::Materializer,
+        true,
+        false,
+        false,
+        "Empty POS column disables POS ids."));
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node,
+        "Tag column",
+        "tag_column",
+        {"tags_column", "tag_sequence_column"},
+        "ner_tags",
+        TruthOwner::Materializer,
+        true,
+        false,
+        true));
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node,
+        "Sentence id column",
+        "sentence_id_column",
+        {"sequence_id_column"},
+        "",
+        TruthOwner::Materializer,
+        true,
+        false,
+        false));
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node,
+        "Target ids column",
+        "target_column",
+        {"target_ids_column", "decoder_target_column"},
+        "",
+        TruthOwner::Compiler,
+        false,
+        false,
+        false,
+        "GraphCompiler copies target aliases into the sequence batch contract."));
+
+    auto max_length = ResolveIntProperty(
+        node,
+        "Max sequence length",
+        "max_sequence_length",
+        "0",
+        TruthOwner::Compiler,
+        true,
+        false,
+        "0 means infer from data; negative values are clamped by runtime.");
+    RequireNonNegativeInt(max_length, "max_sequence_length");
+    report.properties.push_back(std::move(max_length));
+
+    report.properties.push_back(ResolveIntProperty(
+        node,
+        "Padding label ignore index",
+        "ignore_index",
+        "-100",
+        TruthOwner::Compiler,
+        true,
+        false));
+    report.properties.push_back(ResolveIntProperty(
+        node,
+        "Target ignore index",
+        "target_ignore_index",
+        "-100",
+        TruthOwner::Compiler,
+        false,
+        false));
+    report.properties.push_back(ResolveBoolProperty(
+        node,
+        "Create attention mask",
+        "create_attention_mask",
+        true,
+        TruthOwner::Compiler,
+        true,
+        false));
+
+    auto min_frequency = ResolveAliasedIntProperty(
+        node,
+        "Vocabulary minimum frequency",
+        "min_frequency",
+        {"min_freq"},
+        "1",
+        TruthOwner::Materializer,
+        false,
+        false,
+        "NERSequenceBuilder applies one vocabulary threshold to token/POS/tag vocabularies.");
+    RequirePositiveInt(min_frequency, "min_frequency");
+    report.properties.push_back(std::move(min_frequency));
+
+    auto max_size = ResolveAliasedIntProperty(
+        node,
+        "Vocabulary max size",
+        "max_size",
+        {"max_vocab_size"},
+        "0",
+        TruthOwner::Materializer,
+        false,
+        false,
+        "0 means unlimited; applied to token/POS/tag vocabularies.");
+    RequireNonNegativeInt(max_size, "max_size");
+    report.properties.push_back(std::move(max_size));
+}
+
+void AddSequenceTagOutputTruth(NodeTruthReport& report, const MLNode& node) {
+    auto num_tags = ResolveIntProperty(
+        node,
+        "Number of tags",
+        "num_tags",
+        "0",
+        TruthOwner::Compiler,
+        true,
+        false,
+        "0 means infer; positive values drive shape and CrossEntropy class-count validation.");
+    RequireNonNegativeInt(num_tags, "num_tags");
+    report.properties.push_back(std::move(num_tags));
+
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Tag vocabulary file",
+        "tag_vocab_file",
+        "",
+        TruthOwner::Exporter,
+        true,
+        false,
+        false,
+        "Exporter uses this path as the sequence tag vocabulary asset."));
+
+    auto decode_scheme = ResolveStringProperty(
+        node,
+        "Decode scheme",
+        "decode_scheme",
+        "BIO",
+        TruthOwner::Exporter,
+        true,
+        false,
+        false);
+    if (decode_scheme.effective_value != "BIO") {
+        decode_scheme.statuses.clear();
+        AddStatus(decode_scheme, TruthStatus::Unsupported);
+        decode_scheme.message = "Only BIO sequence-tag decode metadata is supported.";
+    }
+    report.properties.push_back(std::move(decode_scheme));
+}
+
+PropertyTruth BuildReadOnlyRuntimeTruth(std::string label,
+                                        std::string canonical_key,
+                                        std::string effective_value,
+                                        std::string message = {}) {
+    PropertyTruth truth;
+    truth.label = std::move(label);
+    truth.canonical_key = std::move(canonical_key);
+    truth.source_key = "PipelineExecutor";
+    truth.effective_value = std::move(effective_value);
+    truth.owner = TruthOwner::Runtime;
+    truth.quick_editable = false;
+    truth.message = std::move(message);
+    AddStatus(truth, TruthStatus::OK);
+    return truth;
+}
+
+void AddDataOutputTruth(NodeTruthReport& report, const MLNode& node) {
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node,
+        "Output file",
+        "file_path",
+        {"path"},
+        "",
+        TruthOwner::Exporter,
+        true,
+        true,
+        true,
+        "PipelineExecutor requires file_path; legacy path is accepted."));
+
+    auto format = ResolveAliasedStringPropertyWithDefault(
+        node,
+        "Output format",
+        "file_type",
+        {"format"},
+        "csv",
+        TruthOwner::Exporter,
+        true,
+        true,
+        false,
+        "DataOutput supports CSV and Parquet table export.");
+    format.effective_value = NormalizeAsciiToken(format.effective_value);
+    if (format.effective_value != "csv" && format.effective_value != "parquet") {
+        format.statuses.clear();
+        AddStatus(format, TruthStatus::Unsupported);
+        format.message = "DataOutput runtime supports only csv and parquet.";
+    }
+    report.properties.push_back(std::move(format));
+
+    report.properties.push_back(BuildReadOnlyRuntimeTruth(
+        "Runtime result",
+        "export_result",
+        "passes through input dataset and sets output path",
+        "On success, the input dataset remains available downstream and ctx.output_dataset is the output file path."));
+}
+
+const char* ExportNodeFormat(NodeType type) {
+    switch (type) {
+    case NodeType::ExportCSV: return "csv";
+    case NodeType::ExportParquet: return "parquet";
+    case NodeType::ExportJSON: return "json";
+    default: break;
+    }
+    return "";
+}
+
+void AddFixedExportTruth(NodeTruthReport& report, const MLNode& node) {
+    const std::string format = ExportNodeFormat(node.type);
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node,
+        "Output file",
+        "file_path",
+        {"path"},
+        "",
+        TruthOwner::Exporter,
+        true,
+        false,
+        true,
+        "PipelineExecutor accepts legacy path as an alias."));
+
+    report.properties.push_back(BuildReadOnlyRuntimeTruth(
+        "Export format",
+        "export_format",
+        format,
+        node.type == NodeType::ExportJSON
+            ? "ExportJSON writes Arrow table rows as a JSON array."
+            : "Exporter writes the input Arrow table through DataRegistry."));
+}
+
+bool HasIncomingLink(const MLNode& node, const NodeTruthContext& context) {
+    if (!context.links) {
+        return false;
+    }
+    return std::any_of(context.links->begin(), context.links->end(),
+                       [&node](const NodeLink& link) {
+                           return link.to_node == node.id;
+                       });
+}
+
+void AddDataConvertTruth(NodeTruthReport& report,
+                         const MLNode& node,
+                         const NodeTruthContext& context) {
+    const bool has_upstream_dataset = HasIncomingLink(node, context);
+    auto input_path = ResolveStringProperty(
+        node,
+        "Input file",
+        "input_path",
+        "",
+        TruthOwner::Loader,
+        true,
+        true,
+        !has_upstream_dataset,
+        "Required only when no upstream dataset is connected.");
+    if (has_upstream_dataset && HasStatus(input_path.statuses,
+                                          TruthStatus::Missing)) {
+        input_path.statuses.clear();
+        AddStatus(input_path, TruthStatus::RuntimeOnly);
+        input_path.message =
+            "Input is resolved from the connected upstream Arrow dataset.";
+    }
+    report.properties.push_back(std::move(input_path));
+
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Output file",
+        "output_path",
+        "",
+        TruthOwner::Exporter,
+        true,
+        true,
+        true,
+        "DataConvert writes a file and reloads it into a registered Arrow dataset."));
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Input format",
+        "input_format",
+        "auto",
+        TruthOwner::Loader,
+        true,
+        true,
+        false));
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Output format",
+        "output_format",
+        "auto",
+        TruthOwner::Exporter,
+        true,
+        true,
+        false));
+    report.properties.push_back(BuildReadOnlyRuntimeTruth(
+        "Runtime result",
+        "convert_result",
+        "file plus registered dataset",
+        "On success, DataConvert writes the output file, reloads it, and registers ds_dataconvert_<node id>."));
+}
+
+void AddDeployToNodeEditorTruth(NodeTruthReport& report, const MLNode& node) {
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Deployment dataset name",
+        "name",
+        "deployed_" + std::to_string(node.id),
+        TruthOwner::Runtime,
+        true,
+        false,
+        false,
+        "When empty, PipelineExecutor uses deployed_<node id>."));
+    report.properties.push_back(BuildReadOnlyRuntimeTruth(
+        "Runtime result",
+        "deployment_result",
+        "deployment_ready=true",
+        "On success, ctx.deployment_dataset and ctx.output_dataset are set to the deployment dataset name."));
+}
+
+void AddDataProfilerTruth(NodeTruthReport& report, const MLNode& node) {
+    auto minimal = ResolveBoolProperty(
+        node,
+        "Minimal mode",
+        "minimal",
+        false,
+        TruthOwner::Runtime,
+        false,
+        false,
+        "Current DataProfiler executor always emits the same per-column profile schema.");
+    if (minimal.effective_value == "true") {
+        minimal.statuses.clear();
+        AddStatus(minimal, TruthStatus::Unsupported);
+        minimal.message =
+            "Legacy minimal=true values are not consumed by ExecuteDataProfiler.";
+    }
+    report.properties.push_back(std::move(minimal));
+    report.properties.push_back(BuildReadOnlyRuntimeTruth(
+        "Report schema",
+        "profile_report_schema",
+        "column,type,nullable,row_count,null_count,non_null_count",
+        "ExecuteDataProfiler registers ds_dataprofiler_<node id>."));
+}
+
+void AddTreeModelPredictorTruth(NodeTruthReport& report, const MLNode& node) {
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Model artifact",
+        "model_path",
+        "",
+        TruthOwner::Runtime,
+        true,
+        false,
+        true,
+        "TreeModelPredictor requires a saved CyxWiz tree-family JSON artifact."));
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Feature columns",
+        "feature_cols",
+        "artifact feature order",
+        TruthOwner::Runtime,
+        true,
+        false,
+        false,
+        "Empty feature_cols uses feature names stored in the model artifact."));
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Prediction column",
+        "prediction_col",
+        "prediction",
+        TruthOwner::Runtime,
+        true,
+        false,
+        false));
+    report.properties.push_back(BuildReadOnlyRuntimeTruth(
+        "Inference result",
+        "inference_result",
+        "input table plus prediction column",
+        "PipelineOperatorFactory routes TreeModelPredictor to the native tree model predictor operator."));
 }
 
 const MLNode* FindNodeById(const std::vector<MLNode>& nodes, int id) {
@@ -649,6 +2311,86 @@ const char* TruthOwnerName(TruthOwner owner) {
     return "Unknown";
 }
 
+const std::vector<NodeType>& SpecializedTruthCoverageNodeTypes() {
+    static const std::vector<NodeType> node_types = {
+        NodeType::DataInput,
+        NodeType::DataOutput,
+        NodeType::DataConvert,
+        NodeType::DeployToNodeEditorNode,
+        NodeType::DataLoader,
+        NodeType::DataProfiler,
+        NodeType::StandardScaler,
+        NodeType::MinMaxScaler,
+        NodeType::RobustScaler,
+        NodeType::LabelEncoder,
+        NodeType::OrdinalEncoder,
+        NodeType::TargetEncoder,
+        NodeType::OutlierDetector,
+        NodeType::TFIDFVectorizer,
+        NodeType::CountVectorizer,
+        NodeType::TextTokenizer,
+        NodeType::RegressionMetricsNode,
+        NodeType::ClassificationMetricsNode,
+        NodeType::ConfusionMatrixNode,
+        NodeType::ROCCurveNode,
+        NodeType::PRCurveNode,
+        NodeType::Dense,
+        NodeType::TimeDistributed,
+        NodeType::Dropout,
+        NodeType::BatchNorm,
+        NodeType::LayerNorm,
+        NodeType::ReLU,
+        NodeType::Sigmoid,
+        NodeType::Softmax,
+        NodeType::GELU,
+        NodeType::Tanh,
+        NodeType::LeakyReLU,
+        NodeType::Flatten,
+        NodeType::Reshape,
+        NodeType::View,
+        NodeType::Permute,
+        NodeType::Squeeze,
+        NodeType::Unsqueeze,
+        NodeType::LSTM,
+        NodeType::GRU,
+        NodeType::NERSequenceBuilder,
+        NodeType::TokenVocabulary,
+        NodeType::POSVocabulary,
+        NodeType::NERTagVocabulary,
+        NodeType::SequenceTagOutput,
+        NodeType::MSELoss,
+        NodeType::FocalLoss,
+        NodeType::BCELoss,
+        NodeType::BCEWithLogits,
+        NodeType::L1Loss,
+        NodeType::SmoothL1Loss,
+        NodeType::HuberLoss,
+        NodeType::NLLLoss,
+        NodeType::SoftDiceLoss,
+        NodeType::TverskyLoss,
+        NodeType::JaccardLoss,
+        NodeType::Adam,
+        NodeType::SGD,
+        NodeType::AdamW,
+        NodeType::RMSprop,
+        NodeType::Adagrad,
+        NodeType::NAdam,
+        NodeType::Output,
+        NodeType::CrossEntropyLoss,
+        NodeType::ExportCSV,
+        NodeType::ExportParquet,
+        NodeType::ExportJSON,
+        NodeType::TreeModelPredictor,
+    };
+    return node_types;
+}
+
+bool HasSpecializedTruthCoverage(NodeType type) {
+    const auto& node_types = SpecializedTruthCoverageNodeTypes();
+    return std::find(node_types.begin(), node_types.end(), type) !=
+           node_types.end();
+}
+
 NodeTruthReport ResolveNodeTruth(const MLNode& node,
                                  const NodeTruthContext& context) {
     NodeTruthReport report;
@@ -694,23 +2436,40 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
         report.properties.push_back(std::move(label_truth));
     }
 
-    if (node.type == NodeType::TFIDFVectorizer) {
-        auto max_features = ResolveIntProperty(
+    if (node.type == NodeType::DataOutput) {
+        AddDataOutputTruth(report, node);
+    }
+
+    if (node.type == NodeType::DataConvert) {
+        AddDataConvertTruth(report, node, context);
+    }
+
+    if (node.type == NodeType::DeployToNodeEditorNode) {
+        AddDeployToNodeEditorTruth(report, node);
+    }
+
+    if (node.type == NodeType::StandardScaler ||
+        node.type == NodeType::MinMaxScaler ||
+        node.type == NodeType::RobustScaler) {
+        AddPreprocessingScalerTruth(report, node);
+    }
+
+    if (node.type == NodeType::LabelEncoder ||
+        node.type == NodeType::OrdinalEncoder ||
+        node.type == NodeType::TargetEncoder) {
+        AddEncoderTruth(report, node);
+    }
+
+    if (node.type == NodeType::OutlierDetector) {
+        AddOutlierTruth(report, node);
+    }
+
+    if (node.type == NodeType::TFIDFVectorizer ||
+        node.type == NodeType::CountVectorizer) {
+        AddVectorizerTruth(
+            report,
             node,
-            "Effective feature width",
-            "max_features",
-            "2000",
-            TruthOwner::Materializer,
-            true,
-            false,
-            "Dense output width is capped by max_features.");
-        const int parsed = ParsePositiveInt(&max_features.effective_value);
-        if (parsed <= 0) {
-            max_features.statuses.clear();
-            AddStatus(max_features, TruthStatus::Missing);
-            max_features.message = "max_features must be >= 1.";
-        }
-        report.properties.push_back(std::move(max_features));
+            node.type == NodeType::CountVectorizer);
     }
 
     if (node.type == NodeType::TextTokenizer) {
@@ -730,6 +2489,24 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
             max_length.message = "max_length must be >= 1.";
         }
         report.properties.push_back(std::move(max_length));
+    }
+
+    if (node.type == NodeType::RegressionMetricsNode ||
+        node.type == NodeType::ClassificationMetricsNode ||
+        node.type == NodeType::ConfusionMatrixNode ||
+        node.type == NodeType::ROCCurveNode ||
+        node.type == NodeType::PRCurveNode) {
+        AddMetricTruth(report, node);
+    }
+
+    if (node.type == NodeType::Dense ||
+        node.type == NodeType::TimeDistributed ||
+        node.type == NodeType::Dropout ||
+        node.type == NodeType::BatchNorm ||
+        node.type == NodeType::LayerNorm ||
+        IsActivationNode(node.type) ||
+        IsShapeOpNode(node.type)) {
+        AddCoreLayerTruth(report, node);
     }
 
     if (node.type == NodeType::DataLoader) {
@@ -788,6 +2565,15 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
         }
     }
 
+    if (node.type == NodeType::Adam ||
+        node.type == NodeType::SGD ||
+        node.type == NodeType::AdamW ||
+        node.type == NodeType::RMSprop ||
+        node.type == NodeType::Adagrad ||
+        node.type == NodeType::NAdam) {
+        AddOptimizerTruth(report, node);
+    }
+
     if (node.type == NodeType::LSTM || node.type == NodeType::GRU) {
         auto hidden_size = ResolveIntProperty(
             node,
@@ -841,6 +2627,38 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
                 "No compile report is available for this recurrent node yet.";
             report.properties.push_back(std::move(missing_placement));
         }
+    }
+
+    if (node.type == NodeType::NERSequenceBuilder) {
+        AddNERSequenceBuilderTruth(report, node);
+    }
+
+    if (node.type == NodeType::TokenVocabulary ||
+        node.type == NodeType::POSVocabulary ||
+        node.type == NodeType::NERTagVocabulary) {
+        AddSequenceVocabularyTruth(report, node);
+    }
+
+    if (node.type == NodeType::SequenceTagOutput) {
+        AddSequenceTagOutputTruth(report, node);
+    }
+
+    if (node.type == NodeType::ExportCSV ||
+        node.type == NodeType::ExportParquet ||
+        node.type == NodeType::ExportJSON) {
+        AddFixedExportTruth(report, node);
+    }
+
+    if (node.type == NodeType::DataProfiler) {
+        AddDataProfilerTruth(report, node);
+    }
+
+    if (node.type == NodeType::TreeModelPredictor) {
+        AddTreeModelPredictorTruth(report, node);
+    }
+
+    if (IsLossNode(node.type)) {
+        AddLossTruth(report, node);
     }
 
     if (node.type == NodeType::Output) {
@@ -928,6 +2746,27 @@ void WriteCanonicalAndAliases(MLNode& node,
         node.parameters["classes"] = value;
     } else if (canonical_key == "classes") {
         node.parameters["num_classes"] = value;
+    } else if (canonical_key == "file_path") {
+        node.parameters.erase("path");
+    } else if (canonical_key == "file_type") {
+        node.parameters.erase("format");
+    } else if (canonical_key == "token_column") {
+        node.parameters.erase("tokens_column");
+        node.parameters.erase("token_sequence_column");
+    } else if (canonical_key == "pos_column") {
+        node.parameters.erase("pos_sequence_column");
+    } else if (canonical_key == "tag_column") {
+        node.parameters.erase("tags_column");
+        node.parameters.erase("tag_sequence_column");
+    } else if (canonical_key == "sentence_id_column") {
+        node.parameters.erase("sequence_id_column");
+    } else if (canonical_key == "target_column") {
+        node.parameters.erase("target_ids_column");
+        node.parameters.erase("decoder_target_column");
+    } else if (canonical_key == "min_frequency") {
+        node.parameters.erase("min_freq");
+    } else if (canonical_key == "max_size") {
+        node.parameters.erase("max_vocab_size");
     }
 }
 
