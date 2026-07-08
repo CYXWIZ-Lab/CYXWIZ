@@ -144,8 +144,27 @@ void TestCountVectorizerBinaryModeEmitsPresenceValues() {
         {"stop_words", "none"},
         {"binary", "true"},
     }, error), error);
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
     auto result = op.Apply(input);
     Check(result.ok(), result.status().ToString());
+    Check(!progress_events.empty(),
+          "CountVectorizer should emit materialization progress events");
+    Check(progress_events.front().stage == "CountVectorizer memory preflight",
+          "CountVectorizer first progress event should be memory preflight");
+    Check(progress_events.front().status == "running",
+          "safe CountVectorizer preflight should stay in running status");
+    Check(progress_events.front().memory_risk_level == "safe",
+          "safe CountVectorizer preflight should report safe risk");
+    Check(progress_events.front().estimated_memory_bytes >
+              1ULL * 3ULL * static_cast<uint64_t>(sizeof(float)),
+          "CountVectorizer preflight should include peak allocation overhead");
+    Check(progress_events.front().message.find("Suggestion:") !=
+              std::string::npos,
+          "CountVectorizer preflight message should include mitigation guidance");
     auto table = result.ValueOrDie();
     Check(table->num_columns() == 2,
           "binary CountVectorizer should emit alpha and beta features");

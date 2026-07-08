@@ -94,3 +94,21 @@ Verified:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_computation_truth_tfidf_loss`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_computation_truth_tfidf_loss.exe`
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+## Slice 4 - CountVectorizer Memory Guard
+
+Status: complete.
+
+Extended the existing dense materialization memory preflight from TF-IDF to
+CountVectorizer. The guard now runs before the Arrow text column is copied into
+`std::vector<std::string>`, reports structured `status` and `memory_risk_level`,
+and blocks clearly unsafe dense `rows x max_features` output before the heavy
+count matrix path starts.
+
+Kept this slice narrow: no new materializer framework, no sparse output path,
+and no extra configuration surface.
+
+Verified:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_operator_configure_resets`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_operator_configure_resets.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
