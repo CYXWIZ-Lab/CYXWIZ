@@ -549,3 +549,13 @@ Additional validation:
 - Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
 - Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume Pointer
+
+Current stopping point:
+
+- Last completed slice: `Unsupported Operator Error Codes`
+- Commit pushed: `423f7ce6` on `origin/Nodes_Implementation`
+- Next safe continuation point: continue from the current `tofix32` / `track32`
+  trail and pick the next smallest debugger diagnostic gap, or resume the
+  separate materialization-cache work if that is the active thread.
