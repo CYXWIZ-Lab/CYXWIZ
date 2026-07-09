@@ -18,6 +18,7 @@
 #include "icons.h"
 #include "theme.h"
 #include "../core/error_codes.h"
+#include "../core/debug_trace_record.h"
 #include "../core/debug_operator_trace_producer.h"
 #include "../core/keyboard_shortcuts.h"
 #include "../core/sequence_arrow_batcher.h"
@@ -3563,7 +3564,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     compile_trace.issues = session.issues;
     compile_trace.payload["node_count"] = nodes.size();
     compile_trace.payload["link_count"] = links.size();
-    compile_trace.payload["issue_count"] = session.issues.size();
+    cyxwiz::DebugNodeTraceContract::AttachIssueSummary(compile_trace, session.issues);
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        compile_trace,
+        "compile",
+        "GraphCompiler",
+        "cyxwiz-engine/src/core/graph_compiler.cpp",
+        "cyxwiz::GraphCompiler::Compile");
     compile_trace.payload["summary"] = compile_summary;
     session.traces.push_back(std::move(compile_trace));
 
@@ -3599,7 +3606,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     preflight_trace.status = session.preflight.ready ? "ready" : "blocked";
     preflight_trace.issues = session.preflight.issues;
     preflight_trace.payload["ready"] = session.preflight.ready;
-    preflight_trace.payload["issue_count"] = session.preflight.issues.size();
+    cyxwiz::DebugNodeTraceContract::AttachIssueSummary(preflight_trace, session.preflight.issues);
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        preflight_trace,
+        "preflight",
+        "PreflightValidator",
+        "cyxwiz-engine/src/core/preflight_validator.cpp",
+        "cyxwiz::PreflightValidator::Validate");
     preflight_trace.payload["summary"] = session.preflight.summary;
     session.traces.push_back(std::move(preflight_trace));
     session.studio_events.push_back({

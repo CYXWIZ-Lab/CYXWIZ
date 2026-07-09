@@ -3,6 +3,7 @@
 #include "error_codes.h"
 #include "graph_compiler.h"
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -109,7 +110,7 @@ struct DebugNodeTraceContract {
                 ? errors::Runtime::ExecutionFailed
                 : error_code
         });
-        trace.payload["warning_count"] = CountIssues(trace, IssueLevel::Warning);
+        AttachIssueSummary(trace, trace.issues);
     }
 
     static void AddError(DebugTraceRecord& trace,
@@ -125,7 +126,57 @@ struct DebugNodeTraceContract {
                 : error_code
         });
         trace.status = "failed";
-        trace.payload["error_count"] = CountIssues(trace, IssueLevel::Error);
+        AttachIssueSummary(trace, trace.issues);
+    }
+
+    static void AttachIssueSummary(DebugTraceRecord& trace,
+                                   const std::vector<ValidationIssue>& issues) {
+        trace.payload["issue_count"] = issues.size();
+        trace.payload["error_count"] = CountIssues(issues, IssueLevel::Error);
+        trace.payload["warning_count"] = CountIssues(issues, IssueLevel::Warning);
+        trace.payload["info_count"] = CountIssues(issues, IssueLevel::Info);
+
+        nlohmann::json issue_codes = nlohmann::json::array();
+        std::vector<std::string> seen_codes;
+        for (const auto& issue : issues) {
+            if (issue.error_code.empty()) {
+                continue;
+            }
+            const bool already_seen = std::find(
+                seen_codes.begin(), seen_codes.end(), issue.error_code) !=
+                seen_codes.end();
+            if (!already_seen) {
+                seen_codes.push_back(issue.error_code);
+                issue_codes.push_back(issue.error_code);
+            }
+            if (issue.level == IssueLevel::Error &&
+                !trace.payload.contains("primary_error_code")) {
+                trace.payload["primary_error_code"] = issue.error_code;
+            } else if (issue.level == IssueLevel::Warning &&
+                       !trace.payload.contains("primary_warning_code")) {
+                trace.payload["primary_warning_code"] = issue.error_code;
+            }
+        }
+        trace.payload["issue_codes"] = std::move(issue_codes);
+    }
+
+    static void AttachDiagnosticContext(DebugTraceRecord& trace,
+                                        const std::string& diagnostic_phase,
+                                        const std::string& component,
+                                        const std::string& source_file = "",
+                                        const std::string& source_symbol = "") {
+        if (!diagnostic_phase.empty()) {
+            trace.payload["diagnostic_phase"] = diagnostic_phase;
+        }
+        if (!component.empty()) {
+            trace.payload["component"] = component;
+        }
+        if (!source_file.empty()) {
+            trace.payload["source_file"] = source_file;
+        }
+        if (!source_symbol.empty()) {
+            trace.payload["source_symbol"] = source_symbol;
+        }
     }
 
 private:
@@ -142,8 +193,13 @@ private:
 
     static size_t CountIssues(const DebugTraceRecord& trace,
                               IssueLevel level) {
+        return CountIssues(trace.issues, level);
+    }
+
+    static size_t CountIssues(const std::vector<ValidationIssue>& issues,
+                              IssueLevel level) {
         size_t count = 0;
-        for (const auto& issue : trace.issues) {
+        for (const auto& issue : issues) {
             if (issue.level == level) {
                 ++count;
             }

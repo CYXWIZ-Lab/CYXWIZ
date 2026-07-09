@@ -275,7 +275,12 @@ DebugTraceRecord BuildGraphWarningTrace(
     trace.payload["operator_backed"] = false;
     trace.payload["message"] = message;
     trace.payload["error_code"] = error_code;
-    trace.payload["diagnostic_phase"] = "graph_walk";
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        trace,
+        "graph_walk",
+        "DebugOperatorTraceProducer",
+        "cyxwiz-engine/src/core/debug_operator_trace_producer.cpp",
+        "cyxwiz::DebugOperatorTraceProducer::TracePreprocessingGraph");
     DebugNodeTraceContract::AddWarning(
         trace,
         message,
@@ -694,7 +699,16 @@ DebugOperatorTraceProducer::TraceTextTokenizer(
     step.payload["effective_text_tokenizer_config"] = effective_config;
     step.payload["folded_text_config_applied"] = folded_config_applied;
     step.payload["folded_text_config_nodes"] = folded_config_nodes;
-    return executor.TraceSteps(run_id, {std::move(step)});
+    auto traces = executor.TraceSteps(run_id, {std::move(step)});
+    for (auto& trace : traces) {
+        DebugNodeTraceContract::AttachDiagnosticContext(
+            trace,
+            "operator_transform",
+            "DebugOperatorTraceProducer",
+            "cyxwiz-engine/src/core/debug_operator_trace_producer.cpp",
+            "cyxwiz::DebugOperatorTraceProducer::TraceTextTokenizer");
+    }
+    return traces;
 }
 
 DebugTraceRecord DebugOperatorTraceProducer::BuildWarningTrace(
@@ -719,6 +733,12 @@ DebugTraceRecord DebugOperatorTraceProducer::BuildWarningTrace(
     trace.payload["operator_backed"] = false;
     trace.payload["message"] = message;
     trace.payload["error_code"] = error_code;
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        trace,
+        "operator_trace",
+        "DebugOperatorTraceProducer",
+        "cyxwiz-engine/src/core/debug_operator_trace_producer.cpp",
+        "cyxwiz::DebugOperatorTraceProducer::BuildWarningTrace");
     DebugNodeTraceContract::AddWarning(
         trace,
         message,

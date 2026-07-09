@@ -6,9 +6,11 @@
 #include "../../core/formats/cyxmodel_format.h"
 #include "../../core/model_importer.h"
 #include "../../inference/text_inference_input.h"
+#include "../../inference/language_model_inference_contract.h"
 #include "../icons.h"
 
 #include <cyxwiz/sequential.h>
+#include <cyxwiz/tensor.h>
 #include <cyxwiz/tokenizer.h>
 
 #include <imgui.h>
@@ -228,11 +230,21 @@ void LanguageModelGenerationPanel::RunGeneration() {
     try {
         std::unique_ptr<Tokenizer> tokenizer;
         std::vector<int64_t> prompt;
+        size_t tokenizer_vocab_size = 0;
+        size_t max_sequence_length = 0;
         if (use_text_prompt_) {
             tokenizer = BuildTokenizer();
             prompt = EncodeTextTokenIdsForGeneration(*tokenizer, text_prompt_);
+            tokenizer_vocab_size = tokenizer->GetVocabulary().Size();
+            max_sequence_length = static_cast<size_t>(std::max(0, tokenizer->GetMaxLength()));
         } else {
             prompt = ParsePromptIds();
+        }
+        const auto prompt_contract = ValidateLanguageModelPromptIds(
+            prompt,
+            max_sequence_length);
+        if (!prompt_contract.compatible) {
+            throw std::runtime_error("Invalid prompt: " + prompt_contract.error);
         }
 
         LanguageModelGenerationConfig config;
@@ -250,6 +262,17 @@ void LanguageModelGenerationPanel::RunGeneration() {
         auto* model = ActiveModel();
         if (model == nullptr) {
             throw std::runtime_error("No trained or imported model is available");
+        }
+
+        Tensor contract_input({1, prompt.size()}, prompt.data(), DataType::Int64);
+        const Tensor contract_logits = model->Forward(contract_input);
+        const auto runtime_contract = ValidateLanguageModelRuntimeOutput(
+            contract_logits,
+            prompt.size(),
+            tokenizer_vocab_size);
+        if (!runtime_contract.compatible) {
+            throw std::runtime_error(
+                "Model output contract failed: " + runtime_contract.error);
         }
 
         generated_ids_ = GenerateTokenIdsWithConfig(
@@ -279,39 +302,47 @@ void LanguageModelGenerationPanel::CheckModelCompatibility() {
             throw std::runtime_error("No trained or imported model is available");
         }
 
-        const auto prompt = CurrentPromptIdsForProbe();
-        Tensor input({1, prompt.size()}, prompt.data(), DataType::Int64);
-        Tensor logits = model->Forward(input);
-        const auto& shape = logits.Shape();
+        std::unique_ptr<Tokenizer> tokenizer;
+        std::vector<int64_t> prompt;
+        size_t tokenizer_vocab_size = 0;
+        size_t max_sequence_length = 0;
+        if (use_text_prompt_) {
+            tokenizer = BuildTokenizer();
+            prompt = EncodeTextTokenIdsForGeneration(*tokenizer, text_prompt_);
+            tokenizer_vocab_size = tokenizer->GetVocabulary().Size();
+            max_sequence_length = static_cast<size_t>(std::max(0, tokenizer->GetMaxLength()));
+        } else {
+            prompt = ParsePromptIds();
+        }
 
-        if (logits.GetDataType() != DataType::Float32) {
-            throw std::runtime_error(
-                "model output dtype is not Float32");
+        const auto prompt_contract = ValidateLanguageModelPromptIds(
+            prompt,
+            max_sequence_length);
+        if (!prompt_contract.compatible) {
+            throw std::runtime_error("Invalid prompt: " + prompt_contract.error);
         }
-        if (shape.size() != 3) {
-            throw std::runtime_error(
-                "model output rank is " + std::to_string(shape.size()) +
-                "; expected rank 3 [1, seq, vocab]");
-        }
-        if (shape[0] != 1) {
-            throw std::runtime_error(
-                "model output batch is " + std::to_string(shape[0]) +
-                "; expected 1");
-        }
-        if (shape[1] != prompt.size()) {
-            throw std::runtime_error(
-                "model output sequence length is " +
-                std::to_string(shape[1]) + "; expected " +
-                std::to_string(prompt.size()));
-        }
-        if (shape[2] == 0) {
-            throw std::runtime_error("model output vocab dimension is 0");
+
+        Tensor input({1, prompt.size()}, prompt.data(), DataType::Int64);
+        const Tensor logits = model->Forward(input);
+        const auto runtime_contract = ValidateLanguageModelRuntimeOutput(
+            logits,
+            prompt.size(),
+            tokenizer_vocab_size);
+        if (!runtime_contract.compatible) {
+            throw std::runtime_error(runtime_contract.error);
         }
 
         compatibility_status_ =
             "Compatible: model returned Float32 [1, " +
-            std::to_string(shape[1]) + ", " +
-            std::to_string(shape[2]) + "] logits.";
+            std::to_string(runtime_contract.sequence_length) + ", " +
+            std::to_string(runtime_contract.vocab_size) + "] logits";
+        if (tokenizer_vocab_size > 0) {
+            compatibility_status_ +=
+                "; tokenizer vocab=" + std::to_string(tokenizer_vocab_size) +
+                ", eos=" +
+                std::to_string(tokenizer->GetVocabulary().EosIndex());
+        }
+        compatibility_status_ += ".";
     } catch (const std::exception& e) {
         compatibility_status_ =
             std::string("Not compatible for generation: ") + e.what();
@@ -392,29 +423,46 @@ void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
         }
 
         LoadTokenizerFromCyxModel();
+        if (!use_packaged_tokenizer_) {
+            throw std::runtime_error(status_);
+        }
+
+        TextTokenizerPackage contract_tokenizer_package;
+        std::string contract_tokenizer_error;
+        if (!LoadTextTokenizerPackage(packaged_tokenizer_config_json_,
+                                      packaged_tokenizer_vocab_text_,
+                                      contract_tokenizer_package,
+                                      contract_tokenizer_error)) {
+            throw std::runtime_error(contract_tokenizer_error);
+        }
+
         imported_model_ = std::move(model);
         imported_model_source_ = cyxmodel_path_;
         imported_model_summary_.clear();
         const auto probe = importer.ProbeFile(cyxmodel_path_);
-        if (probe.valid) {
-            imported_model_summary_ =
-                "package: family=" +
-                (probe.model_family.empty() ? std::string("unspecified")
-                                            : probe.model_family) +
-                ", generation=" +
-                (probe.supports_generation ? std::string("yes")
-                                           : std::string("no"));
-            if (!probe.generation_output_contract.empty()) {
-                imported_model_summary_ +=
-                    ", contract=" + probe.generation_output_contract;
-            }
-            compatibility_status_ =
-                probe.supports_generation
-                    ? "Package declares generation support; use Check "
-                      "compatibility to validate the active runtime graph."
-                    : "Package does not declare generation metadata; use "
-                      "Check compatibility before generating.";
-        }
+        const auto package_contract = ValidateLanguageModelPackageContract(
+            probe,
+            &contract_tokenizer_package,
+            cyxmodel_path_);
+        imported_model_summary_ =
+            "package: family=" +
+            (package_contract.model_family.empty() ? std::string("unspecified")
+                                                   : package_contract.model_family) +
+            ", generation=" +
+            (package_contract.supports_generation ? std::string("yes")
+                                                  : std::string("no")) +
+            ", contract=" +
+            (package_contract.generation_output_contract.empty()
+                 ? std::string("unspecified")
+                 : package_contract.generation_output_contract) +
+            ", tokenizer_vocab=" +
+            std::to_string(package_contract.tokenizer_vocabulary_size) +
+            ", max_len=" + std::to_string(package_contract.max_sequence_length) +
+            ", eos=" + std::to_string(package_contract.eos_token_id);
+        compatibility_status_ = package_contract.compatible
+            ? "Package contract is compatible; use Check compatibility to "
+              "validate the active runtime graph."
+            : "Package contract failed: " + package_contract.error;
         use_imported_model_ = true;
         status_ = "Loaded model and tokenizer assets from .cyxmodel.";
     } catch (const std::exception& e) {

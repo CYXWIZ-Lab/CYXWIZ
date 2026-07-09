@@ -357,6 +357,7 @@ set(ENGINE_SOURCES
     src/gui/panels/python_settings_panel.cpp
     src/network/deployment_client.cpp
     src/inference/local_inference_server.cpp
+    src/inference/language_model_inference_contract.cpp
     src/inference/metric_learning_inference_input.cpp
     src/inference/text_inference_input.cpp
     # DNN inference (Phase 3)
@@ -634,6 +635,7 @@ set(ENGINE_HEADERS
     src/gui/panels/python_settings_panel.h
     src/network/deployment_client.h
     src/inference/local_inference_server.h
+    src/inference/language_model_inference_contract.h
     src/inference/metric_learning_inference_input.h
     src/inference/text_inference_input.h
     # DNN inference (Phase 3)
@@ -1575,6 +1577,31 @@ set_target_properties(test_language_model_generation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Language Model Inference Contract =====
+add_executable(test_language_model_inference_contract
+    tests/test_language_model_inference_contract.cpp
+    src/inference/language_model_inference_contract.cpp
+    src/inference/text_inference_input.cpp
+)
+
+target_include_directories(test_language_model_inference_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_language_model_inference_contract PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_language_model_inference_contract PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_language_model_inference_contract PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 # ===== Test: Pipeline Operator Configure Reset Semantics =====
 add_executable(test_operator_configure_resets
     tests/test_operator_configure_resets.cpp
@@ -2929,6 +2956,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     tests/test_cyxmodel_causal_lm_generation_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/language_model_generation.cpp
     src/core/model_builder.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -2943,6 +2971,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
     src/inference/text_inference_input.cpp
+    src/inference/language_model_inference_contract.cpp
 )
 
 target_include_directories(test_cyxmodel_causal_lm_generation_roundtrip PRIVATE

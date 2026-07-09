@@ -2,7 +2,7 @@
 #include "local_inference_server.h"
 #include "metric_learning_inference_input.h"
 #include "text_inference_input.h"
-#include "../core/language_model_training.h"
+#include "../core/language_model_generation.h"
 #include "../core/model_importer.h"
 #include "../core/formats/cyxmodel_format.h"
 #include "../core/sequence_inference_response.h"
@@ -296,24 +296,31 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         formats::CyxModelFormat cyxmodel_format;
         std::string tokenizer_config_json;
         std::string tokenizer_vocab_text;
+        TextTokenizerPackage new_tokenizer_package;
+        bool new_has_tokenizer_package = false;
         if (cyxmodel_format.ExtractTextTokenizerAssets(
                 model_path, tokenizer_config_json, tokenizer_vocab_text)) {
-            TextTokenizerPackage tokenizer_package;
             std::string tokenizer_error;
             if (!LoadTextTokenizerPackage(tokenizer_config_json,
                                           tokenizer_vocab_text,
-                                          tokenizer_package,
+                                          new_tokenizer_package,
                                           tokenizer_error)) {
                 last_error_ = "Failed to load tokenizer assets: " +
                               tokenizer_error;
                 spdlog::error("{}", last_error_);
                 return false;
             }
-            new_tokenizer = std::move(tokenizer_package.tokenizer);
-            new_has_text_vocabulary = tokenizer_package.has_vocabulary;
+            new_has_tokenizer_package = new_tokenizer_package.tokenizer != nullptr;
+            new_has_text_vocabulary = new_tokenizer_package.has_vocabulary;
         }
 
         const auto probe = cyxmodel_format.Probe(model_path);
+        LanguageModelPackageContract new_language_model_contract =
+            ValidateLanguageModelPackageContract(
+                probe,
+                new_has_tokenizer_package ? &new_tokenizer_package : nullptr,
+                model_path);
+        new_tokenizer = std::move(new_tokenizer_package.tokenizer);
         new_has_sequence_model = probe.has_sequence;
         new_sequence_batch_first = probe.sequence_batch_first;
         new_sequence_create_attention_mask = probe.sequence_create_attention_mask;
@@ -370,6 +377,7 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         model_ = std::move(new_model);
         text_tokenizer_ = std::move(new_tokenizer);
         has_text_vocabulary_ = new_has_text_vocabulary;
+        language_model_contract_ = std::move(new_language_model_contract);
         has_sequence_model_ = new_has_sequence_model;
         has_sequence_token_vocabulary_ = new_has_sequence_token_vocabulary;
         has_sequence_pos_vocabulary_ = new_has_sequence_pos_vocabulary;
@@ -402,6 +410,7 @@ void LocalInferenceServer::UnloadModel() {
     model_.reset();
     text_tokenizer_.reset();
     has_text_vocabulary_ = false;
+    language_model_contract_ = {};
     has_sequence_model_ = false;
     has_sequence_token_vocabulary_ = false;
     has_sequence_pos_vocabulary_ = false;
@@ -583,7 +592,23 @@ void LocalInferenceServer::HandleModelInfo(const httplib::Request&, httplib::Res
         {"sequence_tag_ignore_index", sequence_tag_ignore_index_},
         {"sequence_target_ignore_index", sequence_target_ignore_index_},
         {"supports_sequence_decoding", has_sequence_tag_vocabulary_},
-        {"supports_greedy_generation", text_tokenizer_ != nullptr && has_text_vocabulary_},
+        {"model_family", language_model_contract_.model_family},
+        {"supports_generation", language_model_contract_.supports_generation},
+        {"generation_output_contract", language_model_contract_.generation_output_contract},
+        {"supports_greedy_generation", language_model_contract_.compatible},
+        {"language_model_contract", {
+            {"compatible", language_model_contract_.compatible},
+            {"error", language_model_contract_.error},
+            {"package_path", language_model_contract_.package_path},
+            {"model_family", language_model_contract_.model_family},
+            {"supports_generation", language_model_contract_.supports_generation},
+            {"generation_output_contract", language_model_contract_.generation_output_contract},
+            {"has_tokenizer", language_model_contract_.has_tokenizer},
+            {"has_vocabulary", language_model_contract_.has_vocabulary},
+            {"tokenizer_vocabulary_size", language_model_contract_.tokenizer_vocabulary_size},
+            {"max_sequence_length", language_model_contract_.max_sequence_length},
+            {"eos_token_id", language_model_contract_.eos_token_id}
+        }},
         {"layers", json::array()}
     };
 
@@ -1149,6 +1174,18 @@ void LocalInferenceServer::HandleGenerate(const httplib::Request& req, httplib::
             return;
         }
         max_new_tokens = request_body["max_new_tokens"].get<size_t>();
+        if (max_new_tokens == 0) {
+            json error = {
+                {"error", {
+                    {"message", "max_new_tokens must be greater than 0"},
+                    {"type", "invalid_request_error"},
+                    {"code", "invalid_parameter"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
         if (max_new_tokens > 256) {
             max_new_tokens = 256;
         }
@@ -1159,33 +1196,105 @@ void LocalInferenceServer::HandleGenerate(const httplib::Request& req, httplib::
         if (!model_) {
             throw std::runtime_error("Model unloaded during request");
         }
+        if (!language_model_contract_.compatible) {
+            json error = {
+                {"error", {
+                    {"message", std::string("Text generation unavailable: ") +
+                                    language_model_contract_.error},
+                    {"type", "invalid_request_error"},
+                    {"code", "generation_contract_error"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
         if (!text_tokenizer_) {
             throw std::runtime_error(
                 "text generation requires packaged tokenizer metadata");
-        }
-        if (!has_text_vocabulary_) {
-            throw std::runtime_error(
-                "text generation requires packaged vocabulary");
         }
 
         const std::vector<int64_t> prompt_ids =
             EncodeTextTokenIdsForGeneration(
                 *text_tokenizer_,
                 request_body["input"].get<std::string>());
+        const auto prompt_contract = ValidateLanguageModelPromptIds(
+            prompt_ids,
+            language_model_contract_.max_sequence_length);
+        if (!prompt_contract.compatible) {
+            json error = {
+                {"error", {
+                    {"message", std::string("Invalid prompt: ") +
+                                    prompt_contract.error},
+                    {"type", "invalid_request_error"},
+                    {"code", "invalid_prompt"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
 
-        int64_t eos_token_id = text_tokenizer_->GetVocabulary().EosIndex();
+        int64_t eos_token_id = language_model_contract_.eos_token_id;
         if (request_body.contains("eos_token_id")) {
             if (!request_body["eos_token_id"].is_number_integer()) {
-                throw std::runtime_error("eos_token_id must be an integer");
+                json error = {
+                    {"error", {
+                        {"message", "eos_token_id must be an integer"},
+                        {"type", "invalid_request_error"},
+                        {"code", "invalid_parameter"}
+                    }}
+                };
+                res.status = 400;
+                res.set_content(error.dump(), "application/json");
+                return;
             }
             eos_token_id = request_body["eos_token_id"].get<int64_t>();
         }
+        if (eos_token_id < -1) {
+            json error = {
+                {"error", {
+                    {"message", "eos_token_id must be -1 or greater"},
+                    {"type", "invalid_request_error"},
+                    {"code", "invalid_parameter"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        Tensor contract_input({1, prompt_ids.size()},
+                              prompt_ids.data(),
+                              DataType::Int64);
+        const Tensor contract_logits = model_->Forward(contract_input);
+        const auto runtime_contract = ValidateLanguageModelRuntimeOutput(
+            contract_logits,
+            prompt_ids.size(),
+            language_model_contract_.tokenizer_vocabulary_size);
+        if (!runtime_contract.compatible) {
+            json error = {
+                {"error", {
+                    {"message", std::string("Model output contract failed: ") +
+                                    runtime_contract.error},
+                    {"type", "invalid_request_error"},
+                    {"code", "generation_output_contract_error"}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        LanguageModelGenerationConfig generation_config;
+        generation_config.max_new_tokens = max_new_tokens;
+        generation_config.eos_token_id = eos_token_id;
+        generation_config.include_prompt = true;
 
         const std::vector<int64_t> generated_ids =
-            GenerateGreedyTokenIds(*model_,
-                                   prompt_ids,
-                                   max_new_tokens,
-                                   eos_token_id);
+            GenerateTokenIdsWithConfig(*model_,
+                                       prompt_ids,
+                                       generation_config);
         const std::vector<int64_t> new_token_ids(
             generated_ids.begin() + static_cast<std::ptrdiff_t>(prompt_ids.size()),
             generated_ids.end());
@@ -1201,6 +1310,8 @@ void LocalInferenceServer::HandleGenerate(const httplib::Request& req, httplib::
             {"prompt_token_ids", prompt_ids},
             {"generated_token_ids", generated_ids},
             {"new_token_ids", new_token_ids},
+            {"eos_token_id", eos_token_id},
+            {"max_new_tokens", max_new_tokens},
             {"latency_ms", latency_ms}
         };
 

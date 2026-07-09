@@ -1,14 +1,17 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/model_exporter.h"
 #include "../src/core/model_importer.h"
+#include "../src/core/language_model_generation.h"
 #include "../src/gui/loaders/data_loader.h"
 #include "../src/inference/text_inference_input.h"
+#include "../src/inference/language_model_inference_contract.h"
 
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/tokenizer.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -86,7 +89,7 @@ std::string BuildCausalLmGraphJson() {
     graph["nodes"].push_back({
         {"id", 1},
         {"type", static_cast<int>(gui::NodeType::DatasetInput)},
-        {"name", "Token features"},
+        {"name", "Token IDs"},
         {"parameters", {
             {"dataset_name", "causal_lm_generation_roundtrip_dataset"},
             {"dataset", "causal_lm_generation_roundtrip_dataset"},
@@ -97,6 +100,16 @@ std::string BuildCausalLmGraphJson() {
     });
     graph["nodes"].push_back({
         {"id", 2},
+        {"type", static_cast<int>(gui::NodeType::Embedding)},
+        {"name", "Token Embedding"},
+        {"parameters", {
+            {"num_embeddings", "6"},
+            {"embedding_dim", "4"},
+            {"padding_idx", "0"}
+        }}
+    });
+    graph["nodes"].push_back({
+        {"id", 3},
         {"type", static_cast<int>(gui::NodeType::TransformerDecoder)},
         {"name", "Causal Decoder"},
         {"parameters", {
@@ -108,25 +121,25 @@ std::string BuildCausalLmGraphJson() {
         }}
     });
     graph["nodes"].push_back({
-        {"id", 3},
+        {"id", 4},
         {"type", static_cast<int>(gui::NodeType::TimeDistributed)},
         {"name", "Token Logit Head"},
         {"parameters", {{"units", "6"}}}
     });
     graph["nodes"].push_back({
-        {"id", 4},
+        {"id", 5},
         {"type", static_cast<int>(gui::NodeType::Output)},
         {"name", "Sequence Logits"},
         {"parameters", {{"num_classes", "6"}}}
     });
     graph["nodes"].push_back({
-        {"id", 5},
+        {"id", 6},
         {"type", static_cast<int>(gui::NodeType::CrossEntropyLoss)},
         {"name", "Token Cross Entropy"},
         {"parameters", json::object()}
     });
     graph["nodes"].push_back({
-        {"id", 6},
+        {"id", 7},
         {"type", static_cast<int>(gui::NodeType::Adam)},
         {"name", "Adam"},
         {"parameters", {{"learning_rate", "0.001"}}}
@@ -135,13 +148,13 @@ std::string BuildCausalLmGraphJson() {
     graph["links"].push_back({{"id", 101}, {"from_node", 1}, {"to_node", 2}});
     graph["links"].push_back({{"id", 102}, {"from_node", 2}, {"to_node", 3}});
     graph["links"].push_back({{"id", 103}, {"from_node", 3}, {"to_node", 4}});
-    graph["links"].push_back({{"id", 104}, {"from_node", 3}, {"to_node", 5}});
-    graph["links"].push_back({{"id", 105}, {"from_node", 1}, {"to_node", 5}});
-    graph["links"].push_back({{"id", 106}, {"from_node", 6}, {"to_node", 5}});
+    graph["links"].push_back({{"id", 104}, {"from_node", 4}, {"to_node", 5}});
+    graph["links"].push_back({{"id", 105}, {"from_node", 4}, {"to_node", 6}});
+    graph["links"].push_back({{"id", 106}, {"from_node", 1}, {"to_node", 6}});
+    graph["links"].push_back({{"id", 107}, {"from_node", 7}, {"to_node", 6}});
 
     return graph.dump();
 }
-
 void CheckTensorValues(const cyxwiz::Tensor& tensor,
                        const cyxwiz::Tensor& expected,
                        const std::string& name) {
@@ -168,6 +181,7 @@ int main() {
     WriteTextFile(vocab_path, "[PAD]\n[UNK]\nhello\nworld\n");
 
     cyxwiz::SequentialModel source;
+    source.Add<cyxwiz::EmbeddingModule>(6, 4, 0);
     source.Add<cyxwiz::TransformerDecoderModule>(4, 2, 8, 0.0f, false);
     source.Add<cyxwiz::TimeDistributedDenseModule>(4, 6, true);
 
@@ -251,6 +265,20 @@ int main() {
                                           prompt_ids) == "hello world",
           "packaged tokenizer should decode generated token ids");
 
+    const auto package_contract = cyxwiz::ValidateLanguageModelPackageContract(
+        probe,
+        &tokenizer_package,
+        package_path.string());
+    Check(package_contract.compatible,
+          "causal LM package contract should be compatible: " +
+              package_contract.error);
+    Check(package_contract.tokenizer_vocabulary_size == 6,
+          "package contract should surface tokenizer vocabulary size");
+    Check(package_contract.max_sequence_length == 6,
+          "package contract should surface tokenizer max sequence length");
+    Check(package_contract.eos_token_id == vocab.EosIndex(),
+          "package contract should surface tokenizer EOS token id");
+
     cyxwiz::SequentialModel imported;
     cyxwiz::ImportOptions import_options;
     import_options.strict_mode = true;
@@ -262,8 +290,8 @@ int main() {
     Check(imported_result.success,
           "causal LM .cyxmodel import failed: " +
               imported_result.error_message);
-    Check(imported.Size() == 2,
-          "causal LM import should rebuild decoder plus token head");
+    Check(imported.Size() == 3,
+          "causal LM import should rebuild embedding, decoder, and token head");
 
     const auto imported_params = imported.GetParameters();
     Check(imported_params.size() == source_params.size(),
@@ -274,14 +302,15 @@ int main() {
         CheckTensorValues(imported_params.at(name), tensor, name);
     }
 
-    const float input_values[] = {
-        0.2f, -0.1f, 0.4f, 0.7f,
-        -0.3f, 0.5f, 0.1f, -0.2f,
-        0.6f, 0.2f, -0.4f, 0.3f,
-        -0.5f, 0.8f, 0.2f, -0.1f,
+    const std::vector<int64_t> input_token_ids = {
+        static_cast<int64_t>(vocab.WordToIndex("hello")),
+        static_cast<int64_t>(vocab.WordToIndex("world")),
+        static_cast<int64_t>(vocab.EosIndex()),
+        static_cast<int64_t>(vocab.PadIndex()),
     };
-    const cyxwiz::Tensor input({1, 4, 4}, input_values,
-                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor input({1, input_token_ids.size()},
+                               input_token_ids.data(),
+                               cyxwiz::DataType::Int64);
     const cyxwiz::Tensor source_output = source.Forward(input);
     const cyxwiz::Tensor imported_output = imported.Forward(input);
     Check(source_output.Shape() == std::vector<size_t>({1, 4, 6}),
@@ -292,6 +321,34 @@ int main() {
                       source_output,
                       "causal LM imported generation logits");
 
+    const auto runtime_contract = cyxwiz::ValidateLanguageModelRuntimeOutput(
+        imported_output,
+        input_token_ids.size(),
+        package_contract.tokenizer_vocabulary_size);
+    Check(runtime_contract.compatible,
+          "imported causal LM runtime output should satisfy contract: " +
+              runtime_contract.error);
+
+    cyxwiz::LanguageModelGenerationConfig generation_config;
+    generation_config.max_new_tokens = 2;
+    generation_config.eos_token_id = -1;
+    generation_config.include_prompt = true;
+    const std::vector<int64_t> generated_ids = cyxwiz::GenerateTokenIdsWithConfig(
+        imported,
+        prompt_ids,
+        generation_config,
+        7u);
+    Check(generated_ids.size() == prompt_ids.size() + 2,
+          "imported causal LM generation should append requested tokens");
+    Check(std::equal(prompt_ids.begin(),
+                     prompt_ids.end(),
+                     generated_ids.begin()),
+          "generated token IDs should preserve prompt prefix");
+    const std::string generated_text = cyxwiz::DecodeGeneratedTokenIds(
+        *tokenizer_package.tokenizer,
+        generated_ids);
+    Check(!generated_text.empty(),
+          "generated token IDs should decode through packaged tokenizer");
     fs::remove_all(root);
     std::cout << "CyxModel causal LM generation round-trip test passed\n";
     return 0;

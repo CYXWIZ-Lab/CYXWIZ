@@ -230,6 +230,14 @@ void TestNodeTraceContract() {
           "node trace warning should preserve error code");
     Check(trace.payload["warning_count"].get<size_t>() == 1,
           "node trace warning should update warning count");
+    Check(trace.payload["issue_count"].get<size_t>() == 1,
+          "node trace warning should expose issue count");
+    Check(trace.payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::errors::Gpu::KernelExecutionFailed,
+          "node trace warning should expose primary warning code");
+    Check(trace.payload["issue_codes"][0].get<std::string>() ==
+              cyxwiz::errors::Gpu::KernelExecutionFailed,
+          "node trace warning should expose issue code summary");
     Check(trace.status == "ok",
           "node trace warning should not fail the trace");
 
@@ -244,6 +252,13 @@ void TestNodeTraceContract() {
           "node trace error should preserve error code");
     Check(trace.payload["error_count"].get<size_t>() == 1,
           "node trace error should update error count");
+    Check(trace.payload["issue_count"].get<size_t>() == 2,
+          "node trace error should update aggregate issue count");
+    Check(trace.payload["primary_error_code"].get<std::string>() ==
+              cyxwiz::errors::Compiler::TensorShapeMismatch,
+          "node trace error should expose primary error code");
+    Check(trace.payload["issue_codes"].size() == 2,
+          "node trace error should preserve distinct issue codes");
     Check(trace.status == "failed",
           "node trace error should fail the trace");
 }
@@ -290,6 +305,7 @@ void TestGraphTraceExecutionSlice() {
     output.output_shape = {3, 2};
     output.dtype = "float32";
     output.backend = "CPU";
+    output.errors.push_back("Output sink rejected shape");
     steps.push_back(std::move(output));
 
     const auto traces = executor.TraceSteps("graph-trace-run", steps);
@@ -306,6 +322,18 @@ void TestGraphTraceExecutionSlice() {
           "graph trace should preserve first node role");
     Check(traces[0].payload["rows"].get<int>() == 3,
           "graph trace should preserve custom payload");
+    Check(traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "graph_trace_step",
+          "graph trace should expose executor diagnostic phase");
+    Check(traces[0].payload["component"].get<std::string>() ==
+              "DebugGraphTraceExecutor",
+          "graph trace should expose executor component");
+    Check(traces[0].payload["source_file"].get<std::string>().find(
+              "debug_graph_trace_executor.cpp") != std::string::npos,
+          "graph trace should expose executor source file");
+    Check(traces[0].payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugGraphTraceExecutor::TraceSteps",
+          "graph trace should expose executor source symbol");
 
     Check(traces[1].node_id == 2,
           "graph trace should preserve transform node id");
@@ -315,6 +343,14 @@ void TestGraphTraceExecutionSlice() {
           "graph trace should preserve operator payload");
     Check(traces[1].payload["warning_count"].get<size_t>() == 1,
           "graph trace should count warnings");
+    Check(traces[1].payload["issue_count"].get<size_t>() == 1,
+          "warning graph trace should expose issue count");
+    Check(traces[1].payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::ExecutionFailed,
+          "warning graph trace should expose primary warning code");
+    Check(traces[1].payload["issue_codes"][0].get<std::string>() ==
+              cyxwiz::errors::Runtime::ExecutionFailed,
+          "warning graph trace should expose issue code summary");
     Check(traces[1].status == "ok",
           "warning-only graph trace should remain ok");
     Check(traces[1].duration_ms == 0.25f,
@@ -326,6 +362,15 @@ void TestGraphTraceExecutionSlice() {
           "graph trace should preserve output input shape");
     Check(traces[2].output_shape == std::vector<size_t>{3, 2},
           "graph trace should preserve output output shape");
+    Check(traces[2].status == "failed",
+          "error graph trace should fail the trace");
+    Check(traces[2].payload["issue_count"].get<size_t>() == 1,
+          "error graph trace should expose issue count");
+    Check(traces[2].payload["error_count"].get<size_t>() == 1,
+          "error graph trace should expose error count");
+    Check(traces[2].payload["primary_error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::ExecutionFailed,
+          "error graph trace should expose primary error code");
 }
 
 void TestRuntimeBackendClassificationContract() {
@@ -1167,6 +1212,18 @@ void TestOperatorTraceProducerContract() {
           "operator producer trace should name its producer");
     Check(trace.payload["operator_backed"].get<bool>(),
           "operator producer should mark real operator-backed traces");
+    Check(trace.payload["diagnostic_phase"].get<std::string>() ==
+              "operator_transform",
+          "operator producer trace should expose operator-transform diagnostic phase");
+    Check(trace.payload["component"].get<std::string>() ==
+              "DebugOperatorTraceProducer",
+          "operator producer trace should expose diagnostic component");
+    Check(trace.payload["source_file"].get<std::string>().find(
+              "debug_operator_trace_producer.cpp") != std::string::npos,
+          "operator producer trace should expose source file");
+    Check(trace.payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugOperatorTraceProducer::TraceTextTokenizer",
+          "operator producer trace should expose source symbol");
     Check(trace.payload["input_schema"].get<std::string>().find("text") !=
               std::string::npos,
           "operator producer should include input schema");
@@ -1426,6 +1483,22 @@ void TestOperatorTraceProducerContract() {
               unavailable_source_traces[0].issues[0].error_code ==
                   cyxwiz::errors::Runtime::InputDatasetMissing,
           "unavailable Arrow source table issue should expose missing-input code");
+    Check(unavailable_source_traces[0].payload["issue_count"].get<size_t>() == 1,
+          "unavailable Arrow source table warning should expose issue count");
+    Check(unavailable_source_traces[0].payload["warning_count"].get<size_t>() == 1,
+          "unavailable Arrow source table warning should expose warning count");
+    Check(unavailable_source_traces[0].payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::InputDatasetMissing,
+          "unavailable Arrow source table warning should expose primary warning code");
+    Check(unavailable_source_traces[0].payload["component"].get<std::string>() ==
+              "DebugOperatorTraceProducer",
+          "unavailable Arrow source table warning should expose diagnostic component");
+    Check(unavailable_source_traces[0].payload["source_file"].get<std::string>().find(
+              "debug_operator_trace_producer.cpp") != std::string::npos,
+          "unavailable Arrow source table warning should expose source file");
+    Check(unavailable_source_traces[0].payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugOperatorTraceProducer::TracePreprocessingGraph",
+          "unavailable Arrow source table warning should expose source symbol");
     Check(unavailable_source_traces[0].payload["source_dataset_name"].get<std::string>() ==
               "wanted_dataset",
           "unavailable Arrow source table warning should preserve requested dataset");
@@ -1623,6 +1696,27 @@ void TestOperatorTraceProducerContract() {
     Check(unsupported_traces[1].issues[0].error_code ==
               cyxwiz::errors::Runtime::UnsupportedNode,
           "unsupported operator issue should preserve unsupported-node code");
+    Check(unsupported_traces[1].payload["issue_count"].get<size_t>() == 1,
+          "unsupported operator trace should expose issue count");
+    Check(unsupported_traces[1].payload["warning_count"].get<size_t>() == 1,
+          "unsupported operator trace should expose warning count");
+    Check(unsupported_traces[1].payload["error_count"].get<size_t>() == 0,
+          "unsupported operator trace should expose zero error count");
+    Check(unsupported_traces[1].payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported operator trace should expose primary warning code");
+    Check(unsupported_traces[1].payload["issue_codes"][0].get<std::string>() ==
+              cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported operator trace should expose issue code summary");
+    Check(unsupported_traces[1].payload["component"].get<std::string>() ==
+              "DebugOperatorTraceProducer",
+          "unsupported operator trace should expose diagnostic component");
+    Check(unsupported_traces[1].payload["source_file"].get<std::string>().find(
+              "debug_operator_trace_producer.cpp") != std::string::npos,
+          "unsupported operator trace should expose source file");
+    Check(unsupported_traces[1].payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugOperatorTraceProducer::BuildWarningTrace",
+          "unsupported operator trace should expose source symbol");
     Check(!unsupported_traces[1].payload["operator_backed"].get<bool>(),
           "unsupported operator trace should not claim operator-backed execution");
     Check(unsupported_traces[1].payload["diagnostic_phase"].get<std::string>() ==
@@ -1733,6 +1827,14 @@ void TestOperatorTraceProducerContract() {
           "failed plain tokenizer warning should expose no folded config provenance");
     Check(!failed_tokenizer_traces[0].payload["operator_backed"].get<bool>(),
           "failed tokenizer warning should not claim operator-backed execution");
+    Check(failed_tokenizer_traces[0].payload["issue_count"].get<size_t>() == 1,
+          "failed tokenizer warning should expose issue count");
+    Check(failed_tokenizer_traces[0].payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::ExecutionFailed,
+          "failed tokenizer warning should expose execution-failed warning code");
+    Check(failed_tokenizer_traces[0].payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugOperatorTraceProducer::BuildWarningTrace",
+          "failed tokenizer warning should expose source symbol");
     const auto original_cwd = std::filesystem::current_path();
     const auto test_root = std::filesystem::temp_directory_path() /
         "cyxwiz_debugger_operator_trace_producer_store";
@@ -1916,6 +2018,40 @@ void TestPreflightIssueCodeContract() {
     Check(HasIssueCode(preflight_result.issues,
                        cyxwiz::errors::Compiler::LabelOutputShapeMismatch),
           "empty preflight should expose unknown output-shape code");
+    cyxwiz::DebugTraceRecord trace;
+    trace.issues = preflight_result.issues;
+    cyxwiz::DebugNodeTraceContract::AttachIssueSummary(trace, trace.issues);
+    Check(trace.payload["issue_count"].get<size_t>() == trace.issues.size(),
+          "issue summary should preserve total issue count");
+    Check(trace.payload["error_count"].get<size_t>() == trace.issues.size(),
+          "issue summary should count preflight errors");
+    Check(trace.payload["warning_count"].get<size_t>() == 0,
+          "issue summary should count preflight warnings");
+    Check(trace.payload["primary_error_code"].get<std::string>() ==
+              cyxwiz::errors::Compiler::MissingTrainingPathNode,
+          "issue summary should expose the first error code");
+    Check(trace.payload["issue_codes"].size() == 4,
+          "issue summary should expose unique issue codes");
+    Check(trace.payload["issue_codes"][1].get<std::string>() ==
+              cyxwiz::errors::Runtime::InputDatasetMissing,
+          "issue summary should preserve first-seen code order");
+
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        trace,
+        "preflight",
+        "PreflightValidator",
+        "cyxwiz-engine/src/core/preflight_validator.cpp",
+        "cyxwiz::PreflightValidator::Validate");
+    Check(trace.payload["diagnostic_phase"].get<std::string>() == "preflight",
+          "diagnostic context should preserve phase");
+    Check(trace.payload["component"].get<std::string>() == "PreflightValidator",
+          "diagnostic context should preserve component");
+    Check(trace.payload["source_file"].get<std::string>().find("preflight_validator.cpp") !=
+              std::string::npos,
+          "diagnostic context should preserve source file");
+    Check(trace.payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::PreflightValidator::Validate",
+          "diagnostic context should preserve source symbol");
 }
 
 void TestDebugRunStoreContract() {
@@ -2108,6 +2244,16 @@ void TestTextPreprocessingTraceContract() {
           "tokenizer payload should include token count");
     Check(tokenizer.payload["tokens_preview"].is_array(),
           "tokenizer payload should include token preview");
+    Check(tokenizer.payload["diagnostic_phase"].get<std::string>() == "TextTokenizer",
+          "tokenizer trace should expose text diagnostic phase");
+    Check(tokenizer.payload["component"].get<std::string>() == "TextTokenizer",
+          "tokenizer trace should expose diagnostic component");
+    Check(tokenizer.payload["source_file"].get<std::string>().find(
+              "text_preprocessing_tracer.cpp") != std::string::npos,
+          "tokenizer trace should expose source file");
+    Check(tokenizer.payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::TextPreprocessingTracer::TraceSample",
+          "tokenizer trace should expose source symbol");
 
     const cyxwiz::DebugTraceRecord& vocab = traces[1];
     Check(vocab.node_id == 12, "vocab trace should bind to vocab node");
@@ -2139,6 +2285,28 @@ void TestTextPreprocessingTraceContract() {
     Check(padding.payload.contains("truncated"),
           "padding payload should include truncation flag");
 
+    auto truncated_config = config;
+    truncated_config.text_preprocessing.max_length = 2;
+    const auto truncated_traces =
+        tracer.TraceSample(truncated_config, nodes, "text-trace-truncated-run", 0);
+    Check(truncated_traces.size() == 3,
+          "truncated text preprocessing trace should preserve trace count");
+    const cyxwiz::DebugTraceRecord& truncated_padding = truncated_traces[2];
+    Check(truncated_padding.status == "warning",
+          "truncated padding trace should warn");
+    Check(truncated_padding.payload["issue_count"].get<size_t>() == 1,
+          "truncated padding trace should expose issue count");
+    Check(truncated_padding.payload["warning_count"].get<size_t>() == 1,
+          "truncated padding trace should expose warning count");
+    Check(truncated_padding.payload["error_count"].get<size_t>() == 0,
+          "truncated padding trace should expose zero error count");
+    Check(truncated_padding.payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::errors::Compiler::InvalidParameter,
+          "truncated padding trace should expose primary warning code");
+    Check(truncated_padding.payload["issue_codes"][0].get<std::string>() ==
+              cyxwiz::errors::Compiler::InvalidParameter,
+          "truncated padding trace should expose warning issue code");
+
     cyxwiz::DataRegistry::Instance().UnregisterTextDataset(dataset_name);
     const auto missing_traces =
         tracer.TraceSample(config, nodes, "missing-text-trace-run", 0);
@@ -2151,6 +2319,30 @@ void TestTextPreprocessingTraceContract() {
               missing_traces[0].issues[0].error_code ==
                   cyxwiz::errors::Runtime::InputDatasetMissing,
           "missing text dataset issue should expose runtime input code");
+    Check(missing_traces[0].payload["issue_count"].get<size_t>() == 1,
+          "missing text dataset trace should expose issue count");
+    Check(missing_traces[0].payload["error_count"].get<size_t>() == 1,
+          "missing text dataset trace should expose error count");
+    Check(missing_traces[0].payload["warning_count"].get<size_t>() == 0,
+          "missing text dataset trace should expose zero warning count");
+    Check(missing_traces[0].payload["primary_error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::InputDatasetMissing,
+          "missing text dataset trace should expose primary error code");
+    Check(missing_traces[0].payload["issue_codes"][0].get<std::string>() ==
+              cyxwiz::errors::Runtime::InputDatasetMissing,
+          "missing text dataset trace should expose issue code summary");
+    Check(missing_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "data_source",
+          "missing text dataset trace should expose data-source phase");
+    Check(missing_traces[0].payload["component"].get<std::string>() ==
+              "TextDataset",
+          "missing text dataset trace should expose component");
+    Check(missing_traces[0].payload["source_file"].get<std::string>().find(
+              "text_preprocessing_tracer.cpp") != std::string::npos,
+          "missing text dataset trace should expose source file");
+    Check(missing_traces[0].payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::TextPreprocessingTracer::TraceSample",
+          "missing text dataset trace should expose source symbol");
     std::filesystem::remove_all(test_root);
 }
 

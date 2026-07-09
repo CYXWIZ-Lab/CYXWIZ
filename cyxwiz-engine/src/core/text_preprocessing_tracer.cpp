@@ -96,6 +96,17 @@ std::string PreviewText(const std::string& text) {
     return text.substr(0, kTextPreviewLimit) + "...";
 }
 
+void AttachTextPreprocessingContext(DebugTraceRecord& record,
+                                    const std::string& diagnostic_phase,
+                                    const std::string& component) {
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        record,
+        diagnostic_phase,
+        component,
+        "cyxwiz-engine/src/core/text_preprocessing_tracer.cpp",
+        "cyxwiz::TextPreprocessingTracer::TraceSample");
+}
+
 DebugTraceRecord MakeRecord(const std::string& run_id,
                             gui::NodeType type,
                             int node_id,
@@ -108,6 +119,7 @@ DebugTraceRecord MakeRecord(const std::string& run_id,
     record.phase = phase;
     record.role = DebugTraceRole::PreprocessingOutput;
     record.status = "ok";
+    AttachTextPreprocessingContext(record, phase, record.node_type);
     return record;
 }
 
@@ -141,6 +153,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         record.status = "failed";
         record.node_name = "TextDataset";
         record.node_type = "TextDataset";
+        AttachTextPreprocessingContext(record, "data_source", "TextDataset");
         record.payload["message"] =
             "Text dataset is not registered: " + config.dataset_name;
         record.payload["error_code"] = errors::Runtime::InputDatasetMissing;
@@ -151,6 +164,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
             record.payload["message"].get<std::string>(),
             errors::Runtime::InputDatasetMissing
         });
+        DebugNodeTraceContract::AttachIssueSummary(record, record.issues);
         traces.push_back(std::move(record));
         return traces;
     }
@@ -166,6 +180,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
             record.status = "failed";
             record.node_name = "TextDataset";
             record.node_type = "TextDataset";
+            AttachTextPreprocessingContext(record, "data_source", "TextDataset");
             record.payload["message"] = "Text dataset has no samples.";
             record.payload["error_code"] = errors::Data::RowCountMismatch;
             record.issues.push_back({
@@ -175,6 +190,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
                 "Text dataset has no samples.",
                 errors::Data::RowCountMismatch
             });
+            DebugNodeTraceContract::AttachIssueSummary(record, record.issues);
             traces.push_back(std::move(record));
             return traces;
         }
@@ -186,6 +202,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
             record.status = "failed";
             record.node_name = "TextDataset";
             record.node_type = "TextDataset";
+            AttachTextPreprocessingContext(record, "sample_selection", "TextDataset");
             record.payload["message"] =
                 "Selected sample index is outside the text dataset.";
             record.payload["error_code"] = errors::Runtime::InvalidParameter;
@@ -198,6 +215,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
                 "Selected sample index is outside the text dataset.",
                 errors::Runtime::InvalidParameter
             });
+            DebugNodeTraceContract::AttachIssueSummary(record, record.issues);
             traces.push_back(std::move(record));
             return traces;
         }
@@ -276,6 +294,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
                 "High unknown-token ratio in selected text sample.",
                 errors::Data::VocabularyCoverageWarning
             });
+            DebugNodeTraceContract::AttachIssueSummary(vocab_record, vocab_record.issues);
         }
         traces.push_back(std::move(vocab_record));
 
@@ -299,6 +318,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
                 "Selected text sample was truncated.",
                 errors::Compiler::InvalidParameter
             });
+            DebugNodeTraceContract::AttachIssueSummary(padding_record, padding_record.issues);
         } else if (pad_ratio > 0.8f) {
             padding_record.payload["note"] =
                 "Selected sample is mostly padding. This is informational for a single sample; aggregate smoke statistics should decide whether max_length is too large.";
@@ -313,6 +333,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         record.status = "failed";
         record.node_name = "TextPreprocessing";
         record.node_type = "TextPreprocessing";
+        AttachTextPreprocessingContext(record, "materialization", "TextPreprocessing");
         record.payload["message"] = e.what();
         record.payload["error_code"] = errors::Data::MaterializationFailed;
         record.issues.push_back({
@@ -322,6 +343,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
             e.what(),
             errors::Data::MaterializationFailed
         });
+        DebugNodeTraceContract::AttachIssueSummary(record, record.issues);
         traces.push_back(std::move(record));
     }
 

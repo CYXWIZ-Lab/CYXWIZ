@@ -550,12 +550,206 @@ Additional validation:
 - Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 
+## Resume 2026-07-10 - Aggregate Issue Code Summary
+
+Twenty-third follow-up on the first slice:
+
+- Added `DebugNodeTraceContract::AttachIssueSummary` as a small reusable helper
+  for aggregate debugger traces that carry multiple `ValidationIssue` records.
+- Compile and preflight traces now preserve `issue_count`, severity counts,
+  unique `issue_codes`, `primary_error_code`, and `primary_warning_code` in the
+  trace payload while keeping the existing issue list unchanged.
+- This gives Studio Debugger and support bundles a structured code summary for
+  compiler/preflight diagnostics without parsing free-form messages or widening
+  graph execution.
+- Contract coverage now proves preflight issue summaries preserve total counts,
+  severity counts, first error code, and unique first-seen code order.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Initial full engine build attempt timed out before completion.
+- Passed on rerun: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-10 - Aggregate Diagnostic Context Payload
+
+Twenty-fourth follow-up on the first slice:
+
+- Added `DebugNodeTraceContract::AttachDiagnosticContext` for aggregate traces
+  that need structured owner metadata without creating a broad diagnostic
+  framework.
+- Compile and preflight traces now carry `diagnostic_phase`, `component`,
+  `source_file`, and `source_symbol` payload fields while preserving their
+  existing trace shape and issue lists.
+- This makes compiler/preflight trace ownership inspectable by Studio Debugger
+  and support bundles without parsing the trace name or free-form summary text.
+- Contract coverage now proves the context helper preserves phase, component,
+  source file, and source symbol.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-10 - Text Preprocessing Diagnostic Context
+
+Twenty-fifth follow-up on the first slice:
+
+- Text preprocessing success traces now carry the same structured diagnostic
+  context fields used by aggregate compiler/preflight diagnostics.
+- Missing, empty, out-of-range, and materialization failure traces now identify
+  their diagnostic phase, component, source file, and source symbol without
+  adding a new trace producer or changing issue/error-code shape.
+- Contract coverage now proves tokenizer output and missing-dataset failures
+  expose the text preprocessing diagnostic context.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Text Preprocessing Issue Summary
+
+Twenty-sixth follow-up on the first slice:
+
+- Text preprocessing traces that already carry issues now attach the aggregate
+  issue summary payload used by compiler/preflight diagnostics.
+- Missing, empty, out-of-range, vocabulary-coverage, truncation, and
+  materialization-failure traces now expose issue counts, severity counts,
+  first-seen issue codes, and primary error/warning codes without changing the
+  existing issue list.
+- Contract coverage now proves missing-dataset errors and truncation warnings
+  expose issue summary fields.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Operator Warning Issue Summary
+
+Twenty-seventh follow-up on the first slice:
+
+- Operator-backed debugger warning traces now attach the same aggregate issue
+  summary payload as compiler/preflight and text preprocessing diagnostics.
+- Graph-level warnings and node-level operator warnings now expose issue counts,
+  severity counts, first-seen issue codes, and primary warning codes without
+  changing their existing issue list or warning role.
+- Contract coverage now proves missing Arrow source, unsupported operator, and
+  failed tokenizer warnings expose issue summary fields.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Operator Warning Diagnostic Context
+
+Twenty-eighth follow-up on the first slice:
+
+- Operator-backed debugger warning traces now carry structured owner
+  context alongside their diagnostic phase and issue summary payload.
+- Graph-level and node-level warning builders now attach component, source
+  file, and source symbol fields without changing existing warning roles,
+  issue lists, or caller-specific diagnostic phases.
+- Contract coverage now proves missing Arrow source, unsupported operator,
+  and failed tokenizer warnings expose source context.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1` (MSVC reported incremental-link `.ilk` warnings, but produced the executable.)
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Operator Success Diagnostic Context
+
+Twenty-ninth follow-up on the first slice:
+
+- Successful operator-backed TextTokenizer traces now carry the same structured
+  owner context as operator warning traces.
+- The success path attaches diagnostic phase, component, source file, and source
+  symbol after `DebugGraphTraceExecutor` converts the step, keeping the generic
+  executor unchanged.
+- Contract coverage now proves operator-backed success traces expose source
+  context while preserving the existing trace payload.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Graph Trace Step Issue Summary
+
+Thirtieth follow-up on the first slice:
+
+- `DebugGraphTraceExecutor` now attaches aggregate issue summaries when a
+  converted graph trace step emits warnings or errors.
+- Step traces now expose issue counts, severity counts, first-seen issue codes,
+  and primary warning/error codes without changing no-issue traces or widening
+  the step model.
+- Contract coverage now proves warning-only and error graph trace steps expose
+  issue summary fields.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Graph Trace Step Diagnostic Context
+
+Thirty-first follow-up on the first slice:
+
+- `DebugGraphTraceExecutor` now attaches default structured owner context to
+  converted graph trace steps.
+- The context is attached before custom step payload fields are copied, so
+  specialized producers can still override diagnostic ownership without
+  changing the step model.
+- Contract coverage now proves no-issue graph trace steps expose executor
+  diagnostic phase, component, source file, and source symbol fields.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Central Trace Issue Summary
+
+Thirty-second follow-up on the first slice:
+
+- `DebugNodeTraceContract::AddWarning` and `AddError` now attach aggregate
+  issue summaries automatically whenever they append a trace issue.
+- Helper-based trace producers no longer need local summary calls after using
+  the canonical warning/error helpers; direct issue-list producers still attach
+  summaries explicitly.
+- Contract coverage now proves the low-level warning/error helpers maintain
+  issue counts, primary codes, and issue-code summaries.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Unsupported Operator Error Codes`
-- Commit pushed: `423f7ce6` on `origin/Nodes_Implementation`
-- Next safe continuation point: continue from the current `tofix32` / `track32`
-  trail and pick the next smallest debugger diagnostic gap, or resume the
-  separate materialization-cache work if that is the active thread.
+- Last completed slice: `Central Trace Issue Summary`
+- Commit pushed: not yet for this continuation; last pushed tofix32 commit was `423f7ce6` on `origin/Nodes_Implementation`
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap, likely another narrow trace/error-code enrichment, or resume the separate materialization-cache work if that is the active thread.

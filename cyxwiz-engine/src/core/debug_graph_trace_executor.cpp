@@ -22,6 +22,12 @@ std::vector<DebugTraceRecord> DebugGraphTraceExecutor::TraceSteps(
             step.backend,
             step.status);
         trace.duration_ms = step.duration_ms;
+        DebugNodeTraceContract::AttachDiagnosticContext(
+            trace,
+            "graph_trace_step",
+            "DebugGraphTraceExecutor",
+            "cyxwiz-engine/src/core/debug_graph_trace_executor.cpp",
+            "cyxwiz::DebugGraphTraceExecutor::TraceSteps");
 
         for (auto it = step.payload.begin(); it != step.payload.end(); ++it) {
             trace.payload[it.key()] = it.value();
@@ -33,7 +39,6 @@ std::vector<DebugTraceRecord> DebugGraphTraceExecutor::TraceSteps(
         for (const auto& error : step.errors) {
             DebugNodeTraceContract::AddError(trace, error);
         }
-
         traces.push_back(std::move(trace));
     }
 
