@@ -307,40 +307,57 @@ Do not:
 7. Add usage documentation for prepared dataset reuse.
 8. Add tests for hit, miss, stale, corrupt, save failure, and explicit rebuild.
 
-## Resume 2026-07-09 - Implemented Slice And Next Pickup
+## Resume 2026-07-09 - Current Pushed State And Next Pickup
 
-This ticket is now implemented in code and pushed as commit `4a849e3d`
-(`Add materialization cache and async launcher fixes`).
+This ticket is mostly complete in code on branch `Nodes_Implementation`.
+The relevant pushed commits are:
+
+- `4a849e3d` - Add materialization cache and async launcher fixes.
+- `f942a82a` - Surface materialization cache details in training panel.
 
 What is already in place:
 
 - New focused cache module at `cyxwiz-engine/src/core/materialization_cache.*`.
 - `PipelineMaterializer` cache lookup/save flow with manifest validation.
 - Training launch integration with cache-aware progress reporting.
+- Training panel Materialization summary now shows cache key and cache artifact
+  path, with a copy button for the artifact path.
 - Regression coverage for cache behavior and launcher async behavior.
-- Main engine build and the targeted regression tests pass.
+- Main engine build and targeted regression tests pass.
+
+Latest verified commands:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_text_gui_training_launch test_graph_training_sequence_preflight`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_text_gui_training_launch.exe`
+- `D:\Dev\CyxWiz_Claude\build\bin\Release\test_graph_training_sequence_preflight.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target cyxwiz-engine`
+- `git diff --check`
 
 What is left, if we continue this ticket:
 
-- Add any remaining Studio-facing cache inspection or action controls if the
-  product still wants explicit UI for `Use cached prepared dataset`,
-  `Rebuild prepared dataset`, `Inspect prepared dataset`, `Delete prepared
-  dataset`, or `Open cache location`.
-- Tighten or expand cache diagnostics only if a later bug report exposes a gap.
-- Keep an eye on unrelated worktree noise in `docs/Data Studio/` before making
-  the next commit.
+- Decide whether to add explicit Studio cache actions: rebuild, inspect, delete,
+  or open cache location. The current UI intentionally only surfaces and copies
+  the artifact path; it does not perform destructive cache operations.
+- Add a small debugger/inspection enhancement only if product wants cache
+  manifest fields beyond the training panel summary.
+- Tighten diagnostics only if a later bug report exposes a stale, corrupt, or
+  save-failure gap.
+- Keep unrelated dirty worktree noise in `docs/Data Studio/` out of tofix47
+  commits unless the user explicitly asks to handle those files.
 
 How to pick this up next time:
 
-1. Open `D:\Dev\CyxWiz_Claude\docs\Data Studio\tofix47.md`.
-2. Inspect `cyxwiz-engine/src/core/materialization_cache.*` and
-   `cyxwiz-engine/src/core/pipeline_materializer.*` first.
+1. Start from `git status --short` and confirm only intended files are touched.
+2. Read `cyxwiz-engine/src/core/materialization_cache.*`,
+   `cyxwiz-engine/src/core/pipeline_materializer.*`,
+   `cyxwiz-engine/src/gui/graph_training_launcher.cpp`, and
+   `cyxwiz-engine/src/gui/panels/training_plot_panel.*`.
 3. Re-run `test_materialization_cache`, `test_pipeline_materializer_cache`,
-   `test_graph_training_sequence_preflight`, and
-   `test_text_gui_training_launch`.
-4. If UI follow-up is needed, start from
-   `cyxwiz-engine/src/gui/graph_training_launcher.*` and the training panel
-   paths that consume the cache status events.
+   `test_graph_training_sequence_preflight`, and `test_text_gui_training_launch`
+   before any further cache behavior changes.
+4. If adding UI actions, keep them narrow and non-surprising: inspect/open are
+   lower risk than delete/rebuild, and destructive actions should require clear
+   confirmation.
 
 ## Acceptance criteria
 
