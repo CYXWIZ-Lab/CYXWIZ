@@ -62,6 +62,9 @@ struct MaterializeResult {
         MaterializationCacheStatus::Disabled;
     std::string cache_key;
     std::string cache_artifact_path;
+    std::string cache_manifest_path;
+    int64_t cache_row_count = 0;
+    int64_t cache_column_count = 0;
     std::string cache_message;
     bool loaded_from_cache = false;
     bool saved_to_cache = false;

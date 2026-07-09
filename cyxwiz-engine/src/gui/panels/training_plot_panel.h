@@ -64,7 +64,10 @@ public:
                                        const std::string& memory_risk_level = "",
                                        const std::string& status = "running",
                                        const std::string& cache_key = "",
-                                       const std::string& cache_artifact_path = "");
+                                       const std::string& cache_artifact_path = "",
+                                       const std::string& cache_manifest_path = "",
+                                       int64_t cache_row_count = 0,
+                                       int64_t cache_column_count = 0);
     void SetMaterializationComplete(const std::string& output_dataset,
                                     int operators_applied,
                                     const std::string& status = "completed");
@@ -124,6 +127,9 @@ private:
         uint64_t total_items = 0;
         std::string cache_key;
         std::string cache_artifact_path;
+        std::string cache_manifest_path;
+        int64_t cache_row_count = 0;
+        int64_t cache_column_count = 0;
     };
 
     // Plot IDs
@@ -143,6 +149,9 @@ private:
     std::string materialization_status_;
     std::string materialization_cache_key_;
     std::string materialization_cache_artifact_path_;
+    std::string materialization_cache_manifest_path_;
+    int64_t materialization_cache_row_count_ = 0;
+    int64_t materialization_cache_column_count_ = 0;
     int materialization_operators_applied_ = 0;
 
     // UI state

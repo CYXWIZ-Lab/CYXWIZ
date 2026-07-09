@@ -367,3 +367,45 @@ How to pick this up next time:
 - The debugger records enough detail for an engineer to understand why the cache was or was not used.
 - Training still works if cache saving fails in automatic mode.
 - No new broad storage subsystem is introduced.
+
+## Resume 2026-07-09 - Cache Inspection Metadata Handoff
+
+Continuation after `track47.md` updates.
+
+What is now in place:
+
+- `MaterializeResult` reports `cache_manifest_path`, `cache_row_count`, and
+  `cache_column_count` in addition to cache key, artifact path, status, and
+  message.
+- `PipelineMaterializer` populates manifest path and prepared dataset dimensions
+  on cache save and cache hit from the manifest.
+- Pass-through materialization with zero applied operators clears predicted
+  artifact/manifest paths because no cache artifact is written.
+- `graph_training_launcher.cpp` forwards explicit cache manifest metadata to
+  `TrainingPlotPanel`.
+- The training panel materialization summary and stage history show cache key,
+  prepared dataset artifact path, manifest path, and row/column counts.
+- `test_pipeline_materializer_cache` now asserts manifest path and prepared
+  dataset dimensions on cache save and cache hit.
+
+Latest verified commands:
+
+```powershell
+cmake --build build --config Release --target test_pipeline_materializer_cache test_text_gui_training_launch cyxwiz-engine
+build\bin\Release\test_materialization_cache.exe
+build\bin\Release\test_pipeline_materializer_cache.exe
+build\bin\Release\test_text_gui_training_launch.exe
+build\bin\Release\test_graph_training_sequence_preflight.exe
+git diff --check
+```
+
+Next pickup guidance:
+
+1. Keep cache UI actions non-destructive unless product explicitly asks for
+   rebuild/delete controls.
+2. If adding an inspect/open action, prefer opening or copying the manifest
+   path over adding cache mutation behavior.
+3. Re-run `test_materialization_cache`, `test_pipeline_materializer_cache`,
+   `test_text_gui_training_launch`, and `test_graph_training_sequence_preflight`
+   after touching materialization cache reporting.
+4. Keep unrelated dirty `docs/Data Studio` churn out of the tofix47 commit.

@@ -326,6 +326,9 @@ void TrainingPlotPanel::Clear() {
     materialization_status_.clear();
     materialization_cache_key_.clear();
     materialization_cache_artifact_path_.clear();
+    materialization_cache_manifest_path_.clear();
+    materialization_cache_row_count_ = 0;
+    materialization_cache_column_count_ = 0;
     materialization_operators_applied_ = 0;
 
     // Reset training state
@@ -528,7 +531,10 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     const std::string& memory_risk_level,
     const std::string& status,
     const std::string& cache_key,
-    const std::string& cache_artifact_path) {
+    const std::string& cache_artifact_path,
+    const std::string& cache_manifest_path,
+    int64_t cache_row_count,
+    int64_t cache_column_count) {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     MaterializationProgress event;
@@ -544,12 +550,22 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     event.total_items = total_items;
     event.cache_key = cache_key;
     event.cache_artifact_path = cache_artifact_path;
+    event.cache_manifest_path = cache_manifest_path;
+    event.cache_row_count = cache_row_count;
+    event.cache_column_count = cache_column_count;
 
     if (!cache_key.empty()) {
         materialization_cache_key_ = cache_key;
     }
     if (!cache_artifact_path.empty()) {
         materialization_cache_artifact_path_ = cache_artifact_path;
+    }
+    if (!cache_manifest_path.empty()) {
+        materialization_cache_manifest_path_ = cache_manifest_path;
+    }
+    if (cache_row_count > 0 || cache_column_count > 0) {
+        materialization_cache_row_count_ = cache_row_count;
+        materialization_cache_column_count_ = cache_column_count;
     }
 
     if (!materialization_events_.empty() &&
@@ -1205,16 +1221,32 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                     materialization_operators_applied_);
     }
     if (!materialization_cache_key_.empty()) {
+        const std::string short_key = materialization_cache_key_.substr(
+            0, std::min<size_t>(12, materialization_cache_key_.size()));
         ImGui::TextWrapped("Cache key: %s", materialization_cache_key_.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("short %s", short_key.c_str());
     }
     if (!materialization_cache_artifact_path_.empty()) {
-        ImGui::TextWrapped("Cache artifact: %s",
+        ImGui::TextWrapped("Prepared dataset artifact: %s",
                            materialization_cache_artifact_path_.c_str());
-        if (ImGui::SmallButton("Copy cache artifact path")) {
+        if (ImGui::SmallButton("Copy artifact path")) {
             ImGui::SetClipboardText(materialization_cache_artifact_path_.c_str());
         }
     }
-
+    if (!materialization_cache_manifest_path_.empty()) {
+        ImGui::TextWrapped("Cache manifest: %s",
+                           materialization_cache_manifest_path_.c_str());
+        if (ImGui::SmallButton("Copy manifest path")) {
+            ImGui::SetClipboardText(materialization_cache_manifest_path_.c_str());
+        }
+    }
+    if (materialization_cache_row_count_ > 0 ||
+        materialization_cache_column_count_ > 0) {
+        ImGui::Text("Prepared dataset: %lld rows, %lld columns",
+                    static_cast<long long>(materialization_cache_row_count_),
+                    static_cast<long long>(materialization_cache_column_count_));
+    }
     ImGui::TextWrapped("Message: %s", latest.message.c_str());
     ImGui::ProgressBar(latest.progress, ImVec2(-1.0f, 0.0f));
 
@@ -1267,8 +1299,17 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
             ImGui::TextWrapped("Cache key: %s", event.cache_key.c_str());
         }
         if (!event.cache_artifact_path.empty()) {
-            ImGui::TextWrapped("Cache artifact: %s",
+            ImGui::TextWrapped("Prepared dataset artifact: %s",
                                event.cache_artifact_path.c_str());
+        }
+        if (!event.cache_manifest_path.empty()) {
+            ImGui::TextWrapped("Cache manifest: %s",
+                               event.cache_manifest_path.c_str());
+        }
+        if (event.cache_row_count > 0 || event.cache_column_count > 0) {
+            ImGui::Text("Prepared dataset: %lld rows, %lld columns",
+                        static_cast<long long>(event.cache_row_count),
+                        static_cast<long long>(event.cache_column_count));
         }
         if (event.total_items > 0 || event.processed_items > 0) {
             if (event.total_items > 0) {

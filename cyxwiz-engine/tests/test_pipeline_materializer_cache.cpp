@@ -164,10 +164,16 @@ int main() {
     Check(!saved.cache_key.empty(), "cache save should report cache key");
     Check(std::filesystem::exists(saved.cache_artifact_path),
           "cache save should write artifact");
+    Check(std::filesystem::exists(saved.cache_manifest_path),
+          "cache save should report written manifest path");
     auto saved_dataset = registry.GetArrowDataset(materialized_name);
     Check(saved_dataset && saved_dataset->GetArrowTable() &&
               saved_dataset->GetArrowTable()->GetColumnByName("tok_0") != nullptr,
           "saved materialized dataset should expose token columns");
+    Check(saved.cache_row_count == saved_dataset->GetArrowTable()->num_rows(),
+          "cache save should report prepared row count");
+    Check(saved.cache_column_count == saved_dataset->GetArrowTable()->num_columns(),
+          "cache save should report prepared column count");
 
     registry.UnregisterTabularDataset(materialized_name);
     auto hit = cyxwiz::PipelineMaterializer::Materialize(
@@ -180,6 +186,12 @@ int main() {
           "cache hit should restore operators_applied from manifest");
     Check(hit.cache_key == saved.cache_key,
           "cache hit should use original cache key");
+    Check(hit.cache_manifest_path == saved.cache_manifest_path,
+          "cache hit should report original manifest path");
+    Check(hit.cache_row_count == saved.cache_row_count,
+          "cache hit should report manifest row count");
+    Check(hit.cache_column_count == saved.cache_column_count,
+          "cache hit should report manifest column count");
     Check(registry.GetArrowDataset(materialized_name) != nullptr,
           "cache hit should register prepared dataset");
 

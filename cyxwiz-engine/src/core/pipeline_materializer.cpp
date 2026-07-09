@@ -341,6 +341,7 @@ MaterializeResult PipelineMaterializer::Materialize(
             nodes, links, source_dataset_name, source_schema_fingerprint));
         const auto manifest_path =
             MaterializationCacheManifestPath(cache_config, result.cache_key);
+        result.cache_manifest_path = manifest_path.string();
         result.cache_artifact_path =
             MaterializationCacheArtifactPath(cache_config, result.cache_key).string();
 
@@ -354,6 +355,10 @@ MaterializeResult PipelineMaterializer::Materialize(
                 result.cache_message = validation.message;
                 if (!validation.manifest.artifact_path.empty()) {
                     result.cache_artifact_path = validation.manifest.artifact_path;
+                }
+                if (validation.usable) {
+                    result.cache_row_count = validation.manifest.row_count;
+                    result.cache_column_count = validation.manifest.column_count;
                 }
 
                 if (validation.usable) {
@@ -425,6 +430,8 @@ MaterializeResult PipelineMaterializer::Materialize(
             result.cache_message =
                 "no materializer operators applied; cache artifact not written";
         }
+        result.cache_artifact_path.clear();
+        result.cache_manifest_path.clear();
         return result;
     }
 
@@ -453,12 +460,15 @@ MaterializeResult PipelineMaterializer::Materialize(
             manifest.artifact_format = cache_config.artifact_format;
             manifest.row_count = table_result.table ? table_result.table->num_rows() : 0;
             manifest.column_count = table_result.table ? table_result.table->num_columns() : 0;
+            result.cache_row_count = manifest.row_count;
+            result.cache_column_count = manifest.column_count;
             manifest.schema_fingerprint = source_schema_fingerprint;
             manifest.operators_applied = result.operators_applied;
             manifest.cache_status = MaterializationCacheStatus::Saved;
 
             const auto manifest_path =
                 MaterializationCacheManifestPath(cache_config, result.cache_key);
+            result.cache_manifest_path = manifest_path.string();
             if (WriteMaterializationCacheManifest(manifest, manifest_path,
                                                   &cache_error)) {
                 result.cache_status = MaterializationCacheStatus::Saved;

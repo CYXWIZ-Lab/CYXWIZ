@@ -80,7 +80,10 @@ void ReportMaterializationCacheStatus(
             "",
             status,
             materialize_result.cache_key,
-            materialize_result.cache_artifact_path);
+            materialize_result.cache_artifact_path,
+            materialize_result.cache_manifest_path,
+            materialize_result.cache_row_count,
+            materialize_result.cache_column_count);
     }
 }
 
