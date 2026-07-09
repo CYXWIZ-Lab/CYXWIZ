@@ -307,6 +307,41 @@ Do not:
 7. Add usage documentation for prepared dataset reuse.
 8. Add tests for hit, miss, stale, corrupt, save failure, and explicit rebuild.
 
+## Resume 2026-07-09 - Implemented Slice And Next Pickup
+
+This ticket is now implemented in code and pushed as commit `4a849e3d`
+(`Add materialization cache and async launcher fixes`).
+
+What is already in place:
+
+- New focused cache module at `cyxwiz-engine/src/core/materialization_cache.*`.
+- `PipelineMaterializer` cache lookup/save flow with manifest validation.
+- Training launch integration with cache-aware progress reporting.
+- Regression coverage for cache behavior and launcher async behavior.
+- Main engine build and the targeted regression tests pass.
+
+What is left, if we continue this ticket:
+
+- Add any remaining Studio-facing cache inspection or action controls if the
+  product still wants explicit UI for `Use cached prepared dataset`,
+  `Rebuild prepared dataset`, `Inspect prepared dataset`, `Delete prepared
+  dataset`, or `Open cache location`.
+- Tighten or expand cache diagnostics only if a later bug report exposes a gap.
+- Keep an eye on unrelated worktree noise in `docs/Data Studio/` before making
+  the next commit.
+
+How to pick this up next time:
+
+1. Open `D:\Dev\CyxWiz_Claude\docs\Data Studio\tofix47.md`.
+2. Inspect `cyxwiz-engine/src/core/materialization_cache.*` and
+   `cyxwiz-engine/src/core/pipeline_materializer.*` first.
+3. Re-run `test_materialization_cache`, `test_pipeline_materializer_cache`,
+   `test_graph_training_sequence_preflight`, and
+   `test_text_gui_training_launch`.
+4. If UI follow-up is needed, start from
+   `cyxwiz-engine/src/gui/graph_training_launcher.*` and the training panel
+   paths that consume the cache status events.
+
 ## Acceptance criteria
 
 - A repeated training run with unchanged source data and preprocessing graph reuses the saved prepared dataset.
