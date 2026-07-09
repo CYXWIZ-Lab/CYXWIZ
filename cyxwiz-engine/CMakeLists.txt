@@ -141,6 +141,9 @@ set(ENGINE_SOURCES
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
     src/core/debug_session_manager.cpp
+    src/core/debug_graph_trace_executor.cpp
+    src/core/debug_operator_trace_adapter.cpp
+    src/core/debug_operator_trace_producer.cpp
     src/core/preflight_validator.cpp
     src/core/crash_run_recorder.cpp
     src/core/text_preprocessing_tracer.cpp
@@ -3275,6 +3278,7 @@ add_executable(test_debugger_contracts
     src/core/debug_memory_ownership_tracer.cpp
     src/core/debug_node_inspector.cpp
     src/core/debug_operator_trace_adapter.cpp
+    src/core/debug_operator_trace_producer.cpp
     src/core/debug_runtime_backend_classifier.cpp
     src/core/debug_smoke_sample_selector.cpp
     src/core/debug_support_bundle_builder.cpp

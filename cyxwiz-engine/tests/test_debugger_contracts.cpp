@@ -4,6 +4,7 @@
 #include "../src/core/debug_memory_ownership_tracer.h"
 #include "../src/core/debug_node_inspector.h"
 #include "../src/core/debug_operator_trace_adapter.h"
+#include "../src/core/debug_operator_trace_producer.h"
 #include "../src/core/debug_run_store.h"
 #include "../src/core/debug_runtime_backend_classifier.h"
 #include "../src/core/debug_session_manager.h"
@@ -1102,6 +1103,665 @@ void TestOperatorBackedPreprocessingTraceContract() {
           "operator-backed trace should include output schema summary");
 }
 
+void TestOperatorTraceProducerContract() {
+    auto text = FinishStringArray({
+        "Small text sample",
+        "Another small sample",
+        "Text pipelines should tokenize",
+    });
+    auto label = FinishStringArray({"positive", "positive", "negative"});
+
+    auto schema = arrow::schema({
+        arrow::field("text", arrow::utf8()),
+        arrow::field("label", arrow::utf8()),
+    });
+    auto input = arrow::Table::Make(schema, {text, label}, 3);
+
+    auto data = MakeNode(1, gui::NodeType::DataInput, "Data Input");
+    auto tokenizer = MakeNode(2, gui::NodeType::TextTokenizer, "Tokenizer");
+    tokenizer.parameters = {
+        {"text_col", "text"},
+        {"label_col", "label"},
+        {"tokenizer_type", "1"},
+        {"max_length", "4"},
+        {"lowercase", "true"},
+        {"min_word_freq", "1"},
+        {"max_vocab_size", "100"},
+    };
+
+    gui::NodeLink link;
+    link.id = 101;
+    link.from_node = data.id;
+    link.to_node = tokenizer.id;
+
+    cyxwiz::DebugOperatorTraceProducer producer;
+    const auto traces = producer.TracePreprocessingGraph(
+        "operator-producer-run",
+        {data, tokenizer},
+        {link},
+        input);
+
+    Check(traces.size() == 1,
+          "operator producer should emit one TextTokenizer trace");
+    const auto& trace = traces[0];
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(trace),
+          "operator producer trace should use canonical node schema");
+    Check(trace.run_id == "operator-producer-run",
+          "operator producer trace should preserve run id");
+    Check(trace.node_id == tokenizer.id,
+          "operator producer trace should preserve tokenizer node id");
+    Check(trace.node_name == "Tokenizer",
+          "operator producer trace should preserve tokenizer name");
+    Check(trace.node_type == "TextTokenizer",
+          "operator producer trace should preserve tokenizer type");
+    Check(trace.phase == "OperatorTransform",
+          "operator producer should use operator transform phase");
+    Check(trace.role == cyxwiz::DebugTraceRole::PreprocessingOutput,
+          "operator producer should emit preprocessing output role");
+    Check(trace.input_shape == std::vector<size_t>{3, 2},
+          "operator producer should capture input table shape");
+    Check(trace.output_shape == std::vector<size_t>{3, 5},
+          "operator producer should capture tokenized output table shape");
+    Check(trace.payload["trace_producer"].get<std::string>() ==
+              "DebugOperatorTraceProducer",
+          "operator producer trace should name its producer");
+    Check(trace.payload["operator_backed"].get<bool>(),
+          "operator producer should mark real operator-backed traces");
+    Check(trace.payload["input_schema"].get<std::string>().find("text") !=
+              std::string::npos,
+          "operator producer should include input schema");
+    Check(trace.payload["output_schema"].get<std::string>().find("tok_0") !=
+              std::string::npos,
+          "operator producer should include output schema");
+
+    Check(trace.payload["effective_text_tokenizer_config"]["max_length"].get<std::string>() ==
+              "4",
+          "operator producer should expose effective tokenizer max_length");
+    Check(trace.payload["effective_text_tokenizer_config"]["text_col"].get<std::string>() ==
+              "text",
+          "operator producer should expose effective tokenizer text column");
+    Check(!trace.payload["effective_text_tokenizer_config"]["vocab_file_configured"].get<bool>(),
+          "operator producer should avoid storing an unconfigured vocab path");
+    Check(!trace.payload["folded_text_config_applied"].get<bool>(),
+          "plain tokenizer trace should mark that no folded config was applied");
+    Check(trace.payload["folded_text_config_nodes"].empty(),
+          "plain tokenizer trace should expose no folded config provenance");
+    Check(trace.payload["source_node_id"].get<int>() == data.id,
+          "operator producer trace should preserve source node id");
+    Check(trace.payload["source_node_name"].get<std::string>() == data.name,
+          "operator producer trace should preserve source node name");
+    Check(trace.payload["source_node_type"].get<std::string>() == "DataInput",
+          "operator producer trace should preserve source node type");
+    const auto bounded_traces = producer.TracePreprocessingGraph(
+        "operator-producer-bounded-run",
+        {data, tokenizer},
+        {link},
+        input,
+        {},
+        1,
+        1);
+    Check(bounded_traces.size() == 1,
+          "bounded operator producer should emit tokenizer trace");
+    Check(bounded_traces[0].input_shape == std::vector<size_t>{1, 2},
+          "bounded operator producer should trace only the selected row window");
+    Check(bounded_traces[0].output_shape == std::vector<size_t>{1, 5},
+          "bounded operator producer should emit output shape for selected row window");
+    Check(bounded_traces[0].payload["source_rows"].get<size_t>() == 3,
+          "bounded operator producer should preserve original source row count");
+    Check(bounded_traces[0].payload["selected_sample_index"].get<size_t>() == 1,
+          "bounded operator producer should preserve selected sample index");
+    Check(bounded_traces[0].payload["debug_row_offset"].get<size_t>() == 1,
+          "bounded operator producer should expose debug row offset");
+    Check(bounded_traces[0].payload["debug_row_count"].get<size_t>() == 1,
+          "bounded operator producer should expose debug row count");
+    Check(bounded_traces[0].payload["bounded_debug_table"].get<bool>(),
+          "bounded operator producer should mark bounded debug source tables");
+    Check(!bounded_traces[0].payload["selected_sample_clamped"].get<bool>(),
+          "bounded operator producer should not clamp an in-range selected sample");
+    Check(bounded_traces[0].payload["selected_sample_available"].get<bool>(),
+          "bounded operator producer should mark an in-range selected sample as available");
+
+    const auto clamped_traces = producer.TracePreprocessingGraph(
+        "operator-producer-clamped-run",
+        {data, tokenizer},
+        {link},
+        input,
+        {},
+        99,
+        1);
+    Check(clamped_traces.size() == 1,
+          "clamped operator producer should still emit tokenizer trace");
+    Check(clamped_traces[0].input_shape == std::vector<size_t>{1, 2},
+          "clamped operator producer should trace one available row");
+    Check(clamped_traces[0].payload["selected_sample_index"].get<size_t>() == 99,
+          "clamped operator producer should preserve requested selected sample");
+    Check(clamped_traces[0].payload["debug_row_offset"].get<size_t>() == 2,
+          "clamped operator producer should expose actual clamped row offset");
+    Check(clamped_traces[0].payload["selected_sample_clamped"].get<bool>(),
+          "clamped operator producer should mark selected sample clamping");
+    Check(!clamped_traces[0].payload["selected_sample_available"].get<bool>(),
+          "clamped operator producer should mark the requested sample unavailable");
+
+    auto empty_text = FinishStringArray(std::vector<std::string>{});
+    auto empty_label = FinishStringArray(std::vector<std::string>{});
+    auto empty_input = arrow::Table::Make(schema, {empty_text, empty_label}, 0);
+    const auto empty_source_traces = producer.TracePreprocessingGraph(
+        "operator-producer-empty-source-run",
+        {data, tokenizer},
+        {link},
+        empty_input,
+        {},
+        10,
+        1);
+    Check(empty_source_traces.size() == 1,
+          "empty source operator producer should still emit tokenizer trace");
+    Check(empty_source_traces[0].input_shape == std::vector<size_t>{0, 2},
+          "empty source operator producer should preserve empty input shape");
+    Check(empty_source_traces[0].payload["source_rows"].get<size_t>() == 0,
+          "empty source operator producer should preserve zero source rows");
+    Check(empty_source_traces[0].payload["debug_row_count"].get<size_t>() == 0,
+          "empty source operator producer should expose zero debug rows");
+    Check(!empty_source_traces[0].payload["selected_sample_available"].get<bool>(),
+          "empty source operator producer should mark selected sample unavailable");
+    Check(!empty_source_traces[0].payload["selected_sample_clamped"].get<bool>(),
+          "empty source operator producer should not claim a row clamp occurred");
+
+    auto vocabulary = MakeNode(4, gui::NodeType::TextVocabulary, "Vocabulary");
+    vocabulary.parameters = {
+        {"min_freq", "2"},
+        {"max_vocab_size", "100"},
+    };
+    auto padding = MakeNode(5, gui::NodeType::TextPadding, "Padding");
+    padding.parameters = {
+        {"max_length", "2"},
+        {"pad_value", "0"},
+    };
+    gui::NodeLink vocab_link;
+    vocab_link.id = 104;
+    vocab_link.from_node = tokenizer.id;
+    vocab_link.to_node = vocabulary.id;
+    gui::NodeLink padding_link;
+    padding_link.id = 105;
+    padding_link.from_node = vocabulary.id;
+    padding_link.to_node = padding.id;
+    const auto folded_config_traces = producer.TracePreprocessingGraph(
+        "operator-producer-folded-config-run",
+        {data, tokenizer, vocabulary, padding},
+        {link, vocab_link, padding_link},
+        input);
+    Check(folded_config_traces.size() == 1,
+          "folded text config nodes should not emit separate operator traces");
+    Check(folded_config_traces[0].output_shape == std::vector<size_t>{3, 3},
+          "folded TextPadding max_length should shape the tokenizer trace");
+    Check(folded_config_traces[0].payload["vocab_size"].get<size_t>() <
+              trace.payload["vocab_size"].get<size_t>(),
+          "folded TextVocabulary min_freq should shape tokenizer vocabulary");
+
+    Check(folded_config_traces[0].payload["effective_text_tokenizer_config"]["max_length"].get<std::string>() ==
+              "2",
+          "folded tokenizer trace should expose effective folded max_length");
+    Check(folded_config_traces[0].payload["effective_text_tokenizer_config"]["min_word_freq"].get<std::string>() ==
+              "2",
+          "folded tokenizer trace should expose effective folded min_word_freq");
+    Check(folded_config_traces[0].payload["effective_text_tokenizer_config"]["pad_value"].get<std::string>() ==
+              "0",
+          "folded tokenizer trace should expose effective folded pad_value");
+    Check(folded_config_traces[0].payload["folded_text_config_applied"].get<bool>(),
+          "folded tokenizer trace should mark that folded config was applied");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"].size() == 2,
+          "folded tokenizer trace should expose folded config node provenance");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"][0]["node_id"].get<int>() ==
+              vocabulary.id,
+          "folded tokenizer trace should preserve vocabulary config node id");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"][0]["node_type"].get<std::string>() ==
+              "TextVocabulary",
+          "folded tokenizer trace should preserve vocabulary config node type");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"][0]["contributed_keys"].size() == 2,
+          "folded tokenizer trace should expose vocabulary contributed keys");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"][0]["contributed_keys"][0].get<std::string>() ==
+              "min_word_freq",
+          "folded tokenizer trace should expose vocabulary min frequency contribution");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"][0]["contributed_keys"][1].get<std::string>() ==
+              "max_vocab_size",
+          "folded tokenizer trace should expose vocabulary max size contribution");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"][1]["node_id"].get<int>() ==
+              padding.id,
+          "folded tokenizer trace should preserve padding config node id");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"][1]["contributed_keys"].size() == 2,
+          "folded tokenizer trace should expose padding contributed keys");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"][1]["contributed_keys"][0].get<std::string>() ==
+              "max_length",
+          "folded tokenizer trace should expose padding max_length contribution");
+    Check(folded_config_traces[0].payload["folded_text_config_nodes"][1]["contributed_keys"][1].get<std::string>() ==
+              "pad_value",
+          "folded tokenizer trace should expose padding value contribution");
+
+    auto empty_padding = MakeNode(14, gui::NodeType::TextPadding, "Empty Padding");
+    gui::NodeLink empty_padding_link;
+    empty_padding_link.id = 115;
+    empty_padding_link.from_node = tokenizer.id;
+    empty_padding_link.to_node = empty_padding.id;
+    const auto empty_config_traces = producer.TracePreprocessingGraph(
+        "operator-producer-empty-folded-config-run",
+        {data, tokenizer, empty_padding},
+        {link, empty_padding_link},
+        input);
+    Check(empty_config_traces.size() == 1,
+          "empty folded config nodes should still allow tokenizer trace");
+    Check(empty_config_traces[0].output_shape == std::vector<size_t>{3, 5},
+          "empty folded config nodes should not alter tokenizer output shape");
+    Check(!empty_config_traces[0].payload["folded_text_config_applied"].get<bool>(),
+          "empty folded config nodes should not mark folded config as applied");
+    Check(empty_config_traces[0].payload["folded_text_config_nodes"].empty(),
+          "empty folded config nodes should not appear in folded config provenance");
+
+    gui::NodeLink folded_only_link;
+    folded_only_link.id = 112;
+    folded_only_link.from_node = data.id;
+    folded_only_link.to_node = padding.id;
+    const auto folded_only_traces = producer.TracePreprocessingGraph(
+        "operator-producer-folded-only-run",
+        {data, padding},
+        {folded_only_link},
+        input);
+    Check(folded_only_traces.size() == 1,
+          "folded text config without tokenizer should emit one warning trace");
+    Check(folded_only_traces[0].node_id == data.id,
+          "folded-only warning should attach to the source node");
+    Check(folded_only_traces[0].role == cyxwiz::DebugTraceRole::Warning,
+          "folded-only trace should be warning-only");
+    Check(folded_only_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "graph_walk",
+          "folded-only warning should identify graph-walk validation");
+    Check(folded_only_traces[0].payload["message"].get<std::string>().find(
+              "TextTokenizer") != std::string::npos,
+          "folded-only warning should explain the missing tokenizer operator");
+
+    auto other_data = MakeNode(10, gui::NodeType::DataInput, "Other Data");
+    other_data.parameters["dataset_name"] = "other_dataset";
+    auto named_data = MakeNode(11, gui::NodeType::DataInput, "Named Data");
+    named_data.parameters["dataset_name"] = "wanted_dataset";
+    gui::NodeLink named_link;
+    named_link.id = 103;
+    named_link.from_node = named_data.id;
+    named_link.to_node = tokenizer.id;
+    const auto named_traces = producer.TracePreprocessingGraph(
+        "operator-producer-named-run",
+        {other_data, named_data, tokenizer},
+        {named_link},
+        input,
+        "wanted_dataset");
+    Check(named_traces.size() == 1,
+          "operator producer should start from the data input matching dataset name");
+    Check(named_traces[0].payload["source_dataset_name"].get<std::string>() ==
+              "wanted_dataset",
+          "operator producer should annotate named source dataset");
+    Check(named_traces[0].payload["source_node_id"].get<int>() == named_data.id,
+          "operator producer should preserve selected named source node id");
+    Check(named_traces[0].payload["source_node_name"].get<std::string>() ==
+              named_data.name,
+          "operator producer should preserve selected named source node name");
+    Check(named_traces[0].payload["source_node_dataset_name"].get<std::string>() ==
+              "wanted_dataset",
+          "operator producer should preserve selected source node dataset name");
+    const auto unavailable_source_traces = producer.TracePreprocessingGraph(
+        "operator-producer-unavailable-source-run",
+        {named_data, tokenizer},
+        {named_link},
+        {},
+        "wanted_dataset");
+    Check(unavailable_source_traces.size() == 1,
+          "unavailable Arrow source table should emit one warning trace");
+    Check(unavailable_source_traces[0].node_id == -1,
+          "unavailable Arrow source table warning should be graph-level");
+    Check(unavailable_source_traces[0].role == cyxwiz::DebugTraceRole::Warning,
+          "unavailable Arrow source table should be warning-only");
+    Check(unavailable_source_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "data_source",
+          "unavailable Arrow source table warning should identify data-source validation");
+    Check(unavailable_source_traces[0].payload["error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::InputDatasetMissing,
+          "unavailable Arrow source table warning should expose missing-input code");
+    Check(!unavailable_source_traces[0].issues.empty() &&
+              unavailable_source_traces[0].issues[0].error_code ==
+                  cyxwiz::errors::Runtime::InputDatasetMissing,
+          "unavailable Arrow source table issue should expose missing-input code");
+    Check(unavailable_source_traces[0].payload["source_dataset_name"].get<std::string>() ==
+              "wanted_dataset",
+          "unavailable Arrow source table warning should preserve requested dataset");
+    Check(unavailable_source_traces[0].payload["source_node_id"].get<int>() ==
+              named_data.id,
+          "unavailable Arrow source table warning should preserve source node id");
+    Check(unavailable_source_traces[0].payload["source_rows"].get<size_t>() == 0,
+          "unavailable Arrow source table warning should expose zero source rows");
+    Check(unavailable_source_traces[0].payload["message"].get<std::string>().find(
+              "source table") != std::string::npos,
+          "unavailable Arrow source table warning should explain skipped trace");
+    const auto missing_source_traces = producer.TracePreprocessingGraph(
+        "operator-producer-missing-source-run",
+        {tokenizer},
+        {},
+        input);
+    Check(missing_source_traces.size() == 1,
+          "missing data source should emit one warning trace");
+    Check(missing_source_traces[0].node_id == -1,
+          "missing data source warning should be graph-level");
+    Check(missing_source_traces[0].role == cyxwiz::DebugTraceRole::Warning,
+          "missing data source should be warning-only");
+    Check(missing_source_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "graph_walk",
+          "missing data source warning should identify graph-walk validation");
+    Check(missing_source_traces[0].payload["error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::InputDatasetMissing,
+          "missing data source warning should expose missing-input code");
+    Check(!missing_source_traces[0].issues.empty() &&
+              missing_source_traces[0].issues[0].error_code ==
+                  cyxwiz::errors::Runtime::InputDatasetMissing,
+          "missing data source issue should expose missing-input code");
+    Check(missing_source_traces[0].payload["message"].get<std::string>().find(
+              "no DataInput or DatasetInput") != std::string::npos,
+          "missing data source warning should explain skipped trace");
+
+    const auto mismatched_source_traces = producer.TracePreprocessingGraph(
+        "operator-producer-mismatched-source-run",
+        {other_data, tokenizer},
+        {link},
+        input,
+        "wanted_dataset");
+    Check(mismatched_source_traces.size() == 1,
+          "mismatched dataset source should emit one warning trace");
+    Check(mismatched_source_traces[0].node_id == -1,
+          "mismatched dataset source warning should be graph-level");
+    Check(mismatched_source_traces[0].role == cyxwiz::DebugTraceRole::Warning,
+          "mismatched dataset source should be warning-only");
+    Check(mismatched_source_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "graph_walk",
+          "mismatched dataset source warning should identify graph-walk validation");
+    Check(mismatched_source_traces[0].payload["error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::InputDatasetMissing,
+          "mismatched dataset source warning should expose missing-input code");
+    Check(!mismatched_source_traces[0].issues.empty() &&
+              mismatched_source_traces[0].issues[0].error_code ==
+                  cyxwiz::errors::Runtime::InputDatasetMissing,
+          "mismatched dataset source issue should expose missing-input code");
+    Check(mismatched_source_traces[0].payload["source_dataset_name"].get<std::string>() ==
+              "wanted_dataset",
+          "mismatched dataset source warning should preserve requested dataset");
+    Check(mismatched_source_traces[0].payload["message"].get<std::string>().find(
+              "does not match any DataInput/DatasetInput") != std::string::npos,
+          "mismatched dataset source warning should explain skipped trace");
+    auto second_tokenizer = tokenizer;
+    second_tokenizer.id = 6;
+    second_tokenizer.name = "Second Tokenizer";
+    gui::NodeLink second_tokenizer_link;
+    second_tokenizer_link.id = 106;
+    second_tokenizer_link.from_node = data.id;
+    second_tokenizer_link.to_node = second_tokenizer.id;
+    const auto branched_traces = producer.TracePreprocessingGraph(
+        "operator-producer-branched-run",
+        {data, tokenizer, second_tokenizer},
+        {link, second_tokenizer_link},
+        input);
+    Check(branched_traces.size() == 1,
+          "branched supported trace paths should emit one warning trace");
+    Check(branched_traces[0].role == cyxwiz::DebugTraceRole::Warning,
+          "branched supported trace paths should be warning-only");
+    Check(!branched_traces[0].payload["operator_backed"].get<bool>(),
+          "branched warning should not claim operator-backed execution");
+    Check(branched_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "graph_walk",
+          "branched warning should identify graph-walk validation");
+    Check(branched_traces[0].payload["message"].get<std::string>().find(
+              "branched operator trace paths") != std::string::npos,
+          "branched warning should explain unsupported trace topology");
+
+    gui::NodeLink cycle_link;
+    cycle_link.id = 107;
+    cycle_link.from_node = padding.id;
+    cycle_link.to_node = tokenizer.id;
+    const auto cycle_traces = producer.TracePreprocessingGraph(
+        "operator-producer-cycle-run",
+        {data, tokenizer, vocabulary, padding},
+        {link, vocab_link, padding_link, cycle_link},
+        input);
+    Check(cycle_traces.size() == 1,
+          "cyclic trace paths should emit one warning trace");
+    Check(cycle_traces[0].role == cyxwiz::DebugTraceRole::Warning,
+          "cyclic trace paths should be warning-only");
+    Check(!cycle_traces[0].payload["operator_backed"].get<bool>(),
+          "cycle warning should not claim operator-backed execution");
+    Check(cycle_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "graph_walk",
+          "cycle warning should identify graph-walk validation");
+    Check(cycle_traces[0].payload["message"].get<std::string>().find(
+              "cyclic graph path") != std::string::npos,
+          "cycle warning should explain unsupported trace topology");
+    auto unsupported_cycle = MakeNode(7, gui::NodeType::Dense, "Unsupported Cycle");
+    gui::NodeLink unsupported_cycle_in;
+    unsupported_cycle_in.id = 108;
+    unsupported_cycle_in.from_node = data.id;
+    unsupported_cycle_in.to_node = unsupported_cycle.id;
+    gui::NodeLink unsupported_cycle_back;
+    unsupported_cycle_back.id = 109;
+    unsupported_cycle_back.from_node = unsupported_cycle.id;
+    unsupported_cycle_back.to_node = unsupported_cycle.id;
+    const auto unsupported_cycle_traces = producer.TracePreprocessingGraph(
+        "operator-producer-unsupported-cycle-run",
+        {data, unsupported_cycle},
+        {unsupported_cycle_in, unsupported_cycle_back},
+        input);
+    Check(unsupported_cycle_traces.size() == 1,
+          "unsupported-only cycles should emit the unsupported node warning");
+    Check(unsupported_cycle_traces[0].node_id == unsupported_cycle.id,
+          "unsupported-only cycle warning should attach to the unsupported node");
+    Check(unsupported_cycle_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "unsupported_operator",
+          "unsupported-only cycle warning should identify unsupported-operator phase");
+    Check(unsupported_cycle_traces[0].payload["error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported-only cycle warning should expose unsupported-node code");
+    Check(!unsupported_cycle_traces[0].issues.empty() &&
+              unsupported_cycle_traces[0].issues[0].error_code ==
+                  cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported-only cycle issue should expose unsupported-node code");
+    Check(unsupported_cycle_traces[0].payload["message"].get<std::string>().find(
+              "supports TextTokenizer only") != std::string::npos,
+          "unsupported-only cycle should not be masked by topology validation");
+
+    const auto mixed_cycle_traces = producer.TracePreprocessingGraph(
+        "operator-producer-mixed-unsupported-cycle-run",
+        {data, tokenizer, unsupported_cycle},
+        {link, unsupported_cycle_in, unsupported_cycle_back},
+        input);
+    Check(mixed_cycle_traces.size() == 2,
+          "unsupported side cycles should not block a valid tokenizer trace");
+    Check(mixed_cycle_traces[0].node_id == tokenizer.id,
+          "mixed unsupported cycle should still emit the tokenizer trace");
+    Check(mixed_cycle_traces[0].payload["operator_backed"].get<bool>(),
+          "mixed unsupported cycle should preserve operator-backed tokenizer trace");
+    Check(mixed_cycle_traces[1].node_id == unsupported_cycle.id,
+          "mixed unsupported cycle should attach warning to unsupported node");
+    Check(mixed_cycle_traces[1].role == cyxwiz::DebugTraceRole::Warning,
+          "mixed unsupported cycle should emit unsupported-node warning");
+    Check(mixed_cycle_traces[1].payload["diagnostic_phase"].get<std::string>() ==
+              "unsupported_operator",
+          "mixed unsupported cycle warning should identify unsupported-operator phase");
+    Check(mixed_cycle_traces[1].payload["error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::UnsupportedNode,
+          "mixed unsupported cycle warning should expose unsupported-node code");
+    Check(!mixed_cycle_traces[1].issues.empty() &&
+              mixed_cycle_traces[1].issues[0].error_code ==
+                  cyxwiz::errors::Runtime::UnsupportedNode,
+          "mixed unsupported cycle issue should expose unsupported-node code");
+    Check(mixed_cycle_traces[1].payload["message"].get<std::string>().find(
+              "supports TextTokenizer only") != std::string::npos,
+          "mixed unsupported cycle should not report graph-walk topology failure");
+
+    auto unsupported = MakeNode(3, gui::NodeType::Dense, "Dense Head");
+    gui::NodeLink unsupported_link;
+    unsupported_link.id = 102;
+    unsupported_link.from_node = tokenizer.id;
+    unsupported_link.to_node = unsupported.id;
+    const auto unsupported_traces = producer.TracePreprocessingGraph(
+        "operator-producer-warning-run",
+        {data, tokenizer, unsupported},
+        {link, unsupported_link},
+        input);
+    Check(unsupported_traces.size() == 2,
+          "unsupported operator chain should keep tokenizer trace and warning trace");
+    Check(unsupported_traces[1].role == cyxwiz::DebugTraceRole::Warning,
+          "unsupported operator trace should use warning role");
+    Check(unsupported_traces[1].node_type == "Dense",
+          "unsupported operator trace should preserve readable node type");
+    Check(unsupported_traces[1].input_shape == std::vector<size_t>{3, 5},
+          "unsupported operator warning should receive tokenized table shape");
+    Check(!unsupported_traces[1].issues.empty(),
+          "unsupported operator trace should carry an issue");
+    Check(unsupported_traces[1].payload["error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported operator trace should expose unsupported-node code");
+    Check(unsupported_traces[1].issues[0].error_code ==
+              cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported operator issue should preserve unsupported-node code");
+    Check(!unsupported_traces[1].payload["operator_backed"].get<bool>(),
+          "unsupported operator trace should not claim operator-backed execution");
+    Check(unsupported_traces[1].payload["diagnostic_phase"].get<std::string>() ==
+              "unsupported_operator",
+          "unsupported operator warning should identify unsupported-operator phase");
+
+    auto unsupported_before_tokenizer = MakeNode(
+        9, gui::NodeType::Dense, "Unsupported Before Tokenizer");
+    gui::NodeLink unsupported_before_tokenizer_link;
+    unsupported_before_tokenizer_link.id = 113;
+    unsupported_before_tokenizer_link.from_node = data.id;
+    unsupported_before_tokenizer_link.to_node = unsupported_before_tokenizer.id;
+    gui::NodeLink tokenizer_after_unsupported_link;
+    tokenizer_after_unsupported_link.id = 114;
+    tokenizer_after_unsupported_link.from_node = unsupported_before_tokenizer.id;
+    tokenizer_after_unsupported_link.to_node = tokenizer.id;
+    const auto tokenizer_after_unsupported_traces = producer.TracePreprocessingGraph(
+        "operator-producer-tokenizer-after-unsupported-run",
+        {data, unsupported_before_tokenizer, tokenizer},
+        {unsupported_before_tokenizer_link, tokenizer_after_unsupported_link},
+        input);
+    Check(tokenizer_after_unsupported_traces.size() == 1,
+          "unsupported operators should stop downstream tokenizer tracing");
+    Check(tokenizer_after_unsupported_traces[0].node_id ==
+              unsupported_before_tokenizer.id,
+          "unsupported boundary warning should attach to the unsupported node");
+    Check(tokenizer_after_unsupported_traces[0].role == cyxwiz::DebugTraceRole::Warning,
+          "unsupported boundary trace should be warning-only");
+    Check(tokenizer_after_unsupported_traces[0].node_type == "Dense",
+          "unsupported boundary warning should preserve readable node type");
+    Check(!tokenizer_after_unsupported_traces[0].payload["operator_backed"].get<bool>(),
+          "unsupported boundary warning should not claim operator-backed execution");
+    Check(tokenizer_after_unsupported_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "unsupported_operator",
+          "unsupported boundary warning should identify unsupported-operator phase");
+    Check(tokenizer_after_unsupported_traces[0].payload["error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported boundary warning should expose unsupported-node code");
+    Check(!tokenizer_after_unsupported_traces[0].issues.empty() &&
+              tokenizer_after_unsupported_traces[0].issues[0].error_code ==
+                  cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported boundary issue should expose unsupported-node code");
+    Check(tokenizer_after_unsupported_traces[0].payload["message"].get<std::string>().find(
+              "supports TextTokenizer only") != std::string::npos,
+          "unsupported boundary warning should explain skipped downstream trace");
+
+    const auto direct_and_unsupported_tokenizer_traces = producer.TracePreprocessingGraph(
+        "operator-producer-direct-and-unsupported-tokenizer-run",
+        {data, tokenizer, unsupported_before_tokenizer},
+        {link, unsupported_before_tokenizer_link, tokenizer_after_unsupported_link},
+        input);
+    Check(direct_and_unsupported_tokenizer_traces.size() == 2,
+          "unsupported tokenizer side paths should not make valid tokenizer paths look branched");
+    Check(direct_and_unsupported_tokenizer_traces[0].node_id == tokenizer.id,
+          "valid direct tokenizer path should still emit tokenizer trace");
+    Check(direct_and_unsupported_tokenizer_traces[0].payload["operator_backed"].get<bool>(),
+          "valid direct tokenizer path should remain operator-backed");
+    Check(direct_and_unsupported_tokenizer_traces[1].node_id ==
+              unsupported_before_tokenizer.id,
+          "unsupported side path should still emit unsupported-node warning");
+    Check(direct_and_unsupported_tokenizer_traces[1].role ==
+              cyxwiz::DebugTraceRole::Warning,
+          "unsupported side path should be warning-only");
+    Check(direct_and_unsupported_tokenizer_traces[1].payload["error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported side path warning should expose unsupported-node code");
+    Check(!direct_and_unsupported_tokenizer_traces[1].issues.empty() &&
+              direct_and_unsupported_tokenizer_traces[1].issues[0].error_code ==
+                  cyxwiz::errors::Runtime::UnsupportedNode,
+          "unsupported side path issue should expose unsupported-node code");
+    Check(direct_and_unsupported_tokenizer_traces[1].payload["message"].get<std::string>().find(
+              "supports TextTokenizer only") != std::string::npos,
+          "unsupported side path should not be reported as branched topology");
+
+    auto invalid_tokenizer = tokenizer;
+    invalid_tokenizer.id = 8;
+    invalid_tokenizer.name = "Invalid Tokenizer";
+    invalid_tokenizer.parameters["max_length"] = "0";
+    gui::NodeLink invalid_tokenizer_link;
+    invalid_tokenizer_link.id = 110;
+    invalid_tokenizer_link.from_node = data.id;
+    invalid_tokenizer_link.to_node = invalid_tokenizer.id;
+    gui::NodeLink invalid_downstream_link;
+    invalid_downstream_link.id = 111;
+    invalid_downstream_link.from_node = invalid_tokenizer.id;
+    invalid_downstream_link.to_node = unsupported.id;
+    const auto failed_tokenizer_traces = producer.TracePreprocessingGraph(
+        "operator-producer-failed-tokenizer-run",
+        {data, invalid_tokenizer, unsupported},
+        {invalid_tokenizer_link, invalid_downstream_link},
+        input);
+    Check(failed_tokenizer_traces.size() == 1,
+          "failed supported operators should stop downstream debugger tracing");
+    Check(failed_tokenizer_traces[0].node_id == invalid_tokenizer.id,
+          "failed tokenizer warning should attach to the tokenizer node");
+    Check(failed_tokenizer_traces[0].role == cyxwiz::DebugTraceRole::Warning,
+          "failed tokenizer trace should be warning-only");
+    Check(failed_tokenizer_traces[0].payload["diagnostic_phase"].get<std::string>() ==
+              "configure",
+          "failed tokenizer trace should identify configure phase");
+    Check(failed_tokenizer_traces[0].payload["message"].get<std::string>().find(
+              "max_length") != std::string::npos,
+          "failed tokenizer warning should preserve operator error text");
+    Check(failed_tokenizer_traces[0].payload["effective_text_tokenizer_config"]["max_length"].get<std::string>() ==
+              "0",
+          "failed tokenizer warning should expose effective invalid config");
+    Check(failed_tokenizer_traces[0].payload["folded_text_config_nodes"].empty(),
+          "failed plain tokenizer warning should expose no folded config provenance");
+    Check(!failed_tokenizer_traces[0].payload["operator_backed"].get<bool>(),
+          "failed tokenizer warning should not claim operator-backed execution");
+    const auto original_cwd = std::filesystem::current_path();
+    const auto test_root = std::filesystem::temp_directory_path() /
+        "cyxwiz_debugger_operator_trace_producer_store";
+    std::filesystem::remove_all(test_root);
+    std::filesystem::create_directories(test_root);
+    std::filesystem::current_path(test_root);
+
+    cyxwiz::DebugRunStoreRecord record;
+    record.summary.run_id = "operator-producer-store-run";
+    record.summary.timestamp = "2026-07-09T00:00:00";
+    record.summary.graph_hash = 0x320032;
+    record.summary.success = true;
+    record.summary.summary = "Operator producer trace persistence";
+    record.traces.push_back(trace);
+
+    Check(cyxwiz::DebugRunStore::Save(record),
+          "operator producer traces should persist through DebugRunStore");
+    auto loaded = cyxwiz::DebugRunStore::Load(record.summary.run_id);
+    Check(loaded.has_value(),
+          "operator producer persisted run should load");
+    Check(loaded->traces.size() == 1,
+          "operator producer persisted run should contain trace");
+    Check(loaded->traces[0].payload["trace_producer"].get<std::string>() ==
+              "DebugOperatorTraceProducer",
+          "operator producer payload should round-trip through store");
+
+    std::filesystem::current_path(original_cwd);
+    std::filesystem::remove_all(test_root);
+}
 void TestSmokeSampleSelectionContract() {
     cyxwiz::DebugSmokeSampleSelector selector;
 
@@ -1507,6 +2167,7 @@ int main() {
     TestSupportBundleContract();
     TestNodeInspectorSummaryContract();
     TestOperatorBackedPreprocessingTraceContract();
+    TestOperatorTraceProducerContract();
     TestSmokeSampleSelectionContract();
     TestRecommendationContract();
     TestSmokeRunResultValueContract();

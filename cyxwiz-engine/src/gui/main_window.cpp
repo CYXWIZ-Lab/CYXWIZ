@@ -18,6 +18,7 @@
 #include "icons.h"
 #include "theme.h"
 #include "../core/error_codes.h"
+#include "../core/debug_operator_trace_producer.h"
 #include "../core/keyboard_shortcuts.h"
 #include "../core/sequence_arrow_batcher.h"
 #include "panels/toolbar.h"
@@ -142,6 +143,7 @@
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
 #include "../core/data_registry.h"
+#include "../core/arrow_dataset.h"
 #include "../core/parquet_backed_dataset.h"
 #include "../core/graph_compiler.h"
 #include "../core/debug_executor.h"
@@ -3617,6 +3619,32 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         return session.success;
     }
 
+    if ((run_smoke || run_local_debug) && !config.dataset_name.empty()) {
+        auto arrow_dataset = cyxwiz::DataRegistry::Instance().GetArrowDataset(
+            config.dataset_name);
+        if (arrow_dataset) {
+            cyxwiz::DebugOperatorTraceProducer operator_trace_producer;
+            auto operator_traces = operator_trace_producer.TracePreprocessingGraph(
+                run_id,
+                nodes,
+                links,
+                arrow_dataset->GetArrowTable(),
+                config.dataset_name,
+                selected_sample_index);
+            const bool has_operator_traces = !operator_traces.empty();
+            session.traces.insert(
+                session.traces.end(),
+                std::make_move_iterator(operator_traces.begin()),
+                std::make_move_iterator(operator_traces.end()));
+            if (has_operator_traces) {
+                session.studio_events.push_back({
+                    run_id, "", session.graph_hash, -1,
+                    "OperatorPreprocessingTrace", "captured",
+                    "Captured operator-backed Arrow preprocessing trace."
+                });
+            }
+        }
+    }
     if (run_smoke) {
         cyxwiz::TextPreprocessingTracer text_tracer;
         auto preprocessing_traces = text_tracer.TraceSample(

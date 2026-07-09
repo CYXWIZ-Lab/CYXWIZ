@@ -1,0 +1,551 @@
+# track32 - Studio Debugger Telemetry Spine
+
+## Status
+
+First slice implemented and resumed hardening pass completed.
+
+## Ticket Read
+
+`tofix32` is a large debugger/telemetry-spine ticket. The first implementation
+slice should not redesign the UI or build a second executor. The codebase
+already has:
+
+- canonical `DebugTraceRecord` schema: `cyxwiz.debug.node_trace.v1`;
+- `DebugGraphTraceExecutor` for converting prepared trace steps;
+- `DebugOperatorTraceAdapter` for Arrow table input/output transitions;
+- `DebugRunStore` persistence;
+- existing Studio Debugger lenses that can render preprocessing and shape traces.
+
+The main missing piece for the recommended slice is a real producer that runs a
+bounded operator-backed preprocessing transition and emits canonical traces.
+
+## Lean Scope
+
+Implement only the first operator-backed preprocessing trace path:
+
+- support `TextTokenizer` only;
+- execute through existing `TextTokenizerOperator`;
+- use existing `DebugOperatorTraceAdapter` and `DebugGraphTraceExecutor`;
+- emit warning traces for unsupported operators or invalid inputs;
+- avoid full graph execution, UI redesign, Tracy integration, and broad
+  diagnostic catalogs.
+
+## Planned Files
+
+- `cyxwiz-engine/src/core/debug_operator_trace_producer.h`
+- `cyxwiz-engine/src/core/debug_operator_trace_producer.cpp`
+- `cyxwiz-engine/src/gui/main_window.cpp`
+- `cyxwiz-engine/tests/test_debugger_contracts.cpp`
+- CMake wiring for the new source if required.
+
+## Acceptance For This Slice
+
+- A `TextTokenizer` Arrow table transition produces a canonical node trace.
+- The trace includes input/output shapes and schemas through the existing
+  adapter.
+- Unsupported operators emit warning traces instead of silent gaps.
+- A focused debugger contract test covers the producer path.
+- Existing debugger persistence remains unchanged and stores the new traces when
+  they are appended to a session.
+
+## Implemented Slice
+
+- Added `DebugOperatorTraceProducer`.
+- Executes real `TextTokenizerOperator` against a bounded Arrow table input.
+- Converts the input/output table transition through `DebugOperatorTraceAdapter`
+  and `DebugGraphTraceExecutor`.
+- Appends operator-backed preprocessing traces to Studio Debugger sessions when
+  the compiled dataset is available as an Arrow dataset.
+- Emits warning traces for unsupported non-folded downstream operators, including a first-pass `error_code` payload.
+- Added focused debugger contract coverage for success, unsupported warning, and
+  persistence through `DebugRunStore`.
+
+## Validation
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Known Dirty Tree Boundary
+
+Before this work, the tree already had unrelated dirty changes around
+pre-existing ticket work, `track43.md`, and several docs renames. This track file
+and the `tofix32` implementation should avoid changing those unrelated edits
+except where CMake wiring must work with the current file state.
+
+## Resume 2026-07-09 - Bounded Debugger Trace Hardening
+
+Follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now selects the `DataInput` / `DatasetInput` that
+  matches the compiled `dataset_name` when Studio provides one, instead of
+  blindly starting from the first data source in the graph.
+- Studio Debugger now passes `config.dataset_name` and the selected sample index
+  into the operator-backed preprocessing trace producer.
+- Operator-backed debug tracing now runs on a bounded Arrow row window starting
+  at the selected sample index, with a default cap of 32 rows. This avoids using
+  the full registered table as a debugger input.
+- Trace payloads now preserve the original source size and row-window metadata:
+  `source_rows`, `source_columns`, `selected_sample_index`, `debug_row_offset`,
+  `debug_row_count`, `debug_row_limit`, and `bounded_debug_table`.
+- Contract coverage now proves bounded row-window tracing and named dataset
+  source-node selection.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+## Resume 2026-07-09 - Folded Text Config Parity
+
+Second follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now folds `TextVocabulary` and `TextPadding`
+  parameters with the same explicit mapping used by the Arrow table
+  materializer path.
+- `TextVocabulary.min_freq` now reaches `TextTokenizerOperator` as
+  `min_word_freq` during debugger tracing.
+- `TextPadding.max_length` and `pad_value` now shape the tokenizer-backed trace
+  without emitting separate fake operator traces for folded config nodes.
+- Contract coverage now proves folded vocabulary/padding nodes alter the single
+  tokenizer trace instead of producing separate unsupported warnings.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+## Resume 2026-07-09 - Trace Graph Topology Guard
+
+Third follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now validates the supported trace topology before
+  running `TextTokenizerOperator`.
+- Cyclic paths reachable from the selected data source now emit a warning trace
+  instead of silently producing partial traces.
+- Branched paths with more than one supported tokenizer-backed trace branch now
+  emit a warning trace instead of implying a truthful linear materialization
+  trace.
+- Unsupported non-folded downstream nodes still emit explicit warning traces;
+  this guard only blocks shapes where a supported operator-backed trace would be
+  misleading.
+- Contract coverage now proves branch and cycle topologies are warning-only and
+  do not claim `operator_backed` execution.
+
+Additional validation:
+
+- Passed on rerun after an initial timeout: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+Build note:
+
+- The full engine build re-ran CMake because `cyxwiz-engine/CMakeLists.txt` was
+  newer than the generated stamp, and it compiled the unrelated dirty-tree
+  `materialization_cache.cpp` file already present in the workspace.
+
+## Resume 2026-07-09 - Graph Source Warning Traces
+
+Fourth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` no longer silently returns no traces when it
+  cannot find a graph data source.
+- Missing `DataInput` / `DatasetInput` now emits a graph-level canonical warning
+  trace with node id `-1`.
+- A compiled/requested dataset name that does not match any graph source now
+  emits a graph-level warning trace preserving `source_dataset_name`.
+- These warning traces carry the same `DebugOperatorTraceProducer`,
+  `operator_backed=false`, `diagnostic_phase=graph_walk`, issue, and error-code
+  payload shape as other unsupported debugger trace gaps.
+- Contract coverage now proves missing and mismatched graph-source paths are
+  warning-only instead of silent.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+## Resume 2026-07-09 - Supported-Trace Topology Scope
+
+Fifth follow-up on the first slice:
+
+- The trace topology guard now runs only when a supported tokenizer-backed trace
+  operator is reachable from the selected source.
+- Unsupported-only graph cycles are no longer masked by the topology guard; they
+  continue to emit the normal unsupported-node warning trace.
+- This keeps the guard aligned with its purpose: prevent misleading
+  operator-backed traces, not suppress unsupported topology diagnostics.
+- Contract coverage now proves an unsupported-only cycle still attaches the
+  warning to the unsupported node and does not report a graph-walk topology
+  failure.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Failed Operator Stops Downstream Trace
+
+Sixth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now treats a failed supported operator trace as
+  a traversal boundary.
+- When `TextTokenizerOperator` fails during configure/apply, the debugger emits
+  the tokenizer warning trace and does not enqueue downstream nodes with a
+  missing or fabricated output table.
+- Downstream unsupported-node warnings still appear after successful tokenizer
+  traces, preserving truthful partial coverage for `DataInput -> TextTokenizer
+  -> unsupported` chains.
+- Contract coverage now proves `DataInput -> invalid TextTokenizer -> Dense`
+  emits only the tokenizer configure warning and does not invent a downstream
+  Dense warning.
+
+Additional validation:
+
+- Initial build attempt timed out before completion: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed on rerun: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Missing Arrow Source Table Warning
+
+Seventh follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now validates source-table availability after it
+  resolves the graph `DataInput` / `DatasetInput` node.
+- A resolved source node with no Arrow table now emits one graph-level warning
+  trace instead of falling through to tokenizer execution.
+- The warning uses `diagnostic_phase=data_source`, preserves
+  `source_dataset_name`, and keeps the bounded debug table metadata at zero
+  rows/columns when no table exists.
+- Existing missing-source and mismatched-source graph-walk warnings keep their
+  current `diagnostic_phase=graph_walk` behavior.
+- Contract coverage now proves `DataInput -> TextTokenizer` with a null Arrow
+  source emits only the source-table warning.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Folded Config Without Tokenizer Warning
+
+Eighth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now detects the case where traversal reaches
+  downstream text config nodes but emits no traces because no `TextTokenizer`
+  operator is present.
+- `DataInput -> TextPadding` / folded-config-only shapes now emit one source-node
+  warning instead of silently returning no operator-backed trace records.
+- Data-only graphs remain quiet; the warning only appears when the selected
+  source has downstream nodes but those nodes never produce a trace or
+  unsupported-node warning.
+- Existing folded config behavior remains unchanged when the config nodes can be
+  folded into a reachable `TextTokenizer` trace.
+- Contract coverage now proves a folded-text-config-only graph reports the
+  missing tokenizer operator.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Trace-Relevant Cycle Validation
+
+Ninth follow-up on the first slice:
+
+- The topology cycle guard now follows only branches that can reach a supported
+  operator-backed trace operator.
+- Unsupported-only side cycles no longer suppress a valid tokenizer trace when
+  a supported tokenizer branch exists elsewhere from the selected source.
+- Supported trace cycles still emit the graph-walk topology warning, preserving
+  the guard against misleading cyclic tokenizer-backed traces.
+- Normal unsupported-node warnings still attach to unsupported cyclic side
+  branches through the traversal path.
+- Contract coverage now proves `DataInput -> TextTokenizer` plus an unsupported
+  self-cycling side branch emits the tokenizer trace and the unsupported-node
+  warning, not a graph-level topology failure.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Unsupported Operators Are Trace Boundaries
+
+Tenth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now treats unsupported non-folded operators as
+  traversal boundaries.
+- A path such as `DataInput -> Dense -> TextTokenizer` now emits the Dense
+  unsupported warning and does not run `TextTokenizer` against the unchanged
+  upstream table.
+- Supported-trace reachability now uses the same boundary rule, so unsupported
+  side paths that eventually point at a tokenizer do not make valid direct
+  tokenizer paths look like branched supported topology.
+- Folded text config nodes still remain traversable because they do not execute
+  independently and can legitimately feed tokenizer configuration.
+- Contract coverage now proves unsupported-before-tokenizer paths stop at the
+  unsupported node, while a valid direct tokenizer branch still traces when an
+  unsupported side path also points at the tokenizer.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Effective Tokenizer Config Payload
+
+Eleventh follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now attaches an
+  `effective_text_tokenizer_config` payload to tokenizer-backed traces.
+- The payload records the effective tokenizer fields after folded
+  `TextVocabulary` / `TextPadding` params are applied, including `text_col`,
+  `label_col`, `tokenizer_type`, `max_length`, `lowercase`, `min_word_freq`,
+  `max_vocab_size`, `pad_value`, and `vocab_build_if_missing` when present.
+- Tokenizer traces now also include `folded_text_config_applied` so the debugger
+  can distinguish plain tokenizer params from graph-folded config.
+- Configure/apply warning traces from `TextTokenizerOperator` also preserve the
+  same effective config payload, which makes invalid config warnings easier to
+  inspect.
+- Raw `vocab_file` paths are not stored in the payload; the trace only records
+  `vocab_file_configured` as a boolean.
+- Contract coverage now proves plain tokenizer traces, folded config traces, and
+  invalid tokenizer warnings expose the effective config used by the operator.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Initial engine build timed out once, then a rerun compiled the executable but
+  failed in the post-build resource copy step.
+- Passed on retry: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Folded Config Provenance Payload
+
+Twelfth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now records `folded_text_config_nodes` on
+  tokenizer-backed traces.
+- The provenance payload contains only folded config node id, name, and type,
+  so the debugger can show which `TextVocabulary` / `TextPadding` nodes shaped
+  the effective tokenizer config without copying raw parameter maps or paths.
+- `folded_text_config_applied` now reflects actual folded-node provenance rather
+  than only comparing parameter maps.
+- Plain tokenizer traces and plain tokenizer configure warnings expose an empty
+  folded provenance array.
+- Contract coverage now proves folded tokenizer traces preserve the vocabulary
+  and padding config node identities in traversal order.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Folded Config Contributed Keys
+
+Thirteenth follow-up on the first slice:
+
+- `folded_text_config_nodes` now includes `contributed_keys` for each folded
+  config node.
+- `TextVocabulary` provenance reports effective keys such as `min_word_freq`,
+  `max_vocab_size`, `vocab_file_configured`, and `vocab_build_if_missing` when
+  those values are contributed.
+- `TextPadding` provenance reports effective keys such as `max_length` and
+  `pad_value`.
+- This lets Studio Debugger explain not only which folded config nodes shaped a
+  tokenizer trace, but which effective tokenizer settings each node supplied.
+- Contract coverage now proves vocabulary and padding provenance includes the
+  expected contributed effective keys.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Source Node Provenance Payload
+
+Fourteenth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now annotates resolved-source traces with source
+  graph node provenance.
+- Traces now include `source_node_id`, `source_node_name`, and
+  `source_node_type` when a `DataInput` / `DatasetInput` source node has been
+  selected.
+- If the source node carries a dataset name, traces also include
+  `source_node_dataset_name`.
+- Missing-source graph warnings remain graph-level without source-node fields;
+  null-table warnings after source resolution do include source-node
+  provenance.
+- Contract coverage now proves plain tokenizer traces, named dataset selection,
+  and unavailable Arrow source warnings preserve the selected source node.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Skip Empty Folded Config Provenance
+
+Fifteenth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` no longer records folded config provenance for
+  `TextVocabulary` / `TextPadding` nodes that contribute no effective tokenizer
+  settings.
+- Empty folded config nodes still remain traversable, so meaningful downstream
+  folded config can still be discovered.
+- `folded_text_config_applied` now stays false when the tokenizer is followed
+  only by config nodes with no effective parameters.
+- Contract coverage now proves an empty `TextPadding` after `TextTokenizer`
+  preserves the tokenizer trace, leaves output shape unchanged, and emits no
+  folded config provenance.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Readable Unsupported Node Type Names
+
+Sixteenth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now maps `Dense` to a readable node type name in
+  canonical warning traces.
+- Unsupported Dense warnings no longer expose the numeric enum value as
+  `node_type`.
+- Contract coverage now proves both downstream unsupported Dense warnings and
+  unsupported-before-tokenizer boundary warnings preserve `node_type=Dense`.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Selected Sample Clamp Metadata
+
+Seventeenth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now records `selected_sample_clamped` in trace
+  payloads.
+- In-range selected samples report `selected_sample_clamped=false`.
+- Out-of-range selected samples preserve the requested `selected_sample_index`,
+  expose the actual clamped `debug_row_offset`, and report
+  `selected_sample_clamped=true`.
+- Contract coverage now proves a request for sample `99` on a three-row table
+  traces the final available row while preserving the requested sample index.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Selected Sample Availability Metadata
+
+Eighteenth follow-up on the first slice:
+
+- `DebugOperatorTraceProducer` now records `selected_sample_available` in trace
+  payloads.
+- In-range selected samples report `selected_sample_available=true` and
+  `selected_sample_clamped=false`.
+- Out-of-range selected samples report `selected_sample_available=false` and
+  `selected_sample_clamped=true` while still tracing the clamped row window.
+- Empty source tables report `selected_sample_available=false` and
+  `selected_sample_clamped=false`, because no source row exists to clamp to.
+- Contract coverage now proves all three cases: in-range bounded row, clamped
+  out-of-range row, and empty source table.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Unsupported Operator Diagnostic Phase
+
+Nineteenth follow-up on the first slice:
+
+- Unsupported non-folded operator warnings now carry
+  `diagnostic_phase=unsupported_operator`.
+- The debugger contract no longer has to infer unsupported-node gaps only from
+  warning message text.
+- Contract coverage now proves both downstream unsupported Dense warnings and
+  unsupported-before-tokenizer boundary warnings preserve the explicit phase.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Topology Warning Phase Contracts
+
+Twentieth follow-up on the first slice:
+
+- Tightened debugger contract coverage for topology warning phases.
+- Cyclic supported trace paths now explicitly prove
+  `diagnostic_phase=graph_walk`.
+- Unsupported-only and mixed unsupported cycles now explicitly prove
+  `diagnostic_phase=unsupported_operator`.
+- No production code change was needed; the producer already emitted the
+  intended structured phase values.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Source Availability Error Codes
+
+Twenty-first follow-up on the first slice:
+
+- Source availability warnings from `DebugOperatorTraceProducer` now use
+  `CW-R-0301` / `Runtime::InputDatasetMissing` instead of the generic runtime
+  execution failure code.
+- The retagged warnings cover missing graph source nodes, requested dataset
+  name mismatches, and resolved source nodes that do not provide an Arrow table.
+- Payload `error_code` and the first trace issue `error_code` are kept in sync
+  for each source availability warning.
+- Contract coverage now proves all three source availability paths preserve the
+  missing-input code while keeping their existing diagnostic phases.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-07-09 - Unsupported Operator Error Codes
+
+Twenty-second follow-up on the first slice:
+
+- Unsupported non-folded operator warnings from `DebugOperatorTraceProducer` now
+  use `CW-R-0201` / `Runtime::UnsupportedNode` instead of the generic runtime
+  execution failure code.
+- `BuildWarningTrace` now accepts a caller-provided error code while preserving
+  `Runtime::ExecutionFailed` as the default for real operator configure/apply
+  failures.
+- Payload `error_code` and the first trace issue `error_code` are kept in sync
+  for unsupported operator warnings.
+- Contract coverage now proves unsupported-only cycles, mixed unsupported
+  cycles, downstream unsupported Dense warnings, unsupported-before-tokenizer
+  boundary warnings, and unsupported side paths preserve the unsupported-node
+  code.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
