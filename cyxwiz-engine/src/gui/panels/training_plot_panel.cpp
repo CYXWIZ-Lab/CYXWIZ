@@ -15,6 +15,17 @@
 #include <limits>
 #include <numeric>
 #include <sstream>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#else
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace cyxwiz {
 
@@ -47,6 +58,56 @@ std::string FormatTraceBytes(uint64_t bytes) {
         out << bytes << " B";
     }
     return out.str();
+}
+
+std::string ParentDirectoryForPath(std::string path) {
+    while (path.size() > 1 &&
+           (path.back() == '\\' || path.back() == '/') &&
+           !(path.size() == 3 && path[1] == ':')) {
+        path.pop_back();
+    }
+
+    const size_t separator = path.find_last_of("\\/");
+    if (separator == std::string::npos) {
+        return ".";
+    }
+    if (separator == 0) {
+        return path.substr(0, 1);
+    }
+    if (separator == 2 && path[1] == ':') {
+        return path.substr(0, 3);
+    }
+    return path.substr(0, separator);
+}
+
+bool OpenDirectoryInFileBrowser(const std::string& directory) {
+    if (directory.empty()) {
+        return false;
+    }
+
+#ifdef _WIN32
+    const HINSTANCE result = ShellExecuteA(
+        nullptr, "open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(result) > 32;
+#elif defined(__APPLE__)
+    const pid_t pid = fork();
+    if (pid == 0) {
+        execlp("open", "open", directory.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    int status = 0;
+    return pid > 0 && waitpid(pid, &status, 0) == pid &&
+           WIFEXITED(status) && WEXITSTATUS(status) == 0;
+#else
+    const pid_t pid = fork();
+    if (pid == 0) {
+        execlp("xdg-open", "xdg-open", directory.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    int status = 0;
+    return pid > 0 && waitpid(pid, &status, 0) == pid &&
+           WIFEXITED(status) && WEXITSTATUS(status) == 0;
+#endif
 }
 
 const char* ClassifyTrainingWarning(const std::string& text) {
@@ -1239,6 +1300,24 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                            materialization_cache_manifest_path_.c_str());
         if (ImGui::SmallButton("Copy manifest path")) {
             ImGui::SetClipboardText(materialization_cache_manifest_path_.c_str());
+        }
+    }
+    const std::string cache_location_source =
+        !materialization_cache_manifest_path_.empty()
+            ? materialization_cache_manifest_path_
+            : materialization_cache_artifact_path_;
+    if (!cache_location_source.empty()) {
+        const std::string cache_directory =
+            ParentDirectoryForPath(cache_location_source);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Open cache location")) {
+            if (OpenDirectoryInFileBrowser(cache_directory)) {
+                RecordPanelEvent("TrainingPlotPanel.OpenCacheLocation",
+                                 cache_directory);
+            } else {
+                RecordPanelEvent("TrainingPlotPanel.OpenCacheLocationFailed",
+                                 cache_directory);
+            }
         }
     }
     if (materialization_cache_row_count_ > 0 ||

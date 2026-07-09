@@ -81,3 +81,35 @@ build\bin\Release\test_pipeline_materializer_cache.exe
 build\bin\Release\test_text_gui_training_launch.exe
 build\bin\Release\test_graph_training_sequence_preflight.exe
 ```
+
+## 2026-07-10 Continuation 3
+
+Closed the remaining non-destructive cache inspection action.
+
+### Change
+
+- Added `Open cache location` to the Training Dashboard materialization summary
+  when a prepared dataset artifact or manifest path is available.
+- Opens the cache artifact directory through the platform file browser and
+  records success/failure as panel events.
+- Kept rebuild/delete cache actions out of this track.
+
+### Additional files touched
+
+- `cyxwiz-engine/src/gui/panels/training_plot_panel.cpp`
+
+### Additional verification
+
+Passed:
+
+```powershell
+cmake --build build --config Release --target cyxwiz-engine
+cmake --build build --config Release --target test_materialization_cache test_pipeline_materializer_cache test_graph_training_sequence_preflight test_text_gui_training_launch
+build\bin\Release\test_materialization_cache.exe
+build\bin\Release\test_pipeline_materializer_cache.exe
+build\bin\Release\test_graph_training_sequence_preflight.exe
+build\bin\Release\test_text_gui_training_launch.exe
+```
+
+Note: the first `test_graph_training_sequence_preflight.exe` run hit the 120s
+command timeout without output; rerunning with a longer timeout passed.

@@ -335,11 +335,11 @@ Latest verified commands:
 
 What is left, if we continue this ticket:
 
-- Decide whether to add explicit Studio cache actions: rebuild, inspect, delete,
-  or open cache location. The current UI intentionally only surfaces and copies
-  the artifact path; it does not perform destructive cache operations.
-- Add a small debugger/inspection enhancement only if product wants cache
-  manifest fields beyond the training panel summary.
+- `Open cache location` is now implemented for cache inspection. Rebuild/delete
+  controls remain product decisions and should require explicit confirmation if
+  they are added later.
+- Add more debugger/inspection detail only if product wants cache manifest fields
+  beyond the training panel summary and open-location action.
 - Tighten diagnostics only if a later bug report exposes a stale, corrupt, or
   save-failure gap.
 - Keep unrelated dirty worktree noise in `docs/Data Studio/` out of tofix47
@@ -401,10 +401,10 @@ git diff --check
 
 Next pickup guidance:
 
-1. Keep cache UI actions non-destructive unless product explicitly asks for
-   rebuild/delete controls.
-2. If adding an inspect/open action, prefer opening or copying the manifest
-   path over adding cache mutation behavior.
+1. Cache inspection now exposes copy actions plus `Open cache location` from the
+   materialization summary.
+2. Keep future cache UI actions non-destructive unless product explicitly asks
+   for rebuild/delete controls; destructive actions need clear confirmation.
 3. Re-run `test_materialization_cache`, `test_pipeline_materializer_cache`,
    `test_text_gui_training_launch`, and `test_graph_training_sequence_preflight`
    after touching materialization cache reporting.
