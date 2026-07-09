@@ -62,7 +62,9 @@ public:
                                        int node_id = -1,
                                        const std::string& node_name = "",
                                        const std::string& memory_risk_level = "",
-                                       const std::string& status = "running");
+                                       const std::string& status = "running",
+                                       const std::string& cache_key = "",
+                                       const std::string& cache_artifact_path = "");
     void SetMaterializationComplete(const std::string& output_dataset,
                                     int operators_applied,
                                     const std::string& status = "completed");
@@ -120,6 +122,8 @@ private:
         std::string memory_risk_level;
         uint64_t processed_items = 0;
         uint64_t total_items = 0;
+        std::string cache_key;
+        std::string cache_artifact_path;
     };
 
     // Plot IDs
@@ -137,6 +141,8 @@ private:
     std::vector<MaterializationProgress> materialization_events_;
     std::string materialization_output_dataset_;
     std::string materialization_status_;
+    std::string materialization_cache_key_;
+    std::string materialization_cache_artifact_path_;
     int materialization_operators_applied_ = 0;
 
     // UI state

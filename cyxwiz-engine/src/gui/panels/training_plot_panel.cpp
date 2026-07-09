@@ -324,6 +324,8 @@ void TrainingPlotPanel::Clear() {
     materialization_events_.clear();
     materialization_output_dataset_.clear();
     materialization_status_.clear();
+    materialization_cache_key_.clear();
+    materialization_cache_artifact_path_.clear();
     materialization_operators_applied_ = 0;
 
     // Reset training state
@@ -524,7 +526,9 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     int node_id,
     const std::string& node_name,
     const std::string& memory_risk_level,
-    const std::string& status) {
+    const std::string& status,
+    const std::string& cache_key,
+    const std::string& cache_artifact_path) {
     std::lock_guard<std::mutex> lock(data_mutex_);
 
     MaterializationProgress event;
@@ -538,6 +542,15 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     event.memory_risk_level = memory_risk_level;
     event.processed_items = processed_items;
     event.total_items = total_items;
+    event.cache_key = cache_key;
+    event.cache_artifact_path = cache_artifact_path;
+
+    if (!cache_key.empty()) {
+        materialization_cache_key_ = cache_key;
+    }
+    if (!cache_artifact_path.empty()) {
+        materialization_cache_artifact_path_ = cache_artifact_path;
+    }
 
     if (!materialization_events_.empty() &&
         materialization_events_.back().stage == event.stage) {
@@ -1191,6 +1204,16 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         ImGui::Text("Operators: %d applied",
                     materialization_operators_applied_);
     }
+    if (!materialization_cache_key_.empty()) {
+        ImGui::TextWrapped("Cache key: %s", materialization_cache_key_.c_str());
+    }
+    if (!materialization_cache_artifact_path_.empty()) {
+        ImGui::TextWrapped("Cache artifact: %s",
+                           materialization_cache_artifact_path_.c_str());
+        if (ImGui::SmallButton("Copy cache artifact path")) {
+            ImGui::SetClipboardText(materialization_cache_artifact_path_.c_str());
+        }
+    }
 
     ImGui::TextWrapped("Message: %s", latest.message.c_str());
     ImGui::ProgressBar(latest.progress, ImVec2(-1.0f, 0.0f));
@@ -1239,6 +1262,13 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         }
         if (!event.status.empty() && event.status != "running") {
             ImGui::Text("Decision status: %s", event.status.c_str());
+        }
+        if (!event.cache_key.empty()) {
+            ImGui::TextWrapped("Cache key: %s", event.cache_key.c_str());
+        }
+        if (!event.cache_artifact_path.empty()) {
+            ImGui::TextWrapped("Cache artifact: %s",
+                               event.cache_artifact_path.c_str());
         }
         if (event.total_items > 0 || event.processed_items > 0) {
             if (event.total_items > 0) {

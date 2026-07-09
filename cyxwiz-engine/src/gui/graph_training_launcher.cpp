@@ -78,7 +78,9 @@ void ReportMaterializationCacheStatus(
             -1,
             "",
             "",
-            status);
+            status,
+            materialize_result.cache_key,
+            materialize_result.cache_artifact_path);
     }
 }
 
