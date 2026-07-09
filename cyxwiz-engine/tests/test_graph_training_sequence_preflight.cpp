@@ -1,14 +1,19 @@
 #include "../src/gui/graph_training_launcher.h"
 
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/async_task_manager.h"
 #include "../src/core/data_registry.h"
 
 #include <arrow/api.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -63,6 +68,31 @@ gui::MLNode MakeDataInputNode() {
     return node;
 }
 
+
+bool WaitFor(const std::function<bool()>& predicate,
+             std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    do {
+        cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (std::chrono::steady_clock::now() < deadline);
+
+    cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    return predicate();
+}
+
+std::string LatestFailedTaskError() {
+    for (const auto& task :
+         cyxwiz::AsyncTaskManager::Instance().GetRecentTasks(10)) {
+        if (task.state == cyxwiz::TaskState::Failed) {
+            return task.error_message;
+        }
+    }
+    return {};
+}
 cyxwiz::TrainingConfiguration MakeSequenceConfig() {
     cyxwiz::TrainingConfiguration config;
     config.is_valid = true;
@@ -90,7 +120,7 @@ int main() {
     const std::vector<gui::MLNode> nodes = {MakeDataInputNode()};
     const std::vector<gui::NodeLink> links;
 
-    bool dispatch_called = false;
+    std::atomic<bool> dispatch_called{false};
     auto valid_config = MakeSequenceConfig();
     auto valid_result = gui::StartGraphTrainingFromCompiledConfig(
         nodes,
@@ -106,13 +136,16 @@ int main() {
             int,
             std::weak_ptr<cyxwiz::TrainingPlotPanel>,
             std::function<void(bool)>) {
-            dispatch_called = true;
+            dispatch_called.store(true);
             return true;
         });
     Check(valid_result.started, valid_result.error_message);
-    Check(dispatch_called, "valid sequence preflight should call dispatch");
+    Check(WaitFor([&] { return dispatch_called.load(); },
+                  std::chrono::seconds(5)),
+          "valid sequence preflight should call dispatch");
 
-    bool missing_dispatch_called = false;
+    std::atomic<bool> missing_dispatch_called{false};
+    std::atomic<bool> missing_preparation_failed{false};
     auto missing_config = MakeSequenceConfig();
     missing_config.sequence_batch.tag_column = "missing_ner_tags";
     auto missing_result = gui::StartGraphTrainingFromCompiledConfig(
@@ -121,7 +154,11 @@ int main() {
         std::move(missing_config),
         registry,
         std::weak_ptr<cyxwiz::TrainingPlotPanel>{},
-        [](bool) {},
+        [&](bool preparing) {
+            if (!preparing) {
+                missing_preparation_failed.store(true);
+            }
+        },
         [&](cyxwiz::TrainingConfiguration,
             const std::string&,
             const std::string&,
@@ -129,28 +166,30 @@ int main() {
             int,
             std::weak_ptr<cyxwiz::TrainingPlotPanel>,
             std::function<void(bool)>) {
-            missing_dispatch_called = true;
+            missing_dispatch_called.store(true);
             return true;
         });
-    Check(!missing_result.started,
-          "missing sequence column should block launch");
-    Check(!missing_dispatch_called,
+    Check(missing_result.started, missing_result.error_message);
+    Check(WaitFor([&] { return missing_preparation_failed.load(); },
+                  std::chrono::seconds(5)),
+          "missing sequence column should fail async preparation");
+    Check(!missing_dispatch_called.load(),
           "missing sequence column should not call dispatch");
-    Check(missing_result.error_message.find("tag column 'missing_ner_tags'") !=
+
+    const std::string missing_error = LatestFailedTaskError();
+    Check(missing_error.find("tag column 'missing_ner_tags'") !=
               std::string::npos,
           "missing sequence column error should name the missing tag column: " +
-              missing_result.error_message);
-    Check(missing_result.error_message.find(kDatasetName) != std::string::npos,
+              missing_error);
+    Check(missing_error.find(kDatasetName) != std::string::npos,
           "missing sequence column error should name the dataset: " +
-              missing_result.error_message);
-    Check(missing_result.status_title == "Sequence materialization blocked",
-          "missing sequence column should expose compact status title: " +
+              missing_error);
+    Check(missing_result.status_title == "Training launch queued",
+          "missing sequence column should initially expose queued status: " +
               missing_result.status_title);
-    Check(missing_result.status_detail == missing_result.error_message,
-          "missing sequence column should expose status detail matching the "
-          "full error message");
 
     registry.UnregisterTabularDataset(kDatasetName);
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
     std::cout << "Graph training sequence preflight test passed\n";
     return 0;
 }

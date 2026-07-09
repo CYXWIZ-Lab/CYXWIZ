@@ -28,6 +28,10 @@ struct GraphTrainingLaunchResult {
     bool materializer_skipped_unsupported_source = false;
     std::string materializer_unsupported_source_reason;
     std::string materializer_diagnostic_message;
+    bool materialization_cache_enabled = false;
+    cyxwiz::MaterializationCacheMode materialization_cache_mode =
+        cyxwiz::MaterializationCacheMode::Disabled;
+    std::string materialization_cache_root;
     int epochs = 0;
     int batch_size = 0;
 };

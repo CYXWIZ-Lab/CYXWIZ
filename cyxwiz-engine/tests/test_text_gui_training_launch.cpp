@@ -1,4 +1,5 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/async_task_manager.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/dataset_batcher.h"
 #include "../src/core/model_builder.h"
@@ -14,17 +15,21 @@
 
 #include <arrow/api.h>
 
+#include <atomic>
 #include <cmath>
 #include <cctype>
+#include <chrono>
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 #include <nlohmann/json.hpp>
 
@@ -48,6 +53,21 @@ void Check(bool condition, const std::string& message) {
 }
 
 using json = nlohmann::json;
+
+bool WaitFor(const std::function<bool()>& predicate,
+             std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    do {
+        cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    } while (std::chrono::steady_clock::now() < deadline);
+
+    cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    return predicate();
+}
 
 std::filesystem::path FindRepoRoot() {
     auto dir = std::filesystem::current_path();
@@ -927,9 +947,9 @@ int main() {
         "Legacy text");
     registry.UnregisterTextDataset(kScopeTextDatasetName);
 
-    bool dispatch_called = false;
-    bool callback_started = false;
-    bool callback_finished = false;
+    std::atomic<bool> dispatch_called{false};
+    std::atomic<bool> callback_started{false};
+    std::atomic<bool> callback_finished{false};
 
     auto config = MakeTrainingConfig(work_dir / "checkpoints");
     auto dispatch = [&](cyxwiz::TrainingConfiguration dispatch_config,
@@ -939,7 +959,7 @@ int main() {
                         int batch_size,
                         std::weak_ptr<cyxwiz::TrainingPlotPanel>,
                         std::function<void(bool)> callback) {
-        dispatch_called = true;
+        dispatch_called.store(true);
         Check(dataset_name == kMaterializedDatasetName,
               "dispatch should receive materialized dataset");
         Check(dispatch_config.dataset_name == kMaterializedDatasetName,
@@ -957,7 +977,7 @@ int main() {
 
         if (callback) {
             callback(true);
-            callback_started = true;
+            callback_started.store(true);
         }
 
         auto dataset = registry.GetArrowDataset(dataset_name);
@@ -997,7 +1017,7 @@ int main() {
 
         if (callback) {
             callback(false);
-            callback_finished = true;
+            callback_finished.store(true);
         }
         return true;
     };
@@ -1012,20 +1032,26 @@ int main() {
         dispatch);
 
     Check(result.started, result.error_message);
-    Check(dispatch_called, "dispatch should be called");
-    Check(callback_started, "training start callback should fire");
-    Check(callback_finished, "training finish callback should fire");
-    Check(result.effective_dataset_name == kMaterializedDatasetName,
-          "result should report materialized dataset");
-    Check(result.label_column == "y", "result should report resolved y label");
-    Check(result.operators_applied == 1, "expected one tokenizer operator");
+    Check(WaitFor([&] { return callback_finished.load(); },
+                  std::chrono::seconds(20)),
+          "dispatch should run through the training finish callback");
+    Check(dispatch_called.load(), "dispatch should be called");
+    Check(callback_started.load(), "training start callback should fire");
+    Check(result.effective_dataset_name == kDatasetName,
+          "queued result should report source dataset");
+    Check(result.label_column == "label",
+          "queued result should report source label column");
+    Check(result.operators_applied == 0,
+          "queued result should not report async materializer operators");
     Check(result.materializer_source_kind ==
-              cyxwiz::PipelineMaterializerSourceKind::ArrowTable,
-          "result should report ArrowTable materializer source kind");
+              cyxwiz::PipelineMaterializerSourceKind::Unknown,
+          "queued result should not report async materializer source kind");
     Check(!result.materializer_skipped_unsupported_source,
-          "result should not report unsupported materializer skip for Arrow source");
-    Check(result.materializer_unsupported_source_reason.empty(),
-          "result should not report unsupported materializer reason for Arrow source");
+          "queued result should not report async unsupported-source status");
+    Check(result.materialization_cache_enabled,
+          "queued result should expose enabled materialization cache");
+    Check(result.materialization_cache_mode == cyxwiz::MaterializationCacheMode::Auto,
+          "queued result should expose automatic materialization cache mode");
     Check(result.epochs == 1, "result epochs should match config");
     Check(result.batch_size == 2, "result batch size should match config");
 
@@ -1105,7 +1131,7 @@ int main() {
               std::to_string(sequence_build.tag_vocabulary_size),
           "sequence config normalization should set token head units parameter");
 
-    bool sequence_dispatch_called = false;
+    std::atomic<bool> sequence_dispatch_called{false};
     auto sequence_dispatch = [&](
         cyxwiz::TrainingConfiguration dispatch_config,
         const std::string&,
@@ -1114,7 +1140,7 @@ int main() {
         int,
         std::weak_ptr<cyxwiz::TrainingPlotPanel>,
         std::function<void(bool)>) {
-        sequence_dispatch_called = true;
+        sequence_dispatch_called.store(true);
         Check(dispatch_config.sequence_batch.enabled,
               "sequence launch should preserve sequence_batch.enabled");
         Check(dispatch_config.sequence_batch.token_column == "tokens",
@@ -1134,7 +1160,8 @@ int main() {
 
     Check(sequence_result.started,
           sequence_result.error_message);
-    Check(sequence_dispatch_called,
+    Check(WaitFor([&] { return sequence_dispatch_called.load(); },
+                  std::chrono::seconds(20)),
           "sequence batch launch should call dispatch");
 
     const auto ner_graph_path =
@@ -1158,9 +1185,9 @@ int main() {
         }
     }
 
-    bool saved_ners_dispatch_called = false;
-    bool saved_ners_start_callback = false;
-    bool saved_ners_finish_callback = false;
+    std::atomic<bool> saved_ners_dispatch_called{false};
+    std::atomic<bool> saved_ners_start_callback{false};
+    std::atomic<bool> saved_ners_finish_callback{false};
     auto saved_ners_dispatch = [&](cyxwiz::TrainingConfiguration dispatch_config,
                                   const std::string& materialized_dataset_name,
                                   const std::string& label_column,
@@ -1168,7 +1195,7 @@ int main() {
                                   int batch_size,
                                   std::weak_ptr<cyxwiz::TrainingPlotPanel>,
                                   std::function<void(bool)> callback) {
-        saved_ners_dispatch_called = true;
+        saved_ners_dispatch_called.store(true);
         Check(materialized_dataset_name == kSavedNerDatasetName,
               "saved NER launch should use registered dataset name");
         Check(label_column.empty(),
@@ -1189,7 +1216,7 @@ int main() {
 
         if (callback) {
             callback(true);
-            saved_ners_start_callback = true;
+            saved_ners_start_callback.store(true);
         }
 
         auto dataset = registry.GetArrowDataset(materialized_dataset_name);
@@ -1329,7 +1356,7 @@ int main() {
 
         if (callback) {
             callback(false);
-            saved_ners_finish_callback = true;
+            saved_ners_finish_callback.store(true);
         }
         return true;
     };
@@ -1343,12 +1370,13 @@ int main() {
         saved_ners_dispatch);
 
     Check(saved_ner_result.started, saved_ner_result.error_message);
-    Check(saved_ners_dispatch_called,
+    Check(WaitFor([&] { return saved_ners_finish_callback.load(); },
+                  std::chrono::seconds(20)),
+          "saved NER launch should run through the finish callback");
+    Check(saved_ners_dispatch_called.load(),
           "saved NER launch should call dispatch");
-    Check(saved_ners_start_callback,
+    Check(saved_ners_start_callback.load(),
           "saved NER launch should start callback");
-    Check(saved_ners_finish_callback,
-          "saved NER launch should finish callback");
     Check(saved_ner_result.effective_dataset_name == kSavedNerDatasetName,
           "saved NER result should use registered dataset name");
     Check(saved_ner_result.operators_applied == 0,
@@ -1368,7 +1396,7 @@ int main() {
 
     auto legacy_text_config = MakeTrainingConfig(work_dir / "legacy_text_checkpoints");
     legacy_text_config.dataset_name = kScopeTextDatasetName;
-    bool legacy_text_dispatch_called = false;
+    std::atomic<bool> legacy_text_dispatch_called{false};
     auto legacy_text_dispatch = [&](cyxwiz::TrainingConfiguration dispatch_config,
                                     const std::string& dataset_name,
                                     const std::string& label_column,
@@ -1376,7 +1404,7 @@ int main() {
                                     int batch_size,
                                     std::weak_ptr<cyxwiz::TrainingPlotPanel>,
                                     std::function<void(bool)> callback) {
-        legacy_text_dispatch_called = true;
+        legacy_text_dispatch_called.store(true);
         Check(dispatch_config.dataset_name == kScopeTextDatasetName,
               "legacy text config should keep original dataset");
         Check(dataset_name == kScopeTextDatasetName,
@@ -1406,33 +1434,23 @@ int main() {
         legacy_text_dispatch);
 
     Check(legacy_text_result.started, legacy_text_result.error_message);
-    Check(legacy_text_dispatch_called,
+    Check(WaitFor([&] { return legacy_text_dispatch_called.load(); },
+                  std::chrono::seconds(20)),
           "legacy text dispatch should be called");
     Check(legacy_text_result.effective_dataset_name == kScopeTextDatasetName,
           "legacy text result should keep original dataset");
     Check(legacy_text_result.operators_applied == 0,
           "legacy text result should not apply Arrow materializer operators");
     Check(legacy_text_result.materializer_source_kind ==
-              cyxwiz::PipelineMaterializerSourceKind::TextDataset,
-          "legacy text result should report TextDataset source kind");
-    Check(legacy_text_result.materializer_skipped_unsupported_source,
-          "legacy text result should report unsupported materializer skip");
-    const auto legacy_text_backend_support =
-        cyxwiz::ResolvePipelineMaterializerStorageBackendSupport(
-            cyxwiz::PipelineStorageBackend::TextDataset);
-    Check(legacy_text_result.materializer_unsupported_source_reason ==
-              legacy_text_backend_support.reason,
-          "legacy text result should expose central skip reason");
-    Check(legacy_text_result.materializer_diagnostic_message.find(
-              legacy_text_backend_support.reason) != std::string::npos,
-          "legacy text result should expose materializer diagnostic");
-    Check(legacy_text_result.status_title == "Materializer skipped",
-          "legacy text result should expose user-visible materializer status");
-    Check(legacy_text_result.status_detail ==
-              legacy_text_result.materializer_diagnostic_message,
-          "legacy text status detail should use materializer diagnostic");
+              cyxwiz::PipelineMaterializerSourceKind::Unknown,
+          "legacy text queued result should not report async source kind");
+    Check(!legacy_text_result.materializer_skipped_unsupported_source,
+          "legacy text queued result should not report async materializer skip");
+    Check(legacy_text_result.status_title == "Training launch queued",
+          "legacy text queued result should expose queued launch status");
     registry.UnregisterTextDataset(kScopeTextDatasetName);
 
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
     std::cout << "Text GUI training launch helper passed\n";
     return 0;
 }

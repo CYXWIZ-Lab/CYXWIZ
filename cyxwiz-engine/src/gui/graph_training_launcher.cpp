@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -21,6 +22,65 @@
 namespace gui {
 
 namespace {
+
+cyxwiz::MaterializationCacheConfig DefaultMaterializationCacheConfig() {
+    cyxwiz::MaterializationCacheConfig config;
+    config.mode = cyxwiz::MaterializationCacheMode::Auto;
+    config.cache_root = std::filesystem::current_path() / ".cyxwiz";
+    config.artifact_format = "parquet";
+    return config;
+}
+
+std::string MaterializationCacheStatusLabel(
+    cyxwiz::MaterializationCacheStatus status) {
+    if (status == cyxwiz::MaterializationCacheStatus::Disabled) {
+        return "completed";
+    }
+    return std::string("cache_") + cyxwiz::MaterializationCacheStatusName(status);
+}
+
+void ReportMaterializationCacheStatus(
+    cyxwiz::LambdaTask& task,
+    std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
+    const cyxwiz::MaterializeResult& materialize_result) {
+    if (materialize_result.cache_status ==
+        cyxwiz::MaterializationCacheStatus::Disabled) {
+        return;
+    }
+
+    const std::string status = MaterializationCacheStatusLabel(
+        materialize_result.cache_status);
+    std::string message = materialize_result.cache_message.empty()
+        ? (std::string("Materialization cache status: ") + status)
+        : materialize_result.cache_message;
+    if (!materialize_result.cache_key.empty()) {
+        message += " (key " + materialize_result.cache_key.substr(0, 8) + ")";
+    }
+
+    constexpr float kCacheProgress = 0.64f;
+    task.ReportProgress(kCacheProgress, message);
+    cyxwiz::TrainingTraceCollector::Instance().RecordTaskProgress(
+        task.GetId(),
+        task.GetName(),
+        "MaterializationCache",
+        kCacheProgress,
+        message,
+        status);
+    if (auto panel = plot_panel.lock()) {
+        panel->SetPreparationState(true, message, kCacheProgress);
+        panel->RecordMaterializationProgress(
+            "MaterializationCache",
+            message,
+            kCacheProgress,
+            0,
+            0,
+            0,
+            -1,
+            "",
+            "",
+            status);
+    }
+}
 
 std::string FindDatasetName(const std::vector<MLNode>& nodes) {
     for (const auto& node : nodes) {
@@ -324,6 +384,13 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     result.epochs = epochs;
     result.batch_size = batch_size;
 
+    const auto materialization_cache_config = DefaultMaterializationCacheConfig();
+    result.materialization_cache_enabled =
+        materialization_cache_config.mode != cyxwiz::MaterializationCacheMode::Disabled;
+    result.materialization_cache_mode = materialization_cache_config.mode;
+    result.materialization_cache_root =
+        materialization_cache_config.cache_root.string();
+
     if (auto panel = plot_panel.lock()) {
         panel->Clear();
         panel->SetPreparationState(
@@ -347,6 +414,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
          label_column,
          epochs,
          batch_size,
+         cache_config = materialization_cache_config,
          plot_panel,
          callback = std::move(node_editor_callback),
          dispatch = std::move(dispatch)](cyxwiz::LambdaTask& task) mutable {
@@ -384,7 +452,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             {
                 CYXWIZ_PROFILE_ZONE("CyxWiz Pipeline Materialization");
                 materialize_result = cyxwiz::PipelineMaterializer::Materialize(
-                    nodes, links, registry, effective_dataset_name,
+                    nodes, links, registry, effective_dataset_name, cache_config,
                     [&task, plot_panel](const cyxwiz::PipelineOperatorProgress& event) {
                         const float task_progress =
                             0.15f + 0.50f * std::clamp(event.progress, 0.0f, 1.0f);
@@ -421,6 +489,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                         }
                     });
             }
+            ReportMaterializationCacheStatus(task, plot_panel, materialize_result);
             if (!materialize_result.success) {
                 throw std::runtime_error(
                     "Materializer failed for dataset '" +
@@ -433,7 +502,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                         ? effective_dataset_name
                         : materialize_result.effective_dataset_name,
                     materialize_result.operators_applied,
-                    "completed");
+                    MaterializationCacheStatusLabel(materialize_result.cache_status));
             }
 
             if (materialize_result.skipped_unsupported_source) {
@@ -503,12 +572,13 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             }
 
             task.ReportProgress(1.0f, "Training started");
+            task.MarkCompleted("Training started", "started");
             if (auto panel = plot_panel.lock()) {
                 if (materialize_result.operators_applied > 0) {
                     panel->SetMaterializationComplete(
                         effective_dataset_name,
                         materialize_result.operators_applied,
-                        "completed");
+                        MaterializationCacheStatusLabel(materialize_result.cache_status));
                 }
                 panel->SetPreparationState(false);
             }

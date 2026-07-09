@@ -125,6 +125,7 @@ set(ENGINE_SOURCES
     src/core/data_studio_execution_plan.cpp  # Track 22 typed Data Studio plan
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
+    src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
     src/core/annotation_manager.cpp
     src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
     src/core/texture_manager.cpp
@@ -1889,6 +1890,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
     src/core/pipeline_materializer.cpp
+    src/core/materialization_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -1968,6 +1970,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
     src/core/pipeline_materializer.cpp
+    src/core/materialization_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -2047,6 +2050,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
     src/core/pipeline_materializer.cpp
+    src/core/materialization_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -2527,7 +2531,12 @@ set_target_properties(test_text_arrow_training_launch PROPERTIES
 add_executable(test_graph_training_sequence_preflight
     tests/test_graph_training_sequence_preflight.cpp
     src/gui/graph_training_launcher.cpp
+    src/gui/panels/training_plot_panel.cpp
+    src/core/async_task_manager.cpp
+    src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp
     src/core/pipeline_materializer.cpp
+    src/core/materialization_cache.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/data_analyzer.cpp
@@ -2575,8 +2584,11 @@ target_include_directories(test_graph_training_sequence_preflight PRIVATE
 target_link_libraries(test_graph_training_sequence_preflight PRIVATE
     Arrow::arrow_shared
     Parquet::parquet_shared
+    imgui::imgui
+    implot::implot
     spdlog::spdlog
     fmt::fmt
+    nlohmann_json::nlohmann_json
     cyxwiz-backend
 )
 
@@ -2584,6 +2596,7 @@ if(WIN32)
     target_compile_definitions(test_graph_training_sequence_preflight PRIVATE
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX
+        CYXWIZ_PLOTTING_MODULE
     )
 endif()
 
@@ -2595,8 +2608,13 @@ set_target_properties(test_graph_training_sequence_preflight PROPERTIES
 add_executable(test_text_gui_training_launch
     tests/test_text_gui_training_launch.cpp
     src/gui/graph_training_launcher.cpp
+    src/gui/panels/training_plot_panel.cpp
+    src/core/async_task_manager.cpp
+    src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp
     src/core/sequence_arrow_batcher.cpp
     src/core/pipeline_materializer.cpp
+    src/core/materialization_cache.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
@@ -2620,6 +2638,7 @@ target_link_libraries(test_text_gui_training_launch PRIVATE
     Arrow::arrow_shared
     Parquet::parquet_shared
     imgui::imgui
+    implot::implot
     spdlog::spdlog
     fmt::fmt
     nlohmann_json::nlohmann_json
@@ -2630,6 +2649,7 @@ if(WIN32)
     target_compile_definitions(test_text_gui_training_launch PRIVATE
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX
+        CYXWIZ_PLOTTING_MODULE
     )
 endif()
 
@@ -3392,6 +3412,69 @@ set_target_properties(test_properties_truth PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Pipeline Materializer Cache Integration =====
+add_executable(test_pipeline_materializer_cache
+    tests/test_pipeline_materializer_cache.cpp
+    src/core/pipeline_materializer.cpp
+    src/core/materialization_cache.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/pipeline_table_materializer.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/arrow_dataset.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_base.cpp
+    src/core/parquet_backed_dataset.cpp
+)
+
+target_include_directories(test_pipeline_materializer_cache PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${Stb_INCLUDE_DIR}
+)
+
+target_link_libraries(test_pipeline_materializer_cache PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_pipeline_materializer_cache PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_pipeline_materializer_cache PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+# ===== Test: Materialization Cache =====
+add_executable(test_materialization_cache
+    tests/test_materialization_cache.cpp
+    src/core/materialization_cache.cpp
+)
+
+target_include_directories(test_materialization_cache PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_materialization_cache PRIVATE
+    Arrow::arrow_shared
+)
+
+if(WIN32)
+    target_compile_definitions(test_materialization_cache PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_materialization_cache PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 # ===== ASan Memory Test (standalone, no vcpkg deps) =====
 if(CYXWIZ_ENABLE_ASAN)
     add_executable(test_asan_memory

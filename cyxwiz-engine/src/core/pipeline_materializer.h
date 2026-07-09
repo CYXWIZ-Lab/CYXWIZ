@@ -1,7 +1,8 @@
 #pragma once
 
-#include "../gui/node_editor.h"
+#include "materialization_cache.h"
 #include "node_executors/pipeline_operator.h"
+#include "../gui/node_editor.h"
 
 #include <memory>
 #include <string>
@@ -43,8 +44,10 @@ PipelineMaterializerSourceKind ResolvePipelineMaterializerSourceKind(
  * - source_kind / skipped_unsupported_source / unsupported_source_reason:
  *   records the storage scope that caused a pass-through when the source is
  *   not an in-memory Arrow table.
- * - success: false only if a Configure(), Apply(), or registry operation
- *   reported a hard error.
+ * - cache_*: narrow persistent materialization cache diagnostics. Cache is
+ *   disabled by default unless the caller supplies a MaterializationCacheConfig.
+ * - success: false only if a Configure(), Apply(), registry operation, or
+ *   explicit require-hit cache policy reported a hard error.
  * - error_message: populated only when success=false.
  */
 struct MaterializeResult {
@@ -55,6 +58,13 @@ struct MaterializeResult {
     bool skipped_unsupported_source = false;
     std::string unsupported_source_reason;
     std::string diagnostic_message;
+    MaterializationCacheStatus cache_status =
+        MaterializationCacheStatus::Disabled;
+    std::string cache_key;
+    std::string cache_artifact_path;
+    std::string cache_message;
+    bool loaded_from_cache = false;
+    bool saved_to_cache = false;
     bool success = true;
     std::string error_message;
 };
@@ -99,6 +109,14 @@ public:
         const std::vector<gui::NodeLink>& links,
         DataRegistry& registry,
         const std::string& source_dataset_name,
+        PipelineOperatorProgressCallback progress_callback = {});
+
+    static MaterializeResult Materialize(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        DataRegistry& registry,
+        const std::string& source_dataset_name,
+        const MaterializationCacheConfig& cache_config,
         PipelineOperatorProgressCallback progress_callback = {});
 
     // Suffix used to register the transformed Arrow table when ops fire.
