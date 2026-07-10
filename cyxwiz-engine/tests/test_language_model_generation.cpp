@@ -1,4 +1,5 @@
 #include "core/language_model_generation.h"
+#include "gui/panels/language_model_generation_panel_metadata.h"
 
 #include <cyxwiz/sequential.h>
 
@@ -168,6 +169,51 @@ void TestShapeValidation() {
     Check(threw, "generation distribution should reject logits shape mismatch");
 }
 
+void TestGenerationPanelRunMetadataSmoke() {
+    cyxwiz::LanguageModelGenerationConfig config;
+    config.max_new_tokens = 4;
+    config.temperature = 0.75f;
+    config.top_k = 3;
+    config.top_p = 0.8f;
+    config.eos_token_id = 4;
+    config.include_prompt = false;
+    config.sampling_mode = cyxwiz::LanguageModelSamplingMode::Multinomial;
+
+    cyxwiz::LanguageModelGenerationResult report;
+    report.prompt_length = 2;
+    report.remaining_budget = 1;
+    report.stop_reason = cyxwiz::LanguageModelGenerationStopReason::EosToken;
+    report.steps.push_back({
+        0,
+        2,
+        3,
+        0.6f,
+        {{3, 0.6f}, {1, 0.4f}}
+    });
+
+    const auto metadata = cyxwiz::BuildLanguageModelGenerationPanelRunMetadata(
+        report,
+        config,
+        12,
+        99);
+
+    Check(metadata.stop_reason == "eos",
+          "panel metadata should expose stable stop reason text");
+    Check(metadata.prompt_length == 2,
+          "panel metadata should expose prompt length");
+    Check(metadata.max_context_length == 12,
+          "panel metadata should expose max context length");
+    Check(metadata.remaining_budget == 1,
+          "panel metadata should expose remaining generation budget");
+    Check(metadata.last_candidates.size() == 2,
+          "panel metadata should expose last-token candidates");
+    Check(metadata.last_candidates[0].token_id == 3,
+          "panel metadata should preserve candidate token order");
+    Check(metadata.sampling_settings ==
+              "multinomial, max_new_tokens=4, temperature=0.75, top_k=3, "
+              "top_p=0.8, eos=4, seed=99, include_prompt=false",
+          "panel metadata should expose the sampling settings used for the run");
+}
 void TestGenerateTokenIdsWithReportStopsAtEos() {
     cyxwiz::SequentialModel model;
     model.Add<ScriptedLogitModule>();
@@ -301,6 +347,7 @@ int main() {
     TestTopPFiltering();
     TestMultinomialSelectionIsSeeded();
     TestShapeValidation();
+    TestGenerationPanelRunMetadataSmoke();
     TestGenerateTokenIdsWithReportStopsAtEos();
     TestGenerateTokenIdsWithReportStopsAtMaxTokens();
     TestGenerateTokenIdsWithConfigCompatibilityWrapper();

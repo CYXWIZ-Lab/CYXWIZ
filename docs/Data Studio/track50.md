@@ -79,8 +79,29 @@ Validated:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_computation_truth_transformer_primitives -- /m:4 /v:minimal`
 - `$env:PATH = 'D:\tmp\libtorch-cpu-2.7.0\libtorch\lib;' + $env:PATH; D:\Dev\CyxWiz_Claude\build\bin\Release\test_computation_truth_transformer_primitives.exe`
 
+## Phase 4 - Studio Metadata Smoke Boundary
+
+Status: complete for the Studio metadata smoke boundary slice.
+
+Scope:
+
+- Added a Studio-facing smoke boundary without requiring a headless ImGui
+  harness.
+- Moved generation run metadata shaping into a small panel helper used by the
+  Studio panel.
+- Covered stop reason, prompt length, max context length, remaining budget,
+  sampling settings, and last-token candidate diagnostics in the focused
+  generation test.
+
+Validated:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Debug --target test_language_model_generation cyxwiz-engine -- /m:4 /v:minimal`
+- `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_language_model_generation.exe`
+- `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_language_model_inference_contract.exe`
+- `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_cyxmodel_causal_lm_generation_roundtrip.exe`
+
 ## Next Pickup
 
-No practical headless Studio panel harness was found in this pass. The remaining
-follow-up is to add Studio-facing smoke coverage around the panel metadata path
-when a harness exists, while keeping PyTorch oracles in tests/fixtures only.
+Tofix50 is complete for the current ticket scope. Future work can add a true
+headless ImGui render harness if the project introduces one, while keeping
+PyTorch oracles in tests/fixtures only.

@@ -1,4 +1,5 @@
 #include "language_model_generation_panel.h"
+#include "language_model_generation_panel_metadata.h"
 
 #include "../../core/language_model_generation.h"
 #include "../../core/training_manager.h"
@@ -338,26 +339,17 @@ void LanguageModelGenerationPanel::RunGeneration() {
             config,
             static_cast<uint32_t>(std::max(0, seed_)));
         generated_ids_ = report.token_ids;
-        stop_reason_ = LanguageModelGenerationStopReasonName(report.stop_reason);
-        last_prompt_length_ = report.prompt_length;
-        last_max_context_length_ = max_sequence_length;
-        last_remaining_budget_ = report.remaining_budget;
-        last_candidates_ = report.steps.empty()
-            ? std::vector<NextTokenCandidate>{}
-            : report.steps.back().candidates;
-
-        std::ostringstream settings;
-        settings << (config.sampling_mode == LanguageModelSamplingMode::Multinomial
-                         ? "multinomial"
-                         : "greedy")
-                 << ", max_new_tokens=" << config.max_new_tokens
-                 << ", temperature=" << config.temperature
-                 << ", top_k=" << config.top_k
-                 << ", top_p=" << config.top_p
-                 << ", eos=" << config.eos_token_id
-                 << ", seed=" << std::max(0, seed_)
-                 << ", include_prompt=" << (config.include_prompt ? "true" : "false");
-        sampling_settings_ = settings.str();
+        const auto metadata = BuildLanguageModelGenerationPanelRunMetadata(
+            report,
+            config,
+            max_sequence_length,
+            static_cast<uint32_t>(std::max(0, seed_)));
+        stop_reason_ = metadata.stop_reason;
+        last_prompt_length_ = metadata.prompt_length;
+        last_max_context_length_ = metadata.max_context_length;
+        last_remaining_budget_ = metadata.remaining_budget;
+        last_candidates_ = metadata.last_candidates;
+        sampling_settings_ = metadata.sampling_settings;
 
         generated_text_.clear();
         if (tokenizer) {

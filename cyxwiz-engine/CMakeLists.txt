@@ -703,6 +703,7 @@ set(ENGINE_HEADERS
     src/gui/panels/embeddings_panel.h
     src/gui/panels/sentiment_panel.h
     src/gui/panels/language_model_generation_panel.h
+    src/gui/panels/language_model_generation_panel_metadata.h
     src/gui/panels/calculator_panel.h
     src/gui/panels/unit_converter_panel.h
     src/gui/panels/random_generator_panel.h
