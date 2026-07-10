@@ -2310,8 +2310,11 @@ void TestRecommendationContract() {
         "cyxwiz::DebugExecutor::Run");
     local_forward.payload["has_nan"] = true;
     local_forward.payload["has_inf"] = false;
+    local_forward.payload["success"] = false;
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_forward),
           "local debug forward recommendation fixture should use canonical trace schema");
+    Check(!local_forward.payload["success"].get<bool>(),
+          "local debug non-finite forward fixture should mark trace unsuccessful");
     traces.push_back(std::move(local_forward));
 
     cyxwiz::DebugTraceRecord local_forward_shape = cyxwiz::DebugNodeTraceContract::Make(
@@ -2333,8 +2336,11 @@ void TestRecommendationContract() {
         "cyxwiz-engine/src/core/debug_executor.cpp",
         "cyxwiz::DebugExecutor::Run");
     local_forward_shape.payload["shape_matches"] = false;
+    local_forward_shape.payload["success"] = false;
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_forward_shape),
           "local debug shape-mismatch recommendation fixture should use canonical trace schema");
+    Check(!local_forward_shape.payload["success"].get<bool>(),
+          "local debug shape-mismatch fixture should mark trace unsuccessful");
     traces.push_back(std::move(local_forward_shape));
 
     cyxwiz::DebugTraceRecord runtime_shape = cyxwiz::DebugNodeTraceContract::Make(

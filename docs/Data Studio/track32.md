@@ -1305,11 +1305,28 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug shape recommendation scoping files.
 
+## Resume 2026-07-10 - Local Debug Forward Success Payload
+
+Sixty-first follow-up on the first slice:
+
+- Local Debug forward activation traces now carry a `success` payload.
+- Forward trace success is true only when the observed shape matches compiler
+  expectations and the activation has no NaN or Inf values.
+- Recommendation contract coverage now asserts non-finite and shape-mismatch
+  forward fixtures are unsuccessful traces.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug forward success payload files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Shape Recommendation Scoping`
-- Commit pushed: `a76345b7 Specialize local debug shape recommendations` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none; remaining dirty files belong to other in-progress ticket work and were left untouched.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug shape recommendation scoping, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Forward Success Payload`
+- Commit pushed: not yet for this Local Debug forward success payload continuation; previous pushed repository checkpoint was `a8594c8d Record local debug shape scoping checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp`, `test_debugger_contracts.cpp`, and `track32.md`; remaining dirty files belong to other in-progress ticket work and were left untouched.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug forward success payload, or switch back to the next tracked tofix item requested by the user.

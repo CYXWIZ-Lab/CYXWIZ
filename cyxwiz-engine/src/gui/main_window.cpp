@@ -3765,6 +3765,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             record.payload["shape_matches"] = trace.shape_matches;
             record.payload["has_nan"] = trace.has_nan;
             record.payload["has_inf"] = trace.has_inf;
+            record.payload["success"] = trace.shape_matches &&
+                !trace.has_nan && !trace.has_inf;
             if (!trace.shape_matches) {
                 record.issues.push_back({
                     cyxwiz::IssueLevel::Warning,
