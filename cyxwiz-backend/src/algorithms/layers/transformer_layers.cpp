@@ -35,6 +35,23 @@ Tensor RestoreTransformerSequenceFromDense(const Tensor& input,
     return input.Reshape({batch, seq_len, shape[1]});
 }
 
+Tensor AddSameShape(const Tensor& lhs, const Tensor& rhs) {
+    if (lhs.GetDataType() != DataType::Float32 ||
+        rhs.GetDataType() != DataType::Float32 ||
+        lhs.Shape() != rhs.Shape()) {
+        throw std::runtime_error("Transformer residual backward shape mismatch");
+    }
+
+    Tensor result(lhs.Shape(), DataType::Float32);
+    const float* lhs_data = lhs.Data<float>();
+    const float* rhs_data = rhs.Data<float>();
+    float* result_data = result.Data<float>();
+    for (size_t i = 0; i < lhs.NumElements(); ++i) {
+        result_data[i] = lhs_data[i] + rhs_data[i];
+    }
+    return result;
+}
+
 } // namespace
 
 TransformerEncoderLayer::TransformerEncoderLayer(int d_model, int nhead,
@@ -159,14 +176,12 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
 }
 
 Tensor TransformerEncoderLayer::Backward(const Tensor& grad_output) {
-    // Simplified backward - full implementation would track all intermediate gradients
     Tensor grad = grad_output;
 
     if (!norm_first_) {
         grad = norm2_->Backward(grad);
     }
 
-    // FFN backward
     Tensor grad_ffn = dropout2_->Backward(grad);
     const auto& grad_shape = grad_output.Shape();
     if (grad_shape.size() == 3) {
@@ -174,11 +189,9 @@ Tensor TransformerEncoderLayer::Backward(const Tensor& grad_output) {
     }
     grad_ffn = linear2_->Backward(grad_ffn);
 
-    // ReLU backward
     const float* mid_data = cached_ffn_mid_.Data<float>();
     float* grad_ffn_data = grad_ffn.Data<float>();
-    size_t total = grad_ffn.NumElements();
-    for (size_t i = 0; i < total; i++) {
+    for (size_t i = 0; i < grad_ffn.NumElements(); i++) {
         if (mid_data[i] <= 0.0f) {
             grad_ffn_data[i] = 0.0f;
         }
@@ -194,40 +207,19 @@ Tensor TransformerEncoderLayer::Backward(const Tensor& grad_output) {
         grad_ffn = norm2_->Backward(grad_ffn);
     }
 
-    // Add residual gradient
-    const auto& shape = grad_output.Shape();
-    std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
-    Tensor grad_sum(tensor_shape, DataType::Float32);
-    const float* grad_data = grad.Data<float>();
-    const float* grad_ffn_ptr = grad_ffn.Data<float>();
-    float* sum_data = grad_sum.Data<float>();
-    size_t n = shape[0] * shape[1] * shape[2];
-    for (size_t i = 0; i < n; i++) {
-        sum_data[i] = grad_data[i] + grad_ffn_ptr[i];
+    Tensor grad_after_ffn_residual = AddSameShape(grad, grad_ffn);
+    Tensor grad_before_attn_residual = grad_after_ffn_residual;
+    if (!norm_first_) {
+        grad_before_attn_residual = norm1_->Backward(grad_after_ffn_residual);
     }
 
-    // Attention backward
-    Tensor grad_attn = dropout1_->Backward(grad_sum);
+    Tensor grad_attn = dropout1_->Backward(grad_before_attn_residual);
     grad_attn = self_attn_->Backward(grad_attn);
-
     if (norm_first_) {
         grad_attn = norm1_->Backward(grad_attn);
     }
 
-    // Add residual gradient
-    Tensor result(tensor_shape, DataType::Float32);
-    const float* sum_ptr = grad_sum.Data<float>();
-    const float* attn_ptr = grad_attn.Data<float>();
-    float* result_data = result.Data<float>();
-    for (size_t i = 0; i < n; i++) {
-        result_data[i] = sum_ptr[i] + attn_ptr[i];
-    }
-
-    if (!norm_first_) {
-        result = norm1_->Backward(result);
-    }
-
-    return result;
+    return AddSameShape(grad_before_attn_residual, grad_attn);
 }
 
 std::map<std::string, Tensor> TransformerEncoderLayer::GetParameters() {
@@ -545,14 +537,12 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
 }
 
 Tensor TransformerDecoderLayer::Backward(const Tensor& grad_output) {
-    // Simplified backward - similar to encoder
     Tensor grad = grad_output;
 
     if (!norm_first_) {
         grad = (cached_has_cross_attention_ ? norm3_ : norm2_)->Backward(grad);
     }
 
-    // FFN backward
     Tensor grad_ffn = dropout3_->Backward(grad);
     const auto& grad_shape = grad_output.Shape();
     if (grad_shape.size() == 3) {
@@ -560,11 +550,9 @@ Tensor TransformerDecoderLayer::Backward(const Tensor& grad_output) {
     }
     grad_ffn = linear2_->Backward(grad_ffn);
 
-    // ReLU backward
     const float* mid_data = cached_ffn_mid_.Data<float>();
     float* grad_ffn_data = grad_ffn.Data<float>();
-    size_t total = grad_ffn.NumElements();
-    for (size_t i = 0; i < total; i++) {
+    for (size_t i = 0; i < grad_ffn.NumElements(); i++) {
         if (mid_data[i] <= 0.0f) {
             grad_ffn_data[i] = 0.0f;
         }
@@ -580,65 +568,35 @@ Tensor TransformerDecoderLayer::Backward(const Tensor& grad_output) {
         grad_ffn = (cached_has_cross_attention_ ? norm3_ : norm2_)->Backward(grad_ffn);
     }
 
-    // Add residual gradient
-    const auto& shape = grad_output.Shape();
-    size_t n = shape[0] * shape[1] * shape[2];
-    std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
-    Tensor grad_sum(tensor_shape, DataType::Float32);
-    const float* grad_data = grad.Data<float>();
-    const float* grad_ffn_ptr = grad_ffn.Data<float>();
-    float* sum_data = grad_sum.Data<float>();
-    for (size_t i = 0; i < n; i++) {
-        sum_data[i] = grad_data[i] + grad_ffn_ptr[i];
-    }
+    Tensor grad_after_ffn_residual = AddSameShape(grad, grad_ffn);
+    Tensor grad_before_self_residual = grad_after_ffn_residual;
 
-    // Cross-attention backward
-    Tensor grad_cross = grad_sum;
     if (cached_has_cross_attention_) {
-        grad_cross = dropout2_->Backward(grad_sum);
+        Tensor grad_cross_norm_input = grad_after_ffn_residual;
+        if (!norm_first_) {
+            grad_cross_norm_input = norm2_->Backward(grad_after_ffn_residual);
+        }
+
+        Tensor grad_cross = dropout2_->Backward(grad_cross_norm_input);
         grad_cross = cross_attn_->Backward(grad_cross);
-    }
-
-    if (cached_has_cross_attention_) {
         if (norm_first_) {
             grad_cross = norm2_->Backward(grad_cross);
-        } else {
-            grad_sum = norm2_->Backward(grad_sum);
         }
+
+        grad_before_self_residual = AddSameShape(grad_cross_norm_input, grad_cross);
     }
 
-    // Add residual
-    Tensor grad_sum2(tensor_shape, DataType::Float32);
-    const float* sum_ptr = grad_sum.Data<float>();
-    const float* cross_ptr = grad_cross.Data<float>();
-    float* sum2_data = grad_sum2.Data<float>();
-    for (size_t i = 0; i < n; i++) {
-        sum2_data[i] = sum_ptr[i] + cross_ptr[i];
+    if (!norm_first_) {
+        grad_before_self_residual = norm1_->Backward(grad_before_self_residual);
     }
 
-    // Self-attention backward
-    Tensor grad_self = dropout1_->Backward(grad_sum2);
+    Tensor grad_self = dropout1_->Backward(grad_before_self_residual);
     grad_self = self_attn_->Backward(grad_self);
-
     if (norm_first_) {
         grad_self = norm1_->Backward(grad_self);
     }
 
-    // Add residual
-    std::vector<size_t> result_shape = {shape[0], shape[1], shape[2]};
-    Tensor result(result_shape, DataType::Float32);
-    const float* sum2_ptr = grad_sum2.Data<float>();
-    const float* self_ptr = grad_self.Data<float>();
-    float* result_data = result.Data<float>();
-    for (size_t i = 0; i < n; i++) {
-        result_data[i] = sum2_ptr[i] + self_ptr[i];
-    }
-
-    if (!norm_first_) {
-        result = norm1_->Backward(result);
-    }
-
-    return result;
+    return AddSameShape(grad_before_self_residual, grad_self);
 }
 
 std::map<std::string, Tensor> TransformerDecoderLayer::GetParameters() {

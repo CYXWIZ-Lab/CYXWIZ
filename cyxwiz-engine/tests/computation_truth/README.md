@@ -61,8 +61,18 @@ Latest observed run also exercised `LinearLayer` while ArrayFire GPU was active.
 
 - Verifies embedding, positional encoding, attention, layer norm, encoder, and
   decoder primitive parity.
+- Verifies single-block TransformerEncoder and causal TransformerDecoder
+  backward parity for input gradients plus representative attention, layer norm,
+  and feed-forward parameter gradients against PyTorch-derived fixtures.
+- Verifies masked MultiHeadAttention backward parity for input and projection
+  gradients against PyTorch-derived fixtures.
+- Verifies two-block TransformerEncoder and causal TransformerDecoder stack
+  backward parity with layer-indexed gradient checks for both blocks.
 - Verifies tiny causal-LM vocabulary logits and loss against PyTorch linear and
   cross-entropy semantics.
+- Verifies a tiny transformer token-classification training step using
+  token-shaped CrossEntropy mean reduction, ignore_index, label smoothing,
+  backward propagation, and SGD loss decrease.
 - Verifies BERT-style CLS extraction, sequence-classifier logits, and
   token-classifier logits against PyTorch indexing and linear-head semantics.
 - Verifies GPT-style generation candidate probabilities for temperature,

@@ -1,6 +1,7 @@
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/layers/attention.h>
 #include <cyxwiz/loss.h>
+#include <cyxwiz/optimizers/sgd.h>
 #include <cyxwiz/tensor.h>
 #include "core/language_model_training.h"
 #include "core/language_model_generation.h"
@@ -42,6 +43,29 @@ void CheckShape(const cyxwiz::Tensor& tensor,
                 const std::vector<size_t>& expected,
                 const std::string& label) {
     Check(tensor.Shape() == expected, label + " shape mismatch");
+}
+
+template <size_t N>
+void CheckTensorNear(const cyxwiz::Tensor& tensor,
+                     const float (&expected)[N],
+                     float tolerance,
+                     const std::string& label) {
+    Check(tensor.NumElements() == N, label + " element count mismatch");
+    const float* data = tensor.Data<float>();
+    for (size_t i = 0; i < N; ++i) {
+        CheckNear(data[i], expected[i], tolerance, label);
+    }
+}
+
+template <size_t N>
+void CheckGradientNear(const std::map<std::string, cyxwiz::Tensor>& gradients,
+                       const std::string& key,
+                       const float (&expected)[N],
+                       float tolerance,
+                       const std::string& label) {
+    const auto it = gradients.find(key);
+    Check(it != gradients.end(), label + " missing gradient: " + key);
+    CheckTensorNear(it->second, expected, tolerance, label);
 }
 
 void CheckCandidatesNear(
@@ -615,6 +639,79 @@ void TestMultiHeadAttentionForwardParity() {
         CheckNear(masked_weight_data[i], expected_masked_weights[i], 1e-5f,
                   "Masked MultiHeadAttention weights match PyTorch");
     }
+
+    const cyxwiz::Tensor masked_grad_input = attention.Backward(grad_output);
+    CheckShape(masked_grad_input, {1, 2, 4},
+               "Masked MultiHeadAttention grad_input");
+    const auto masked_attention_grads = attention.GetParameters();
+
+    const float expected_masked_grad_input[] = {
+        0.0797419f, -0.0032785f, -0.0039199f, -0.0177325f,
+        -0.0039559f, -0.0245402f, 0.0266122f, -0.0251867f,
+    };
+    const float expected_masked_grad_W_q[] = {
+        0.0002895f, -0.0004825f, -0.0000965f, 0.0001930f,
+        0.0001024f, -0.0001707f, -0.0000341f, 0.0000683f,
+        0.0001633f, -0.0002722f, -0.0000544f, 0.0001089f,
+        -0.0001418f, 0.0002363f, 0.0000473f, -0.0000945f,
+    };
+    const float expected_masked_grad_W_k[] = {
+        -0.0001039f, 0.0001247f, -0.0000624f, -0.0001871f,
+        -0.0001336f, 0.0001603f, -0.0000802f, -0.0002405f,
+        0.0001284f, -0.0001541f, 0.0000770f, 0.0002311f,
+        -0.0000565f, 0.0000678f, -0.0000339f, -0.0001017f,
+    };
+    const float expected_masked_grad_W_v[] = {
+        0.0466489f, -0.0440787f, 0.0517894f, 0.1128681f,
+        -0.0023511f, -0.0195787f, -0.0462106f, -0.0586319f,
+        -0.0248626f, 0.0613351f, 0.0480825f, 0.0317474f,
+        0.0394046f, -0.0374855f, 0.0432427f, 0.0947282f,
+    };
+    const float expected_masked_grad_W_o[] = {
+        0.0275918f, -0.0290013f, -0.0092702f, -0.0320259f,
+        -0.0222367f, 0.0084005f, 0.0005081f, 0.0132104f,
+        0.0312899f, 0.0532016f, 0.0295243f, 0.0361311f,
+        0.0531184f, 0.0077997f, 0.0117460f, -0.0081052f,
+    };
+    const float expected_masked_grad_b_q[] = {
+        -0.0009651f, -0.0003415f, -0.0005444f, 0.0004725f,
+    };
+    const float expected_masked_grad_b_k[] = {
+        0.0f, 0.0f, 0.0f, 0.0f,
+    };
+    const float expected_masked_grad_b_v[] = {
+        0.0850000f, -0.1600000f, 0.2250000f, 0.0700000f,
+    };
+    const float expected_masked_grad_b_o[] = {
+        -0.2000000f, 0.0000000f, 0.7000000f, 0.3000000f,
+    };
+
+    check_tensor_values(masked_grad_input, expected_masked_grad_input, 1e-5f,
+                        "Masked MultiHeadAttention grad_input matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_W_q"),
+                        expected_masked_grad_W_q, 1e-5f,
+                        "Masked MultiHeadAttention grad_W_q matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_W_k"),
+                        expected_masked_grad_W_k, 1e-5f,
+                        "Masked MultiHeadAttention grad_W_k matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_W_v"),
+                        expected_masked_grad_W_v, 1e-5f,
+                        "Masked MultiHeadAttention grad_W_v matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_W_o"),
+                        expected_masked_grad_W_o, 1e-5f,
+                        "Masked MultiHeadAttention grad_W_o matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_b_q"),
+                        expected_masked_grad_b_q, 1e-5f,
+                        "Masked MultiHeadAttention grad_b_q matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_b_k"),
+                        expected_masked_grad_b_k, 1e-5f,
+                        "Masked MultiHeadAttention grad_b_k matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_b_v"),
+                        expected_masked_grad_b_v, 1e-5f,
+                        "Masked MultiHeadAttention grad_b_v matches PyTorch");
+    check_tensor_values(masked_attention_grads.at("grad_b_o"),
+                        expected_masked_grad_b_o, 1e-5f,
+                        "Masked MultiHeadAttention grad_b_o matches PyTorch");
 }
 
 void TestMultiHeadAttentionCrossAttentionParity() {
@@ -1180,8 +1277,240 @@ void TestTransformerEncoderForwardParity() {
         CheckNear(out[i], expected_output[i], 1e-5f,
                   "TransformerEncoder forward matches PyTorch primitive composition");
     }
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = encoder.Backward(grad_output);
+    CheckShape(grad_input, {1, 2, 4}, "TransformerEncoder grad_input");
+
+    // PyTorch-derived oracle constants for the primitive composition above.
+    const float expected_grad_input[] = {
+        0.2585771f, -0.2199569f, 0.1394564f, -0.1617069f,
+        0.0600003f, 0.1246955f, -0.3394983f, 0.1705608f,
+    };
+    const float expected_grad_wq[] = {
+        0.0001625f, -0.0001091f, 0.0002692f, 0.0005010f,
+        0.0000575f, -0.0000386f, 0.0000953f, 0.0001773f,
+        0.0000253f, 0.0000229f, 0.0001217f, 0.0001749f,
+        -0.0000220f, -0.0000199f, -0.0001056f, -0.0001518f,
+    };
+    const float expected_grad_wv[] = {
+        -0.0029881f, 0.0121630f, 0.0153615f, 0.0154516f,
+        -0.0015037f, 0.0069265f, 0.0093419f, 0.0097326f,
+        0.0052436f, -0.0195085f, -0.0232862f, -0.0226579f,
+        -0.0032878f, 0.0132015f, 0.0165394f, 0.0165609f,
+    };
+    const float expected_grad_wo[] = {
+        0.0084128f, 0.0252138f, 0.0129867f, 0.0182445f,
+        -0.0030466f, -0.0098400f, -0.0050188f, -0.0068413f,
+        -0.0053650f, -0.0145081f, -0.0075821f, -0.0111158f,
+        -0.0000012f, -0.0008657f, -0.0003858f, -0.0002874f,
+    };
+    const float expected_grad_norm1_gamma[] = {
+        -0.0425924f, 0.1467121f, -0.0000671f, -0.0981389f,
+    };
+    const float expected_grad_norm2_gamma[] = {
+        -0.0006644f, 0.3040228f, 0.0007235f, -0.0691462f,
+    };
+    const float expected_grad_linear1_weights[] = {
+        -0.0071501f, -0.0349480f, 0.0041177f, 0.0409809f,
+        -0.0159304f, 0.0273475f, 0.0014425f, -0.0127954f,
+        -0.0022624f, -0.0110579f, 0.0013029f, 0.0129668f,
+    };
+    const float expected_grad_linear2_weights[] = {
+        0.0276620f, 0.0138232f, 0.0092411f,
+        -0.0231685f, 0.0233416f, -0.0077399f,
+        0.0157923f, -0.0655653f, 0.0052758f,
+        -0.0202858f, 0.0284005f, -0.0067769f,
+    };
+    const float expected_grad_linear2_bias[] = {
+        0.0897864f, -0.0183862f, -0.0682576f, -0.0031425f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "TransformerEncoder grad_input matches PyTorch");
+    const auto encoder_gradients = encoder.GetGradients();
+    CheckGradientNear(encoder_gradients, "self_attn.W_q", expected_grad_wq,
+                      2e-4f, "TransformerEncoder grad_W_q matches PyTorch");
+    CheckGradientNear(encoder_gradients, "self_attn.W_v", expected_grad_wv,
+                      2e-4f, "TransformerEncoder grad_W_v matches PyTorch");
+    CheckGradientNear(encoder_gradients, "self_attn.W_o", expected_grad_wo,
+                      2e-4f, "TransformerEncoder grad_W_o matches PyTorch");
+    CheckGradientNear(encoder_gradients, "norm1.gamma",
+                      expected_grad_norm1_gamma, 2e-4f,
+                      "TransformerEncoder grad_norm1_gamma matches PyTorch");
+    CheckGradientNear(encoder_gradients, "norm2.gamma",
+                      expected_grad_norm2_gamma, 2e-4f,
+                      "TransformerEncoder grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(encoder_gradients, "linear1.weights",
+                      expected_grad_linear1_weights, 2e-4f,
+                      "TransformerEncoder grad_linear1_weights matches PyTorch");
+    CheckGradientNear(encoder_gradients, "linear2.weights",
+                      expected_grad_linear2_weights, 2e-4f,
+                      "TransformerEncoder grad_linear2_weights matches PyTorch");
+    CheckGradientNear(encoder_gradients, "linear2.bias",
+                      expected_grad_linear2_bias, 2e-4f,
+                      "TransformerEncoder grad_linear2_bias matches PyTorch");
 }
 
+void TestTransformerEncoderTwoBlockStackBackwardParity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+
+    cyxwiz::SequentialModel stack;
+    stack.Add<cyxwiz::TransformerEncoderModule>(4, 2, 3, 0.0f, false);
+    stack.Add<cyxwiz::TransformerEncoderModule>(4, 2, 3, 0.0f, false);
+    stack.SetTraining(false);
+
+    std::map<std::string, cyxwiz::Tensor> params;
+    const auto add_block_params = [&](const std::string& prefix) {
+        params[prefix + ".self_attn.W_q"] = cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_k"] = cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_v"] = cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_o"] = cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_q"] = cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_k"] = cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_v"] = cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_o"] = cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm1.gamma"] = cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm1.beta"] = cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm2.gamma"] = cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm2.beta"] = cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear1.weights"] = cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear1.bias"] = cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear2.weights"] = cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear2.bias"] = cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32);
+    };
+    add_block_params("layer0");
+    add_block_params("layer1");
+    stack.SetParameters(params);
+
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = stack.Forward(input);
+    CheckShape(output, {1, 2, 4}, "Two-block TransformerEncoder stack output");
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = stack.Backward(grad_output);
+    CheckShape(grad_input, {1, 2, 4}, "Two-block TransformerEncoder stack grad_input");
+
+    const float expected_grad_input[] = {
+        0.2277846f, -0.2145388f, 0.1669143f, -0.1662447f,
+        0.0645579f, 0.1177802f, -0.3197498f, 0.1507031f,
+    };
+    const float expected_layer0_grad_wq[] = {
+        0.0001576f, -0.0001128f, 0.0002470f, 0.0004688f,
+        0.0000558f, -0.0000399f, 0.0000874f, 0.0001659f,
+        0.0000182f, 0.0000258f, 0.0001062f, 0.0001485f,
+        -0.0000158f, -0.0000224f, -0.0000922f, -0.0001289f,
+    };
+    const float expected_layer1_grad_wq[] = {
+        0.0010023f, -0.0052515f, 0.0001894f, 0.0026937f,
+        0.0002514f, -0.0013171f, 0.0000475f, 0.0006756f,
+        -0.0007612f, -0.0018248f, 0.0003484f, 0.0017790f,
+        0.0000949f, 0.0002275f, -0.0000434f, -0.0002218f,
+    };
+    const float expected_layer0_grad_wv[] = {
+        -0.0025250f, 0.0102954f, 0.0130159f, 0.0130997f,
+        -0.0009765f, 0.0047917f, 0.0066540f, 0.0070336f,
+        0.0042894f, -0.0156955f, -0.0185229f, -0.0178963f,
+        -0.0029343f, 0.0117505f, 0.0146980f, 0.0147037f,
+    };
+    const float expected_layer1_grad_wv[] = {
+        -0.0089323f, 0.0017683f, 0.0021256f, 0.0056234f,
+        -0.0037885f, -0.0046698f, 0.0013605f, 0.0059510f,
+        0.0147207f, -0.0089271f, -0.0029938f, -0.0053112f,
+        -0.0116347f, 0.0051339f, 0.0025289f, 0.0054622f,
+    };
+    const float expected_layer0_norm2_gamma[] = {
+        -0.0414589f, 0.1290882f, -0.0004327f, -0.1346681f,
+    };
+    const float expected_layer1_norm2_gamma[] = {
+        0.0200774f, 0.3182996f, 0.0162506f, -0.0626373f,
+    };
+    const float expected_layer0_linear2_bias[] = {
+        0.0820758f, -0.0187426f, -0.0545918f, -0.0087413f,
+    };
+    const float expected_layer1_linear2_bias[] = {
+        0.0907866f, -0.0171270f, -0.0635368f, -0.0101228f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "Two-block TransformerEncoder stack grad_input matches PyTorch");
+    const auto gradients = stack.GetGradients();
+    CheckGradientNear(gradients, "layer0.self_attn.W_q", expected_layer0_grad_wq,
+                      2e-4f, "Two-block encoder layer0 grad_W_q matches PyTorch");
+    CheckGradientNear(gradients, "layer1.self_attn.W_q", expected_layer1_grad_wq,
+                      2e-4f, "Two-block encoder layer1 grad_W_q matches PyTorch");
+    CheckGradientNear(gradients, "layer0.self_attn.W_v", expected_layer0_grad_wv,
+                      2e-4f, "Two-block encoder layer0 grad_W_v matches PyTorch");
+    CheckGradientNear(gradients, "layer1.self_attn.W_v", expected_layer1_grad_wv,
+                      2e-4f, "Two-block encoder layer1 grad_W_v matches PyTorch");
+    CheckGradientNear(gradients, "layer0.norm2.gamma", expected_layer0_norm2_gamma,
+                      2e-4f, "Two-block encoder layer0 grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(gradients, "layer1.norm2.gamma", expected_layer1_norm2_gamma,
+                      2e-4f, "Two-block encoder layer1 grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(gradients, "layer0.linear2.bias", expected_layer0_linear2_bias,
+                      2e-4f, "Two-block encoder layer0 grad_linear2_bias matches PyTorch");
+    CheckGradientNear(gradients, "layer1.linear2.bias", expected_layer1_linear2_bias,
+                      2e-4f, "Two-block encoder layer1 grad_linear2_bias matches PyTorch");
+}
 void TestBertEncoderHeadLogitParity() {
     const std::vector<float> bert_hidden_values = {
         -0.1815133f, -1.3401134f, 0.1597225f, 1.0196487f,
@@ -1450,8 +1779,240 @@ void TestTransformerDecoderCausalForwardParity() {
         CheckNear(out[i], expected_output[i], 1e-5f,
                   "TransformerDecoder causal forward matches PyTorch primitive composition");
     }
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = decoder.Backward(grad_output);
+    CheckShape(grad_input, {1, 2, 4}, "TransformerDecoder causal grad_input");
+
+    // PyTorch-derived oracle constants for the causal primitive composition above.
+    const float expected_grad_input[] = {
+        0.2563263f, -0.2058288f, 0.1275619f, -0.1593824f,
+        0.0464455f, 0.1273076f, -0.3360445f, 0.1751978f,
+    };
+    const float expected_grad_wq[] = {
+        0.0000239f, -0.0000398f, -0.0000080f, 0.0000159f,
+        0.0000084f, -0.0000141f, -0.0000028f, 0.0000056f,
+        -0.0000305f, 0.0000508f, 0.0000102f, -0.0000203f,
+        0.0000265f, -0.0000441f, -0.0000088f, 0.0000176f,
+    };
+    const float expected_grad_wv[] = {
+        0.0039149f, 0.0034684f, 0.0186815f, 0.0268792f,
+        -0.0163208f, 0.0253423f, 0.0017222f, -0.0153953f,
+        0.0106388f, -0.0260733f, -0.0202303f, -0.0131667f,
+        0.0072580f, 0.0001367f, 0.0220474f, 0.0345483f,
+    };
+    const float expected_grad_wo[] = {
+        0.0349240f, 0.0139267f, 0.0118145f, 0.0020755f,
+        -0.0268721f, 0.0006845f, -0.0037888f, 0.0079970f,
+        0.0103128f, -0.0212696f, -0.0083154f, -0.0207475f,
+        -0.0183647f, 0.0066585f, 0.0002897f, 0.0106750f,
+    };
+    const float expected_grad_norm1_gamma[] = {
+        -0.0416903f, 0.1460242f, 0.0004305f, -0.0986316f,
+    };
+    const float expected_grad_norm2_gamma[] = {
+        0.0007537f, 0.3048945f, 0.0012835f, -0.0687971f,
+    };
+    const float expected_grad_linear1_weights[] = {
+        -0.0067981f, -0.0350157f, 0.0043485f, 0.0403265f,
+        -0.0159304f, 0.0273475f, 0.0014425f, -0.0127954f,
+        -0.0022414f, -0.0115453f, 0.0014338f, 0.0132963f,
+    };
+    const float expected_grad_linear2_weights[] = {
+        0.0280886f, 0.0138232f, 0.0091336f,
+        -0.0231034f, 0.0233416f, -0.0075125f,
+        0.0159472f, -0.0655653f, 0.0051856f,
+        -0.0209324f, 0.0284005f, -0.0068066f,
+    };
+    const float expected_grad_linear2_bias[] = {
+        0.0896902f, -0.0172952f, -0.0685245f, -0.0038704f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "TransformerDecoder causal grad_input matches PyTorch");
+    const auto decoder_gradients = decoder.GetGradients();
+    CheckGradientNear(decoder_gradients, "self_attn.W_q", expected_grad_wq,
+                      2e-4f, "TransformerDecoder causal grad_W_q matches PyTorch");
+    CheckGradientNear(decoder_gradients, "self_attn.W_v", expected_grad_wv,
+                      2e-4f, "TransformerDecoder causal grad_W_v matches PyTorch");
+    CheckGradientNear(decoder_gradients, "self_attn.W_o", expected_grad_wo,
+                      2e-4f, "TransformerDecoder causal grad_W_o matches PyTorch");
+    CheckGradientNear(decoder_gradients, "norm1.gamma",
+                      expected_grad_norm1_gamma, 2e-4f,
+                      "TransformerDecoder causal grad_norm1_gamma matches PyTorch");
+    CheckGradientNear(decoder_gradients, "norm2.gamma",
+                      expected_grad_norm2_gamma, 2e-4f,
+                      "TransformerDecoder causal grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(decoder_gradients, "linear1.weights",
+                      expected_grad_linear1_weights, 2e-4f,
+                      "TransformerDecoder causal grad_linear1_weights matches PyTorch");
+    CheckGradientNear(decoder_gradients, "linear2.weights",
+                      expected_grad_linear2_weights, 2e-4f,
+                      "TransformerDecoder causal grad_linear2_weights matches PyTorch");
+    CheckGradientNear(decoder_gradients, "linear2.bias",
+                      expected_grad_linear2_bias, 2e-4f,
+                      "TransformerDecoder causal grad_linear2_bias matches PyTorch");
 }
 
+void TestTransformerDecoderTwoBlockCausalStackBackwardParity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+
+    cyxwiz::SequentialModel stack;
+    stack.Add<cyxwiz::TransformerDecoderModule>(4, 2, 3, 0.0f, false);
+    stack.Add<cyxwiz::TransformerDecoderModule>(4, 2, 3, 0.0f, false);
+    stack.SetTraining(false);
+
+    std::map<std::string, cyxwiz::Tensor> params;
+    const auto add_block_params = [&](const std::string& prefix) {
+        params[prefix + ".self_attn.W_q"] = cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_k"] = cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_v"] = cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.W_o"] = cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_q"] = cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_k"] = cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_v"] = cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".self_attn.b_o"] = cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm1.gamma"] = cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm1.beta"] = cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm2.gamma"] = cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".norm2.beta"] = cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear1.weights"] = cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear1.bias"] = cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear2.weights"] = cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32);
+        params[prefix + ".linear2.bias"] = cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32);
+    };
+    add_block_params("layer0");
+    add_block_params("layer1");
+    stack.SetParameters(params);
+
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = stack.Forward(input);
+    CheckShape(output, {1, 2, 4}, "Two-block TransformerDecoder causal stack output");
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = stack.Backward(grad_output);
+    CheckShape(grad_input, {1, 2, 4}, "Two-block TransformerDecoder causal stack grad_input");
+
+    const float expected_grad_input[] = {
+        0.2191821f, -0.1872560f, 0.1331417f, -0.1496372f,
+        0.0454749f, 0.1198603f, -0.3153136f, 0.1621244f,
+    };
+    const float expected_layer0_grad_wq[] = {
+        0.0000241f, -0.0000401f, -0.0000080f, 0.0000161f,
+        0.0000085f, -0.0000142f, -0.0000028f, 0.0000057f,
+        -0.0000289f, 0.0000481f, 0.0000096f, -0.0000193f,
+        0.0000251f, -0.0000418f, -0.0000084f, 0.0000167f,
+    };
+    const float expected_layer1_grad_wq[] = {
+        0.0013710f, -0.0026798f, -0.0001223f, 0.0007215f,
+        0.0003435f, -0.0006714f, -0.0000306f, 0.0001808f,
+        -0.0004331f, 0.0008466f, 0.0000386f, -0.0002279f,
+        0.0000530f, -0.0001036f, -0.0000047f, 0.0000279f,
+    };
+    const float expected_layer0_grad_wv[] = {
+        0.0029093f, 0.0035801f, 0.0158879f, 0.0224095f,
+        -0.0158485f, 0.0240950f, 0.0006446f, -0.0161978f,
+        0.0112161f, -0.0250504f, -0.0164524f, -0.0079606f,
+        0.0059315f, 0.0005938f, 0.0189821f, 0.0294048f,
+    };
+    const float expected_layer1_grad_wv[] = {
+        -0.0067778f, -0.0057098f, 0.0023787f, 0.0088110f,
+        -0.0106763f, 0.0215394f, 0.0008896f, -0.0060567f,
+        0.0183713f, -0.0235499f, -0.0027954f, 0.0015985f,
+        -0.0066632f, -0.0145377f, 0.0031737f, 0.0144889f,
+    };
+    const float expected_layer0_norm2_gamma[] = {
+        -0.0359151f, 0.1222169f, -0.0008445f, -0.1301739f,
+    };
+    const float expected_layer1_norm2_gamma[] = {
+        0.0171181f, 0.3195416f, 0.0202203f, -0.0615627f,
+    };
+    const float expected_layer0_linear2_bias[] = {
+        0.0786480f, -0.0144922f, -0.0603344f, -0.0038213f,
+    };
+    const float expected_layer1_linear2_bias[] = {
+        0.0913237f, -0.0151982f, -0.0654266f, -0.0106989f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "Two-block TransformerDecoder causal stack grad_input matches PyTorch");
+    const auto gradients = stack.GetGradients();
+    CheckGradientNear(gradients, "layer0.self_attn.W_q", expected_layer0_grad_wq,
+                      2e-4f, "Two-block decoder layer0 grad_W_q matches PyTorch");
+    CheckGradientNear(gradients, "layer1.self_attn.W_q", expected_layer1_grad_wq,
+                      2e-4f, "Two-block decoder layer1 grad_W_q matches PyTorch");
+    CheckGradientNear(gradients, "layer0.self_attn.W_v", expected_layer0_grad_wv,
+                      2e-4f, "Two-block decoder layer0 grad_W_v matches PyTorch");
+    CheckGradientNear(gradients, "layer1.self_attn.W_v", expected_layer1_grad_wv,
+                      2e-4f, "Two-block decoder layer1 grad_W_v matches PyTorch");
+    CheckGradientNear(gradients, "layer0.norm2.gamma", expected_layer0_norm2_gamma,
+                      2e-4f, "Two-block decoder layer0 grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(gradients, "layer1.norm2.gamma", expected_layer1_norm2_gamma,
+                      2e-4f, "Two-block decoder layer1 grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(gradients, "layer0.linear2.bias", expected_layer0_linear2_bias,
+                      2e-4f, "Two-block decoder layer0 grad_linear2_bias matches PyTorch");
+    CheckGradientNear(gradients, "layer1.linear2.bias", expected_layer1_linear2_bias,
+                      2e-4f, "Two-block decoder layer1 grad_linear2_bias matches PyTorch");
+}
 void TestGenerationSamplingDistributionParity() {
     cyxwiz::LanguageModelGenerationConfig config;
     config.temperature = 0.75f;
@@ -1634,6 +2195,125 @@ void TestTinyCausalLanguageModelLogitsAndLossParity() {
               "Tiny causal LM cross entropy matches PyTorch");
 }
 
+void TestTinyTransformerCrossEntropyTrainingStepSanity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+    const std::vector<float> token_head_weights = {
+        0.20f, -0.05f, 0.10f, 0.15f,
+        -0.10f, 0.25f, 0.05f, -0.20f,
+        0.05f, 0.10f, -0.15f, 0.30f,
+        0.30f, -0.20f, 0.25f, 0.05f,
+    };
+    const std::vector<float> token_head_bias = {
+        0.02f, -0.01f, 0.03f, -0.04f,
+    };
+
+    cyxwiz::SequentialModel model;
+    model.Add<cyxwiz::TransformerEncoderModule>(4, 2, 3, 0.0f, false);
+    model.Add<cyxwiz::TimeDistributedDenseModule>(4, 4, true);
+    model.SetTraining(false);
+    model.SetParameters({
+        {"layer0.self_attn.W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"layer0.self_attn.b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+        {"layer0.norm1.gamma", cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32)},
+        {"layer0.norm1.beta", cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32)},
+        {"layer0.norm2.gamma", cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32)},
+        {"layer0.norm2.beta", cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32)},
+        {"layer0.linear1.weights", cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32)},
+        {"layer0.linear1.bias", cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32)},
+        {"layer0.linear2.weights", cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32)},
+        {"layer0.linear2.bias", cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32)},
+        {"layer1.weight", cyxwiz::Tensor({4, 4}, token_head_weights.data(), cyxwiz::DataType::Float32)},
+        {"layer1.bias", cyxwiz::Tensor({4}, token_head_bias.data(), cyxwiz::DataType::Float32)},
+    });
+
+    const int64_t target_values[] = {1, -100};
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets({1, 2}, target_values,
+                                 cyxwiz::DataType::Int64);
+    cyxwiz::CrossEntropyLoss loss(
+        cyxwiz::Reduction::Mean, -100, std::vector<float>{}, 0.1f);
+
+    const cyxwiz::Tensor logits_before = model.Forward(input);
+    CheckShape(logits_before, {1, 2, 4}, "Tiny transformer train-step logits");
+    const cyxwiz::Tensor loss_before = loss.Forward(logits_before, targets);
+    CheckShape(loss_before, {1}, "Tiny transformer train-step loss");
+    CheckNear(loss_before.Data<float>()[0], 1.9317321f, 2e-5f,
+              "Tiny transformer smoothed token CE matches PyTorch");
+
+    const cyxwiz::Tensor loss_grad = loss.Backward(logits_before, targets);
+    const cyxwiz::Tensor input_grad = model.Backward(loss_grad);
+    CheckShape(input_grad, {1, 2, 4}, "Tiny transformer train-step grad_input");
+
+    const auto gradients = model.GetGradients();
+    Check(gradients.find("layer0.self_attn.W_v") != gradients.end(),
+          "Tiny transformer train-step should produce encoder attention gradients");
+    Check(gradients.find("layer1.weight") != gradients.end(),
+          "Tiny transformer train-step should produce token-head gradients");
+
+    cyxwiz::SGDOptimizer optimizer(0.05, 0.0);
+    model.UpdateParameters(&optimizer);
+    const cyxwiz::Tensor logits_after = model.Forward(input);
+    const cyxwiz::Tensor loss_after = loss.Forward(logits_after, targets);
+    Check(std::isfinite(loss_after.Data<float>()[0]),
+          "Tiny transformer train-step updated loss should be finite");
+    Check(loss_after.Data<float>()[0] < loss_before.Data<float>()[0],
+          "Tiny transformer train-step should lower smoothed token CE");
+}
 } // namespace
 
 int main() {
@@ -1645,10 +2325,13 @@ int main() {
         TestMultiHeadAttentionCrossAttentionParity();
         TestLayerNormParity();
         TestTransformerEncoderForwardParity();
+        TestTransformerEncoderTwoBlockStackBackwardParity();
         TestBertEncoderHeadLogitParity();
         TestTransformerDecoderCausalForwardParity();
+        TestTransformerDecoderTwoBlockCausalStackBackwardParity();
         TestGenerationSamplingDistributionParity();
         TestTinyCausalLanguageModelLogitsAndLossParity();
+        TestTinyTransformerCrossEntropyTrainingStepSanity();
         std::cout << "Computation truth transformer primitive checks passed\n";
         return 0;
     } catch (const std::exception& e) {
