@@ -1423,6 +1423,38 @@ void TestGenerationSamplingDistributionParity() {
               expected_probabilities.front(),
               1e-5f,
               "Generation greedy selection probability matches PyTorch fixture");
+
+    // PyTorch is the oracle for candidate probabilities. CyxWiz owns the
+    // C++ RNG stream, so deterministic multinomial parity means seeded replay
+    // over that PyTorch-verified distribution, not RNG identity with torch.multinomial.
+    config.sampling_mode = cyxwiz::LanguageModelSamplingMode::Multinomial;
+    std::mt19937 replay_rng_a(2026);
+    std::mt19937 replay_rng_b(2026);
+    for (size_t i = 0; i < 8; ++i) {
+        const auto selected_a = cyxwiz::SelectNextTokenFromDistribution(
+            candidates,
+            config,
+            replay_rng_a);
+        const auto selected_b = cyxwiz::SelectNextTokenFromDistribution(
+            candidates,
+            config,
+            replay_rng_b);
+        Check(selected_a.token_id == selected_b.token_id,
+              "Generation multinomial seeded replay token ID should be stable");
+        CheckNear(selected_a.probability,
+                  selected_b.probability,
+                  0.0f,
+                  "Generation multinomial seeded replay probability should be stable");
+        bool in_candidate_set = false;
+        for (const int64_t token_id : expected_ids) {
+            if (selected_a.token_id == token_id) {
+                in_candidate_set = true;
+                break;
+            }
+        }
+        Check(in_candidate_set,
+              "Generation multinomial selection should stay within PyTorch candidate set");
+    }
 }
 
 void TestTinyCausalLanguageModelLogitsAndLossParity() {

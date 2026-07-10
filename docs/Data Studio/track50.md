@@ -59,9 +59,28 @@ Validated:
 - `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_computation_truth_transformer_primitives -- /m:4 /v:minimal`
 - `$env:PATH = 'D:\tmp\libtorch-cpu-2.7.0\libtorch\lib;' + $env:PATH; D:\Dev\CyxWiz_Claude\build\bin\Release\test_computation_truth_transformer_primitives.exe`
 
+## Phase 3 - Deterministic Multinomial Sampling Policy
+
+Status: complete for the deterministic multinomial policy slice.
+
+Scope:
+
+- Keep PyTorch as the oracle for candidate probabilities and filtering.
+- Define deterministic multinomial parity as seeded CyxWiz replay over the
+  PyTorch-verified candidate distribution.
+- Do not require CyxWiz's `std::mt19937` stream to match `torch.multinomial`
+  exactly.
+
+Validated:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Debug --target test_computation_truth_transformer_primitives -- /m:4 /v:minimal`
+- `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_computation_truth_transformer_primitives.exe`
+- `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_language_model_generation.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_computation_truth_transformer_primitives -- /m:4 /v:minimal`
+- `$env:PATH = 'D:\tmp\libtorch-cpu-2.7.0\libtorch\lib;' + $env:PATH; D:\Dev\CyxWiz_Claude\build\bin\Release\test_computation_truth_transformer_primitives.exe`
+
 ## Next Pickup
 
-Add Studio-facing smoke coverage around the panel metadata path if a practical
-harness is available. Remaining numerical follow-up is deterministic
-multinomial parity policy: keep any PyTorch oracle in tests/fixtures and do not
-force PyTorch into the engine runtime boundary.
+No practical headless Studio panel harness was found in this pass. The remaining
+follow-up is to add Studio-facing smoke coverage around the panel metadata path
+when a harness exists, while keeping PyTorch oracles in tests/fixtures only.

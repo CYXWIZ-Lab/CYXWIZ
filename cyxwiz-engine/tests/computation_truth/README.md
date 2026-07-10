@@ -67,6 +67,9 @@ Latest observed run also exercised `LinearLayer` while ArrayFire GPU was active.
   top-k, top-p, and greedy selection against PyTorch softmax/top-k reference
   behavior, with hard-coded PyTorch-derived constants when LibTorch is not
   enabled.
+- Verifies deterministic multinomial replay over the PyTorch-verified
+  candidate distribution. CyxWiz does not require its C++ RNG stream to match
+  `torch.multinomial` exactly.
 
 Run:
 
