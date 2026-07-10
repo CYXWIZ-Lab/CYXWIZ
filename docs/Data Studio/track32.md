@@ -918,5 +918,4 @@ Current stopping point:
 - Last completed slice: `Canonical Auxiliary Trace Schema Marker`
 - Commit pushed: `360b1124 Canonicalize auxiliary trace schemas` on `origin/Nodes_Implementation`.
 - Current uncommitted files for this continuation: none before the next slice.
-- Other uncommitted files present outside this continuation: `language_model_generation_panel.cpp`, `language_model_generation_panel.h`, and `track49.md`.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical auxiliary trace schema markers, or switch back to the next tracked tofix item requested by the user.
