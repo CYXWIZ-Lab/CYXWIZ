@@ -916,7 +916,7 @@ Additional validation:
 Current stopping point:
 
 - Last completed slice: `Canonical Auxiliary Trace Schema Marker`
-- Commit pushed: not yet for this Auxiliary Trace Schema continuation; previous pushed repository checkpoint was `6853f26a Record text preprocessing trace checkpoint` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: `debug_trace_record.h`, `debug_export_correlation_tracer.cpp`, `debug_windows_crash_importer.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Commit pushed: `360b1124 Canonicalize auxiliary trace schemas` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: none before the next slice.
 - Other uncommitted files present outside this continuation: `language_model_generation_panel.cpp`, `language_model_generation_panel.h`, and `track49.md`.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical auxiliary trace schema markers, or switch back to the next tracked tofix item requested by the user.
