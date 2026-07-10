@@ -935,6 +935,6 @@ Additional validation:
 Current stopping point:
 
 - Last completed slice: `Canonical Compile Preflight Session Traces`
-- Commit pushed: not yet for this Compile/Preflight continuation; previous pushed repository checkpoint was `da8cbe10 Clarify auxiliary trace resume state` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: `main_window.cpp` and `track32.md`.
+- Commit pushed: `2d1f636a Canonicalize debugger compile preflight traces` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: none before the next slice.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical compile/preflight traces, or switch back to the next tracked tofix item requested by the user.
