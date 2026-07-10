@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../core/language_model_generation.h"
 #include "../../inference/language_model_inference_contract.h"
 
 #include <cstdint>
@@ -67,6 +68,12 @@ private:
     bool include_prompt_ = true;
 
     std::vector<int64_t> generated_ids_;
+    std::string stop_reason_;
+    std::string sampling_settings_;
+    size_t last_prompt_length_ = 0;
+    size_t last_max_context_length_ = 0;
+    size_t last_remaining_budget_ = 0;
+    std::vector<NextTokenCandidate> last_candidates_;
     std::string status_;
     std::string compatibility_status_;
     std::string active_model_status_;

@@ -70,6 +70,23 @@ void TestConfigValidation() {
           "invalid generation config should report each bad field");
 }
 
+void TestStopReasonNames() {
+    Check(cyxwiz::LanguageModelGenerationStopReasonName(
+              cyxwiz::LanguageModelGenerationStopReason::MaxTokens) ==
+              "max_tokens",
+          "max-token stop reason should have a stable UI name");
+    Check(cyxwiz::LanguageModelGenerationStopReasonName(
+              cyxwiz::LanguageModelGenerationStopReason::EosToken) == "eos",
+          "EOS stop reason should have a stable UI name");
+    Check(cyxwiz::LanguageModelGenerationStopReasonName(
+              cyxwiz::LanguageModelGenerationStopReason::Error) == "error",
+          "error stop reason should have a stable UI name");
+    Check(cyxwiz::LanguageModelGenerationStopReasonName(
+              cyxwiz::LanguageModelGenerationStopReason::UserCancelled) ==
+              "user_cancel",
+          "user-cancel stop reason should have a stable UI name");
+}
+
 void TestGreedyTopKDistribution() {
     cyxwiz::LanguageModelGenerationConfig config;
     config.top_k = 2;
@@ -151,7 +168,86 @@ void TestShapeValidation() {
     Check(threw, "generation distribution should reject logits shape mismatch");
 }
 
-void TestGenerateTokenIdsWithConfigRuntime() {
+void TestGenerateTokenIdsWithReportStopsAtEos() {
+    cyxwiz::SequentialModel model;
+    model.Add<ScriptedLogitModule>();
+
+    cyxwiz::LanguageModelGenerationConfig config;
+    config.max_new_tokens = 4;
+    config.eos_token_id = 4;
+    config.include_prompt = false;
+
+    const auto result = cyxwiz::GenerateTokenIdsWithReport(
+        model,
+        {1, 2},
+        config);
+
+    Check(result.stop_reason ==
+              cyxwiz::LanguageModelGenerationStopReason::EosToken,
+          "runtime generation report should stop at EOS");
+    Check(result.token_ids == std::vector<int64_t>({3, 4}),
+          "runtime generation report should return generated-only token IDs");
+    Check(result.new_token_ids == std::vector<int64_t>({3, 4}),
+          "runtime generation report should expose new token IDs separately");
+    Check(result.prompt_length == 2,
+          "runtime generation report should record prompt length");
+    Check(result.max_new_tokens == 4,
+          "runtime generation report should record max new tokens");
+    Check(result.remaining_budget == 2,
+          "runtime generation report should record remaining budget after EOS");
+    Check(result.steps.size() == 2,
+          "runtime generation report should record one step per generated token");
+    Check(result.steps[0].step_index == 0,
+          "first generation step should record step index");
+    Check(result.steps[0].input_length == 2,
+          "first generation step should record model input length");
+    Check(result.steps[0].token_id == 3,
+          "first generation step should record selected token");
+    Check(!result.steps[0].candidates.empty(),
+          "generation report should expose candidate distribution diagnostics");
+}
+
+void TestGenerateTokenIdsWithReportStopsAtMaxTokens() {
+    cyxwiz::SequentialModel model;
+    model.Add<ScriptedLogitModule>();
+
+    cyxwiz::LanguageModelGenerationConfig config;
+    config.max_new_tokens = 1;
+    config.eos_token_id = -1;
+    config.include_prompt = true;
+
+    const auto result = cyxwiz::GenerateTokenIdsWithReport(
+        model,
+        {1, 2},
+        config);
+
+    Check(result.stop_reason ==
+              cyxwiz::LanguageModelGenerationStopReason::MaxTokens,
+          "generation report should use max-token stop reason when budget ends");
+    Check(result.token_ids == std::vector<int64_t>({1, 2, 3}),
+          "generation report should include prompt when requested");
+    Check(result.new_token_ids == std::vector<int64_t>({3}),
+          "generation report should record only generated IDs separately");
+    Check(result.remaining_budget == 0,
+          "generation report should have no remaining budget at max tokens");
+
+    config.max_new_tokens = 4;
+    config.max_context_tokens = 3;
+    config.include_prompt = false;
+    const auto context_result = cyxwiz::GenerateTokenIdsWithReport(
+        model,
+        {1, 2},
+        config);
+    Check(context_result.stop_reason ==
+              cyxwiz::LanguageModelGenerationStopReason::MaxTokens,
+          "context budget exhaustion should use the max-token stop reason");
+    Check(context_result.new_token_ids == std::vector<int64_t>({3}),
+          "context budget should stop generation before exceeding max length");
+    Check(context_result.remaining_budget == 0,
+          "context budget exhaustion should report zero remaining budget");
+}
+
+void TestGenerateTokenIdsWithConfigCompatibilityWrapper() {
     cyxwiz::SequentialModel model;
     model.Add<ScriptedLogitModule>();
 
@@ -166,18 +262,49 @@ void TestGenerateTokenIdsWithConfigRuntime() {
         config);
 
     Check(generated == std::vector<int64_t>({3, 4}),
-          "runtime generation should emit generated-only tokens and stop at EOS");
+          "legacy runtime generation wrapper should preserve token output");
+}
+
+void TestGenerateTokenIdsWithReportRejectsBadPrompt() {
+    cyxwiz::SequentialModel model;
+    model.Add<ScriptedLogitModule>();
+
+    cyxwiz::LanguageModelGenerationConfig config;
+    config.max_new_tokens = 2;
+
+    bool empty_prompt_threw = false;
+    try {
+        (void)cyxwiz::GenerateTokenIdsWithReport(model, {}, config);
+    } catch (const std::invalid_argument&) {
+        empty_prompt_threw = true;
+    }
+    Check(empty_prompt_threw,
+          "generation report should reject empty prompts before inference");
+
+    config.max_context_tokens = 2;
+    bool long_prompt_threw = false;
+    try {
+        (void)cyxwiz::GenerateTokenIdsWithReport(model, {1, 2}, config);
+    } catch (const std::invalid_argument&) {
+        long_prompt_threw = true;
+    }
+    Check(long_prompt_threw,
+          "generation report should reject prompts without context budget");
 }
 
 } // namespace
 
 int main() {
     TestConfigValidation();
+    TestStopReasonNames();
     TestGreedyTopKDistribution();
     TestTopPFiltering();
     TestMultinomialSelectionIsSeeded();
     TestShapeValidation();
-    TestGenerateTokenIdsWithConfigRuntime();
+    TestGenerateTokenIdsWithReportStopsAtEos();
+    TestGenerateTokenIdsWithReportStopsAtMaxTokens();
+    TestGenerateTokenIdsWithConfigCompatibilityWrapper();
+    TestGenerateTokenIdsWithReportRejectsBadPrompt();
     std::cout << "Language model generation controls test passed\n";
     return 0;
 }

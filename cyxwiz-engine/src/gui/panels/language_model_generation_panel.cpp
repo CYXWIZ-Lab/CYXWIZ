@@ -205,8 +205,23 @@ void LanguageModelGenerationPanel::RenderResult() {
         ImGui::TextWrapped("%s", status_.c_str());
     }
 
+    if (!stop_reason_.empty()) {
+        ImGui::Text("Stop reason: %s", stop_reason_.c_str());
+    }
     if (!has_result_) {
         return;
+    }
+
+    ImGui::Text("Prompt length: %zu", last_prompt_length_);
+    ImGui::SameLine();
+    if (last_max_context_length_ > 0) {
+        ImGui::Text("Max context: %zu", last_max_context_length_);
+    } else {
+        ImGui::Text("Max context: unbounded");
+    }
+    ImGui::Text("Remaining generation budget: %zu", last_remaining_budget_);
+    if (!sampling_settings_.empty()) {
+        ImGui::TextWrapped("Sampling settings: %s", sampling_settings_.c_str());
     }
 
     const std::string joined = JoinTokenIds(generated_ids_);
@@ -223,6 +238,28 @@ void LanguageModelGenerationPanel::RenderResult() {
                                   generated_text_.size() + 1,
                                   ImVec2(-1, 120),
                                   ImGuiInputTextFlags_ReadOnly);
+    }
+
+    if (!last_candidates_.empty() &&
+        ImGui::BeginTable("##GenerationCandidateTable",
+                          2,
+                          ImGuiTableFlags_Borders |
+                              ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Token ID");
+        ImGui::TableSetupColumn("Probability");
+        ImGui::TableHeadersRow();
+        const size_t visible_candidates =
+            std::min<size_t>(last_candidates_.size(), 8);
+        for (size_t i = 0; i < visible_candidates; ++i) {
+            const auto& candidate = last_candidates_[i];
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%lld", static_cast<long long>(candidate.token_id));
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("%.6f", candidate.probability);
+        }
+        ImGui::EndTable();
     }
 }
 
@@ -268,9 +305,16 @@ void LanguageModelGenerationPanel::RunGeneration() {
         config.top_p = top_p_;
         config.eos_token_id = static_cast<int64_t>(eos_token_id_);
         config.include_prompt = include_prompt_;
+        config.max_context_tokens = max_sequence_length;
         config.sampling_mode = multinomial_sampling_
             ? LanguageModelSamplingMode::Multinomial
             : LanguageModelSamplingMode::Greedy;
+        RequireValidLanguageModelGenerationConfig(config);
+        if (config.max_context_tokens > 0 &&
+            prompt.size() >= config.max_context_tokens) {
+            throw std::runtime_error(
+                "Prompt length leaves no generation budget for max context");
+        }
 
         auto* model = ActiveModel();
         if (model == nullptr) {
@@ -288,22 +332,51 @@ void LanguageModelGenerationPanel::RunGeneration() {
                 "Model output contract failed: " + runtime_contract.error);
         }
 
-        generated_ids_ = GenerateTokenIdsWithConfig(
+        const auto report = GenerateTokenIdsWithReport(
             *model,
             prompt,
             config,
             static_cast<uint32_t>(std::max(0, seed_)));
+        generated_ids_ = report.token_ids;
+        stop_reason_ = LanguageModelGenerationStopReasonName(report.stop_reason);
+        last_prompt_length_ = report.prompt_length;
+        last_max_context_length_ = max_sequence_length;
+        last_remaining_budget_ = report.remaining_budget;
+        last_candidates_ = report.steps.empty()
+            ? std::vector<NextTokenCandidate>{}
+            : report.steps.back().candidates;
+
+        std::ostringstream settings;
+        settings << (config.sampling_mode == LanguageModelSamplingMode::Multinomial
+                         ? "multinomial"
+                         : "greedy")
+                 << ", max_new_tokens=" << config.max_new_tokens
+                 << ", temperature=" << config.temperature
+                 << ", top_k=" << config.top_k
+                 << ", top_p=" << config.top_p
+                 << ", eos=" << config.eos_token_id
+                 << ", seed=" << std::max(0, seed_)
+                 << ", include_prompt=" << (config.include_prompt ? "true" : "false");
+        sampling_settings_ = settings.str();
+
         generated_text_.clear();
         if (tokenizer) {
             generated_text_ = DecodeGeneratedTokenIds(*tokenizer, generated_ids_);
         }
         has_result_ = true;
         status_ = "Generation completed: " +
-                  std::to_string(generated_ids_.size()) + " token IDs.";
+                  std::to_string(report.new_token_ids.size()) +
+                  " new token IDs.";
     } catch (const std::exception& e) {
         has_result_ = false;
         generated_ids_.clear();
         generated_text_.clear();
+        stop_reason_ = "error";
+        sampling_settings_.clear();
+        last_prompt_length_ = 0;
+        last_max_context_length_ = 0;
+        last_remaining_budget_ = 0;
+        last_candidates_.clear();
         status_ = std::string("Generation failed: ") + e.what();
     }
 }

@@ -7,7 +7,39 @@
 #include <limits>
 #include <stdexcept>
 
+namespace {
+
+size_t RemainingGenerationBudget(size_t max_new_remaining,
+                                 size_t current_sequence_length,
+                                 size_t max_context_tokens) {
+    if (max_context_tokens == 0) {
+        return max_new_remaining;
+    }
+    if (current_sequence_length >= max_context_tokens) {
+        return 0;
+    }
+    return std::min(max_new_remaining,
+                    max_context_tokens - current_sequence_length);
+}
+
+} // namespace
+
 namespace cyxwiz {
+
+std::string LanguageModelGenerationStopReasonName(
+    LanguageModelGenerationStopReason reason) {
+    switch (reason) {
+        case LanguageModelGenerationStopReason::MaxTokens:
+            return "max_tokens";
+        case LanguageModelGenerationStopReason::EosToken:
+            return "eos";
+        case LanguageModelGenerationStopReason::Error:
+            return "error";
+        case LanguageModelGenerationStopReason::UserCancelled:
+            return "user_cancel";
+    }
+    return "unknown";
+}
 
 std::vector<std::string> ValidateLanguageModelGenerationConfig(
     const LanguageModelGenerationConfig& config) {
@@ -204,7 +236,7 @@ NextTokenSelection SelectNextTokenFromLogits(
     return SelectNextTokenFromDistribution(candidates, config, rng);
 }
 
-std::vector<int64_t> GenerateTokenIdsWithConfig(
+LanguageModelGenerationResult GenerateTokenIdsWithReport(
     SequentialModel& model,
     const std::vector<int64_t>& prompt_ids,
     const LanguageModelGenerationConfig& config,
@@ -213,15 +245,36 @@ std::vector<int64_t> GenerateTokenIdsWithConfig(
     RequireValidLanguageModelGenerationConfig(config);
     if (prompt_ids.empty()) {
         throw std::invalid_argument(
-            "GenerateTokenIdsWithConfig requires at least one prompt token");
+            "GenerateTokenIdsWithReport requires at least one prompt token");
     }
+    if (config.max_context_tokens > 0 &&
+        prompt_ids.size() >= config.max_context_tokens) {
+        throw std::invalid_argument(
+            "GenerateTokenIdsWithReport prompt length meets or exceeds available generation context");
+    }
+
+    LanguageModelGenerationResult result;
+    result.prompt_length = prompt_ids.size();
+    result.max_new_tokens = config.max_new_tokens;
+    result.remaining_budget = RemainingGenerationBudget(
+        config.max_new_tokens,
+        prompt_ids.size(),
+        config.max_context_tokens);
+    result.include_prompt = config.include_prompt;
+    result.stop_reason = LanguageModelGenerationStopReason::MaxTokens;
 
     std::vector<int64_t> generated = prompt_ids;
     std::vector<int64_t> new_tokens;
     new_tokens.reserve(config.max_new_tokens);
+    result.steps.reserve(config.max_new_tokens);
 
     std::mt19937 rng(seed);
     for (size_t step = 0; step < config.max_new_tokens; ++step) {
+        if (config.max_context_tokens > 0 &&
+            generated.size() >= config.max_context_tokens) {
+            break;
+        }
+
         Tensor input({1, generated.size()}, generated.data(), DataType::Int64);
         Tensor logits = model.Forward(input);
         const auto& shape = logits.Shape();
@@ -229,7 +282,7 @@ std::vector<int64_t> GenerateTokenIdsWithConfig(
             shape[1] != generated.size() || shape[2] == 0 ||
             logits.GetDataType() != DataType::Float32) {
             throw std::invalid_argument(
-                "GenerateTokenIdsWithConfig model must return Float32 [1, seq, vocab] logits");
+                "GenerateTokenIdsWithReport model must return Float32 [1, seq, vocab] logits");
         }
 
         const float* data = logits.Data<float>();
@@ -243,16 +296,37 @@ std::vector<int64_t> GenerateTokenIdsWithConfig(
             rng,
             0);
 
+        result.steps.push_back({
+            step,
+            generated.size(),
+            selection.token_id,
+            selection.probability,
+            selection.candidates
+        });
         generated.push_back(selection.token_id);
         new_tokens.push_back(selection.token_id);
+        result.remaining_budget = RemainingGenerationBudget(
+            config.max_new_tokens - new_tokens.size(),
+            generated.size(),
+            config.max_context_tokens);
 
         if (config.eos_token_id >= 0 &&
             selection.token_id == config.eos_token_id) {
+            result.stop_reason = LanguageModelGenerationStopReason::EosToken;
             break;
         }
     }
 
-    return config.include_prompt ? generated : new_tokens;
+    result.new_token_ids = new_tokens;
+    result.token_ids = config.include_prompt ? generated : new_tokens;
+    return result;
 }
 
+std::vector<int64_t> GenerateTokenIdsWithConfig(
+    SequentialModel& model,
+    const std::vector<int64_t>& prompt_ids,
+    const LanguageModelGenerationConfig& config,
+    uint32_t seed) {
+    return GenerateTokenIdsWithReport(model, prompt_ids, config, seed).token_ids;
+}
 } // namespace cyxwiz
