@@ -162,6 +162,12 @@ DebugTraceRecord DebugWindowsCrashImporter::BuildTrace(
     trace.role = DebugTraceRole::Error;
     trace.dtype = "wer";
     trace.status = report.available ? "captured" : "missing";
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        trace,
+        "windows_crash_import",
+        "DebugWindowsCrashImporter",
+        "cyxwiz-engine/src/core/debug_windows_crash_importer.cpp",
+        "cyxwiz::DebugWindowsCrashImporter::BuildTrace");
     trace.payload["schema"] = kSchema;
     trace.payload["error_code"] = kCrashErrorCode;
     trace.payload["report_available"] = report.available;
@@ -180,11 +186,13 @@ DebugTraceRecord DebugWindowsCrashImporter::BuildTrace(
     if (!report.available) {
         DebugNodeTraceContract::AddWarning(
             trace,
-            "No Windows crash report was available for this debug run.");
+            "No Windows crash report was available for this debug run.",
+            kCrashErrorCode);
     } else if (!correlation.matched) {
         DebugNodeTraceContract::AddWarning(
             trace,
-            "Windows crash report was imported but not confidently matched.");
+            "Windows crash report was imported but not confidently matched.",
+            kCrashErrorCode);
     }
 
     return trace;

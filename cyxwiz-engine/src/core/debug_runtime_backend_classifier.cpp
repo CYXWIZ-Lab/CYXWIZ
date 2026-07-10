@@ -48,6 +48,12 @@ void DebugRuntimeBackendClassifier::AttachToTrace(
     DebugTraceRecord& trace,
     const BackendPlacementEntry& placement) const {
     const auto classification = Classify(placement);
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        trace,
+        "backend_placement",
+        "DebugRuntimeBackendClassifier",
+        "cyxwiz-engine/src/core/debug_runtime_backend_classifier.cpp",
+        "cyxwiz::DebugRuntimeBackendClassifier::AttachToTrace");
 
     trace.payload["backend_requested"] = classification.requested_backend;
     trace.payload["backend_expected"] = classification.expected_backend;

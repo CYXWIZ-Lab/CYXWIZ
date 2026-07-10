@@ -109,6 +109,14 @@ Release verification:
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_debugger_contracts.exe`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_language_model_inference_contract.exe`
 - `D:\Dev\CyxWiz_Claude\build\bin\Release\test_cyxmodel_causal_lm_generation_roundtrip.exe`
+
+Commit state:
+
+- Committed as `aca3f02e Complete track49 LM inference contract`.
+- Pushed to `origin/Nodes_Implementation`.
+- Track49 implementation and verification are closed in that pushed checkpoint.
+- Later dirty work in the workspace belongs to the track32 debugger diagnostic continuation, not track49.
+
 ## Next Pickup
 
 - Optional: add a direct HTTP integration test for `/v1/model` and `/v1/generate` using a generated causal-LM package.

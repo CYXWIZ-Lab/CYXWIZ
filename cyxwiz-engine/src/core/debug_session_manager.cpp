@@ -72,14 +72,24 @@ DebugSession DebugSessionManager::StartSession(
 }
 
 DebugTraceRecord DebugSessionManager::BuildGraphSnapshotTrace(const DebugSession& session) {
-    DebugTraceRecord trace;
-    trace.run_id = session.run_id;
-    trace.node_id = -1;
-    trace.node_name = "GraphSnapshot";
-    trace.node_type = "DebugSession";
-    trace.phase = "GraphSnapshot";
-    trace.role = DebugTraceRole::CompileArtifact;
-    trace.status = "captured";
+    DebugTraceRecord trace = DebugNodeTraceContract::Make(
+        session.run_id,
+        -1,
+        "GraphSnapshot",
+        "DebugSession",
+        "GraphSnapshot",
+        DebugTraceRole::CompileArtifact,
+        {},
+        {},
+        "graph_snapshot",
+        "Studio",
+        "captured");
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        trace,
+        "graph_snapshot",
+        "DebugSessionManager",
+        "cyxwiz-engine/src/core/debug_session_manager.cpp",
+        "cyxwiz::DebugSessionManager::BuildGraphSnapshotTrace");
     trace.payload["mode"] = session.mode_name;
     trace.payload["graph_hash"] = session.graph_hash;
     trace.payload["node_count"] = session.node_count;

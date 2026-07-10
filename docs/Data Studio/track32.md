@@ -746,10 +746,110 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the tofix32 files.
 
+## Resume 2026-07-10 - Auxiliary Trace Diagnostic Context
+
+Thirty-third follow-up on the first slice:
+
+- Memory ownership, export correlation, backend placement, and Windows crash
+  import traces now attach diagnostic ownership metadata with stable phase,
+  component, source file, and source symbol fields.
+- The change reuses the central `DebugNodeTraceContract::AttachDiagnosticContext`
+  helper and does not add new trace shapes or UI behavior.
+- Contract coverage now proves these auxiliary trace producers expose diagnostic
+  context and that warning/error payload summaries stay attached through the
+  canonical warning/error helpers.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+- Reconfirmed in current workspace: `cmake --build D:\Dev\CyxWiz_Claude\build --config Debug --target test_debugger_contracts cyxwiz-engine`
+- Reconfirmed in current workspace: `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_debugger_contracts.exe`
+
+## Resume 2026-07-10 - Auxiliary Trace Issue Codes
+
+Thirty-fourth follow-up on the first slice:
+
+- Export correlation warnings for missing artifact paths now use the existing
+  `CW-S-0101` serialization/artifact code instead of the generic runtime
+  fallback.
+- Windows crash import warnings now pass the importer's documented `CW-R-0501`
+  code explicitly instead of relying on the default warning helper fallback.
+- Memory and backend attention warnings intentionally stay on the existing
+  generic runtime fallback until a narrower non-overstated diagnostic code is
+  warranted.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Canonical Graph Snapshot Trace
+
+Thirty-fifth follow-up on the first slice:
+
+- `DebugSessionManager::BuildGraphSnapshotTrace` now creates the always-present
+  graph snapshot through `DebugNodeTraceContract::Make` instead of manually
+  filling a partial trace record.
+- Graph snapshot traces now carry the canonical node trace schema plus stable
+  diagnostic phase, component, source file, and source symbol metadata.
+- Contract coverage now proves debugger sessions emit canonical graph snapshot
+  traces while preserving the existing frozen graph payload.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Support Bundle Diagnostic Text Redaction
+
+Thirty-sixth follow-up on the first slice:
+
+- Support bundle serialization now redacts token-bearing free-form diagnostic
+  issue node names and messages before writing run-level and trace-level issue
+  records.
+- Studio event messages and recommendation titles/details/actions in the debug
+  run section now use the same local redaction helper as logs and training
+  trace events.
+- Contract coverage now proves stable error codes remain visible while sensitive
+  diagnostic text is redacted from support-bundle records.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
+## Resume 2026-07-10 - Support Bundle Metadata Redaction
+
+Thirty-seventh follow-up on the first slice:
+
+- Support bundle serialization now redacts token-bearing top-level request
+  reason text, debug-run summary text, and debug trace node names.
+- The change reuses the existing support-bundle string redactor and keeps stable
+  identifiers, structured error codes, and trace payload schema fields intact.
+- Contract coverage now proves support bundles redact these metadata fields while
+  retaining the diagnostic fields engineers need for triage.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the tofix32 files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Central Trace Issue Summary`
-- Commit pushed: not yet for this continuation; last pushed tofix32 commit was `423f7ce6` on `origin/Nodes_Implementation`
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap, likely another narrow trace/error-code enrichment, or resume the separate materialization-cache work if that is the active thread.
+- Last completed slice: `Support Bundle Metadata Redaction`
+- Commit pushed: not yet for this continuation; last pushed tofix32 commit was `423f7ce6` on `origin/Nodes_Implementation`. The last pushed repository checkpoint is `aca3f02e Complete track49 LM inference contract`.
+- Current uncommitted files for this continuation: `debug_support_bundle_builder.cpp`, `debug_session_manager.cpp`, `debug_export_correlation_tracer.cpp`, `debug_memory_ownership_tracer.cpp`, `debug_runtime_backend_classifier.cpp`, `debug_windows_crash_importer.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: review/commit this auxiliary trace diagnostic-context slice, or continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap.

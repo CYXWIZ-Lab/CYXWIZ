@@ -54,6 +54,12 @@ DebugTraceRecord DebugMemoryOwnershipTracer::BuildTrace(
         input.dtype,
         input.backend,
         "ok");
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        trace,
+        "memory_ownership",
+        "DebugMemoryOwnershipTracer",
+        "cyxwiz-engine/src/core/debug_memory_ownership_tracer.cpp",
+        "cyxwiz::DebugMemoryOwnershipTracer::BuildTrace");
 
     trace.payload["memory_schema"] = kSchema;
     trace.payload["memory_observation"] = "training_trace_delta";

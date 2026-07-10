@@ -16,6 +16,12 @@ DebugTraceRecord DebugExportCorrelationTracer::BuildTrace(
     trace.role = DebugTraceRole::GeneratedCode;
     trace.dtype = input.artifact_kind;
     trace.status = input.compile_success ? "ok" : "failed";
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        trace,
+        "export_correlation",
+        "DebugExportCorrelationTracer",
+        "cyxwiz-engine/src/core/debug_export_correlation_tracer.cpp",
+        "cyxwiz::DebugExportCorrelationTracer::BuildTrace");
     trace.payload["schema"] = kSchema;
     trace.payload["artifact_kind"] = input.artifact_kind;
     trace.payload["artifact_path"] = input.artifact_path;
@@ -32,7 +38,8 @@ DebugTraceRecord DebugExportCorrelationTracer::BuildTrace(
     if (input.artifact_path.empty()) {
         DebugNodeTraceContract::AddWarning(
             trace,
-            "Generated-code/export trace has no artifact path.");
+            "Generated-code/export trace has no artifact path.",
+            errors::Serialization::ArtifactPathMissing);
     }
     if (!input.compile_success) {
         DebugNodeTraceContract::AddError(

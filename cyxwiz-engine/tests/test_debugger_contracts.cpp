@@ -153,6 +153,20 @@ void TestDebugSessionSnapshotContract() {
     Check(trace.role == cyxwiz::DebugTraceRole::CompileArtifact,
           "snapshot trace should be a compile artifact");
     Check(trace.status == "captured", "snapshot trace status should be captured");
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(trace),
+          "snapshot trace should use canonical node trace schema");
+    Check(trace.payload["diagnostic_phase"].get<std::string>() ==
+              "graph_snapshot",
+          "snapshot trace should expose diagnostic phase");
+    Check(trace.payload["component"].get<std::string>() ==
+              "DebugSessionManager",
+          "snapshot trace should expose diagnostic component");
+    Check(trace.payload["source_file"].get<std::string>().find(
+              "debug_session_manager.cpp") != std::string::npos,
+          "snapshot trace should expose diagnostic source file");
+    Check(trace.payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugSessionManager::BuildGraphSnapshotTrace",
+          "snapshot trace should expose diagnostic source symbol");
     Check(trace.payload["mode"].get<std::string>() == "FullWorkflow",
           "snapshot payload should include mode");
     Check(trace.payload["graph_hash"].get<uint64_t>() == 0xBEEF,
@@ -418,6 +432,18 @@ void TestRuntimeBackendClassificationContract() {
     Check(trace.payload["backend_reason_code"].get<std::string>() ==
               cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
           "backend trace payload should include reason code");
+    Check(trace.payload["diagnostic_phase"].get<std::string>() ==
+              "backend_placement",
+          "backend trace should expose diagnostic phase");
+    Check(trace.payload["component"].get<std::string>() ==
+              "DebugRuntimeBackendClassifier",
+          "backend trace should expose diagnostic component");
+    Check(trace.payload["source_file"].get<std::string>().find(
+              "debug_runtime_backend_classifier.cpp") != std::string::npos,
+          "backend trace should expose diagnostic source file");
+    Check(trace.payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugRuntimeBackendClassifier::AttachToTrace",
+          "backend trace should expose diagnostic source symbol");
     Check(trace.payload["backend_proven"].get<bool>(),
           "backend trace payload should expose proven status");
     Check(trace.payload["backend_fallback_possible"].get<bool>(),
@@ -519,6 +545,11 @@ void TestRuntimeBackendClassificationContract() {
           "MHA backend trace payload should request attention");
     Check(mha_trace.payload["warning_count"].get<size_t>() == 1,
           "MHA CPU-backed placement should add one debugger warning");
+    Check(mha_trace.payload["issue_count"].get<size_t>() == 1,
+          "MHA CPU-backed placement should expose issue count");
+    Check(mha_trace.payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::ExecutionFailed,
+          "MHA CPU-backed placement should expose primary warning code");
     Check(mha_trace.status == "ok",
           "MHA CPU-backed attention warning should not fail execution trace");
 
@@ -623,6 +654,23 @@ void TestMemoryOwnershipTraceContract() {
           "memory trace should mark device OOM risk near budget");
     Check(trace.payload["warning_count"].get<size_t>() == 2,
           "memory trace should warn for host and device risk");
+    Check(trace.payload["diagnostic_phase"].get<std::string>() ==
+              "memory_ownership",
+          "memory trace should expose diagnostic phase");
+    Check(trace.payload["component"].get<std::string>() ==
+              "DebugMemoryOwnershipTracer",
+          "memory trace should expose diagnostic component");
+    Check(trace.payload["source_file"].get<std::string>().find(
+              "debug_memory_ownership_tracer.cpp") != std::string::npos,
+          "memory trace should expose diagnostic source file");
+    Check(trace.payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugMemoryOwnershipTracer::BuildTrace",
+          "memory trace should expose diagnostic source symbol");
+    Check(trace.payload["issue_count"].get<size_t>() == 2,
+          "memory trace should expose warning issue count");
+    Check(trace.payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::ExecutionFailed,
+          "memory trace should expose primary warning code");
 
     Check(cyxwiz::DebugMemoryOwnershipTracer::EstimateTensorBytes({2, 3}, 8) == 48,
           "tensor byte estimate should multiply shape by element size");
@@ -675,6 +723,18 @@ void TestExportCorrelationTraceContract() {
               cyxwiz::DebugExportCorrelationTracer::Fingerprint(
                   input.generated_content),
           "export correlation trace should include deterministic fingerprint");
+    Check(trace.payload["diagnostic_phase"].get<std::string>() ==
+              "export_correlation",
+          "export correlation trace should expose diagnostic phase");
+    Check(trace.payload["component"].get<std::string>() ==
+              "DebugExportCorrelationTracer",
+          "export correlation trace should expose diagnostic component");
+    Check(trace.payload["source_file"].get<std::string>().find(
+              "debug_export_correlation_tracer.cpp") != std::string::npos,
+          "export correlation trace should expose diagnostic source file");
+    Check(trace.payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugExportCorrelationTracer::BuildTrace",
+          "export correlation trace should expose diagnostic source symbol");
 
     cyxwiz::DebugExportCorrelationInput failed;
     failed.artifact_kind = "onnx";
@@ -694,6 +754,14 @@ void TestExportCorrelationTraceContract() {
           "missing export artifact path should produce a warning");
     Check(failed_trace.payload["error_count"].get<size_t>() == 1,
           "failed compile correlation should produce an error");
+    Check(failed_trace.payload["issue_count"].get<size_t>() == 2,
+          "failed export correlation should expose total issue count");
+    Check(failed_trace.payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::errors::Serialization::ArtifactPathMissing,
+          "failed export correlation should expose primary warning code");
+    Check(failed_trace.payload["primary_error_code"].get<std::string>() ==
+              cyxwiz::errors::Runtime::ExecutionFailed,
+          "failed export correlation should expose primary error code");
 }
 
 void TestWindowsCrashImportContract() {
@@ -760,6 +828,18 @@ void TestWindowsCrashImportContract() {
     Check(trace.payload["exception_code"].get<std::string>() ==
               "c0000005",
           "Windows crash import trace should include exception code");
+    Check(trace.payload["diagnostic_phase"].get<std::string>() ==
+              "windows_crash_import",
+          "Windows crash import trace should expose diagnostic phase");
+    Check(trace.payload["component"].get<std::string>() ==
+              "DebugWindowsCrashImporter",
+          "Windows crash import trace should expose diagnostic component");
+    Check(trace.payload["source_file"].get<std::string>().find(
+              "debug_windows_crash_importer.cpp") != std::string::npos,
+          "Windows crash import trace should expose diagnostic source file");
+    Check(trace.payload["source_symbol"].get<std::string>() ==
+              "cyxwiz::DebugWindowsCrashImporter::BuildTrace",
+          "Windows crash import trace should expose diagnostic source symbol");
 
     const auto empty_report = importer.ParseWerText("", "");
     const auto missing_trace = importer.BuildTrace(
@@ -770,6 +850,11 @@ void TestWindowsCrashImportContract() {
           "missing Windows crash report should be explicit");
     Check(missing_trace.payload["warning_count"].get<size_t>() == 1,
           "missing Windows crash report should add warning");
+    Check(missing_trace.payload["issue_count"].get<size_t>() == 1,
+          "missing Windows crash report should expose issue count");
+    Check(missing_trace.payload["primary_warning_code"].get<std::string>() ==
+              cyxwiz::DebugWindowsCrashImporter::kCrashErrorCode,
+          "missing Windows crash report should expose primary warning code");
 }
 
 void TestSupportBundleContract() {
@@ -782,14 +867,14 @@ void TestSupportBundleContract() {
     record.summary.trace_count = 1;
     record.summary.event_count = 1;
     record.summary.recommendation_count = 1;
-    record.summary.summary = "Support bundle contract";
+    record.summary.summary = "Support bundle contract token=secret-token";
     record.summary.file_path = "C:/Users/private/.cyxwiz/debug_runs/support-run.json";
 
     record.issues.push_back({
         cyxwiz::IssueLevel::Error,
         5,
-        "Tokenizer",
-        "[CW-D-0101] required column missing",
+        "Tokenizer token=secret-token",
+        "[CW-D-0101] required column missing token=secret-token",
         "CW-D-0101"
     });
 
@@ -797,7 +882,7 @@ void TestSupportBundleContract() {
         cyxwiz::DebugNodeTraceContract::Make(
             "support-run",
             5,
-            "Tokenizer",
+            "Tokenizer token=secret-token",
             "TextTokenizer",
             "TextTokenizer",
             cyxwiz::DebugTraceRole::PreprocessingOutput,
@@ -812,8 +897,8 @@ void TestSupportBundleContract() {
     trace.issues.push_back({
         cyxwiz::IssueLevel::Error,
         5,
-        "Tokenizer",
-        "required column missing",
+        "Tokenizer token=secret-token",
+        "required column missing token=secret-token",
         "CW-D-0101"
     });
     record.traces.push_back(std::move(trace));
@@ -825,16 +910,16 @@ void TestSupportBundleContract() {
         5,
         "StudioDebugger.SelectTrace",
         "ok",
-        "Selected failing trace"
+        "Selected failing trace token=secret-token"
     });
 
     record.recommendations.push_back({
         cyxwiz::DebugRecommendationSeverity::Critical,
         5,
         "Data",
-        "Missing required column",
-        "The text column was not found.",
-        "Select a dataset with the configured text column."
+        "Missing required column token=secret-token",
+        "The text column was not found token=secret-token.",
+        "Select a dataset with the configured text column token=secret-token."
     });
 
     cyxwiz::CrashRunSummary crash;
@@ -874,7 +959,7 @@ void TestSupportBundleContract() {
 
     cyxwiz::DebugSupportBundleInput input;
     input.request_id = "support-request-1";
-    input.reason = "app requested engine log for HQ diagnostics";
+    input.reason = "app requested engine log for HQ diagnostics token=secret-token";
     input.debug_run = record;
     input.crash_run = crash;
     input.training_trace = training;
@@ -918,7 +1003,15 @@ void TestSupportBundleContract() {
     Check(!bundle["hq_upload_performed"].get<bool>(),
           "support bundle builder should not upload");
     Check(bundle["redaction_applied"].get<bool>(),
-          "support bundle should mark redaction");
+          "support bundle should mark redaction");    Check(bundle["reason"].get<std::string>() ==
+              "app requested engine log for HQ diagnostics token=[REDACTED]",
+          "support bundle should redact top-level reason text");
+    Check(bundle["debug_run"]["summary"]["summary"].get<std::string>() ==
+              "Support bundle contract token=[REDACTED]",
+          "support bundle should redact debug run summary text");
+    Check(bundle["debug_run"]["traces"][0]["node_name"].get<std::string>() ==
+              "Tokenizer token=[REDACTED]",
+          "support bundle should redact trace node names");
     Check(bundle["debug_run"]["summary"]["file_path"].get<std::string>() ==
               "[REDACTED]",
           "support bundle should redact debug run file path");
@@ -937,6 +1030,30 @@ void TestSupportBundleContract() {
     Check(bundle["debug_run"]["traces"][0]["issues"][0]["error_code"].get<std::string>() ==
               "CW-D-0101",
           "support bundle should keep trace issue error codes");
+    Check(bundle["debug_run"]["issues"][0]["node_name"].get<std::string>() ==
+              "Tokenizer token=[REDACTED]",
+          "support bundle should redact record issue node names");
+    Check(bundle["debug_run"]["issues"][0]["message"].get<std::string>() ==
+              "[CW-D-0101] required column missing token=[REDACTED]",
+          "support bundle should redact record issue messages");
+    Check(bundle["debug_run"]["traces"][0]["issues"][0]["node_name"].get<std::string>() ==
+              "Tokenizer token=[REDACTED]",
+          "support bundle should redact trace issue node names");
+    Check(bundle["debug_run"]["traces"][0]["issues"][0]["message"].get<std::string>() ==
+              "required column missing token=[REDACTED]",
+          "support bundle should redact trace issue messages");
+    Check(bundle["debug_run"]["studio_events"][0]["message"].get<std::string>() ==
+              "Selected failing trace token=[REDACTED]",
+          "support bundle should redact Studio event messages");
+    Check(bundle["debug_run"]["recommendations"][0]["title"].get<std::string>() ==
+              "Missing required column token=[REDACTED]",
+          "support bundle should redact recommendation titles");
+    Check(bundle["debug_run"]["recommendations"][0]["detail"].get<std::string>() ==
+              "The text column was not found token=[REDACTED]",
+          "support bundle should redact recommendation details");
+    Check(bundle["debug_run"]["recommendations"][0]["action"].get<std::string>() ==
+              "Select a dataset with the configured text column token=[REDACTED]",
+          "support bundle should redact recommendation actions");
     Check(bundle["placement_observations"].is_array() &&
               bundle["placement_observations"].size() == 1,
           "support bundle should export placement observations");

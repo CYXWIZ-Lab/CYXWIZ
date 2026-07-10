@@ -40,9 +40,9 @@ nlohmann::json IssueToJson(const ValidationIssue& issue) {
     return {
         {"level", IssueLevelName(issue.level)},
         {"node_id", issue.node_id},
-        {"node_name", issue.node_name},
+        {"node_name", DebugSupportBundleBuilder::RedactString(issue.node_name)},
         {"error_code", issue.error_code},
-        {"message", issue.message}
+        {"message", DebugSupportBundleBuilder::RedactString(issue.message)}
     };
 }
 
@@ -50,7 +50,7 @@ nlohmann::json TraceToJson(const DebugTraceRecord& trace) {
     return {
         {"run_id", trace.run_id},
         {"node_id", trace.node_id},
-        {"node_name", trace.node_name},
+        {"node_name", DebugSupportBundleBuilder::RedactString(trace.node_name)},
         {"node_type", trace.node_type},
         {"phase", trace.phase},
         {"role", DebugTraceRoleName(trace.role)},
@@ -72,7 +72,7 @@ nlohmann::json EventToJson(const StudioEventRecord& event) {
         {"selected_node_id", event.selected_node_id},
         {"action", event.action},
         {"status", event.status},
-        {"message", event.message}
+        {"message", DebugSupportBundleBuilder::RedactString(event.message)}
     };
 }
 
@@ -80,9 +80,9 @@ nlohmann::json RecommendationToJson(const DebugRecommendation& recommendation) {
     return {
         {"node_id", recommendation.node_id},
         {"category", recommendation.category},
-        {"title", recommendation.title},
-        {"detail", recommendation.detail},
-        {"action", recommendation.action}
+        {"title", DebugSupportBundleBuilder::RedactString(recommendation.title)},
+        {"detail", DebugSupportBundleBuilder::RedactString(recommendation.detail)},
+        {"action", DebugSupportBundleBuilder::RedactString(recommendation.action)}
     };
 }
 
@@ -103,7 +103,7 @@ nlohmann::json DebugSupportBundleBuilder::Build(
     return {
         {"schema", kSchema},
         {"request_id", input.request_id},
-        {"reason", input.reason},
+        {"reason", RedactString(input.reason)},
         {"local_first", true},
         {"hq_upload_allowed", input.allow_hq_upload},
         {"hq_upload_performed", false},
@@ -204,7 +204,7 @@ nlohmann::json DebugSupportBundleBuilder::DebugRunToJson(
             {"trace_count", record.summary.trace_count},
             {"event_count", record.summary.event_count},
             {"recommendation_count", record.summary.recommendation_count},
-            {"summary", record.summary.summary},
+            {"summary", RedactString(record.summary.summary)},
             {"file_path", "[REDACTED]"}
         }},
         {"issues", issues},
