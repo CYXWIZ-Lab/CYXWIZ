@@ -153,6 +153,8 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
         }
 
         if (trace.phase == "Forward" &&
+            trace.role == DebugTraceRole::Activation &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_forward" &&
             (PayloadBool(trace, "has_nan", false) ||
              PayloadBool(trace, "has_inf", false))) {
             Add(out, DebugRecommendationSeverity::Critical, trace.node_id,

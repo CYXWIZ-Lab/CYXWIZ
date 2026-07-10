@@ -2302,11 +2302,35 @@ void TestRecommendationContract() {
         "float32",
         "LocalDebug",
         "warning");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        local_forward,
+        "local_debug_forward",
+        "DebugExecutor",
+        "cyxwiz-engine/src/core/debug_executor.cpp",
+        "cyxwiz::DebugExecutor::Run");
     local_forward.payload["has_nan"] = true;
     local_forward.payload["has_inf"] = false;
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_forward),
           "local debug forward recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(local_forward));
+
+    cyxwiz::DebugTraceRecord runtime_forward = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        17,
+        "RuntimeDense_17",
+        "Dense",
+        "Forward",
+        cyxwiz::DebugTraceRole::Activation,
+        {},
+        {2, 4},
+        "float32",
+        "Runtime",
+        "warning");
+    runtime_forward.payload["has_nan"] = true;
+    runtime_forward.payload["has_inf"] = false;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(runtime_forward),
+          "runtime forward recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(runtime_forward));
 
     cyxwiz::DebugTraceRecord local_forward_failed = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
@@ -2506,6 +2530,11 @@ void TestRecommendationContract() {
           "local debug optimizer failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug produced non-finite activation"),
           "local debug non-finite activation should produce recommendation");
+    Check(CountRecommendationsWithDetail(
+              recs,
+              "Local Debug produced non-finite activation",
+              "A Local Debug forward trace reported NaN or Inf output values.") == 1,
+          "runtime forward non-finite fixture should not produce Local Debug recommendation");
     Check(HasRecommendation(recs, "Local Debug forward pass failed"),
           "local debug forward failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug backward pass failed"),
