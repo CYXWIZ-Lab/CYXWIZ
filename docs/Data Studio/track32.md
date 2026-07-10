@@ -976,6 +976,6 @@ Additional validation:
 Current stopping point:
 
 - Last completed slice: `Local Debug Structured Issue Summaries`
-- Commit pushed: not yet for this Local Debug issue-summary continuation; previous pushed repository checkpoint was `e9ddfce1 Record local debug trace checkpoint` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: `main_window.cpp` and `track32.md`.
+- Commit pushed: `ef800c97 Add local debug trace issue summaries` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: none before the next slice.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug structured issue summaries, or switch back to the next tracked tofix item requested by the user.
