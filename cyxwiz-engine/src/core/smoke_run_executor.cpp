@@ -390,9 +390,10 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             }
         }
 
+        const bool all_gradients_zero = grad_count > 0 && zero_grad_count >= grad_count;
         auto grad_record = MakeSmokeRecord(
             run_id, "SmokeRun.Backward", DebugTraceRole::Gradient,
-            model_node_id, grad_count > 0 ? "ok" : "warning");
+            model_node_id, grad_count == 0 || all_gradients_zero ? "warning" : "ok");
         grad_record.payload["batch"] = batch_index;
         grad_record.payload["gradient_tensor_count"] = grad_count;
         grad_record.payload["zero_gradient_tensor_count"] = zero_grad_count;
@@ -406,6 +407,16 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             result.issues.push_back({
                 IssueLevel::Warning, model_node_id, "SmokeRun",
                 "Smoke Run did not observe parameter gradients.",
+                errors::Training::TrainingExecutionFailed
+            });
+        } else if (all_gradients_zero) {
+            DebugNodeTraceContract::AddWarning(
+                grad_record,
+                "Smoke Run observed only zero gradients.",
+                errors::Training::TrainingExecutionFailed);
+            result.issues.push_back({
+                IssueLevel::Warning, model_node_id, "SmokeRun",
+                "Smoke Run observed only zero gradients.",
                 errors::Training::TrainingExecutionFailed
             });
         }

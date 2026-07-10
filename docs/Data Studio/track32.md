@@ -1028,11 +1028,29 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the export/crash recommendation files.
 
+## Resume 2026-07-10 - Smoke Run Zero-Gradient Trace Warnings
+
+Forty-seventh follow-up on the first slice:
+
+- `SmokeRunExecutor` now marks backward traces as warning traces when every
+  captured gradient tensor is zero.
+- The all-zero gradient trace now carries a structured warning issue using the
+  existing Smoke Run training-execution error code.
+- Recommendation contract coverage now proves all-zero Smoke Run gradients stay
+  distinct from the no-gradient case.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Smoke Run zero-gradient files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Export Crash Trace Recommendations`
-- Commit pushed: `c9abef6d Recommend export crash trace issues` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after export/crash trace recommendations, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Smoke Run Zero-Gradient Trace Warnings`
+- Commit pushed: not yet for this Smoke Run zero-gradient continuation; previous pushed repository checkpoint was `fd805131 Record export crash recommendation checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `smoke_run_executor.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Smoke Run zero-gradient trace warnings, or switch back to the next tracked tofix item requested by the user.

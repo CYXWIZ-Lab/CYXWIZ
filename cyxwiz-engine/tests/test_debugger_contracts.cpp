@@ -2094,6 +2094,30 @@ void TestRecommendationContract() {
           "smoke backward recommendation fixture should expose diagnostic phase");
     traces.push_back(std::move(backward));
 
+    cyxwiz::DebugTraceRecord zero_backward = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        5,
+        "SmokeRun",
+        "SmokeRun",
+        "SmokeRun.Backward",
+        cyxwiz::DebugTraceRole::Gradient,
+        {},
+        {},
+        "float32",
+        "Runtime",
+        "warning");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        zero_backward,
+        "smoke_run",
+        "SmokeRunExecutor",
+        "cyxwiz-engine/src/core/smoke_run_executor.cpp",
+        "cyxwiz::SmokeRunExecutor::RunTextSmoke");
+    zero_backward.payload["gradient_tensor_count"] = 3;
+    zero_backward.payload["zero_gradient_tensor_count"] = 3;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(zero_backward),
+          "smoke all-zero-gradient recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(zero_backward));
+
     cyxwiz::DebugTraceRecord local_forward = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
         7,
@@ -2201,6 +2225,8 @@ void TestRecommendationContract() {
           "invalid smoke loss should produce recommendation");
     Check(HasRecommendation(recs, "No gradients observed"),
           "missing gradients should produce recommendation");
+    Check(HasRecommendation(recs, "All gradients are zero"),
+          "all-zero smoke gradients should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug produced non-finite activation"),
           "local debug non-finite activation should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is NaN"),
