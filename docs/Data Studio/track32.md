@@ -955,6 +955,6 @@ Additional validation:
 Current stopping point:
 
 - Last completed slice: `Canonical Local Debug Runtime Traces`
-- Commit pushed: not yet for this Local Debug continuation; previous pushed repository checkpoint was `b8244481 Record compile preflight trace checkpoint` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: `main_window.cpp` and `track32.md`.
+- Commit pushed: `d2fd8b55 Canonicalize local debug runtime traces` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: none before the next slice.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical Local Debug runtime traces, or switch back to the next tracked tofix item requested by the user.
