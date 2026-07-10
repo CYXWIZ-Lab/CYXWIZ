@@ -142,6 +142,10 @@ Verification:
 
 ## Next Pickup
 
-- Optional: add a direct HTTP integration test for `/v1/model` and `/v1/generate` using a generated causal-LM package.
-- Optional: extend the Studio panel test surface if a GUI harness becomes available; the current follow-up is compile-validated through `cyxwiz-engine`.
-- Optional: run the full engine regression suite if a broader release gate is required beyond the focused Debug/Release tests above.
+Optional hardening follow-ups have been moved to `tofix64`:
+
+- direct HTTP integration coverage for `/v1/model` and `/v1/generate` with a generated causal-LM package,
+- Studio panel test coverage only if an existing GUI harness can exercise imported package contract behavior,
+- broader release-gate runs only if the endpoint follow-up changes runtime/server behavior.
+
+`tofix49` remains complete; continue new work from `tofix64`.
