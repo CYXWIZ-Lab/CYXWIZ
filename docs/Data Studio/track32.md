@@ -1008,11 +1008,31 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug zero-gradient recommendation files.
 
+## Resume 2026-07-10 - Export Crash Trace Recommendations
+
+Forty-sixth follow-up on the first slice:
+
+- `DebugRecommendationEngine` now turns failed export correlation traces into
+  warning recommendations for export follow-up.
+- Export traces missing artifact paths now produce an explicit warning
+  recommendation instead of relying only on raw issue payloads.
+- Windows crash import traces now produce recommendations for unavailable crash
+  reports or imported reports that cannot be confidently matched to the run.
+- Recommendation contract coverage now uses the existing export correlation and
+  Windows crash import trace producers as fixtures.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the export/crash recommendation files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Zero-Gradient Recommendations`
-- Commit pushed: `f8cbdb9d Recommend local debug zero gradients` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug zero-gradient recommendations, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Export Crash Trace Recommendations`
+- Commit pushed: not yet for this Export/Crash recommendation continuation; previous pushed repository checkpoint was `73828baf Record zero gradient recommendation checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after export/crash trace recommendations, or switch back to the next tracked tofix item requested by the user.

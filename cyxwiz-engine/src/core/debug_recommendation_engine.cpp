@@ -16,6 +16,11 @@ double PayloadNumber(const DebugTraceRecord& trace, const char* key, double fall
     return it != trace.payload.end() && it->is_number() ? it->get<double>() : fallback;
 }
 
+std::string PayloadString(const DebugTraceRecord& trace, const char* key) {
+    auto it = trace.payload.find(key);
+    return it != trace.payload.end() && it->is_string() ? it->get<std::string>() : std::string{};
+}
+
 void Add(std::vector<DebugRecommendation>& out,
          DebugRecommendationSeverity severity,
          int node_id,
@@ -123,6 +128,38 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
                 "Gradients", "Local Debug gradient is zero",
                 "A Local Debug gradient trace reported a zero parameter norm.",
                 "Inspect disconnected layers, saturated activations, frozen parameters, and loss wiring before training.");
+        }
+
+        if (trace.phase == "ExportCorrelation") {
+            if (!PayloadBool(trace, "compile_success", true) ||
+                trace.status == "failed") {
+                Add(out, DebugRecommendationSeverity::Warning, trace.node_id,
+                    "Export", "Export correlation failed",
+                    "The generated-code/export trace reported a failed compile or correlation status.",
+                    "Inspect the export compile status and generated artifact before using the exported model.");
+            }
+            if (PayloadString(trace, "artifact_path").empty()) {
+                Add(out, DebugRecommendationSeverity::Warning, trace.node_id,
+                    "Export", "Export artifact path missing",
+                    "The export correlation trace did not include an artifact path.",
+                    "Verify the exporter wrote an artifact and records its path in the debug trace.");
+            }
+        }
+
+        if (trace.phase == "WindowsCrashImport") {
+            const bool report_available = PayloadBool(trace, "report_available", true);
+            const bool matched = PayloadBool(trace, "matched", true);
+            if (!report_available) {
+                Add(out, DebugRecommendationSeverity::Warning, trace.node_id,
+                    "Crash", "Windows crash report unavailable",
+                    "The crash importer did not find a Windows Error Reporting artifact for this run.",
+                    "Inspect the crash heartbeat and Windows Event Viewer if the run stopped unexpectedly.");
+            } else if (!matched) {
+                Add(out, DebugRecommendationSeverity::Warning, trace.node_id,
+                    "Crash", "Windows crash report not confidently matched",
+                    "A Windows crash report was imported but could not be tied confidently to this debug run.",
+                    "Compare run id, process name, report id, and crash timestamp before acting on the report.");
+            }
         }
 
         if (trace.phase == "SmokeRun.Loss") {

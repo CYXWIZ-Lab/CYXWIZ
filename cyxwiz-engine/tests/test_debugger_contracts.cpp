@@ -2148,6 +2148,35 @@ void TestRecommendationContract() {
           "local debug zero-gradient recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(local_zero_gradient));
 
+    cyxwiz::DebugExportCorrelationInput export_input;
+    export_input.artifact_kind = "onnx";
+    export_input.exporter_name = "ONNXExporter";
+    export_input.compile_success = false;
+    export_input.compile_status = "compile failed before export";
+    export_input.generated_content = "";
+    cyxwiz::DebugExportCorrelationTracer export_tracer;
+    auto export_trace = export_tracer.BuildTrace(
+        "recommendation-run",
+        export_input);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(export_trace),
+          "export recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(export_trace));
+
+    cyxwiz::CrashRunSummary crash_run;
+    crash_run.available = true;
+    crash_run.suspected_crash = true;
+    crash_run.run_id = "recommendation-run";
+    crash_run.status = "suspected crash";
+    cyxwiz::DebugWindowsCrashImporter crash_importer;
+    auto missing_crash_report = crash_importer.ParseWerText("", "");
+    auto crash_trace = crash_importer.BuildTrace(
+        "recommendation-run",
+        crash_run,
+        missing_crash_report);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(crash_trace),
+          "crash recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(crash_trace));
+
     cyxwiz::SmokeRunResult smoke;
     smoke.supported = true;
     smoke.success = false;
@@ -2178,6 +2207,12 @@ void TestRecommendationContract() {
           "local debug NaN gradient should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is zero"),
           "local debug zero gradient should produce recommendation");
+    Check(HasRecommendation(recs, "Export correlation failed"),
+          "failed export correlation trace should produce recommendation");
+    Check(HasRecommendation(recs, "Export artifact path missing"),
+          "missing export artifact path should produce recommendation");
+    Check(HasRecommendation(recs, "Windows crash report unavailable"),
+          "missing Windows crash report should produce recommendation");
     Check(HasRecommendation(recs, "Smoke Run needs attention"),
           "failed supported smoke run should produce recommendation");
 }
