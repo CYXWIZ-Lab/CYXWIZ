@@ -2170,6 +2170,34 @@ void TestRecommendationContract() {
           "smoke all-zero-gradient recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(zero_backward));
 
+    cyxwiz::DebugTraceRecord local_build = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        -1,
+        "LocalDebugBuildModel",
+        "BuildModel",
+        "BuildModel",
+        cyxwiz::DebugTraceRole::Error,
+        {},
+        {},
+        "model",
+        "LocalDebug",
+        "failed");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        local_build,
+        "local_debug_build_model",
+        "DebugExecutor",
+        "cyxwiz-engine/src/core/debug_executor.cpp",
+        "cyxwiz::DebugExecutor::Run");
+    local_build.payload["build_model_reached"] = true;
+    local_build.payload["success"] = false;
+    cyxwiz::DebugNodeTraceContract::AddError(
+        local_build,
+        "Model build failed (invalid config)",
+        cyxwiz::errors::Training::ModelBuildFailed);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_build),
+          "local debug build-model recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(local_build));
+
     cyxwiz::DebugTraceRecord local_loss = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
         -1,
@@ -2404,6 +2432,8 @@ void TestRecommendationContract() {
           "missing gradients should produce recommendation");
     Check(HasRecommendation(recs, "All gradients are zero"),
           "all-zero smoke gradients should produce recommendation");
+    Check(HasRecommendation(recs, "Local Debug model build failed"),
+          "local debug model build failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug loss is not finite"),
           "local debug non-finite loss should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug optimizer step failed"),

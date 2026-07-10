@@ -142,6 +142,16 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
                 "Inspect the selected node wiring and its input/output shape settings before training.");
         }
 
+        if (trace.phase == "BuildModel" &&
+            trace.role == DebugTraceRole::Error &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_build_model" &&
+            trace.status == "failed") {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Model", "Local Debug model build failed",
+                "A Local Debug build-model trace reported a failure before forward execution.",
+                "Inspect graph-to-model layer mapping, model configuration, and unsupported layer parameters before training.");
+        }
+
         if (trace.phase == "Forward" &&
             (PayloadBool(trace, "has_nan", false) ||
              PayloadBool(trace, "has_inf", false))) {

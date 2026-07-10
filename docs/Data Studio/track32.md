@@ -1168,11 +1168,33 @@ Additional validation:
 - Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug forward failure files.
+
+## Resume 2026-07-10 - Local Debug Build Failure Recommendations
+
+Fifty-fourth follow-up on the first slice:
+
+- Studio Debugger now emits a canonical Local Debug build-model failure trace
+  when `DebugExecutor` fails before forward execution.
+- Build failure traces preserve diagnostic context and attach a structured model
+  build error issue using the existing trace contract.
+- `DebugRecommendationEngine` now emits a focused critical recommendation for
+  failed Local Debug build-model traces.
+- Recommendation contract coverage now includes a canonical failed build-model
+  trace fixture alongside forward, loss, optimizer, and gradient fixtures.
+
+Additional validation:
+
+- Retried after timeout: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug build failure files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Forward Failure Recommendations`
-- Commit pushed: `0cf535a5 Trace local debug forward failures` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none; remaining dirty files belong to other in-progress ticket work and were left untouched.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug forward failure recommendations, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Build Failure Recommendations`
+- Commit pushed: not yet for this Local Debug build failure continuation; previous pushed repository checkpoint was `3b4d1de9 Record local debug forward failure checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp`, `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug build failure recommendations, or switch back to the next tracked tofix item requested by the user.

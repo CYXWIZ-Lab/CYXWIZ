@@ -3713,6 +3713,38 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.issues = session.debug_result.issues;
         }
 
+        const bool local_debug_build_failed =
+            session.debug_result.reached == cyxwiz::DebugStage::BuildModel &&
+            !session.debug_result.success &&
+            !session.debug_result.failure_summary.empty();
+        if (local_debug_build_failed) {
+            cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
+                run_id,
+                -1,
+                "LocalDebugBuildModel",
+                "BuildModel",
+                "BuildModel",
+                cyxwiz::DebugTraceRole::Error,
+                {},
+                {},
+                "model",
+                "LocalDebug",
+                "failed");
+            record.payload["build_model_reached"] = true;
+            record.payload["success"] = false;
+            cyxwiz::DebugNodeTraceContract::AddError(
+                record,
+                session.debug_result.failure_summary,
+                cyxwiz::errors::Training::ModelBuildFailed);
+            cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+                record,
+                "local_debug_build_model",
+                "DebugExecutor",
+                "cyxwiz-engine/src/core/debug_executor.cpp",
+                "cyxwiz::DebugExecutor::Run");
+            session.traces.push_back(std::move(record));
+        }
+
         for (const auto& trace : session.debug_result.layer_traces) {
             cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
                 run_id,
