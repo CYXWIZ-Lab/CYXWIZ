@@ -526,6 +526,7 @@ set(ENGINE_HEADERS
     src/core/texture_manager.h
     src/core/async_task_manager.h
     src/core/graph_compiler.h
+    src/core/bert_encoder_contract.h
     src/core/dataset_batcher.h
     src/core/metric_learning_batch.h
     src/core/metric_learning_batcher.h
@@ -2279,6 +2280,44 @@ set_target_properties(test_graph_compiler_causal_lm_shape PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: BERT Encoder Graph And Inference Contracts =====
+add_executable(test_bert_encoder_contracts
+    tests/test_bert_encoder_contracts.cpp
+    src/core/graph_compiler.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+)
+
+target_include_directories(test_bert_encoder_contracts PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_bert_encoder_contracts PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_bert_encoder_contracts PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_bert_encoder_contracts PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 # ===== Test: Recurrent Backend Placement Preflight =====
 add_executable(test_recurrent_backend_placement
     tests/test_recurrent_backend_placement.cpp

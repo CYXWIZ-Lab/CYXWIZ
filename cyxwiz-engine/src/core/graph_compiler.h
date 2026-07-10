@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bert_encoder_contract.h"
 #include "compiled_graph_plan.h"
 #include "metric_learning_graph_contract.h"
 #include "../gui/node_editor.h"
@@ -382,6 +383,10 @@ struct TrainingConfiguration {
     // executable=false until the graph executor and local inference routes are
     // implemented.
     MetricLearningGraphContract metric_learning_graph;
+    // Passive BERT-style encoder contract. Populated when the selected graph
+    // explicitly declares a BERT-style encoder path or uses an encoder with a
+    // first-class token/CLS classifier head.
+    BertEncoderGraphContract bert_encoder_graph;
 
     // Input/Output configuration
     std::vector<size_t> input_shape;    // e.g., [28, 28, 1] for MNIST

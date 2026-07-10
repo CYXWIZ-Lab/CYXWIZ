@@ -3334,6 +3334,16 @@ TrainingConfiguration GraphCompiler::Compile(
         config.optimizer_node_id);
     config.metric_learning_graph =
         AnalyzeMetricLearningGraphContract(config.graph_plan);
+    config.bert_encoder_graph =
+        AnalyzeBertEncoderGraphContract(config.graph_plan);
+    for (const auto& blocker : config.bert_encoder_graph.blockers) {
+        AddIssue(config,
+                 IssueLevel::Error,
+                 blocker,
+                 -1,
+                 "",
+                 errors::Compiler::UnsupportedTrainingNode);
+    }
 
     // CrossEntropy/Focal consume logits and apply softmax internally.
     bool using_cross_entropy =
