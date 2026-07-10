@@ -950,11 +950,32 @@ Additional validation:
 - Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
 - Passed: scoped `git diff --check` for the Local Debug trace files.
 
+## Resume 2026-07-10 - Local Debug Structured Issue Summaries
+
+Forty-third follow-up on the first slice:
+
+- Local Debug forward activation traces now attach structured warning issues
+  when runtime shape differs from the compiler prediction.
+- Local Debug forward activation traces now attach structured warning issues
+  when the observed output contains NaN or Inf values.
+- Local Debug gradient traces now attach a structured warning issue when a
+  gradient norm is NaN.
+- The issue summaries use existing `tofix26` codes and preserve the existing
+  trace status values instead of flattening shape mismatch into a generic
+  warning status.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Blocked: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1` is currently failing in unrelated dirty LM panel work: `language_model_generation_panel.cpp` references missing `NextTokenCandidate::logit`.
+- Passed: scoped `git diff --check` for the Local Debug issue summary files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Canonical Local Debug Runtime Traces`
-- Commit pushed: `d2fd8b55 Canonicalize local debug runtime traces` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical Local Debug runtime traces, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Structured Issue Summaries`
+- Commit pushed: not yet for this Local Debug issue-summary continuation; previous pushed repository checkpoint was `e9ddfce1 Record local debug trace checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp` and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug structured issue summaries, or switch back to the next tracked tofix item requested by the user.

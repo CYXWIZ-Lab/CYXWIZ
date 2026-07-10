@@ -3732,6 +3732,25 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             record.payload["shape_matches"] = trace.shape_matches;
             record.payload["has_nan"] = trace.has_nan;
             record.payload["has_inf"] = trace.has_inf;
+            if (!trace.shape_matches) {
+                record.issues.push_back({
+                    cyxwiz::IssueLevel::Warning,
+                    trace.node_id,
+                    trace.name,
+                    "Local Debug forward shape differed from compiler prediction.",
+                    cyxwiz::errors::Compiler::TensorShapeMismatch
+                });
+            }
+            if (trace.has_nan || trace.has_inf) {
+                record.issues.push_back({
+                    cyxwiz::IssueLevel::Warning,
+                    trace.node_id,
+                    trace.name,
+                    "Local Debug forward output contained non-finite values.",
+                    cyxwiz::errors::Training::TrainingExecutionFailed
+                });
+            }
+            cyxwiz::DebugNodeTraceContract::AttachIssueSummary(record, record.issues);
             cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
                 record,
                 "local_debug_forward",
@@ -3757,6 +3776,16 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             record.payload["l2_norm"] = grad.l2_norm;
             record.payload["is_nan"] = grad.is_nan;
             record.payload["is_zero"] = grad.is_zero;
+            if (grad.is_nan) {
+                record.issues.push_back({
+                    cyxwiz::IssueLevel::Warning,
+                    grad.layer_index,
+                    grad.param_name,
+                    "Local Debug gradient norm was NaN.",
+                    cyxwiz::errors::Training::TrainingExecutionFailed
+                });
+            }
+            cyxwiz::DebugNodeTraceContract::AttachIssueSummary(record, record.issues);
             cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
                 record,
                 "local_debug_backward",
