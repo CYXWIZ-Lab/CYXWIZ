@@ -12,7 +12,7 @@ Studio generation tooling, causal-LM compiler shape truth, and
 generation-shaped export/import validation.
 
 Remaining GPT/BERT/T5/ELMo/CBOW expansion work is tracked separately in
-`tofix49` through `tofix55`.
+`done49` completed the first LM-stack inference follow-up; remaining expansion work continues in `tofix50` through `tofix55`.
 
 ## Scope
 
@@ -256,9 +256,9 @@ Candidate extraction points:
    fallback unless a real use case requires it.
 2. Add graph-training launcher coverage once a small fixture can produce a
    trained causal-LM package with tokenizer assets without long runtime.
-3. Follow-up tickets now start at `tofix49` because `tofix46` through
-   `tofix48` already exist for unrelated work.
-4. Use `tofix49` through `tofix55` for LM-stack inference, GPT-style generation
+3. Follow-up ticket numbering started at 49 because `tofix46` through
+   `tofix48` already exist for unrelated work; ticket 49 is now closed as `done49`.
+4. Use `done49` for completed LM-stack inference, then `tofix50` through `tofix55` for GPT-style generation
    UX, BERT-style coverage, transformer backward parity, cross-attention/T5
    readiness, CBOW, and deferred ELMo/T5 gates.
 3. Add LayerNorm GPU coverage only after an ArrayFire implementation and

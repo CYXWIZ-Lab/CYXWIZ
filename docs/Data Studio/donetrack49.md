@@ -115,7 +115,7 @@ Commit state:
 - Committed as `aca3f02e Complete track49 LM inference contract`.
 - Pushed to `origin/Nodes_Implementation`.
 - Track49 implementation and verification are closed in that pushed checkpoint.
-- Later dirty work in the workspace belongs to the track32 debugger diagnostic continuation, not track49.
+- Later dirty work in the workspace belongs to the track32 debugger diagnostic continuation, not donetrack49.
 
 ## Follow-up - Studio Package Contract Enforcement
 
@@ -148,4 +148,4 @@ Optional hardening follow-ups have been moved to `tofix64`:
 - Studio panel test coverage only if an existing GUI harness can exercise imported package contract behavior,
 - broader release-gate runs only if the endpoint follow-up changes runtime/server behavior.
 
-`tofix49` remains complete; continue new work from `tofix64`.
+`done49` remains complete; continue new work from `tofix64`.

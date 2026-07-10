@@ -349,7 +349,7 @@ The following are explicitly not claimed as complete:
 Follow-ups were documented separately because `tofix46` through `tofix48`
 already exist:
 
-- `tofix49` - Full LM-stack inference contract.
+- `done49` - Full LM-stack inference contract completed.
 - `tofix50` - GPT-style generation controls and UX.
 - `tofix51` - BERT-style encoder graph/head/inference coverage.
 - `tofix52` - Transformer backward parity and training correctness.

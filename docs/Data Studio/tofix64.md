@@ -6,7 +6,7 @@ Open.
 
 ## Background
 
-`tofix49` / `track49` completed the full LM-stack inference contract:
+`done49` / `donetrack49` completed the full LM-stack inference contract:
 
 - causal-LM `.cyxmodel` packages can be loaded and validated,
 - packaged tokenizer assets are loaded from the same package,
@@ -16,7 +16,7 @@ Open.
 - generated token IDs can be decoded back to text,
 - Studio and the local inference server surface contract failures before generation.
 
-The remaining work is follow-up hardening, not core `tofix49` completion work.
+The remaining work is follow-up hardening, not core `done49` completion work.
 Keep this ticket focused on proving the existing contract through boundary tests
 and release checks.
 
@@ -69,7 +69,7 @@ creating a broad new UI test framework.
 
 ## Non-goals
 
-- Do not reopen `tofix49`.
+- Do not reopen `done49`.
 - Do not add a new model family.
 - Do not add GPT, BERT, encoder-decoder, cross-attention, or training features.
 - Do not build a new GUI test framework just for this ticket.
@@ -88,6 +88,6 @@ but avoid copying large setup blocks if a small helper can keep the test readabl
 - `/v1/model` and `/v1/generate` are directly tested against a generated
   causal-LM package.
 - The test proves success and at least one structured contract-failure path.
-- Existing `tofix49` contract and package-roundtrip tests remain green.
-- `track49.md` continues to mark the main LM inference contract as complete and
+- Existing `done49` contract and package-roundtrip tests remain green.
+- `donetrack49.md` continues to mark the main LM inference contract as complete and
   points optional hardening work to this ticket.
