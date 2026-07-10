@@ -1236,6 +1236,6 @@ Additional validation:
 Current stopping point:
 
 - Last completed slice: `Local Debug Loss Failure Recommendations`
-- Commit pushed: not yet for this Local Debug loss failure continuation; previous pushed repository checkpoint was `6740b8f5 Record local debug backward checkpoint` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: `main_window.cpp`, `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Commit pushed: `3b991715 Distinguish local debug loss failures` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: none; remaining dirty files belong to other in-progress ticket work and were left untouched.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug loss failure recommendations, or switch back to the next tracked tofix item requested by the user.
