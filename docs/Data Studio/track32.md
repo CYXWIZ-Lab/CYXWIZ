@@ -868,11 +868,33 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Smoke Run trace files.
 
+## Resume 2026-07-10 - Canonical Text Preprocessing Trace Records
+
+Thirty-ninth follow-up on the first slice:
+
+- `TextPreprocessingTracer` now creates successful tokenizer, vocabulary, and
+  padding traces through `DebugNodeTraceContract::Make` instead of hand-filling
+  partial `DebugTraceRecord` fields.
+- Text preprocessing output shapes are passed at construction time so canonical
+  rank and element-count payload fields match the final trace shapes.
+- Missing, empty, out-of-range, and materialization error traces now use the
+  same canonical node trace schema while preserving diagnostic phase metadata
+  and structured issue summaries.
+- Contract coverage now proves text preprocessing success traces and missing
+  dataset error traces advertise the canonical schema and shape summaries.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the text preprocessing trace files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Smoke Run Canonical Trace Context`
-- Commit pushed: not yet for this Smoke Run continuation; previous pushed repository checkpoint was `e65de62e Extend debugger trace diagnostics` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: `smoke_run_executor.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after smoke-run traces, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Canonical Text Preprocessing Trace Records`
+- Commit pushed: not yet for this Text Preprocessing continuation; previous pushed repository checkpoint was `1bbdb67b Canonicalize smoke run traces` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `text_preprocessing_tracer.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical text preprocessing traces, or switch back to the next tracked tofix item requested by the user.

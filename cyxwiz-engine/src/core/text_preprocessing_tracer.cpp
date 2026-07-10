@@ -110,16 +110,41 @@ void AttachTextPreprocessingContext(DebugTraceRecord& record,
 DebugTraceRecord MakeRecord(const std::string& run_id,
                             gui::NodeType type,
                             int node_id,
-                            const std::string& phase) {
-    DebugTraceRecord record;
-    record.run_id = run_id;
-    record.node_id = node_id;
-    record.node_name = NodeName(type);
-    record.node_type = NodeName(type);
-    record.phase = phase;
-    record.role = DebugTraceRole::PreprocessingOutput;
-    record.status = "ok";
+                            const std::string& phase,
+                            const std::vector<size_t>& output_shape = {}) {
+    DebugTraceRecord record = DebugNodeTraceContract::Make(
+        run_id,
+        node_id,
+        NodeName(type),
+        NodeName(type),
+        phase,
+        DebugTraceRole::PreprocessingOutput,
+        {},
+        output_shape,
+        "text",
+        "TextPreprocessing",
+        "ok");
     AttachTextPreprocessingContext(record, phase, record.node_type);
+    return record;
+}
+
+DebugTraceRecord MakeErrorRecord(const std::string& run_id,
+                                 const std::string& phase,
+                                 const std::string& node_name,
+                                 const std::string& diagnostic_phase) {
+    DebugTraceRecord record = DebugNodeTraceContract::Make(
+        run_id,
+        -1,
+        node_name,
+        node_name,
+        phase,
+        DebugTraceRole::Error,
+        {},
+        {},
+        "text",
+        "TextPreprocessing",
+        "failed");
+    AttachTextPreprocessingContext(record, diagnostic_phase, node_name);
     return record;
 }
 
@@ -146,14 +171,8 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
 
     const auto* entry = DataRegistry::Instance().GetTextDatasetEntry(config.dataset_name);
     if (!entry) {
-        DebugTraceRecord record;
-        record.run_id = run_id;
-        record.phase = "Preprocessing";
-        record.role = DebugTraceRole::Error;
-        record.status = "failed";
-        record.node_name = "TextDataset";
-        record.node_type = "TextDataset";
-        AttachTextPreprocessingContext(record, "data_source", "TextDataset");
+        DebugTraceRecord record = MakeErrorRecord(
+            run_id, "Preprocessing", "TextDataset", "data_source");
         record.payload["message"] =
             "Text dataset is not registered: " + config.dataset_name;
         record.payload["error_code"] = errors::Runtime::InputDatasetMissing;
@@ -173,14 +192,8 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         const TextDatasetConfig cfg = BuildTextDatasetConfig(*entry, config.text_preprocessing);
         TextDataset dataset(entry->source_path, cfg);
         if (dataset.Size() == 0) {
-            DebugTraceRecord record;
-            record.run_id = run_id;
-            record.phase = "Preprocessing";
-            record.role = DebugTraceRole::Error;
-            record.status = "failed";
-            record.node_name = "TextDataset";
-            record.node_type = "TextDataset";
-            AttachTextPreprocessingContext(record, "data_source", "TextDataset");
+            DebugTraceRecord record = MakeErrorRecord(
+                run_id, "Preprocessing", "TextDataset", "data_source");
             record.payload["message"] = "Text dataset has no samples.";
             record.payload["error_code"] = errors::Data::RowCountMismatch;
             record.issues.push_back({
@@ -195,14 +208,8 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
             return traces;
         }
         if (sample_index >= dataset.Size()) {
-            DebugTraceRecord record;
-            record.run_id = run_id;
-            record.phase = "Preprocessing";
-            record.role = DebugTraceRole::Error;
-            record.status = "failed";
-            record.node_name = "TextDataset";
-            record.node_type = "TextDataset";
-            AttachTextPreprocessingContext(record, "sample_selection", "TextDataset");
+            DebugTraceRecord record = MakeErrorRecord(
+                run_id, "Preprocessing", "TextDataset", "sample_selection");
             record.payload["message"] =
                 "Selected sample index is outside the text dataset.";
             record.payload["error_code"] = errors::Runtime::InvalidParameter;
@@ -261,8 +268,8 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         DebugTraceRecord tokenizer_record = MakeRecord(
             run_id, gui::NodeType::TextTokenizer,
             FindNodeId(nodes, gui::NodeType::TextTokenizer),
-            "TextTokenizer");
-        tokenizer_record.output_shape = {tokenized.tokens.size()};
+            "TextTokenizer",
+            {tokenized.tokens.size()});
         tokenizer_record.payload["dataset"] = config.dataset_name;
         tokenizer_record.payload["sample_index"] = sample_index;
         tokenizer_record.payload["dataset_size"] = dataset.Size();
@@ -275,8 +282,8 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         DebugTraceRecord vocab_record = MakeRecord(
             run_id, gui::NodeType::TextVocabulary,
             FindNodeId(nodes, gui::NodeType::TextVocabulary),
-            "TextVocabulary");
-        vocab_record.output_shape = {tokenized.token_ids.size()};
+            "TextVocabulary",
+            {tokenized.token_ids.size()});
         vocab_record.payload["vocab_size"] = vocab.Size();
         vocab_record.payload["vocab_file"] = cfg.vocab_file;
         vocab_record.payload["vocab_hits"] = vocab_hits;
@@ -301,8 +308,8 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         DebugTraceRecord padding_record = MakeRecord(
             run_id, gui::NodeType::TextPadding,
             FindNodeId(nodes, gui::NodeType::TextPadding),
-            "TextPadding");
-        padding_record.output_shape = {tokenized.token_ids.size()};
+            "TextPadding",
+            {tokenized.token_ids.size()});
         padding_record.payload["max_length"] = cfg.max_length;
         padding_record.payload["final_sequence_length"] = tokenized.token_ids.size();
         padding_record.payload["pad_count"] = pad_count;
@@ -326,14 +333,8 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         traces.push_back(std::move(padding_record));
     } catch (const std::exception& e) {
         spdlog::warn("TextPreprocessingTracer: failed: {}", e.what());
-        DebugTraceRecord record;
-        record.run_id = run_id;
-        record.phase = "Preprocessing";
-        record.role = DebugTraceRole::Error;
-        record.status = "failed";
-        record.node_name = "TextPreprocessing";
-        record.node_type = "TextPreprocessing";
-        AttachTextPreprocessingContext(record, "materialization", "TextPreprocessing");
+        DebugTraceRecord record = MakeErrorRecord(
+            run_id, "Preprocessing", "TextPreprocessing", "materialization");
         record.payload["message"] = e.what();
         record.payload["error_code"] = errors::Data::MaterializationFailed;
         record.issues.push_back({

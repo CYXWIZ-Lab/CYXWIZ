@@ -2386,6 +2386,13 @@ void TestTextPreprocessingTraceContract() {
     Check(tokenizer.role == cyxwiz::DebugTraceRole::PreprocessingOutput,
           "tokenizer trace should be preprocessing output");
     Check(tokenizer.status == "ok", "tokenizer trace should succeed");
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(tokenizer),
+          "tokenizer trace should use canonical node trace schema");
+    Check(tokenizer.payload["output_rank"].get<size_t>() == 1,
+          "tokenizer trace should expose output rank");
+    Check(tokenizer.payload["output_numel"].get<size_t>() ==
+              tokenizer.output_shape[0],
+          "tokenizer trace should expose output element count");
     Check(tokenizer.payload["dataset"].get<std::string>() == dataset_name,
           "tokenizer payload should include dataset");
     Check(tokenizer.payload["sample_index"].get<size_t>() == 0,
@@ -2410,6 +2417,12 @@ void TestTextPreprocessingTraceContract() {
     const cyxwiz::DebugTraceRecord& vocab = traces[1];
     Check(vocab.node_id == 12, "vocab trace should bind to vocab node");
     Check(vocab.phase == "TextVocabulary", "vocab trace phase should be stable");
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(vocab),
+          "vocab trace should use canonical node trace schema");
+    Check(vocab.payload["output_rank"].get<size_t>() == 1,
+          "vocab trace should expose output rank");
+    Check(vocab.payload["output_numel"].get<size_t>() == vocab.output_shape[0],
+          "vocab trace should expose output element count");
     Check(vocab.payload["vocab_size"].get<size_t>() > 0,
           "vocab payload should include vocab size");
     Check(vocab.payload["vocab_hits"].get<int>() > 0,
@@ -2424,8 +2437,14 @@ void TestTextPreprocessingTraceContract() {
     const cyxwiz::DebugTraceRecord& padding = traces[2];
     Check(padding.node_id == 13, "padding trace should bind to padding node");
     Check(padding.phase == "TextPadding", "padding trace phase should be stable");
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(padding),
+          "padding trace should use canonical node trace schema");
     Check(padding.output_shape == std::vector<size_t>{6},
           "padding output shape should reflect configured max length");
+    Check(padding.payload["output_rank"].get<size_t>() == 1,
+          "padding trace should expose output rank");
+    Check(padding.payload["output_numel"].get<size_t>() == 6,
+          "padding trace should expose output element count");
     Check(padding.payload["max_length"].get<int>() == 6,
           "padding payload should include max length");
     Check(padding.payload["final_sequence_length"].get<size_t>() == 6,
@@ -2464,6 +2483,8 @@ void TestTextPreprocessingTraceContract() {
         tracer.TraceSample(config, nodes, "missing-text-trace-run", 0);
     Check(missing_traces.size() == 1,
           "text preprocessing tracer should report missing dataset trace");
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(missing_traces[0]),
+          "missing text dataset trace should use canonical node trace schema");
     Check(missing_traces[0].payload["error_code"].get<std::string>() ==
               cyxwiz::errors::Runtime::InputDatasetMissing,
           "missing text dataset trace should expose runtime input code");
