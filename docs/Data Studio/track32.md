@@ -1084,11 +1084,36 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug zero-gradient issue files.
 
+## Resume 2026-07-10 - Local Debug Missing-Gradient Traces
+
+Fiftieth follow-up on the first slice:
+
+- `GradNormEntry` now preserves whether a gradient tensor was actually present,
+  so missing gradients no longer collapse into ordinary zero-gradient traces.
+- Local Debug gradient traces now emit `has_gradient=false`, a
+  `missing_gradient` status, and a structured warning issue when a trainable
+  parameter has no gradient tensor.
+- `DebugRecommendationEngine` now emits a specific critical recommendation for
+  Local Debug missing-gradient traces while keeping true zero-gradient traces on
+  the existing zero-gradient rule.
+- Contract coverage now keeps NaN, missing-gradient, and zero-gradient fixtures
+  distinct, and `test_debug_executor` proves the golden path marks gradients as
+  present.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target test_debug_executor --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debug_executor.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug missing-gradient files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Zero-Gradient Issue Summaries`
-- Commit pushed: `d9ade35c Add local debug zero gradient issues` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug zero-gradient issue summaries, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Missing-Gradient Traces`
+- Commit pushed: not yet for this Local Debug missing-gradient continuation; previous pushed repository checkpoint was `e9b0c883 Record local debug zero gradient issue checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `debug_executor.h`, `debug_executor.cpp`, `debug_recommendation_engine.cpp`, `main_window.cpp`, `test_debugger_contracts.cpp`, `test_debug_executor.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug missing-gradient traces, or switch back to the next tracked tofix item requested by the user.

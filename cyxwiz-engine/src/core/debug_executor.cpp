@@ -224,10 +224,12 @@ DebugResult DebugExecutor::Run() {
 
             auto grad_it = grads.find(param_name);
             if (grad_it == grads.end()) {
+                entry.has_gradient = false;
                 entry.is_zero = true;
                 entry.l2_norm = 0.0f;
                 ++result.params_missing_grad;
             } else {
+                entry.has_gradient = true;
                 const Tensor& g = grad_it->second;
                 auto [gnan, ginf] = ScanFinite(g);
                 entry.is_nan  = gnan;

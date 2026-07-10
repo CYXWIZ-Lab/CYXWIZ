@@ -2200,11 +2200,35 @@ void TestRecommendationContract() {
         "float32",
         "LocalDebug",
         "nan");
+    local_gradient.payload["has_gradient"] = true;
     local_gradient.payload["is_nan"] = true;
     local_gradient.payload["is_zero"] = false;
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_gradient),
           "local debug gradient recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(local_gradient));
+
+    cyxwiz::DebugTraceRecord local_missing_gradient = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        10,
+        "Dense_10.weight",
+        "Parameter",
+        "Backward",
+        cyxwiz::DebugTraceRole::Gradient,
+        {},
+        {},
+        "float32",
+        "LocalDebug",
+        "missing_gradient");
+    local_missing_gradient.payload["has_gradient"] = false;
+    local_missing_gradient.payload["is_nan"] = false;
+    local_missing_gradient.payload["is_zero"] = true;
+    cyxwiz::DebugNodeTraceContract::AddWarning(
+        local_missing_gradient,
+        "Local Debug gradient was missing.",
+        cyxwiz::errors::Training::TrainingExecutionFailed);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_missing_gradient),
+          "local debug missing-gradient recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(local_missing_gradient));
 
     cyxwiz::DebugTraceRecord local_zero_gradient = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
@@ -2218,6 +2242,7 @@ void TestRecommendationContract() {
         "float32",
         "LocalDebug",
         "zero");
+    local_zero_gradient.payload["has_gradient"] = true;
     local_zero_gradient.payload["is_nan"] = false;
     local_zero_gradient.payload["is_zero"] = true;
     cyxwiz::DebugNodeTraceContract::AddWarning(
@@ -2299,6 +2324,8 @@ void TestRecommendationContract() {
           "local debug non-finite activation should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is NaN"),
           "local debug NaN gradient should produce recommendation");
+    Check(HasRecommendation(recs, "Local Debug gradient is missing"),
+          "local debug missing gradient should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is zero"),
           "local debug zero gradient should produce recommendation");
     Check(HasRecommendation(recs, "Export correlation failed"),

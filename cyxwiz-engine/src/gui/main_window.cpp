@@ -3390,8 +3390,9 @@ void MainWindow::LocalDebugGraphAndReport() {
         out << "\nGradient L2 norms:\n";
         for (const auto& g : result.grad_norms) {
             out << "  " << g.param_name << "  ||g||=" << g.l2_norm;
+            if (!g.has_gradient) out << "  [missing]";
             if (g.is_nan)  out << "  [NaN!]";
-            if (g.is_zero) out << "  [zero]";
+            if (g.has_gradient && g.is_zero) out << "  [zero]";
             out << "\n";
         }
     }
@@ -3772,11 +3773,21 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 {},
                 "float32",
                 "LocalDebug",
-                grad.is_nan ? "nan" : (grad.is_zero ? "zero" : "ok"));
+                !grad.has_gradient ? "missing_gradient" :
+                    (grad.is_nan ? "nan" : (grad.is_zero ? "zero" : "ok")));
             record.payload["l2_norm"] = grad.l2_norm;
+            record.payload["has_gradient"] = grad.has_gradient;
             record.payload["is_nan"] = grad.is_nan;
             record.payload["is_zero"] = grad.is_zero;
-            if (grad.is_nan) {
+            if (!grad.has_gradient) {
+                record.issues.push_back({
+                    cyxwiz::IssueLevel::Warning,
+                    grad.layer_index,
+                    grad.param_name,
+                    "Local Debug gradient was missing.",
+                    cyxwiz::errors::Training::TrainingExecutionFailed
+                });
+            } else if (grad.is_nan) {
                 record.issues.push_back({
                     cyxwiz::IssueLevel::Warning,
                     grad.layer_index,

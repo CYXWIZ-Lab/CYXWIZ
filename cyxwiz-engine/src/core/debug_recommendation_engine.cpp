@@ -153,6 +153,15 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
 
         if (trace.phase == "Backward" &&
             trace.role == DebugTraceRole::Gradient &&
+            !PayloadBool(trace, "has_gradient", true)) {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Gradients", "Local Debug gradient is missing",
+                "A Local Debug gradient trace did not find a gradient tensor for a trainable parameter.",
+                "Inspect parameter registration, loss wiring, and disconnected branches before training.");
+        }
+
+        if (trace.phase == "Backward" &&
+            trace.role == DebugTraceRole::Gradient &&
             PayloadBool(trace, "is_nan", false)) {
             Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
                 "Gradients", "Local Debug gradient is NaN",
@@ -162,6 +171,7 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
 
         if (trace.phase == "Backward" &&
             trace.role == DebugTraceRole::Gradient &&
+            PayloadBool(trace, "has_gradient", true) &&
             PayloadBool(trace, "is_zero", false)) {
             Add(out, DebugRecommendationSeverity::Warning, trace.node_id,
                 "Gradients", "Local Debug gradient is zero",

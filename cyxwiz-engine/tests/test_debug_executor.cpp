@@ -1005,6 +1005,7 @@ void TestDebugExecutorGradNormBookkeeping() {
                       << g.param_name << "\n";
             std::exit(1);
         }
+        assert(g.has_gradient && "golden path grad norm should know the gradient exists");
         assert(!g.is_nan && "grad norm NaN on random init is a backend bug");
         if (g.l2_norm > 0.0f) any_positive_norm = true;
     }

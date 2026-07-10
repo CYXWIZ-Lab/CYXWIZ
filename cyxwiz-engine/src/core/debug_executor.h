@@ -46,6 +46,7 @@ struct GradNormEntry {
     std::string param_name;
     int layer_index = -1;
     float l2_norm = 0.0f;
+    bool has_gradient = false;
     bool is_nan = false;
     bool is_zero = false;
 };
