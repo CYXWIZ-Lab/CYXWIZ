@@ -1051,6 +1051,6 @@ Additional validation:
 Current stopping point:
 
 - Last completed slice: `Smoke Run Zero-Gradient Trace Warnings`
-- Commit pushed: not yet for this Smoke Run zero-gradient continuation; previous pushed repository checkpoint was `fd805131 Record export crash recommendation checkpoint` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: `smoke_run_executor.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Commit pushed: `936cca23 Warn on smoke run zero gradients` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: none before the next slice.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Smoke Run zero-gradient trace warnings, or switch back to the next tracked tofix item requested by the user.
