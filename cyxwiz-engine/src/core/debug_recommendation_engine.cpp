@@ -116,6 +116,15 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
                 "Inspect the loss, labels, activation ranges, and backend numerical stability before training.");
         }
 
+        if (trace.phase == "Backward" &&
+            trace.role == DebugTraceRole::Gradient &&
+            PayloadBool(trace, "is_zero", false)) {
+            Add(out, DebugRecommendationSeverity::Warning, trace.node_id,
+                "Gradients", "Local Debug gradient is zero",
+                "A Local Debug gradient trace reported a zero parameter norm.",
+                "Inspect disconnected layers, saturated activations, frozen parameters, and loss wiring before training.");
+        }
+
         if (trace.phase == "SmokeRun.Loss") {
             const bool pred_bad = PayloadBool(trace, "predictions_have_non_finite", false);
             const double loss = PayloadNumber(trace, "loss", 0.0);

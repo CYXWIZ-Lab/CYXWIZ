@@ -2130,6 +2130,24 @@ void TestRecommendationContract() {
           "local debug gradient recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(local_gradient));
 
+    cyxwiz::DebugTraceRecord local_zero_gradient = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        9,
+        "Dense_9.bias",
+        "Parameter",
+        "Backward",
+        cyxwiz::DebugTraceRole::Gradient,
+        {},
+        {},
+        "float32",
+        "LocalDebug",
+        "zero");
+    local_zero_gradient.payload["is_nan"] = false;
+    local_zero_gradient.payload["is_zero"] = true;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_zero_gradient),
+          "local debug zero-gradient recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(local_zero_gradient));
+
     cyxwiz::SmokeRunResult smoke;
     smoke.supported = true;
     smoke.success = false;
@@ -2158,6 +2176,8 @@ void TestRecommendationContract() {
           "local debug non-finite activation should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is NaN"),
           "local debug NaN gradient should produce recommendation");
+    Check(HasRecommendation(recs, "Local Debug gradient is zero"),
+          "local debug zero gradient should produce recommendation");
     Check(HasRecommendation(recs, "Smoke Run needs attention"),
           "failed supported smoke run should produce recommendation");
 }

@@ -990,11 +990,29 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug recommendation files.
 
+## Resume 2026-07-10 - Local Debug Zero-Gradient Recommendations
+
+Forty-fifth follow-up on the first slice:
+
+- `DebugRecommendationEngine` now turns Local Debug gradient traces with zero
+  parameter norms into a warning recommendation.
+- Recommendation contract coverage now includes a canonical Local Debug
+  zero-gradient fixture so NaN and zero-gradient paths stay distinct.
+- The change reuses existing Local Debug gradient payloads and does not add a
+  parallel gradient-health model.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug zero-gradient recommendation files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Numerics Recommendations`
-- Commit pushed: `e29c7a4a Recommend local debug numerics issues` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug numerics recommendations, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Zero-Gradient Recommendations`
+- Commit pushed: not yet for this Local Debug zero-gradient continuation; previous pushed repository checkpoint was `4fb51c20 Record local debug recommendation checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug zero-gradient recommendations, or switch back to the next tracked tofix item requested by the user.
