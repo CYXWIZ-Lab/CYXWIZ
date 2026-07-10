@@ -3761,6 +3761,41 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.traces.push_back(std::move(record));
         }
 
+        const bool has_local_debug_loss =
+            session.debug_result.reached == cyxwiz::DebugStage::Loss ||
+            session.debug_result.reached == cyxwiz::DebugStage::Backward ||
+            session.debug_result.reached == cyxwiz::DebugStage::OptimizerStep ||
+            session.debug_result.reached == cyxwiz::DebugStage::Complete;
+        if (has_local_debug_loss) {
+            cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
+                run_id,
+                -1,
+                "LocalDebugLoss",
+                "Loss",
+                "Loss",
+                cyxwiz::DebugTraceRole::Loss,
+                {},
+                {},
+                "float32",
+                "LocalDebug",
+                session.debug_result.loss_finite ? "ok" : "failed");
+            record.payload["loss"] = session.debug_result.loss_value;
+            record.payload["loss_finite"] = session.debug_result.loss_finite;
+            if (!session.debug_result.loss_finite) {
+                cyxwiz::DebugNodeTraceContract::AddError(
+                    record,
+                    "Local Debug loss was not finite.",
+                    cyxwiz::errors::Training::TrainingExecutionFailed);
+            }
+            cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+                record,
+                "local_debug_loss",
+                "DebugExecutor",
+                "cyxwiz-engine/src/core/debug_executor.cpp",
+                "cyxwiz::DebugExecutor::Run");
+            session.traces.push_back(std::move(record));
+        }
+
         for (const auto& grad : session.debug_result.grad_norms) {
             cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
                 run_id,

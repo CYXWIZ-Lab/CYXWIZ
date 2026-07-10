@@ -1109,11 +1109,31 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug missing-gradient files.
 
+## Resume 2026-07-10 - Local Debug Loss Trace Recommendations
+
+Fifty-first follow-up on the first slice:
+
+- Studio Debugger now emits a canonical Local Debug loss trace when
+  `DebugExecutor` reaches the loss stage.
+- Local Debug loss traces preserve `loss`, `loss_finite`, diagnostic context,
+  and a structured error issue when the loss is not finite.
+- `DebugRecommendationEngine` now emits a focused critical recommendation for
+  non-finite Local Debug loss traces before backward execution.
+- Recommendation contract coverage now includes a canonical Local Debug loss
+  fixture alongside the existing forward and gradient fixtures.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug loss trace files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Missing-Gradient Traces`
-- Commit pushed: `fe7d60b2 Distinguish local debug missing gradients` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug missing-gradient traces, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Loss Trace Recommendations`
+- Commit pushed: not yet for this Local Debug loss trace continuation; previous pushed repository checkpoint was `7e8cd5d8 Record local debug missing gradient checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp`, `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug loss trace recommendations, or switch back to the next tracked tofix item requested by the user.

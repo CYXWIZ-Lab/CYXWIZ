@@ -151,6 +151,16 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
                 "Inspect input scaling, layer initialization, activation choice, and learning-rate-sensitive paths before training.");
         }
 
+        if (trace.phase == "Loss" &&
+            trace.role == DebugTraceRole::Loss &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_loss" &&
+            !PayloadBool(trace, "loss_finite", true)) {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Optimization", "Local Debug loss is not finite",
+                "A Local Debug loss trace reported NaN or Inf before backward execution.",
+                "Inspect labels, output activation, loss configuration, and input scaling before training.");
+        }
+
         if (trace.phase == "Backward" &&
             trace.role == DebugTraceRole::Gradient &&
             !PayloadBool(trace, "has_gradient", true)) {
