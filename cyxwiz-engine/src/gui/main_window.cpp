@@ -3831,6 +3831,10 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.debug_result.reached == cyxwiz::DebugStage::OptimizerStep ||
             session.debug_result.reached == cyxwiz::DebugStage::Complete;
         if (has_local_debug_loss) {
+            const bool loss_stage_failed =
+                session.debug_result.reached == cyxwiz::DebugStage::Loss &&
+                !session.debug_result.success &&
+                !session.debug_result.failure_summary.empty();
             cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
                 run_id,
                 -1,
@@ -3845,10 +3849,14 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 session.debug_result.loss_finite ? "ok" : "failed");
             record.payload["loss"] = session.debug_result.loss_value;
             record.payload["loss_finite"] = session.debug_result.loss_finite;
+            record.payload["loss_stage_failed"] = loss_stage_failed;
+            record.payload["success"] = !loss_stage_failed;
             if (!session.debug_result.loss_finite) {
                 cyxwiz::DebugNodeTraceContract::AddError(
                     record,
-                    "Local Debug loss was not finite.",
+                    loss_stage_failed
+                        ? session.debug_result.failure_summary
+                        : "Local Debug loss was not finite.",
                     cyxwiz::errors::Training::TrainingExecutionFailed);
             }
             cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(

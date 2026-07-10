@@ -1210,11 +1210,32 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug backward failure files.
 
+## Resume 2026-07-10 - Local Debug Loss Failure Recommendations
+
+Fifty-sixth follow-up on the first slice:
+
+- Studio Debugger now distinguishes Local Debug loss-stage failures from
+  computed non-finite loss values.
+- Loss traces now preserve `loss_stage_failed`, `success`, and the original
+  `DebugExecutor` failure summary when loss computation throws or fails.
+- `DebugRecommendationEngine` now emits a focused critical recommendation for
+  failed Local Debug loss-stage traces while keeping non-finite loss values on
+  the existing recommendation.
+- Recommendation contract coverage now includes a canonical failed loss-stage
+  fixture alongside build, forward, backward, optimizer, and gradient fixtures.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug loss failure files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Backward Failure Recommendations`
-- Commit pushed: `df7399a7 Trace local debug backward failures` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none; remaining dirty files belong to other in-progress ticket work and were left untouched.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug backward failure recommendations, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Loss Failure Recommendations`
+- Commit pushed: not yet for this Local Debug loss failure continuation; previous pushed repository checkpoint was `6740b8f5 Record local debug backward checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp`, `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug loss failure recommendations, or switch back to the next tracked tofix item requested by the user.

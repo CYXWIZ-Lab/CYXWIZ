@@ -174,6 +174,18 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
         if (trace.phase == "Loss" &&
             trace.role == DebugTraceRole::Loss &&
             PayloadString(trace, "diagnostic_phase") == "local_debug_loss" &&
+            PayloadBool(trace, "loss_stage_failed", false) &&
+            trace.status == "failed") {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Optimization", "Local Debug loss stage failed",
+                "A Local Debug loss trace reported a failure while computing the loss.",
+                "Inspect prediction and target tensor shapes, label encoding, loss configuration, and backend errors before training.");
+        }
+
+        if (trace.phase == "Loss" &&
+            trace.role == DebugTraceRole::Loss &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_loss" &&
+            !PayloadBool(trace, "loss_stage_failed", false) &&
             !PayloadBool(trace, "loss_finite", true)) {
             Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
                 "Optimization", "Local Debug loss is not finite",

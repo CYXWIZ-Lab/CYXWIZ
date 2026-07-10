@@ -2226,6 +2226,36 @@ void TestRecommendationContract() {
           "local debug loss recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(local_loss));
 
+    cyxwiz::DebugTraceRecord local_loss_failed = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        -1,
+        "LocalDebugLoss",
+        "Loss",
+        "Loss",
+        cyxwiz::DebugTraceRole::Loss,
+        {},
+        {},
+        "float32",
+        "LocalDebug",
+        "failed");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        local_loss_failed,
+        "local_debug_loss",
+        "DebugExecutor",
+        "cyxwiz-engine/src/core/debug_executor.cpp",
+        "cyxwiz::DebugExecutor::Run");
+    local_loss_failed.payload["loss"] = std::numeric_limits<double>::quiet_NaN();
+    local_loss_failed.payload["loss_finite"] = false;
+    local_loss_failed.payload["loss_stage_failed"] = true;
+    local_loss_failed.payload["success"] = false;
+    cyxwiz::DebugNodeTraceContract::AddError(
+        local_loss_failed,
+        "Exception during Loss: target shape mismatch",
+        cyxwiz::errors::Training::TrainingExecutionFailed);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_loss_failed),
+          "local debug failed-loss recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(local_loss_failed));
+
     cyxwiz::DebugTraceRecord local_optimizer = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
         -1,
@@ -2464,6 +2494,8 @@ void TestRecommendationContract() {
           "local debug model build failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug loss is not finite"),
           "local debug non-finite loss should produce recommendation");
+    Check(HasRecommendation(recs, "Local Debug loss stage failed"),
+          "local debug loss stage failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug optimizer step failed"),
           "local debug optimizer failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug produced non-finite activation"),
