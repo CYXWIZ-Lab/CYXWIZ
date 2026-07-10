@@ -3850,7 +3850,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             record.payload["loss"] = session.debug_result.loss_value;
             record.payload["loss_finite"] = session.debug_result.loss_finite;
             record.payload["loss_stage_failed"] = loss_stage_failed;
-            record.payload["success"] = !loss_stage_failed;
+            record.payload["success"] = session.debug_result.loss_finite && !loss_stage_failed;
             if (!session.debug_result.loss_finite) {
                 cyxwiz::DebugNodeTraceContract::AddError(
                     record,

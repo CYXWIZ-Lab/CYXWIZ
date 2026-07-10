@@ -1231,11 +1231,29 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug loss failure files.
 
+## Resume 2026-07-10 - Local Debug Loss Success Payload Correction
+
+Fifty-seventh follow-up on the first slice:
+
+- Local Debug loss traces now mark `success=false` when a computed loss is
+  non-finite, not only when the loss stage itself throws or fails.
+- Non-finite loss traces explicitly preserve `loss_stage_failed=false`, keeping
+  them distinct from hard loss-stage failures.
+- Recommendation contract coverage now asserts the non-finite loss fixture is
+  an unsuccessful trace while still using the non-finite-loss recommendation.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug loss success payload files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Loss Failure Recommendations`
-- Commit pushed: `3b991715 Distinguish local debug loss failures` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none; remaining dirty files belong to other in-progress ticket work and were left untouched.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug loss failure recommendations, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Loss Success Payload Correction`
+- Commit pushed: not yet for this Local Debug loss success payload continuation; previous pushed repository checkpoint was `3528bb2a Record local debug loss checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug loss success payload correction, or switch back to the next tracked tofix item requested by the user.

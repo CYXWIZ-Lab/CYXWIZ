@@ -2218,12 +2218,18 @@ void TestRecommendationContract() {
         "cyxwiz::DebugExecutor::Run");
     local_loss.payload["loss"] = std::numeric_limits<double>::quiet_NaN();
     local_loss.payload["loss_finite"] = false;
+    local_loss.payload["loss_stage_failed"] = false;
+    local_loss.payload["success"] = false;
     cyxwiz::DebugNodeTraceContract::AddError(
         local_loss,
         "Local Debug loss was not finite.",
         cyxwiz::errors::Training::TrainingExecutionFailed);
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_loss),
           "local debug loss recommendation fixture should use canonical trace schema");
+    Check(!local_loss.payload["success"].get<bool>(),
+          "local debug non-finite loss fixture should mark trace unsuccessful");
+    Check(!local_loss.payload["loss_stage_failed"].get<bool>(),
+          "local debug non-finite loss fixture should stay distinct from loss-stage failure");
     traces.push_back(std::move(local_loss));
 
     cyxwiz::DebugTraceRecord local_loss_failed = cyxwiz::DebugNodeTraceContract::Make(
