@@ -3784,6 +3784,14 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                     "Local Debug gradient norm was NaN.",
                     cyxwiz::errors::Training::TrainingExecutionFailed
                 });
+            } else if (grad.is_zero) {
+                record.issues.push_back({
+                    cyxwiz::IssueLevel::Warning,
+                    grad.layer_index,
+                    grad.param_name,
+                    "Local Debug gradient norm was zero.",
+                    cyxwiz::errors::Training::TrainingExecutionFailed
+                });
             }
             cyxwiz::DebugNodeTraceContract::AttachIssueSummary(record, record.issues);
             cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
