@@ -5,17 +5,18 @@ namespace cyxwiz {
 DebugTraceRecord DebugExportCorrelationTracer::BuildTrace(
     const std::string& run_id,
     const DebugExportCorrelationInput& input) const {
-    DebugTraceRecord trace;
-    trace.run_id = run_id;
-    trace.node_id = -1;
-    trace.node_name = input.exporter_name.empty()
-        ? "GeneratedCodeExport"
-        : input.exporter_name;
-    trace.node_type = "ExportArtifact";
-    trace.phase = "ExportCorrelation";
-    trace.role = DebugTraceRole::GeneratedCode;
-    trace.dtype = input.artifact_kind;
-    trace.status = input.compile_success ? "ok" : "failed";
+    DebugTraceRecord trace = DebugNodeTraceContract::Make(
+        run_id,
+        -1,
+        input.exporter_name.empty() ? "GeneratedCodeExport" : input.exporter_name,
+        "ExportArtifact",
+        "ExportCorrelation",
+        DebugTraceRole::GeneratedCode,
+        {},
+        {},
+        input.artifact_kind,
+        "ExportCorrelation",
+        input.compile_success ? "ok" : "failed");
     DebugNodeTraceContract::AttachDiagnosticContext(
         trace,
         "export_correlation",

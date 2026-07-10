@@ -890,11 +890,33 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the text preprocessing trace files.
 
+## Resume 2026-07-10 - Canonical Auxiliary Trace Schema Marker
+
+Fortieth follow-up on the first slice:
+
+- `DebugNodeTraceContract::Make` now emits a dedicated `node_trace_schema`
+  marker alongside the existing canonical `schema` value.
+- `DebugNodeTraceContract::IsNodeTrace` remains backward-compatible with older
+  canonical traces while also recognizing the dedicated node-trace marker.
+- Export correlation and Windows crash import traces now use the canonical trace
+  envelope without overwriting their domain-specific `payload["schema"]`
+  contracts.
+- Contract coverage now proves auxiliary export/crash traces are canonical node
+  traces while preserving their export/crash schema payloads.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the auxiliary trace schema files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Canonical Text Preprocessing Trace Records`
-- Commit pushed: `23bcb3a9 Canonicalize text preprocessing traces` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical text preprocessing traces, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Canonical Auxiliary Trace Schema Marker`
+- Commit pushed: not yet for this Auxiliary Trace Schema continuation; previous pushed repository checkpoint was `6853f26a Record text preprocessing trace checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `debug_trace_record.h`, `debug_export_correlation_tracer.cpp`, `debug_windows_crash_importer.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Other uncommitted files present outside this continuation: `language_model_generation_panel.cpp`, `language_model_generation_panel.h`, and `track49.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical auxiliary trace schema markers, or switch back to the next tracked tofix item requested by the user.

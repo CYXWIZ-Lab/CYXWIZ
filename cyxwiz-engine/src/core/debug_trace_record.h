@@ -81,6 +81,7 @@ struct DebugNodeTraceContract {
         trace.dtype = dtype;
         trace.status = status;
         trace.payload["schema"] = kSchema;
+        trace.payload["node_trace_schema"] = kSchema;
         trace.payload["backend"] = backend;
         trace.payload["input_rank"] = input_shape.size();
         trace.payload["output_rank"] = output_shape.size();
@@ -93,9 +94,15 @@ struct DebugNodeTraceContract {
 
     static bool IsNodeTrace(const DebugTraceRecord& trace) {
         auto it = trace.payload.find("schema");
-        return it != trace.payload.end() &&
-               it->is_string() &&
-               it->get<std::string>() == kSchema;
+        if (it != trace.payload.end() &&
+            it->is_string() &&
+            it->get<std::string>() == kSchema) {
+            return true;
+        }
+        auto node_trace_it = trace.payload.find("node_trace_schema");
+        return node_trace_it != trace.payload.end() &&
+               node_trace_it->is_string() &&
+               node_trace_it->get<std::string>() == kSchema;
     }
 
     static void AddWarning(DebugTraceRecord& trace,

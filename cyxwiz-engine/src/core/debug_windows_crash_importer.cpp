@@ -153,15 +153,18 @@ DebugTraceRecord DebugWindowsCrashImporter::BuildTrace(
     const DebugWindowsCrashReport& report) const {
     const auto correlation = Correlate(run, report);
 
-    DebugTraceRecord trace;
-    trace.run_id = run_id;
-    trace.node_id = -1;
-    trace.node_name = "WindowsCrashImport";
-    trace.node_type = "WER";
-    trace.phase = "WindowsCrashImport";
-    trace.role = DebugTraceRole::Error;
-    trace.dtype = "wer";
-    trace.status = report.available ? "captured" : "missing";
+    DebugTraceRecord trace = DebugNodeTraceContract::Make(
+        run_id,
+        -1,
+        "WindowsCrashImport",
+        "WER",
+        "WindowsCrashImport",
+        DebugTraceRole::Error,
+        {},
+        {},
+        "wer",
+        "WindowsCrashImport",
+        report.available ? "captured" : "missing");
     DebugNodeTraceContract::AttachDiagnosticContext(
         trace,
         "windows_crash_import",

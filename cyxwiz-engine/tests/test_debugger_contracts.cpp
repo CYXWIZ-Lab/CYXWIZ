@@ -218,6 +218,9 @@ void TestNodeTraceContract() {
     Check(trace.payload["schema"].get<std::string>() ==
               cyxwiz::DebugNodeTraceContract::kSchema,
           "node trace payload should include schema");
+    Check(trace.payload["node_trace_schema"].get<std::string>() ==
+              cyxwiz::DebugNodeTraceContract::kSchema,
+          "node trace payload should include canonical node schema marker");
     Check(trace.payload["backend"].get<std::string>() == "CPU",
           "node trace payload should include backend");
     Check(trace.payload["input_rank"].get<size_t>() == 2,
@@ -701,6 +704,11 @@ void TestExportCorrelationTraceContract() {
           "export correlation phase should be stable");
     Check(trace.status == "ok",
           "successful export correlation should be ok");
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(trace),
+          "export correlation trace should use canonical node trace schema");
+    Check(trace.payload["node_trace_schema"].get<std::string>() ==
+              cyxwiz::DebugNodeTraceContract::kSchema,
+          "export correlation trace should expose canonical node schema marker");
     Check(trace.payload["schema"].get<std::string>() ==
               cyxwiz::DebugExportCorrelationTracer::kSchema,
           "export correlation trace should expose schema");
@@ -814,6 +822,11 @@ void TestWindowsCrashImportContract() {
           "Windows crash import trace phase should be stable");
     Check(trace.status == "captured",
           "available Windows crash report should be captured");
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(trace),
+          "Windows crash import trace should use canonical node trace schema");
+    Check(trace.payload["node_trace_schema"].get<std::string>() ==
+              cyxwiz::DebugNodeTraceContract::kSchema,
+          "Windows crash import trace should expose canonical node schema marker");
     Check(trace.payload["schema"].get<std::string>() ==
               cyxwiz::DebugWindowsCrashImporter::kSchema,
           "Windows crash import trace should expose schema");
