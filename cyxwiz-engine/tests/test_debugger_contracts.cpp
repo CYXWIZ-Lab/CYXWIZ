@@ -94,6 +94,19 @@ bool HasRecommendation(const std::vector<cyxwiz::DebugRecommendation>& recs,
     return false;
 }
 
+int CountRecommendationsWithDetail(
+    const std::vector<cyxwiz::DebugRecommendation>& recs,
+    const std::string& title,
+    const std::string& detail) {
+    int count = 0;
+    for (const auto& rec : recs) {
+        if (rec.title == title && rec.detail == detail) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 bool HasIssueCode(const std::vector<cyxwiz::ValidationIssue>& issues,
                   const std::string& code) {
     for (const auto& issue : issues) {
@@ -2044,6 +2057,45 @@ void TestRecommendationContract() {
     padding.payload["pad_ratio"] = 0.0;
     traces.push_back(std::move(padding));
 
+    cyxwiz::DebugTraceRecord operator_warning = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        11,
+        "UnsupportedPreprocess",
+        "UnsupportedPreprocess",
+        "OperatorTransform",
+        cyxwiz::DebugTraceRole::Warning,
+        {2, 3},
+        {2, 3},
+        "arrow",
+        "Arrow",
+        "warning");
+    cyxwiz::DebugNodeTraceContract::AddWarning(
+        operator_warning,
+        "Operator-backed trace skipped unsupported preprocessing operator.",
+        cyxwiz::errors::Runtime::UnsupportedNode);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(operator_warning),
+          "trace issue recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(operator_warning));
+
+    cyxwiz::DebugTraceRecord duplicate_warning = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        12,
+        "DuplicateWarning",
+        "Preflight",
+        "Preflight",
+        cyxwiz::DebugTraceRole::Warning,
+        {},
+        {},
+        "graph",
+        "PreflightValidator",
+        "blocked");
+    cyxwiz::DebugNodeTraceContract::AddWarning(
+        duplicate_warning,
+        "Duplicate warning should be recommended only once.",
+        cyxwiz::errors::Compiler::InvalidParameter);
+    const cyxwiz::ValidationIssue duplicate_issue = duplicate_warning.issues[0];
+    traces.push_back(std::move(duplicate_warning));
+
     cyxwiz::DebugTraceRecord loss = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
         4,
@@ -2212,7 +2264,7 @@ void TestRecommendationContract() {
     cyxwiz::DebugRecommendationEngine engine;
     const auto recs = engine.Build(
         traces,
-        {},
+        {duplicate_issue},
         smoke,
         last_run,
         training_trace);
@@ -2221,6 +2273,16 @@ void TestRecommendationContract() {
           "high unknown-token ratio should produce recommendation");
     Check(HasRecommendation(recs, "Text sample was truncated"),
           "truncation should produce recommendation");
+    Check(CountRecommendationsWithDetail(
+              recs,
+              "Trace warning reported",
+              "Operator-backed trace skipped unsupported preprocessing operator.") == 1,
+          "unique trace warning issue should produce recommendation");
+    Check(CountRecommendationsWithDetail(
+              recs,
+              "Trace warning reported",
+              "Duplicate warning should be recommended only once.") == 0,
+          "duplicate trace warning issue should not produce duplicate recommendation");
     Check(HasRecommendation(recs, "Smoke Run produced invalid values"),
           "invalid smoke loss should produce recommendation");
     Check(HasRecommendation(recs, "No gradients observed"),

@@ -31,6 +31,24 @@ void Add(std::vector<DebugRecommendation>& out,
     out.push_back({severity, node_id, category, title, detail, action});
 }
 
+std::string IssueKey(const ValidationIssue& issue) {
+    return std::to_string(static_cast<int>(issue.level)) + "|" +
+           std::to_string(issue.node_id) + "|" + issue.node_name + "|" +
+           issue.error_code + "|" + issue.message;
+}
+
+bool RememberIssue(std::vector<std::string>& seen_issue_keys,
+                   const ValidationIssue& issue) {
+    const std::string key = IssueKey(issue);
+    for (const auto& seen : seen_issue_keys) {
+        if (seen == key) {
+            return false;
+        }
+    }
+    seen_issue_keys.push_back(key);
+    return true;
+}
+
 } // namespace
 
 const char* DebugRecommendationSeverityName(DebugRecommendationSeverity severity) {
@@ -50,7 +68,11 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
     const TrainingTraceSummary& training_trace) const {
     std::vector<DebugRecommendation> out;
 
+    std::vector<std::string> seen_issue_keys;
     for (const auto& issue : issues) {
+        if (!RememberIssue(seen_issue_keys, issue)) {
+            continue;
+        }
         if (issue.level == IssueLevel::Error) {
             Add(out, DebugRecommendationSeverity::Critical, issue.node_id,
                 "Issue", issue.node_name.empty() ? "Blocking issue" : issue.node_name,
@@ -65,6 +87,23 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
     }
 
     for (const auto& trace : traces) {
+        for (const auto& issue : trace.issues) {
+            if (!RememberIssue(seen_issue_keys, issue)) {
+                continue;
+            }
+            if (issue.level == IssueLevel::Error) {
+                Add(out, DebugRecommendationSeverity::Critical, issue.node_id,
+                    "Trace", "Trace error reported",
+                    issue.message,
+                    "Fix the trace-reported issue before running full training.");
+            } else if (issue.level == IssueLevel::Warning) {
+                Add(out, DebugRecommendationSeverity::Warning, issue.node_id,
+                    "Trace", "Trace warning reported",
+                    issue.message,
+                    "Review the trace-reported warning before trusting debugger results.");
+            }
+        }
+
         if (trace.phase == "TextVocabulary") {
             const double unknown_ratio = PayloadNumber(trace, "unknown_token_ratio", 0.0);
             if (unknown_ratio > 0.20) {

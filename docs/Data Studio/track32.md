@@ -1046,11 +1046,30 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Smoke Run zero-gradient files.
 
+## Resume 2026-07-10 - Trace Issue Recommendations
+
+Forty-eighth follow-up on the first slice:
+
+- `DebugRecommendationEngine` now turns structured warning/error issues stored
+  on canonical trace records into recommendations.
+- Recommendation issue handling now de-duplicates trace issues that were already
+  supplied through the session-level issue list.
+- Recommendation contract coverage now proves trace-only warnings are surfaced
+  while duplicate trace/session warnings do not produce duplicate trace
+  recommendations.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the trace issue recommendation files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Smoke Run Zero-Gradient Trace Warnings`
-- Commit pushed: `936cca23 Warn on smoke run zero gradients` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Smoke Run zero-gradient trace warnings, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Trace Issue Recommendations`
+- Commit pushed: not yet for this Trace Issue recommendation continuation; previous pushed repository checkpoint was `681dc1b8 Record smoke zero gradient checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after trace issue recommendations, or switch back to the next tracked tofix item requested by the user.
