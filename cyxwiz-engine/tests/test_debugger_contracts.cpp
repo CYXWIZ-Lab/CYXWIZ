@@ -1003,7 +1003,8 @@ void TestSupportBundleContract() {
     Check(!bundle["hq_upload_performed"].get<bool>(),
           "support bundle builder should not upload");
     Check(bundle["redaction_applied"].get<bool>(),
-          "support bundle should mark redaction");    Check(bundle["reason"].get<std::string>() ==
+          "support bundle should mark redaction");
+    Check(bundle["reason"].get<std::string>() ==
               "app requested engine log for HQ diagnostics token=[REDACTED]",
           "support bundle should redact top-level reason text");
     Check(bundle["debug_run"]["summary"]["summary"].get<std::string>() ==
@@ -2030,20 +2031,54 @@ void TestRecommendationContract() {
     padding.payload["pad_ratio"] = 0.0;
     traces.push_back(std::move(padding));
 
-    cyxwiz::DebugTraceRecord loss;
-    loss.node_id = 4;
-    loss.node_name = "SmokeRun";
-    loss.phase = "SmokeRun.Loss";
+    cyxwiz::DebugTraceRecord loss = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        4,
+        "SmokeRun",
+        "SmokeRun",
+        "SmokeRun.Loss",
+        cyxwiz::DebugTraceRole::Loss,
+        {2, 3},
+        {1},
+        "float32",
+        "Runtime",
+        "failed");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        loss,
+        "smoke_run",
+        "SmokeRunExecutor",
+        "cyxwiz-engine/src/core/smoke_run_executor.cpp",
+        "cyxwiz::SmokeRunExecutor::RunTextSmoke");
     loss.payload["predictions_have_non_finite"] = true;
     loss.payload["loss"] = std::numeric_limits<double>::quiet_NaN();
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(loss),
+          "smoke loss recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(loss));
 
-    cyxwiz::DebugTraceRecord backward;
-    backward.node_id = 4;
-    backward.node_name = "SmokeRun";
-    backward.phase = "SmokeRun.Backward";
+    cyxwiz::DebugTraceRecord backward = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        4,
+        "SmokeRun",
+        "SmokeRun",
+        "SmokeRun.Backward",
+        cyxwiz::DebugTraceRole::Gradient,
+        {},
+        {},
+        "float32",
+        "Runtime",
+        "warning");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        backward,
+        "smoke_run",
+        "SmokeRunExecutor",
+        "cyxwiz-engine/src/core/smoke_run_executor.cpp",
+        "cyxwiz::SmokeRunExecutor::RunTextSmoke");
     backward.payload["gradient_tensor_count"] = 0;
     backward.payload["zero_gradient_tensor_count"] = 0;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(backward),
+          "smoke backward recommendation fixture should use canonical trace schema");
+    Check(backward.payload["diagnostic_phase"].get<std::string>() == "smoke_run",
+          "smoke backward recommendation fixture should expose diagnostic phase");
     traces.push_back(std::move(backward));
 
     cyxwiz::SmokeRunResult smoke;

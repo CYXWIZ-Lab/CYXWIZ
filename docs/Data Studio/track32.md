@@ -845,11 +845,34 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the tofix32 files.
 
+## Resume 2026-07-10 - Smoke Run Canonical Trace Context
+
+Thirty-eighth follow-up on the first slice:
+
+- `SmokeRunExecutor` now creates smoke-run batch, loss, and backward traces
+  through `DebugNodeTraceContract::Make` instead of hand-filling partial
+  `DebugTraceRecord` fields.
+- Smoke-run traces now carry canonical rank/numel shape payloads at construction
+  time plus stable diagnostic phase, component, source file, and source symbol
+  metadata.
+- No-gradient smoke backward traces now attach the canonical warning issue summary
+  on the emitted trace while preserving the existing run-level warning.
+- Contract coverage now uses canonical smoke loss/backward fixtures for debugger
+  recommendation checks and preserves the support-bundle redaction assertion
+  formatting cleanup.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Smoke Run trace files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Support Bundle Metadata Redaction`
-- Commit pushed: not yet for this continuation; last pushed tofix32 commit was `423f7ce6` on `origin/Nodes_Implementation`. The last pushed repository checkpoint is `aca3f02e Complete track49 LM inference contract`.
-- Current uncommitted files for this continuation: `debug_support_bundle_builder.cpp`, `debug_session_manager.cpp`, `debug_export_correlation_tracer.cpp`, `debug_memory_ownership_tracer.cpp`, `debug_runtime_backend_classifier.cpp`, `debug_windows_crash_importer.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
-- Next safe continuation point: review/commit this auxiliary trace diagnostic-context slice, or continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap.
+- Last completed slice: `Smoke Run Canonical Trace Context`
+- Commit pushed: not yet for this Smoke Run continuation; previous pushed repository checkpoint was `e65de62e Extend debugger trace diagnostics` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `smoke_run_executor.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after smoke-run traces, or switch back to the next tracked tofix item requested by the user.

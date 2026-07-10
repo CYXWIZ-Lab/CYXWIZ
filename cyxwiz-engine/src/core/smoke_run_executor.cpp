@@ -133,15 +133,27 @@ DebugTraceRecord MakeSmokeRecord(const std::string& run_id,
                                  const std::string& phase,
                                  DebugTraceRole role,
                                  int node_id,
-                                 const std::string& status) {
-    DebugTraceRecord record;
-    record.run_id = run_id;
-    record.node_id = node_id;
-    record.node_name = "SmokeRun";
-    record.node_type = "SmokeRun";
-    record.phase = phase;
-    record.role = role;
-    record.status = status;
+                                 const std::string& status,
+                                 const std::vector<size_t>& input_shape = {},
+                                 const std::vector<size_t>& output_shape = {}) {
+    DebugTraceRecord record = DebugNodeTraceContract::Make(
+        run_id,
+        node_id,
+        "SmokeRun",
+        "SmokeRun",
+        phase,
+        role,
+        input_shape,
+        output_shape,
+        "float32",
+        "Runtime",
+        status);
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        record,
+        "smoke_run",
+        "SmokeRunExecutor",
+        "cyxwiz-engine/src/core/smoke_run_executor.cpp",
+        "cyxwiz::SmokeRunExecutor::RunTextSmoke");
     return record;
 }
 
@@ -317,9 +329,7 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
         auto input_record = MakeSmokeRecord(
             run_id, "SmokeRun.BatchInput", DebugTraceRole::ModelInput,
-            model_node_id, "ok");
-        input_record.input_shape = ShapeOf(batch.data);
-        input_record.output_shape = ShapeOf(batch.labels);
+            model_node_id, "ok", ShapeOf(batch.data), ShapeOf(batch.labels));
         input_record.payload["batch"] = batch_index;
         input_record.payload["samples"] = batch.size;
         result.traces.push_back(std::move(input_record));
@@ -351,9 +361,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
         auto loss_record = MakeSmokeRecord(
             run_id, "SmokeRun.Loss", DebugTraceRole::Loss,
-            model_node_id, loss_ok && !pred_bad ? "ok" : "failed");
-        loss_record.input_shape = ShapeOf(predictions);
-        loss_record.output_shape = ShapeOf(loss_tensor);
+            model_node_id, loss_ok && !pred_bad ? "ok" : "failed",
+            ShapeOf(predictions), ShapeOf(loss_tensor));
         loss_record.payload["batch"] = batch_index;
         loss_record.payload["loss"] = loss;
         loss_record.payload["accuracy"] = result.last_accuracy;
@@ -388,15 +397,20 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         grad_record.payload["gradient_tensor_count"] = grad_count;
         grad_record.payload["zero_gradient_tensor_count"] = zero_grad_count;
         grad_record.payload["max_gradient_l2_norm"] = max_grad_norm;
-        result.traces.push_back(std::move(grad_record));
 
         if (grad_count == 0) {
+            DebugNodeTraceContract::AddWarning(
+                grad_record,
+                "Smoke Run did not observe parameter gradients.",
+                errors::Training::TrainingExecutionFailed);
             result.issues.push_back({
                 IssueLevel::Warning, model_node_id, "SmokeRun",
                 "Smoke Run did not observe parameter gradients.",
                 errors::Training::TrainingExecutionFailed
             });
         }
+
+        result.traces.push_back(std::move(grad_record));
     }
 
     result.average_loss = result.batches_seen > 0
