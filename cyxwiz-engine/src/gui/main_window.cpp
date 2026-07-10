@@ -3713,37 +3713,56 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         }
 
         for (const auto& trace : session.debug_result.layer_traces) {
-            cyxwiz::DebugTraceRecord record;
-            record.run_id = run_id;
-            record.node_id = trace.node_id;
-            record.node_name = trace.name;
-            record.node_type = std::to_string(static_cast<int>(trace.type));
-            record.phase = "Forward";
-            record.role = cyxwiz::DebugTraceRole::Activation;
-            record.output_shape = trace.actual_shape;
+            cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
+                run_id,
+                trace.node_id,
+                trace.name,
+                std::to_string(static_cast<int>(trace.type)),
+                "Forward",
+                cyxwiz::DebugTraceRole::Activation,
+                {},
+                trace.actual_shape,
+                "float32",
+                "LocalDebug",
+                (trace.has_nan || trace.has_inf) ? "warning" :
+                    (trace.shape_matches ? "ok" : "shape_mismatch"));
             record.duration_ms = trace.forward_ms;
-            record.status = (trace.has_nan || trace.has_inf) ? "warning" :
-                (trace.shape_matches ? "ok" : "shape_mismatch");
             record.payload["predicted_shape"] = trace.predicted_shape;
             record.payload["actual_shape"] = trace.actual_shape;
             record.payload["shape_matches"] = trace.shape_matches;
             record.payload["has_nan"] = trace.has_nan;
             record.payload["has_inf"] = trace.has_inf;
+            cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+                record,
+                "local_debug_forward",
+                "DebugExecutor",
+                "cyxwiz-engine/src/core/debug_executor.cpp",
+                "cyxwiz::DebugExecutor::Run");
             session.traces.push_back(std::move(record));
         }
 
         for (const auto& grad : session.debug_result.grad_norms) {
-            cyxwiz::DebugTraceRecord record;
-            record.run_id = run_id;
-            record.node_id = grad.layer_index;
-            record.node_name = grad.param_name;
-            record.node_type = "Parameter";
-            record.phase = "Backward";
-            record.role = cyxwiz::DebugTraceRole::Gradient;
-            record.status = grad.is_nan ? "nan" : (grad.is_zero ? "zero" : "ok");
+            cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
+                run_id,
+                grad.layer_index,
+                grad.param_name,
+                "Parameter",
+                "Backward",
+                cyxwiz::DebugTraceRole::Gradient,
+                {},
+                {},
+                "float32",
+                "LocalDebug",
+                grad.is_nan ? "nan" : (grad.is_zero ? "zero" : "ok"));
             record.payload["l2_norm"] = grad.l2_norm;
             record.payload["is_nan"] = grad.is_nan;
             record.payload["is_zero"] = grad.is_zero;
+            cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+                record,
+                "local_debug_backward",
+                "DebugExecutor",
+                "cyxwiz-engine/src/core/debug_executor.cpp",
+                "cyxwiz::DebugExecutor::Run");
             session.traces.push_back(std::move(record));
         }
         session.studio_events.push_back({

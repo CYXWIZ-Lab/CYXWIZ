@@ -930,11 +930,31 @@ Additional validation:
 - Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
 - Passed: scoped `git diff --check` for the compile/preflight trace files.
 
+## Resume 2026-07-10 - Canonical Local Debug Runtime Traces
+
+Forty-second follow-up on the first slice:
+
+- Studio Debugger Local Debug forward activation traces now use
+  `DebugNodeTraceContract::Make` instead of hand-filling trace envelope fields
+  in `MainWindow`.
+- Local Debug gradient traces now use the same canonical envelope while
+  preserving parameter name, layer index, L2 norm, NaN, and zero-gradient
+  payloads.
+- Forward and gradient traces now attach stable diagnostic phase, component,
+  source file, and source symbol metadata pointing back to `DebugExecutor`.
+
+Additional validation:
+
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: scoped `git diff --check` for the Local Debug trace files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Canonical Compile Preflight Session Traces`
-- Commit pushed: `2d1f636a Canonicalize debugger compile preflight traces` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical compile/preflight traces, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Canonical Local Debug Runtime Traces`
+- Commit pushed: not yet for this Local Debug continuation; previous pushed repository checkpoint was `b8244481 Record compile preflight trace checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp` and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical Local Debug runtime traces, or switch back to the next tracked tofix item requested by the user.
