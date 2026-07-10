@@ -2314,6 +2314,46 @@ void TestRecommendationContract() {
           "local debug forward recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(local_forward));
 
+    cyxwiz::DebugTraceRecord local_forward_shape = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        11,
+        "Dense_11",
+        "Dense",
+        "Forward",
+        cyxwiz::DebugTraceRole::Activation,
+        {2, 8},
+        {2, 4},
+        "float32",
+        "LocalDebug",
+        "shape_mismatch");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        local_forward_shape,
+        "local_debug_forward",
+        "DebugExecutor",
+        "cyxwiz-engine/src/core/debug_executor.cpp",
+        "cyxwiz::DebugExecutor::Run");
+    local_forward_shape.payload["shape_matches"] = false;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_forward_shape),
+          "local debug shape-mismatch recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(local_forward_shape));
+
+    cyxwiz::DebugTraceRecord runtime_shape = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        12,
+        "RuntimeDense_12",
+        "Dense",
+        "Forward",
+        cyxwiz::DebugTraceRole::Activation,
+        {2, 8},
+        {2, 4},
+        "float32",
+        "Runtime",
+        "shape_mismatch");
+    runtime_shape.payload["shape_matches"] = false;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(runtime_shape),
+          "runtime shape-mismatch recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(runtime_shape));
+
     cyxwiz::DebugTraceRecord runtime_forward = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
         17,
@@ -2565,6 +2605,10 @@ void TestRecommendationContract() {
           "local debug loss stage failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug optimizer step failed"),
           "local debug optimizer failure should produce recommendation");
+    Check(HasRecommendation(recs, "Local Debug forward shape mismatch"),
+          "local debug forward shape mismatch should produce focused recommendation");
+    Check(HasRecommendation(recs, "Shape mismatch detected"),
+          "non-local shape mismatch should keep generic recommendation");
     Check(HasRecommendation(recs, "Local Debug produced non-finite activation"),
           "local debug non-finite activation should produce recommendation");
     Check(CountRecommendationsWithDetail(

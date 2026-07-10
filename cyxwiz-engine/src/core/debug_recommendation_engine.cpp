@@ -135,7 +135,13 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
             }
         }
 
-        if (trace.status == "shape_mismatch") {
+        if (trace.status == "shape_mismatch" &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_forward") {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Shapes", "Local Debug forward shape mismatch",
+                "A Local Debug forward trace did not match the compiled graph expectation.",
+                "Inspect the selected node wiring, layer dimensions, and compiler-inferred input/output shapes before training.");
+        } else if (trace.status == "shape_mismatch") {
             Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
                 "Shapes", "Shape mismatch detected",
                 "A runtime shape did not match the compiled graph expectation.",
