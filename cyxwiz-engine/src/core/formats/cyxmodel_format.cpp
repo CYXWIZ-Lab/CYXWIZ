@@ -44,6 +44,16 @@ nlohmann::json CyxModelFormat::ManifestToJson(const ModelManifest& manifest) {
     j["model"]["supports_generation"] = manifest.supports_generation;
     j["model"]["generation_output_contract"] =
         manifest.generation_output_contract;
+    j["model"]["supports_bert_encoder"] = manifest.supports_bert_encoder;
+    j["model"]["bert_encoder_task"] = manifest.bert_encoder_task;
+    j["model"]["bert_encoder_input_kind"] =
+        manifest.bert_encoder_input_kind;
+    j["model"]["bert_encoder_output_contract"] =
+        manifest.bert_encoder_output_contract;
+    j["model"]["bert_encoder_has_attention_mask"] =
+        manifest.bert_encoder_has_attention_mask;
+    j["model"]["bert_encoder_requires_token_type_ids"] =
+        manifest.bert_encoder_requires_token_type_ids;
     j["model"]["num_parameters"] = manifest.num_parameters;
     j["model"]["num_layers"] = manifest.num_layers;
 
@@ -111,6 +121,18 @@ ModelManifest CyxModelFormat::JsonToManifest(const nlohmann::json& j) {
             j["model"].value("supports_generation", false);
         manifest.generation_output_contract =
             j["model"].value("generation_output_contract", "");
+        manifest.supports_bert_encoder =
+            j["model"].value("supports_bert_encoder", false);
+        manifest.bert_encoder_task =
+            j["model"].value("bert_encoder_task", "");
+        manifest.bert_encoder_input_kind =
+            j["model"].value("bert_encoder_input_kind", "");
+        manifest.bert_encoder_output_contract =
+            j["model"].value("bert_encoder_output_contract", "");
+        manifest.bert_encoder_has_attention_mask =
+            j["model"].value("bert_encoder_has_attention_mask", false);
+        manifest.bert_encoder_requires_token_type_ids =
+            j["model"].value("bert_encoder_requires_token_type_ids", false);
         manifest.num_parameters = j["model"].value("num_parameters", 0);
         manifest.num_layers = j["model"].value("num_layers", 0);
     }
@@ -730,13 +752,22 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
         ModelManifest manifest = JsonToManifest(j);
 
         result.valid = true;
-    result.format_version = manifest.version;
-    result.model_name = manifest.model_name;
-    result.model_family = manifest.model_family;
-    result.supports_generation = manifest.supports_generation;
-    result.generation_output_contract = manifest.generation_output_contract;
-    result.author = manifest.author;
-    result.description = manifest.description;
+        result.format_version = manifest.version;
+        result.model_name = manifest.model_name;
+        result.model_family = manifest.model_family;
+        result.supports_generation = manifest.supports_generation;
+        result.generation_output_contract = manifest.generation_output_contract;
+        result.supports_bert_encoder = manifest.supports_bert_encoder;
+        result.bert_encoder_task = manifest.bert_encoder_task;
+        result.bert_encoder_input_kind = manifest.bert_encoder_input_kind;
+        result.bert_encoder_output_contract =
+            manifest.bert_encoder_output_contract;
+        result.bert_encoder_has_attention_mask =
+            manifest.bert_encoder_has_attention_mask;
+        result.bert_encoder_requires_token_type_ids =
+            manifest.bert_encoder_requires_token_type_ids;
+        result.author = manifest.author;
+        result.description = manifest.description;
         result.num_parameters = manifest.num_parameters;
         result.num_layers = manifest.num_layers;
         result.epochs_trained = manifest.epochs_trained;

@@ -151,10 +151,17 @@ struct ImportResult {
 
     // Loaded model info
     std::string model_name;
+    std::string model_family;
     std::string format_version;
     int num_parameters = 0;
     int num_layers = 0;
     std::vector<std::string> layer_names;
+    bool supports_bert_encoder = false;
+    std::string bert_encoder_task;
+    std::string bert_encoder_input_kind;
+    std::string bert_encoder_output_contract;
+    bool bert_encoder_has_attention_mask = false;
+    bool bert_encoder_requires_token_type_ids = false;
 
     // Warnings (non-fatal issues)
     std::vector<std::string> warnings;
@@ -174,6 +181,12 @@ struct ProbeResult {
     std::string model_family;
     bool supports_generation = false;
     std::string generation_output_contract;
+    bool supports_bert_encoder = false;
+    std::string bert_encoder_task;
+    std::string bert_encoder_input_kind;
+    std::string bert_encoder_output_contract;
+    bool bert_encoder_has_attention_mask = false;
+    bool bert_encoder_requires_token_type_ids = false;
     std::string author;
     std::string description;
 
@@ -299,6 +312,12 @@ struct ModelManifest {
     std::string model_family;       // e.g., "causal_lm", "classifier"
     bool supports_generation = false;
     std::string generation_output_contract;
+    bool supports_bert_encoder = false;
+    std::string bert_encoder_task;
+    std::string bert_encoder_input_kind;
+    std::string bert_encoder_output_contract;
+    bool bert_encoder_has_attention_mask = false;
+    bool bert_encoder_requires_token_type_ids = false;
     int num_parameters = 0;
     int num_layers = 0;
 

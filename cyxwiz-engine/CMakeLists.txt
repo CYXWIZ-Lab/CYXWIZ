@@ -357,6 +357,7 @@ set(ENGINE_SOURCES
     src/gui/panels/python_settings_panel.cpp
     src/network/deployment_client.cpp
     src/inference/local_inference_server.cpp
+    src/inference/bert_encoder_inference_contract.cpp
     src/inference/language_model_inference_contract.cpp
     src/inference/metric_learning_inference_input.cpp
     src/inference/text_inference_input.cpp
@@ -636,6 +637,7 @@ set(ENGINE_HEADERS
     src/gui/panels/python_settings_panel.h
     src/network/deployment_client.h
     src/inference/local_inference_server.h
+    src/inference/bert_encoder_inference_contract.h
     src/inference/language_model_inference_contract.h
     src/inference/metric_learning_inference_input.h
     src/inference/text_inference_input.h
@@ -1583,6 +1585,7 @@ set_target_properties(test_language_model_generation PROPERTIES
 # ===== Test: Language Model Inference Contract =====
 add_executable(test_language_model_inference_contract
     tests/test_language_model_inference_contract.cpp
+    src/inference/bert_encoder_inference_contract.cpp
     src/inference/language_model_inference_contract.cpp
     src/inference/text_inference_input.cpp
 )

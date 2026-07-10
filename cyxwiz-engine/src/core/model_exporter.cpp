@@ -2,6 +2,7 @@
 #include "error_codes.h"
 #include "training_executor.h"
 #include "node_executors/tree_model_artifact.h"
+#include "../gui/node_editor.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <filesystem>
@@ -31,6 +32,16 @@ struct InferredSequenceConfig {
     std::string token_vocab_path;
     std::string pos_vocab_path;
     std::string tag_vocab_path;
+};
+
+struct InferredBertEncoderConfig {
+    bool detected = false;
+    bool supported = false;
+    std::string task;
+    std::string input_kind;
+    std::string output_contract;
+    bool has_attention_mask = false;
+    bool requires_token_type_ids = false;
 };
 
 bool LooksLikeTokenizerParams(const nlohmann::json& params) {
@@ -416,6 +427,257 @@ bool InferSequenceAssetsFromGraph(
     }
 }
 
+std::string ReadStringParam(const nlohmann::json& params, const char* key) {
+    if (!params.contains(key)) {
+        return {};
+    }
+    const auto& value = params[key];
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_boolean()) {
+        return value.get<bool>() ? "true" : "false";
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<int64_t>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<uint64_t>());
+    }
+    return {};
+}
+
+bool ReadTruthyParam(const nlohmann::json& params, const char* key) {
+    bool bool_value = false;
+    if (ReadBoolParam(params, key, bool_value)) {
+        return bool_value;
+    }
+    const std::string value = ToLowerInvariant(ReadStringParam(params, key));
+    return value == "required" || value == "present";
+}
+
+bool HasNonEmptyParam(const nlohmann::json& params, const char* key) {
+    return params.contains(key) && !ReadStringParam(params, key).empty();
+}
+
+bool DeclaresBertEncoderFamily(const nlohmann::json& node,
+                               const nlohmann::json& params) {
+    const std::string node_name =
+        node.contains("name") && node["name"].is_string()
+            ? ToLowerInvariant(node["name"].get<std::string>())
+            : "";
+    if (node_name.find("bert") != std::string::npos) {
+        return true;
+    }
+
+    static const char* family_keys[] = {
+        "model_family", "encoder_family", "text_model_family"
+    };
+    for (const char* key : family_keys) {
+        const std::string value = ToLowerInvariant(ReadStringParam(params, key));
+        if (value == "bert" || value == "bert_encoder" ||
+            value == "bert-style" || value == "bert_style") {
+            return true;
+        }
+    }
+
+    return ReadTruthyParam(params, "bert_style") ||
+           ReadTruthyParam(params, "bert_encoder");
+}
+
+bool DeclaresBertAttentionMask(const nlohmann::json& params) {
+    return ReadTruthyParam(params, "attention_mask") ||
+           ReadTruthyParam(params, "create_attention_mask") ||
+           HasNonEmptyParam(params, "attention_mask_column");
+}
+
+bool DeclaresBertTokenTypeIds(const nlohmann::json& params) {
+    if (ReadTruthyParam(params, "token_type_ids") ||
+        ReadTruthyParam(params, "segment_ids") ||
+        ReadTruthyParam(params, "use_token_type_ids") ||
+        ReadTruthyParam(params, "use_segment_ids")) {
+        return true;
+    }
+
+    static const char* keys[] = {
+        "token_type_column", "token_type_ids_column", "segment_column",
+        "segment_ids_column", "segment_vocab_file", "token_type_vocab_file",
+        "type_vocab_size"
+    };
+    for (const char* key : keys) {
+        if (HasNonEmptyParam(params, key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<int> ReadIntListParam(const nlohmann::json& params,
+                                  const char* key) {
+    std::vector<int> result;
+    if (!params.contains(key)) {
+        return result;
+    }
+    const auto& value = params[key];
+    if (value.is_array()) {
+        for (const auto& item : value) {
+            if (item.is_number_integer()) {
+                result.push_back(item.get<int>());
+            } else if (item.is_string()) {
+                try {
+                    result.push_back(std::stoi(item.get<std::string>()));
+                } catch (...) {
+                    return {};
+                }
+            }
+        }
+        return result;
+    }
+
+    std::string text = ReadStringParam(params, key);
+    text.erase(std::remove(text.begin(), text.end(), '['), text.end());
+    text.erase(std::remove(text.begin(), text.end(), ']'), text.end());
+    text.erase(std::remove(text.begin(), text.end(), ' '), text.end());
+    std::stringstream stream(text);
+    std::string token;
+    while (std::getline(stream, token, ',')) {
+        if (token.empty()) {
+            continue;
+        }
+        try {
+            result.push_back(std::stoi(token));
+        } catch (...) {
+            return {};
+        }
+    }
+    return result;
+}
+
+bool SelectsClsToken(const nlohmann::json& params) {
+    int64_t dim = 0;
+    if (ReadInt64Param(params, "dim", dim) && dim != 0) {
+        return false;
+    }
+    const auto indices = ReadIntListParam(params, "indices");
+    return indices.size() == 1 && indices.front() == 0;
+}
+
+bool PoolsSequence(const nlohmann::json& params) {
+    int64_t dim = -1;
+    return ReadInt64Param(params, "dim", dim) && dim == 0;
+}
+
+bool InferBertEncoderConfigFromGraph(
+    const std::string& graph_json,
+    InferredBertEncoderConfig& out_config
+) {
+    out_config = InferredBertEncoderConfig{};
+    if (graph_json.empty()) {
+        return false;
+    }
+
+    try {
+        const auto graph = nlohmann::json::parse(graph_json);
+        if (!graph.contains("nodes") || !graph["nodes"].is_array()) {
+            return false;
+        }
+
+        bool declared_bert = false;
+        bool has_token_embedding = false;
+        bool has_positional_encoding = false;
+        bool has_encoder_stack = false;
+        bool has_cls_extraction = false;
+        bool has_sequence_pooling = false;
+        bool has_dense_head = false;
+        bool has_time_distributed_head = false;
+        bool has_sequence_tag_output = false;
+
+        for (const auto& node : graph["nodes"]) {
+            const nlohmann::json empty_params = nlohmann::json::object();
+            const auto& params =
+                node.contains("parameters") && node["parameters"].is_object()
+                    ? node["parameters"]
+                    : empty_params;
+            declared_bert = declared_bert ||
+                            DeclaresBertEncoderFamily(node, params);
+            out_config.has_attention_mask =
+                out_config.has_attention_mask ||
+                DeclaresBertAttentionMask(params);
+            out_config.requires_token_type_ids =
+                out_config.requires_token_type_ids ||
+                DeclaresBertTokenTypeIds(params);
+
+            const auto type = static_cast<gui::NodeType>(
+                node.value("type", static_cast<int>(gui::NodeType::DataInput)));
+            switch (type) {
+                case gui::NodeType::Embedding:
+                    has_token_embedding = true;
+                    break;
+                case gui::NodeType::PositionalEncoding:
+                    has_positional_encoding = true;
+                    break;
+                case gui::NodeType::TransformerEncoder:
+                    has_encoder_stack = true;
+                    break;
+                case gui::NodeType::TensorIndexSelect:
+                    has_cls_extraction = has_cls_extraction ||
+                                         SelectsClsToken(params);
+                    break;
+                case gui::NodeType::TensorMean:
+                case gui::NodeType::TensorMax:
+                    has_sequence_pooling = has_sequence_pooling ||
+                                           PoolsSequence(params);
+                    break;
+                case gui::NodeType::Dense:
+                    has_dense_head = true;
+                    break;
+                case gui::NodeType::TimeDistributed:
+                    has_time_distributed_head = true;
+                    break;
+                case gui::NodeType::SequenceTagOutput:
+                    has_sequence_tag_output = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        out_config.detected =
+            declared_bert ||
+            (has_encoder_stack &&
+             (has_time_distributed_head || has_sequence_tag_output ||
+              has_cls_extraction || has_sequence_pooling));
+        if (!out_config.detected) {
+            return false;
+        }
+
+        out_config.input_kind = has_token_embedding ? "token_ids"
+                                                    : "encoded_tensor";
+        if (has_sequence_tag_output || has_time_distributed_head) {
+            out_config.task = "token_classification";
+            out_config.output_contract = "Float32[batch,seq,classes]";
+            out_config.supported = has_encoder_stack &&
+                                   has_time_distributed_head &&
+                                   !out_config.requires_token_type_ids;
+        } else {
+            out_config.task = "sequence_classification";
+            out_config.output_contract = "Float32[batch,classes]";
+            out_config.supported = has_encoder_stack && has_dense_head &&
+                                   (has_cls_extraction || has_sequence_pooling) &&
+                                   !out_config.requires_token_type_ids;
+        }
+
+        if (out_config.input_kind == "token_ids" &&
+            !has_positional_encoding) {
+            out_config.supported = false;
+        }
+        return true;
+    } catch (const std::exception&) {
+        spdlog::warn("Could not infer BERT encoder metadata from graph");
+        out_config = InferredBertEncoderConfig{};
+        return false;
+    }
+}
 } // namespace
 
 ExportResult ModelExporter::Export(
@@ -541,6 +803,10 @@ ExportResult ModelExporter::ExportCyxModel(
                 inferred_sequence_config.target_ignore_index;
         }
 
+        InferredBertEncoderConfig inferred_bert_config;
+        const bool has_bert_encoder_config =
+            InferBertEncoderConfigFromGraph(graph_json, inferred_bert_config);
+
         // 1. Create manifest
         ModelManifest manifest = CreateManifest(model, training_metrics,
                                                 resolved_options);
@@ -548,6 +814,19 @@ ExportResult ModelExporter::ExportCyxModel(
             manifest.model_family = "causal_lm";
             manifest.supports_generation = true;
             manifest.generation_output_contract = "Float32[1,seq,vocab]";
+        }
+        if (has_bert_encoder_config && inferred_bert_config.supported &&
+            !resolved_options.sequence_create_causal_lm_targets) {
+            manifest.model_family = "bert_encoder";
+            manifest.supports_bert_encoder = true;
+            manifest.bert_encoder_task = inferred_bert_config.task;
+            manifest.bert_encoder_input_kind = inferred_bert_config.input_kind;
+            manifest.bert_encoder_output_contract =
+                inferred_bert_config.output_contract;
+            manifest.bert_encoder_has_attention_mask =
+                inferred_bert_config.has_attention_mask;
+            manifest.bert_encoder_requires_token_type_ids =
+                inferred_bert_config.requires_token_type_ids;
         }
         manifest.has_tokenizer =
             !resolved_options.text_tokenizer_config_json.empty();

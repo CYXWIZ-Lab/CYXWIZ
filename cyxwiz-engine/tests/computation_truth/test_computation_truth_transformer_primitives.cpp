@@ -1182,6 +1182,108 @@ void TestTransformerEncoderForwardParity() {
     }
 }
 
+void TestBertEncoderHeadLogitParity() {
+    const std::vector<float> bert_hidden_values = {
+        -0.1815133f, -1.3401134f, 0.1597225f, 1.0196487f,
+        -0.8367455f, 1.6354986f, 0.0746440f, -0.4403224f,
+    };
+    const std::vector<float> cls_head_weights = {
+        0.25f, -0.10f, 0.05f, 0.20f,
+        -0.15f, 0.30f, 0.10f, -0.05f,
+        0.05f, 0.15f, -0.20f, 0.25f,
+    };
+    const std::vector<float> cls_head_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> token_head_weights = {
+        0.20f, -0.05f, 0.10f, 0.15f,
+        -0.10f, 0.25f, 0.05f, -0.20f,
+        0.05f, 0.10f, -0.15f, 0.30f,
+        0.30f, -0.20f, 0.25f, 0.05f,
+    };
+    const std::vector<float> token_head_bias = {0.02f, -0.01f, 0.03f, -0.04f};
+
+    const cyxwiz::Tensor hidden({1, 2, 4}, bert_hidden_values.data(),
+                                cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor cls_hidden({1, 4}, bert_hidden_values.data(),
+                                    cyxwiz::DataType::Float32);
+
+    cyxwiz::LinearModule cls_head(4, 3, true);
+    cls_head.SetParameters({
+        {"weight", cyxwiz::Tensor({3, 4}, cls_head_weights.data(),
+                                   cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor({3}, cls_head_bias.data(),
+                                 cyxwiz::DataType::Float32)},
+    });
+    const cyxwiz::Tensor cls_logits = cls_head.Forward(cls_hidden);
+    CheckShape(cls_logits, {1, 3}, "BERT CLS classifier logits");
+
+    cyxwiz::TimeDistributedDenseModule token_head(4, 4, true);
+    token_head.SetParameters({
+        {"weight", cyxwiz::Tensor({4, 4}, token_head_weights.data(),
+                                   cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor({4}, token_head_bias.data(),
+                                 cyxwiz::DataType::Float32)},
+    });
+    const cyxwiz::Tensor token_logits = token_head.Forward(hidden);
+    CheckShape(token_logits, {1, 2, 4}, "BERT token classifier logits");
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_hidden = torch::from_blob(
+        const_cast<float*>(bert_hidden_values.data()), {1, 2, 4},
+        torch::kFloat32).clone();
+    auto torch_cls_weights = torch::from_blob(
+        const_cast<float*>(cls_head_weights.data()), {3, 4},
+        torch::kFloat32).clone();
+    auto torch_cls_bias = torch::from_blob(
+        const_cast<float*>(cls_head_bias.data()), {3},
+        torch::kFloat32).clone();
+    auto torch_token_weights = torch::from_blob(
+        const_cast<float*>(token_head_weights.data()), {4, 4},
+        torch::kFloat32).clone();
+    auto torch_token_bias = torch::from_blob(
+        const_cast<float*>(token_head_bias.data()), {4},
+        torch::kFloat32).clone();
+
+    auto torch_cls_hidden = torch_hidden.index(
+        {0, 0, torch::indexing::Slice()}).view({1, 4});
+    const std::vector<float> expected_cls_hidden =
+        TensorToVector(torch_cls_hidden);
+    const std::vector<float> expected_cls_logits = TensorToVector(
+        torch::linear(torch_cls_hidden, torch_cls_weights, torch_cls_bias));
+    const std::vector<float> expected_token_logits = TensorToVector(
+        torch::linear(torch_hidden.view({2, 4}),
+                      torch_token_weights,
+                      torch_token_bias).view({1, 2, 4}));
+#else
+    const float expected_cls_hidden[] = {
+        -0.1815133f, -1.3401134f, 0.1597225f, 1.0196487f,
+    };
+    const float expected_cls_logits[] = {
+        0.3105489f, -0.4298172f, 0.0428750f,
+    };
+    const float expected_token_logits[] = {
+        0.2196226f, -0.5228206f, 0.1688492f, 0.2644818f,
+        -0.2877080f, 0.5743459f, 0.0084193f, -0.6214785f,
+    };
+#endif
+
+    const float* cls_hidden_data = cls_hidden.Data<float>();
+    for (size_t i = 0; i < cls_hidden.NumElements(); ++i) {
+        CheckNear(cls_hidden_data[i], expected_cls_hidden[i], 1e-6f,
+                  "BERT CLS extraction matches PyTorch hidden[:, 0, :]");
+    }
+
+    const float* cls_logit_data = cls_logits.Data<float>();
+    for (size_t i = 0; i < cls_logits.NumElements(); ++i) {
+        CheckNear(cls_logit_data[i], expected_cls_logits[i], 1e-5f,
+                  "BERT CLS classifier logits match PyTorch linear head");
+    }
+
+    const float* token_logit_data = token_logits.Data<float>();
+    for (size_t i = 0; i < token_logits.NumElements(); ++i) {
+        CheckNear(token_logit_data[i], expected_token_logits[i], 1e-5f,
+                  "BERT token classifier logits match PyTorch per-token linear head");
+    }
+}
 void TestTransformerDecoderCausalForwardParity() {
     const std::vector<float> input_values = {
         0.2f, -0.1f, 0.4f, 0.7f,
@@ -1543,6 +1645,7 @@ int main() {
         TestMultiHeadAttentionCrossAttentionParity();
         TestLayerNormParity();
         TestTransformerEncoderForwardParity();
+        TestBertEncoderHeadLogitParity();
         TestTransformerDecoderCausalForwardParity();
         TestGenerationSamplingDistributionParity();
         TestTinyCausalLanguageModelLogitsAndLossParity();

@@ -1,0 +1,41 @@
+{
+  "id": "task51_bert_sequence_classifier_contract",
+  "name": "Task 51 BERT Sequence Classifier Contract",
+  "description": "Small BERT-style encoder contract example for sequence classification. Uses explicit token IDs, attention-mask declaration, CLS extraction, and classifier logits [batch, classes]. TransformerEncoder is currently CPU-backed.",
+  "category": "Transformer",
+  "tags": ["task51", "bert", "encoder", "sequence-classification", "attention-mask", "cpu-backed"],
+  "parameters": [
+    {"name": "vocab_size", "type": "int", "default_value": "128", "description": "Token vocabulary size", "min_value": "8", "max_value": "100000"},
+    {"name": "max_sequence_length", "type": "int", "default_value": "8", "description": "Maximum token sequence length", "min_value": "2", "max_value": "512"},
+    {"name": "d_model", "type": "int", "default_value": "32", "description": "Embedding and encoder width", "min_value": "4", "max_value": "1024"},
+    {"name": "num_heads", "type": "int", "default_value": "4", "description": "Attention heads", "min_value": "1", "max_value": "16"},
+    {"name": "ff_dim", "type": "int", "default_value": "64", "description": "Feed-forward hidden width", "min_value": "8", "max_value": "4096"},
+    {"name": "num_classes", "type": "int", "default_value": "2", "description": "Classifier class count", "min_value": "2", "max_value": "1000"}
+  ],
+  "template": {
+    "nodes": [
+      {"id": "tokens", "type": "DataInput", "name": "BERT Token IDs", "pos": [0, 240], "params": {"model_family": "bert_encoder", "bert_style": "true", "shape": "[$max_sequence_length]", "input_kind": "token_ids", "token_column": "token_ids", "label_column": "label", "create_attention_mask": "true", "max_sequence_length": "$max_sequence_length"}},
+      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [240, 240], "params": {"num_embeddings": "$vocab_size", "vocab_size": "$vocab_size", "embedding_dim": "$d_model", "padding_idx": "0"}},
+      {"id": "pos", "type": "PositionalEncoding", "name": "Position Encoding", "pos": [480, 240], "params": {"d_model": "$d_model", "max_len": "$max_sequence_length", "max_length": "$max_sequence_length"}},
+      {"id": "encoder", "type": "TransformerEncoder", "name": "BERT Encoder", "pos": [720, 240], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "nhead": "$num_heads", "ff_dim": "$ff_dim", "dim_feedforward": "$ff_dim", "dropout": "0.0"}},
+      {"id": "cls", "type": "TensorIndexSelect", "name": "CLS Select", "pos": [960, 240], "params": {"dim": "0", "axis": "0", "indices": "0"}},
+      {"id": "squeeze", "type": "Squeeze", "name": "CLS Squeeze", "pos": [1200, 240], "params": {"dim": "0", "axis": "0"}},
+      {"id": "classifier", "type": "Dense", "name": "Classifier", "pos": [1440, 240], "params": {"units": "$num_classes", "activation": "linear"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "Cross Entropy", "pos": [1680, 240], "params": {"reduction": "mean", "ignore_index": "-100"}},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [1920, 240], "params": {"learning_rate": "0.001"}},
+      {"id": "output", "type": "Output", "name": "Sequence Classifier Output", "pos": [2160, 240], "params": {"model_family": "bert_encoder", "model_task": "sequence_classification", "num_classes": "$num_classes", "output_contract": "Float32[batch,classes]"}}
+    ],
+    "links": [
+      {"from": "tokens", "to": "embed", "from_pin": 0, "to_pin": 0},
+      {"from": "embed", "to": "pos", "from_pin": 0, "to_pin": 0},
+      {"from": "pos", "to": "encoder", "from_pin": 0, "to_pin": 0},
+      {"from": "encoder", "to": "cls", "from_pin": 0, "to_pin": 0},
+      {"from": "cls", "to": "squeeze", "from_pin": 0, "to_pin": 0},
+      {"from": "squeeze", "to": "classifier", "from_pin": 0, "to_pin": 0},
+      {"from": "classifier", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "tokens", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "classifier", "to": "output", "from_pin": 0, "to_pin": 0}
+    ]
+  }
+}

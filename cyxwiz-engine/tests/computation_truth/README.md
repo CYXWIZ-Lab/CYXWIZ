@@ -63,6 +63,8 @@ Latest observed run also exercised `LinearLayer` while ArrayFire GPU was active.
   decoder primitive parity.
 - Verifies tiny causal-LM vocabulary logits and loss against PyTorch linear and
   cross-entropy semantics.
+- Verifies BERT-style CLS extraction, sequence-classifier logits, and
+  token-classifier logits against PyTorch indexing and linear-head semantics.
 - Verifies GPT-style generation candidate probabilities for temperature,
   top-k, top-p, and greedy selection against PyTorch softmax/top-k reference
   behavior, with hard-coded PyTorch-derived constants when LibTorch is not

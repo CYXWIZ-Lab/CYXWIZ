@@ -1,6 +1,7 @@
 // local_inference_server.h - Embedded HTTP inference server for the Engine
 #pragma once
 
+#include "bert_encoder_inference_contract.h"
 #include "language_model_inference_contract.h"
 
 #include <string>
@@ -132,6 +133,7 @@ private:
     std::unique_ptr<Tokenizer> text_tokenizer_;
     bool has_text_vocabulary_ = false;
     LanguageModelPackageContract language_model_contract_;
+    BertEncoderPackageContract bert_encoder_contract_;
     bool has_sequence_model_ = false;
     bool has_sequence_token_vocabulary_ = false;
     bool has_sequence_pos_vocabulary_ = false;

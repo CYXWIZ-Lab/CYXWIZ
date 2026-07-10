@@ -621,7 +621,17 @@ ImportResult ModelImporter::ImportCyxModel(
         // Populate result
         result.success = true;
         result.model_name = manifest.model_name;
+        result.model_family = manifest.model_family;
         result.format_version = manifest.version;
+        result.supports_bert_encoder = manifest.supports_bert_encoder;
+        result.bert_encoder_task = manifest.bert_encoder_task;
+        result.bert_encoder_input_kind = manifest.bert_encoder_input_kind;
+        result.bert_encoder_output_contract =
+            manifest.bert_encoder_output_contract;
+        result.bert_encoder_has_attention_mask =
+            manifest.bert_encoder_has_attention_mask;
+        result.bert_encoder_requires_token_type_ids =
+            manifest.bert_encoder_requires_token_type_ids;
         result.num_parameters = manifest.num_parameters;
         result.num_layers = static_cast<int>(model.Size());  // Use actual model size
 

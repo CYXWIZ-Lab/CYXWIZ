@@ -2,6 +2,7 @@
 #include "local_inference_server.h"
 #include "metric_learning_inference_input.h"
 #include "text_inference_input.h"
+#include "../core/bert_encoder_contract.h"
 #include "../core/language_model_generation.h"
 #include "../core/model_importer.h"
 #include "../core/formats/cyxmodel_format.h"
@@ -206,6 +207,16 @@ json SizeRowsToJson(const std::vector<size_t>& values) {
     return values_json;
 }
 
+BertEncoderTask BertEncoderTaskFromContract(const std::string& task) {
+    if (task == "sequence_classification") {
+        return BertEncoderTask::SequenceClassification;
+    }
+    if (task == "token_classification") {
+        return BertEncoderTask::TokenClassification;
+    }
+    return BertEncoderTask::None;
+}
+
 Tensor TransposeSequenceLogits(const Tensor& logits) {
     const auto& shape = logits.Shape();
     if (shape.size() != 3) {
@@ -320,6 +331,11 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
                 probe,
                 new_has_tokenizer_package ? &new_tokenizer_package : nullptr,
                 model_path);
+        BertEncoderPackageContract new_bert_encoder_contract =
+            ValidateBertEncoderPackageContract(
+                probe,
+                new_has_tokenizer_package ? &new_tokenizer_package : nullptr,
+                model_path);
         new_tokenizer = std::move(new_tokenizer_package.tokenizer);
         new_has_sequence_model = probe.has_sequence;
         new_sequence_batch_first = probe.sequence_batch_first;
@@ -378,6 +394,7 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         text_tokenizer_ = std::move(new_tokenizer);
         has_text_vocabulary_ = new_has_text_vocabulary;
         language_model_contract_ = std::move(new_language_model_contract);
+        bert_encoder_contract_ = std::move(new_bert_encoder_contract);
         has_sequence_model_ = new_has_sequence_model;
         has_sequence_token_vocabulary_ = new_has_sequence_token_vocabulary;
         has_sequence_pos_vocabulary_ = new_has_sequence_pos_vocabulary;
@@ -411,6 +428,7 @@ void LocalInferenceServer::UnloadModel() {
     text_tokenizer_.reset();
     has_text_vocabulary_ = false;
     language_model_contract_ = {};
+    bert_encoder_contract_ = {};
     has_sequence_model_ = false;
     has_sequence_token_vocabulary_ = false;
     has_sequence_pos_vocabulary_ = false;
@@ -596,6 +614,27 @@ void LocalInferenceServer::HandleModelInfo(const httplib::Request&, httplib::Res
         {"supports_generation", language_model_contract_.supports_generation},
         {"generation_output_contract", language_model_contract_.generation_output_contract},
         {"supports_greedy_generation", language_model_contract_.compatible},
+        {"supports_bert_encoder", bert_encoder_contract_.supports_bert_encoder},
+        {"bert_encoder_task", bert_encoder_contract_.task},
+        {"bert_encoder_input_kind", bert_encoder_contract_.input_kind},
+        {"bert_encoder_output_contract", bert_encoder_contract_.output_contract},
+        {"supports_bert_text_inference", bert_encoder_contract_.compatible},
+        {"bert_encoder_contract", {
+            {"compatible", bert_encoder_contract_.compatible},
+            {"error", bert_encoder_contract_.error},
+            {"package_path", bert_encoder_contract_.package_path},
+            {"model_family", bert_encoder_contract_.model_family},
+            {"supports_bert_encoder", bert_encoder_contract_.supports_bert_encoder},
+            {"task", bert_encoder_contract_.task},
+            {"input_kind", bert_encoder_contract_.input_kind},
+            {"output_contract", bert_encoder_contract_.output_contract},
+            {"has_attention_mask", bert_encoder_contract_.has_attention_mask},
+            {"requires_token_type_ids", bert_encoder_contract_.requires_token_type_ids},
+            {"has_tokenizer", bert_encoder_contract_.has_tokenizer},
+            {"has_vocabulary", bert_encoder_contract_.has_vocabulary},
+            {"tokenizer_vocabulary_size", bert_encoder_contract_.tokenizer_vocabulary_size},
+            {"max_sequence_length", bert_encoder_contract_.max_sequence_length}
+        }},
         {"language_model_contract", {
             {"compatible", language_model_contract_.compatible},
             {"error", language_model_contract_.error},
@@ -681,6 +720,8 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
     bool has_sequence_pos_input = false;
     bool has_sequence_attention_input = false;
     std::vector<int64_t> sequence_lengths;
+    size_t sequence_input_batch_size = 0;
+    size_t sequence_input_length = 0;
     try {
         const auto& input_json = request_body["input"];
 
@@ -738,6 +779,8 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
                 }
             }
             input_tensor = Tensor(word_shape, word_data.data(), DataType::Int64);
+            sequence_input_batch_size = word_shape[0];
+            sequence_input_length = word_shape[1];
         } else if (input_json.is_string()) {
             std::lock_guard<std::mutex> lock(model_mutex_);
             if (!text_tokenizer_) {
@@ -749,9 +792,42 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
                     "raw text input requires packaged vocabulary");
             }
 
-            input_data = EncodeTextForInference(*text_tokenizer_,
-                                                input_json.get<std::string>());
-            shape = {1, input_data.size()};
+            if (bert_encoder_contract_.supports_bert_encoder) {
+                word_data = EncodeTextTokenIdsForBertEncoder(
+                    *text_tokenizer_, input_json.get<std::string>());
+                const auto text_contract = ValidateBertEncoderTextInputIds(
+                    word_data,
+                    bert_encoder_contract_.max_sequence_length,
+                    bert_encoder_contract_.has_attention_mask);
+                if (!text_contract.compatible) {
+                    throw std::runtime_error(text_contract.error);
+                }
+
+                word_shape = {1, word_data.size()};
+                input_tensor = Tensor(word_shape, word_data.data(), DataType::Int64);
+                is_sequence_input = true;
+                sequence_input_batch_size = 1;
+                sequence_input_length = word_data.size();
+
+                if (bert_encoder_contract_.has_attention_mask) {
+                    optional_data = BuildBertEncoderAttentionMask(
+                        word_data,
+                        static_cast<int64_t>(
+                            text_tokenizer_->GetVocabulary().PadIndex()));
+                    sequence_attention_tensor =
+                        Tensor(word_shape, optional_data.data(), DataType::Int64);
+                    has_sequence_attention_input = true;
+                    sequence_lengths.push_back(static_cast<int64_t>(std::count(
+                        optional_data.begin(), optional_data.end(), int64_t{1})));
+                } else {
+                    sequence_lengths.push_back(
+                        static_cast<int64_t>(word_data.size()));
+                }
+            } else {
+                input_data = EncodeTextForInference(
+                    *text_tokenizer_, input_json.get<std::string>());
+                shape = {1, input_data.size()};
+            }
         } else if (!input_json.is_array()) {
             throw std::runtime_error("input must be an array or string");
         } else if (input_json.empty()) {
@@ -819,6 +895,8 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
             }
             sequence_batch.size = input_tensor.Shape()[0];
             sequence_batch.sequence_length = input_tensor.Shape()[1];
+            sequence_input_batch_size = sequence_batch.size;
+            sequence_input_length = sequence_batch.sequence_length;
 
             TrainingConfiguration sequence_config;
             sequence_config.sequence_batch.word_pad_id = sequence_word_pad_id_;
@@ -833,6 +911,16 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
                 BuildSequenceModelInput(sequence_batch, sequence_config);
         }
         output_tensor = model_->Forward(input_tensor);
+        if (bert_encoder_contract_.supports_bert_encoder) {
+            const auto output_contract = ValidateBertEncoderRuntimeOutput(
+                output_tensor,
+                BertEncoderTaskFromContract(bert_encoder_contract_.task),
+                sequence_input_batch_size,
+                sequence_input_length);
+            if (!output_contract.compatible) {
+                throw std::runtime_error(output_contract.error);
+            }
+        }
         request_count_++;
 
     } catch (const std::exception& e) {

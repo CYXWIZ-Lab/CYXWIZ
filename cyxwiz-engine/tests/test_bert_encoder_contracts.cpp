@@ -90,6 +90,17 @@ bool HasIssueText(const cyxwiz::TrainingConfiguration& config,
     return false;
 }
 
+const cyxwiz::BackendPlacementEntry* FindPlacement(
+    const cyxwiz::TrainingConfiguration& config,
+    int node_id) {
+    for (const auto& placement : config.backend_placements) {
+        if (placement.node_id == node_id) {
+            return &placement;
+        }
+    }
+    return nullptr;
+}
+
 gui::MLNode DataNode() {
     auto data = Node(1,
                      gui::NodeType::DataInput,
@@ -229,6 +240,16 @@ void TestBertSequenceClassificationGraphContract() {
     Check(config.bert_encoder_graph.output_contract ==
               "Float32[batch,classes]",
           "BERT sequence graph should expose classifier output contract");
+    const auto* encoder_placement = FindPlacement(config, 4);
+    Check(encoder_placement != nullptr,
+          "BERT sequence graph should report TransformerEncoder placement");
+    Check(encoder_placement->node_type == "TransformerEncoder",
+          "BERT sequence placement should name TransformerEncoder");
+    Check(encoder_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
+          "BERT sequence TransformerEncoder should be reported CPU-backed");
+    Check(encoder_placement->reason_code ==
+              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
+          "BERT sequence TransformerEncoder should use CPU-backed reason");
 }
 
 void TestBertTokenClassificationGraphContract() {
@@ -281,6 +302,23 @@ void TestBertTokenClassificationGraphContract() {
     Check(config.bert_encoder_graph.output_contract ==
               "Float32[batch,seq,classes]",
           "BERT token graph should expose token-classifier output contract");
+    const auto* encoder_placement = FindPlacement(config, 4);
+    Check(encoder_placement != nullptr,
+          "BERT token graph should report TransformerEncoder placement");
+    Check(encoder_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
+          "BERT token TransformerEncoder should be reported CPU-backed");
+    const auto* head_placement = FindPlacement(config, 5);
+    Check(head_placement != nullptr,
+          "BERT token graph should report TimeDistributed placement");
+    Check(head_placement->node_type == "TimeDistributed",
+          "BERT token head placement should name TimeDistributed");
+    Check(head_placement->status == cyxwiz::BackendPlacementStatus::Unknown,
+          "BERT token TimeDistributed wrapper should remain explicit unknown");
+    Check(head_placement->reason_code ==
+              cyxwiz::BackendPlacementReason::TimeDistributedSequenceWrapper,
+          "BERT token TimeDistributed should use wrapper reason");
+    Check(HasIssueText(config, "TimeDistributed"),
+          "BERT token TimeDistributed placement warning should surface");
 }
 
 void TestBertGraphRejectsUnsupportedSegmentIds() {

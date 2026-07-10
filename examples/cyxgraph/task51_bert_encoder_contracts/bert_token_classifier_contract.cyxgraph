@@ -1,0 +1,37 @@
+{
+  "id": "task51_bert_token_classifier_contract",
+  "name": "Task 51 BERT Token Classifier Contract",
+  "description": "Small BERT-style encoder contract example for token classification. Uses explicit token IDs, attention-mask declaration, and TimeDistributed token logits [batch, seq, classes]. TransformerEncoder is currently CPU-backed and TimeDistributed placement is reported conservatively.",
+  "category": "Transformer",
+  "tags": ["task51", "bert", "encoder", "token-classification", "attention-mask", "cpu-backed"],
+  "parameters": [
+    {"name": "vocab_size", "type": "int", "default_value": "128", "description": "Token vocabulary size", "min_value": "8", "max_value": "100000"},
+    {"name": "max_sequence_length", "type": "int", "default_value": "8", "description": "Maximum token sequence length", "min_value": "2", "max_value": "512"},
+    {"name": "d_model", "type": "int", "default_value": "32", "description": "Embedding and encoder width", "min_value": "4", "max_value": "1024"},
+    {"name": "num_heads", "type": "int", "default_value": "4", "description": "Attention heads", "min_value": "1", "max_value": "16"},
+    {"name": "ff_dim", "type": "int", "default_value": "64", "description": "Feed-forward hidden width", "min_value": "8", "max_value": "4096"},
+    {"name": "num_classes", "type": "int", "default_value": "5", "description": "Per-token class count", "min_value": "2", "max_value": "1000"}
+  ],
+  "template": {
+    "nodes": [
+      {"id": "tokens", "type": "DataInput", "name": "BERT Token IDs", "pos": [0, 260], "params": {"model_family": "bert_encoder", "bert_style": "true", "shape": "[$max_sequence_length]", "input_kind": "token_ids", "token_column": "token_ids", "label_column": "tag_ids", "create_attention_mask": "true", "max_sequence_length": "$max_sequence_length"}},
+      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [240, 260], "params": {"num_embeddings": "$vocab_size", "vocab_size": "$vocab_size", "embedding_dim": "$d_model", "padding_idx": "0"}},
+      {"id": "pos", "type": "PositionalEncoding", "name": "Position Encoding", "pos": [480, 260], "params": {"d_model": "$d_model", "max_len": "$max_sequence_length", "max_length": "$max_sequence_length"}},
+      {"id": "encoder", "type": "TransformerEncoder", "name": "BERT Encoder", "pos": [720, 260], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "nhead": "$num_heads", "ff_dim": "$ff_dim", "dim_feedforward": "$ff_dim", "dropout": "0.0"}},
+      {"id": "token_head", "type": "TimeDistributed", "name": "Token Classifier", "pos": [960, 260], "params": {"units": "$num_classes", "activation": "linear"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "Token Cross Entropy", "pos": [1200, 260], "params": {"reduction": "mean", "ignore_index": "-100"}},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [1440, 260], "params": {"learning_rate": "0.001"}},
+      {"id": "output", "type": "Output", "name": "Token Classifier Output", "pos": [1680, 260], "params": {"model_family": "bert_encoder", "model_task": "token_classification", "num_classes": "$num_classes", "output_contract": "Float32[batch,seq,classes]"}}
+    ],
+    "links": [
+      {"from": "tokens", "to": "embed", "from_pin": 0, "to_pin": 0},
+      {"from": "embed", "to": "pos", "from_pin": 0, "to_pin": 0},
+      {"from": "pos", "to": "encoder", "from_pin": 0, "to_pin": 0},
+      {"from": "encoder", "to": "token_head", "from_pin": 0, "to_pin": 0},
+      {"from": "token_head", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "tokens", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "token_head", "to": "output", "from_pin": 0, "to_pin": 0}
+    ]
+  }
+}
