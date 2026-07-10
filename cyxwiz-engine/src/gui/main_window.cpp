@@ -3920,6 +3920,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             record.payload["has_gradient"] = grad.has_gradient;
             record.payload["is_nan"] = grad.is_nan;
             record.payload["is_zero"] = grad.is_zero;
+            record.payload["success"] = grad.has_gradient &&
+                !grad.is_nan && !grad.is_zero;
             if (!grad.has_gradient) {
                 record.issues.push_back({
                     cyxwiz::IssueLevel::Warning,

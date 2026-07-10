@@ -2455,8 +2455,11 @@ void TestRecommendationContract() {
     local_gradient.payload["has_gradient"] = true;
     local_gradient.payload["is_nan"] = true;
     local_gradient.payload["is_zero"] = false;
+    local_gradient.payload["success"] = false;
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_gradient),
           "local debug gradient recommendation fixture should use canonical trace schema");
+    Check(!local_gradient.payload["success"].get<bool>(),
+          "local debug NaN-gradient fixture should mark trace unsuccessful");
     traces.push_back(std::move(local_gradient));
 
     cyxwiz::DebugTraceRecord runtime_gradient = cyxwiz::DebugNodeTraceContract::Make(
@@ -2499,12 +2502,15 @@ void TestRecommendationContract() {
     local_missing_gradient.payload["has_gradient"] = false;
     local_missing_gradient.payload["is_nan"] = false;
     local_missing_gradient.payload["is_zero"] = true;
+    local_missing_gradient.payload["success"] = false;
     cyxwiz::DebugNodeTraceContract::AddWarning(
         local_missing_gradient,
         "Local Debug gradient was missing.",
         cyxwiz::errors::Training::TrainingExecutionFailed);
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_missing_gradient),
           "local debug missing-gradient recommendation fixture should use canonical trace schema");
+    Check(!local_missing_gradient.payload["success"].get<bool>(),
+          "local debug missing-gradient fixture should mark trace unsuccessful");
     traces.push_back(std::move(local_missing_gradient));
 
     cyxwiz::DebugTraceRecord local_zero_gradient = cyxwiz::DebugNodeTraceContract::Make(
@@ -2528,6 +2534,7 @@ void TestRecommendationContract() {
     local_zero_gradient.payload["has_gradient"] = true;
     local_zero_gradient.payload["is_nan"] = false;
     local_zero_gradient.payload["is_zero"] = true;
+    local_zero_gradient.payload["success"] = false;
     cyxwiz::DebugNodeTraceContract::AddWarning(
         local_zero_gradient,
         "Local Debug gradient norm was zero.",
@@ -2536,6 +2543,8 @@ void TestRecommendationContract() {
           "local debug zero-gradient recommendation fixture should use canonical trace schema");
     Check(local_zero_gradient.payload["warning_count"].get<size_t>() == 1,
           "local debug zero-gradient fixture should expose issue summary");
+    Check(!local_zero_gradient.payload["success"].get<bool>(),
+          "local debug zero-gradient fixture should mark trace unsuccessful");
     traces.push_back(std::move(local_zero_gradient));
 
     cyxwiz::DebugExportCorrelationInput export_input;
