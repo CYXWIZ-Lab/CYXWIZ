@@ -181,6 +181,16 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
                 "Inspect labels, output activation, loss configuration, and input scaling before training.");
         }
 
+        if (trace.phase == "Backward" &&
+            trace.role == DebugTraceRole::Error &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_backward" &&
+            trace.status == "failed") {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Gradients", "Local Debug backward pass failed",
+                "A Local Debug backward trace reported a failure before gradient summaries were collected.",
+                "Inspect loss backward output, layer backward implementations, tensor shapes, and backend errors before training.");
+        }
+
         if (trace.phase == "OptimizerStep" &&
             trace.role == DebugTraceRole::OptimizerStep &&
             PayloadString(trace, "diagnostic_phase") == "local_debug_optimizer" &&

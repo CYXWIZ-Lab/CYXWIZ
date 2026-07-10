@@ -3860,6 +3860,38 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.traces.push_back(std::move(record));
         }
 
+        const bool local_debug_backward_failed =
+            session.debug_result.reached == cyxwiz::DebugStage::Backward &&
+            !session.debug_result.success &&
+            !session.debug_result.failure_summary.empty();
+        if (local_debug_backward_failed) {
+            cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
+                run_id,
+                -1,
+                "LocalDebugBackward",
+                "Backward",
+                "Backward",
+                cyxwiz::DebugTraceRole::Error,
+                {},
+                {},
+                "float32",
+                "LocalDebug",
+                "failed");
+            record.payload["backward_reached"] = true;
+            record.payload["success"] = false;
+            cyxwiz::DebugNodeTraceContract::AddError(
+                record,
+                session.debug_result.failure_summary,
+                cyxwiz::errors::Training::TrainingExecutionFailed);
+            cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+                record,
+                "local_debug_backward",
+                "DebugExecutor",
+                "cyxwiz-engine/src/core/debug_executor.cpp",
+                "cyxwiz::DebugExecutor::Run");
+            session.traces.push_back(std::move(record));
+        }
+
         for (const auto& grad : session.debug_result.grad_norms) {
             cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
                 run_id,

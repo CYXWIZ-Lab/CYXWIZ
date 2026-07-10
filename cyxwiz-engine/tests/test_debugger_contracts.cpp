@@ -2300,6 +2300,34 @@ void TestRecommendationContract() {
           "local debug failed-forward recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(local_forward_failed));
 
+    cyxwiz::DebugTraceRecord local_backward_failed = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        -1,
+        "LocalDebugBackward",
+        "Backward",
+        "Backward",
+        cyxwiz::DebugTraceRole::Error,
+        {},
+        {},
+        "float32",
+        "LocalDebug",
+        "failed");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        local_backward_failed,
+        "local_debug_backward",
+        "DebugExecutor",
+        "cyxwiz-engine/src/core/debug_executor.cpp",
+        "cyxwiz::DebugExecutor::Run");
+    local_backward_failed.payload["backward_reached"] = true;
+    local_backward_failed.payload["success"] = false;
+    cyxwiz::DebugNodeTraceContract::AddError(
+        local_backward_failed,
+        "Exception during Backward: tensor shape mismatch",
+        cyxwiz::errors::Training::TrainingExecutionFailed);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_backward_failed),
+          "local debug failed-backward recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(local_backward_failed));
+
     cyxwiz::DebugTraceRecord local_gradient = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
         8,
@@ -2442,6 +2470,8 @@ void TestRecommendationContract() {
           "local debug non-finite activation should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug forward pass failed"),
           "local debug forward failure should produce recommendation");
+    Check(HasRecommendation(recs, "Local Debug backward pass failed"),
+          "local debug backward failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is NaN"),
           "local debug NaN gradient should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is missing"),
