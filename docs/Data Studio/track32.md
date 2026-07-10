@@ -1292,6 +1292,6 @@ Additional validation:
 Current stopping point:
 
 - Last completed slice: `Local Debug Gradient Recommendation Scoping`
-- Commit pushed: not yet for this Local Debug gradient recommendation scoping continuation; previous pushed repository checkpoint was `2c86f2cb Record local debug forward scoping checkpoint` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`; unrelated dirty files belong to other in-progress ticket work and were left untouched.
+- Commit pushed: `8e397241 Scope local debug gradient recommendations` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: none; remaining dirty files belong to other in-progress ticket work and were left untouched.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug gradient recommendation scoping, or switch back to the next tracked tofix item requested by the user.
