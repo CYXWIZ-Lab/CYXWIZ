@@ -971,11 +971,30 @@ Additional validation:
 - Blocked: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1` is currently failing in unrelated dirty LM panel work: `language_model_generation_panel.cpp` references missing `NextTokenCandidate::logit`.
 - Passed: scoped `git diff --check` for the Local Debug issue summary files.
 
+## Resume 2026-07-10 - Local Debug Numerics Recommendations
+
+Forty-fourth follow-up on the first slice:
+
+- `DebugRecommendationEngine` now turns Local Debug forward traces with NaN/Inf
+  activation payloads into a critical numerics recommendation.
+- Local Debug gradient traces with NaN gradient norms now produce a critical
+  gradient recommendation.
+- Recommendation contract coverage now uses canonical Local Debug forward and
+  gradient fixtures to prove these issue-summary traces produce actionable
+  guidance.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug recommendation files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Structured Issue Summaries`
-- Commit pushed: `ef800c97 Add local debug trace issue summaries` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug structured issue summaries, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Numerics Recommendations`
+- Commit pushed: not yet for this Local Debug recommendations continuation; previous pushed repository checkpoint was `221525bc Record local debug issue summary checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug numerics recommendations, or switch back to the next tracked tofix item requested by the user.

@@ -2094,6 +2094,42 @@ void TestRecommendationContract() {
           "smoke backward recommendation fixture should expose diagnostic phase");
     traces.push_back(std::move(backward));
 
+    cyxwiz::DebugTraceRecord local_forward = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        7,
+        "Dense_7",
+        "Dense",
+        "Forward",
+        cyxwiz::DebugTraceRole::Activation,
+        {},
+        {2, 4},
+        "float32",
+        "LocalDebug",
+        "warning");
+    local_forward.payload["has_nan"] = true;
+    local_forward.payload["has_inf"] = false;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_forward),
+          "local debug forward recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(local_forward));
+
+    cyxwiz::DebugTraceRecord local_gradient = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        8,
+        "Dense_8.weight",
+        "Parameter",
+        "Backward",
+        cyxwiz::DebugTraceRole::Gradient,
+        {},
+        {},
+        "float32",
+        "LocalDebug",
+        "nan");
+    local_gradient.payload["is_nan"] = true;
+    local_gradient.payload["is_zero"] = false;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_gradient),
+          "local debug gradient recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(local_gradient));
+
     cyxwiz::SmokeRunResult smoke;
     smoke.supported = true;
     smoke.success = false;
@@ -2118,6 +2154,10 @@ void TestRecommendationContract() {
           "invalid smoke loss should produce recommendation");
     Check(HasRecommendation(recs, "No gradients observed"),
           "missing gradients should produce recommendation");
+    Check(HasRecommendation(recs, "Local Debug produced non-finite activation"),
+          "local debug non-finite activation should produce recommendation");
+    Check(HasRecommendation(recs, "Local Debug gradient is NaN"),
+          "local debug NaN gradient should produce recommendation");
     Check(HasRecommendation(recs, "Smoke Run needs attention"),
           "failed supported smoke run should produce recommendation");
 }

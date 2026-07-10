@@ -98,6 +98,24 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
                 "Inspect the selected node wiring and its input/output shape settings before training.");
         }
 
+        if (trace.phase == "Forward" &&
+            (PayloadBool(trace, "has_nan", false) ||
+             PayloadBool(trace, "has_inf", false))) {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Numerics", "Local Debug produced non-finite activation",
+                "A Local Debug forward trace reported NaN or Inf output values.",
+                "Inspect input scaling, layer initialization, activation choice, and learning-rate-sensitive paths before training.");
+        }
+
+        if (trace.phase == "Backward" &&
+            trace.role == DebugTraceRole::Gradient &&
+            PayloadBool(trace, "is_nan", false)) {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Gradients", "Local Debug gradient is NaN",
+                "A Local Debug gradient trace reported a NaN parameter norm.",
+                "Inspect the loss, labels, activation ranges, and backend numerical stability before training.");
+        }
+
         if (trace.phase == "SmokeRun.Loss") {
             const bool pred_bad = PayloadBool(trace, "predictions_have_non_finite", false);
             const double loss = PayloadNumber(trace, "loss", 0.0);
