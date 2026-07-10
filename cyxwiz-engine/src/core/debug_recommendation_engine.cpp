@@ -161,6 +161,16 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
                 "Inspect labels, output activation, loss configuration, and input scaling before training.");
         }
 
+        if (trace.phase == "OptimizerStep" &&
+            trace.role == DebugTraceRole::OptimizerStep &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_optimizer" &&
+            trace.status == "failed") {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Optimization", "Local Debug optimizer step failed",
+                "A Local Debug optimizer-step trace reported a failure while updating parameters.",
+                "Inspect optimizer configuration, parameter registration, and backend update errors before training.");
+        }
+
         if (trace.phase == "Backward" &&
             trace.role == DebugTraceRole::Gradient &&
             !PayloadBool(trace, "has_gradient", true)) {

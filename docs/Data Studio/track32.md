@@ -1129,11 +1129,31 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug loss trace files.
 
+## Resume 2026-07-10 - Local Debug Optimizer Trace Recommendations
+
+Fifty-second follow-up on the first slice:
+
+- Studio Debugger now emits a canonical Local Debug optimizer-step trace when
+  `DebugExecutor` reaches the optimizer step.
+- Optimizer-step traces preserve diagnostic context and attach a structured
+  error issue when the parameter update fails during Local Debug.
+- `DebugRecommendationEngine` now emits a focused critical recommendation for
+  failed Local Debug optimizer-step traces.
+- Recommendation contract coverage now includes a canonical failed optimizer
+  trace fixture alongside loss, forward, and gradient fixtures.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug optimizer trace files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Loss Trace Recommendations`
-- Commit pushed: `dd0937b2 Trace local debug loss issues` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug loss trace recommendations, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Optimizer Trace Recommendations`
+- Commit pushed: not yet for this Local Debug optimizer trace continuation; previous pushed repository checkpoint was `0623cb3d Record local debug loss trace checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp`, `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug optimizer trace recommendations, or switch back to the next tracked tofix item requested by the user.

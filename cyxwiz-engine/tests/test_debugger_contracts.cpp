@@ -2198,6 +2198,34 @@ void TestRecommendationContract() {
           "local debug loss recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(local_loss));
 
+    cyxwiz::DebugTraceRecord local_optimizer = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        -1,
+        "LocalDebugOptimizerStep",
+        "OptimizerStep",
+        "OptimizerStep",
+        cyxwiz::DebugTraceRole::OptimizerStep,
+        {},
+        {},
+        "optimizer",
+        "LocalDebug",
+        "failed");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        local_optimizer,
+        "local_debug_optimizer",
+        "DebugExecutor",
+        "cyxwiz-engine/src/core/debug_executor.cpp",
+        "cyxwiz::DebugExecutor::Run");
+    local_optimizer.payload["optimizer_step_reached"] = true;
+    local_optimizer.payload["success"] = false;
+    cyxwiz::DebugNodeTraceContract::AddError(
+        local_optimizer,
+        "Exception during OptimizerStep: optimizer update failed",
+        cyxwiz::errors::Training::TrainingExecutionFailed);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_optimizer),
+          "local debug optimizer recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(local_optimizer));
+
     cyxwiz::DebugTraceRecord local_forward = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
         7,
@@ -2350,6 +2378,8 @@ void TestRecommendationContract() {
           "all-zero smoke gradients should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug loss is not finite"),
           "local debug non-finite loss should produce recommendation");
+    Check(HasRecommendation(recs, "Local Debug optimizer step failed"),
+          "local debug optimizer failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug produced non-finite activation"),
           "local debug non-finite activation should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is NaN"),

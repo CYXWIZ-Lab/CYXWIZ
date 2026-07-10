@@ -3848,6 +3848,42 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 "cyxwiz::DebugExecutor::Run");
             session.traces.push_back(std::move(record));
         }
+        const bool reached_optimizer_step =
+            session.debug_result.reached == cyxwiz::DebugStage::OptimizerStep ||
+            session.debug_result.reached == cyxwiz::DebugStage::Complete;
+        if (reached_optimizer_step) {
+            const bool optimizer_failed =
+                session.debug_result.reached == cyxwiz::DebugStage::OptimizerStep &&
+                !session.debug_result.success &&
+                !session.debug_result.failure_summary.empty();
+            cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
+                run_id,
+                -1,
+                "LocalDebugOptimizerStep",
+                "OptimizerStep",
+                "OptimizerStep",
+                cyxwiz::DebugTraceRole::OptimizerStep,
+                {},
+                {},
+                "optimizer",
+                "LocalDebug",
+                optimizer_failed ? "failed" : "ok");
+            record.payload["optimizer_step_reached"] = reached_optimizer_step;
+            record.payload["success"] = !optimizer_failed;
+            if (optimizer_failed) {
+                cyxwiz::DebugNodeTraceContract::AddError(
+                    record,
+                    session.debug_result.failure_summary,
+                    cyxwiz::errors::Training::TrainingExecutionFailed);
+            }
+            cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+                record,
+                "local_debug_optimizer",
+                "DebugExecutor",
+                "cyxwiz-engine/src/core/debug_executor.cpp",
+                "cyxwiz::DebugExecutor::Run");
+            session.traces.push_back(std::move(record));
+        }
         session.studio_events.push_back({
             run_id, "", session.graph_hash, -1,
             "LocalDebug", session.debug_result.success ? "passed" : "failed",
