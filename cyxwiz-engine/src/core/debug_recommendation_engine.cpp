@@ -217,6 +217,7 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
 
         if (trace.phase == "Backward" &&
             trace.role == DebugTraceRole::Gradient &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_backward" &&
             !PayloadBool(trace, "has_gradient", true)) {
             Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
                 "Gradients", "Local Debug gradient is missing",
@@ -226,6 +227,7 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
 
         if (trace.phase == "Backward" &&
             trace.role == DebugTraceRole::Gradient &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_backward" &&
             PayloadBool(trace, "is_nan", false)) {
             Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
                 "Gradients", "Local Debug gradient is NaN",
@@ -235,6 +237,7 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
 
         if (trace.phase == "Backward" &&
             trace.role == DebugTraceRole::Gradient &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_backward" &&
             PayloadBool(trace, "has_gradient", true) &&
             PayloadBool(trace, "is_zero", false)) {
             Add(out, DebugRecommendationSeverity::Warning, trace.node_id,

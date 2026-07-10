@@ -2400,12 +2400,37 @@ void TestRecommendationContract() {
         "float32",
         "LocalDebug",
         "nan");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        local_gradient,
+        "local_debug_backward",
+        "DebugExecutor",
+        "cyxwiz-engine/src/core/debug_executor.cpp",
+        "cyxwiz::DebugExecutor::Run");
     local_gradient.payload["has_gradient"] = true;
     local_gradient.payload["is_nan"] = true;
     local_gradient.payload["is_zero"] = false;
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(local_gradient),
           "local debug gradient recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(local_gradient));
+
+    cyxwiz::DebugTraceRecord runtime_gradient = cyxwiz::DebugNodeTraceContract::Make(
+        "recommendation-run",
+        18,
+        "RuntimeDense_18.weight",
+        "Parameter",
+        "Backward",
+        cyxwiz::DebugTraceRole::Gradient,
+        {},
+        {},
+        "float32",
+        "Runtime",
+        "nan");
+    runtime_gradient.payload["has_gradient"] = true;
+    runtime_gradient.payload["is_nan"] = true;
+    runtime_gradient.payload["is_zero"] = false;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(runtime_gradient),
+          "runtime gradient recommendation fixture should use canonical trace schema");
+    traces.push_back(std::move(runtime_gradient));
 
     cyxwiz::DebugTraceRecord local_missing_gradient = cyxwiz::DebugNodeTraceContract::Make(
         "recommendation-run",
@@ -2419,6 +2444,12 @@ void TestRecommendationContract() {
         "float32",
         "LocalDebug",
         "missing_gradient");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        local_missing_gradient,
+        "local_debug_backward",
+        "DebugExecutor",
+        "cyxwiz-engine/src/core/debug_executor.cpp",
+        "cyxwiz::DebugExecutor::Run");
     local_missing_gradient.payload["has_gradient"] = false;
     local_missing_gradient.payload["is_nan"] = false;
     local_missing_gradient.payload["is_zero"] = true;
@@ -2442,6 +2473,12 @@ void TestRecommendationContract() {
         "float32",
         "LocalDebug",
         "zero");
+    cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+        local_zero_gradient,
+        "local_debug_backward",
+        "DebugExecutor",
+        "cyxwiz-engine/src/core/debug_executor.cpp",
+        "cyxwiz::DebugExecutor::Run");
     local_zero_gradient.payload["has_gradient"] = true;
     local_zero_gradient.payload["is_nan"] = false;
     local_zero_gradient.payload["is_zero"] = true;
@@ -2541,6 +2578,11 @@ void TestRecommendationContract() {
           "local debug backward failure should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is NaN"),
           "local debug NaN gradient should produce recommendation");
+    Check(CountRecommendationsWithDetail(
+              recs,
+              "Local Debug gradient is NaN",
+              "A Local Debug gradient trace reported a NaN parameter norm.") == 1,
+          "runtime gradient NaN fixture should not produce Local Debug recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is missing"),
           "local debug missing gradient should produce recommendation");
     Check(HasRecommendation(recs, "Local Debug gradient is zero"),

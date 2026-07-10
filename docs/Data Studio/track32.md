@@ -1268,11 +1268,30 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug forward recommendation scoping files.
 
+## Resume 2026-07-10 - Local Debug Gradient Recommendation Scoping
+
+Fifty-ninth follow-up on the first slice:
+
+- `DebugRecommendationEngine` now scopes Local Debug gradient health
+  recommendations to canonical Local Debug backward traces.
+- Runtime/non-local backward gradient traces no longer produce Local
+  Debug-specific missing, NaN, or zero-gradient recommendations.
+- Recommendation contract coverage now attaches Local Debug diagnostic context
+  to gradient fixtures and includes a non-local NaN-gradient fixture proving the
+  Local Debug recommendation is not emitted for unrelated backward traces.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug gradient recommendation scoping files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Forward Recommendation Scoping`
-- Commit pushed: `11972308 Scope local debug forward recommendations` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug forward recommendation scoping, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Gradient Recommendation Scoping`
+- Commit pushed: not yet for this Local Debug gradient recommendation scoping continuation; previous pushed repository checkpoint was `2c86f2cb Record local debug forward scoping checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`; unrelated dirty files belong to other in-progress ticket work and were left untouched.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug gradient recommendation scoping, or switch back to the next tracked tofix item requested by the user.
