@@ -3553,14 +3553,18 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         compile_summary = session.failure_summary;
     }
 
-    cyxwiz::DebugTraceRecord compile_trace;
-    compile_trace.run_id = run_id;
-    compile_trace.node_id = -1;
-    compile_trace.node_name = "GraphCompiler";
-    compile_trace.node_type = "Compile";
-    compile_trace.phase = "Compile";
-    compile_trace.role = cyxwiz::DebugTraceRole::CompileArtifact;
-    compile_trace.status = compile_success ? "passed" : "failed";
+    cyxwiz::DebugTraceRecord compile_trace = cyxwiz::DebugNodeTraceContract::Make(
+        run_id,
+        -1,
+        "GraphCompiler",
+        "Compile",
+        "Compile",
+        cyxwiz::DebugTraceRole::CompileArtifact,
+        {},
+        {},
+        "graph",
+        "GraphCompiler",
+        compile_success ? "passed" : "failed");
     compile_trace.issues = session.issues;
     compile_trace.payload["node_count"] = nodes.size();
     compile_trace.payload["link_count"] = links.size();
@@ -3594,16 +3598,20 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     cyxwiz::PreflightValidator preflight_validator;
     session.preflight = preflight_validator.Validate(config, nodes, links, session.graph_hash);
     session.preflight_summary = session.preflight.summary;
-    cyxwiz::DebugTraceRecord preflight_trace;
-    preflight_trace.run_id = run_id;
-    preflight_trace.node_id = -1;
-    preflight_trace.node_name = "PreflightValidator";
-    preflight_trace.node_type = "Preflight";
-    preflight_trace.phase = "Preflight";
-    preflight_trace.role = session.preflight.ready
-        ? cyxwiz::DebugTraceRole::CompileArtifact
-        : cyxwiz::DebugTraceRole::Warning;
-    preflight_trace.status = session.preflight.ready ? "ready" : "blocked";
+    cyxwiz::DebugTraceRecord preflight_trace = cyxwiz::DebugNodeTraceContract::Make(
+        run_id,
+        -1,
+        "PreflightValidator",
+        "Preflight",
+        "Preflight",
+        session.preflight.ready
+            ? cyxwiz::DebugTraceRole::CompileArtifact
+            : cyxwiz::DebugTraceRole::Warning,
+        {},
+        {},
+        "graph",
+        "PreflightValidator",
+        session.preflight.ready ? "ready" : "blocked");
     preflight_trace.issues = session.preflight.issues;
     preflight_trace.payload["ready"] = session.preflight.ready;
     cyxwiz::DebugNodeTraceContract::AttachIssueSummary(preflight_trace, session.preflight.issues);

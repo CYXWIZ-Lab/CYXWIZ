@@ -911,11 +911,30 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the auxiliary trace schema files.
 
+## Resume 2026-07-10 - Canonical Compile Preflight Session Traces
+
+Forty-first follow-up on the first slice:
+
+- Studio Debugger compile traces now use `DebugNodeTraceContract::Make` instead
+  of hand-filling the canonical trace envelope in `MainWindow`.
+- Studio Debugger preflight traces now use the same canonical envelope while
+  preserving their ready/blocked role, status, issues, diagnostic context, and
+  summary payloads.
+- The change keeps compile/preflight trace construction inside the existing
+  session flow and does not add a parallel debugger execution path.
+
+Additional validation:
+
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: scoped `git diff --check` for the compile/preflight trace files.
+
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Canonical Auxiliary Trace Schema Marker`
-- Commit pushed: `360b1124 Canonicalize auxiliary trace schemas` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none before the next slice.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical auxiliary trace schema markers, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Canonical Compile Preflight Session Traces`
+- Commit pushed: not yet for this Compile/Preflight continuation; previous pushed repository checkpoint was `da8cbe10 Clarify auxiliary trace resume state` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp` and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical compile/preflight traces, or switch back to the next tracked tofix item requested by the user.
