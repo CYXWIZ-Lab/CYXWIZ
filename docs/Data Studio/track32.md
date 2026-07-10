@@ -1149,11 +1149,30 @@ Additional validation:
 - Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
 - Passed: scoped `git diff --check` for the Local Debug optimizer trace files.
 
+## Resume 2026-07-10 - Local Debug Forward Failure Recommendations
+
+Fifty-third follow-up on the first slice:
+
+- Studio Debugger now emits a canonical Local Debug forward-stage failure trace
+  when `DebugExecutor` fails while executing model layers.
+- Forward failure traces preserve diagnostic context and attach a structured
+  training execution error issue using the existing trace contract.
+- `DebugRecommendationEngine` now emits a focused critical recommendation for
+  failed Local Debug forward traces.
+- Recommendation contract coverage now includes a canonical failed forward
+  trace fixture alongside loss, optimizer, and gradient fixtures.
+
+Additional validation:
+
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+- Passed: scoped `git diff --check` for the Local Debug forward failure files.
 ## Resume Pointer
 
 Current stopping point:
 
-- Last completed slice: `Local Debug Optimizer Trace Recommendations`
-- Commit pushed: `8005a68b Trace local debug optimizer step` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: none; remaining dirty files belong to other in-progress ticket work and were left untouched.
-- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug optimizer trace recommendations, or switch back to the next tracked tofix item requested by the user.
+- Last completed slice: `Local Debug Forward Failure Recommendations`
+- Commit pushed: not yet for this Local Debug forward failure continuation; previous pushed repository checkpoint was `a61dd8ba Record local debug optimizer trace checkpoint` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: `main_window.cpp`, `debug_recommendation_engine.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug forward failure recommendations, or switch back to the next tracked tofix item requested by the user.

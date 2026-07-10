@@ -151,6 +151,16 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
                 "Inspect input scaling, layer initialization, activation choice, and learning-rate-sensitive paths before training.");
         }
 
+        if (trace.phase == "Forward" &&
+            trace.role == DebugTraceRole::Activation &&
+            PayloadString(trace, "diagnostic_phase") == "local_debug_forward" &&
+            trace.status == "failed") {
+            Add(out, DebugRecommendationSeverity::Critical, trace.node_id,
+                "Runtime", "Local Debug forward pass failed",
+                "A Local Debug forward trace reported a failure while executing model layers.",
+                "Inspect model construction, input tensor shape, layer compatibility, and backend errors before training.");
+        }
+
         if (trace.phase == "Loss" &&
             trace.role == DebugTraceRole::Loss &&
             PayloadString(trace, "diagnostic_phase") == "local_debug_loss" &&

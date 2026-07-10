@@ -3761,6 +3761,38 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.traces.push_back(std::move(record));
         }
 
+        const bool local_debug_forward_failed =
+            session.debug_result.reached == cyxwiz::DebugStage::Forward &&
+            !session.debug_result.success &&
+            !session.debug_result.failure_summary.empty();
+        if (local_debug_forward_failed) {
+            cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
+                run_id,
+                -1,
+                "LocalDebugForward",
+                "Forward",
+                "Forward",
+                cyxwiz::DebugTraceRole::Activation,
+                {},
+                {},
+                "float32",
+                "LocalDebug",
+                "failed");
+            record.payload["forward_reached"] = true;
+            record.payload["success"] = false;
+            cyxwiz::DebugNodeTraceContract::AddError(
+                record,
+                session.debug_result.failure_summary,
+                cyxwiz::errors::Training::TrainingExecutionFailed);
+            cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
+                record,
+                "local_debug_forward",
+                "DebugExecutor",
+                "cyxwiz-engine/src/core/debug_executor.cpp",
+                "cyxwiz::DebugExecutor::Run");
+            session.traces.push_back(std::move(record));
+        }
+
         const bool has_local_debug_loss =
             session.debug_result.reached == cyxwiz::DebugStage::Loss ||
             session.debug_result.reached == cyxwiz::DebugStage::Backward ||
