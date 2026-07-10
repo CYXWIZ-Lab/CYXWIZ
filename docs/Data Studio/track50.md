@@ -38,9 +38,30 @@ Validated:
 - `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_language_model_inference_contract.exe`
 - `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_cyxmodel_causal_lm_generation_roundtrip.exe`
 
+## Phase 2 - PyTorch Reference Sampling Fixture
+
+Status: complete for the PyTorch reference sampling slice.
+
+Scope:
+
+- Extended computation-truth coverage for GPT-style generation probability
+  behavior without adding PyTorch to the runtime boundary.
+- Uses LibTorch as the direct reference when `CYXWIZ_HAS_PYTORCH` is enabled
+  outside Debug; otherwise uses tiny PyTorch-derived constants in the C++ test.
+- Covers temperature scaling, top-k, top-p, candidate ordering,
+  renormalization, and greedy candidate selection.
+
+Validated:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Debug --target test_computation_truth_transformer_primitives -- /m:4 /v:minimal`
+- `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_computation_truth_transformer_primitives.exe`
+- `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_language_model_generation.exe`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Release --target test_computation_truth_transformer_primitives -- /m:4 /v:minimal`
+- `$env:PATH = 'D:\tmp\libtorch-cpu-2.7.0\libtorch\lib;' + $env:PATH; D:\Dev\CyxWiz_Claude\build\bin\Release\test_computation_truth_transformer_primitives.exe`
+
 ## Next Pickup
 
 Add Studio-facing smoke coverage around the panel metadata path if a practical
-harness is available. The next numerical slice should add PyTorch-backed or
-generated PyTorch expected-output fixtures for deterministic sampling/logit
-parity without bringing PyTorch into the engine runtime boundary.
+harness is available. Remaining numerical follow-up is deterministic
+multinomial parity policy: keep any PyTorch oracle in tests/fixtures and do not
+force PyTorch into the engine runtime boundary.

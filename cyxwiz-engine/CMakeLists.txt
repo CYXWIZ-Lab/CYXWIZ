@@ -1516,6 +1516,7 @@ set_target_properties(test_computation_truth_tfidf_loss PROPERTIES
 add_executable(test_computation_truth_transformer_primitives
     tests/computation_truth/test_computation_truth_transformer_primitives.cpp
     src/core/language_model_training.cpp
+    src/core/language_model_generation.cpp
     src/core/transformer_primitive_contracts.cpp
 )
 

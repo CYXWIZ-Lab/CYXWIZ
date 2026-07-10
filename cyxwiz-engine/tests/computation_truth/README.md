@@ -50,6 +50,31 @@ cmake --build build --config Release --target test_computation_truth_tfidf_loss 
 build\bin\Release\test_computation_truth_tfidf_loss.exe
 ```
 
-Note: this repository build currently reports `PyTorch/LibTorch: OFF`, so C++ tests should use hand references or optional Python-side PyTorch checks until LibTorch is available.
+Note: some local builds report `PyTorch/LibTorch: OFF`; those builds should
+use hand references or optional Python-side PyTorch checks. When LibTorch is
+enabled, keep it in computation-truth tests and outside the engine runtime
+boundary.
 
 Latest observed run also exercised `LinearLayer` while ArrayFire GPU was active.
+
+`test_computation_truth_transformer_primitives`
+
+- Verifies embedding, positional encoding, attention, layer norm, encoder, and
+  decoder primitive parity.
+- Verifies tiny causal-LM vocabulary logits and loss against PyTorch linear and
+  cross-entropy semantics.
+- Verifies GPT-style generation candidate probabilities for temperature,
+  top-k, top-p, and greedy selection against PyTorch softmax/top-k reference
+  behavior, with hard-coded PyTorch-derived constants when LibTorch is not
+  enabled.
+
+Run:
+
+```powershell
+cmake --build build --config Debug --target test_computation_truth_transformer_primitives -- /m:4 /v:minimal
+build\bin\Debug\test_computation_truth_transformer_primitives.exe
+
+cmake --build build --config Release --target test_computation_truth_transformer_primitives -- /m:4 /v:minimal
+$env:PATH = "<local-libtorch>\lib;$env:PATH"
+build\bin\Release\test_computation_truth_transformer_primitives.exe
+```

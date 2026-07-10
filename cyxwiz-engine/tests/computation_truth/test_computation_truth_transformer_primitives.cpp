@@ -3,6 +3,7 @@
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
 #include "core/language_model_training.h"
+#include "core/language_model_generation.h"
 #include "core/transformer_primitive_contracts.h"
 
 #if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
@@ -13,6 +14,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -42,12 +44,37 @@ void CheckShape(const cyxwiz::Tensor& tensor,
     Check(tensor.Shape() == expected, label + " shape mismatch");
 }
 
+void CheckCandidatesNear(
+    const std::vector<cyxwiz::NextTokenCandidate>& actual,
+    const std::vector<int64_t>& expected_ids,
+    const std::vector<float>& expected_probabilities,
+    float tolerance,
+    const std::string& label) {
+    Check(actual.size() == expected_ids.size(), label + " candidate count");
+    Check(expected_ids.size() == expected_probabilities.size(),
+          label + " expected fixture size");
+    for (size_t i = 0; i < actual.size(); ++i) {
+        Check(actual[i].token_id == expected_ids[i], label + " token order");
+        CheckNear(actual[i].probability,
+                  expected_probabilities[i],
+                  tolerance,
+                  label + " probability");
+    }
+}
+
 #if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
 std::vector<float> TensorToVector(const torch::Tensor& tensor) {
     torch::Tensor contiguous =
         tensor.detach().to(torch::kCPU).contiguous().to(torch::kFloat32);
     const float* data = contiguous.data_ptr<float>();
     return std::vector<float>(data, data + contiguous.numel());
+}
+
+std::vector<int64_t> TensorToInt64Vector(const torch::Tensor& tensor) {
+    torch::Tensor contiguous =
+        tensor.detach().to(torch::kCPU).contiguous().to(torch::kInt64);
+    const int64_t* data = contiguous.data_ptr<int64_t>();
+    return std::vector<int64_t>(data, data + contiguous.numel());
 }
 #endif
 
@@ -1323,6 +1350,81 @@ void TestTransformerDecoderCausalForwardParity() {
     }
 }
 
+void TestGenerationSamplingDistributionParity() {
+    cyxwiz::LanguageModelGenerationConfig config;
+    config.temperature = 0.75f;
+    config.top_k = 4;
+    config.top_p = 0.85f;
+
+    const std::vector<float> logits = {
+        9.0f, 8.0f, 7.0f, 6.0f, 5.0f,
+        0.25f, 1.25f, -0.75f, 2.0f, 0.5f,
+    };
+
+    const auto candidates = cyxwiz::BuildNextTokenDistribution(
+        logits,
+        1,
+        2,
+        5,
+        config);
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+    auto torch_logits = torch::tensor(
+        {0.25f, 1.25f, -0.75f, 2.0f, 0.5f}, torch::kFloat32) /
+        config.temperature;
+    auto torch_probabilities = torch::softmax(torch_logits, -1);
+    auto topk = torch::topk(torch_probabilities,
+                            static_cast<int64_t>(config.top_k));
+    std::vector<float> topk_probabilities = TensorToVector(std::get<0>(topk));
+    std::vector<int64_t> topk_ids = TensorToInt64Vector(std::get<1>(topk));
+
+    std::vector<int64_t> expected_ids;
+    std::vector<float> expected_probabilities;
+    float cumulative = 0.0f;
+    for (size_t i = 0; i < topk_ids.size(); ++i) {
+        expected_ids.push_back(topk_ids[i]);
+        expected_probabilities.push_back(topk_probabilities[i]);
+        cumulative += topk_probabilities[i];
+        if (cumulative >= config.top_p) {
+            break;
+        }
+    }
+    float filtered_sum = 0.0f;
+    for (const float probability : expected_probabilities) {
+        filtered_sum += probability;
+    }
+    for (float& probability : expected_probabilities) {
+        probability /= filtered_sum;
+    }
+#else
+    const std::vector<int64_t> expected_ids = {3, 1, 4};
+    const std::vector<float> expected_probabilities = {
+        0.6652409f,
+        0.2447285f,
+        0.0900306f,
+    };
+#endif
+
+    CheckCandidatesNear(candidates,
+                        expected_ids,
+                        expected_probabilities,
+                        1e-5f,
+                        "Generation top-k/top-p distribution matches PyTorch");
+
+    config.sampling_mode = cyxwiz::LanguageModelSamplingMode::Greedy;
+    std::mt19937 rng(11);
+    const auto selection = cyxwiz::SelectNextTokenFromDistribution(
+        candidates,
+        config,
+        rng);
+    Check(selection.token_id == expected_ids.front(),
+          "Generation greedy selection should match PyTorch argmax candidate");
+    CheckNear(selection.probability,
+              expected_probabilities.front(),
+              1e-5f,
+              "Generation greedy selection probability matches PyTorch fixture");
+}
+
 void TestTinyCausalLanguageModelLogitsAndLossParity() {
     const std::vector<float> decoder_hidden_values = {
         -0.1711998f, -1.3525668f, 0.1731623f, 1.0115018f,
@@ -1410,6 +1512,7 @@ int main() {
         TestLayerNormParity();
         TestTransformerEncoderForwardParity();
         TestTransformerDecoderCausalForwardParity();
+        TestGenerationSamplingDistributionParity();
         TestTinyCausalLanguageModelLogitsAndLossParity();
         std::cout << "Computation truth transformer primitive checks passed\n";
         return 0;
