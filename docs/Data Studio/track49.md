@@ -117,8 +117,31 @@ Commit state:
 - Track49 implementation and verification are closed in that pushed checkpoint.
 - Later dirty work in the workspace belongs to the track32 debugger diagnostic continuation, not track49.
 
+## Follow-up - Studio Package Contract Enforcement
+
+Status: completed.
+
+Implementation:
+
+- The Language Model Generation panel now persists the package-level
+  `LanguageModelPackageContract` computed while loading an imported `.cyxmodel`.
+- Imported `.cyxmodel` generation and compatibility checks now stop before
+  runtime execution when the package metadata is not a compatible `causal_lm`
+  generation package.
+- Imported text-prompt generation now requires the packaged tokenizer assets
+  instead of silently allowing a manual tokenizer mismatch.
+- Runtime prompt-length and vocab checks now use the imported package contract
+  even in raw token-ID mode.
+
+Verification:
+
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Debug --target cyxwiz-engine`
+- `cmake --build D:\Dev\CyxWiz_Claude\build --config Debug --target test_language_model_inference_contract test_cyxmodel_causal_lm_generation_roundtrip`
+- `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_language_model_inference_contract.exe`
+- `D:\Dev\CyxWiz_Claude\build\bin\Debug\test_cyxmodel_causal_lm_generation_roundtrip.exe`
+
 ## Next Pickup
 
 - Optional: add a direct HTTP integration test for `/v1/model` and `/v1/generate` using a generated causal-LM package.
-- Optional: extend the Studio panel test surface if a GUI harness becomes available.
+- Optional: extend the Studio panel test surface if a GUI harness becomes available; the current follow-up is compile-validated through `cyxwiz-engine`.
 - Optional: run the full engine regression suite if a broader release gate is required beyond the focused Debug/Release tests above.

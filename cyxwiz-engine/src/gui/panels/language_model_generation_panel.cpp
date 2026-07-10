@@ -228,6 +228,14 @@ void LanguageModelGenerationPanel::RenderResult() {
 
 void LanguageModelGenerationPanel::RunGeneration() {
     try {
+        if (use_imported_model_) {
+            if (use_text_prompt_ && !use_packaged_tokenizer_) {
+                throw std::runtime_error(
+                    "Imported .cyxmodel generation requires packaged tokenizer assets");
+            }
+            RequireImportedModelPackageContract();
+        }
+
         std::unique_ptr<Tokenizer> tokenizer;
         std::vector<int64_t> prompt;
         size_t tokenizer_vocab_size = 0;
@@ -240,6 +248,11 @@ void LanguageModelGenerationPanel::RunGeneration() {
         } else {
             prompt = ParsePromptIds();
         }
+        if (use_imported_model_) {
+            tokenizer_vocab_size = imported_model_contract_.tokenizer_vocabulary_size;
+            max_sequence_length = imported_model_contract_.max_sequence_length;
+        }
+
         const auto prompt_contract = ValidateLanguageModelPromptIds(
             prompt,
             max_sequence_length);
@@ -301,6 +314,13 @@ void LanguageModelGenerationPanel::CheckModelCompatibility() {
         if (model == nullptr) {
             throw std::runtime_error("No trained or imported model is available");
         }
+        if (use_imported_model_) {
+            if (use_text_prompt_ && !use_packaged_tokenizer_) {
+                throw std::runtime_error(
+                    "Imported .cyxmodel compatibility checks require packaged tokenizer assets");
+            }
+            RequireImportedModelPackageContract();
+        }
 
         std::unique_ptr<Tokenizer> tokenizer;
         std::vector<int64_t> prompt;
@@ -313,6 +333,10 @@ void LanguageModelGenerationPanel::CheckModelCompatibility() {
             max_sequence_length = static_cast<size_t>(std::max(0, tokenizer->GetMaxLength()));
         } else {
             prompt = ParsePromptIds();
+        }
+        if (use_imported_model_) {
+            tokenizer_vocab_size = imported_model_contract_.tokenizer_vocabulary_size;
+            max_sequence_length = imported_model_contract_.max_sequence_length;
         }
 
         const auto prompt_contract = ValidateLanguageModelPromptIds(
@@ -338,14 +362,33 @@ void LanguageModelGenerationPanel::CheckModelCompatibility() {
             std::to_string(runtime_contract.vocab_size) + "] logits";
         if (tokenizer_vocab_size > 0) {
             compatibility_status_ +=
-                "; tokenizer vocab=" + std::to_string(tokenizer_vocab_size) +
-                ", eos=" +
-                std::to_string(tokenizer->GetVocabulary().EosIndex());
+                "; tokenizer vocab=" + std::to_string(tokenizer_vocab_size);
+            if (use_imported_model_) {
+                compatibility_status_ +=
+                    ", eos=" + std::to_string(imported_model_contract_.eos_token_id);
+            } else if (tokenizer) {
+                compatibility_status_ +=
+                    ", eos=" + std::to_string(tokenizer->GetVocabulary().EosIndex());
+            }
         }
         compatibility_status_ += ".";
     } catch (const std::exception& e) {
         compatibility_status_ =
             std::string("Not compatible for generation: ") + e.what();
+    }
+}
+
+void LanguageModelGenerationPanel::RequireImportedModelPackageContract() const {
+    if (!use_imported_model_) {
+        return;
+    }
+    if (imported_model_contract_.package_path.empty()) {
+        throw std::runtime_error(
+            "Imported model package contract is not available");
+    }
+    if (!imported_model_contract_.compatible) {
+        throw std::runtime_error(
+            "Package contract failed: " + imported_model_contract_.error);
     }
 }
 
@@ -444,6 +487,7 @@ void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
             probe,
             &contract_tokenizer_package,
             cyxmodel_path_);
+        imported_model_contract_ = package_contract;
         imported_model_summary_ =
             "package: family=" +
             (package_contract.model_family.empty() ? std::string("unspecified")
@@ -464,11 +508,15 @@ void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
               "validate the active runtime graph."
             : "Package contract failed: " + package_contract.error;
         use_imported_model_ = true;
-        status_ = "Loaded model and tokenizer assets from .cyxmodel.";
+        status_ = package_contract.compatible
+            ? "Loaded model and tokenizer assets from .cyxmodel."
+            : "Loaded model package, but generation contract failed: " +
+                  package_contract.error;
     } catch (const std::exception& e) {
         imported_model_.reset();
         imported_model_source_.clear();
         imported_model_summary_.clear();
+        imported_model_contract_ = {};
         use_imported_model_ = false;
         status_ = std::string("Failed to load model package: ") + e.what();
     }

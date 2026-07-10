@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include "../../inference/language_model_inference_contract.h"
 
 #include <cstdint>
 #include <memory>
@@ -28,6 +29,7 @@ private:
     void CheckModelCompatibility();
     void LoadTokenizerFromCyxModel();
     void LoadModelAndTokenizerFromCyxModel();
+    void RequireImportedModelPackageContract() const;
     SequentialModel* ActiveModel() const;
     std::vector<int64_t> ParsePromptIds() const;
     std::vector<int64_t> CurrentPromptIdsForProbe() const;
@@ -53,6 +55,7 @@ private:
     std::unique_ptr<SequentialModel> imported_model_;
     std::string imported_model_source_;
     std::string imported_model_summary_;
+    LanguageModelPackageContract imported_model_contract_;
 
     int max_new_tokens_ = 16;
     float temperature_ = 1.0f;
