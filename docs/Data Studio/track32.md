@@ -895,6 +895,6 @@ Additional validation:
 Current stopping point:
 
 - Last completed slice: `Canonical Text Preprocessing Trace Records`
-- Commit pushed: not yet for this Text Preprocessing continuation; previous pushed repository checkpoint was `1bbdb67b Canonicalize smoke run traces` on `origin/Nodes_Implementation`.
-- Current uncommitted files for this continuation: `text_preprocessing_tracer.cpp`, `test_debugger_contracts.cpp`, and `track32.md`.
+- Commit pushed: `23bcb3a9 Canonicalize text preprocessing traces` on `origin/Nodes_Implementation`.
+- Current uncommitted files for this continuation: none before the next slice.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after canonical text preprocessing traces, or switch back to the next tracked tofix item requested by the user.
