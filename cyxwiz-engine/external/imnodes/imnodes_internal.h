@@ -253,6 +253,7 @@ struct ImNodesEditorContext
 
     // ui related fields
     ImVec2 Panning;
+    float Zoom = 1.0f;
     ImVec2 AutoPanningDelta;
     // Minimum and maximum extents of all content in grid space. Valid after final
     // ImNodes::EndNode() call.

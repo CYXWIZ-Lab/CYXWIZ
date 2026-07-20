@@ -290,6 +290,7 @@ void NodeEditor::Render() {
         ImNodes::PushStyleVar(ImNodesStyleVar_LinkThickness, 3.0f * zoom_);
         ImNodes::PushStyleVar(ImNodesStyleVar_PinLineThickness, 1.0f * zoom_);
         ImGui::SetWindowFontScale(zoom_);
+        ImNodes::EditorContextSetZoom(zoom_);
 
         ImNodes::BeginNodeEditor();
 
@@ -374,8 +375,8 @@ void NodeEditor::Render() {
 
             // Convert screen position to grid space
             context_menu_pos_ = ImVec2(
-                mouse_pos.x - editor_origin.x - panning.x,
-                mouse_pos.y - editor_origin.y - panning.y
+                (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                (mouse_pos.y - editor_origin.y - panning.y) / zoom_
             );
             right_click_detected = true;
         }

@@ -255,7 +255,7 @@ inline bool RectangleOverlapsLink(
 
 inline ImVec2 ScreenSpaceToGridSpace(const ImNodesEditorContext& editor, const ImVec2& v)
 {
-    return v - GImNodes->CanvasOriginScreenSpace - editor.Panning;
+    return (v - GImNodes->CanvasOriginScreenSpace - editor.Panning) / editor.Zoom;
 }
 
 inline ImRect ScreenSpaceToGridSpace(const ImNodesEditorContext& editor, const ImRect& r)
@@ -265,17 +265,17 @@ inline ImRect ScreenSpaceToGridSpace(const ImNodesEditorContext& editor, const I
 
 inline ImVec2 GridSpaceToScreenSpace(const ImNodesEditorContext& editor, const ImVec2& v)
 {
-    return v + GImNodes->CanvasOriginScreenSpace + editor.Panning;
+    return v * editor.Zoom + GImNodes->CanvasOriginScreenSpace + editor.Panning;
 }
 
 inline ImVec2 GridSpaceToEditorSpace(const ImNodesEditorContext& editor, const ImVec2& v)
 {
-    return v + editor.Panning;
+    return v * editor.Zoom + editor.Panning;
 }
 
 inline ImVec2 EditorSpaceToGridSpace(const ImNodesEditorContext& editor, const ImVec2& v)
 {
-    return v - editor.Panning;
+    return (v - editor.Panning) / editor.Zoom;
 }
 
 inline ImVec2 EditorSpaceToScreenSpace(const ImVec2& v)
@@ -2053,13 +2053,24 @@ void EditorContextResetPanning(const ImVec2& pos)
     editor.Panning = pos;
 }
 
+void EditorContextSetZoom(const float zoom)
+{
+    IM_ASSERT(zoom > 0.0f);
+    EditorContextGet().Zoom = zoom;
+}
+
+float EditorContextGetZoom()
+{
+    return EditorContextGet().Zoom;
+}
+
 void EditorContextMoveToNode(const int node_id)
 {
     ImNodesEditorContext& editor = EditorContextGet();
     ImNodeData&           node = ObjectPoolFindOrCreateObject(editor.Nodes, node_id);
 
-    editor.Panning.x = -node.Origin.x;
-    editor.Panning.y = -node.Origin.y;
+    editor.Panning.x = -node.Origin.x * editor.Zoom;
+    editor.Panning.y = -node.Origin.y * editor.Zoom;
 }
 
 void SetImGuiContext(ImGuiContext* ctx) { ImGui::SetCurrentContext(ctx); }
