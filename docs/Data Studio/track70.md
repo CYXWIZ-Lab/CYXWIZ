@@ -204,3 +204,10 @@ changes are outside Track 70 scope and must remain isolated.
   persists `dataset_role=train|dev|test`; Dev/Test continue through the
   compiler-owned validation and full-source role batcher path rather than a UI
   shortcut. APS remains an acceptance fixture only, not a special case.
+- 2026-07-21: Added role overlap preflight for externally supplied Dev/Test
+  tabular sources. When Train and a supplied role share a stable identifier
+  column such as `sample_id`/`*_id`, launch now blocks on detected overlap with
+  a role-specific leakage diagnostic. For small tables without such an
+  identifier, the launcher falls back to bounded exact-row comparison; for
+  larger tables it logs that overlap verification was not practical instead of
+  pretending the source is leak-free.

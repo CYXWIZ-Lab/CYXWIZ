@@ -22,6 +22,7 @@ constexpr const char* kDatasetName = "gui_sequence_preflight_runtime";
 constexpr const char* kRoleTrainDataset = "gui_role_schema_train";
 constexpr const char* kRoleMissingLabelDataset = "gui_role_schema_missing_label";
 constexpr const char* kRoleMismatchedFeatureDataset = "gui_role_schema_mismatched_feature";
+constexpr const char* kRoleOverlappingIdDataset = "gui_role_schema_overlapping_id";
 void Check(bool condition, const std::string& message) {
     if (!condition) {
         std::cerr << "FAIL: " << message << "\n";
@@ -78,12 +79,14 @@ std::shared_ptr<arrow::Table> MakeRoleTable(
         ? arrow::field("sensor_b", arrow::int64())
         : arrow::field("sensor_b", arrow::float64());
     auto schema = arrow::schema({
+        arrow::field("sample_id", arrow::int64()),
         arrow::field("sensor_a", arrow::float64()),
         second_feature,
         arrow::field(label_name, arrow::int64()),
     });
 
     std::vector<std::shared_ptr<arrow::Array>> arrays = {
+        FinishInt64Array({100, 200, 300}),
         FinishDoubleArray({1.0, 2.0, 3.0}),
         mismatched_second_feature_type
             ? FinishInt64Array({10, 20, 30})
@@ -91,6 +94,23 @@ std::shared_ptr<arrow::Table> MakeRoleTable(
         FinishInt64Array({0, 1, 0}),
     };
     return arrow::Table::Make(schema, arrays, 3);
+}
+std::shared_ptr<arrow::Table> MakeRoleTableWithSampleIds(
+    const std::vector<int64_t>& sample_ids) {
+    auto schema = arrow::schema({
+        arrow::field("sample_id", arrow::int64()),
+        arrow::field("sensor_a", arrow::float64()),
+        arrow::field("sensor_b", arrow::float64()),
+        arrow::field("label", arrow::int64()),
+    });
+
+    return arrow::Table::Make(
+        schema,
+        {FinishInt64Array(sample_ids),
+         FinishDoubleArray({1.0, 2.0, 3.0}),
+         FinishDoubleArray({10.0, 20.0, 30.0}),
+         FinishInt64Array({0, 1, 0})},
+        3);
 }
 
 std::shared_ptr<arrow::Table> MakeSequenceTable() {
@@ -206,6 +226,7 @@ int main() {
     registry.UnregisterTabularDataset(kRoleTrainDataset);
     registry.UnregisterTabularDataset(kRoleMissingLabelDataset);
     registry.UnregisterTabularDataset(kRoleMismatchedFeatureDataset);
+    registry.UnregisterTabularDataset(kRoleOverlappingIdDataset);
     Check(registry.RegisterArrowTable(MakeSequenceTable(), kDatasetName) !=
               nullptr,
           "sequence preflight dataset should register");
@@ -219,6 +240,11 @@ int main() {
               MakeRoleTable("label", true),
               kRoleMismatchedFeatureDataset) != nullptr,
           "mismatched-feature role dataset should register");
+    Check(registry.RegisterArrowTable(
+              MakeRoleTableWithSampleIds({400, 200, 500}),
+              kRoleOverlappingIdDataset) != nullptr,
+          "overlapping-id external role dataset should register");
+
 
     const std::vector<gui::MLNode> nodes = {MakeDataInputNode()};
     const std::vector<gui::NodeLink> links;
@@ -326,6 +352,48 @@ int main() {
               "mismatched external role feature should name dataset: " +
                   role_result.error_message);
     }
+    {
+        const std::vector<gui::MLNode> role_nodes = {
+            MakeRoleDataInputNode(10, "Training Data", kRoleTrainDataset),
+            MakeRoleDataInputNode(11, "External Test Data",
+                                  kRoleOverlappingIdDataset, "test"),
+        };
+        bool role_dispatch_called = false;
+        auto role_result = gui::StartGraphTrainingFromCompiledConfig(
+            role_nodes,
+            links,
+            MakeRoleConfig(kRoleTrainDataset, kRoleOverlappingIdDataset),
+            registry,
+            std::weak_ptr<cyxwiz::TrainingPlotPanel>{},
+            [](bool) {},
+            [&](cyxwiz::TrainingConfiguration,
+                const std::string&,
+                const std::string&,
+                int,
+                int,
+                std::weak_ptr<cyxwiz::TrainingPlotPanel>,
+                std::function<void(bool)>) {
+                role_dispatch_called = true;
+                return true;
+            });
+        Check(!role_result.started,
+              "overlapping external role id should block synchronously");
+        Check(!role_dispatch_called,
+              "overlapping external role id should not call dispatch");
+        Check(role_result.status_title == "Test dataset leakage detected",
+              "overlapping external role id should name leakage: " +
+                  role_result.status_title);
+        Check(role_result.error_message.find("sample_id") != std::string::npos,
+              "overlapping external role id should name id column: " +
+                  role_result.error_message);
+        Check(role_result.error_message.find("200") != std::string::npos,
+              "overlapping external role id should name overlapping value: " +
+                  role_result.error_message);
+        Check(role_result.error_message.find(kRoleOverlappingIdDataset) !=
+                  std::string::npos,
+              "overlapping external role id should name dataset: " +
+                  role_result.error_message);
+    }
     std::atomic<bool> missing_dispatch_called{false};
     std::atomic<bool> missing_preparation_failed{false};
     auto missing_config = MakeSequenceConfig();
@@ -374,6 +442,7 @@ int main() {
     registry.UnregisterTabularDataset(kRoleTrainDataset);
     registry.UnregisterTabularDataset(kRoleMissingLabelDataset);
     registry.UnregisterTabularDataset(kRoleMismatchedFeatureDataset);
+    registry.UnregisterTabularDataset(kRoleOverlappingIdDataset);
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
     std::cout << "Graph training sequence preflight test passed\n";
     return 0;

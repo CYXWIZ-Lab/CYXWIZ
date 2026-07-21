@@ -13,6 +13,9 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
+#include <sstream>
+#include <unordered_set>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -308,6 +311,323 @@ std::vector<std::shared_ptr<arrow::Field>> RoleFeatureFields(
     }
     return fields;
 }
+std::string LowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool IsStableIdentifierColumnName(const std::string& name) {
+    const std::string lower = LowerAscii(name);
+    if (lower == "id" || lower == "uid" || lower == "uuid" ||
+        lower == "row_id" || lower == "record_id" ||
+        lower == "sample_id" || lower == "example_id" ||
+        lower == "instance_id") {
+        return true;
+    }
+    return lower.size() > 3 &&
+           lower.compare(lower.size() - 3, 3, "_id") == 0;
+}
+
+std::string FindSharedStableIdentifierColumn(
+    const std::shared_ptr<arrow::Schema>& train_schema,
+    const std::shared_ptr<arrow::Schema>& role_schema,
+    const std::string& train_label_name,
+    const std::string& role_label_name) {
+    if (!train_schema || !role_schema) return {};
+    for (int i = 0; i < train_schema->num_fields(); ++i) {
+        auto train_field = train_schema->field(i);
+        if (!train_field) continue;
+        const std::string& name = train_field->name();
+        if (name == train_label_name || IsInternalRoleColumn(name) ||
+            !IsStableIdentifierColumnName(name)) {
+            continue;
+        }
+        auto role_field = role_schema->GetFieldByName(name);
+        if (role_field && name != role_label_name &&
+            train_field->type()->Equals(role_field->type())) {
+            return name;
+        }
+    }
+    return {};
+}
+
+bool AppendColumnValues(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& column_name,
+    std::unordered_set<std::string>& values,
+    int64_t& rows_scanned) {
+    if (!table) return false;
+    auto column = table->GetColumnByName(column_name);
+    if (!column) return false;
+    for (const auto& chunk : column->chunks()) {
+        if (!chunk) continue;
+        for (int64_t i = 0; i < chunk->length(); ++i) {
+            auto scalar_result = chunk->GetScalar(i);
+            if (!scalar_result.ok()) return false;
+            const auto scalar = scalar_result.ValueOrDie();
+            if (scalar && scalar->is_valid) {
+                values.insert(scalar->ToString());
+            }
+            ++rows_scanned;
+        }
+    }
+    return true;
+}
+
+bool AppendDatasetColumnValues(
+    cyxwiz::DataRegistry& registry,
+    const std::string& dataset_name,
+    const std::string& column_name,
+    int64_t max_rows,
+    std::unordered_set<std::string>& values,
+    int64_t& rows_scanned,
+    std::string& reason) {
+    if (auto arrow_ds = registry.GetArrowDataset(dataset_name)) {
+        if (arrow_ds->GetNumRows() > max_rows) {
+            reason = "row count exceeds bounded identifier scan limit";
+            return false;
+        }
+        return AppendColumnValues(
+            arrow_ds->GetArrowTable(), column_name, values, rows_scanned);
+    }
+    if (auto parquet_ds = registry.GetParquetBackedDataset(dataset_name)) {
+        if (parquet_ds->GetNumRows() > max_rows) {
+            reason = "row count exceeds bounded identifier scan limit";
+            return false;
+        }
+        for (int i = 0; i < parquet_ds->GetNumRowGroups(); ++i) {
+            if (!AppendColumnValues(
+                    parquet_ds->ReadRowGroup(i), column_name, values,
+                    rows_scanned)) {
+                reason = "could not read Parquet row group for identifier scan";
+                return false;
+            }
+        }
+        return true;
+    }
+    reason = "dataset is not a registered Arrow/Parquet table";
+    return false;
+}
+
+std::string BuildRowSignature(
+    const std::shared_ptr<arrow::Table>& table,
+    int64_t row,
+    const std::vector<std::string>& columns) {
+    std::ostringstream out;
+    for (const auto& column_name : columns) {
+        auto column = table->GetColumnByName(column_name);
+        if (!column) return {};
+        int64_t offset = row;
+        for (const auto& chunk : column->chunks()) {
+            if (!chunk) continue;
+            if (offset >= chunk->length()) {
+                offset -= chunk->length();
+                continue;
+            }
+            auto scalar_result = chunk->GetScalar(offset);
+            if (!scalar_result.ok()) return {};
+            const auto scalar = scalar_result.ValueOrDie();
+            out << ((scalar && scalar->is_valid) ? scalar->ToString() : "<null>")
+                << '\x1f';
+            break;
+        }
+    }
+    return out.str();
+}
+
+bool AppendRowSignatures(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::vector<std::string>& columns,
+    std::unordered_set<std::string>& values,
+    std::string& example) {
+    if (!table) return false;
+    for (int64_t row = 0; row < table->num_rows(); ++row) {
+        const std::string signature = BuildRowSignature(table, row, columns);
+        if (signature.empty()) return false;
+        if (example.empty()) example = signature;
+        values.insert(signature);
+    }
+    return true;
+}
+
+bool AppendDatasetRowSignatures(
+    cyxwiz::DataRegistry& registry,
+    const std::string& dataset_name,
+    const std::vector<std::string>& columns,
+    int64_t max_rows,
+    std::unordered_set<std::string>& values,
+    std::string& example,
+    std::string& reason) {
+    if (auto arrow_ds = registry.GetArrowDataset(dataset_name)) {
+        if (arrow_ds->GetNumRows() > max_rows) {
+            reason = "row count exceeds bounded exact-row scan limit";
+            return false;
+        }
+        return AppendRowSignatures(
+            arrow_ds->GetArrowTable(), columns, values, example);
+    }
+    if (auto parquet_ds = registry.GetParquetBackedDataset(dataset_name)) {
+        if (parquet_ds->GetNumRows() > max_rows) {
+            reason = "row count exceeds bounded exact-row scan limit";
+            return false;
+        }
+        for (int i = 0; i < parquet_ds->GetNumRowGroups(); ++i) {
+            if (!AppendRowSignatures(
+                    parquet_ds->ReadRowGroup(i), columns, values, example)) {
+                reason = "could not read Parquet row group for exact-row scan";
+                return false;
+            }
+        }
+        return true;
+    }
+    reason = "dataset is not a registered Arrow/Parquet table";
+    return false;
+}
+
+std::vector<std::string> ExactRowSignatureColumns(
+    const std::vector<std::shared_ptr<arrow::Field>>& feature_fields,
+    const std::string& label_name) {
+    std::vector<std::string> columns;
+    columns.reserve(feature_fields.size() + 1);
+    for (const auto& field : feature_fields) {
+        if (field) columns.push_back(field->name());
+    }
+    if (!label_name.empty()) columns.push_back(label_name);
+    return columns;
+}
+
+bool ValidateSuppliedRoleLeakage(
+    cyxwiz::DataRegistry& registry,
+    const cyxwiz::ResolvedDatasetRole& train_role,
+    const cyxwiz::ResolvedDatasetRole& role,
+    const char* role_name,
+    GraphTrainingLaunchResult& launch_result) {
+    if (!role.IsSupplied()) return true;
+
+    constexpr int64_t kMaxIdentifierScanRows = 1000000;
+    constexpr int64_t kMaxExactRowScanRows = 20000;
+
+    auto train_schema = FindTabularSchema(registry, train_role.dataset_name);
+    auto role_schema = FindTabularSchema(registry, role.dataset_name);
+    auto train_label = ResolveRoleLabelField(train_schema, train_role.label_column);
+    auto role_label = ResolveRoleLabelField(role_schema, role.label_column);
+    if (!train_schema || !role_schema || !train_label || !role_label) {
+        return true;
+    }
+
+    const std::string id_column = FindSharedStableIdentifierColumn(
+        train_schema, role_schema, train_label->name(), role_label->name());
+    if (!id_column.empty()) {
+        std::unordered_set<std::string> train_ids;
+        std::string reason;
+        int64_t ignored_rows_scanned = 0;
+        if (!AppendDatasetColumnValues(registry, train_role.dataset_name,
+                                       id_column, kMaxIdentifierScanRows,
+                                       train_ids, ignored_rows_scanned, reason)) {
+            spdlog::warn(
+                "Track70: skipped {} overlap check against Training dataset '{}' using identifier '{}': {}",
+                role_name, train_role.dataset_name, id_column, reason);
+            return true;
+        }
+
+        std::unordered_set<std::string> role_ids;
+        reason.clear();
+        if (!AppendDatasetColumnValues(registry, role.dataset_name,
+                                       id_column, kMaxIdentifierScanRows,
+                                       role_ids, ignored_rows_scanned, reason)) {
+            spdlog::warn(
+                "Track70: skipped {} overlap check for dataset '{}' using identifier '{}': {}",
+                role_name, role.dataset_name, id_column, reason);
+            return true;
+        }
+
+        for (const auto& id : role_ids) {
+            if (train_ids.count(id) > 0) {
+                SetBlockedStatus(
+                    launch_result,
+                    std::string(role_name) + " dataset leakage detected",
+                    std::string(role_name) + " Dataset '" + role.dataset_name +
+                        "' overlaps Training Dataset '" +
+                        train_role.dataset_name + "' on identifier column '" +
+                        id_column + "' with value " + id +
+                        ". External " + role_name +
+                        " data must not duplicate Training rows.");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    auto train_arrow = registry.GetArrowDataset(train_role.dataset_name);
+    auto role_arrow = registry.GetArrowDataset(role.dataset_name);
+    auto train_parquet = registry.GetParquetBackedDataset(train_role.dataset_name);
+    auto role_parquet = registry.GetParquetBackedDataset(role.dataset_name);
+    const int64_t train_rows = train_arrow ? train_arrow->GetNumRows()
+        : train_parquet ? train_parquet->GetNumRows()
+        : 0;
+    const int64_t role_rows = role_arrow ? role_arrow->GetNumRows()
+        : role_parquet ? role_parquet->GetNumRows()
+        : 0;
+    if (train_rows + role_rows > kMaxExactRowScanRows) {
+        spdlog::warn(
+            "Track70: {} overlap check for dataset '{}' could not find a shared stable identifier and skipped exact-row comparison for {} combined rows",
+            role_name, role.dataset_name, train_rows + role_rows);
+        return true;
+    }
+
+    const auto train_features =
+        RoleFeatureFields(train_schema, train_label->name());
+    const std::vector<std::string> train_columns =
+        ExactRowSignatureColumns(train_features, train_label->name());
+    const auto role_features =
+        RoleFeatureFields(role_schema, role_label->name());
+    std::vector<std::string> role_columns;
+    role_columns.reserve(role_features.size() + 1);
+    for (const auto& field : role_features) {
+        if (field) role_columns.push_back(field->name());
+    }
+    if (!role_label->name().empty()) role_columns.push_back(role_label->name());
+
+    std::unordered_set<std::string> train_rows_seen;
+    std::string reason;
+    std::string ignored_example;
+    if (!AppendDatasetRowSignatures(registry, train_role.dataset_name,
+                                    train_columns, kMaxExactRowScanRows,
+                                    train_rows_seen, ignored_example, reason)) {
+        spdlog::warn(
+            "Track70: skipped exact-row {} overlap check for Training dataset '{}': {}",
+            role_name, train_role.dataset_name, reason);
+        return true;
+    }
+
+    std::unordered_set<std::string> role_rows_seen;
+    reason.clear();
+    if (!AppendDatasetRowSignatures(registry, role.dataset_name,
+                                    role_columns, kMaxExactRowScanRows,
+                                    role_rows_seen, ignored_example, reason)) {
+        spdlog::warn(
+            "Track70: skipped exact-row {} overlap check for dataset '{}': {}",
+            role_name, role.dataset_name, reason);
+        return true;
+    }
+
+    for (const auto& signature : role_rows_seen) {
+        if (train_rows_seen.count(signature) > 0) {
+            SetBlockedStatus(
+                launch_result,
+                std::string(role_name) + " dataset leakage detected",
+                std::string(role_name) + " Dataset '" + role.dataset_name +
+                    "' contains an exact row also present in Training Dataset '" +
+                    train_role.dataset_name +
+                    "'. External " + role_name +
+                    " data must not duplicate Training rows.");
+            return false;
+        }
+    }
+
+    return true;
+}
 
 bool ValidateSuppliedRoleSchema(
     cyxwiz::DataRegistry& registry,
@@ -431,6 +751,17 @@ bool ValidateSuppliedRoleSchemas(
     return ValidateSuppliedRoleSchema(
                registry, roles.train, roles.dev, "Dev", launch_result) &&
            ValidateSuppliedRoleSchema(
+               registry, roles.train, roles.test, "Test", launch_result);
+}
+
+bool ValidateSuppliedRolePreflight(
+    cyxwiz::DataRegistry& registry,
+    const cyxwiz::ResolvedDatasetRoles& roles,
+    GraphTrainingLaunchResult& launch_result) {
+    return ValidateSuppliedRoleSchemas(registry, roles, launch_result) &&
+           ValidateSuppliedRoleLeakage(
+               registry, roles.train, roles.dev, "Dev", launch_result) &&
+           ValidateSuppliedRoleLeakage(
                registry, roles.train, roles.test, "Test", launch_result);
 }
 
@@ -577,7 +908,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         !validate_supplied_role(config.dataset_roles.test, "Test", result)) {
         return result;
     }
-    if (!ValidateSuppliedRoleSchemas(registry, config.dataset_roles, result)) {
+    if (!ValidateSuppliedRolePreflight(registry, config.dataset_roles, result)) {
         return result;
     }
 
@@ -764,7 +1095,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             runtime_roles.train.dataset_name = effective_dataset_name;
             runtime_roles.train.label_column = effective_label_column;
             GraphTrainingLaunchResult role_validation;
-            if (!ValidateSuppliedRoleSchemas(registry, runtime_roles, role_validation)) {
+            if (!ValidateSuppliedRolePreflight(registry, runtime_roles, role_validation)) {
                 throw std::runtime_error(role_validation.error_message);
             }
             config.dataset_roles = runtime_roles;
