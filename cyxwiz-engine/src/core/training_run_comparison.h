@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
+#include <cstdint>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -42,6 +43,10 @@ inline std::string TrainingRunComparisonCsvHeader() {
            "architecture_summary,model_layer_count,epochs,batch_size,"
            "learning_rate,train_ratio,val_ratio,test_ratio,"
            "train_sample_count,val_sample_count,test_sample_count,"
+           "train_source_name,dev_source_name,test_source_name,"
+           "train_origin,dev_origin,test_origin,"
+           "train_label_column,dev_label_column,test_label_column,"
+           "partition_manifest_fingerprint,"
            "bidirectional,hidden_size,num_layers,"
            "save_best_checkpoint,early_stopping_patience,checkpoint_dir,"
            "checkpoint_used,has_validation_metrics,has_test_metrics,"
@@ -98,6 +103,16 @@ inline std::string TrainingRunComparisonToCsvRow(
         << record.train_sample_count << ','
         << record.val_sample_count << ','
         << record.test_sample_count << ','
+        << EscapeTrainingRunComparisonCsvField(record.train_source_name) << ','
+        << EscapeTrainingRunComparisonCsvField(record.dev_source_name) << ','
+        << EscapeTrainingRunComparisonCsvField(record.test_source_name) << ','
+        << EscapeTrainingRunComparisonCsvField(record.train_origin) << ','
+        << EscapeTrainingRunComparisonCsvField(record.dev_origin) << ','
+        << EscapeTrainingRunComparisonCsvField(record.test_origin) << ','
+        << EscapeTrainingRunComparisonCsvField(record.train_label_column) << ','
+        << EscapeTrainingRunComparisonCsvField(record.dev_label_column) << ','
+        << EscapeTrainingRunComparisonCsvField(record.test_label_column) << ','
+        << EscapeTrainingRunComparisonCsvField(record.partition_manifest_fingerprint) << ','
         << (record.bidirectional ? "true" : "false") << ','
         << record.hidden_size << ','
         << record.num_layers << ','
@@ -161,6 +176,91 @@ inline std::string ResolveTrainingRunCheckpointDisplay(
     return "default .cyxwiz/checkpoints run folder";
 }
 
+inline std::string TrainingRunComparisonHex(uint64_t value) {
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << value;
+    return out.str();
+}
+
+inline std::string TrainingRunComparisonStableFingerprint(
+    const std::string& text) {
+    uint64_t hash = 14695981039346656037ull;
+    for (unsigned char ch : text) {
+        hash ^= static_cast<uint64_t>(ch);
+        hash *= 1099511628211ull;
+    }
+    return TrainingRunComparisonHex(hash);
+}
+
+inline std::string EscapeTrainingRunPartitionPart(const std::string& value) {
+    std::ostringstream out;
+    for (char ch : value) {
+        switch (ch) {
+        case '\\': out << "\\\\"; break;
+        case '\n': out << "\\n"; break;
+        case '\r': out << "\\r"; break;
+        case '|': out << "\\|"; break;
+        case '=': out << "\\="; break;
+        default: out << ch; break;
+        }
+    }
+    return out.str();
+}
+
+inline std::string TrainingRunRoleSourceName(
+    const TrainingConfiguration& config,
+    const ResolvedDatasetRole& role,
+    const std::string& fallback_source) {
+    if (!role.dataset_name.empty()) {
+        return role.dataset_name;
+    }
+    if (!fallback_source.empty()) {
+        return fallback_source;
+    }
+    return config.dataset_name;
+}
+
+inline std::string TrainingRunRoleLabelColumn(
+    const ResolvedDatasetRole& role,
+    const std::string& fallback_label) {
+    return role.label_column.empty() ? fallback_label : role.label_column;
+}
+
+inline std::string TrainingRunRoleOrigin(
+    const ResolvedDatasetRole& role,
+    bool train_role) {
+    if (train_role) {
+        return "external";
+    }
+    return role.IsSupplied() ? "external" : "derived";
+}
+
+inline std::string BuildTrainingRunPartitionFingerprint(
+    const TrainingConfiguration& config,
+    const TrainingMetrics& metrics,
+    const TrainingRunComparisonRecord& record) {
+    std::ostringstream out;
+    out << "partition_manifest_schema=track70.v1\n";
+    out << "train_source=" << EscapeTrainingRunPartitionPart(record.train_source_name) << "\n";
+    out << "dev_source=" << EscapeTrainingRunPartitionPart(record.dev_source_name) << "\n";
+    out << "test_source=" << EscapeTrainingRunPartitionPart(record.test_source_name) << "\n";
+    out << "train_origin=" << record.train_origin << "\n";
+    out << "dev_origin=" << record.dev_origin << "\n";
+    out << "test_origin=" << record.test_origin << "\n";
+    out << "train_label=" << EscapeTrainingRunPartitionPart(record.train_label_column) << "\n";
+    out << "dev_label=" << EscapeTrainingRunPartitionPart(record.dev_label_column) << "\n";
+    out << "test_label=" << EscapeTrainingRunPartitionPart(record.test_label_column) << "\n";
+    out << "train_ratio=" << config.train_ratio << "\n";
+    out << "val_ratio=" << config.val_ratio << "\n";
+    out << "test_ratio=" << config.test_ratio << "\n";
+    out << "seed=" << config.dataloader_seed << "\n";
+    out << "shuffle=" << (config.shuffle ? "true" : "false") << "\n";
+    out << "train_rows=" << metrics.train_sample_count << "\n";
+    out << "dev_rows=" << metrics.val_sample_count << "\n";
+    out << "test_rows=" << metrics.test_sample_count << "\n";
+    return TrainingRunComparisonStableFingerprint(out.str());
+}
+
 inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
     const std::string& run_id,
     const TrainingConfiguration& config,
@@ -190,6 +290,27 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
     record.train_sample_count = metrics.train_sample_count;
     record.val_sample_count = metrics.val_sample_count;
     record.test_sample_count = metrics.test_sample_count;
+
+    const std::string train_source = TrainingRunRoleSourceName(
+        config, config.dataset_roles.train, config.dataset_name);
+    const std::string train_label = TrainingRunRoleLabelColumn(
+        config.dataset_roles.train, "");
+    record.train_source_name = train_source;
+    record.dev_source_name = TrainingRunRoleSourceName(
+        config, config.dataset_roles.dev, train_source);
+    record.test_source_name = TrainingRunRoleSourceName(
+        config, config.dataset_roles.test, train_source);
+    record.train_origin = TrainingRunRoleOrigin(config.dataset_roles.train, true);
+    record.dev_origin = TrainingRunRoleOrigin(config.dataset_roles.dev, false);
+    record.test_origin = TrainingRunRoleOrigin(config.dataset_roles.test, false);
+    record.train_label_column = train_label;
+    record.dev_label_column = TrainingRunRoleLabelColumn(
+        config.dataset_roles.dev, train_label);
+    record.test_label_column = TrainingRunRoleLabelColumn(
+        config.dataset_roles.test, train_label);
+    record.partition_manifest_fingerprint =
+        BuildTrainingRunPartitionFingerprint(config, metrics, record);
+
     record.save_best_checkpoint = config.save_best_checkpoint;
     record.early_stopping_patience = config.early_stopping_patience;
     record.checkpoint_dir = config.checkpoint_dir;

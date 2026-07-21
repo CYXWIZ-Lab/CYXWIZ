@@ -646,7 +646,13 @@ void TestTrainingRunComparisonRecord() {
     config.save_best_checkpoint = true;
     config.early_stopping_patience = 3;
     config.checkpoint_dir = "runs/sentiment";
-
+    config.dataloader_seed = 123;
+    config.shuffle = false;
+    config.dataset_roles.train.dataset_name = "sentiment_v1";
+    config.dataset_roles.train.label_column = "label";
+    config.dataset_roles.test.dataset_name = "sentiment_test_v1";
+    config.dataset_roles.test.label_column = "label";
+    config.dataset_roles.test.externally_supplied = true;
     cyxwiz::CompiledLayer gru;
     gru.type = gui::NodeType::GRU;
     gru.parameters["hidden_size"] = "96";
@@ -708,6 +714,40 @@ void TestTrainingRunComparisonRecord() {
           "run comparison should preserve validation sample count");
     Check(record.test_sample_count == 150,
           "run comparison should preserve test sample count");
+    Check(record.train_source_name == "sentiment_v1",
+          "run comparison should record training source name");
+    Check(record.dev_source_name == "sentiment_v1",
+          "run comparison should record derived dev source name");
+    Check(record.test_source_name == "sentiment_test_v1",
+          "run comparison should record external test source name");
+    Check(record.train_origin == "external",
+          "run comparison should mark training source external");
+    Check(record.dev_origin == "derived",
+          "run comparison should mark absent dev role derived");
+    Check(record.test_origin == "external",
+          "run comparison should mark supplied test role external");
+    Check(record.train_label_column == "label" &&
+              record.dev_label_column == "label" &&
+              record.test_label_column == "label",
+          "run comparison should record role label columns");
+    Check(record.partition_manifest_fingerprint.size() == 16,
+          "run comparison should include stable partition fingerprint");
+    const auto repeated_record = cyxwiz::MakeTrainingRunComparisonRecord(
+        "run-001", config, metrics, 12.5f,
+        metrics.checkpoint_used,
+        "complete");
+    Check(repeated_record.partition_manifest_fingerprint ==
+              record.partition_manifest_fingerprint,
+          "same partition manifest inputs should produce same fingerprint");
+    auto changed_metrics = metrics;
+    changed_metrics.test_sample_count = 151;
+    const auto changed_record = cyxwiz::MakeTrainingRunComparisonRecord(
+        "run-001", config, changed_metrics, 12.5f,
+        metrics.checkpoint_used,
+        "complete");
+    Check(changed_record.partition_manifest_fingerprint !=
+              record.partition_manifest_fingerprint,
+          "resolved row-count changes should alter partition fingerprint");
     Check(record.best_val_loss == 0.7f,
           "run comparison should compute best validation loss");
     Check(record.best_val_accuracy == 0.72f,
@@ -729,10 +769,17 @@ void TestTrainingRunComparisonRecord() {
     Check(csv.find("run_id,run_status,dataset_name,preprocessing_domain,"
                    "sequence_batch_enabled") == 0,
           "run comparison CSV should include stable header");
+    Check(csv.find("partition_manifest_fingerprint") != std::string::npos,
+          "run comparison CSV should include partition manifest column");
     Check(csv.find("run-001,complete,sentiment_v1,text,true,GRU") !=
               std::string::npos,
           "run comparison CSV should include record row");
-
+    Check(csv.find("sentiment_v1,sentiment_v1,sentiment_test_v1") !=
+              std::string::npos,
+          "run comparison CSV should include role source names");
+    Check(csv.find("external,derived,external,label,label,label") !=
+              std::string::npos,
+          "run comparison CSV should include role origins and labels");
     const auto output_path =
         std::filesystem::temp_directory_path() /
         "cyxwiz_training_run_comparison" /

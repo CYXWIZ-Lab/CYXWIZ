@@ -1501,7 +1501,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
     if (ImGui::BeginTable(
             "TrainingRunComparisonTable",
-            21,
+            25,
             ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_Resizable |
@@ -1513,6 +1513,10 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("Seq");
         ImGui::TableSetupColumn("Split");
         ImGui::TableSetupColumn("Samples");
+        ImGui::TableSetupColumn("Role Sources");
+        ImGui::TableSetupColumn("Role Origins");
+        ImGui::TableSetupColumn("Role Labels");
+        ImGui::TableSetupColumn("Partition ID");
         ImGui::TableSetupColumn("Model");
         ImGui::TableSetupColumn("Architecture");
         ImGui::TableSetupColumn("Epochs");
@@ -1558,6 +1562,34 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
                 record.train_sample_count,
                 record.val_sample_count,
                 record.test_sample_count);
+
+            const std::string role_sources = record.train_source_name + " / " +
+                record.dev_source_name + " / " + record.test_source_name;
+            const std::string role_origins = record.train_origin + " / " +
+                record.dev_origin + " / " + record.test_origin;
+            const std::string role_labels = record.train_label_column + " / " +
+                record.dev_label_column + " / " + record.test_label_column;
+            const std::string partition_display =
+                record.partition_manifest_fingerprint.empty()
+                    ? std::string("-")
+                    : record.partition_manifest_fingerprint.substr(0, 8);
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(role_sources.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(role_origins.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(role_labels.c_str());
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(partition_display.c_str());
+            if (!record.partition_manifest_fingerprint.empty() &&
+                ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s",
+                                  record.partition_manifest_fingerprint.c_str());
+            }
 
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(record.model_family.c_str());

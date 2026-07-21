@@ -24,6 +24,16 @@ struct TrainingRunComparisonRecord {
     size_t train_sample_count = 0;
     size_t val_sample_count = 0;
     size_t test_sample_count = 0;
+    std::string train_source_name;
+    std::string dev_source_name;
+    std::string test_source_name;
+    std::string train_origin;
+    std::string dev_origin;
+    std::string test_origin;
+    std::string train_label_column;
+    std::string dev_label_column;
+    std::string test_label_column;
+    std::string partition_manifest_fingerprint;
     bool bidirectional = false;
     int hidden_size = 0;
     int num_layers = 0;
