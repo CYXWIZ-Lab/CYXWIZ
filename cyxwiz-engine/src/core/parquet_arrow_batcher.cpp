@@ -160,6 +160,8 @@ void ParquetArrowBatcher::AssignRowGroups() {
         val_cutoff = train_cutoff + static_cast<int>(total_groups * safe_val_split);
         train_cutoff = std::clamp(train_cutoff, 0, total_groups);
         val_cutoff = std::clamp(val_cutoff, train_cutoff, total_groups);
+    } else if (safe_train_split >= 1.0f) {
+        train_cutoff = total_groups;
     } else if (total_groups >= 2) {
         train_cutoff = std::max(1, std::min(train_cutoff, total_groups - 1));
     } else {

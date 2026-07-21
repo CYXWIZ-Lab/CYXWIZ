@@ -404,32 +404,109 @@ bool TabularLoader::LaunchTraining(
     const bool has_external_role = config.dataset_roles.dev.IsSupplied() ||
                                    config.dataset_roles.test.IsSupplied();
     if (has_external_role && !config.sequence_batch.enabled) {
-        const std::string train_role_name = config.dataset_roles.train.dataset_name.empty() ? dataset_name : config.dataset_roles.train.dataset_name;
-        const std::string train_role_label = config.dataset_roles.train.label_column.empty() ? label_column : config.dataset_roles.train.label_column;
-        auto train_ds = registry.GetArrowDataset(train_role_name);
-        auto dev_ds = config.dataset_roles.dev.IsSupplied() ? registry.GetArrowDataset(config.dataset_roles.dev.dataset_name) : nullptr;
-        auto test_ds = config.dataset_roles.test.IsSupplied() ? registry.GetArrowDataset(config.dataset_roles.test.dataset_name) : nullptr;
-        if (!train_ds || (config.dataset_roles.dev.IsSupplied() && !dev_ds) || (config.dataset_roles.test.IsSupplied() && !test_ds)) {
-            spdlog::error("TabularLoader: explicit roles require Arrow-backed sources; mixed or unavailable backing stores are not supported yet");
+        const std::string train_role_name =
+            config.dataset_roles.train.dataset_name.empty()
+                ? dataset_name
+                : config.dataset_roles.train.dataset_name;
+        const std::string train_role_label =
+            config.dataset_roles.train.label_column.empty()
+                ? label_column
+                : config.dataset_roles.train.label_column;
+
+        auto train_arrow = registry.GetArrowDataset(train_role_name);
+        auto train_parquet = registry.GetParquetBackedDataset(train_role_name);
+        auto dev_arrow = config.dataset_roles.dev.IsSupplied()
+            ? registry.GetArrowDataset(config.dataset_roles.dev.dataset_name)
+            : nullptr;
+        auto dev_parquet = config.dataset_roles.dev.IsSupplied()
+            ? registry.GetParquetBackedDataset(config.dataset_roles.dev.dataset_name)
+            : nullptr;
+        auto test_arrow = config.dataset_roles.test.IsSupplied()
+            ? registry.GetArrowDataset(config.dataset_roles.test.dataset_name)
+            : nullptr;
+        auto test_parquet = config.dataset_roles.test.IsSupplied()
+            ? registry.GetParquetBackedDataset(config.dataset_roles.test.dataset_name)
+            : nullptr;
+
+        const bool missing_train = !train_arrow && !train_parquet;
+        const bool missing_dev = config.dataset_roles.dev.IsSupplied() &&
+            !dev_arrow && !dev_parquet;
+        const bool missing_test = config.dataset_roles.test.IsSupplied() &&
+            !test_arrow && !test_parquet;
+        if (missing_train || missing_dev || missing_test) {
+            spdlog::error("TabularLoader: explicit tabular roles require "
+                          "registered Arrow or Parquet-backed sources");
             return false;
         }
-        auto batchers = BuildArrowTrainingBatchers(config, train_ds, train_role_label, batch_size);
-        if (dev_ds) batchers.arrow_val = std::make_unique<cyxwiz::ArrowDatasetBatcher>(dev_ds, config.dataset_roles.dev.label_column, batch_size, false, 1.0f, true, "", 0, config.num_workers, cyxwiz::BatcherPhase::Train, 0.0f, static_cast<uint32_t>(config.dataloader_seed));
-        if (test_ds) batchers.arrow_test = std::make_unique<cyxwiz::ArrowDatasetBatcher>(test_ds, config.dataset_roles.test.label_column, batch_size, false, 1.0f, true, "", 0, config.num_workers, cyxwiz::BatcherPhase::Train, 0.0f, static_cast<uint32_t>(config.dataloader_seed));
-        auto apply_role_transforms = [&](cyxwiz::ArrowDatasetBatcher* b) {
-            if (!b) return;
-            if (config.preprocessing.has_normalization)
-                b->SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);
-            if (config.is_time_series) b->SetRegressionMode(true);
-            else if (config.preprocessing.has_onehot) b->SetOneHotEncoding(config.preprocessing.num_classes);
-            else b->SetOneHotEncoding(config.output_size);
-        };
-        apply_role_transforms(batchers.arrow_val.get());
-        apply_role_transforms(batchers.arrow_test.get());
-        batchers.val = batchers.arrow_val.get(); batchers.test = batchers.arrow_test.get();
-        return tm.StartTrainingExternal(std::move(config), TakeResolvedExternalBatchers(std::move(batchers)), epochs, batch_size, plot_panel, std::move(node_editor_callback));
-    }
 
+        auto batchers = train_arrow
+            ? BuildArrowTrainingBatchers(
+                  config, train_arrow, train_role_label, batch_size)
+            : BuildParquetTrainingBatchers(
+                  config, train_parquet, train_role_label, batch_size);
+
+        auto make_arrow_role = [&](std::shared_ptr<cyxwiz::ArrowDataset> ds,
+                                   const std::string& role_label) {
+            return std::make_unique<cyxwiz::ArrowDatasetBatcher>(
+                ds, role_label, batch_size, false, 1.0f, true, "", 0,
+                config.num_workers, cyxwiz::BatcherPhase::Train, 0.0f,
+                static_cast<uint32_t>(config.dataloader_seed));
+        };
+        auto make_parquet_role = [&, batch_size](
+            std::shared_ptr<cyxwiz::ParquetBackedDataset> ds,
+            const std::string& role_label) {
+            return std::make_unique<cyxwiz::ParquetArrowBatcher>(
+                ds, role_label, batch_size, false, 1.0f, true, "", 0,
+                config.num_workers, cyxwiz::BatcherPhase::Train, 0.0f,
+                static_cast<uint32_t>(config.dataloader_seed));
+        };
+
+        if (dev_arrow) {
+            batchers.arrow_val = make_arrow_role(
+                dev_arrow, config.dataset_roles.dev.label_column);
+            batchers.val = batchers.arrow_val.get();
+        } else if (dev_parquet) {
+            batchers.parquet_val = make_parquet_role(
+                dev_parquet, config.dataset_roles.dev.label_column);
+            batchers.val = batchers.parquet_val.get();
+        }
+        if (test_arrow) {
+            batchers.arrow_test = make_arrow_role(
+                test_arrow, config.dataset_roles.test.label_column);
+            batchers.test = batchers.arrow_test.get();
+        } else if (test_parquet) {
+            batchers.parquet_test = make_parquet_role(
+                test_parquet, config.dataset_roles.test.label_column);
+            batchers.test = batchers.parquet_test.get();
+        }
+
+        auto apply_role_transforms = [&](cyxwiz::IBatcher* b) {
+            if (!b) return;
+            if (config.preprocessing.has_normalization) {
+                b->SetNormalization(config.preprocessing.norm_mean,
+                                    config.preprocessing.norm_std);
+            }
+            if (config.is_time_series) {
+                if (auto* arrow_b =
+                        dynamic_cast<cyxwiz::ArrowDatasetBatcher*>(b)) {
+                    arrow_b->SetRegressionMode(true);
+                } else if (auto* parquet_b =
+                               dynamic_cast<cyxwiz::ParquetArrowBatcher*>(b)) {
+                    parquet_b->SetRegressionMode(true);
+                }
+            } else if (config.preprocessing.has_onehot) {
+                b->SetOneHotEncoding(config.preprocessing.num_classes);
+            } else {
+                b->SetOneHotEncoding(config.output_size);
+            }
+        };
+        apply_role_transforms(batchers.val);
+        apply_role_transforms(batchers.test);
+
+        return tm.StartTrainingExternal(
+            std::move(config), TakeResolvedExternalBatchers(std::move(batchers)),
+            epochs, batch_size, plot_panel, std::move(node_editor_callback));
+    }
     if (config.sequence_batch.enabled) {
         auto table = LoadSequenceSourceTable(dataset_name);
         if (!table) {

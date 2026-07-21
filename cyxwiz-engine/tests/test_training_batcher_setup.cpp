@@ -798,6 +798,14 @@ int main() {
     Check(external_test->GetNumSamples() == 6,
           "external test batcher must preserve every supplied row");
 
+    auto external_parquet_test = std::make_unique<cyxwiz::ParquetArrowBatcher>(
+        multi_parquet_dataset, "label", 2, false, 1.0f, true, "", 0, 0,
+        cyxwiz::BatcherPhase::Train, 0.0f, 42);
+    Check(external_parquet_test->GetNumSamples() == 6,
+          "external Parquet test batcher must preserve every supplied row group");
+    external_test.reset();
+    external_parquet_test.reset();
+
     parquet_batchers = cyxwiz::TrainingBatcherSet{};
     prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     parquet_prefetch_batchers = cyxwiz::TrainingBatcherSet{};
