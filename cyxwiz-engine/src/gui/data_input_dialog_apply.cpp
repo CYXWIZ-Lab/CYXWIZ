@@ -53,6 +53,23 @@ void DataInputDialog::Apply() {
     node_->parameters["file_path"] = file_path_;
     node_->parameters["folder_path"] = folder_path_;
     node_->parameters["configured"] = "true";
+    const bool supports_dataset_roles =
+        source_type_ == SourceType::File &&
+        (file_category_ == FileCategory::Tabular ||
+         file_category_ == FileCategory::TimeSeries);
+    const int effective_dataset_role_idx =
+        supports_dataset_roles ? dataset_role_idx_ : 0;
+    switch (effective_dataset_role_idx) {
+        case 1:
+            node_->parameters["dataset_role"] = "dev";
+            break;
+        case 2:
+            node_->parameters["dataset_role"] = "test";
+            break;
+        default:
+            node_->parameters["dataset_role"] = "train";
+            break;
+    }
     // Persist the Force disk-backed toggle so reopening the dialog (or
     // reopening the project) keeps the user's choice. Without this, the
     // checkbox silently resets to false and the next Apply falls back to

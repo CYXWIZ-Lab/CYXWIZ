@@ -78,6 +78,16 @@ DataInputDialog::DataInputDialog(MLNode* node)
         if (node_->parameters.count("dataset_name")) {
             strncpy(dataset_name_, node_->parameters["dataset_name"].c_str(), sizeof(dataset_name_) - 1);
         }
+        if (node_->parameters.count("dataset_role")) {
+            const std::string& role = node_->parameters["dataset_role"];
+            if (role == "dev") {
+                dataset_role_idx_ = 1;
+            } else if (role == "test") {
+                dataset_role_idx_ = 2;
+            } else {
+                dataset_role_idx_ = 0;
+            }
+        }
         // Restore label column selection
         if (node_->parameters.count("label_column") && !node_->parameters["label_column"].empty()) {
             std::string label_col = node_->parameters["label_column"];

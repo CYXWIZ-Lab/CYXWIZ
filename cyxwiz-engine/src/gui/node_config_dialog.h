@@ -403,6 +403,9 @@ private:
     std::vector<std::string> available_columns_;
     std::vector<bool> selected_columns_;
     int label_column_idx_ = -1;  // Index of label/target column (-1 = none selected)
+    // Track70 dataset role persisted as node parameter `dataset_role`.
+    // 0=train/default, 1=dev/validation, 2=test.
+    int dataset_role_idx_ = 0;
 
     // STATE: Row filter
     int skip_rows_ = 0;

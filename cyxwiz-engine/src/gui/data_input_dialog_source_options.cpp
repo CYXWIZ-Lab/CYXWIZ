@@ -267,6 +267,41 @@ void DataInputDialog::RenderTabularOptions() {
         }
     }
 
+    if (ImGui::CollapsingHeader("Dataset Role", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
+            "Assign how this loaded table participates in training.");
+        ImGui::Spacing();
+
+        static constexpr const char* kRoleLabels[] = {
+            "Train (default)",
+            "Dev / Validation",
+            "Test"
+        };
+
+        ImGui::Text("Role:");
+        ImGui::SameLine(120);
+        ImGui::SetNextItemWidth(200);
+        const int role_preview_idx =
+            (dataset_role_idx_ >= 0 && dataset_role_idx_ < 3) ? dataset_role_idx_ : 0;
+        if (ImGui::BeginCombo("##datasetrole", kRoleLabels[role_preview_idx])) {
+            for (int i = 0; i < static_cast<int>(sizeof(kRoleLabels) / sizeof(kRoleLabels[0])); ++i) {
+                const bool selected = dataset_role_idx_ == i;
+                if (ImGui::Selectable(kRoleLabels[i], selected)) {
+                    dataset_role_idx_ = i;
+                    has_changes_ = true;
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
+            "Dev/Test sources are validated against Train and are not internally split.");
+    }
+
+
     // Column Mapping - Label/Target column selection
     if (ImGui::CollapsingHeader("Column Mapping", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],

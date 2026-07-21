@@ -199,3 +199,8 @@ changes are outside Track 70 scope and must remain isolated.
 - 2026-07-21: Added first run-ledger partition provenance fields. Training run comparison records and CSV export now include Train/Dev/Test source names, role origins (`external` vs `derived`), role label columns, resolved row counts already present in metrics, and a stable Track70 partition-manifest fingerprint computed from role sources/origins/labels, split ratios, seed/shuffle policy, and resolved row counts. This is intentionally a flat comparison-record contract, not a separate manifest database. Focused run-comparison coverage passed, along with Release `test_text_gui_training_launch`, `test_graph_training_sequence_preflight`, `test_training_batcher_setup`, and `cyxwiz-engine` build.
 
 - 2026-07-21: Surfaced Track70 partition provenance in the Training Plot run-comparison table. The panel now shows role source names, role origins, role label columns, and a short partition ID with the full fingerprint available as a tooltip. This uses the flat comparison-record fields added in the prior batch and avoids introducing a separate manifest UI before the runtime contract is fully stable. Release `cyxwiz-engine` build passed.
+- 2026-07-21: Exposed the explicit tabular Data Input dataset role selector now
+  that the guarded Arrow/Parquet backend path is proven. The Settings tab
+  persists `dataset_role=train|dev|test`; Dev/Test continue through the
+  compiler-owned validation and full-source role batcher path rather than a UI
+  shortcut. APS remains an acceptance fixture only, not a special case.
