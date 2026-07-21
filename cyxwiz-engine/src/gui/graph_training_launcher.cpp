@@ -23,6 +23,10 @@ namespace gui {
 
 namespace {
 
+void SetBlockedStatus(GraphTrainingLaunchResult& result,
+                      std::string title,
+                      std::string detail);
+
 cyxwiz::MaterializationCacheConfig DefaultMaterializationCacheConfig() {
     cyxwiz::MaterializationCacheConfig config;
     config.mode = cyxwiz::MaterializationCacheMode::Auto;
@@ -252,6 +256,184 @@ std::shared_ptr<arrow::Schema> FindTabularSchema(
     return nullptr;
 }
 
+bool IsRoleFeatureType(const std::shared_ptr<arrow::DataType>& type) {
+    if (!type) return false;
+    switch (type->id()) {
+    case arrow::Type::DOUBLE:
+    case arrow::Type::FLOAT:
+    case arrow::Type::INT64:
+    case arrow::Type::INT32:
+    case arrow::Type::INT16:
+    case arrow::Type::INT8:
+    case arrow::Type::UINT64:
+    case arrow::Type::UINT32:
+    case arrow::Type::UINT16:
+    case arrow::Type::UINT8:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsInternalRoleColumn(const std::string& name) {
+    return name.rfind("__", 0) == 0;
+}
+
+std::shared_ptr<arrow::Field> ResolveRoleLabelField(
+    const std::shared_ptr<arrow::Schema>& schema,
+    const std::string& requested_label) {
+    if (!schema) return nullptr;
+    if (!requested_label.empty()) {
+        return schema->GetFieldByName(requested_label);
+    }
+    const int fallback_idx = cyxwiz::FindCommonLabelColumnIndex(schema);
+    return fallback_idx >= 0 ? schema->field(fallback_idx) : nullptr;
+}
+
+std::vector<std::shared_ptr<arrow::Field>> RoleFeatureFields(
+    const std::shared_ptr<arrow::Schema>& schema,
+    const std::string& label_name) {
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    if (!schema) return fields;
+    for (int i = 0; i < schema->num_fields(); ++i) {
+        auto field = schema->field(i);
+        if (!field) continue;
+        const std::string& name = field->name();
+        if (name == label_name || IsInternalRoleColumn(name)) {
+            continue;
+        }
+        if (IsRoleFeatureType(field->type())) {
+            fields.push_back(field);
+        }
+    }
+    return fields;
+}
+
+bool ValidateSuppliedRoleSchema(
+    cyxwiz::DataRegistry& registry,
+    const cyxwiz::ResolvedDatasetRole& train_role,
+    const cyxwiz::ResolvedDatasetRole& role,
+    const char* role_name,
+    GraphTrainingLaunchResult& launch_result) {
+    if (!role.IsSupplied()) return true;
+
+    auto train_schema = FindTabularSchema(registry, train_role.dataset_name);
+    if (!train_schema) {
+        SetBlockedStatus(
+            launch_result,
+            "Training dataset schema unavailable",
+            "Could not inspect schema for Training dataset '" +
+                train_role.dataset_name +
+                "' while validating supplied " + std::string(role_name) +
+                " dataset '" + role.dataset_name + "'.");
+        return false;
+    }
+
+    auto role_schema = FindTabularSchema(registry, role.dataset_name);
+    if (!role_schema) {
+        SetBlockedStatus(
+            launch_result,
+            std::string(role_name) + " dataset schema unavailable",
+            "Could not inspect schema for supplied " + std::string(role_name) +
+                " dataset '" + role.dataset_name + "'. Apply its Data Input "
+                "node as a tabular Arrow/Parquet source before training.");
+        return false;
+    }
+
+    auto train_label = ResolveRoleLabelField(train_schema, train_role.label_column);
+    if (!train_label) {
+        SetBlockedStatus(
+            launch_result,
+            "Training dataset label unavailable",
+            "Training dataset '" + train_role.dataset_name +
+                "' does not contain label column '" +
+                (train_role.label_column.empty() ? "<auto>" : train_role.label_column) +
+                "'.");
+        return false;
+    }
+
+    auto role_label = ResolveRoleLabelField(role_schema, role.label_column);
+    if (!role_label) {
+        SetBlockedStatus(
+            launch_result,
+            std::string(role_name) + " dataset label unavailable",
+            "Supplied " + std::string(role_name) + " dataset '" +
+                role.dataset_name + "' does not contain label column '" +
+                (role.label_column.empty() ? "<auto>" : role.label_column) +
+                "'.");
+        return false;
+    }
+
+    if (!train_label->type()->Equals(role_label->type())) {
+        SetBlockedStatus(
+            launch_result,
+            std::string(role_name) + " dataset label mismatch",
+            std::string(role_name) + " Dataset label column '" +
+                role_label->name() + "' in dataset '" + role.dataset_name +
+                "' has type " + role_label->type()->ToString() +
+                ", but Training Dataset label column '" + train_label->name() +
+                "' has type " + train_label->type()->ToString() + ".");
+        return false;
+    }
+
+    const auto train_features =
+        RoleFeatureFields(train_schema, train_label->name());
+    const auto role_features =
+        RoleFeatureFields(role_schema, role_label->name());
+    if (train_features.size() != role_features.size()) {
+        SetBlockedStatus(
+            launch_result,
+            std::string(role_name) + " dataset schema mismatch",
+            std::string(role_name) + " Dataset '" + role.dataset_name +
+                "' has " + std::to_string(role_features.size()) +
+                " numeric feature columns after excluding label/internal "
+                "columns, but Training Dataset '" + train_role.dataset_name +
+                "' has " + std::to_string(train_features.size()) + ".");
+        return false;
+    }
+
+    for (size_t i = 0; i < train_features.size(); ++i) {
+        const auto& train_field = train_features[i];
+        const auto& role_field = role_features[i];
+        if (train_field->name() != role_field->name()) {
+            SetBlockedStatus(
+                launch_result,
+                std::string(role_name) + " dataset schema mismatch",
+                std::string(role_name) + " Dataset schema mismatch at feature " +
+                    std::to_string(i) + ": expected Training feature '" +
+                    train_field->name() + "' from dataset '" +
+                    train_role.dataset_name + "', found '" +
+                    role_field->name() + "' in dataset '" + role.dataset_name +
+                    "'.");
+            return false;
+        }
+        if (!train_field->type()->Equals(role_field->type())) {
+            SetBlockedStatus(
+                launch_result,
+                std::string(role_name) + " dataset schema mismatch",
+                std::string(role_name) + " Dataset feature '" +
+                    role_field->name() + "' in dataset '" + role.dataset_name +
+                    "' has type " + role_field->type()->ToString() +
+                    ", but Training Dataset feature '" +
+                    train_field->name() + "' has type " +
+                    train_field->type()->ToString() + ".");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ValidateSuppliedRoleSchemas(
+    cyxwiz::DataRegistry& registry,
+    const cyxwiz::ResolvedDatasetRoles& roles,
+    GraphTrainingLaunchResult& launch_result) {
+    return ValidateSuppliedRoleSchema(
+               registry, roles.train, roles.dev, "Dev", launch_result) &&
+           ValidateSuppliedRoleSchema(
+               registry, roles.train, roles.test, "Test", launch_result);
+}
+
 bool ValidateSequenceLaunchColumns(
     cyxwiz::DataRegistry& registry,
     const std::string& dataset_name,
@@ -361,6 +543,43 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
 
     std::string label_column = FindLabelColumn(
         nodes, dataset_name, config.data_source_node_id);
+    if (config.dataset_roles.train.dataset_name.empty()) {
+        config.dataset_roles.train.dataset_name = dataset_name;
+    }
+    config.dataset_roles.train.label_column = label_column;
+    if (config.dataset_roles.dev.IsSupplied()) {
+        config.dataset_roles.dev.label_column = FindLabelColumn(
+            nodes, config.dataset_roles.dev.dataset_name,
+            config.dataset_roles.dev.source_node_id);
+    }
+    if (config.dataset_roles.test.IsSupplied()) {
+        config.dataset_roles.test.label_column = FindLabelColumn(
+            nodes, config.dataset_roles.test.dataset_name,
+            config.dataset_roles.test.source_node_id);
+    }
+
+    auto validate_supplied_role = [&registry](const cyxwiz::ResolvedDatasetRole& role,
+                                              const char* role_name,
+                                              GraphTrainingLaunchResult& launch_result) {
+        if (!role.IsSupplied()) return true;
+        if (registry.GetArrowDataset(role.dataset_name) ||
+            registry.GetParquetBackedDataset(role.dataset_name)) {
+            return true;
+        }
+        SetBlockedStatus(launch_result,
+                         std::string(role_name) + " dataset unavailable",
+                         "The supplied " + std::string(role_name) +
+                             " dataset '" + role.dataset_name +
+                             "' is not registered. Apply its Data Input node first.");
+        return false;
+    };
+    if (!validate_supplied_role(config.dataset_roles.dev, "Dev", result) ||
+        !validate_supplied_role(config.dataset_roles.test, "Test", result)) {
+        return result;
+    }
+    if (!ValidateSuppliedRoleSchemas(registry, config.dataset_roles, result)) {
+        return result;
+    }
 
     if (config.sequence_batch.enabled) {
         const bool has_arrow = registry.GetArrowDataset(dataset_name) != nullptr;
@@ -541,6 +760,15 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                 return;
             }
 
+            auto runtime_roles = config.dataset_roles;
+            runtime_roles.train.dataset_name = effective_dataset_name;
+            runtime_roles.train.label_column = effective_label_column;
+            GraphTrainingLaunchResult role_validation;
+            if (!ValidateSuppliedRoleSchemas(registry, runtime_roles, role_validation)) {
+                throw std::runtime_error(role_validation.error_message);
+            }
+            config.dataset_roles = runtime_roles;
+
             if (config.sequence_batch.enabled) {
                 task.ReportProgress(0.75f, "Validating sequence launch columns...");
                 if (auto panel = plot_panel.lock()) {
@@ -556,6 +784,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             }
 
             config.dataset_name = effective_dataset_name;
+            config.dataset_roles.train.dataset_name = effective_dataset_name;
 
             task.ReportProgress(0.9f, "Starting training...");
             if (auto panel = plot_panel.lock()) {

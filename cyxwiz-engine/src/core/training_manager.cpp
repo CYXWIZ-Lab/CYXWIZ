@@ -193,6 +193,29 @@ bool TrainingManager::StartTraining(
         "Training Model", "Training from Node Graph");
 }
 
+bool TrainingManager::StartTrainingExternal(
+    TrainingConfiguration config,
+    ResolvedExternalBatchers batchers,
+    int epochs,
+    int batch_size,
+    std::weak_ptr<TrainingPlotPanel> plot_panel,
+    std::function<void(bool)> node_editor_callback)
+{
+    if (is_training_.load() || !batchers.train) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_training_.load()) return false;
+
+    NormalizeTrainingNumWorkers(config, "TrainingManager");
+    auto executor = std::make_unique<TrainingExecutor>(
+        std::move(config), std::move(batchers));
+    return StartTrainingCommon(
+        std::move(executor), epochs, batch_size, plot_panel,
+        std::move(node_editor_callback),
+        "Training Model (Resolved Roles)", "Training from resolved dataset roles");
+}
 bool TrainingManager::StartTrainingArrow(
     TrainingConfiguration config,
     std::shared_ptr<ArrowDataset> arrow_dataset,

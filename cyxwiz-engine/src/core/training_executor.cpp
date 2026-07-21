@@ -172,10 +172,22 @@ TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
 TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
                                    std::unique_ptr<IBatcher> external_batcher)
     : config_(std::move(config))
-    , external_batcher_(std::move(external_batcher))
     , mode_(DatasetMode::External)
 {
+    external_batchers_.train = std::shared_ptr<IBatcher>(std::move(external_batcher));
+    external_batchers_.dev = external_batchers_.train;
     spdlog::info("TrainingExecutor: Created with external IBatcher, "
+                 "{} layers, input_size={}, output_size={}",
+                 config_.layers.size(), config_.input_size, config_.output_size);
+}
+
+TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
+                                   ResolvedExternalBatchers external_batchers)
+    : config_(std::move(config))
+    , external_batchers_(std::move(external_batchers))
+    , mode_(DatasetMode::External)
+{
+    spdlog::info("TrainingExecutor: Created with resolved external role batchers, "
                  "{} layers, input_size={}, output_size={}",
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
@@ -313,6 +325,9 @@ void TrainingExecutor::Train(
     IBatcher* active_train_ibatcher = nullptr;
     IBatcher* active_val_ibatcher = nullptr;
     IBatcher* active_test_ibatcher = nullptr;
+    BatcherPhase train_batcher_phase = BatcherPhase::Train;
+    BatcherPhase val_batcher_phase = BatcherPhase::Val;
+    BatcherPhase test_batcher_phase = BatcherPhase::Test;
     ISequenceBatcher* active_sequence_batcher = nullptr;
 
     size_t num_train_samples = 0;
@@ -340,16 +355,21 @@ void TrainingExecutor::Train(
         spdlog::info("TrainingExecutor: Using external batcher for training "
                      "(batch_size={}, num_workers={}, {} samples)",
                      batch_size, config_.num_workers,
-                     external_batcher_ ? external_batcher_->GetNumSamples() : 0);
+                     external_batchers_.train ? external_batchers_.train->GetNumSamples() : 0);
 
-        if (!external_batcher_) {
-            spdlog::error("TrainingExecutor: external batcher mode but no external batcher");
+        if (!external_batchers_.train) {
+            spdlog::error("TrainingExecutor: external batcher mode but no Train batcher");
             return;
         }
 
-        num_train_samples = external_batcher_->GetNumSamples();
-        active_train_ibatcher = external_batcher_.get();
-        active_val_ibatcher = external_batcher_.get();
+        active_train_ibatcher = external_batchers_.train.get();
+        active_val_ibatcher = external_batchers_.dev
+            ? external_batchers_.dev.get() : active_train_ibatcher;
+        active_test_ibatcher = external_batchers_.test.get();
+        train_batcher_phase = external_batchers_.train_phase;
+        val_batcher_phase = external_batchers_.dev
+            ? external_batchers_.dev_phase : BatcherPhase::Val;
+        test_batcher_phase = external_batchers_.test_phase;
     } else if (mode_ == DatasetMode::SequenceExternal) {
         spdlog::info("TrainingExecutor: Using external sequence batcher for "
                      "token tagging ({} samples, {} batches)",
@@ -453,22 +473,22 @@ void TrainingExecutor::Train(
         num_val_samples = active_sequence_batcher->GetNumSamples();
         active_sequence_batcher->SetPhase(BatcherPhase::Train);
     } else if (active_train_ibatcher) {
-        active_train_ibatcher->SetPhase(BatcherPhase::Train);
+        active_train_ibatcher->SetPhase(train_batcher_phase);
         num_train_samples = active_train_ibatcher->GetNumSamples();
 
         if (active_val_ibatcher) {
-            active_val_ibatcher->SetPhase(BatcherPhase::Val);
+            active_val_ibatcher->SetPhase(val_batcher_phase);
             num_val_samples = active_val_ibatcher->GetNumSamples();
-            active_val_ibatcher->SetPhase(BatcherPhase::Train);
+            active_val_ibatcher->SetPhase(train_batcher_phase);
         }
 
         if (active_test_ibatcher) {
-            active_test_ibatcher->SetPhase(BatcherPhase::Test);
+            active_test_ibatcher->SetPhase(test_batcher_phase);
             num_test_samples = active_test_ibatcher->GetNumSamples();
-            active_test_ibatcher->SetPhase(BatcherPhase::Train);
+            active_test_ibatcher->SetPhase(train_batcher_phase);
         }
 
-        active_train_ibatcher->SetPhase(BatcherPhase::Train);
+        active_train_ibatcher->SetPhase(train_batcher_phase);
     }
 
     UpdateMetrics([num_train_samples, num_val_samples, num_test_samples](
@@ -626,9 +646,9 @@ void TrainingExecutor::Train(
             active_sequence_batcher->SetPhase(BatcherPhase::Train);
             validation_ran_this_epoch = true;
         } else if (should_validate_this_epoch && active_val_ibatcher) {
-            active_val_ibatcher->SetPhase(BatcherPhase::Val);
+            active_val_ibatcher->SetPhase(val_batcher_phase);
             RunValidationArrow(*active_val_ibatcher);
-            active_val_ibatcher->SetPhase(BatcherPhase::Train);
+            active_val_ibatcher->SetPhase(train_batcher_phase);
             validation_ran_this_epoch = true;
         } else if (!should_validate_this_epoch) {
             spdlog::debug("TrainingExecutor: Skipping validation at epoch {} (validation_freq={})",
@@ -846,9 +866,9 @@ void TrainingExecutor::Train(
     if (!stop_requested_.load() && active_test_ibatcher &&
         active_test_ibatcher->GetNumSamples() > 0) {
         model_->SetTraining(false);
-        active_test_ibatcher->SetPhase(BatcherPhase::Test);
+        active_test_ibatcher->SetPhase(test_batcher_phase);
         const auto [test_loss, test_acc] = EvaluateArrowBatcher(*active_test_ibatcher);
-        active_test_ibatcher->SetPhase(BatcherPhase::Train);
+        active_test_ibatcher->SetPhase(train_batcher_phase);
         UpdateMetrics([test_loss, test_acc](TrainingMetrics& m) {
             m.test_loss = test_loss;
             m.test_accuracy = test_acc;

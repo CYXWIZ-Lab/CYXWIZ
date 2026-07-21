@@ -792,6 +792,12 @@ int main() {
         training_config,
         "Parquet model-step");
 
+    auto external_test = std::make_unique<cyxwiz::ArrowDatasetBatcher>(
+        MakeMultiGroupDataset(), "label", 2, false, 1.0f, true, "", 0, 0,
+        cyxwiz::BatcherPhase::Train, 0.0f, 42);
+    Check(external_test->GetNumSamples() == 6,
+          "external test batcher must preserve every supplied row");
+
     parquet_batchers = cyxwiz::TrainingBatcherSet{};
     prefetch_batchers = cyxwiz::TrainingBatcherSet{};
     parquet_prefetch_batchers = cyxwiz::TrainingBatcherSet{};

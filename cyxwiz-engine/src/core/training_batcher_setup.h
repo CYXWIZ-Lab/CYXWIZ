@@ -16,6 +16,7 @@ namespace cyxwiz {
 
 class ArrowDataset;
 class ParquetBackedDataset;
+struct ResolvedExternalBatchers;
 
 struct TrainingBatcherSet {
     std::unique_ptr<ArrowDatasetBatcher> arrow_train;
@@ -63,5 +64,7 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     std::shared_ptr<ParquetBackedDataset> dataset,
     const std::string& label_column,
     int batch_size);
+
+ResolvedExternalBatchers TakeResolvedExternalBatchers(TrainingBatcherSet batchers);
 
 } // namespace cyxwiz

@@ -53,6 +53,25 @@ bool IsDatasetSourceType(gui::NodeType type) {
            type == gui::NodeType::DatasetInput;
 }
 
+std::string DatasetNameFromNode(const gui::MLNode& node) {
+    auto it = node.parameters.find("dataset_name");
+    if (it != node.parameters.end() && !it->second.empty()) {
+        return it->second;
+    }
+    it = node.parameters.find("dataset");
+    return it != node.parameters.end() ? it->second : std::string{};
+}
+
+std::string DatasetRoleFromNode(const gui::MLNode& node) {
+    auto it = node.parameters.find("dataset_role");
+    return it == node.parameters.end() ? std::string{} : it->second;
+}
+
+bool IsTrainDatasetSource(const gui::MLNode& node) {
+    const std::string role = DatasetRoleFromNode(node);
+    return role.empty() || role == "train";
+}
+
 bool IsOutputNodeType(gui::NodeType type) {
     return type == gui::NodeType::Output ||
            type == gui::NodeType::SequenceTagOutput;
@@ -2915,11 +2934,36 @@ TrainingConfiguration GraphCompiler::Compile(
         // a dataset is loaded. The legacy "dataset" key was used by the
         // older DatasetInput dialog and is now obsolete — fall back to it
         // only if dataset_name is empty, so older project files still load.
-        if (dataset_node->parameters.count("dataset_name") &&
-            !dataset_node->parameters.at("dataset_name").empty()) {
-            config.dataset_name = dataset_node->parameters.at("dataset_name");
-        } else if (dataset_node->parameters.count("dataset")) {
-            config.dataset_name = dataset_node->parameters.at("dataset");
+        config.dataset_name = DatasetNameFromNode(*dataset_node);
+        config.dataset_roles.train.dataset_name = config.dataset_name;
+        config.dataset_roles.train.source_node_id = dataset_node->id;
+
+        for (const auto& node : nodes) {
+            if (!IsDatasetSourceType(node.type)) {
+                continue;
+            }
+            const std::string role = DatasetRoleFromNode(node);
+            ResolvedDatasetRole* resolved = nullptr;
+            if (role == "dev") {
+                resolved = &config.dataset_roles.dev;
+            } else if (role == "test") {
+                resolved = &config.dataset_roles.test;
+            } else {
+                continue;
+            }
+
+            if (resolved->IsSupplied()) {
+                AddIssue(config, IssueLevel::Error,
+                         "More than one Data Input is configured for the '" +
+                             role + "' dataset role",
+                         node.id, node.name,
+                         errors::Compiler::InvalidConnectivity);
+                continue;
+            }
+
+            resolved->dataset_name = DatasetNameFromNode(node);
+            resolved->source_node_id = node.id;
+            resolved->externally_supplied = true;
         }
 
         // === New error checks tied to the dataset node ===
@@ -4164,7 +4208,7 @@ const gui::MLNode* GraphCompiler::FindDatasetInputNode(
     const gui::MLNode* first_source = nullptr;
     const gui::MLNode* first_connected_source = nullptr;
     for (const auto& node : nodes) {
-        if (!IsDatasetSourceType(node.type)) {
+        if (!IsDatasetSourceType(node.type) || !IsTrainDatasetSource(node)) {
             continue;
         }
 
@@ -5050,6 +5094,12 @@ void GraphCompiler::ValidateRequiredOutputsConnected(
     }
 
     for (const auto& node : nodes) {
+        // Supplied Dev/Test datasets are semantic runtime roles, not tensor
+        // producers in the Train model path. Their outputs intentionally have
+        // no canvas consumer until the role-aware launcher builds batchers.
+        if (IsDatasetSourceType(node.type) && !IsTrainDatasetSource(node)) {
+            continue;
+        }
         for (const auto& pin : node.outputs) {
             if (!pin.is_required) continue;
             if (connected_output_pins.count(pin.id) > 0) continue;

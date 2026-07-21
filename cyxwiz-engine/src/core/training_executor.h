@@ -92,6 +92,21 @@ using EpochCallback = std::function<void(int epoch, float train_loss, float trai
 using TrainingCompleteCallback = std::function<void(const TrainingMetrics& final_metrics)>;
 
 /**
+ * Batchers resolved to semantic Train/Dev/Test roles before execution.
+ * A role carries its iteration phase because a supplied Dev/Test dataset is
+ * consumed in full, while one source can expose derived partitions by
+ * switching the same batcher between phases.
+ */
+struct ResolvedExternalBatchers {
+    std::shared_ptr<IBatcher> train;
+    std::shared_ptr<IBatcher> dev;
+    std::shared_ptr<IBatcher> test;
+    BatcherPhase train_phase = BatcherPhase::Train;
+    BatcherPhase dev_phase = BatcherPhase::Val;
+    BatcherPhase test_phase = BatcherPhase::Test;
+};
+
+/**
  * TrainingExecutor - Executes ML training based on compiled graph configuration
  *
  * This class handles the actual training loop:
@@ -132,6 +147,9 @@ public:
 
     TrainingExecutor(TrainingConfiguration config,
                      std::unique_ptr<IBatcher> external_batcher);
+
+    TrainingExecutor(TrainingConfiguration config,
+                     ResolvedExternalBatchers external_batchers);
 
     TrainingExecutor(TrainingConfiguration config,
                      std::unique_ptr<ISequenceBatcher> sequence_batcher,
@@ -233,7 +251,7 @@ private:
     std::shared_ptr<ParquetBackedDataset> parquet_dataset_;
     std::string label_column_;
     DatasetMode mode_ = DatasetMode::Legacy;
-    std::unique_ptr<IBatcher> external_batcher_;
+    ResolvedExternalBatchers external_batchers_;
     std::unique_ptr<ISequenceBatcher> sequence_batcher_;
     std::vector<std::string> sequence_id_to_label_;
 

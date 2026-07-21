@@ -189,6 +189,14 @@ int main() {
                       Pin(102, gui::PinType::Labels, "Labels", false)});
     data.parameters["dataset_name"] = "deferred_guard_dataset";
 
+    auto dev_data = Node(6, gui::NodeType::DataInput, "Development Data", {}, {});
+    dev_data.parameters["dataset_name"] = "deferred_guard_dev";
+    dev_data.parameters["dataset_role"] = "dev";
+
+    auto test_data = Node(7, gui::NodeType::DataInput, "Test Data", {}, {});
+    test_data.parameters["dataset_name"] = "deferred_guard_test";
+    test_data.parameters["dataset_role"] = "test";
+
     auto dense = Node(2,
                       gui::NodeType::Dense,
                       "Dense",
@@ -216,7 +224,7 @@ int main() {
                           {Pin(501, gui::PinType::Loss, "Loss", true)},
                           {});
 
-    std::vector<gui::MLNode> nodes = {data, dense, batch_matmul, loss, optimizer};
+    std::vector<gui::MLNode> nodes = {data, dev_data, test_data, dense, batch_matmul, loss, optimizer};
     std::vector<gui::NodeLink> links = {
         Link(1, 1, 101, 2, 201),
         Link(2, 2, 202, 3, 301),
@@ -228,6 +236,21 @@ int main() {
 
     cyxwiz::GraphCompiler compiler;
     auto config = compiler.Compile(nodes, links, true);
+
+    Check(config.dataset_roles.train.dataset_name == "deferred_guard_dataset",
+          "the selected DataInput must resolve as the Train dataset role");
+    Check(config.dataset_roles.train.source_node_id == 1,
+          "the Train dataset role must retain its source node id");
+    Check(!config.dataset_roles.train.externally_supplied,
+          "the current primary DataInput is not an external role override");
+    Check(config.dataset_roles.dev.dataset_name == "deferred_guard_dev" &&
+              config.dataset_roles.dev.source_node_id == 6 &&
+              config.dataset_roles.dev.externally_supplied,
+          "the compiler must resolve the supplied Dev dataset role");
+    Check(config.dataset_roles.test.dataset_name == "deferred_guard_test" &&
+              config.dataset_roles.test.source_node_id == 7 &&
+              config.dataset_roles.test.externally_supplied,
+          "the compiler must resolve the supplied Test dataset role");
 
     Check(!config.is_valid, "training path with template TensorBatchMatMul must be invalid");
     Check(HasIssueText(config, "template/deferred"),

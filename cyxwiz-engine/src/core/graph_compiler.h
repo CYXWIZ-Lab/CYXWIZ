@@ -363,6 +363,24 @@ struct PinMemoryTransferStatus {
 };
 
 /**
+ * A physical dataset source resolved to a semantic training role.
+ * Derived Dev/Test roles leave dataset_name empty and are partitioned from Train.
+ */
+struct ResolvedDatasetRole {
+    std::string dataset_name;
+    std::string label_column;
+    int source_node_id = -1;
+    bool externally_supplied = false;
+    bool IsSupplied() const { return !dataset_name.empty(); }
+};
+
+struct ResolvedDatasetRoles {
+    ResolvedDatasetRole train;
+    ResolvedDatasetRole dev;
+    ResolvedDatasetRole test;
+};
+
+/**
  * Complete training configuration extracted from graph
  */
 struct TrainingConfiguration {
@@ -396,6 +414,7 @@ struct TrainingConfiguration {
     // Dataset configuration
     std::string dataset_name;           // Name of dataset in DataRegistry
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
+    ResolvedDatasetRoles dataset_roles;  // Train plus optional supplied Dev/Test
 
     // DataSplit configuration (from DataSplit node, or defaults if absent)
     float train_ratio = 0.8f;

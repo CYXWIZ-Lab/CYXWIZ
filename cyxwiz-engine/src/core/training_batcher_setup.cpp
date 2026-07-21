@@ -1,4 +1,5 @@
 #include "training_batcher_setup.h"
+#include "training_executor.h"
 
 #include "arrow_dataset.h"
 #include "prefetch_batcher.h"
@@ -507,4 +508,25 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     return result;
 }
 
+ResolvedExternalBatchers TakeResolvedExternalBatchers(TrainingBatcherSet batchers) {
+    auto take = [](std::unique_ptr<IBatcher> prefetch,
+                   std::unique_ptr<ArrowDatasetBatcher> arrow,
+                   std::unique_ptr<ParquetArrowBatcher> parquet) {
+        if (prefetch) return std::shared_ptr<IBatcher>(std::move(prefetch));
+        if (arrow) return std::shared_ptr<IBatcher>(std::move(arrow));
+        return std::shared_ptr<IBatcher>(std::move(parquet));
+    };
+
+    ResolvedExternalBatchers resolved;
+    resolved.train = take(std::move(batchers.prefetch_train),
+                          std::move(batchers.arrow_train),
+                          std::move(batchers.parquet_train));
+    resolved.dev = take(std::move(batchers.prefetch_val),
+                        std::move(batchers.arrow_val),
+                        std::move(batchers.parquet_val));
+    resolved.test = take(std::move(batchers.prefetch_test),
+                         std::move(batchers.arrow_test),
+                         std::move(batchers.parquet_test));
+    return resolved;
+}
 } // namespace cyxwiz

@@ -54,6 +54,18 @@ public:
         std::weak_ptr<TrainingPlotPanel> plot_panel = {},
         std::function<void(bool)> node_editor_callback = nullptr
     );
+    /**
+     * Start training from role-resolved external batchers. The caller owns
+     * modality-specific construction; TrainingManager owns the common loop.
+     */
+    bool StartTrainingExternal(
+        TrainingConfiguration config,
+        ResolvedExternalBatchers batchers,
+        int epochs,
+        int batch_size,
+        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
+        std::function<void(bool)> node_editor_callback = nullptr
+    );
 
     /**
      * Start training with Arrow dataset (modern API)
