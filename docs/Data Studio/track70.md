@@ -253,3 +253,8 @@ changes are outside Track 70 scope and must remain isolated.
   `LazyDataTable` file-index/cache path. Table Viewer remains only an
   already-materialized `DataTable` display shell; registered/source previews
   stay on the shared bounded `DataPreviewService` path.
+- 2026-07-22: Hid raw Quick Preview for dataset assets in Asset Browser.
+  Dataset files now expose `Preview Data` and `Create Data Input` only, so
+  dataset inspection cannot silently fall back to the old raw file table parser;
+  Quick Preview remains available for non-dataset files such as code, Markdown,
+  JSON, images, and opaque binary peeks.

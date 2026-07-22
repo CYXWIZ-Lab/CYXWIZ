@@ -656,14 +656,13 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
                     CreateDataInputFromItem(item);
                 }
             }
-            // Quick Preview (for previewable files)
-            if (IsPreviewableFile(item)) {
+            // Quick Preview is raw file peeking for non-dataset assets only.
+            if (!IsDatasetFile(item) && IsPreviewableFile(item)) {
                 if (ImGui::MenuItem(ICON_FA_EYE " Quick Preview")) {
                     show_quick_preview_ = true;
                     quick_preview_path_ = item.absolute_path;
                 }
             }
-
             // Open in CyxWiz Studio (for .cyxgraph files only)
             if (item.type == AssetType::Graph) {
                 if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Open in CyxWiz Studio")) {
