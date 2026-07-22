@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "../../core/data_registry.h"
+#include "../../core/data_preview_service.h"
 #include "../../core/async_task_manager.h"
 #include "../preview/preview_renderer.h"
 #include <string>
@@ -73,12 +74,8 @@ public:
     void SetOnAssetDeleted(AssetCallback callback) { on_deleted_ = std::move(callback); }
 
     // Dataset callback - called when a dataset is double-clicked
-    using DatasetCallback = std::function<void(const std::string& path, DatasetHandle handle)>;
-    void SetOnDatasetLoaded(DatasetCallback callback) { on_dataset_loaded_ = std::move(callback); }
-
-    // Table view callback - called when user selects "View in Table" from context menu
-    using TableViewCallback = std::function<void(const std::string& path)>;
-    void SetOnViewInTable(TableViewCallback callback) { on_view_in_table_ = std::move(callback); }
+    using DataInputSourceCallback = std::function<void(const std::string& path)>;
+    void SetOnCreateDataInput(DataInputSourceCallback callback) { on_create_data_input_ = std::move(callback); }
 
     // Graph file callback - called when user opens a .cyxgraph file
     using GraphCallback = std::function<void(const std::string& path)>;
@@ -98,8 +95,7 @@ private:
     // Dataset helpers
     bool IsDatasetFile(const AssetItem& item) const;
     bool IsTableViewableFile(const AssetItem& item) const;
-    void LoadDatasetFromItem(const AssetItem& item);
-    void LoadDatasetFromItemAsync(const AssetItem& item);
+    void CreateDataInputFromItem(const AssetItem& item);
 
     // Dialogs
     void RenderNewScriptDialog();
@@ -177,14 +173,15 @@ private:
     // Callbacks
     AssetCallback on_double_click_;
     AssetCallback on_deleted_;
-    DatasetCallback on_dataset_loaded_;
-    TableViewCallback on_view_in_table_;
+    DataInputSourceCallback on_create_data_input_;
+
     GraphCallback on_open_in_node_editor_;
 
     // Dataset preview state
     bool show_dataset_preview_ = true;
-    DatasetPreview current_preview_;
+    DataPreviewPage current_preview_;
     std::string preview_path_;
+    std::string preview_dataset_name_;
     AssetItem* hovered_dataset_item_ = nullptr;
 
     // Clipboard state
@@ -200,11 +197,6 @@ private:
 
     // Force tree state update (for expand/collapse all)
     bool force_tree_state_ = false;
-
-    // Async loading state for datasets
-    std::atomic<bool> is_loading_dataset_{false};
-    uint64_t loading_task_id_ = 0;
-    std::string loading_dataset_path_;
 
     // Async directory scanning state
     std::atomic<bool> is_scanning_directory_{false};

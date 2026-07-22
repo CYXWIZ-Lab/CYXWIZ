@@ -605,12 +605,12 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
                 on_open_in_node_editor_(item.absolute_path);
             }
         }
-        // Special handling for dataset files - load into DataRegistry (async with loading indicator)
+        // Dataset files create a configured Data Input; only that node applies a load.
         else if (IsDatasetFile(item)) {
-            LoadDatasetFromItemAsync(item);
+            CreateDataInputFromItem(item);
         }
-        // Fire callback for file double-click
-        if (on_double_click_) {
+        // Dataset files already performed their dedicated action above.
+        if (on_double_click_ && !IsDatasetFile(item)) {
             on_double_click_(item);
         }
     }
@@ -641,20 +641,17 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
                     on_double_click_(item);
                 }
             }
-
-            // View in Table (for tabular data files only)
+            // Preview Data uses the same bounded renderer as Quick Preview.
             if (IsTableViewableFile(item)) {
-                if (ImGui::MenuItem(ICON_FA_TABLE " View in Table")) {
-                    if (on_view_in_table_) {
-                        on_view_in_table_(item.absolute_path);
-                    }
+                if (ImGui::MenuItem(ICON_FA_TABLE " Preview Data")) {
+                    show_quick_preview_ = true;
+                    quick_preview_path_ = item.absolute_path;
                 }
             }
-
             // Load Dataset (for dataset files only - async with loading indicator)
             if (IsDatasetFile(item)) {
-                if (ImGui::MenuItem(ICON_FA_DATABASE " Load Dataset")) {
-                    LoadDatasetFromItemAsync(item);
+                if (ImGui::MenuItem(ICON_FA_DATABASE " Create Data Input")) {
+                    CreateDataInputFromItem(item);
                 }
             }
 
@@ -1618,69 +1615,9 @@ void AssetBrowserPanel::RenderQuickPreviewPopup() {
     ImGui::End();
 }
 
-void AssetBrowserPanel::LoadDatasetFromItem(const AssetItem& item) {
-    // Use async loading by default for better UX
-    LoadDatasetFromItemAsync(item);
+void AssetBrowserPanel::CreateDataInputFromItem(const AssetItem& item) {
+    if (IsDatasetFile(item) && on_create_data_input_) on_create_data_input_(item.absolute_path);
 }
-
-void AssetBrowserPanel::LoadDatasetFromItemAsync(const AssetItem& item) {
-    if (!IsDatasetFile(item)) return;
-
-    if (is_loading_dataset_.load()) {
-        spdlog::warn("Already loading a dataset, please wait...");
-        return;
-    }
-
-    spdlog::info("Loading dataset async from Asset Browser: {}", item.absolute_path);
-
-    is_loading_dataset_.store(true);
-    loading_dataset_path_ = item.absolute_path;
-
-    // Capture path and callback by value to avoid dangling references
-    std::string path = item.absolute_path;
-    DatasetCallback callback = on_dataset_loaded_;
-
-    loading_task_id_ = AsyncTaskManager::Instance().RunAsync(
-        "Loading: " + item.name,
-        [this, path, callback](LambdaTask& task) {
-            task.ReportProgress(0.1f, "Opening file...");
-
-            auto& registry = DataRegistry::Instance();
-
-            task.ReportProgress(0.3f, "Parsing data...");
-            if (task.ShouldStop()) return;
-
-            DatasetHandle handle = registry.LoadDataset(path);
-
-            task.ReportProgress(0.9f, "Finalizing...");
-            if (task.ShouldStop()) return;
-
-            if (handle.IsValid()) {
-                spdlog::info("Dataset loaded successfully: {} ({} samples)",
-                    handle.GetName(), handle.GetInfo().num_samples);
-                task.MarkCompleted();
-            } else {
-                task.MarkFailed("Failed to load dataset");
-            }
-        },
-        nullptr,  // No progress callback needed - indicator is shown via is_loading_dataset_
-        [this, path, callback](bool success, const std::string& error) {
-            is_loading_dataset_.store(false);
-
-            if (success && callback) {
-                // Reload the handle on main thread and fire callback
-                auto& registry = DataRegistry::Instance();
-                auto handle = registry.GetDataset(path);
-                if (handle.IsValid()) {
-                    callback(path, handle);
-                }
-            } else if (!success) {
-                spdlog::error("Async dataset load failed: {}", error);
-            }
-        }
-    );
-}
-
 void AssetBrowserPanel::RenderDatasetPreview() {
     if (!show_dataset_preview_) return;
 
@@ -1695,11 +1632,28 @@ void AssetBrowserPanel::RenderDatasetPreview() {
 
     if (!dataset_item) return;
 
-    // Check if we need to update preview
+    // Resolve filesystem selection to an already-registered tabular dataset.
+    // Raw file peeking remains the Quick Preview popup; this pane reports the
+    // registered dataset state and uses DataPreviewService for bounded data.
     if (preview_path_ != dataset_item->absolute_path) {
         preview_path_ = dataset_item->absolute_path;
+        preview_dataset_name_.clear();
+        current_preview_ = DataPreviewPage{};
+
         auto& registry = DataRegistry::Instance();
-        current_preview_ = registry.GetPreview(preview_path_, 5);
+        auto dataset_name = registry.FindTabularDatasetBySourcePath(preview_path_);
+        if (dataset_name) {
+            DataPreviewRequest request;
+            request.dataset_name = *dataset_name;
+            request.offset = 0;
+            request.row_limit = 5;
+            current_preview_ = DataPreviewService::PreviewRegisteredTabular(registry, request);
+            if (current_preview_.ok) {
+                preview_dataset_name_ = *dataset_name;
+            }
+        } else {
+            current_preview_.reason = "Dataset file is not registered yet. Use Create Data Input, then Apply.";
+        }
     }
 
     // Render preview in a side panel
@@ -1708,59 +1662,41 @@ void AssetBrowserPanel::RenderDatasetPreview() {
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_DATABASE " Dataset Preview");
     ImGui::Separator();
 
-    ImGui::Text("Type: %s", DataRegistry::TypeToString(current_preview_.type).c_str());
-    ImGui::Text("Samples: %zu", current_preview_.num_samples);
-    ImGui::Text("Classes: %zu", current_preview_.num_classes);
-
-    if (!current_preview_.shape.empty()) {
-        std::string shape_str = "[";
-        for (size_t i = 0; i < current_preview_.shape.size(); ++i) {
-            if (i > 0) shape_str += ", ";
-            shape_str += std::to_string(current_preview_.shape[i]);
-        }
-        shape_str += "]";
-        ImGui::Text("Shape: %s", shape_str.c_str());
+    ImGui::TextWrapped("File: %s", dataset_item->name.c_str());
+    if (dataset_item->file_size > 0) {
+        ImGui::Text("Size: %s", FormatFileSize(dataset_item->file_size).c_str());
     }
 
-    ImGui::Text("Size: %s", FormatFileSize(current_preview_.file_size).c_str());
-
-    ImGui::Separator();
-
-    // Show column names for tabular data
-    if (!current_preview_.columns.empty()) {
-        ImGui::Text("Columns:");
-        for (size_t i = 0; i < current_preview_.columns.size() && i < 5; ++i) {
-            ImGui::BulletText("%s", current_preview_.columns[i].c_str());
+    if (!current_preview_.ok) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", current_preview_.reason.c_str());
+    } else {
+        ImGui::Spacing();
+        ImGui::TextWrapped("Dataset: %s", preview_dataset_name_.c_str());
+        ImGui::Text("Backend: %s", current_preview_.backend.c_str());
+        ImGui::Text("Rows: %lld", static_cast<long long>(current_preview_.total_rows));
+        ImGui::Text("Columns: %lld", static_cast<long long>(current_preview_.total_columns));
+        if (current_preview_.has_next) {
+            ImGui::TextDisabled("Next offset: %lld", static_cast<long long>(current_preview_.next_offset));
         }
-        if (current_preview_.columns.size() > 5) {
-            ImGui::Text("  ... and %zu more", current_preview_.columns.size() - 5);
-        }
-    }
 
-    ImGui::Separator();
-
-    // Show loading indicator or load button
-    if (is_loading_dataset_.load()) {
-        // Animated loading spinner
-        float time = static_cast<float>(ImGui::GetTime());
-        const char* spinner_chars[] = {"|", "/", "-", "\\"};
-        int spinner_idx = static_cast<int>(time * 8) % 4;
-
-        ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s Loading...", spinner_chars[spinner_idx]);
-
-        if (ImGui::Button("Cancel", ImVec2(-1, 0))) {
-            if (loading_task_id_ != 0) {
-                AsyncTaskManager::Instance().Cancel(loading_task_id_);
-                is_loading_dataset_.store(false);
+        ImGui::Separator();
+        if (!current_preview_.schema.empty()) {
+            ImGui::Text("Columns:");
+            for (size_t i = 0; i < current_preview_.schema.size() && i < 5; ++i) {
+                const auto& column = current_preview_.schema[i];
+                ImGui::BulletText("%s", column.name.c_str());
+            }
+            if (current_preview_.schema.size() > 5) {
+                ImGui::Text("  ... and %zu more", current_preview_.schema.size() - 5);
             }
         }
-    } else {
-        // Load button
-        if (ImGui::Button("Load Dataset", ImVec2(-1, 0))) {
-            LoadDatasetFromItemAsync(*dataset_item);
-        }
     }
 
+    ImGui::Separator();
+    if (ImGui::Button("Create Data Input", ImVec2(-1, 0))) {
+        CreateDataInputFromItem(*dataset_item);
+    }
     ImGui::EndChild();
 }
 

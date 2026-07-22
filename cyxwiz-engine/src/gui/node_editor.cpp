@@ -536,6 +536,7 @@ void NodeEditor::Render() {
         }
         for (const auto& pending : pending_nodes_) {
             MLNode node = CreateNode(pending.type, pending.name);
+            for (const auto& [key, value] : pending.initial_parameters) node.parameters[key] = value;
 
             nodes_.push_back(node);
 
@@ -4354,6 +4355,16 @@ void NodeEditor::AddNodeFromMenu(NodeType type, const std::string& name) {
     spdlog::info("Menu: Adding {} node at center of view", name);
 }
 
+void NodeEditor::AddDataInputFromAsset(const std::string& path) {
+    ImVec2 panning = ImNodes::EditorContextGetPanning();
+    PendingNode pending{NodeType::DataInput, "Data Input", ImVec2(-panning.x + 400, -panning.y + 300)};
+    pending.initial_parameters["file_path"] = path;
+    pending.initial_parameters["source_type"] = "file";
+    pending.initial_parameters["configured"] = "false";
+    pending.initial_parameters["data_loaded"] = "false";
+    pending_nodes_.push_back(std::move(pending));
+    spdlog::info("Asset Browser queued Data Input source {}", path);
+}
 void NodeEditor::DeleteSelectedNodes() {
     // Reuse existing DeleteSelected logic
     DeleteSelected();

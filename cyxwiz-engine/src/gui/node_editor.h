@@ -1010,6 +1010,7 @@ public:
 
     // Add a node at the center of the visible area
     void AddNodeFromMenu(NodeType type, const std::string& name);
+    void AddDataInputFromAsset(const std::string& path);
 
     // Delete currently selected nodes
     void DeleteSelectedNodes();
@@ -1289,6 +1290,7 @@ private:
         NodeType type;
         std::string name;
         ImVec2 position;  // Grid space position where node should be created
+        std::unordered_map<std::string, std::string> initial_parameters;
     };
     std::vector<PendingNode> pending_nodes_;
     ImVec2 context_menu_pos_;  // Mouse position when context menu was opened (grid space)

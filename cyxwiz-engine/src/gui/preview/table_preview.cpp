@@ -74,7 +74,8 @@ void TablePreviewRenderer::LoadFromFile(const std::string& filepath, char delimi
             for (const auto& t : tokens) {
                 if (!t.empty()) {
                     try {
-                        std::stod(t);
+                        const double parsed = std::stod(t);
+                        (void)parsed;
                     } catch (...) {
                         is_header = true;
                         break;
@@ -101,45 +102,6 @@ void TablePreviewRenderer::LoadFromFile(const std::string& filepath, char delimi
     }
 
     spdlog::info("TablePreview: Loaded {} rows, {} columns from {}", rows_.size(), headers_.size(), filepath);
-}
-
-void TablePreviewRenderer::LoadFromDataset(const cyxwiz::DatasetHandle& handle,
-                                            const std::vector<std::string>& column_names) {
-    if (!handle.IsValid()) return;
-
-    // Check if same dataset (avoid reloading)
-    std::string dataset_name = handle.GetName();
-    if (dataset_name == cached_source_ && !rows_.empty()) return;
-    cached_source_ = dataset_name;
-
-    headers_ = column_names;
-    rows_.clear();
-    current_page_ = 0;
-
-    size_t num_samples = std::min(handle.Size(), static_cast<size_t>(1000));
-
-    for (size_t i = 0; i < num_samples; i++) {
-        auto [data, label] = handle.GetSample(i);
-        std::vector<std::string> row;
-
-        for (float val : data) {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "%.4f", val);
-            row.push_back(buf);
-        }
-        row.push_back(std::to_string(label));
-        rows_.push_back(std::move(row));
-    }
-
-    // Add "Label" column if not in headers
-    if (!headers_.empty() && headers_.size() < rows_[0].size()) {
-        headers_.push_back("Label");
-    } else if (headers_.empty() && !rows_.empty()) {
-        for (size_t i = 0; i < rows_[0].size() - 1; i++) {
-            headers_.push_back("F" + std::to_string(i));
-        }
-        headers_.push_back("Label");
-    }
 }
 
 void TablePreviewRenderer::SetData(const std::vector<std::string>& headers,

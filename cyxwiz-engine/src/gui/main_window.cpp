@@ -1892,60 +1892,8 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up asset browser callback for dataset loading
-    asset_browser_->SetOnDatasetLoaded([this](const std::string& path, cyxwiz::DatasetHandle handle) {
-        if (handle.IsValid()) {
-            spdlog::info("Dataset loaded from Asset Browser: {}", path);
-            if (data_explorer_panel_) {
-                data_explorer_panel_->SetVisible(true);
-            }
-
-            // Update node editor with dataset name
-            if (node_editor_) {
-                // Extract dataset name from path (e.g., "mnist.npz" -> "MNIST")
-                std::filesystem::path fs_path(path);
-                std::string dataset_name = fs_path.stem().string();
-                // Capitalize first letter
-                if (!dataset_name.empty()) {
-                    dataset_name[0] = std::toupper(dataset_name[0]);
-                }
-                node_editor_->UpdateDatasetNodeName(dataset_name);
-            }
-        }
-    });
-
-    // Set up asset browser callback for "View in Table" option
-    asset_browser_->SetOnViewInTable([this](const std::string& path) {
-        if (table_viewer_) {
-            std::filesystem::path fs_path(path);
-            std::string ext = fs_path.extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-            bool loaded = false;
-
-            // Load based on file extension
-            if (ext == ".csv") {
-                loaded = table_viewer_->LoadCSV(path);
-            } else if (ext == ".tsv") {
-                loaded = table_viewer_->LoadTXT(path, '\t');
-            } else if (ext == ".txt") {
-                loaded = table_viewer_->LoadTXT(path);
-            } else if (ext == ".h5" || ext == ".hdf5") {
-                loaded = table_viewer_->LoadHDF5(path);
-            } else if (ext == ".xlsx" || ext == ".xls") {
-                loaded = table_viewer_->LoadExcel(path);
-            } else {
-                // Try to load as CSV by default
-                loaded = table_viewer_->LoadCSV(path);
-            }
-
-            if (loaded) {
-                table_viewer_->Show();
-                spdlog::info("Opened file in table viewer: {}", fs_path.filename().string());
-            } else {
-                spdlog::error("Failed to open file in table viewer: {}", path);
-            }
-        }
+    asset_browser_->SetOnCreateDataInput([this](const std::string& path) {
+        if (node_editor_) node_editor_->AddDataInputFromAsset(path);
     });
 
     // Set up asset browser callback for "Open in Node Editor" (.cyxgraph files)

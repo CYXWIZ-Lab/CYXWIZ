@@ -211,3 +211,28 @@ changes are outside Track 70 scope and must remain isolated.
   identifier, the launcher falls back to bounded exact-row comparison; for
   larger tables it logs that overlap verification was not practical instead of
   pretending the source is leak-free.
+- 2026-07-21: Added the first shared bounded tabular data preview service in
+  `src/core/data_preview_service.*`. It previews already-registered Arrow and
+  Parquet-backed datasets by dataset identity with offset/row-limit/selected
+  column requests, returns schema/backend/cursor metadata plus typed failure
+  reasons, and does not load files or register datasets as a side effect. This
+  is the replacement boundary for Data Input and Asset Browser preview wiring;
+  the old file-path preview helpers remain temporarily as callers are migrated.
+  Release `test_data_preview_service` passed.
+- 2026-07-22: Wired Data Input's loaded tabular preview path to the shared
+  `DataPreviewService`. After Apply, Preview reads a bounded registered
+  Arrow/Parquet page by dataset identity and displays backend, total row count,
+  and next cursor metadata. The older source-file preview remains only as the
+  pre-Apply fallback while Asset Browser/Table Viewer callers are migrated.
+- 2026-07-22: Migrated the Asset Browser dataset preview pane off legacy
+  `DataRegistry::GetPreview(path, ...)` for registered tabular data. The
+  registry now records source/cache path provenance for Arrow/Parquet-backed
+  tabular datasets, and the pane resolves a selected file to its registered
+  dataset name before calling `DataPreviewService`. Raw file peeking remains
+  in Quick Preview; the side pane no longer silently reloads or reparses files.
+- 2026-07-22: Removed the now-orphan legacy preview API and renderer hooks:
+  `DataRegistry::GetPreview(path, ...)`, `DatasetPreview`,
+  `PreviewRenderer::RenderDatasetPreview(...)`, and
+  `TablePreviewRenderer::LoadFromDataset(...)`. Raw Quick Preview remains a
+  file-only preview path, while registered Arrow/Parquet previews flow through
+  `DataPreviewService`.

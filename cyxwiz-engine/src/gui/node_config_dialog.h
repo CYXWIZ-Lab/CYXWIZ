@@ -461,6 +461,10 @@ private:
     std::vector<std::vector<std::string>> preview_data_;
     std::vector<ImTextureID> preview_image_textures_;
     std::vector<std::string> preview_image_labels_;
+    int64_t preview_total_rows_ = 0;
+    int64_t preview_next_offset_ = 0;
+    bool preview_has_next_ = false;
+    std::string preview_backend_;
     std::vector<std::pair<std::string, size_t>> label_distribution_;
     std::string label_distribution_column_;
     size_t label_distribution_total_ = 0;

@@ -65,7 +65,26 @@ void DataInputDialog::RenderTabularPreview() {
         return;
     }
 
-    ImGui::Text("%zu columns, %zu rows", preview_columns_.size(), preview_data_.size());
+    if (preview_total_rows_ > 0) {
+        std::string backend_label;
+        if (!preview_backend_.empty()) {
+            backend_label = " (" + preview_backend_ + ")";
+        }
+        ImGui::Text("%zu columns, %zu rows shown of %lld%s",
+                    preview_columns_.size(),
+                    preview_data_.size(),
+                    static_cast<long long>(preview_total_rows_),
+                    backend_label.c_str());
+    } else {
+        ImGui::Text("%zu columns, %zu rows",
+                    preview_columns_.size(),
+                    preview_data_.size());
+    }
+    if (preview_has_next_) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("next offset %lld",
+                            static_cast<long long>(preview_next_offset_));
+    }
     ImGui::Spacing();
 
     if (ImGui::BeginTable("Preview", static_cast<int>(preview_columns_.size()),

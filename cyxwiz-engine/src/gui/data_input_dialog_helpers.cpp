@@ -12,9 +12,12 @@
 
 #include "node_config_dialog.h"
 #include "data_input_preview.h"
+#include "../core/data_preview_service.h"
+#include "../core/data_registry.h"
 
 #include <cstring>
 #include <string>
+#include <utility>
 
 #include <spdlog/spdlog.h>
 
@@ -36,12 +39,52 @@ void DataInputDialog::LoadPreview() {
     preview_error_.clear();
     preview_columns_.clear();
     preview_data_.clear();
+    preview_total_rows_ = 0;
+    preview_next_offset_ = 0;
+    preview_has_next_ = false;
+    preview_backend_.clear();
     label_distribution_.clear();
     label_distribution_column_.clear();
     label_distribution_total_ = 0;
 
     if (!IsPreviewSupported()) {
         preview_error_ = PreviewUnavailableMessage();
+        preview_loaded_ = true;
+        UpdateRAMEstimate();
+        return;
+    }
+
+    const bool can_preview_registered_tabular =
+        source_type_ == SourceType::File &&
+        (file_category_ == FileCategory::Tabular ||
+         file_category_ == FileCategory::TimeSeries) &&
+        !loaded_dataset_name_.empty() &&
+        data_load_state_ == DataLoadState::InMemory;
+    if (can_preview_registered_tabular) {
+        cyxwiz::DataPreviewRequest request;
+        request.dataset_name = loaded_dataset_name_;
+        request.offset = 0;
+        request.row_limit = 20;
+        auto page = cyxwiz::DataPreviewService::PreviewRegisteredTabular(
+            cyxwiz::DataRegistry::Instance(), request);
+        if (!page.ok) {
+            preview_error_ = page.reason;
+            preview_loaded_ = true;
+            UpdateRAMEstimate();
+            return;
+        }
+
+        preview_backend_ = page.backend;
+        preview_total_rows_ = page.total_rows;
+        preview_next_offset_ = page.next_offset;
+        preview_has_next_ = page.has_next;
+        preview_columns_.reserve(page.schema.size());
+        for (const auto& column : page.schema) {
+            preview_columns_.push_back(column.name);
+        }
+        available_columns_ = preview_columns_;
+        preview_data_ = std::move(page.rows);
+        selected_columns_.assign(preview_columns_.size(), true);
         preview_loaded_ = true;
         UpdateRAMEstimate();
         return;
@@ -75,6 +118,10 @@ void DataInputDialog::LoadColumnList() {
     preview_columns_ = table.columns;
     available_columns_ = table.columns;
     preview_data_ = table.rows;
+    preview_total_rows_ = static_cast<int64_t>(table.rows.size());
+    preview_next_offset_ = preview_total_rows_;
+    preview_has_next_ = false;
+    preview_backend_ = "Source";
     selected_columns_.assign(table.columns.size(), true);
 
     UpdateTextLabelDistribution();

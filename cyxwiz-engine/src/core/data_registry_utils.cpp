@@ -11,9 +11,30 @@
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <ctime>
+#include <filesystem>
 #include <sstream>
 
 namespace cyxwiz {
+
+namespace {
+
+std::string NormalizeTabularSourcePath(const std::string& path) {
+    if (path.empty()) return {};
+    try {
+        return std::filesystem::weakly_canonical(std::filesystem::absolute(path))
+            .lexically_normal()
+            .string();
+    } catch (...) {
+        try {
+            return std::filesystem::absolute(path).lexically_normal().string();
+        } catch (...) {
+            return path;
+        }
+    }
+}
+
+} // namespace
+
 
 // =============================================================================
 // Dataset Versioning
@@ -284,6 +305,50 @@ bool DataRegistry::IsParquetBackedDataset(const std::string& name) const {
     return parquet_backed_datasets_.find(name) != parquet_backed_datasets_.end();
 }
 
+std::optional<std::string> DataRegistry::FindTabularDatasetBySourcePath(
+    const std::string& path) const {
+    const std::string normalized = NormalizeTabularSourcePath(path);
+    if (normalized.empty()) return std::nullopt;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tabular_dataset_by_source_path_.find(normalized);
+    if (it == tabular_dataset_by_source_path_.end()) {
+        return std::nullopt;
+    }
+    const std::string& name = it->second;
+    if (arrow_datasets_.find(name) == arrow_datasets_.end() &&
+        parquet_backed_datasets_.find(name) == parquet_backed_datasets_.end()) {
+        return std::nullopt;
+    }
+    return name;
+}
+
+void DataRegistry::RememberTabularSourcePathUnlocked(
+    const std::string& name, const std::string& path) {
+    const std::string normalized = NormalizeTabularSourcePath(path);
+    if (name.empty() || normalized.empty()) return;
+
+    if (auto old_name = tabular_dataset_by_source_path_.find(normalized);
+        old_name != tabular_dataset_by_source_path_.end() && old_name->second != name) {
+        tabular_source_paths_by_name_.erase(old_name->second);
+    }
+
+    if (auto old_path = tabular_source_paths_by_name_.find(name);
+        old_path != tabular_source_paths_by_name_.end() && old_path->second != normalized) {
+        tabular_dataset_by_source_path_.erase(old_path->second);
+    }
+
+    tabular_source_paths_by_name_[name] = normalized;
+    tabular_dataset_by_source_path_[normalized] = name;
+}
+
+void DataRegistry::ForgetTabularSourcePathUnlocked(const std::string& name) {
+    auto it = tabular_source_paths_by_name_.find(name);
+    if (it == tabular_source_paths_by_name_.end()) return;
+    tabular_dataset_by_source_path_.erase(it->second);
+    tabular_source_paths_by_name_.erase(it);
+}
+
 void DataRegistry::RegisterParquetBacked(
     const std::string& name,
     std::shared_ptr<ParquetBackedDataset> dataset) {
@@ -293,6 +358,7 @@ void DataRegistry::RegisterParquetBacked(
         spdlog::warn("RegisterParquetBacked: overwriting existing dataset '{}'", name);
     }
     parquet_backed_datasets_[name] = dataset;
+    RememberTabularSourcePathUnlocked(name, dataset->GetFilePath());
     spdlog::info("Registered ParquetBackedDataset '{}': {} rows, {} columns, {:.1f} MB on disk",
                  name,
                  dataset->GetNumRows(),
@@ -317,6 +383,7 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
         removed_parquet = true;
     }
 
+    ForgetTabularSourcePathUnlocked(name);
     if (removed_arrow || removed_parquet) {
         spdlog::debug("UnregisterTabularDataset '{}': removed arrow={} parquet={}",
                       name, removed_arrow, removed_parquet);
@@ -347,6 +414,7 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
             parquet_backed_datasets_.erase(it);
             mat_parquet = true;
         }
+        ForgetTabularSourcePathUnlocked(mat_name);
         if (mat_arrow || mat_parquet) {
             spdlog::debug("UnregisterTabularDataset '{}' cascade: dropped materialized variant '{}'",
                           name, mat_name);
@@ -482,6 +550,8 @@ void DataRegistry::ClearAllTabularDatasets() {
 
     arrow_datasets_.clear();
     parquet_backed_datasets_.clear();
+    tabular_source_paths_by_name_.clear();
+    tabular_dataset_by_source_path_.clear();
     image_dataset_entries_.clear();
     audio_dataset_entries_.clear();
     text_dataset_entries_.clear();

@@ -77,28 +77,6 @@ struct MemoryStats {
 
 // DatasetInfo moved to dataset_types.h
 
-/**
- * Preview data for quick display
- */
-struct DatasetPreview {
-    DatasetType type = DatasetType::None;
-    size_t num_samples = 0;
-    size_t num_classes = 0;
-    std::vector<size_t> shape;
-    size_t file_size = 0;
-
-    // For tabular data
-    std::vector<std::string> columns;
-    std::vector<std::vector<std::string>> rows;
-
-    // For image data
-    std::vector<std::vector<float>> thumbnails;
-    std::vector<int> thumbnail_labels;
-    int thumbnail_width = 0;
-    int thumbnail_height = 0;
-    int thumbnail_channels = 0;
-};
-
 // SplitConfig moved to dataset_types.h
 
 /**
@@ -306,6 +284,7 @@ public:
     // temp directory (see ParquetBackedDataset::GetCacheFilePath).
     std::shared_ptr<class ParquetBackedDataset> GetParquetBackedDataset(const std::string& name) const;
     bool IsParquetBackedDataset(const std::string& name) const;
+    std::optional<std::string> FindTabularDatasetBySourcePath(const std::string& path) const;
     void RegisterParquetBacked(const std::string& name,
                                std::shared_ptr<class ParquetBackedDataset> dataset);
 
@@ -510,9 +489,6 @@ public:
     std::vector<DatasetInfo> ListDatasets() const;
     std::vector<std::string> GetDatasetNames() const;
 
-    // Preview (lightweight, doesn't fully load)
-    DatasetPreview GetPreview(const std::string& path, int max_samples = 5);
-
     // Type detection
     static DatasetType DetectType(const std::string& path);
     static std::string TypeToString(DatasetType type);
@@ -590,6 +566,9 @@ public:
 private:
     DataRegistry() = default;
 
+    void RememberTabularSourcePathUnlocked(const std::string& name, const std::string& path);
+    void ForgetTabularSourcePathUnlocked(const std::string& name);
+
     // Generate unique name if not provided
     std::string GenerateUniqueName(const std::string& base_name);
 
@@ -603,6 +582,12 @@ private:
     // is too large to fit comfortably in RAM. Lookups by name fall through
     // to this map when not found in arrow_datasets_.
     std::map<std::string, std::shared_ptr<class ParquetBackedDataset>> parquet_backed_datasets_;
+
+    // Provenance index for registered tabular datasets. Lets UI callers
+    // resolve a selected source/cache path to the registered dataset name
+    // without invoking legacy file-path preview/loading code.
+    std::map<std::string, std::string> tabular_source_paths_by_name_;
+    std::map<std::string, std::string> tabular_dataset_by_source_path_;
 
     // Image dataset entries (Phase 1) — lightweight metadata, not loaded
     // datasets. The actual pixel-loading dataset is constructed at

@@ -81,34 +81,6 @@ PreviewContentType PreviewRenderer::DetectFileType(const std::string& filepath) 
     return PreviewContentType::HexDump;
 }
 
-PreviewContentType PreviewRenderer::DetectDatasetType(const cyxwiz::DatasetInfo& info) {
-    switch (info.type) {
-        case cyxwiz::DatasetType::ImageFolder:
-        case cyxwiz::DatasetType::ImageCSV:
-        case cyxwiz::DatasetType::MNIST:
-        case cyxwiz::DatasetType::FashionMNIST:
-        case cyxwiz::DatasetType::CIFAR10:
-        case cyxwiz::DatasetType::CIFAR100:
-            return PreviewContentType::DatasetImage;
-
-        case cyxwiz::DatasetType::CSV:
-        case cyxwiz::DatasetType::TSV:
-            return PreviewContentType::DatasetTabular;
-
-        case cyxwiz::DatasetType::JSON:
-            return PreviewContentType::DatasetJSON;
-
-        case cyxwiz::DatasetType::TXT:
-            return PreviewContentType::DatasetText;
-
-        case cyxwiz::DatasetType::HDF5:
-            return PreviewContentType::DatasetHDF5;
-
-        default:
-            return PreviewContentType::DatasetTabular;
-    }
-}
-
 const char* PreviewRenderer::GetTypeName(PreviewContentType type) {
     switch (type) {
         case PreviewContentType::Image:          return "Image";
@@ -119,11 +91,6 @@ const char* PreviewRenderer::GetTypeName(PreviewContentType type) {
         case PreviewContentType::Markdown:       return "Markdown";
         case PreviewContentType::HexDump:        return "Binary";
         case PreviewContentType::HDF5:           return "HDF5";
-        case PreviewContentType::DatasetImage:   return "Image Dataset";
-        case PreviewContentType::DatasetTabular: return "Tabular Dataset";
-        case PreviewContentType::DatasetJSON:    return "JSON Dataset";
-        case PreviewContentType::DatasetText:    return "Text Dataset";
-        case PreviewContentType::DatasetHDF5:    return "HDF5 Dataset";
         default:                                 return "Unknown";
     }
 }
@@ -248,77 +215,6 @@ void PreviewRenderer::RenderFilePreview(const std::string& filepath) {
 
         default:
             ImGui::TextWrapped("No preview available for this file type.");
-            break;
-    }
-}
-
-void PreviewRenderer::RenderDatasetPreview(const cyxwiz::DatasetHandle& handle,
-                                             const cyxwiz::DatasetInfo& info,
-                                             int sample_idx, int view_mode, float zoom,
-                                             int grid_cols, int grid_rows,
-                                             const std::vector<std::string>& class_names) {
-    auto type = DetectDatasetType(info);
-
-    switch (type) {
-        case PreviewContentType::DatasetImage:
-            // Delegate to existing image preview (handled by dataset_panel.cpp still)
-            // This is a pass-through - the dataset panel handles image datasets directly
-            break;
-
-        case PreviewContentType::DatasetTabular: {
-            // Get column names from the dataset if available
-            auto* raw = handle.GetUnderlyingDataset();
-            std::vector<std::string> cols;
-            if (raw) {
-                cols = raw->GetColumnNames();
-            }
-
-            if (cols.empty()) {
-                // Generate generic column names
-                if (!info.shape.empty()) {
-                    size_t num_features = info.shape[0];
-                    for (size_t i = 0; i < num_features; i++) {
-                        cols.push_back("F" + std::to_string(i));
-                    }
-                }
-            }
-
-            table_renderer_->LoadFromDataset(handle, cols);
-            table_renderer_->Render();
-            break;
-        }
-
-        case PreviewContentType::DatasetJSON: {
-            auto* raw = handle.GetUnderlyingDataset();
-            if (raw) {
-                auto* json_data = static_cast<const nlohmann::json*>(raw->GetRawJSON());
-                if (json_data) {
-                    json_renderer_->SetJSON(*json_data);
-                    json_renderer_->Render();
-                    break;
-                }
-            }
-            // Fallback: show as tabular
-            ImGui::TextWrapped("JSON tree view not available. Showing sample data.");
-            break;
-        }
-
-        case PreviewContentType::DatasetText: {
-            auto* raw = handle.GetUnderlyingDataset();
-            if (raw) {
-                auto& lines = raw->GetTextLines();
-                if (!lines.empty()) {
-                    text_renderer_->SetContentFromLines(lines);
-                    text_renderer_->Render();
-                    break;
-                }
-            }
-            ImGui::TextWrapped("Text preview not available.");
-            break;
-        }
-
-        default:
-            ImGui::TextWrapped("Preview not available for this dataset type.");
             break;
     }
 }

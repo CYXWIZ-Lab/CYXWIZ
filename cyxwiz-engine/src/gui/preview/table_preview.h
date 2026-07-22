@@ -2,7 +2,6 @@
 
 #include <string>
 #include <vector>
-#include "../../core/data_registry.h"
 
 namespace gui {
 
@@ -15,10 +14,6 @@ public:
 
     // Load from raw file (parses first N rows)
     void LoadFromFile(const std::string& filepath, char delimiter = ',', int max_rows = 1000);
-
-    // Load from dataset with column names
-    void LoadFromDataset(const cyxwiz::DatasetHandle& handle,
-                          const std::vector<std::string>& column_names);
 
     // Set data directly
     void SetData(const std::vector<std::string>& headers,

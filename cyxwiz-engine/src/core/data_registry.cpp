@@ -753,107 +753,6 @@ std::vector<std::string> DataRegistry::GetDatasetNames() const {
     return names;
 }
 
-DatasetPreview DataRegistry::GetPreview(const std::string& path, int max_samples) {
-    DatasetPreview preview;
-    preview.type = DetectType(path);
-
-    if (!fs::exists(path)) {
-        return preview;
-    }
-
-    // Get file size
-    if (fs::is_regular_file(path)) {
-        preview.file_size = fs::file_size(path);
-    } else if (fs::is_directory(path)) {
-        for (const auto& entry : fs::recursive_directory_iterator(path)) {
-            if (entry.is_regular_file()) {
-                preview.file_size += entry.file_size();
-            }
-        }
-    }
-
-    // Generate preview based on type
-    switch (preview.type) {
-        case DatasetType::CSV: {
-            std::ifstream file(path);
-            if (!file) return preview;
-
-            std::string line;
-            int line_count = 0;
-
-            while (std::getline(file, line) && line_count <= max_samples) {
-                std::vector<std::string> tokens;
-                std::stringstream ss(line);
-                std::string token;
-
-                while (std::getline(ss, token, ',')) {
-                    token.erase(0, token.find_first_not_of(" \t\r\n"));
-                    token.erase(token.find_last_not_of(" \t\r\n") + 1);
-                    tokens.push_back(token);
-                }
-
-                if (line_count == 0) {
-                    // Check if header
-                    try {
-                        (void)std::stof(tokens[0]);  // Just checking if it's numeric
-                        preview.rows.push_back(tokens);
-                    } catch (...) {
-                        preview.columns = tokens;
-                    }
-                } else {
-                    preview.rows.push_back(tokens);
-                }
-                line_count++;
-            }
-
-            // Count total lines
-            file.clear();
-            file.seekg(0);
-            preview.num_samples = std::count(
-                std::istreambuf_iterator<char>(file),
-                std::istreambuf_iterator<char>(), '\n');
-            if (!preview.columns.empty()) preview.num_samples--;
-
-            break;
-        }
-
-        case DatasetType::MNIST: {
-            preview.shape = {28, 28, 1};
-            preview.num_classes = 10;
-
-            // Quick count from header
-            std::string images_file = path + "/train-images-idx3-ubyte";
-            if (!fs::exists(images_file)) {
-                images_file = path + "/train-images.idx3-ubyte";
-            }
-
-            if (fs::exists(images_file)) {
-                std::ifstream file(images_file, std::ios::binary);
-                file.seekg(4);  // Skip magic
-
-                uint32_t num;
-                file.read(reinterpret_cast<char*>(&num), 4);
-                // Convert from big-endian
-                preview.num_samples = ((num & 0xFF) << 24) | ((num & 0xFF00) << 8) |
-                                     ((num & 0xFF0000) >> 8) | ((num & 0xFF000000) >> 24);
-            }
-            break;
-        }
-
-        case DatasetType::CIFAR10: {
-            preview.shape = {32, 32, 3};
-            preview.num_classes = 10;
-            preview.num_samples = 50000;  // Standard CIFAR-10 training set
-            break;
-        }
-
-        default:
-            break;
-    }
-
-    return preview;
-}
-
 DatasetType DataRegistry::DetectType(const std::string& path) {
     if (!fs::exists(path)) {
         return DatasetType::None;
@@ -1361,6 +1260,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
 
         std::lock_guard<std::mutex> lock(mutex_);
         arrow_datasets_[unique_name] = dataset;
+        RememberTabularSourcePathUnlocked(unique_name, path);
 
         spdlog::info("LoadCSVToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
                     path, unique_name, dataset->GetNumRows(), dataset->GetNumColumns());
@@ -1503,6 +1403,10 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
     }
 
     RegisterParquetBacked(unique_name, pq_dataset);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        RememberTabularSourcePathUnlocked(unique_name, path);
+    }
 
     // Note: max_rows is intentionally ignored on the disk-backed path for
     // now. Applying it would require reading a row-limit subset into memory,
@@ -1531,6 +1435,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadParquetToArrow(
 
         std::lock_guard<std::mutex> lock(mutex_);
         arrow_datasets_[unique_name] = dataset;
+        RememberTabularSourcePathUnlocked(unique_name, path);
 
         spdlog::info("LoadParquetToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
                     path, unique_name, dataset->GetNumRows(), dataset->GetNumColumns());
@@ -1559,6 +1464,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadJSONToArrow(
 
         std::lock_guard<std::mutex> lock(mutex_);
         arrow_datasets_[unique_name] = dataset;
+        RememberTabularSourcePathUnlocked(unique_name, path);
 
         spdlog::info("LoadJSONToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
                     path, unique_name, dataset->GetNumRows(), dataset->GetNumColumns());

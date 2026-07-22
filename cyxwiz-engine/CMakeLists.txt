@@ -96,6 +96,7 @@ set(ENGINE_SOURCES
     src/core/data_registry_config.cpp
     src/core/data_registry_utils.cpp
     src/core/data_convert_service.cpp
+    src/core/data_preview_service.cpp
     src/core/dataset_base.cpp
     src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/hdf5_dataset.cpp
@@ -517,6 +518,7 @@ set(ENGINE_HEADERS
     src/core/engine_config.h
     src/core/window_manager.h
     src/core/data_registry.h
+    src/core/data_preview_service.h
     src/core/arrow_dataset.h
     src/core/arrow_converters.h
     src/core/duckdb_connector.h
@@ -3171,6 +3173,46 @@ if(WIN32)
 endif()
 
 set_target_properties(test_data_convert_service PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Shared bounded data preview service =====
+add_executable(test_data_preview_service
+    tests/test_data_preview_service.cpp
+    src/core/data_preview_service.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_base.cpp
+    src/core/arrow_dataset.cpp
+    src/core/parquet_backed_dataset.cpp
+)
+
+target_include_directories(test_data_preview_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+
+target_link_libraries(test_data_preview_service PRIVATE
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+)
+
+if(HighFive_FOUND)
+    target_link_libraries(test_data_preview_service PRIVATE HighFive)
+    target_compile_definitions(test_data_preview_service PRIVATE CYXWIZ_HAS_HDF5)
+endif()
+
+if(WIN32)
+    target_compile_definitions(test_data_preview_service PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_data_preview_service PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
