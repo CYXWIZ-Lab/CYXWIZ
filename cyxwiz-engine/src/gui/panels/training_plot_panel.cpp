@@ -1498,10 +1498,13 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
     ImGui::SameLine();
     ImGui::TextDisabled(
         "Sorted by test accuracy, then validation metrics, then elapsed time.");
+    ImGui::TextDisabled(
+        "Partition Match is relative to the top-ranked run; different manifests "
+        "are not directly comparable.");
 
     if (ImGui::BeginTable(
             "TrainingRunComparisonTable",
-            25,
+            26,
             ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_Resizable |
@@ -1517,6 +1520,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("Role Origins");
         ImGui::TableSetupColumn("Role Labels");
         ImGui::TableSetupColumn("Partition ID");
+        ImGui::TableSetupColumn("Partition Match");
         ImGui::TableSetupColumn("Model");
         ImGui::TableSetupColumn("Architecture");
         ImGui::TableSetupColumn("Epochs");
@@ -1533,6 +1537,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("Checkpoint");
         ImGui::TableHeadersRow();
 
+        const auto& partition_reference = run_comparison_records_.front();
         for (const auto& record : run_comparison_records_) {
             ImGui::TableNextRow();
 
@@ -1589,6 +1594,19 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
                 ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s",
                                   record.partition_manifest_fingerprint.c_str());
+            }
+
+            const auto partition_compatibility =
+                CompareTrainingRunPartitions(partition_reference, record);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(
+                TrainingRunPartitionCompatibilityLabel(partition_compatibility));
+            if (partition_compatibility ==
+                    TrainingRunPartitionCompatibility::DifferentManifest &&
+                ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Not directly comparable: this run used a different "
+                    "partition manifest than the top-ranked run.");
             }
 
             ImGui::TableNextColumn();

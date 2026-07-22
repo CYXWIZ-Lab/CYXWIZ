@@ -15,6 +15,38 @@
 
 namespace cyxwiz {
 
+enum class TrainingRunPartitionCompatibility {
+    SameManifest,
+    DifferentManifest,
+    Unknown
+};
+
+inline TrainingRunPartitionCompatibility CompareTrainingRunPartitions(
+    const TrainingRunComparisonRecord& reference,
+    const TrainingRunComparisonRecord& candidate) {
+    if (reference.partition_manifest_fingerprint.empty() ||
+        candidate.partition_manifest_fingerprint.empty()) {
+        return TrainingRunPartitionCompatibility::Unknown;
+    }
+    return reference.partition_manifest_fingerprint ==
+               candidate.partition_manifest_fingerprint
+        ? TrainingRunPartitionCompatibility::SameManifest
+        : TrainingRunPartitionCompatibility::DifferentManifest;
+}
+
+inline const char* TrainingRunPartitionCompatibilityLabel(
+    TrainingRunPartitionCompatibility compatibility) {
+    switch (compatibility) {
+        case TrainingRunPartitionCompatibility::SameManifest:
+            return "same";
+        case TrainingRunPartitionCompatibility::DifferentManifest:
+            return "different";
+        case TrainingRunPartitionCompatibility::Unknown:
+            return "unknown";
+    }
+    return "unknown";
+}
+
 inline std::string TrainingRunComparisonDomainName(
     PreprocessingDomain domain) {
     switch (domain) {

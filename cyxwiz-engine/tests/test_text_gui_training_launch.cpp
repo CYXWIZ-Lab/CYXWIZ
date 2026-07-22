@@ -748,6 +748,22 @@ void TestTrainingRunComparisonRecord() {
     Check(changed_record.partition_manifest_fingerprint !=
               record.partition_manifest_fingerprint,
           "resolved row-count changes should alter partition fingerprint");
+    Check(cyxwiz::CompareTrainingRunPartitions(record, repeated_record) ==
+              cyxwiz::TrainingRunPartitionCompatibility::SameManifest,
+          "identical partition manifests should be directly comparable");
+    Check(cyxwiz::CompareTrainingRunPartitions(record, changed_record) ==
+              cyxwiz::TrainingRunPartitionCompatibility::DifferentManifest,
+          "different partition manifests should not be directly comparable");
+    auto unknown_partition_record = record;
+    unknown_partition_record.partition_manifest_fingerprint.clear();
+    Check(cyxwiz::CompareTrainingRunPartitions(
+              record, unknown_partition_record) ==
+              cyxwiz::TrainingRunPartitionCompatibility::Unknown,
+          "missing partition provenance should produce unknown compatibility");
+    Check(std::string(cyxwiz::TrainingRunPartitionCompatibilityLabel(
+              cyxwiz::TrainingRunPartitionCompatibility::DifferentManifest)) ==
+              "different",
+          "comparison UI should label different partition manifests explicitly");
     Check(record.best_val_loss == 0.7f,
           "run comparison should compute best validation loss");
     Check(record.best_val_accuracy == 0.72f,
