@@ -312,3 +312,8 @@ changes are outside Track 70 scope and must remain isolated.
   data boundary. Generated `graph.cyxgraph` files now include DataInput ->
   DataSplit -> DataLoader before model layers, and loss targets are wired from
   `DataLoader.Labels` instead of the removed `DataInput.Labels` output.
+- 2026-07-22: Cleaned stale user-facing `DataInput.Data` / `DataInput.Labels`
+  guidance after the Dataset boundary migration. OneHotEncode, BarChart, and
+  the loss-connectivity diagnostic now point new graphs at `DataLoader.Data` /
+  `DataLoader.Labels`, while naming DataInput/DataSplit label pins as legacy
+  compatibility sources only where relevant.

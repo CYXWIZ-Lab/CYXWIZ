@@ -14,9 +14,9 @@ void PopulateBarChartNode(MLNode& node, int& next_pin_id) {
     data_in.name = "Data";
     data_in.is_input = true;
     data_in.description =
-        "Tabular stream to chart. Usually wired from DataInput.Data "
-        "(or a preprocessing node's output). The `column` parameter "
-        "picks which column's values to plot.";
+        "Tabular feature stream to chart. Usually wired from DataLoader.Data "
+        "or a preprocessing node output. The `column` parameter picks "
+        "which column's values to plot.";
     node.inputs.push_back(data_in);
 
     NodePin labels_in;
@@ -26,7 +26,7 @@ void PopulateBarChartNode(MLNode& node, int& next_pin_id) {
     labels_in.is_input = true;
     labels_in.is_required = false;  // Optional — class-distribution mode only.
     labels_in.description =
-        "Optional. Connect DataInput.Labels to switch to "
+        "Optional. Connect DataLoader.Labels to switch to "
         "class-distribution mode: the chart counts values in the "
         "label stream instead of a column of Data.";
     node.inputs.push_back(labels_in);

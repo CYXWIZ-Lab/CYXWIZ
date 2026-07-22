@@ -1026,9 +1026,8 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.is_input = true;
             input_pin.description =
                 "Integer class indices [batch] in the range "
-                "[0, num_classes). Wire from DataInput.Labels (or "
-                "DataLoader.Labels) when your loss expects one-hot "
-                "instead of class indices.";
+                "[0, num_classes). Wire from DataLoader.Labels when your "
+                "loss expects one-hot labels instead of class indices.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;

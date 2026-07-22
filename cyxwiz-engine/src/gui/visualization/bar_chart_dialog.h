@@ -13,7 +13,7 @@ namespace gui::visualization {
 // For v1 the dataset is selected from a dropdown of DataRegistry
 // entries (user-driven). Once TrainingExecutor walks pins the dialog
 // can auto-populate dataset + label column from the upstream
-// DataInput node the user wired in. See tofix.md under
+// DataInput/DatasetInput source the user wired in. See tofix.md under
 // "TrainingExecutor should walk pin connections".
 //
 // Data source: reads the selected column from an ArrowDataset in
@@ -40,9 +40,9 @@ private:
     // key skips repeat work when neither dataset nor column changed.
     void ComputeDistribution();
 
-    // Walk upstream pins from this BarChart node to find a DataInput
-    // ancestor; if found, return its dataset_name parameter. Empty
-    // string if no upstream DataInput. Uses node_editor_ from the base
+    // Walk upstream pins from this BarChart node to find a DataInput or
+    // DatasetInput ancestor; if found, return its dataset_name parameter.
+    // Empty string if no upstream dataset source. Uses node_editor_ from the base
     // class; no-op when the editor pointer is null.
     std::string FindUpstreamDatasetName() const;
 

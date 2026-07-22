@@ -5256,9 +5256,10 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
             std::ostringstream msg;
             msg << "Loss node '" << node.name
                 << "' has its Targets pin wired, but the upstream chain "
-                   "never passes through a Labels-typed pin "
-                   "(DataInput.Labels, DataSplit.*Labels, or "
-                   "DataLoader.Labels). The model is being trained "
+                   "never passes through a Labels-typed pin. Use "
+                   "DataLoader.Labels for new graphs; DataInput.Labels and "
+                   "DataSplit.*Labels are legacy compatibility sources. "
+                   "The model is being trained "
                    "against the wrong stream.";
             AddIssue(config, IssueLevel::Error, msg.str(),
                      node.id, node.name,
@@ -5276,7 +5277,7 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
     // each Loss node's Predictions pin, but the success criterion is
     // "ancestor node is a model layer or Output node" instead of
     // "ancestor pin is PinType::Labels". Catches the case where a user
-    // wires Predictions to DataInput.Data, a Normalize output, or
+    // wires Predictions to a dataset/source path, a Normalize output, or
     // (worst) the Labels stream — all of which would silently train
     // garbage before the runtime fix lands.
     std::unordered_map<int, int> pin_to_node;  // pin_id → owning node_id

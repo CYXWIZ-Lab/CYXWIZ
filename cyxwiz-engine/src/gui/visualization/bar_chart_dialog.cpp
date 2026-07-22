@@ -171,8 +171,8 @@ void BarChartDialog::Reset() {
 
 void BarChartDialog::RenderContent() {
     // First render after Open: if the node has no dataset hint but
-    // there's an upstream DataInput we can see, auto-populate. Users
-    // who explicitly wired DataInput → BarChart get the expected
+    // there is an upstream dataset source we can see, auto-populate. Users
+    // who explicitly wired a data boundary into BarChart get the expected
     // "dataset already selected" feel without needing to pick in the
     // dropdown. first_open_ is cleared by the base Render() after
     // the first pass.
@@ -183,7 +183,7 @@ void BarChartDialog::RenderContent() {
             cache_key_.clear();  // force recompute with new dataset
             has_changes_ = true;
             spdlog::info("[BarChartDialog] auto-populated dataset "
-                         "'{}' from upstream DataInput", upstream);
+                         "'{}' from upstream dataset source", upstream);
         }
     }
 
