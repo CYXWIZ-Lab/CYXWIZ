@@ -328,3 +328,9 @@ changes are outside Track 70 scope and must remain isolated.
   skipped with a warning instead of being silently clamped to pin 0; truly
   index-less legacy links retain their first-pin fallback. Removed the unused
   legacy pin-ID heuristic and added focused index-resolution coverage.
+- 2026-07-22: Finished the template-format label-source migration. MNIST,
+  BERT encoder, and time-series examples now route targets from
+  `DataLoader.Labels`; BERT templates gained the minimal Data Split/Data Loader
+  boundary. Pin-connectivity negative fixtures were rewritten to preserve each
+  intended compile failure without stale DataInput label pins, and the example
+  guard now scans both saved-graph and template formats.

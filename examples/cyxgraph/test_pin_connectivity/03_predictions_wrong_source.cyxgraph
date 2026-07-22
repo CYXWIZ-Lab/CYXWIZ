@@ -1,7 +1,7 @@
 {
   "id": "test_pin_predictions_wrong_source",
   "name": "[TEST] Loss.Predictions wired to label stream instead of model",
-  "description": "Compile-gate test fixture for the 2026-04-17 Predictions-reachability check. Loss.Predictions HAS an incoming wire — but it's wired to DataInput.Labels (the label stream) instead of the model's output. Required-input check passes. Reachability fails: 'Loss node CrossEntropy has its Predictions pin wired, but the upstream chain never passes through a model layer or Output node'. Before the check landed, this graph would compile and 'train' the loss on labels-vs-labels — perfect 0 loss with no learning, no error.",
+  "description": "Compile-gate test fixture for the 2026-04-17 Predictions-reachability check. Loss.Predictions HAS an incoming wire — but it's wired to DataLoader.Labels (the label stream) instead of the model's output. Required-input check passes. Reachability fails: 'Loss node CrossEntropy has its Predictions pin wired, but the upstream chain never passes through a model layer or Output node'. Before the check landed, this graph would compile and 'train' the loss on labels-vs-labels — perfect 0 loss with no learning, no error.",
   "category": "Test Fixtures",
   "tags": ["test", "compile-gate", "pin-connectivity", "expected-fail"],
   "parameters": [],
@@ -38,7 +38,6 @@
     ],
     "links": [
       {"from": "data_input",  "to": "data_split",  "from_pin": 0, "to_pin": 0},
-      {"from": "data_input",  "to": "data_split",  "from_pin": 1, "to_pin": 1},
       {"from": "data_split",  "to": "data_loader", "from_pin": 0, "to_pin": 0},
       {"from": "data_loader", "to": "normalize",   "from_pin": 0, "to_pin": 0},
       {"from": "normalize",   "to": "fc1",         "from_pin": 0, "to_pin": 0},
@@ -46,8 +45,8 @@
       {"from": "relu1",       "to": "fc2",         "from_pin": 0, "to_pin": 0},
       {"from": "fc2",         "to": "relu2",       "from_pin": 0, "to_pin": 0},
       {"from": "relu2",       "to": "fc3",         "from_pin": 0, "to_pin": 0},
-      {"from": "data_input",  "to": "loss",        "from_pin": 1, "to_pin": 0},
-      {"from": "data_input",  "to": "loss",        "from_pin": 1, "to_pin": 1},
+      {"from": "data_loader",  "to": "loss",        "from_pin": 1, "to_pin": 0},
+      {"from": "data_loader",  "to": "loss",        "from_pin": 1, "to_pin": 1},
       {"from": "loss",        "to": "optimizer",   "from_pin": 0, "to_pin": 0},
       {"from": "optimizer",   "to": "output",      "from_pin": 0, "to_pin": 0}
     ]

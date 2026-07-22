@@ -38,7 +38,6 @@
     ],
     "links": [
       {"from": "data_input",  "to": "data_split",  "from_pin": 0, "to_pin": 0},
-      {"from": "data_input",  "to": "data_split",  "from_pin": 1, "to_pin": 1},
       {"from": "data_split",  "to": "data_loader", "from_pin": 0, "to_pin": 0},
       {"from": "data_loader", "to": "normalize",   "from_pin": 0, "to_pin": 0},
       {"from": "normalize",   "to": "fc1",         "from_pin": 0, "to_pin": 0},
@@ -47,7 +46,7 @@
       {"from": "fc2",         "to": "relu2",       "from_pin": 0, "to_pin": 0},
       {"from": "relu2",       "to": "fc3",         "from_pin": 0, "to_pin": 0},
       {"from": "fc3",         "to": "loss",        "from_pin": 0, "to_pin": 0},
-      {"from": "data_input",  "to": "loss",        "from_pin": 1, "to_pin": 1},
+      {"from": "data_loader",  "to": "loss",        "from_pin": 1, "to_pin": 1},
       {"from": "fc3",         "to": "optimizer",   "from_pin": 0, "to_pin": 0},
       {"from": "optimizer",   "to": "output",      "from_pin": 0, "to_pin": 0}
     ]

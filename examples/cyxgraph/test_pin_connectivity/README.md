@@ -5,7 +5,7 @@ in `GraphCompiler::Compile` (commit `8c468316`). Each fixture is a
 deliberately-broken graph that the compile gate must reject with a
 specific error.
 
-Both fixtures are derived from `examples/cyxgraph/mnist_mlp.cyxgraph`
+These fixtures are derived from `examples/cyxgraph/mnist_mlp.cyxgraph`
 — the only difference is one bad wire (or one missing wire) on the
 loss node.
 
@@ -13,7 +13,7 @@ loss node.
 
 ### `01_targets_disconnected.cyxgraph`
 
-The `DataInput.Labels → CrossEntropy.Targets` link is removed.
+The `DataLoader.Labels → CrossEntropy.Targets` link is removed.
 `Loss.Targets` is required but has no incoming connection.
 
 **Expected compile error:**
@@ -27,7 +27,7 @@ This catches `ValidateRequiredInputsConnected`.
 ### `02_targets_wrong_source.cyxgraph`
 
 `Loss.Targets` IS wired — but to `fc3.Output` (the model's prediction
-tensor) instead of `DataInput.Labels`. The required-input check passes
+tensor) instead of `DataLoader.Labels`. The required-input check passes
 because the pin has an incoming link; the reachability check fails
 because that link's upstream chain never touches a `PinType::Labels`
 output pin.
@@ -35,8 +35,9 @@ output pin.
 **Expected compile error:**
 ```
 Loss node 'CrossEntropy' has its Targets pin wired, but the upstream
-chain never passes through a Labels-typed pin (DataInput.Labels,
-DataSplit.*Labels, or DataLoader.Labels). The model is being trained
+chain never passes through a Labels-typed pin. New graphs should use
+DataLoader.Labels; DataInput.Labels and DataSplit.*Labels are legacy
+compatibility sources. The model is being trained
 against the wrong stream.
 ```
 
@@ -44,7 +45,7 @@ This catches `ValidateLossTargetsReachLabels`.
 
 ### `03_predictions_wrong_source.cyxgraph`
 
-`Loss.Predictions` IS wired — but to `DataInput.Labels` (the label
+`Loss.Predictions` IS wired — but to `DataLoader.Labels` (the label
 stream) instead of the model's output. The required-input check
 passes; the reachability check fails because the upstream chain
 never touches a model layer or `Output` node.
@@ -54,7 +55,7 @@ never touches a model layer or `Output` node.
 Loss node 'CrossEntropy' has its Predictions pin wired, but the
 upstream chain never passes through a model layer or Output node.
 The loss is being computed against a non-prediction tensor (often
-the Labels stream wired by mistake, or a raw DataInput tensor with
+the Labels stream wired by mistake, or a raw data stream with
 no model in between).
 ```
 
@@ -83,7 +84,7 @@ pin-fooling-user vector in the compile → loss → optimizer chain.
 
 ## Why these matter
 
-Before the pin-connectivity compile-gate landed, both fixtures would
+Before the pin-connectivity compile-gate landed, these fixtures would
 compile cleanly and start training. The runtime path
 (`TrainingExecutor`) reads the dataset and labels from `DataRegistry`
 by name, ignoring the graph topology — so a graph with broken wires

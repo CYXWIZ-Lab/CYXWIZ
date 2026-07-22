@@ -1,7 +1,7 @@
 {
   "id": "test_pin_targets_disconnected",
   "name": "[TEST] Loss.Targets has no incoming connection",
-  "description": "Compile-gate test fixture for the 2026-04-17 pin-connectivity check. Identical to mnist_mlp.cyxgraph except the DataInput.Labels → Loss.Targets wire is removed, leaving Loss.Targets with no incoming link. Loading this and hitting Compile should fail with: 'Required input pin Targets on node CrossEntropy has no incoming connection'. Before the check landed, this graph compiled fine and silently trained against whatever the executor read from the registry — exactly the 'pin is fooling user' case.",
+  "description": "Compile-gate test fixture for the 2026-04-17 pin-connectivity check. Identical to mnist_mlp.cyxgraph except the DataLoader.Labels → Loss.Targets wire is removed, leaving Loss.Targets with no incoming link. Loading this and hitting Compile should fail with: 'Required input pin Targets on node CrossEntropy has no incoming connection'. Before the check landed, this graph compiled fine and silently trained against whatever the executor read from the registry — exactly the 'pin is fooling user' case.",
   "category": "Test Fixtures",
   "tags": ["test", "compile-gate", "pin-connectivity", "expected-fail"],
   "parameters": [],
@@ -38,7 +38,6 @@
     ],
     "links": [
       {"from": "data_input",  "to": "data_split",  "from_pin": 0, "to_pin": 0},
-      {"from": "data_input",  "to": "data_split",  "from_pin": 1, "to_pin": 1},
       {"from": "data_split",  "to": "data_loader", "from_pin": 0, "to_pin": 0},
       {"from": "data_loader", "to": "normalize",   "from_pin": 0, "to_pin": 0},
       {"from": "normalize",   "to": "fc1",         "from_pin": 0, "to_pin": 0},

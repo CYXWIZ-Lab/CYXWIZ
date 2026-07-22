@@ -15,21 +15,25 @@
   "template": {
     "nodes": [
       {"id": "tokens", "type": "DataInput", "name": "BERT Token IDs", "pos": [0, 260], "params": {"model_family": "bert_encoder", "bert_style": "true", "shape": "[$max_sequence_length]", "input_kind": "token_ids", "token_column": "token_ids", "label_column": "tag_ids", "create_attention_mask": "true", "max_sequence_length": "$max_sequence_length"}},
-      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [240, 260], "params": {"num_embeddings": "$vocab_size", "vocab_size": "$vocab_size", "embedding_dim": "$d_model", "padding_idx": "0"}},
-      {"id": "pos", "type": "PositionalEncoding", "name": "Position Encoding", "pos": [480, 260], "params": {"d_model": "$d_model", "max_len": "$max_sequence_length", "max_length": "$max_sequence_length"}},
-      {"id": "encoder", "type": "TransformerEncoder", "name": "BERT Encoder", "pos": [720, 260], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "nhead": "$num_heads", "ff_dim": "$ff_dim", "dim_feedforward": "$ff_dim", "dropout": "0.0"}},
-      {"id": "token_head", "type": "TimeDistributed", "name": "Token Classifier", "pos": [960, 260], "params": {"units": "$num_classes", "activation": "linear"}},
-      {"id": "loss", "type": "CrossEntropyLoss", "name": "Token Cross Entropy", "pos": [1200, 260], "params": {"reduction": "mean", "ignore_index": "-100"}},
-      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [1440, 260], "params": {"learning_rate": "0.001"}},
-      {"id": "output", "type": "Output", "name": "Token Classifier Output", "pos": [1680, 260], "params": {"model_family": "bert_encoder", "model_task": "token_classification", "num_classes": "$num_classes", "output_contract": "Float32[batch,seq,classes]"}}
+      {"id": "data_split", "type": "DataSplit", "name": "Train/Val/Test Split", "pos": [240, 260], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "true"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "Data Loader", "pos": [480, 260], "params": {"batch_size": "32", "epochs": "10", "shuffle": "true", "drop_last": "false"}},
+      {"id": "embed", "type": "Embedding", "name": "Token Embedding", "pos": [720, 260], "params": {"num_embeddings": "$vocab_size", "vocab_size": "$vocab_size", "embedding_dim": "$d_model", "padding_idx": "0"}},
+      {"id": "pos", "type": "PositionalEncoding", "name": "Position Encoding", "pos": [960, 260], "params": {"d_model": "$d_model", "max_len": "$max_sequence_length", "max_length": "$max_sequence_length"}},
+      {"id": "encoder", "type": "TransformerEncoder", "name": "BERT Encoder", "pos": [1200, 260], "params": {"d_model": "$d_model", "num_heads": "$num_heads", "nhead": "$num_heads", "ff_dim": "$ff_dim", "dim_feedforward": "$ff_dim", "dropout": "0.0"}},
+      {"id": "token_head", "type": "TimeDistributed", "name": "Token Classifier", "pos": [1440, 260], "params": {"units": "$num_classes", "activation": "linear"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "Token Cross Entropy", "pos": [1680, 260], "params": {"reduction": "mean", "ignore_index": "-100"}},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [1920, 260], "params": {"learning_rate": "0.001"}},
+      {"id": "output", "type": "Output", "name": "Token Classifier Output", "pos": [2160, 260], "params": {"model_family": "bert_encoder", "model_task": "token_classification", "num_classes": "$num_classes", "output_contract": "Float32[batch,seq,classes]"}}
     ],
     "links": [
-      {"from": "tokens", "to": "embed", "from_pin": 0, "to_pin": 0},
+      {"from": "tokens", "to": "data_split", "from_pin": 0, "to_pin": 0},
+      {"from": "data_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "embed", "from_pin": 0, "to_pin": 0},
       {"from": "embed", "to": "pos", "from_pin": 0, "to_pin": 0},
       {"from": "pos", "to": "encoder", "from_pin": 0, "to_pin": 0},
       {"from": "encoder", "to": "token_head", "from_pin": 0, "to_pin": 0},
       {"from": "token_head", "to": "loss", "from_pin": 0, "to_pin": 0},
-      {"from": "tokens", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
       {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
       {"from": "token_head", "to": "output", "from_pin": 0, "to_pin": 0}
     ]

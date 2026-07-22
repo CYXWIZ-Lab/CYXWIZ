@@ -254,7 +254,7 @@ void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
           "NER graph should include every expected first-class sequence node");
 }
 
-void CheckSavedExampleDataBoundaryPins() {
+void CheckExampleDataBoundaryPins() {
     const auto examples_root = FindRepoRoot() / "examples" / "cyxgraph";
 
     for (const auto& entry : std::filesystem::recursive_directory_iterator(examples_root)) {
@@ -263,6 +263,46 @@ void CheckSavedExampleDataBoundaryPins() {
         }
 
         const auto graph = nlohmann::json::parse(ReadFile(entry.path()));
+        if (graph.contains("template") && graph["template"].is_object()) {
+            const auto& pattern = graph["template"];
+            if (!pattern.contains("nodes") || !pattern["nodes"].is_array() ||
+                !pattern.contains("links") || !pattern["links"].is_array()) {
+                continue;
+            }
+
+            std::unordered_map<std::string, std::string> node_types;
+            for (const auto& node_json : pattern["nodes"]) {
+                if (node_json.contains("id") && node_json["id"].is_string() &&
+                    node_json.contains("type") && node_json["type"].is_string()) {
+                    node_types[node_json["id"].get<std::string>()] =
+                        node_json["type"].get<std::string>();
+                }
+            }
+
+            std::size_t link_number = 0;
+            for (const auto& link_json : pattern["links"]) {
+                const std::string from = link_json.value("from", "");
+                const std::string to = link_json.value("to", "");
+                const auto from_it = node_types.find(from);
+                const auto to_it = node_types.find(to);
+                const std::string context = entry.path().string() +
+                    " template link " + std::to_string(link_number++);
+                if (from_it == node_types.end() || to_it == node_types.end()) {
+                    continue;
+                }
+
+                if (from_it->second == "DataInput" || from_it->second == "DataSplit") {
+                    Check(link_json.value("from_pin", 0) == 0,
+                          context + " uses a stale data-boundary output pin index");
+                }
+                if (to_it->second == "DataLoader") {
+                    Check(link_json.value("to_pin", 0) == 0,
+                          context + " uses a stale DataLoader input pin index");
+                }
+            }
+            continue;
+        }
+
         if (!graph.contains("nodes") || !graph["nodes"].is_array() ||
             !graph.contains("links") || !graph["links"].is_array()) {
             continue;
@@ -312,6 +352,52 @@ void CheckSavedExampleDataBoundaryPins() {
             }
         }
     }
+}
+
+void CheckModernPinConnectivityFixtures() {
+    const auto root = FindRepoRoot() / "examples" / "cyxgraph";
+    auto load = [&root](const std::filesystem::path& relative_path) {
+        return nlohmann::json::parse(ReadFile(root / relative_path));
+    };
+    auto has_link = [](const nlohmann::json& graph,
+                       const char* from,
+                       const char* to,
+                       int from_pin,
+                       int to_pin) {
+        for (const auto& link : graph["template"]["links"]) {
+            if (link.value("from", "") == from &&
+                link.value("to", "") == to &&
+                link.value("from_pin", 0) == from_pin &&
+                link.value("to_pin", 0) == to_pin) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const auto mnist = load("mnist_mlp.cyxgraph");
+    Check(has_link(mnist, "data_loader", "loss", 1, 1),
+          "MNIST should route DataLoader.Labels to Loss.Targets");
+
+    const auto disconnected = load("test_pin_connectivity/01_targets_disconnected.cyxgraph");
+    Check(!has_link(disconnected, "data_loader", "loss", 1, 1),
+          "disconnected-target fixture should keep Loss.Targets unconnected");
+
+    const auto wrong_target = load("test_pin_connectivity/02_targets_wrong_source.cyxgraph");
+    Check(has_link(wrong_target, "fc3", "loss", 0, 1),
+          "wrong-target fixture should route model output to Loss.Targets");
+
+    const auto wrong_predictions =
+        load("test_pin_connectivity/03_predictions_wrong_source.cyxgraph");
+    Check(has_link(wrong_predictions, "data_loader", "loss", 1, 0) &&
+              has_link(wrong_predictions, "data_loader", "loss", 1, 1),
+          "wrong-predictions fixture should route labels to both loss inputs");
+
+    const auto wrong_optimizer =
+        load("test_pin_connectivity/04_optimizer_loss_wrong_source.cyxgraph");
+    Check(has_link(wrong_optimizer, "data_loader", "loss", 1, 1) &&
+              has_link(wrong_optimizer, "fc3", "optimizer", 0, 0),
+          "wrong-optimizer fixture should keep valid targets and invalid loss source");
 }
 
 void CheckSerializedPinIndexGuard() {
@@ -544,7 +630,8 @@ int main() {
           "Dense-encoded NER parameter marker should report the matching parameter");
 
     CheckSavedNERGraphUsesFirstClassSequenceNodes();
-    CheckSavedExampleDataBoundaryPins();
+    CheckExampleDataBoundaryPins();
+    CheckModernPinConnectivityFixtures();
     CheckSerializedPinIndexGuard();
 
     std::cout << "Pattern template guard passed\n";

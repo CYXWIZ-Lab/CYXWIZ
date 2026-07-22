@@ -178,7 +178,7 @@
       {"from": "relu1", "to": "dropout", "from_pin": 0, "to_pin": 0},
       {"from": "dropout", "to": "fc2", "from_pin": 0, "to_pin": 0},
       {"from": "fc2", "to": "loss", "from_pin": 0, "to_pin": 0},
-      {"from": "data_input", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
       {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
       {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
     ]

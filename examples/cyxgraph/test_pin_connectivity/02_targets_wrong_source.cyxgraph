@@ -1,7 +1,7 @@
 {
   "id": "test_pin_targets_wrong_source",
   "name": "[TEST] Loss.Targets wired to model output instead of labels",
-  "description": "Compile-gate test fixture for the 2026-04-17 pin-connectivity check. Loss.Targets HAS an incoming wire — but it's wired to fc3.Output (a model layer's tensor) instead of DataInput.Labels. Required-input check passes. The reachability check fails: 'Loss node CrossEntropy has its Targets pin wired, but the upstream chain never passes through a Labels-typed pin'. Before the check landed, this graph would compile fine and train against its own predictions as labels — silent gradient garbage with no error.",
+  "description": "Compile-gate test fixture for the 2026-04-17 pin-connectivity check. Loss.Targets HAS an incoming wire — but it's wired to fc3.Output (a model layer's tensor) instead of DataLoader.Labels. Required-input check passes. The reachability check fails: 'Loss node CrossEntropy has its Targets pin wired, but the upstream chain never passes through a Labels-typed pin'. Before the check landed, this graph would compile fine and train against its own predictions as labels — silent gradient garbage with no error.",
   "category": "Test Fixtures",
   "tags": ["test", "compile-gate", "pin-connectivity", "expected-fail"],
   "parameters": [],
@@ -38,7 +38,6 @@
     ],
     "links": [
       {"from": "data_input",  "to": "data_split",  "from_pin": 0, "to_pin": 0},
-      {"from": "data_input",  "to": "data_split",  "from_pin": 1, "to_pin": 1},
       {"from": "data_split",  "to": "data_loader", "from_pin": 0, "to_pin": 0},
       {"from": "data_loader", "to": "normalize",   "from_pin": 0, "to_pin": 0},
       {"from": "normalize",   "to": "fc1",         "from_pin": 0, "to_pin": 0},
