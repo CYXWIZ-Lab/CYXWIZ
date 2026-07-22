@@ -94,7 +94,7 @@ void TableViewerPanel::Render() {
             ImGui::TextWrapped("Failed to load table.");
         }
     } else {
-        ImGui::TextWrapped("No table loaded. Right-click on a data file in Asset Browser and select 'View in Table'.");
+        ImGui::TextWrapped("No table loaded. Registered datasets are previewed from Asset Browser or Data Input through Data Preview.");
     }
 
     ImGui::Separator();

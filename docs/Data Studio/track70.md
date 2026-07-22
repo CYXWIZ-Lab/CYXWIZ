@@ -241,3 +241,9 @@ changes are outside Track 70 scope and must remain isolated.
   dataset name, resolves the Data Input label column, and dispatches to
   `TestManager::StartTestingArrow` or `StartTestingParquet` instead of falling
   through to the legacy DatasetHandle registry path.
+- 2026-07-22: Removed the remaining misleading Asset Browser `Preview Data`
+  menu path that opened the raw Quick Preview parser for table-like files.
+  `Preview Data` is now dataset-only and refreshes the registered-dataset side
+  pane backed by `DataPreviewService`; raw file peeking stays under Quick
+  Preview. Updated the orphan Table Viewer empty-state copy so it no longer
+  points users at the removed `View in Table` action.

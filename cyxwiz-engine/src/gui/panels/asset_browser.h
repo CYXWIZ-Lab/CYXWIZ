@@ -94,7 +94,6 @@ private:
 
     // Dataset helpers
     bool IsDatasetFile(const AssetItem& item) const;
-    bool IsTableViewableFile(const AssetItem& item) const;
     void CreateDataInputFromItem(const AssetItem& item);
 
     // Dialogs

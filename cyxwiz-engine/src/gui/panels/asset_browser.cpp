@@ -641,20 +641,21 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
                     on_double_click_(item);
                 }
             }
-            // Preview Data uses the same bounded renderer as Quick Preview.
-            if (IsTableViewableFile(item)) {
+            // Preview Data is for already-registered DatasetAssets. Raw file
+            // peeking remains under Quick Preview and must not register data.
+            if (IsDatasetFile(item)) {
                 if (ImGui::MenuItem(ICON_FA_TABLE " Preview Data")) {
-                    show_quick_preview_ = true;
-                    quick_preview_path_ = item.absolute_path;
+                    SelectItem(&item, false, false);
+                    preview_path_.clear();
                 }
             }
-            // Load Dataset (for dataset files only - async with loading indicator)
+            // Create a configured Data Input node; Data Input Apply performs
+            // the actual load/registration.
             if (IsDatasetFile(item)) {
                 if (ImGui::MenuItem(ICON_FA_DATABASE " Create Data Input")) {
                     CreateDataInputFromItem(item);
                 }
             }
-
             // Quick Preview (for previewable files)
             if (IsPreviewableFile(item)) {
                 if (ImGui::MenuItem(ICON_FA_EYE " Quick Preview")) {
@@ -1556,19 +1557,6 @@ bool AssetBrowserPanel::HasMatchingChildren(const AssetItem& item, const std::st
 
 bool AssetBrowserPanel::IsDatasetFile(const AssetItem& item) const {
     return item.type == AssetType::Dataset;
-}
-
-bool AssetBrowserPanel::IsTableViewableFile(const AssetItem& item) const {
-    if (item.is_directory) return false;
-
-    std::string ext = fs::path(item.absolute_path).extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-    // Tabular data files that can be viewed in TableViewer
-    return ext == ".csv" || ext == ".tsv" || ext == ".txt" ||
-           ext == ".h5" || ext == ".hdf5" ||
-           ext == ".xlsx" || ext == ".xls" ||
-           ext == ".json" || ext == ".parquet";
 }
 
 bool AssetBrowserPanel::IsPreviewableFile(const AssetItem& item) const {
