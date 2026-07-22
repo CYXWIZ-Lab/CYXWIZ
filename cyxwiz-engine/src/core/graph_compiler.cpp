@@ -3123,6 +3123,13 @@ TrainingConfiguration GraphCompiler::Compile(
     if (const gui::MLNode* split_node = FindFirstReachableNodeOfType(
             nodes, dataset_reachable, gui::NodeType::DataSplit)) {
         config.has_data_split = true;
+        AddIssue(config,
+                 IssueLevel::Info,
+                 "DataSplit Train/Val/Test tensor pins are legacy compatibility "
+                 "pins; runtime validation and test evaluation use "
+                 "compiler-resolved dataset partitions.",
+                 split_node->id,
+                 split_node->name);
         try {
             if (split_node->parameters.count("train_ratio"))
                 config.train_ratio = std::stof(split_node->parameters.at("train_ratio"));

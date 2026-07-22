@@ -269,3 +269,7 @@ changes are outside Track 70 scope and must remain isolated.
   the quick inspector, rich dialog, node pins, and docs: legacy Train/Val/Test
   pins remain loadable, but runtime evaluation follows resolved dataset
   partitions.
+- 2026-07-22: Added a compiler info diagnostic for reachable Data Split nodes
+  that still expose Train/Val/Test tensor pins. Compile now records the same
+  compatibility truth as the UI: those pins remain loadable, while validation
+  and held-out testing come from compiler-resolved dataset partitions.

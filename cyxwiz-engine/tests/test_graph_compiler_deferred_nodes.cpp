@@ -1782,6 +1782,10 @@ int main() {
           "supported imbalance parameters should compile");
     Check(config.stratified,
           "compiler should preserve DataSplit.stratified=true in training config");
+    Check(HasIssueText(config,
+                       cyxwiz::IssueLevel::Info,
+                       "DataSplit Train/Val/Test tensor pins are legacy compatibility pins"),
+          "compiler should report the DataSplit legacy-pin compatibility note");
     Check(!HasIssueText(config, "DataSplit.stratified=true is not implemented"),
           "compiler should not warn that implemented DataSplit stratification is ignored");
     Check(config.balance_classes,
