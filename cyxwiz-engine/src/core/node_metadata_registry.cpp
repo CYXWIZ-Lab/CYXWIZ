@@ -1188,9 +1188,10 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
 
     RegisterNode({NodeType::DataLoader, NodeCategory::DataPipeline, "Data Loader", ICON_FA_DATABASE,
         {"batch", "loader", "dataloader", "shuffle", "epoch", "training"}, 0, false,
-        "Training batch policy for dataset iteration", "", "",
-        {{"Data", PinType::Dataset, true, "Input dataset"}},
-        {{"Batches", PinType::Dataset, true, "Training batches"}},
+        "Creates runtime batchers from resolved dataset partitions", "", "",
+        {{"Partitions", PinType::Dataset, true, "Resolved partition set from Data Split"}},
+        {{"Data", PinType::Tensor, true, "Batched training features"},
+         {"Labels", PinType::Labels, false, "Batched training labels"}},
         {{"epochs", "int", "10", "Training epochs", {}, "1-10000", "", "Training", false, false},
          {"batch_size", "int", "32", "Samples per batch", {}, "1-100000", "", "Training", false, false},
          {"shuffle", "bool", "true", "Shuffle training batches", {}, "", "", "Training", false, false},

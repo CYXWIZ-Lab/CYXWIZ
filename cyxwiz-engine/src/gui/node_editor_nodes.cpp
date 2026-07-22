@@ -666,52 +666,37 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::DataLoader: {
-            // DataLoader node — training-loop hyperparameters AND batching.
-            // Sits between the data pipeline and the model: takes the raw
-            // (data, labels) pair from upstream (DataSplit or DataInput),
-            // batches them, and emits the batched (data, labels) pair to
-            // the model and the loss function respectively.
+            // DataLoader node - training-loop hyperparameters and batching.
+            // New nodes consume the resolved Dataset partition contract from
+            // DataSplit/Partition Policy and expose the model-facing batched
+            // tensor/label boundary. Legacy saved graphs may still have raw
+            // Data/Labels inputs; graph loading preserves those pins.
 
-            // Input 1: Data tensor stream (from DataSplit.TrainData or DataInput.Data)
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Tensor;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            data_in.description =
-                "Unbatched feature stream. Usually wired from "
-                "DataSplit.Train Data, or directly from DataInput.Data "
-                "if you skip the split.";
-            node.inputs.push_back(data_in);
+            NodePin partitions_in;
+            partitions_in.id = next_pin_id_++;
+            partitions_in.type = PinType::Dataset;
+            partitions_in.name = "Partitions";
+            partitions_in.is_input = true;
+            partitions_in.description =
+                "Resolved Train/Validation/Test Dataset partition set from "
+                "Data Split. DataLoader turns those partitions into runtime "
+                "batchers.";
+            node.inputs.push_back(partitions_in);
 
-            // Input 2: Labels stream (from DataSplit.TrainLabels or DataInput.Labels)
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            labels_in.description =
-                "Unbatched label stream, row-aligned with Data. Usually "
-                "wired from DataSplit.Train Labels.";
-            node.inputs.push_back(labels_in);
-
-            // Output 1: Batched data tensor → first model layer
+            // Output 1: Batched data tensor -> first model/preprocessing layer
             NodePin data_out;
             data_out.id = next_pin_id_++;
             data_out.type = PinType::Tensor;
             data_out.name = "Data";
             data_out.is_input = false;
             data_out.description =
-                "Batched feature tensor of shape [batch_size, ...]. "
-                "Connect to the model's first layer (Embedding, Conv2D, "
-                "Dense, ...). Reshuffled each epoch when shuffle=true.";
+                "Batched training feature tensor of shape [batch_size, ...]. "
+                "Connect to preprocessing or the model's first layer. "
+                "Validation/Test batchers are created by runtime from the same "
+                "Partitions contract.";
             node.outputs.push_back(data_out);
 
-            // Output 2: Batched labels → loss function's Targets pin
-            // Marked optional for the same reason as DataSplit.Train Labels:
-            // every example graph bypasses this pin and wires labels
-            // direct from DataInput to Loss. Tighten once the runtime
-            // walks pins.
+            // Output 2: Batched labels -> loss function's Targets pin
             NodePin labels_out;
             labels_out.id = next_pin_id_++;
             labels_out.type = PinType::Labels;
@@ -719,9 +704,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             labels_out.is_input = false;
             labels_out.is_required = false;
             labels_out.description =
-                "Batched label tensor of shape [batch_size, ...], "
-                "row-aligned with Data. Connect to the loss node's "
-                "Targets pin.";
+                "Batched training label tensor, row-aligned with Data. Connect "
+                "to the loss node's Targets pin when the graph explicitly routes "
+                "labels.";
             node.outputs.push_back(labels_out);
 
             // Training-loop hyperparameters. DataLoader owns ALL the

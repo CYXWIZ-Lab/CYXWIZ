@@ -114,6 +114,7 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 ImGui::TextUnformatted(balance_target.c_str());
             }
             ImGui::Spacing();
+            ImGui::TextWrapped("Consumes the resolved Partitions Dataset from Data Split and creates runtime Train/Validation/Test batchers.");
             ImGui::TextDisabled("Use Open Dialog to edit DataLoader batching, imbalance, checkpointing, and performance settings.");
             break;
         }

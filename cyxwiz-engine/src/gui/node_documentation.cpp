@@ -1543,17 +1543,17 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::DataLoader] = {
         "Data Loader",
-        "Creates batched iterator with shuffling and parallel loading. "
-        "Wraps dataset for efficient training.",
-        "Outputs batches of (features, labels).",
+        "Creates runtime batchers from the resolved Dataset partitions. "
+        "Train updates weights; Validation/Test batchers are owned by runtime evaluation.",
+        "Consumes one Partitions Dataset contract and emits model-facing batched Data/Labels.",
         {
             {"batch_size", "Samples per batch"},
-            {"shuffle", "Randomize order each epoch"},
-            {"drop_last", "Drop incomplete final batch"}
+            {"shuffle", "Randomize training order each epoch"},
+            {"drop_last", "Drop incomplete final training batch"}
         },
         {
-            "shuffle=True for training, False for validation",
-            "Larger batch_size = faster but more memory"
+            "Training shuffle/balancing applies to Train only",
+            "Validation and Test are resolved from the partition manifest, not separate canvas branches"
         },
         "Data Pipeline"
     };

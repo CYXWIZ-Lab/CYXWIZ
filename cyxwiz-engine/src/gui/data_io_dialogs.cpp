@@ -1300,9 +1300,9 @@ void DataLoaderDialog::RenderContent() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::TextDisabled(
-        "This node is the single source of truth for batching. If batch_size is\n"
-        "also set on the optimizer node, the DataLoader value wins and a warning\n"
-        "is logged at training start.");
+        "This node consumes the Partitions Dataset contract and is the single\n"
+        "source of truth for batching. If batch_size is also set on the optimizer\n"
+        "node, the DataLoader value wins and a warning is logged at training start.");
 }
 
 // ==================== DataSplitDialog ====================

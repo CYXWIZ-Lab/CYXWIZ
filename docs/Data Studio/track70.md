@@ -287,3 +287,7 @@ changes are outside Track 70 scope and must remain isolated.
   Data Split nodes and modern catalog metadata now expose Dataset role inputs
   (Training/Validation/Test) plus one `Partitions` Dataset output. Legacy
   Train/Val/Test Tensor/Labels pins remain supported for saved graph fixtures.
+- 2026-07-22: Aligned new Data Loader nodes with the Dataset partition
+  boundary. New Data Loader nodes now consume a single `Partitions` Dataset
+  input and emit model-facing batched `Data`/`Labels`; legacy saved graphs
+  with raw Data/Labels inputs remain loadable.

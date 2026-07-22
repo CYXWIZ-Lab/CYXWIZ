@@ -713,6 +713,18 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
               metadata.GetMetadata(gui::NodeType::DataLoader)) ==
               gui::properties_contract::PanelContractPath::MetadataRenderer,
           "DataLoader should expose metadata-rendered quick parameters");
+
+    const auto* data_loader = metadata.GetMetadata(gui::NodeType::DataLoader);
+    Check(data_loader != nullptr,
+          "DataLoader must be registered in the modern node catalog");
+    Check(HasInputType(data_loader, "Partitions", gui::PinType::Dataset),
+          "DataLoader must consume the resolved Dataset partition contract");
+    Check(!HasInputType(data_loader, "Data", gui::PinType::Tensor) &&
+              !HasInputType(data_loader, "Labels", gui::PinType::Labels),
+          "DataLoader metadata must not expose legacy raw Tensor/Labels inputs");
+    Check(HasOutputType(data_loader, "Data", gui::PinType::Tensor) &&
+              HasOutputType(data_loader, "Labels", gui::PinType::Labels),
+          "DataLoader must expose model-facing batched Data/Labels outputs");
     Check(gui::properties_contract::ClassifyPanelContractPath(
               gui::NodeType::ReLU,
               metadata.GetMetadata(gui::NodeType::ReLU)) ==
