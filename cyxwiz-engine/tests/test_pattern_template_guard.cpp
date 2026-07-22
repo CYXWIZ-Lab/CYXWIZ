@@ -75,7 +75,9 @@ std::filesystem::path WriteDataBoundaryPattern(const std::string& id) {
         << "    ],\n"
         << "    \"links\": [\n"
         << "      {\"from\": \"input\", \"to\": \"split\", \"from_pin\": 0, \"to_pin\": 0},\n"
-        << "      {\"from\": \"split\", \"to\": \"loader\", \"from_pin\": 0, \"to_pin\": 0}\n"
+        << "      {\"from\": \"input\", \"to\": \"split\", \"from_pin\": 1, \"to_pin\": 1},\n"
+        << "      {\"from\": \"split\", \"to\": \"loader\", \"from_pin\": 0, \"to_pin\": 0},\n"
+        << "      {\"from\": \"split\", \"to\": \"loader\", \"from_pin\": 1, \"to_pin\": 1}\n"
         << "    ]\n"
         << "  }\n"
         << "}\n";
@@ -361,6 +363,17 @@ int main() {
     Check(nodes.empty() && links.empty(), "unknown rejection should leave no partial graph");
     Check(creator_calls == 5, "unknown rejection should not call node creator");
 
+    nodes.clear();
+    links.clear();
+    Check(library.InstantiatePatternWithCreator(
+              "guard_data_boundary", {}, nodes, links, next_node_id,
+              next_link_id, ImVec2(0, 0), creator),
+          "creator data-boundary pattern should instantiate");
+    Check(creator_calls == 8,
+          "data-boundary pattern should call node creator for each node");
+    Check(nodes.size() == 3 && links.size() == 2,
+          "creator data-boundary pattern should skip stale legacy pin links");
+
     int next_pin_id = 2000;
 
     nodes.clear();
@@ -406,7 +419,7 @@ int main() {
               "guard_ner_name", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "Dense-encoded NER placeholder-name pattern should be rejected");
     Check(nodes.empty() && links.empty(), "Dense-encoded NER name rejection should leave no partial graph");
-    Check(creator_calls == 5, "Dense-encoded NER name rejection should not call node creator");
+    Check(creator_calls == 8, "Dense-encoded NER name rejection should not call node creator");
 
     Check(!library.InstantiatePattern(
               "guard_ner_name", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),

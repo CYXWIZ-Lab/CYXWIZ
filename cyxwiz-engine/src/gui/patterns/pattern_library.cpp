@@ -701,13 +701,33 @@ bool PatternLibrary::InstantiatePattern(
         int to_pin_id = -1;
 
         for (const auto& node : out_nodes) {
-            if (node.id == from_node_id && !node.outputs.empty()) {
-                int pin_idx = std::min(pattern_link.from_pin, (int)node.outputs.size() - 1);
-                from_pin_id = node.outputs[pin_idx].id;
+            if (node.id == from_node_id) {
+                if (pattern_link.from_pin >= 0 &&
+                    pattern_link.from_pin < static_cast<int>(node.outputs.size())) {
+                    from_pin_id = node.outputs[pattern_link.from_pin].id;
+                } else {
+                    spdlog::warn(
+                        "Skipping pattern link {} -> {}: source pin index {} is out of range for node '{}' ({} outputs)",
+                        pattern_link.from_node,
+                        pattern_link.to_node,
+                        pattern_link.from_pin,
+                        node.name,
+                        node.outputs.size());
+                }
             }
-            if (node.id == to_node_id && !node.inputs.empty()) {
-                int pin_idx = std::min(pattern_link.to_pin, (int)node.inputs.size() - 1);
-                to_pin_id = node.inputs[pin_idx].id;
+            if (node.id == to_node_id) {
+                if (pattern_link.to_pin >= 0 &&
+                    pattern_link.to_pin < static_cast<int>(node.inputs.size())) {
+                    to_pin_id = node.inputs[pattern_link.to_pin].id;
+                } else {
+                    spdlog::warn(
+                        "Skipping pattern link {} -> {}: target pin index {} is out of range for node '{}' ({} inputs)",
+                        pattern_link.from_node,
+                        pattern_link.to_node,
+                        pattern_link.to_pin,
+                        node.name,
+                        node.inputs.size());
+                }
             }
         }
 
@@ -827,13 +847,33 @@ bool PatternLibrary::InstantiatePatternWithCreator(
         int to_pin_id = -1;
 
         for (const auto& node : out_nodes) {
-            if (node.id == from_node_id && !node.outputs.empty()) {
-                int pin_idx = std::min(pattern_link.from_pin, (int)node.outputs.size() - 1);
-                from_pin_id = node.outputs[pin_idx].id;
+            if (node.id == from_node_id) {
+                if (pattern_link.from_pin >= 0 &&
+                    pattern_link.from_pin < static_cast<int>(node.outputs.size())) {
+                    from_pin_id = node.outputs[pattern_link.from_pin].id;
+                } else {
+                    spdlog::warn(
+                        "Skipping pattern link {} -> {}: source pin index {} is out of range for node '{}' ({} outputs)",
+                        pattern_link.from_node,
+                        pattern_link.to_node,
+                        pattern_link.from_pin,
+                        node.name,
+                        node.outputs.size());
+                }
             }
-            if (node.id == to_node_id && !node.inputs.empty()) {
-                int pin_idx = std::min(pattern_link.to_pin, (int)node.inputs.size() - 1);
-                to_pin_id = node.inputs[pin_idx].id;
+            if (node.id == to_node_id) {
+                if (pattern_link.to_pin >= 0 &&
+                    pattern_link.to_pin < static_cast<int>(node.inputs.size())) {
+                    to_pin_id = node.inputs[pattern_link.to_pin].id;
+                } else {
+                    spdlog::warn(
+                        "Skipping pattern link {} -> {}: target pin index {} is out of range for node '{}' ({} inputs)",
+                        pattern_link.from_node,
+                        pattern_link.to_node,
+                        pattern_link.to_pin,
+                        node.name,
+                        node.inputs.size());
+                }
             }
         }
 

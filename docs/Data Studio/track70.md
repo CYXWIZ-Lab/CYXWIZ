@@ -299,3 +299,8 @@ changes are outside Track 70 scope and must remain isolated.
   boundary. The fallback Pattern Library path now creates modern DataInput,
   DataSplit, and DataLoader pins instead of generic Tensor Input/Output pins,
   with a focused pattern guard covering the fallback.
+- 2026-07-22: Stopped pattern link pin-index clamping. Pattern links with
+  stale legacy pin indices are now skipped with a warning instead of being
+  silently rewired to the wrong modern Dataset role pin. The pattern guard now
+  covers stale DataInput/DataSplit/DataLoader label-link indices in both the
+  creator and no-editor fallback insertion paths.
