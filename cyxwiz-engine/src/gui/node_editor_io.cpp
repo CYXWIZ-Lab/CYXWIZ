@@ -676,6 +676,60 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
     }
 }
 
+static bool ResolveSavedGraphLinkPins(const nlohmann::json& link_json,
+                                      const MLNode* from_node,
+                                      const MLNode* to_node,
+                                      NodeLink& link) {
+    if (!from_node || !to_node) {
+        spdlog::warn(
+            "Skipping saved graph link {} ({} -> {}): referenced node is missing",
+            link.id,
+            link.from_node,
+            link.to_node);
+        return false;
+    }
+
+    int from_pin_index = 0;
+    if (!detail::ResolveSerializedPinIndex(
+            link_json, "from_pin_index", from_node->outputs.size(), from_pin_index)) {
+        const std::string saved_index = link_json.contains("from_pin_index")
+            ? link_json["from_pin_index"].dump()
+            : "legacy default 0";
+        spdlog::warn(
+            "Skipping saved graph link {} ({} -> {}): source pin index {} is invalid "
+            "for node '{}' ({} outputs)",
+            link.id,
+            link.from_node,
+            link.to_node,
+            saved_index,
+            from_node->name,
+            from_node->outputs.size());
+        return false;
+    }
+
+    int to_pin_index = 0;
+    if (!detail::ResolveSerializedPinIndex(
+            link_json, "to_pin_index", to_node->inputs.size(), to_pin_index)) {
+        const std::string saved_index = link_json.contains("to_pin_index")
+            ? link_json["to_pin_index"].dump()
+            : "legacy default 0";
+        spdlog::warn(
+            "Skipping saved graph link {} ({} -> {}): target pin index {} is invalid "
+            "for node '{}' ({} inputs)",
+            link.id,
+            link.from_node,
+            link.to_node,
+            saved_index,
+            to_node->name,
+            to_node->inputs.size());
+        return false;
+    }
+
+    link.from_pin = from_node->outputs[from_pin_index].id;
+    link.to_pin = to_node->inputs[to_pin_index].id;
+    return true;
+}
+
 bool NodeEditor::LoadGraph(const std::string& filepath) {
     using json = nlohmann::json;
 
@@ -825,29 +879,6 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
         // to exist before SetNodeGridSpacePos takes effect
         pending_positions_frames_ = 3;  // Apply for 3 frames to ensure positions stick
 
-        // Build helper to find actual pin ID from file pin ID
-        // File format: pins are assigned sequentially per node in order
-        // Node 0: input pin 0, output pin 1
-        // Node 1: input pin 2, output pin 3
-        // etc.
-        auto findActualPinId = [this](int file_pin_id, int node_id, bool is_from_pin) -> int {
-            // Find the node
-            const MLNode* node = FindNodeById(node_id);
-            if (!node) return file_pin_id;  // Fallback
-
-            // For from_pin, it's an output pin; for to_pin, it's an input pin
-            const auto& pins = is_from_pin ? node->outputs : node->inputs;
-
-            // Calculate expected pin offset: each node before this one contributes pins
-            // But since we can't know the original pin assignment, use a simple heuristic:
-            // Just use the first pin of the appropriate type
-            if (!pins.empty()) {
-                // If file_pin_id matches what we'd expect for this node's first output/input, use it
-                return pins[0].id;
-            }
-            return file_pin_id;
-        };
-
         // Load links with pin index support for multi-pin nodes
         for (const auto& link_json : j["links"]) {
             NodeLink link;
@@ -859,32 +890,8 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             const MLNode* from_node = FindNodeById(link.from_node);
             const MLNode* to_node = FindNodeById(link.to_node);
 
-            // Use pin indices if available (new format), otherwise fall back to first pin
-            int from_pin_index = 0;
-            int to_pin_index = 0;
-
-            if (link_json.contains("from_pin_index")) {
-                from_pin_index = link_json["from_pin_index"].get<int>();
-            }
-            if (link_json.contains("to_pin_index")) {
-                to_pin_index = link_json["to_pin_index"].get<int>();
-            }
-
-            // Get the actual pin ID using the index
-            if (from_node && from_pin_index < static_cast<int>(from_node->outputs.size())) {
-                link.from_pin = from_node->outputs[from_pin_index].id;
-            } else if (from_node && !from_node->outputs.empty()) {
-                link.from_pin = from_node->outputs[0].id;  // Fallback to first
-            } else {
-                link.from_pin = link_json["from_pin"];  // Legacy fallback
-            }
-
-            if (to_node && to_pin_index < static_cast<int>(to_node->inputs.size())) {
-                link.to_pin = to_node->inputs[to_pin_index].id;
-            } else if (to_node && !to_node->inputs.empty()) {
-                link.to_pin = to_node->inputs[0].id;  // Fallback to first
-            } else {
-                link.to_pin = link_json["to_pin"];  // Legacy fallback
+            if (!ResolveSavedGraphLinkPins(link_json, from_node, to_node, link)) {
+                continue;
             }
 
             // Load link type for skip connection visualization
@@ -1074,32 +1081,8 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
             const MLNode* from_node = FindNodeById(link.from_node);
             const MLNode* to_node = FindNodeById(link.to_node);
 
-            // Use pin indices if available
-            int from_pin_index = 0;
-            int to_pin_index = 0;
-
-            if (link_json.contains("from_pin_index")) {
-                from_pin_index = link_json["from_pin_index"].get<int>();
-            }
-            if (link_json.contains("to_pin_index")) {
-                to_pin_index = link_json["to_pin_index"].get<int>();
-            }
-
-            // Get the actual pin ID using the index
-            if (from_node && from_pin_index < static_cast<int>(from_node->outputs.size())) {
-                link.from_pin = from_node->outputs[from_pin_index].id;
-            } else if (from_node && !from_node->outputs.empty()) {
-                link.from_pin = from_node->outputs[0].id;
-            } else {
-                link.from_pin = link_json["from_pin"];
-            }
-
-            if (to_node && to_pin_index < static_cast<int>(to_node->inputs.size())) {
-                link.to_pin = to_node->inputs[to_pin_index].id;
-            } else if (to_node && !to_node->inputs.empty()) {
-                link.to_pin = to_node->inputs[0].id;
-            } else {
-                link.to_pin = link_json["to_pin"];
+            if (!ResolveSavedGraphLinkPins(link_json, from_node, to_node, link)) {
+                continue;
             }
 
             // Load link type

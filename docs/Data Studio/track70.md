@@ -323,3 +323,8 @@ changes are outside Track 70 scope and must remain isolated.
   loader links, while model targets continue to come from `DataLoader.Labels`.
   Focused guards now use the modern boundary and reject stale saved-example pin
   indices.
+- 2026-07-22: Hardened saved-graph link restoration in both file and in-memory
+  load paths. Explicit negative, malformed, or out-of-range pin indices are now
+  skipped with a warning instead of being silently clamped to pin 0; truly
+  index-less legacy links retain their first-pin fallback. Removed the unused
+  legacy pin-ID heuristic and added focused index-resolution coverage.

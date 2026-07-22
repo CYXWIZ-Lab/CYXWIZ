@@ -2,6 +2,9 @@
 
 #include "node_editor.h"
 
+#include <nlohmann/json.hpp>
+
+#include <cstddef>
 #include <map>
 #include <string>
 
@@ -10,6 +13,29 @@ namespace gui::detail {
 inline bool HasImportGuardParam(const std::map<std::string, std::string>& params,
                                 const char* key) {
     return params.find(key) != params.end();
+}
+
+inline bool ResolveSerializedPinIndex(const nlohmann::json& link_json,
+                                      const char* index_key,
+                                      std::size_t pin_count,
+                                      int& resolved_index) {
+    resolved_index = 0;
+    if (!link_json.contains(index_key)) {
+        return pin_count > 0;
+    }
+
+    const auto& value = link_json[index_key];
+    if (!value.is_number_integer()) {
+        return false;
+    }
+
+    const int index = value.get<int>();
+    if (index < 0 || static_cast<std::size_t>(index) >= pin_count) {
+        return false;
+    }
+
+    resolved_index = index;
+    return true;
 }
 
 inline bool IsDenseEncodedSequencePlaceholderName(

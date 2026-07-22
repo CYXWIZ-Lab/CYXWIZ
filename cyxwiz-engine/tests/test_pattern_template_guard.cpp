@@ -314,6 +314,33 @@ void CheckSavedExampleDataBoundaryPins() {
     }
 }
 
+void CheckSerializedPinIndexGuard() {
+    int index = -1;
+    nlohmann::json link = nlohmann::json::object();
+    Check(gui::detail::ResolveSerializedPinIndex(link, "from_pin_index", 1, index) &&
+              index == 0,
+          "index-less legacy links should resolve to the first available pin");
+    Check(!gui::detail::ResolveSerializedPinIndex(link, "from_pin_index", 0, index),
+          "index-less legacy links should reject nodes without pins");
+
+    link["from_pin_index"] = 1;
+    Check(gui::detail::ResolveSerializedPinIndex(link, "from_pin_index", 2, index) &&
+              index == 1,
+          "explicit in-range pin indices should be preserved");
+
+    link["from_pin_index"] = -1;
+    Check(!gui::detail::ResolveSerializedPinIndex(link, "from_pin_index", 2, index),
+          "negative pin indices should be rejected");
+
+    link["from_pin_index"] = 2;
+    Check(!gui::detail::ResolveSerializedPinIndex(link, "from_pin_index", 2, index),
+          "out-of-range pin indices should be rejected");
+
+    link["from_pin_index"] = "1";
+    Check(!gui::detail::ResolveSerializedPinIndex(link, "from_pin_index", 2, index),
+          "non-integer pin indices should be rejected");
+}
+
 } // namespace
 
 int main() {
@@ -518,6 +545,7 @@ int main() {
 
     CheckSavedNERGraphUsesFirstClassSequenceNodes();
     CheckSavedExampleDataBoundaryPins();
+    CheckSerializedPinIndexGuard();
 
     std::cout << "Pattern template guard passed\n";
     return 0;
