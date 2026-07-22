@@ -273,3 +273,6 @@ changes are outside Track 70 scope and must remain isolated.
   that still expose Train/Val/Test tensor pins. Compile now records the same
   compatibility truth as the UI: those pins remain loadable, while validation
   and held-out testing come from compiler-resolved dataset partitions.
+- 2026-07-22: Repaired Asset Browser `Show in Explorer` to launch the OS file
+  browser without building a shell command string. Windows now asks Explorer to
+  select the exact asset path and logs a typed failure when the OS launch fails.
