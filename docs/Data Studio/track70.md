@@ -308,3 +308,7 @@ changes are outside Track 70 scope and must remain isolated.
   loading. `NodeEditor::LoadPatternFromFile` now skips out-of-range template
   pin indices with a warning instead of falling back to the first pin and
   possibly changing Dataset role semantics.
+- 2026-07-22: Updated binary-model conversion graph generation for the modern
+  data boundary. Generated `graph.cyxgraph` files now include DataInput ->
+  DataSplit -> DataLoader before model layers, and loss targets are wired from
+  `DataLoader.Labels` instead of the removed `DataInput.Labels` output.

@@ -191,10 +191,11 @@ bool ModelConverter::BinaryToDirectory(
             int prev_node_id = -1;
             int prev_pin_id = -1;
 
-            // Add Input node first
+            // Add Data Input node first. Modern DataInput emits one Dataset
+            // artifact; feature/label selection is dataset metadata.
             json input_node;
             input_node["id"] = node_id;
-            input_node["name"] = "Input";
+            input_node["name"] = "Data Input";
             input_node["type"] = 77;  // DataInput type
             input_node["pos_x"] = pos_x;
             input_node["pos_y"] = 200.0f;
@@ -220,10 +221,78 @@ bool ModelConverter::BinaryToDirectory(
             }
 
             graph["nodes"].push_back(input_node);
-            prev_node_id = node_id;
-            prev_pin_id = pin_id + 1;  // Output pin
+            const int input_node_id = node_id;
+            const int input_dataset_pin = pin_id;
             node_id++;
-            pin_id += 2;
+            pin_id += 1;
+            pos_x += 200.0f;
+
+            // Add Data Split node to resolve Train/Validation/Test partitions.
+            json split_node;
+            split_node["id"] = node_id;
+            split_node["name"] = "Train/Val/Test Split";
+            split_node["type"] = 106;  // DataSplit type
+            split_node["pos_x"] = pos_x;
+            split_node["pos_y"] = 200.0f;
+            split_node["parameters"] = json::object();
+            split_node["parameters"]["train_ratio"] = "0.8";
+            split_node["parameters"]["val_ratio"] = "0.1";
+            split_node["parameters"]["test_ratio"] = "0.1";
+            split_node["parameters"]["shuffle"] = "true";
+            graph["nodes"].push_back(split_node);
+
+            const int split_node_id = node_id;
+            const int split_training_pin = pin_id;
+            const int split_partitions_pin = pin_id + 3;
+
+            json input_split_link;
+            input_split_link["id"] = link_id++;
+            input_split_link["from_node"] = input_node_id;
+            input_split_link["from_pin"] = input_dataset_pin;
+            input_split_link["from_pin_index"] = 0;
+            input_split_link["to_node"] = split_node_id;
+            input_split_link["to_pin"] = split_training_pin;
+            input_split_link["to_pin_index"] = 0;
+            input_split_link["link_type"] = 0;
+            graph["links"].push_back(input_split_link);
+
+            node_id++;
+            pin_id += 4;  // DataSplit: 3 Dataset inputs + 1 Partitions output
+            pos_x += 200.0f;
+
+            // Add Data Loader node to create model-facing batched Data/Labels.
+            json loader_node;
+            loader_node["id"] = node_id;
+            loader_node["name"] = "Data Loader";
+            loader_node["type"] = 104;  // DataLoader type
+            loader_node["pos_x"] = pos_x;
+            loader_node["pos_y"] = 200.0f;
+            loader_node["parameters"] = json::object();
+            loader_node["parameters"]["batch_size"] = "32";
+            loader_node["parameters"]["epochs"] = "10";
+            loader_node["parameters"]["shuffle"] = "true";
+            graph["nodes"].push_back(loader_node);
+
+            const int data_loader_node_id = node_id;
+            const int loader_partitions_pin = pin_id;
+            const int loader_data_pin = pin_id + 1;
+            const int loader_labels_pin = pin_id + 2;
+
+            json split_loader_link;
+            split_loader_link["id"] = link_id++;
+            split_loader_link["from_node"] = split_node_id;
+            split_loader_link["from_pin"] = split_partitions_pin;
+            split_loader_link["from_pin_index"] = 0;
+            split_loader_link["to_node"] = data_loader_node_id;
+            split_loader_link["to_pin"] = loader_partitions_pin;
+            split_loader_link["to_pin_index"] = 0;
+            split_loader_link["link_type"] = 0;
+            graph["links"].push_back(split_loader_link);
+
+            prev_node_id = data_loader_node_id;
+            prev_pin_id = loader_data_pin;
+            node_id++;
+            pin_id += 3;  // DataLoader: 1 Partitions input + Data/Labels outputs
             pos_x += 200.0f;
 
             // Add nodes for each module
@@ -346,11 +415,11 @@ bool ModelConverter::BinaryToDirectory(
             loss_link["link_type"] = 0;
             graph["links"].push_back(loss_link);
 
-            // Link Input node to Loss (target input) - use second output pin from Input
+            // Link DataLoader labels to Loss target input.
             json target_link;
             target_link["id"] = link_id++;
-            target_link["from_node"] = 1;  // Input node
-            target_link["from_pin"] = 2;   // Second output pin (labels)
+            target_link["from_node"] = data_loader_node_id;
+            target_link["from_pin"] = loader_labels_pin;
             target_link["from_pin_index"] = 1;
             target_link["to_node"] = loss_node_id;
             target_link["to_pin"] = loss_target_pin;
