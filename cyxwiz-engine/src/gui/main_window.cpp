@@ -244,6 +244,54 @@ uint64_t HashGraphStructure(const std::vector<MLNode>& nodes,
     return h;
 }
 
+std::string FindTestingLabelColumn(
+    const std::vector<MLNode>& nodes,
+    const std::string& dataset_name,
+    int data_source_node_id) {
+
+    const MLNode* fallback_data_input = nullptr;
+    for (const auto& node : nodes) {
+        if (node.type != NodeType::DataInput) {
+            continue;
+        }
+
+        if (node.id == data_source_node_id) {
+            auto label_it = node.parameters.find("label_column");
+            if (label_it != node.parameters.end() && !label_it->second.empty()) {
+                return label_it->second;
+            }
+            return {};
+        }
+
+        if (!fallback_data_input) {
+            fallback_data_input = &node;
+        }
+
+        auto dataset_it = node.parameters.find("dataset_name");
+        if (dataset_it == node.parameters.end() || dataset_it->second.empty()) {
+            dataset_it = node.parameters.find("dataset");
+        }
+        if (!dataset_name.empty() &&
+            dataset_it != node.parameters.end() &&
+            dataset_it->second == dataset_name) {
+            auto label_it = node.parameters.find("label_column");
+            if (label_it != node.parameters.end() && !label_it->second.empty()) {
+                return label_it->second;
+            }
+            return {};
+        }
+    }
+
+    if (fallback_data_input) {
+        auto label_it = fallback_data_input->parameters.find("label_column");
+        if (label_it != fallback_data_input->parameters.end() &&
+            !label_it->second.empty()) {
+            return label_it->second;
+        }
+    }
+    return {};
+}
+
 std::string JsonEscape(const std::string& value) {
     std::string escaped;
     escaped.reserve(value.size());
@@ -4498,17 +4546,29 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         return;
     }
 
-    std::string dataset_name;
+    std::string dataset_name = config.dataset_name;
     for (const auto& node : nodes) {
-        if (node.type == NodeType::DataInput || node.type == NodeType::DatasetInput) {
-            auto it = node.parameters.find("dataset_name");
-            if (it != node.parameters.end() && !it->second.empty()) {
-                dataset_name = it->second;
+        if (node.type != NodeType::DataInput && node.type != NodeType::DatasetInput) {
+            continue;
+        }
+
+        auto it = node.parameters.find("dataset_name");
+        if (it == node.parameters.end() || it->second.empty()) {
+            it = node.parameters.find("dataset");
+        }
+        if (it == node.parameters.end() || it->second.empty()) {
+            continue;
+        }
+
+        if (node.id == config.data_source_node_id || dataset_name.empty()) {
+            dataset_name = it->second;
+            if (node.id == config.data_source_node_id) {
                 break;
             }
         }
     }
-
+    std::string label_column = FindTestingLabelColumn(
+        nodes, dataset_name, config.data_source_node_id);
     if (dataset_name.empty()) {
         spdlog::error("StartTestingFromGraph: no dataset loaded. Configure the Data Input node first.");
         return;
@@ -4526,7 +4586,13 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
 
     auto& registry = cyxwiz::DataRegistry::Instance();
     bool started = false;
-    if (registry.IsTextDataset(dataset_name)) {
+    if (auto arrow_dataset = registry.GetArrowDataset(dataset_name)) {
+        started = cyxwiz::TestManager::Instance().StartTestingArrow(
+            std::move(config), std::move(arrow_dataset), label_column, config.batch_size, model, on_complete);
+    } else if (auto parquet_dataset = registry.GetParquetBackedDataset(dataset_name)) {
+        started = cyxwiz::TestManager::Instance().StartTestingParquet(
+            std::move(config), std::move(parquet_dataset), label_column, config.batch_size, model, on_complete);
+    } else if (registry.IsTextDataset(dataset_name)) {
         const auto* text_entry = registry.GetTextDatasetEntry(dataset_name);
         if (!text_entry) {
             spdlog::error("StartTestingFromGraph: text dataset '{}' is registered but entry retrieval failed", dataset_name);

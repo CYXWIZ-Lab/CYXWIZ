@@ -13,6 +13,9 @@
 
 namespace cyxwiz {
 
+class ArrowDataset;
+class ParquetBackedDataset;
+
 /**
  * TestManager - Centralized manager for model testing sessions
  *
@@ -57,6 +60,22 @@ public:
         TestCompleteCallback on_complete = nullptr
     );
 
+    bool StartTestingArrow(
+        TrainingConfiguration config,
+        std::shared_ptr<ArrowDataset> dataset,
+        std::string label_column,
+        int batch_size,
+        std::shared_ptr<SequentialModel> model = nullptr,
+        TestCompleteCallback on_complete = nullptr
+    );
+    bool StartTestingParquet(
+        TrainingConfiguration config,
+        std::shared_ptr<ParquetBackedDataset> dataset,
+        std::string label_column,
+        int batch_size,
+        std::shared_ptr<SequentialModel> model = nullptr,
+        TestCompleteCallback on_complete = nullptr
+    );
     bool StartTestingText(
         TrainingConfiguration config,
         const DataRegistry::TextDatasetEntry& text_entry,

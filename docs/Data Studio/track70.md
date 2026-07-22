@@ -236,3 +236,8 @@ changes are outside Track 70 scope and must remain isolated.
   `TablePreviewRenderer::LoadFromDataset(...)`. Raw Quick Preview remains a
   file-only preview path, while registered Arrow/Parquet previews flow through
   `DataPreviewService`.
+- 2026-07-22: Wired graph testing dispatch for registered Arrow and Parquet
+  tabular datasets. `StartTestingFromGraph` now prefers the compiler-resolved
+  dataset name, resolves the Data Input label column, and dispatches to
+  `TestManager::StartTestingArrow` or `StartTestingParquet` instead of falling
+  through to the legacy DatasetHandle registry path.

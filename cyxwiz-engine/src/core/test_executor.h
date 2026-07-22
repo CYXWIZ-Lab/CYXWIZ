@@ -17,6 +17,9 @@
 
 namespace cyxwiz {
 
+class ArrowDataset;
+class ParquetBackedDataset;
+
 /**
  * Per-class metrics for detailed analysis
  */
@@ -106,6 +109,8 @@ public:
      * @param dataset Dataset handle from DataRegistry
      */
     TestExecutor(TrainingConfiguration config, DatasetHandle dataset);
+    TestExecutor(TrainingConfiguration config, std::shared_ptr<ArrowDataset> arrow_dataset, std::string label_column);
+    TestExecutor(TrainingConfiguration config, std::shared_ptr<ParquetBackedDataset> parquet_dataset, std::string label_column);
     TestExecutor(TrainingConfiguration config, const DataRegistry::TextDatasetEntry& text_entry);
 
     ~TestExecutor();
@@ -151,8 +156,14 @@ public:
 private:
     TrainingConfiguration config_;
     DatasetHandle dataset_;
+    std::shared_ptr<ArrowDataset> arrow_dataset_;
+    std::shared_ptr<ParquetBackedDataset> parquet_dataset_;
     DataRegistry::TextDatasetEntry text_entry_;
     bool use_text_dataset_ = false;
+    bool use_arrow_dataset_ = false;
+    bool use_parquet_dataset_ = false;
+    std::string arrow_label_column_;
+    std::string parquet_label_column_;
 
     // Thread safety
     std::atomic<bool> is_testing_{false};

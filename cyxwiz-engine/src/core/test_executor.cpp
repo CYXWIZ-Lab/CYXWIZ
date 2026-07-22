@@ -1,4 +1,5 @@
 #include "test_executor.h"
+#include "training_batcher_setup.h"
 
 #include <cstdint>
 #include <spdlog/spdlog.h>
@@ -129,6 +130,31 @@ TestExecutor::TestExecutor(TrainingConfiguration config, DatasetHandle dataset)
     , dataset_(dataset)
 {
     spdlog::info("TestExecutor: Created with {} layers, input_size={}, output_size={}",
+                 config_.layers.size(), config_.input_size, config_.output_size);
+}
+
+TestExecutor::TestExecutor(
+    TrainingConfiguration config,
+    std::shared_ptr<ArrowDataset> arrow_dataset,
+    std::string label_column)
+    : config_(std::move(config))
+    , arrow_dataset_(std::move(arrow_dataset))
+    , use_arrow_dataset_(true)
+    , arrow_label_column_(std::move(label_column))
+{
+    spdlog::info("TestExecutor: Created for Arrow dataset with {} layers, input_size={}, output_size={}",
+                 config_.layers.size(), config_.input_size, config_.output_size);
+}
+TestExecutor::TestExecutor(
+    TrainingConfiguration config,
+    std::shared_ptr<ParquetBackedDataset> parquet_dataset,
+    std::string label_column)
+    : config_(std::move(config))
+    , parquet_dataset_(std::move(parquet_dataset))
+    , use_parquet_dataset_(true)
+    , parquet_label_column_(std::move(label_column))
+{
+    spdlog::info("TestExecutor: Created for Parquet-backed dataset with {} layers, input_size={}, output_size={}",
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
 
@@ -607,8 +633,22 @@ void TestExecutor::Test(
     // Create the test batcher using the dataset type that was trained.
     std::unique_ptr<DatasetBatcher> legacy_test_batcher;
     std::unique_ptr<TextDatasetBatcher> text_test_batcher;
+    std::unique_ptr<ArrowDatasetBatcher> arrow_test_batcher;
+    std::unique_ptr<ParquetArrowBatcher> parquet_test_batcher;
 
-    if (use_text_dataset_) {
+    if (use_arrow_dataset_) {
+        TrainingConfiguration test_config = config_;
+        test_config.prefetch_factor = 0;
+        auto batchers = BuildArrowTrainingBatchers(
+            test_config, arrow_dataset_, arrow_label_column_, batch_size);
+        arrow_test_batcher = std::move(batchers.arrow_test);
+    } else if (use_parquet_dataset_) {
+        TrainingConfiguration test_config = config_;
+        test_config.prefetch_factor = 0;
+        auto batchers = BuildParquetTrainingBatchers(
+            test_config, parquet_dataset_, parquet_label_column_, batch_size);
+        parquet_test_batcher = std::move(batchers.parquet_test);
+    } else if (use_text_dataset_) {
         text_test_batcher = std::make_unique<TextDatasetBatcher>(
             text_entry_,
             config_.text_preprocessing,
@@ -650,9 +690,16 @@ void TestExecutor::Test(
         legacy_test_batcher->SetFlatten(true);
     }
 
-    size_t total_batches = use_text_dataset_
-        ? text_test_batcher->GetNumBatches()
-        : legacy_test_batcher->GetNumBatches();
+    size_t total_batches = 0;
+    if (use_arrow_dataset_) {
+        total_batches = arrow_test_batcher ? arrow_test_batcher->GetNumBatches() : 0;
+    } else if (use_parquet_dataset_) {
+        total_batches = parquet_test_batcher ? parquet_test_batcher->GetNumBatches() : 0;
+    } else if (use_text_dataset_) {
+        total_batches = text_test_batcher ? text_test_batcher->GetNumBatches() : 0;
+    } else {
+        total_batches = legacy_test_batcher ? legacy_test_batcher->GetNumBatches() : 0;
+    }
     UpdateMetrics([total_batches](TestingMetrics& m) {
         m.total_batches = static_cast<int>(total_batches);
     });
@@ -687,9 +734,17 @@ void TestExecutor::Test(
     while (true) {
         if (ShouldStop()) break;
 
-        Batch batch = use_text_dataset_
-            ? text_test_batcher->GetNextBatch()
-            : legacy_test_batcher->GetNextBatch();
+        Batch batch;
+        if (use_arrow_dataset_) {
+            batch = arrow_test_batcher->GetNextBatch();
+        } else if (use_parquet_dataset_) {
+            batch = parquet_test_batcher->GetNextBatch();
+        } else if (use_text_dataset_) {
+            batch = text_test_batcher->GetNextBatch();
+        } else {
+            batch = legacy_test_batcher->GetNextBatch();
+        }
+
         if (!batch.IsValid()) break;
 
         batch_num++;
