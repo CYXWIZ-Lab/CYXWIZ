@@ -625,23 +625,51 @@ bool PatternLibrary::InstantiatePattern(
         node.initial_pos_y = base_position.y + pattern_node.pos_y;
         node.has_initial_position = true;
 
-        // Create pins based on node type (simplified - NodeEditor has more complex logic)
-        // Input pin
-        NodePin input_pin;
-        input_pin.id = next_pin_id++;
-        input_pin.type = PinType::Tensor;
-        input_pin.name = "Input";
-        input_pin.is_input = true;
-        node.inputs.push_back(input_pin);
+        // Create fallback pins for legacy/no-editor pattern insertion. The
+        // normal UI path uses NodeEditor::CreateNode via
+        // InstantiatePatternWithCreator; keep this fallback small but truthful
+        // for the Data Studio role-aware data boundary.
+        auto add_input = [&](PinType type, const std::string& pin_name,
+                             bool required = true) {
+            NodePin pin;
+            pin.id = next_pin_id++;
+            pin.type = type;
+            pin.name = pin_name;
+            pin.is_input = true;
+            pin.is_required = required;
+            node.inputs.push_back(pin);
+        };
+        auto add_output = [&](PinType type, const std::string& pin_name,
+                              bool required = true) {
+            NodePin pin;
+            pin.id = next_pin_id++;
+            pin.type = type;
+            pin.name = pin_name;
+            pin.is_input = false;
+            pin.is_required = required;
+            node.outputs.push_back(pin);
+        };
 
-        // Output pin
-        NodePin output_pin;
-        output_pin.id = next_pin_id++;
-        output_pin.type = PinType::Tensor;
-        output_pin.name = "Output";
-        output_pin.is_input = false;
-        node.outputs.push_back(output_pin);
-
+        switch (node_type) {
+        case NodeType::DataInput:
+            add_output(PinType::Dataset, "Dataset");
+            break;
+        case NodeType::DataSplit:
+            add_input(PinType::Dataset, "Training Dataset");
+            add_input(PinType::Dataset, "Validation Dataset", false);
+            add_input(PinType::Dataset, "Test Dataset", false);
+            add_output(PinType::Dataset, "Partitions");
+            break;
+        case NodeType::DataLoader:
+            add_input(PinType::Dataset, "Partitions");
+            add_output(PinType::Tensor, "Data");
+            add_output(PinType::Labels, "Labels", false);
+            break;
+        default:
+            add_input(PinType::Tensor, "Input");
+            add_output(PinType::Tensor, "Output");
+            break;
+        }
         // Copy parameters with substitution
         for (const auto& [key, value] : pattern_node.params) {
             node.parameters[key] = SubstituteParams(value, merged_params);

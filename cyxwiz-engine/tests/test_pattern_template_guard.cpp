@@ -56,6 +56,32 @@ std::filesystem::path WritePattern(const std::string& id, const std::string& typ
     return WritePatternWithNode(id, type, type, "");
 }
 
+std::filesystem::path WriteDataBoundaryPattern(const std::string& id) {
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_pattern_guard";
+    std::filesystem::create_directories(dir);
+
+    const auto path = dir / (id + ".cyxgraph");
+    std::ofstream out(path, std::ios::binary);
+    Check(out.is_open(), "could not write data-boundary pattern file");
+    out << "{\n"
+        << "  \"id\": \"" << id << "\",\n"
+        << "  \"name\": \"" << id << "\",\n"
+        << "  \"category\": \"Training Pipeline\",\n"
+        << "  \"template\": {\n"
+        << "    \"nodes\": [\n"
+        << "      {\"id\": \"input\", \"type\": \"DataInput\", \"name\": \"Data Input\", \"pos_x\": 0, \"pos_y\": 0},\n"
+        << "      {\"id\": \"split\", \"type\": \"DataSplit\", \"name\": \"Split\", \"pos_x\": 200, \"pos_y\": 0},\n"
+        << "      {\"id\": \"loader\", \"type\": \"DataLoader\", \"name\": \"Loader\", \"pos_x\": 400, \"pos_y\": 0}\n"
+        << "    ],\n"
+        << "    \"links\": [\n"
+        << "      {\"from\": \"input\", \"to\": \"split\", \"from_pin\": 0, \"to_pin\": 0},\n"
+        << "      {\"from\": \"split\", \"to\": \"loader\", \"from_pin\": 0, \"to_pin\": 0}\n"
+        << "    ]\n"
+        << "  }\n"
+        << "}\n";
+    return path;
+}
+
 gui::MLNode MinimalNode(gui::NodeType type, const std::string& name) {
     gui::MLNode node;
     node.type = type;
@@ -255,6 +281,8 @@ int main() {
                                    "Custom Sequence Builder",
                                    "{\"bio_scheme\": \"BIO\", \"units\": \"128\"}").string()),
           "failed to load Dense-encoded NER parameter-marker pattern");
+    Check(library.LoadPatternFromFile(WriteDataBoundaryPattern("guard_data_boundary").string()),
+          "failed to load data-boundary pattern");
 
     std::vector<gui::MLNode> nodes;
     std::vector<gui::NodeLink> links;
@@ -334,6 +362,46 @@ int main() {
     Check(creator_calls == 5, "unknown rejection should not call node creator");
 
     int next_pin_id = 2000;
+
+    nodes.clear();
+    links.clear();
+    Check(library.InstantiatePattern(
+              "guard_data_boundary", {}, nodes, links, next_node_id,
+              next_pin_id, next_link_id, ImVec2(0, 0)),
+          "legacy/no-editor data-boundary pattern should instantiate");
+    Check(nodes.size() == 3 && links.size() == 2,
+          "data-boundary fallback should create three nodes and two links");
+    const gui::MLNode* data_input = nullptr;
+    const gui::MLNode* data_split = nullptr;
+    const gui::MLNode* data_loader = nullptr;
+    for (const auto& node : nodes) {
+        if (node.type == gui::NodeType::DataInput) data_input = &node;
+        if (node.type == gui::NodeType::DataSplit) data_split = &node;
+        if (node.type == gui::NodeType::DataLoader) data_loader = &node;
+    }
+    Check(data_input != nullptr && data_split != nullptr && data_loader != nullptr,
+          "data-boundary fallback should create DataInput/DataSplit/DataLoader");
+    Check(data_input->outputs.size() == 1 &&
+              data_input->outputs[0].name == "Dataset" &&
+              data_input->outputs[0].type == gui::PinType::Dataset,
+          "fallback DataInput should expose one Dataset output");
+    Check(data_split->inputs.size() == 3 && data_split->outputs.size() == 1 &&
+              data_split->inputs[0].name == "Training Dataset" &&
+              data_split->inputs[0].type == gui::PinType::Dataset &&
+              data_split->outputs[0].name == "Partitions" &&
+              data_split->outputs[0].type == gui::PinType::Dataset,
+          "fallback DataSplit should expose Dataset role inputs and Partitions output");
+    Check(data_loader->inputs.size() == 1 && data_loader->outputs.size() == 2 &&
+              data_loader->inputs[0].name == "Partitions" &&
+              data_loader->inputs[0].type == gui::PinType::Dataset &&
+              data_loader->outputs[0].name == "Data" &&
+              data_loader->outputs[0].type == gui::PinType::Tensor &&
+              data_loader->outputs[1].name == "Labels" &&
+              data_loader->outputs[1].type == gui::PinType::Labels,
+          "fallback DataLoader should consume Partitions and emit Data/Labels");
+
+    nodes.clear();
+    links.clear();
     Check(!library.InstantiatePatternWithCreator(
               "guard_ner_name", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "Dense-encoded NER placeholder-name pattern should be rejected");

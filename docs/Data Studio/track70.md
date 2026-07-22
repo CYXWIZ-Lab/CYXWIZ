@@ -295,3 +295,7 @@ changes are outside Track 70 scope and must remain isolated.
   New Data Input nodes now emit one `Dataset` output matching the modern
   catalog, and the startup showcase now routes `Data Input -> Data Split ->
   Data Loader -> Normalize -> Model` with labels supplied by `DataLoader.Labels`.
+- 2026-07-22: Fixed legacy/no-editor pattern insertion for the role-aware data
+  boundary. The fallback Pattern Library path now creates modern DataInput,
+  DataSplit, and DataLoader pins instead of generic Tensor Input/Output pins,
+  with a focused pattern guard covering the fallback.
