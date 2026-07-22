@@ -264,3 +264,8 @@ changes are outside Track 70 scope and must remain isolated.
   validation/test execution is created from compiler-resolved dataset
   partitions rather than separate canvas branches. The node pin descriptions
   now carry the same warning until the Dataset-oriented pin migration lands.
+- 2026-07-22: Mirrored the Data Split legacy-contract notice into the
+  Properties panel and node documentation. Users now see the same truth from
+  the quick inspector, rich dialog, node pins, and docs: legacy Train/Val/Test
+  pins remain loadable, but runtime evaluation follows resolved dataset
+  partitions.

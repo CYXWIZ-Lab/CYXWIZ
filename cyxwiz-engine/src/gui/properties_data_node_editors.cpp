@@ -259,6 +259,16 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
             if (ImGui::InputText("##seed", seed_buffer, sizeof(seed_buffer), ImGuiInputTextFlags_CharsDecimal)) {
                 seed = seed_buffer;
             }
+
+            ImGui::Spacing();
+            ImGui::TextColored(
+                ImVec4(0.85f, 0.75f, 0.35f, 1.0f),
+                "Train/Val/Test output pins are legacy compatibility pins."
+            );
+            ImGui::TextWrapped(
+                "Runtime validation and test evaluation use compiler-resolved "
+                "dataset partitions, not separate canvas model branches."
+            );
             break;
         }
         default:

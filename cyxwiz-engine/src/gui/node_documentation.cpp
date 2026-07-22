@@ -1575,17 +1575,20 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::DataSplit] = {
         "Data Split",
-        "Splits dataset into training, validation, and optionally test sets. "
-        "Essential for proper model evaluation.",
-        "Outputs multiple dataset handles.",
+        "Resolves train, validation, and test partition policy for a dataset. "
+        "Runtime batchers consume the compiler-resolved partitions.",
+        "The current Train/Val/Test tensor outputs are legacy compatibility "
+        "pins for saved graphs, not separate model-branch execution paths.",
         {
-            {"train_ratio", "Fraction for training (e.g., 0.8)"},
-            {"val_ratio", "Fraction for validation (e.g., 0.1)"},
-            {"shuffle", "Shuffle before splitting"}
+            {"train_ratio", "Fraction for training when a role is derived (e.g., 0.8)"},
+            {"val_ratio", "Fraction for validation when derived from Train (e.g., 0.1)"},
+            {"test_ratio", "Fraction for test when derived from Train (e.g., 0.1)"},
+            {"stratified", "Preserve class distribution when supported"},
+            {"seed", "Deterministic split seed"}
         },
         {
-            "80/10/10 is a common split",
-            "Always shuffle for non-time-series data"
+            "External Dev/Test sources are preserved by role resolution",
+            "Do not build separate Val/Test model branches from legacy pins"
         },
         "Data Pipeline"
     };
