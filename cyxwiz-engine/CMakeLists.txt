@@ -321,7 +321,6 @@ set(ENGINE_SOURCES
     src/gui/panels/table_viewer_editing.cpp
     src/gui/panels/table_viewer_visualization.cpp
     src/gui/panels/table_viewer_stats.cpp
-    src/gui/panels/table_viewer_loading.cpp
     src/gui/panels/table_viewer_tabs.cpp
     src/gui/panels/table_viewer_transforms.cpp
     src/gui/panels/table_viewer_plot.cpp
@@ -445,7 +444,6 @@ set(ENGINE_SOURCES
     src/gui/query/cyxql_parser.cpp
     src/gui/query/cyxql_executor.cpp
     src/data/data_table.cpp
-    src/data/lazy_data_table.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
     src/scripting/scripting_engine.cpp

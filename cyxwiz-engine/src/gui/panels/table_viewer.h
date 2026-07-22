@@ -2,14 +2,10 @@
 
 #include "../panel.h"
 #include "../../data/data_table.h"
-#include "../../data/lazy_data_table.h"
-#include "../../core/async_task_manager.h"
 #include <imgui.h>
 #include <string>
 #include <memory>
 #include <vector>
-#include <atomic>
-#include <mutex>
 #include <map>
 
 namespace cyxwiz {
@@ -119,9 +115,9 @@ struct TableColumnStats {
 };
 
 /**
- * TableViewer Panel - Display tabular data from CSV, Excel, HDF5
- * Uses ImGui tables for efficient rendering of large datasets
- * Supports multiple tabs and async loading
+ * TableViewer Panel - Display already-materialized tabular data.
+ * Source-file and registered-dataset previews flow through Data Preview.
+ * Supports multiple tabs for in-memory DataTable instances.
  */
 class TableViewerPanel : public Panel {
 public:
@@ -129,12 +125,6 @@ public:
     ~TableViewerPanel() override = default;
 
     void Render() override;
-
-    // Load data from files (async by default for large files)
-    bool LoadCSV(const std::string& filepath);
-    bool LoadTXT(const std::string& filepath, char delimiter = '\t');
-    bool LoadHDF5(const std::string& filepath, const std::string& dataset_name = "data");
-    bool LoadExcel(const std::string& filepath, const std::string& sheet_name = "");
 
     // Set table to display (opens in new tab)
     void SetTable(std::shared_ptr<DataTable> table);
@@ -162,14 +152,9 @@ private:
         std::string filename;           // Display name
         std::string filepath;           // Full path
         std::shared_ptr<DataTable> table;
-        std::shared_ptr<LazyDataTable> lazy_table;  // For large files
-        bool use_lazy_loading = false;  // Which table type is active
         int current_page = 0;
         std::string filter_text;
         char filter_buffer[256] = {0};
-        bool is_loading = false;        // Async loading in progress
-        float load_progress = 0.0f;
-        std::string load_status;
 
         // Column statistics and sorting
         std::vector<TableColumnStats> column_stats;
@@ -222,41 +207,30 @@ private:
             std::memset(edit_buffer, 0, sizeof(edit_buffer));
         }
 
-        // Unified accessors for both table types
+        // Unified accessors for the retained in-memory table display path.
         size_t GetRowCount() const {
-            if (use_lazy_loading && lazy_table) return lazy_table->GetRowCount();
-            if (table) return table->GetRowCount();
-            return 0;
+            return table ? table->GetRowCount() : 0;
         }
 
         size_t GetColumnCount() const {
-            if (use_lazy_loading && lazy_table) return lazy_table->GetColumnCount();
-            if (table) return table->GetColumnCount();
-            return 0;
+            return table ? table->GetColumnCount() : 0;
         }
 
         const std::vector<std::string>& GetHeaders() const {
             static std::vector<std::string> empty;
-            if (use_lazy_loading && lazy_table) return lazy_table->GetHeaders();
-            if (table) return table->GetHeaders();
-            return empty;
+            return table ? table->GetHeaders() : empty;
         }
 
         std::string GetCellAsString(size_t row, size_t col) {
-            if (use_lazy_loading && lazy_table) return lazy_table->GetCellAsString(row, col);
-            if (table) return table->GetCellAsString(row, col);
-            return "";
+            return table ? table->GetCellAsString(row, col) : "";
         }
 
         DataTable::CellValue GetCell(size_t row, size_t col) {
-            if (use_lazy_loading && lazy_table) return lazy_table->GetCell(row, col);
-            if (table) return table->GetCell(row, col);
-            return std::monostate{};
+            return table ? table->GetCell(row, col) : std::monostate{};
         }
 
         bool HasData() const {
-            return (use_lazy_loading && lazy_table && lazy_table->GetRowCount() > 0) ||
-                   (!use_lazy_loading && table && table->GetRowCount() > 0);
+            return table && table->GetRowCount() > 0;
         }
     };
 
@@ -264,7 +238,6 @@ private:
     void RenderToolbar();
     void RenderTable();
     void RenderStatusBar();
-    void RenderLoadingIndicator();
     void RenderStatsSidebar(TableTab* tab);
 
     // Column statistics and sorting
@@ -326,10 +299,6 @@ private:
     void SaveTable(TableTab* tab);
     bool HasUnsavedChanges() const;
 
-    // Async loading helpers
-    void LoadFileAsync(const std::string& filepath, const std::string& type, char delimiter = ',');
-    void OnLoadComplete(int tab_index, std::shared_ptr<DataTable> table, bool success, const std::string& error);
-
     // Tab management
     int FindTabByPath(const std::string& filepath) const;
     TableTab* GetActiveTab();
@@ -372,14 +341,6 @@ private:
     bool show_find_dialog_ = false;
     char find_buffer_[256] = {0};
     char replace_buffer_[256] = {0};
-
-    // Async loading
-    std::mutex tabs_mutex_;
-    std::atomic<bool> has_pending_load_{false};
-
-    // Lazy loading settings
-    static constexpr size_t LAZY_LOAD_THRESHOLD_MB = 10;  // Files > 10MB use lazy loading
-    bool prefer_lazy_loading_ = true;  // User preference
 
     // Visualization integration
     VisualizationPanel* visualization_panel_ = nullptr;

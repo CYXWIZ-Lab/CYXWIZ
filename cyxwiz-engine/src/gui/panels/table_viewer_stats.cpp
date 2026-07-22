@@ -1,4 +1,4 @@
-﻿#include "table_viewer.h"
+#include "table_viewer.h"
 #include "../icons.h"
 #include <imgui.h>
 #include <implot.h>
@@ -19,10 +19,9 @@ void TableViewerPanel::ComputeColumnStats(TableTab* tab) {
 
     tab->column_stats.resize(cols);
 
-    // For lazy loading with many rows, sample instead of scanning all
-    bool sample_mode = tab->use_lazy_loading && rows > 10000;
-    size_t sample_size = sample_mode ? 5000 : rows;
-    size_t step = sample_mode ? rows / sample_size : 1;
+    const bool sample_mode = false;
+    size_t sample_size = rows;
+    size_t step = 1;
 
     for (size_t c = 0; c < cols; c++) {
         auto& stats = tab->column_stats[c];
@@ -126,12 +125,6 @@ void TableViewerPanel::SortByColumn(TableTab* tab, int column) {
     if (!tab || !tab->HasData() || column < 0) return;
 
     size_t rows = tab->GetRowCount();
-
-    // For very large lazy-loaded files, sorting is disabled (too slow)
-    if (tab->use_lazy_loading && rows > 100000) {
-        spdlog::warn("Sorting disabled for lazy-loaded files with >100K rows");
-        return;
-    }
 
     tab->sorted_indices.resize(rows);
     std::iota(tab->sorted_indices.begin(), tab->sorted_indices.end(), size_t(0));

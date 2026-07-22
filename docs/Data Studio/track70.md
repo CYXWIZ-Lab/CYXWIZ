@@ -247,3 +247,9 @@ changes are outside Track 70 scope and must remain isolated.
   pane backed by `DataPreviewService`; raw file peeking stays under Quick
   Preview. Updated the orphan Table Viewer empty-state copy so it no longer
   points users at the removed `View in Table` action.
+- 2026-07-22: Removed the orphan Table Viewer source-file loading stack.
+  `TableViewerPanel` no longer exposes CSV/TXT/HDF5/Excel file-loader methods,
+  no longer compiles `table_viewer_loading.cpp`, and no longer retains its old
+  `LazyDataTable` file-index/cache path. Table Viewer remains only an
+  already-materialized `DataTable` display shell; registered/source previews
+  stay on the shared bounded `DataPreviewService` path.

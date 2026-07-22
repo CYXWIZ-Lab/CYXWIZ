@@ -1,4 +1,4 @@
-﻿#include "table_viewer.h"
+#include "table_viewer.h"
 #include <spdlog/spdlog.h>
 #include <memory>
 
@@ -11,7 +11,6 @@ void TableViewerPanel::SetTable(std::shared_ptr<DataTable> table) {
     tab->filename = table->GetName();
     tab->filepath = "";  // In-memory table
     tab->table = table;
-    tab->is_loading = false;
 
     tabs_.push_back(std::move(tab));
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;

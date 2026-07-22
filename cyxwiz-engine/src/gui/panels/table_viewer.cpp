@@ -1,11 +1,10 @@
-﻿#include "table_viewer.h"
+#include "table_viewer.h"
 #include "visualization_panel.h"
 #include "../icons.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <cstring>
-#include <filesystem>
 #include <limits>
 #include <numeric>
 #include <algorithm>
@@ -13,8 +12,6 @@
 #include <cmath>
 #include <sstream>
 #include <iomanip>
-
-namespace fs = std::filesystem;
 
 namespace cyxwiz {
 
@@ -38,7 +35,7 @@ void TableViewerPanel::Render() {
     // Handle keyboard shortcuts
     ImGuiIO& io = ImGui::GetIO();
     TableTab* shortcut_tab = GetActiveTab();
-    if (shortcut_tab && !shortcut_tab->is_loading) {
+    if (shortcut_tab) {
         // Ctrl+S: Save
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
             if (shortcut_tab->is_dirty) {
@@ -63,12 +60,10 @@ void TableViewerPanel::Render() {
 
     ImGui::Separator();
 
-    // Table display or loading indicator
+    // Table display
     TableTab* active_tab = GetActiveTab();
     if (active_tab) {
-        if (active_tab->is_loading) {
-            RenderLoadingIndicator();
-        } else if (active_tab->table) {
+        if (active_tab->table) {
             // 3-pane layout: sidebar + splitter + main table
             if (show_stats_sidebar_) {
                 RenderStatsSidebar(active_tab);
@@ -129,11 +124,7 @@ void TableViewerPanel::RenderTabBar() {
             if (tab->is_dirty) {
                 tab_name += " *";  // Unsaved changes indicator
             }
-            if (tab->is_loading) {
-                tab_name = ICON_FA_SPINNER " " + tab_name;
-            } else {
-                tab_name = ICON_FA_TABLE " " + tab_name;
-            }
+            tab_name = ICON_FA_TABLE " " + tab_name;
 
             // Make tab closable
             bool tab_open = true;
@@ -240,7 +231,7 @@ void TableViewerPanel::RenderToolbar() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find in table");
 
     // Save button (only enabled if dirty)
-    if (active_tab->table && !active_tab->is_loading) {
+    if (active_tab->table) {
         ImGui::SameLine();
         if (active_tab->is_dirty) {
             if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
@@ -353,9 +344,9 @@ void TableViewerPanel::RenderTable() {
             ImGui::TableSetupColumn(header.c_str(), ImGuiTableColumnFlags_DefaultSort);
         }
 
-        // ═══════════════════════════════════════════════════════════
+        // -----------------------------------------------------------
         // Manual header row with context menu support
-        // ═══════════════════════════════════════════════════════════
+        // -----------------------------------------------------------
         ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
 
         // Line number column header (if enabled)
@@ -553,9 +544,9 @@ void TableViewerPanel::RenderTable() {
                                       active_tab->editing_col == cell_col);
 
                     if (is_editing) {
-                        // ═══════════════════════════════════════════════════════════
+                        // -----------------------------------------------------------
                         // EDITING MODE: Show InputText
-                        // ═══════════════════════════════════════════════════════════
+                        // -----------------------------------------------------------
                         ImGui::SetNextItemWidth(-1);  // Fill available width
 
                         // Focus on first frame of editing
@@ -583,9 +574,9 @@ void TableViewerPanel::RenderTable() {
                             EndCellEdit(active_tab, true);
                         }
                     } else {
-                        // ═══════════════════════════════════════════════════════════
+                        // -----------------------------------------------------------
                         // NORMAL MODE: Selectable cell
-                        // ═══════════════════════════════════════════════════════════
+                        // -----------------------------------------------------------
                         ImGuiSelectableFlags sel_flags = ImGuiSelectableFlags_AllowDoubleClick;
 
                         if (ImGui::Selectable(cell_text.c_str(), is_selected || in_multi_selection, sel_flags)) {
@@ -691,29 +682,14 @@ void TableViewerPanel::RenderStatusBar() {
         return;
     }
 
-    if (tab->is_loading) {
-        ImGui::Text(ICON_FA_SPINNER " Loading: %s", tab->filename.c_str());
-        return;
-    }
-
     if (!tab->HasData()) {
         ImGui::TextDisabled("Failed to load table");
         return;
     }
 
-    // Left: Table info with lazy loading indicator
-    if (tab->use_lazy_loading) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_BOLT);
-        ImGui::SameLine(0, 4);
-    }
+    // Left: Table info
     ImGui::Text(ICON_FA_TABLE " %zu rows x %zu cols",
         tab->GetRowCount(), tab->GetColumnCount());
-
-    // Show cache info for lazy loading
-    if (tab->use_lazy_loading && tab->lazy_table) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("(cached: %zu)", tab->lazy_table->GetCachedRowCount());
-    }
 
     // Middle: Selection info
     ImGui::SameLine();
@@ -725,54 +701,18 @@ void TableViewerPanel::RenderStatusBar() {
         ImGui::TextDisabled("No cell selected");
     }
 
-    // Right: Memory/file size info
+    // Right: Memory estimate for in-memory table
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-    if (tab->use_lazy_loading && tab->lazy_table) {
-        // Show file size for lazy loading
-        size_t file_bytes = tab->lazy_table->GetFileSize();
-        if (file_bytes > 1024 * 1024) {
-            ImGui::Text(ICON_FA_FILE " %.1f MB (lazy)", file_bytes / (1024.0 * 1024.0));
-        } else {
-            ImGui::Text(ICON_FA_FILE " %.1f KB (lazy)", file_bytes / 1024.0);
-        }
+    size_t mem_bytes = tab->GetRowCount() * tab->GetColumnCount() * sizeof(double);
+    if (mem_bytes > 1024 * 1024) {
+        ImGui::Text(ICON_FA_MEMORY " %.1f MB", mem_bytes / (1024.0 * 1024.0));
     } else {
-        // Memory estimate for in-memory table
-        size_t mem_bytes = tab->GetRowCount() * tab->GetColumnCount() * sizeof(double);
-        if (mem_bytes > 1024 * 1024) {
-            ImGui::Text(ICON_FA_MEMORY " %.1f MB", mem_bytes / (1024.0 * 1024.0));
-        } else {
-            ImGui::Text(ICON_FA_MEMORY " %.1f KB", mem_bytes / 1024.0);
-        }
+        ImGui::Text(ICON_FA_MEMORY " %.1f KB", mem_bytes / 1024.0);
     }
 }
 
-void TableViewerPanel::RenderLoadingIndicator() {
-    TableTab* active_tab = GetActiveTab();
-    if (!active_tab) return;
-
-    ImGui::Spacing();
-    ImGui::Spacing();
-
-    // Center the loading indicator
-    float window_width = ImGui::GetWindowWidth();
-    float text_width = ImGui::CalcTextSize(active_tab->load_status.c_str()).x;
-    ImGui::SetCursorPosX((window_width - text_width) * 0.5f);
-
-    // Animated spinner
-    float time = static_cast<float>(ImGui::GetTime());
-    const char* spinner_chars = "|/-\\";
-    char spinner = spinner_chars[static_cast<int>(time * 10) % 4];
-
-    ImGui::Text("%c %s", spinner, active_tab->load_status.c_str());
-
-    ImGui::Spacing();
-
-    // Progress bar
-    ImGui::SetCursorPosX(window_width * 0.2f);
-    ImGui::ProgressBar(active_tab->load_progress, ImVec2(window_width * 0.6f, 0.0f));
-}
 }  // namespace cyxwiz
 
 
