@@ -950,9 +950,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             train_data.name = "Train Data";
             train_data.is_input = false;
             train_data.description =
-                "Feature subset for training — train_ratio of the input "
-                "rows. Connect to a DataLoader (or directly to the model "
-                "for tiny in-memory datasets).";
+                "Legacy compatibility pin for the derived training feature "
+                "partition. The training runtime consumes the compiler-resolved "
+                "partition policy; do not use Val/Test outputs as separate model "
+                "branches.";
             node.outputs.push_back(train_data);
 
             // Output: Train Labels
@@ -970,9 +971,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             train_labels.is_input = false;
             train_labels.is_required = false;
             train_labels.description =
-                "Label subset for training, row-aligned with Train Data. "
-                "Pair with the matching DataLoader or wire straight to "
-                "the loss node's Targets pin.";
+                "Legacy compatibility pin for labels row-aligned with Train "
+                "Data. Saved graphs may still wire labels directly to Loss; the "
+                "runtime resolves labels from the dataset partition contract.";
             node.outputs.push_back(train_labels);
 
             // Output: Val Data
@@ -983,9 +984,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             val_data.is_input = false;
             val_data.is_required = false;  // Optional — common to skip validation during early dev.
             val_data.description =
-                "Feature subset for validation — val_ratio of the input "
-                "rows. Used by the eval pass between training epochs (no "
-                "weight updates).";
+                "Legacy compatibility pin for the validation feature "
+                "partition. Validation is executed by the runtime from resolved "
+                "dataset partitions, not by routing a separate canvas branch.";
             node.outputs.push_back(val_data);
 
             // Output: Val Labels
@@ -996,7 +997,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             val_labels.is_input = false;
             val_labels.is_required = false;
             val_labels.description =
-                "Label subset for validation, row-aligned with Val Data.";
+                "Legacy compatibility pin for labels row-aligned with Val "
+                "Data. Runtime validation labels come from the resolved dataset "
+                "partition.";
             node.outputs.push_back(val_labels);
 
             // Output: Test Data
@@ -1007,8 +1010,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             test_data.is_input = false;
             test_data.is_required = false;  // Optional — held-out test is often skipped.
             test_data.description =
-                "Feature subset for the held-out test pass — test_ratio "
-                "of the input rows. Only touched after training completes.";
+                "Legacy compatibility pin for the held-out test feature "
+                "partition. Final test evaluation is created by the runtime from "
+                "resolved dataset partitions, not by a visible model branch.";
             node.outputs.push_back(test_data);
 
             // Output: Test Labels
@@ -1019,8 +1023,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             test_labels.is_input = false;
             test_labels.is_required = false;
             test_labels.description =
-                "Label subset for the held-out test pass, row-aligned "
-                "with Test Data.";
+                "Legacy compatibility pin for labels row-aligned with Test "
+                "Data. Runtime test labels come from the resolved dataset "
+                "partition.";
             node.outputs.push_back(test_labels);
 
             // Parameters

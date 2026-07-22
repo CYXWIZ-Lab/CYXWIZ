@@ -258,3 +258,9 @@ changes are outside Track 70 scope and must remain isolated.
   dataset inspection cannot silently fall back to the old raw file table parser;
   Quick Preview remains available for non-dataset files such as code, Markdown,
   JSON, images, and opaque binary peeks.
+- 2026-07-22: Added the first Data Split legacy-contract notice without
+  changing saved-graph pin shape. The Data Split dialog now states that
+  Train/Val/Test tensor outputs are compatibility pins, while runtime
+  validation/test execution is created from compiler-resolved dataset
+  partitions rather than separate canvas branches. The node pin descriptions
+  now carry the same warning until the Dataset-oriented pin migration lands.
