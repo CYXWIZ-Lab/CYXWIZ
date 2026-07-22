@@ -263,10 +263,11 @@ void RenderDataPipelineNodeProperties(MLNode& node, RenderNodePropertiesContext 
             ImGui::Spacing();
             ImGui::TextColored(
                 ImVec4(0.85f, 0.75f, 0.35f, 1.0f),
-                "Train/Val/Test output pins are legacy compatibility pins."
+                "Older saved graphs may show legacy Train/Val/Test pins."
             );
             ImGui::TextWrapped(
-                "Runtime validation and test evaluation use compiler-resolved "
+                "New Data Split nodes expose Dataset role inputs and one partition "
+                "output; runtime validation/test evaluation uses resolved "
                 "dataset partitions, not separate canvas model branches."
             );
             break;

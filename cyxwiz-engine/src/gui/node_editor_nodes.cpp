@@ -918,115 +918,54 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::DataSplit: {
-            // DataSplit node - train/val/test splitter
-            // Input: Data tensor
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Tensor;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            data_in.description =
-                "Incoming feature stream (X) — usually wired from "
-                "DataInput.Data or a Normalize/Preprocess node. Will be "
-                "partitioned row-wise by the train/val/test ratios.";
-            node.inputs.push_back(data_in);
+            // DataSplit node - role-aware partition policy over Dataset assets.
+            // Legacy saved graphs may still contain Tensor/Labels Train/Val/Test
+            // pins; new nodes expose the truthful Dataset-oriented contract.
+            NodePin train_in;
+            train_in.id = next_pin_id_++;
+            train_in.type = PinType::Dataset;
+            train_in.name = "Training Dataset";
+            train_in.is_input = true;
+            train_in.description =
+                "Required Dataset asset used as the Training source. Missing "
+                "Validation/Test roles are derived from this source according "
+                "to the split policy.";
+            node.inputs.push_back(train_in);
 
-            // Input: Labels tensor
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            labels_in.description =
-                "Incoming label stream (y) — usually wired from "
-                "DataInput.Labels. Partitioned with the same row indices "
-                "as Data so each split's (X, y) pairs stay aligned.";
-            node.inputs.push_back(labels_in);
+            NodePin validation_in;
+            validation_in.id = next_pin_id_++;
+            validation_in.type = PinType::Dataset;
+            validation_in.name = "Validation Dataset";
+            validation_in.is_input = true;
+            validation_in.is_required = false;
+            validation_in.description =
+                "Optional externally supplied Validation/Dev source. When "
+                "connected or assigned by role metadata, it is preserved and "
+                "not re-split from Training.";
+            node.inputs.push_back(validation_in);
 
-            // Output: Train Data
-            NodePin train_data;
-            train_data.id = next_pin_id_++;
-            train_data.type = PinType::Tensor;
-            train_data.name = "Train Data";
-            train_data.is_input = false;
-            train_data.description =
-                "Legacy compatibility pin for the derived training feature "
-                "partition. The training runtime consumes the compiler-resolved "
-                "partition policy; do not use Val/Test outputs as separate model "
-                "branches.";
-            node.outputs.push_back(train_data);
+            NodePin test_in;
+            test_in.id = next_pin_id_++;
+            test_in.type = PinType::Dataset;
+            test_in.name = "Test Dataset";
+            test_in.is_input = true;
+            test_in.is_required = false;
+            test_in.description =
+                "Optional externally supplied held-out Test source. When "
+                "connected or assigned by role metadata, it is preserved for "
+                "final evaluation and never mixed into Training.";
+            node.inputs.push_back(test_in);
 
-            // Output: Train Labels
-            // Marked optional because the existing convention (used by
-            // every example graph) routes labels directly DataInput →
-            // Loss.Targets, bypassing DataSplit/DataLoader. The runtime
-            // pin-walking fix (tofix.md) will make this path
-            // canonical; tighten is_required to true once labels are
-            // required to flow through the split/loader for shuffling
-            // alignment.
-            NodePin train_labels;
-            train_labels.id = next_pin_id_++;
-            train_labels.type = PinType::Labels;
-            train_labels.name = "Train Labels";
-            train_labels.is_input = false;
-            train_labels.is_required = false;
-            train_labels.description =
-                "Legacy compatibility pin for labels row-aligned with Train "
-                "Data. Saved graphs may still wire labels directly to Loss; the "
-                "runtime resolves labels from the dataset partition contract.";
-            node.outputs.push_back(train_labels);
-
-            // Output: Val Data
-            NodePin val_data;
-            val_data.id = next_pin_id_++;
-            val_data.type = PinType::Tensor;
-            val_data.name = "Val Data";
-            val_data.is_input = false;
-            val_data.is_required = false;  // Optional — common to skip validation during early dev.
-            val_data.description =
-                "Legacy compatibility pin for the validation feature "
-                "partition. Validation is executed by the runtime from resolved "
-                "dataset partitions, not by routing a separate canvas branch.";
-            node.outputs.push_back(val_data);
-
-            // Output: Val Labels
-            NodePin val_labels;
-            val_labels.id = next_pin_id_++;
-            val_labels.type = PinType::Labels;
-            val_labels.name = "Val Labels";
-            val_labels.is_input = false;
-            val_labels.is_required = false;
-            val_labels.description =
-                "Legacy compatibility pin for labels row-aligned with Val "
-                "Data. Runtime validation labels come from the resolved dataset "
-                "partition.";
-            node.outputs.push_back(val_labels);
-
-            // Output: Test Data
-            NodePin test_data;
-            test_data.id = next_pin_id_++;
-            test_data.type = PinType::Tensor;
-            test_data.name = "Test Data";
-            test_data.is_input = false;
-            test_data.is_required = false;  // Optional — held-out test is often skipped.
-            test_data.description =
-                "Legacy compatibility pin for the held-out test feature "
-                "partition. Final test evaluation is created by the runtime from "
-                "resolved dataset partitions, not by a visible model branch.";
-            node.outputs.push_back(test_data);
-
-            // Output: Test Labels
-            NodePin test_labels;
-            test_labels.id = next_pin_id_++;
-            test_labels.type = PinType::Labels;
-            test_labels.name = "Test Labels";
-            test_labels.is_input = false;
-            test_labels.is_required = false;
-            test_labels.description =
-                "Legacy compatibility pin for labels row-aligned with Test "
-                "Data. Runtime test labels come from the resolved dataset "
-                "partition.";
-            node.outputs.push_back(test_labels);
+            NodePin partitions_out;
+            partitions_out.id = next_pin_id_++;
+            partitions_out.type = PinType::Dataset;
+            partitions_out.name = "Partitions";
+            partitions_out.is_input = false;
+            partitions_out.description =
+                "Resolved Train/Validation/Test partition set plus manifest "
+                "identity. Data Loader consumes this contract to create runtime "
+                "batchers.";
+            node.outputs.push_back(partitions_out);
 
             // Parameters
             node.parameters["train_ratio"] = "0.8";

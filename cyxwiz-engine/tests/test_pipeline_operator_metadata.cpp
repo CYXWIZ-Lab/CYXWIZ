@@ -724,13 +724,12 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
           "DataSplit must be registered in the modern node catalog");
     Check(data_split->status == cyxwiz::NodeImplementationStatus::Implemented,
           "DataSplit must remain addable rather than a template entry");
-    Check(HasInputType(data_split, "Data", gui::PinType::Tensor) &&
-              HasInputType(data_split, "Labels", gui::PinType::Labels),
-          "DataSplit must expose aligned feature and label inputs");
-    Check(HasOutputType(data_split, "Train Data", gui::PinType::Tensor) &&
-              HasOutputType(data_split, "Val Data", gui::PinType::Tensor) &&
-              HasOutputType(data_split, "Test Data", gui::PinType::Tensor),
-          "DataSplit must expose train, validation, and test feature outputs");
+    Check(HasInputType(data_split, "Training Dataset", gui::PinType::Dataset) &&
+              HasInputType(data_split, "Validation Dataset", gui::PinType::Dataset) &&
+              HasInputType(data_split, "Test Dataset", gui::PinType::Dataset),
+          "DataSplit must expose Dataset-oriented role inputs");
+    Check(HasOutputType(data_split, "Partitions", gui::PinType::Dataset),
+          "DataSplit must expose one resolved partition-set output");
     Check(HasParameter(data_split, "train_ratio") &&
               HasParameter(data_split, "val_ratio") &&
               HasParameter(data_split, "test_ratio") &&

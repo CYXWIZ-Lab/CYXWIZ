@@ -1416,9 +1416,9 @@ void DataSplitDialog::RenderContent() {
     ImGui::Separator();
     ImGui::TextDisabled(
         "If no DataSplit node is in the graph, training uses defaults (80/10/10).\n"
-        "This node resolves partition policy for training. The Train/Val/Test\n"
-        "tensor output pins are legacy compatibility pins for saved graphs;\n"
-        "runtime validation/test paths are created from the resolved dataset\n"
+        "This node resolves partition policy for training. Older saved graphs\n"
+        "may show Train/Val/Test tensor output pins as legacy compatibility\n"
+        "pins; runtime validation/test paths are created from resolved dataset\n"
         "partitions, not from separate canvas branches.");
 }
 

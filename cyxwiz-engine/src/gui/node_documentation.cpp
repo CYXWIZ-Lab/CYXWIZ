@@ -1577,8 +1577,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Data Split",
         "Resolves train, validation, and test partition policy for a dataset. "
         "Runtime batchers consume the compiler-resolved partitions.",
-        "The current Train/Val/Test tensor outputs are legacy compatibility "
-        "pins for saved graphs, not separate model-branch execution paths.",
+        "New nodes expose Dataset role inputs and one partition output. Older "
+        "saved graphs may still show Train/Val/Test tensor pins as legacy "
+        "compatibility pins, not separate model-branch execution paths.",
         {
             {"train_ratio", "Fraction for training when a role is derived (e.g., 0.8)"},
             {"val_ratio", "Fraction for validation when derived from Train (e.g., 0.1)"},

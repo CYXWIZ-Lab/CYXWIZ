@@ -283,3 +283,7 @@ changes are outside Track 70 scope and must remain isolated.
 - 2026-07-22: Aligned Data Split's modern metadata catalog descriptions with
   the legacy-pin contract. Node Browser/search metadata now says Train/Val/Test
   pins are compatibility pins and runtime uses compiler-resolved partitions.
+- 2026-07-22: Started the actual Data Split pin migration. Newly created
+  Data Split nodes and modern catalog metadata now expose Dataset role inputs
+  (Training/Validation/Test) plus one `Partitions` Dataset output. Legacy
+  Train/Val/Test Tensor/Labels pins remain supported for saved graph fixtures.
