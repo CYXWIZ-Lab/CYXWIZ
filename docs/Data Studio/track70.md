@@ -304,3 +304,7 @@ changes are outside Track 70 scope and must remain isolated.
   silently rewired to the wrong modern Dataset role pin. The pattern guard now
   covers stale DataInput/DataSplit/DataLoader label-link indices in both the
   creator and no-editor fallback insertion paths.
+- 2026-07-22: Applied the same stale-pin rule to direct pattern-file graph
+  loading. `NodeEditor::LoadPatternFromFile` now skips out-of-range template
+  pin indices with a warning instead of falling back to the first pin and
+  possibly changing Dataset role semantics.

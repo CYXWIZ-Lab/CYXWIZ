@@ -493,28 +493,34 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
             int from_pin_idx = link_json.value("from_pin", 0);
             int to_pin_idx = link_json.value("to_pin", 0);
 
+            if (from_pin_idx < 0 ||
+                from_pin_idx >= static_cast<int>(from_node->outputs.size())) {
+                spdlog::warn(
+                    "Skipping pattern link {} -> {}: source pin index {} is out of range for node '{}' ({} outputs)",
+                    from_str,
+                    to_str,
+                    from_pin_idx,
+                    from_node->name,
+                    from_node->outputs.size());
+                continue;
+            }
+            if (to_pin_idx < 0 ||
+                to_pin_idx >= static_cast<int>(to_node->inputs.size())) {
+                spdlog::warn(
+                    "Skipping pattern link {} -> {}: target pin index {} is out of range for node '{}' ({} inputs)",
+                    from_str,
+                    to_str,
+                    to_pin_idx,
+                    to_node->name,
+                    to_node->inputs.size());
+                continue;
+            }
+
             // Create link using actual pin IDs
             NodeLink link;
             link.id = link_id++;
-
-            if (from_pin_idx < static_cast<int>(from_node->outputs.size())) {
-                link.from_pin = from_node->outputs[from_pin_idx].id;
-            } else if (!from_node->outputs.empty()) {
-                link.from_pin = from_node->outputs[0].id;
-            } else {
-                spdlog::warn("Node {} has no output pins", from_str);
-                continue;
-            }
-
-            if (to_pin_idx < static_cast<int>(to_node->inputs.size())) {
-                link.to_pin = to_node->inputs[to_pin_idx].id;
-            } else if (!to_node->inputs.empty()) {
-                link.to_pin = to_node->inputs[0].id;
-            } else {
-                spdlog::warn("Node {} has no input pins", to_str);
-                continue;
-            }
-
+            link.from_pin = from_node->outputs[from_pin_idx].id;
+            link.to_pin = to_node->inputs[to_pin_idx].id;
             link.from_node = from_node_id;
             link.to_node = to_node_id;
             link.type = LinkType::TensorFlow;
