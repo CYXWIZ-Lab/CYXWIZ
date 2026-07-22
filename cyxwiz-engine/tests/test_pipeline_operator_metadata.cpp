@@ -719,6 +719,60 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
               gui::properties_contract::PanelContractPath::CustomFallbackEditor,
           "parameterless implemented nodes should route to fallback properties");
 
+    const auto* data_split = metadata.GetMetadata(gui::NodeType::DataSplit);
+    Check(data_split != nullptr,
+          "DataSplit must be registered in the modern node catalog");
+    Check(data_split->status == cyxwiz::NodeImplementationStatus::Implemented,
+          "DataSplit must remain addable rather than a template entry");
+    Check(HasInputType(data_split, "Data", gui::PinType::Tensor) &&
+              HasInputType(data_split, "Labels", gui::PinType::Labels),
+          "DataSplit must expose aligned feature and label inputs");
+    Check(HasOutputType(data_split, "Train Data", gui::PinType::Tensor) &&
+              HasOutputType(data_split, "Val Data", gui::PinType::Tensor) &&
+              HasOutputType(data_split, "Test Data", gui::PinType::Tensor),
+          "DataSplit must expose train, validation, and test feature outputs");
+    Check(HasParameter(data_split, "train_ratio") &&
+              HasParameter(data_split, "val_ratio") &&
+              HasParameter(data_split, "test_ratio") &&
+              HasParameter(data_split, "stratified") &&
+              HasParameter(data_split, "seed"),
+          "DataSplit metadata must match its configuration dialog");
+    Check(SearchContainsType(metadata, "data split", gui::NodeType::DataSplit),
+          "DataSplit must be discoverable by the modern node search");
+    const std::vector<gui::NodeType> expected_supported_catalog_nodes = {
+        gui::NodeType::TransformerEncoder,
+        gui::NodeType::TransformerDecoder,
+        gui::NodeType::PositionalEncoding,
+        gui::NodeType::ELU,
+        gui::NodeType::Swish,
+        gui::NodeType::Mish,
+    };
+    for (const auto type : expected_supported_catalog_nodes) {
+        const auto* supported = metadata.GetMetadata(type);
+        Check(supported != nullptr,
+              "supported catalog node must be discoverable: " + TypeId(type));
+        Check(supported->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "supported catalog node must not be downgraded to a preview: " + TypeId(type));
+        Check(SearchContainsType(metadata, supported->name, type),
+              "supported catalog node must be searchable: " + TypeId(type));
+    }
+
+    const std::vector<gui::NodeType> expected_catalog_previews = {
+        gui::NodeType::PReLU,
+        gui::NodeType::Resize,
+        gui::NodeType::HuggingFaceDataset,
+        gui::NodeType::LinePlot,
+        gui::NodeType::PluginCustom,
+    };
+    for (const auto type : expected_catalog_previews) {
+        const auto* preview = metadata.GetMetadata(type);
+        Check(preview != nullptr,
+              "known catalog preview must be discoverable: " + TypeId(type));
+        Check(preview->status == cyxwiz::NodeImplementationStatus::Template,
+              "known catalog preview must be visibly unavailable: " + TypeId(type));
+        Check(SearchContainsType(metadata, preview->name, type),
+              "known catalog preview must be searchable: " + TypeId(type));
+    }
     const auto* adam = metadata.GetMetadata(gui::NodeType::Adam);
     Check(adam != nullptr, "Adam metadata should exist");
     Check(HasParameter(adam, "learning_rate"),

@@ -137,6 +137,9 @@ private:
     // Apply runtime capability truth to browser-visible metadata.
     void ApplyRuntimeCapabilityStatus();
 
+    // Register known enum nodes that are intentionally visible as unavailable
+    // previews until an implementation owner enables them.
+    void InitializeCatalogPreviewNodes();
     // Initialize data source nodes (I/O)
     void InitializeDataSourceNodes();
 

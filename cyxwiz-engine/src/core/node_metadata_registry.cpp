@@ -340,6 +340,7 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
     InitializeOptimizationNodes();
     InitializeAdditionalTextNodes();
     InitializeVisualizationNodes();
+    InitializeCatalogPreviewNodes();
 
     InitializeKNIMENodes();
     InitializeUtilityNodes();
@@ -1054,6 +1055,117 @@ bool NodeMetadataRegistry::MatchesQuery(const NodeMetadata& metadata, const std:
 // =============================================================================
 // Data Source Nodes (I/O)
 // =============================================================================
+void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
+    struct PreviewDefinition {
+        NodeType type;
+        NodeCategory category;
+        const char* name;
+        std::initializer_list<const char*> keywords;
+    };
+
+    const std::initializer_list<PreviewDefinition> previews = {
+        {NodeType::Conv1D, NodeCategory::Layers, "Conv1D", {"convolution", "1d", "sequence"}},
+        {NodeType::Conv3D, NodeCategory::Layers, "Conv3D", {"convolution", "3d", "volume"}},
+        {NodeType::DepthwiseConv2D, NodeCategory::Layers, "Depthwise Conv2D", {"convolution", "depthwise", "image"}},
+        {NodeType::AdaptiveAvgPool, NodeCategory::Pooling, "Adaptive Average Pool", {"pooling", "adaptive", "average"}},
+        {NodeType::TransformerEncoder, NodeCategory::Attention, "Transformer Encoder", {"transformer", "attention", "encoder"}},
+        {NodeType::TransformerDecoder, NodeCategory::Attention, "Transformer Decoder", {"transformer", "attention", "decoder"}},
+        {NodeType::PositionalEncoding, NodeCategory::Attention, "Positional Encoding", {"transformer", "position", "encoding"}},
+        {NodeType::PReLU, NodeCategory::Activation, "PReLU", {"activation", "relu"}},
+        {NodeType::ELU, NodeCategory::Activation, "ELU", {"activation"}},
+        {NodeType::SELU, NodeCategory::Activation, "SELU", {"activation"}},
+        {NodeType::Swish, NodeCategory::Activation, "Swish", {"activation"}},
+        {NodeType::Mish, NodeCategory::Activation, "Mish", {"activation"}},
+        {NodeType::Parameter, NodeCategory::Utility, "Parameter", {"parameter", "constant"}},
+        {NodeType::SineWave, NodeCategory::Signal, "Sine Wave", {"signal", "sine", "wave"}},
+        {NodeType::StepSignal, NodeCategory::Signal, "Step Signal", {"signal", "step"}},
+        {NodeType::RampSignal, NodeCategory::Signal, "Ramp Signal", {"signal", "ramp"}},
+        {NodeType::Augmentation, NodeCategory::Preprocessing, "Augmentation", {"augmentation", "transform"}},
+        {NodeType::TensorReshape, NodeCategory::ShapeOps, "Tensor Reshape", {"tensor", "reshape", "legacy"}},
+        {NodeType::Resize, NodeCategory::Preprocessing, "Resize", {"image", "resize"}},
+        {NodeType::CenterCrop, NodeCategory::Preprocessing, "Center Crop", {"image", "crop"}},
+        {NodeType::RandomCrop, NodeCategory::Preprocessing, "Random Crop", {"image", "crop", "augmentation"}},
+        {NodeType::HorizontalFlip, NodeCategory::Preprocessing, "Horizontal Flip", {"image", "flip", "augmentation"}},
+        {NodeType::VerticalFlip, NodeCategory::Preprocessing, "Vertical Flip", {"image", "flip", "augmentation"}},
+        {NodeType::ImageRotate, NodeCategory::Preprocessing, "Image Rotate", {"image", "rotate", "augmentation"}},
+        {NodeType::ColorJitter, NodeCategory::Preprocessing, "Color Jitter", {"image", "color", "augmentation"}},
+        {NodeType::ImageGaussianBlur, NodeCategory::Preprocessing, "Image Gaussian Blur", {"image", "blur"}},
+        {NodeType::Grayscale, NodeCategory::Preprocessing, "Grayscale", {"image", "grayscale"}},
+        {NodeType::Subgraph, NodeCategory::Workflow, "Subgraph", {"workflow", "subgraph"}},
+        {NodeType::DNNClassify, NodeCategory::DNN, "DNN Classify", {"dnn", "classification"}},
+        {NodeType::DNNPoseEstimate, NodeCategory::DNN, "DNN Pose Estimate", {"dnn", "pose"}},
+        {NodeType::DNNFaceDetect, NodeCategory::DNN, "DNN Face Detect", {"dnn", "face", "detection"}},
+        {NodeType::DNNPreprocess, NodeCategory::DNN, "DNN Preprocess", {"dnn", "preprocess"}},
+        {NodeType::PretrainedMobileNet, NodeCategory::DNN, "Pretrained MobileNet", {"pretrained", "mobilenet"}},
+        {NodeType::PretrainedOpenPose, NodeCategory::DNN, "Pretrained OpenPose", {"pretrained", "pose"}},
+        {NodeType::PretrainedFaceNet, NodeCategory::DNN, "Pretrained FaceNet", {"pretrained", "face"}},
+        {NodeType::NonMaxSuppression, NodeCategory::DNN, "Non-Max Suppression", {"detection", "nms"}},
+        {NodeType::ArgMax, NodeCategory::Utility, "ArgMax", {"tensor", "argmax"}},
+        {NodeType::TopK, NodeCategory::Utility, "Top K", {"tensor", "topk"}},
+        {NodeType::ThresholdFilter, NodeCategory::Preprocessing, "Threshold Filter", {"threshold", "filter"}},
+        {NodeType::AudioAugmentation, NodeCategory::Audio, "Audio Augmentation", {"audio", "augmentation"}},
+        {NodeType::RLTraining, NodeCategory::RL, "RL Training", {"reinforcement", "training"}},
+        {NodeType::PivotTable, NodeCategory::DataTransform, "Pivot Table", {"table", "pivot"}},
+        {NodeType::UnionTables, NodeCategory::DataTransform, "Union Tables", {"table", "union"}},
+        {NodeType::RenameColumns, NodeCategory::DataTransform, "Rename Columns", {"table", "columns", "rename"}},
+        {NodeType::CrossTabulation, NodeCategory::DataTransform, "Cross Tabulation", {"table", "crosstab"}},
+        {NodeType::UMAPNode, NodeCategory::Analytics, "UMAP", {"umap", "dimension", "embedding"}},
+        {NodeType::SVMRegressor, NodeCategory::Analytics, "SVM Regressor", {"svm", "regression"}},
+        {NodeType::ImagePreprocessor, NodeCategory::Preprocessing, "Image Preprocessor", {"image", "preprocess"}},
+        {NodeType::QualityAnalyzer, NodeCategory::Preprocessing, "Quality Analyzer", {"image", "quality"}},
+        {NodeType::ImageFolderDataset, NodeCategory::DataSources, "Image Folder Dataset", {"image", "folder", "dataset"}},
+        {NodeType::MNISTDataset, NodeCategory::DataSources, "MNIST Dataset", {"mnist", "dataset"}},
+        {NodeType::CIFAR10Dataset, NodeCategory::DataSources, "CIFAR-10 Dataset", {"cifar", "dataset"}},
+        {NodeType::HuggingFaceDataset, NodeCategory::DataSources, "Hugging Face Dataset", {"huggingface", "dataset", "hub"}},
+        {NodeType::KaggleDataset, NodeCategory::DataSources, "Kaggle Dataset", {"kaggle", "dataset"}},
+        {NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", {"augmentation", "preset"}},
+        {NodeType::GeometricTransform, NodeCategory::Preprocessing, "Geometric Transform", {"image", "geometry", "augmentation"}},
+        {NodeType::ColorTransform, NodeCategory::Preprocessing, "Color Transform", {"image", "color", "augmentation"}},
+        {NodeType::MorphologyTransform, NodeCategory::Preprocessing, "Morphology Transform", {"image", "morphology"}},
+        {NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", {"image", "augmentation"}},
+        {NodeType::LinePlot, NodeCategory::Visualization, "Line Plot", {"chart", "line", "plot"}},
+        {NodeType::ScatterPlot, NodeCategory::Visualization, "Scatter Plot", {"chart", "scatter", "plot"}},
+        {NodeType::Histogram, NodeCategory::Visualization, "Histogram", {"chart", "distribution"}},
+        {NodeType::PieChart, NodeCategory::Visualization, "Pie Chart", {"chart", "pie"}},
+        {NodeType::AreaPlot, NodeCategory::Visualization, "Area Plot", {"chart", "area", "plot"}},
+        {NodeType::BoxPlot, NodeCategory::Visualization, "Box Plot", {"chart", "box", "distribution"}},
+        {NodeType::ViolinPlot, NodeCategory::Visualization, "Violin Plot", {"chart", "violin", "distribution"}},
+        {NodeType::ErrorBarPlot, NodeCategory::Visualization, "Error Bar Plot", {"chart", "error", "plot"}},
+        {NodeType::StepPlot, NodeCategory::Visualization, "Step Plot", {"chart", "step", "plot"}},
+        {NodeType::HexbinPlot, NodeCategory::Visualization, "Hexbin Plot", {"chart", "hexbin", "plot"}},
+        {NodeType::Heatmap, NodeCategory::Visualization, "Heatmap", {"chart", "heatmap"}},
+        {NodeType::ContourPlot, NodeCategory::Visualization, "Contour Plot", {"chart", "contour", "plot"}},
+        {NodeType::Imshow, NodeCategory::Visualization, "Image Display", {"image", "imshow", "visualization"}},
+        {NodeType::Plot3D, NodeCategory::Visualization, "3D Plot", {"chart", "3d", "plot"}},
+        {NodeType::Scatter3D, NodeCategory::Visualization, "3D Scatter Plot", {"chart", "scatter", "3d"}},
+        {NodeType::SurfacePlot, NodeCategory::Visualization, "Surface Plot", {"chart", "surface", "3d"}},
+        {NodeType::WireframePlot, NodeCategory::Visualization, "Wireframe Plot", {"chart", "wireframe", "3d"}},
+        {NodeType::PolarPlot, NodeCategory::Visualization, "Polar Plot", {"chart", "polar", "plot"}},
+        {NodeType::QuiverPlot, NodeCategory::Visualization, "Quiver Plot", {"chart", "vector", "plot"}},
+        {NodeType::StreamPlot, NodeCategory::Visualization, "Stream Plot", {"chart", "stream", "plot"}},
+        {NodeType::SpectrogramPlot, NodeCategory::Visualization, "Spectrogram", {"audio", "spectrogram", "plot"}},
+        {NodeType::NetworkGraph, NodeCategory::Visualization, "Network Graph", {"graph", "network", "visualization"}},
+        {NodeType::PluginCustom, NodeCategory::Plugin, "Custom Plugin Node", {"plugin", "custom", "extension"}},
+    };
+
+    for (const auto& preview : previews) {
+        if (metadata_.find(preview.type) != metadata_.end()) {
+            continue;
+        }
+
+        NodeMetadata metadata;
+        metadata.type = preview.type;
+        metadata.category = preview.category;
+        metadata.name = preview.name;
+        metadata.icon = GetCategoryIcon(preview.category);
+        metadata.keywords.assign(preview.keywords.begin(), preview.keywords.end());
+        metadata.brief_description =
+            std::string(preview.name) + " is planned and not yet available in the runtime.";
+        metadata.status = NodeImplementationStatus::Template;
+        metadata.badge = "Coming Soon";
+        RegisterNode(std::move(metadata));
+    }
+}
 void NodeMetadataRegistry::InitializeDataSourceNodes() {
     // ===== Smart I/O Nodes (Universal - replaces individual format nodes) =====
     RegisterNode({NodeType::DataInput, NodeCategory::DataSources, "Data Input", ICON_FA_FILE_IMPORT,
@@ -1099,6 +1211,26 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
+    // DataSplit is a graph-level training configuration node. It has a
+    // dedicated dialog and compiler support, so it must remain in the modern
+    // metadata catalog used by both the Node Browser and the add-node search.
+    RegisterNode({NodeType::DataSplit, NodeCategory::DataPipeline, "Data Split", ICON_FA_CODE_BRANCH,
+        {"split", "train", "validation", "test", "partition", "stratified", "dataset"}, 0, false,
+        "Partition one labelled dataset into train, validation, and held-out test sets", "", "",
+        {{"Data", PinType::Tensor, true, "Feature rows to partition"},
+         {"Labels", PinType::Labels, true, "Labels kept row-aligned with the feature rows"}},
+        {{"Train Data", PinType::Tensor, true, "Training feature partition"},
+         {"Train Labels", PinType::Labels, false, "Training label partition"},
+         {"Val Data", PinType::Tensor, false, "Validation feature partition"},
+         {"Val Labels", PinType::Labels, false, "Validation label partition"},
+         {"Test Data", PinType::Tensor, false, "Held-out test feature partition"},
+         {"Test Labels", PinType::Labels, false, "Held-out test label partition"}},
+        {{"train_ratio", "float", "0.8", "Training fraction", {}, "0-1", "", "Split", false, false},
+         {"val_ratio", "float", "0.1", "Validation fraction", {}, "0-1", "", "Split", false, false},
+         {"test_ratio", "float", "0.1", "Held-out test fraction", {}, "0-1", "", "Split", false, false},
+         {"stratified", "bool", "true", "Preserve class proportions when labels allow it", {}, "", "", "Split", false, false},
+         {"seed", "int", "42", "Deterministic split seed", {}, "0-2147483647", "", "Split", false, false}},
+        NodeImplementationStatus::Implemented, 0});
     RegisterNode({NodeType::DeployToNodeEditorNode, NodeCategory::DataSources, "Deploy to Node Editor", ICON_FA_FILE_EXPORT,
         {"deploy", "node", "editor", "handoff", "dataset"}, 0, false,
         "Mark a dataset ready for Node Editor deployment", "", "",
@@ -1872,6 +2004,40 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"embed_dim", "int", "512", "Dim", {}, ""}, {"num_heads", "int", "8", "Heads", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::TransformerEncoder, NodeCategory::Attention, "Transformer Encoder", ICON_FA_BULLSEYE,
+        {"transformer", "attention", "encoder"}, 0, false,
+        "Decoder/encoder-style self-attention block for sequence tensors", "", "",
+        {{"Input", PinType::Tensor, true, "Sequence tensor [batch, tokens, d_model]"}},
+        {{"Output", PinType::Tensor, true, "Encoded sequence"}},
+        {{"d_model", "int", "512", "Model width", {}, ""},
+         {"num_heads", "int", "8", "Attention heads", {}, ""},
+         {"dim_feedforward", "int", "2048", "Feed-forward width", {}, ""},
+         {"dropout", "float", "0.1", "Dropout", {}, ""},
+         {"norm_first", "bool", "false", "Pre-norm ordering", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::TransformerDecoder, NodeCategory::Attention, "Transformer Decoder", ICON_FA_BULLSEYE,
+        {"transformer", "attention", "decoder", "causal"}, 0, false,
+        "Decoder-only causal self-attention block. Connected Memory input is intentionally blocked until seq2seq is implemented.", "", "",
+        {{"Input", PinType::Tensor, true, "Target sequence tensor [batch, tokens, d_model]"},
+         {"Memory", PinType::Tensor, false, "Optional; connected seq2seq memory is blocked by the compiler"}},
+        {{"Output", PinType::Tensor, true, "Decoded sequence"}},
+        {{"d_model", "int", "512", "Model width", {}, ""},
+         {"num_heads", "int", "8", "Attention heads", {}, ""},
+         {"dim_feedforward", "int", "2048", "Feed-forward width", {}, ""},
+         {"dropout", "float", "0.1", "Dropout", {}, ""},
+         {"norm_first", "bool", "false", "Pre-norm ordering", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::PositionalEncoding, NodeCategory::Attention, "Positional Encoding", ICON_FA_BULLSEYE,
+        {"transformer", "position", "encoding", "sequence"}, 0, false,
+        "Sinusoidal positional encoding for token/sequence tensors", "", "",
+        {{"Input", PinType::Tensor, true, "Sequence tensor [batch, tokens, d_model]"}},
+        {{"Output", PinType::Tensor, true, "Position-aware sequence"}},
+        {{"d_model", "int", "512", "Model width", {}, ""},
+         {"max_sequence_length", "int", "512", "Maximum sequence length", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::SelfAttention, NodeCategory::Attention, "Self Attention", ICON_FA_BULLSEYE,
         {"attention", "self_attention", "transformer"}, 0, false, "Self attention", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
@@ -2220,6 +2386,25 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
         {{"Output", PinType::Tensor, true, "Activated"}},
         {{"negative_slope", "float", "0.01", "Slope", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ELU, NodeCategory::Activation, "ELU", ICON_FA_BOLT,
+        {"elu", "activation"}, 0, false, "Exponential linear unit", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Activated"}},
+        {{"alpha", "float", "1.0", "Negative saturation scale", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Swish, NodeCategory::Activation, "Swish", ICON_FA_BOLT,
+        {"swish", "activation", "silu"}, 0, false, "Swish activation", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Activated"}},
+        {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Mish, NodeCategory::Activation, "Mish", ICON_FA_BOLT,
+        {"mish", "activation"}, 0, false, "Mish activation", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Activated"}},
+        {}, NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

@@ -276,3 +276,7 @@ changes are outside Track 70 scope and must remain isolated.
 - 2026-07-22: Repaired Asset Browser `Show in Explorer` to launch the OS file
   browser without building a shell command string. Windows now asks Explorer to
   select the exact asset path and logs a typed failure when the OS launch fails.
+- 2026-07-22: Fixed the modern node catalog blocker before Data Split pin
+  migration. Catalog preview placeholders no longer overwrite real implemented
+  metadata, and supported Transformer/activation nodes now remain searchable as
+  implemented rather than being downgraded to template/deferred previews.
