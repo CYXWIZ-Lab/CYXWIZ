@@ -291,3 +291,7 @@ changes are outside Track 70 scope and must remain isolated.
   boundary. New Data Loader nodes now consume a single `Partitions` Dataset
   input and emit model-facing batched `Data`/`Labels`; legacy saved graphs
   with raw Data/Labels inputs remain loadable.
+- 2026-07-22: Aligned new Data Input nodes with the Dataset artifact boundary.
+  New Data Input nodes now emit one `Dataset` output matching the modern
+  catalog, and the startup showcase now routes `Data Input -> Data Split ->
+  Data Loader -> Normalize -> Model` with labels supplied by `DataLoader.Labels`.

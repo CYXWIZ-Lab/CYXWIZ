@@ -132,20 +132,20 @@ NodeEditor::NodeEditor()
     shape_inference_ = std::make_unique<ShapeInferenceEngine>();
 
     // Create ML Training Pipeline showcase
-    // Demonstrates: Complete machine learning workflow with data preparation, model, loss, and optimizer
+    // Demonstrates: Complete machine learning workflow with data preparation, model, loss, and optimizer.
     //
-    // Flow: DataInput → DataSplit → Normalize → Dense(128) → ReLU → Dense(10) → MSELoss → Adam → Output
+    // Flow: DataInput -> DataSplit -> DataLoader -> Normalize -> Dense(128) -> ReLU -> Dense(10) -> MSELoss -> Adam -> Output
 
     // ========== DATA PREPARATION ==========
 
-    // 1. Data Input - Load dataset
+    // 1. Data Input - Load dataset asset
     MLNode data_input = CreateNode(NodeType::DataInput, "Data Input");
     data_input.parameters["format"] = "csv";
     data_input.parameters["file_path"] = "dataset.csv";
     nodes_.push_back(data_input);
     ImNodes::SetNodeGridSpacePos(data_input.id, ImVec2(50.0f, 200.0f));
 
-    // 2. Data Split - Split into train/val/test
+    // 2. Data Split - Resolve train/validation/test partitions
     MLNode data_split = CreateNode(NodeType::DataSplit, "Train/Val/Test Split");
     data_split.parameters["train_ratio"] = "0.8";
     data_split.parameters["val_ratio"] = "0.1";
@@ -154,62 +154,72 @@ NodeEditor::NodeEditor()
     nodes_.push_back(data_split);
     ImNodes::SetNodeGridSpacePos(data_split.id, ImVec2(250.0f, 200.0f));
 
-    // 3. Normalize - Normalize input features
+    // 3. Data Loader - Create runtime batchers from resolved partitions
+    MLNode data_loader = CreateNode(NodeType::DataLoader, "Data Loader");
+    data_loader.parameters["batch_size"] = "32";
+    data_loader.parameters["epochs"] = "10";
+    data_loader.parameters["shuffle"] = "true";
+    nodes_.push_back(data_loader);
+    ImNodes::SetNodeGridSpacePos(data_loader.id, ImVec2(450.0f, 200.0f));
+
+    // 4. Normalize - Fixed per-batch feature scaling
     MLNode normalize = CreateNode(NodeType::Normalize, "Normalize");
     normalize.parameters["method"] = "z-score";
     normalize.parameters["mean"] = "0.0";
     normalize.parameters["std"] = "1.0";
     nodes_.push_back(normalize);
-    ImNodes::SetNodeGridSpacePos(normalize.id, ImVec2(450.0f, 200.0f));
+    ImNodes::SetNodeGridSpacePos(normalize.id, ImVec2(650.0f, 200.0f));
 
     // ========== NEURAL NETWORK ==========
 
-    // 4. Dense Layer - First hidden layer
+    // 5. Dense Layer - First hidden layer
     MLNode dense1 = CreateNode(NodeType::Dense, "Dense (128)");
     dense1.parameters["units"] = "128";
     dense1.parameters["use_bias"] = "true";
     nodes_.push_back(dense1);
-    ImNodes::SetNodeGridSpacePos(dense1.id, ImVec2(650.0f, 200.0f));
+    ImNodes::SetNodeGridSpacePos(dense1.id, ImVec2(850.0f, 200.0f));
 
-    // 5. ReLU Activation
+    // 6. ReLU Activation
     MLNode relu = CreateNode(NodeType::ReLU, "ReLU");
     nodes_.push_back(relu);
-    ImNodes::SetNodeGridSpacePos(relu.id, ImVec2(850.0f, 200.0f));
+    ImNodes::SetNodeGridSpacePos(relu.id, ImVec2(1050.0f, 200.0f));
 
-    // 6. Dense Layer - Output layer
+    // 7. Dense Layer - Output layer
     MLNode dense2 = CreateNode(NodeType::Dense, "Dense (10)");
     dense2.parameters["units"] = "10";
     dense2.parameters["use_bias"] = "true";
     nodes_.push_back(dense2);
-    ImNodes::SetNodeGridSpacePos(dense2.id, ImVec2(1050.0f, 200.0f));
+    ImNodes::SetNodeGridSpacePos(dense2.id, ImVec2(1250.0f, 200.0f));
 
     // ========== TRAINING CONFIGURATION ==========
 
-    // 7. Loss Function
+    // 8. Loss Function
     MLNode loss = CreateNode(NodeType::MSELoss, "MSE Loss");
     nodes_.push_back(loss);
-    ImNodes::SetNodeGridSpacePos(loss.id, ImVec2(1250.0f, 200.0f));
+    ImNodes::SetNodeGridSpacePos(loss.id, ImVec2(1450.0f, 200.0f));
 
-    // 8. Optimizer
+    // 9. Optimizer
     MLNode optimizer = CreateNode(NodeType::Adam, "Adam");
     optimizer.parameters["learning_rate"] = "0.001";
     optimizer.parameters["beta1"] = "0.9";
     optimizer.parameters["beta2"] = "0.999";
     nodes_.push_back(optimizer);
-    ImNodes::SetNodeGridSpacePos(optimizer.id, ImVec2(1450.0f, 200.0f));
+    ImNodes::SetNodeGridSpacePos(optimizer.id, ImVec2(1650.0f, 200.0f));
 
-    // 9. Output
+    // 10. Output
     MLNode output = CreateNode(NodeType::Output, "Output");
     nodes_.push_back(output);
-    ImNodes::SetNodeGridSpacePos(output.id, ImVec2(1650.0f, 200.0f));
+    ImNodes::SetNodeGridSpacePos(output.id, ImVec2(1850.0f, 200.0f));
 
     // ========== CREATE CONNECTIONS ==========
 
-    // Data flow: DataInput -> DataSplit -> Normalize
+    // Data flow: DataInput -> DataSplit -> DataLoader -> Normalize
     CreateLink(data_input.outputs[0].id, data_split.inputs[0].id,
                data_input.id, data_split.id);
-    CreateLink(data_split.outputs[0].id, normalize.inputs[0].id,
-               data_split.id, normalize.id);
+    CreateLink(data_split.outputs[0].id, data_loader.inputs[0].id,
+               data_split.id, data_loader.id);
+    CreateLink(data_loader.outputs[0].id, normalize.inputs[0].id,
+               data_loader.id, normalize.id);
 
     // Model flow: Normalize -> Dense(128) -> ReLU -> Dense(10)
     CreateLink(normalize.outputs[0].id, dense1.inputs[0].id,
@@ -219,9 +229,11 @@ NodeEditor::NodeEditor()
     CreateLink(relu.outputs[0].id, dense2.inputs[0].id,
                relu.id, dense2.id);
 
-    // Training flow: Dense(10) -> MSELoss -> Adam -> Output
+    // Training flow: Dense(10) -> MSELoss -> Adam -> Output, with labels from DataLoader
     CreateLink(dense2.outputs[0].id, loss.inputs[0].id,
                dense2.id, loss.id);
+    CreateLink(data_loader.outputs[1].id, loss.inputs[1].id,
+               data_loader.id, loss.id);
     CreateLink(loss.outputs[0].id, optimizer.inputs[0].id,
                loss.id, optimizer.id);
     CreateLink(optimizer.outputs[0].id, output.inputs[0].id,
@@ -229,7 +241,7 @@ NodeEditor::NodeEditor()
 
     spdlog::info("Created ML Training Pipeline with {} nodes and {} connections",
                  nodes_.size(), links_.size());
-    spdlog::info("Pipeline: DataInput -> DataSplit -> Normalize -> Dense(128) -> ReLU -> Dense(10) -> MSELoss -> Adam -> Output");
+    spdlog::info("Pipeline: DataInput -> DataSplit -> DataLoader -> Normalize -> Dense(128) -> ReLU -> Dense(10) -> MSELoss -> Adam -> Output");
 }
 
 NodeEditor::~NodeEditor() {

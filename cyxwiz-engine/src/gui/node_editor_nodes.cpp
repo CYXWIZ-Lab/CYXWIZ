@@ -996,10 +996,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             input_pin.name = "Input";
             input_pin.is_input = true;
             input_pin.description =
-                "Feature stream to normalize. The mean/std parameters "
-                "are applied as (x - mean) / std elementwise — pre-"
-                "computed stats, NOT learned. Place between DataInput "
-                "and DataSplit.";
+                "Batched feature tensor to normalize with fixed configured "
+                "statistics. In the current runtime boundary, place after "
+                "DataLoader. Learned train-fit normalization remains a "
+                "separate role-aware pipeline step.";
             node.inputs.push_back(input_pin);
 
             NodePin output_pin;
@@ -3148,37 +3148,23 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         // ========== Smart I/O Nodes (Universal Data Input/Output) ==========
 
         case NodeType::DataInput: {
-            // Universal Data Input node - smart dialog auto-detects format
-            // Supports: CSV, TSV, Parquet, Feather, Arrow, and IPC
-            // TWO outputs: Data (X) and Labels (y) — same naming the rest
-            // of the chain (DataSplit / DataLoader) uses, so the canvas
-            // reads as a single Data + Label flow end-to-end.
+            // Universal Data Input node - smart dialog auto-detects format.
+            // New nodes expose one Dataset artifact. Feature/label selection
+            // is dataset metadata configured by the dialog. Legacy saved
+            // graphs may still carry separate Data/Labels outputs; graph
+            // loading preserves those pins.
 
-            // Output 1: Data (the X tensor that feeds the model)
-            NodePin data_pin;
-            data_pin.id = next_pin_id_++;
-            data_pin.type = PinType::Tensor;
-            data_pin.name = "Data";
-            data_pin.is_input = false;
-            data_pin.description =
-                "Feature stream (X). Carries every column from the loaded "
-                "dataset that is NOT marked as the label column. Connect to "
-                "the next node in the data pipeline (Normalize, DataSplit, "
-                "DataLoader, ...) — eventually feeds the model's first layer.";
-            node.outputs.push_back(data_pin);
-
-            // Output 2: Labels (targets for loss function)
-            NodePin labels_pin;
-            labels_pin.id = next_pin_id_++;
-            labels_pin.type = PinType::Labels;
-            labels_pin.name = "Labels";
-            labels_pin.is_input = false;
-            labels_pin.description =
-                "Label stream (y). Carries the column selected as 'Label "
-                "Column' in the DataInput dialog. Travels alongside Data "
-                "through DataSplit and DataLoader and terminates at the "
-                "loss function's Targets pin.";
-            node.outputs.push_back(labels_pin);
+            NodePin dataset_pin;
+            dataset_pin.id = next_pin_id_++;
+            dataset_pin.type = PinType::Dataset;
+            dataset_pin.name = "Dataset";
+            dataset_pin.is_input = false;
+            dataset_pin.description =
+                "Loaded Dataset asset with source identity, schema, selected "
+                "label column, feature columns, row count, and backing-store "
+                "metadata. Connect to Data Split's Training/Validation/Test "
+                "Dataset role inputs.";
+            node.outputs.push_back(dataset_pin);
 
             // Core parameters (set by DataInputDialog)
             node.parameters["file_path"] = "";

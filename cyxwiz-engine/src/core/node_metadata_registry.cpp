@@ -1171,7 +1171,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
     RegisterNode({NodeType::DataInput, NodeCategory::DataSources, "Data Input", ICON_FA_FILE_IMPORT,
         {"csv", "tsv", "parquet", "feather", "arrow", "ipc", "input", "load", "read", "import", "file"}, 0, false,
         "Universal data loader - supports CSV, TSV, Parquet, Feather, Arrow, and IPC", "", "",
-        {}, {{"Data", PinType::Dataset, true, "Output dataset"}},
+        {}, {{"Dataset", PinType::Dataset, true, "Loaded dataset asset"}},
         {{"file_path", "file", "", "Data file", {}, "*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc"},
          {"type", "enum", "auto", "Input format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
          {"configured", "bool", "false", "Dialog configured", {}, ""}},

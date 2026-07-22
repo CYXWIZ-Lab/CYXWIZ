@@ -870,6 +870,11 @@ int main() {
               "DataInput metadata should not advertise Excel runtime input");
         Check(!ContainsString(data_input->keywords, "hdf5"),
               "DataInput metadata should not advertise HDF5 runtime input");
+        Check(HasOutputType(data_input, "Dataset", gui::PinType::Dataset),
+              "DataInput metadata must expose one Dataset artifact output");
+        Check(!HasOutputType(data_input, "Data", gui::PinType::Tensor) &&
+                  !HasOutputType(data_input, "Labels", gui::PinType::Labels),
+              "DataInput metadata must not expose legacy Tensor/Labels outputs");
 
         const auto* file_path = FindParameter(data_input, "file_path");
         Check(file_path != nullptr,
