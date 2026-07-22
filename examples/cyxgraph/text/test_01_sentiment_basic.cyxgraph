@@ -1,7 +1,7 @@
 {
   "id": "text_test_01_sentiment_basic",
   "name": "Text Test 1 - Sentiment Classification (Fallback Mode)",
-  "description": "Phase 3 text pipeline smoke test for the legacy fallback path. No TextTokenizer/TextVocabulary/TextPadding nodes are present, so training uses the dialog-baked TextDatasetEntry defaults while the graph still carries explicit Data and Labels pin routes. Target dataset: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv with statement as text and status as label.",
+  "description": "Phase 3 text pipeline smoke test for the legacy fallback path. No TextTokenizer/TextVocabulary/TextPadding nodes are present, so training uses the dialog-baked TextDatasetEntry defaults while the graph uses the Dataset -> DataSplit -> DataLoader boundary and routes loss targets from DataLoader.Labels. Target dataset: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv with statement as text and status as label.",
   "category": "Training Pipeline",
   "tags": [
     "text",
@@ -217,22 +217,10 @@
         "to_pin": 0
       },
       {
-        "from": "data_input",
-        "to": "data_split",
-        "from_pin": 1,
-        "to_pin": 1
-      },
-      {
         "from": "data_split",
         "to": "data_loader",
         "from_pin": 0,
         "to_pin": 0
-      },
-      {
-        "from": "data_split",
-        "to": "data_loader",
-        "from_pin": 1,
-        "to_pin": 1
       },
       {
         "from": "data_loader",

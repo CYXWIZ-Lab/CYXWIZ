@@ -254,6 +254,66 @@ void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
           "NER graph should include every expected first-class sequence node");
 }
 
+void CheckSavedExampleDataBoundaryPins() {
+    const auto examples_root = FindRepoRoot() / "examples" / "cyxgraph";
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(examples_root)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".cyxgraph") {
+            continue;
+        }
+
+        const auto graph = nlohmann::json::parse(ReadFile(entry.path()));
+        if (!graph.contains("nodes") || !graph["nodes"].is_array() ||
+            !graph.contains("links") || !graph["links"].is_array()) {
+            continue;
+        }
+
+        std::unordered_map<int, gui::NodeType> node_types;
+        for (const auto& node_json : graph["nodes"]) {
+            if (node_json.contains("id") && node_json["id"].is_number_integer() &&
+                node_json.contains("type") && node_json["type"].is_number_integer()) {
+                node_types[node_json["id"].get<int>()] =
+                    static_cast<gui::NodeType>(node_json["type"].get<int>());
+            }
+        }
+
+        for (const auto& link_json : graph["links"]) {
+            if (!link_json.contains("from_node") ||
+                !link_json["from_node"].is_number_integer() ||
+                !link_json.contains("to_node") ||
+                !link_json["to_node"].is_number_integer()) {
+                continue;
+            }
+
+            const auto from_it = node_types.find(link_json["from_node"].get<int>());
+            const auto to_it = node_types.find(link_json["to_node"].get<int>());
+            if (from_it == node_types.end() || to_it == node_types.end()) {
+                continue;
+            }
+
+            const std::string context = entry.path().string() + " link " +
+                std::to_string(link_json.value("id", -1));
+
+            if (link_json.contains("from_pin_index") &&
+                link_json["from_pin_index"].is_number_integer()) {
+                const int index = link_json["from_pin_index"].get<int>();
+                if (from_it->second == gui::NodeType::DataInput ||
+                    from_it->second == gui::NodeType::DataSplit) {
+                    Check(index == 0,
+                          context + " uses a stale data-boundary output pin index");
+                }
+            }
+
+            if (link_json.contains("to_pin_index") &&
+                link_json["to_pin_index"].is_number_integer() &&
+                to_it->second == gui::NodeType::DataLoader) {
+                Check(link_json["to_pin_index"].get<int>() == 0,
+                      context + " uses a stale DataLoader input pin index");
+            }
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -457,6 +517,7 @@ int main() {
           "Dense-encoded NER parameter marker should report the matching parameter");
 
     CheckSavedNERGraphUsesFirstClassSequenceNodes();
+    CheckSavedExampleDataBoundaryPins();
 
     std::cout << "Pattern template guard passed\n";
     return 0;

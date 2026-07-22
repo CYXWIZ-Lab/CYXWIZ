@@ -317,3 +317,9 @@ changes are outside Track 70 scope and must remain isolated.
   the loss-connectivity diagnostic now point new graphs at `DataLoader.Data` /
   `DataLoader.Labels`, while naming DataInput/DataSplit label pins as legacy
   compatibility sources only where relevant.
+- 2026-07-22: Migrated the remaining saved graphs and text smoke templates
+  off the legacy four-wire DataInput/DataSplit/DataLoader boundary. Sentiment
+  and causal-LM examples now keep only Dataset -> split and Partitions ->
+  loader links, while model targets continue to come from `DataLoader.Labels`.
+  Focused guards now use the modern boundary and reject stale saved-example pin
+  indices.

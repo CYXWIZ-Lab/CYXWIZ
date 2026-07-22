@@ -316,22 +316,10 @@
         "to_pin": 0
       },
       {
-        "from": "data_input",
-        "to": "data_split",
-        "from_pin": 1,
-        "to_pin": 1
-      },
-      {
         "from": "data_split",
         "to": "data_loader",
         "from_pin": 0,
         "to_pin": 0
-      },
-      {
-        "from": "data_split",
-        "to": "data_loader",
-        "from_pin": 1,
-        "to_pin": 1
       },
       {
         "from": "data_loader",

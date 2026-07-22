@@ -1,7 +1,7 @@
 {
   "id": "mental_health_sentiment_classifier",
   "name": "Mental Health Sentiment Classifier",
-  "description": "Multi-class mental health text classification from first-person statements. Classifies short self-reported text into 7 mental health categories: Normal, Depression, Suicidal, Anxiety, Bipolar, Stress, Personality disorder. Uses the legacy fallback text path from DataInput defaults, with explicit Data and Labels pin routes for compile-time honesty. Target file: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv, columns statement and status.",
+  "description": "Multi-class mental health text classification from first-person statements. Classifies short self-reported text into 7 mental health categories: Normal, Depression, Suicidal, Anxiety, Bipolar, Stress, Personality disorder. Uses the legacy fallback text path from DataInput defaults with the Dataset -> DataSplit -> DataLoader boundary and DataLoader.Labels loss targets. Target file: D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv, columns statement and status.",
   "category": "Training Pipeline",
   "tags": [
     "text",
@@ -268,22 +268,10 @@
         "to_pin": 0
       },
       {
-        "from": "data_input",
-        "to": "data_split",
-        "from_pin": 1,
-        "to_pin": 1
-      },
-      {
         "from": "data_split",
         "to": "data_loader",
         "from_pin": 0,
         "to_pin": 0
-      },
-      {
-        "from": "data_split",
-        "to": "data_loader",
-        "from_pin": 1,
-        "to_pin": 1
       },
       {
         "from": "data_loader",

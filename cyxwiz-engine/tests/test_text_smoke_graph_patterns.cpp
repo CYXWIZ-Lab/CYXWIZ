@@ -119,34 +119,22 @@ gui::MLNode MakeNode(int id, int& next_pin_id, gui::NodeType type,
 
     switch (type) {
         case gui::NodeType::DataInput:
-            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Tensor,
-                                       "Data", false));
-            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Labels,
-                                       "Labels", false));
+            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Dataset,
+                                       "Dataset", false));
             break;
         case gui::NodeType::DataSplit:
-            node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Tensor,
-                                      "Data", true));
-            node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Labels,
-                                      "Labels", true));
-            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Tensor,
-                                       "Train Data", false));
-            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Labels,
-                                       "Train Labels", false, false));
-            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Tensor,
-                                       "Val Data", false, false));
-            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Labels,
-                                       "Val Labels", false, false));
-            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Tensor,
-                                       "Test Data", false, false));
-            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Labels,
-                                       "Test Labels", false, false));
+            node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Dataset,
+                                      "Training Dataset", true));
+            node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Dataset,
+                                      "Validation Dataset", true, false));
+            node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Dataset,
+                                      "Test Dataset", true, false));
+            node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Dataset,
+                                       "Partitions", false));
             break;
         case gui::NodeType::DataLoader:
-            node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Tensor,
-                                      "Data", true));
-            node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Labels,
-                                      "Labels", true));
+            node.inputs.push_back(Pin(next_pin_id++, gui::PinType::Dataset,
+                                      "Partitions", true));
             node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Tensor,
                                        "Data", false));
             node.outputs.push_back(Pin(next_pin_id++, gui::PinType::Labels,

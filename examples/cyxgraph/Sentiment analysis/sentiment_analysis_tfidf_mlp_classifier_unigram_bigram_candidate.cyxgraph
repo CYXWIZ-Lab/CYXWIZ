@@ -29,16 +29,6 @@
                       "to_pin_index":  0
                   },
                   {
-                      "from_node":  1,
-                      "from_pin":  2,
-                      "from_pin_index":  1,
-                      "id":  3,
-                      "link_type":  0,
-                      "to_node":  3,
-                      "to_pin":  6,
-                      "to_pin_index":  1
-                  },
-                  {
                       "from_node":  3,
                       "from_pin":  7,
                       "from_pin_index":  0,
@@ -47,16 +37,6 @@
                       "to_node":  4,
                       "to_pin":  13,
                       "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  3,
-                      "from_pin":  8,
-                      "from_pin_index":  1,
-                      "id":  5,
-                      "link_type":  0,
-                      "to_node":  4,
-                      "to_pin":  14,
-                      "to_pin_index":  1
                   },
                   {
                       "from_node":  4,
