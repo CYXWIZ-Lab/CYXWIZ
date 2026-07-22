@@ -280,3 +280,6 @@ changes are outside Track 70 scope and must remain isolated.
   migration. Catalog preview placeholders no longer overwrite real implemented
   metadata, and supported Transformer/activation nodes now remain searchable as
   implemented rather than being downgraded to template/deferred previews.
+- 2026-07-22: Aligned Data Split's modern metadata catalog descriptions with
+  the legacy-pin contract. Node Browser/search metadata now says Train/Val/Test
+  pins are compatibility pins and runtime uses compiler-resolved partitions.
