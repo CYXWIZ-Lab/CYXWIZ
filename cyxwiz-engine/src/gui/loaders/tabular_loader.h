@@ -16,6 +16,36 @@ inline std::string NormalizeTabularFileType(std::string file_type) {
     return file_type.empty() ? "auto" : file_type;
 }
 
+inline std::string ResolveTabularFileType(
+    const std::string& file_type,
+    const std::string& source_path) {
+    const std::string normalized = NormalizeTabularFileType(file_type);
+    if (normalized != "auto") {
+        return normalized;
+    }
+
+    std::string path = source_path;
+    std::transform(path.begin(), path.end(), path.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    const std::size_t separator = path.find_last_of("/\\");
+    const std::size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos ||
+        (separator != std::string::npos && dot < separator)) {
+        return normalized;
+    }
+
+    const std::string extension = path.substr(dot + 1);
+    if (extension == "csv") return "csv";
+    if (extension == "tsv" || extension == "tab") return "tsv";
+    if (extension == "parquet" || extension == "pq") return "parquet";
+    if (extension == "feather" || extension == "fea") return "feather";
+    if (extension == "arrow") return "arrow";
+    if (extension == "ipc") return "ipc";
+    return normalized;
+}
+
 inline bool IsSupportedTabularFileType(const std::string& file_type) {
     const std::string normalized = NormalizeTabularFileType(file_type);
     return normalized == "auto" || normalized == "csv" ||

@@ -1458,7 +1458,14 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {"missing", "null", "fill"}, 0, false, "Handle missing values", "", "",
         {{"Table", PinType::Dataset, true, "Input"}},
         {{"Filled", PinType::Dataset, true, "Filled"}},
-        {{"strategy", "enum", "mean", "Strategy", {"mean", "median", "mode", "constant"}, ""}},
+        {{"strategy", "enum", "mean", "Statistic or value used to replace nulls", {"mean", "median", "mode", "constant"}, "", "Strategy", "Transformation"},
+         {"value", "string", "0", "Value used when Strategy is constant", {}, "", "Constant value", "Transformation"},
+         {"columns", "string", "", "Comma-separated feature columns; empty selects all except Label column", {}, "", "Feature columns", "Columns"},
+         {"label_col", "string", "", "Label/target column excluded from fitting", {}, "", "Label column", "Columns"},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse a saved training state", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist fitted values for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "string", "", "Path to a versioned .cyxstate.json artifact", {}, "", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RemoveDuplicateRows, NodeCategory::DataTransform, "Duplicate Remover", ICON_FA_COPY,
@@ -1796,7 +1803,11 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"columns", "string", "", "Columns to scale (empty = numeric auto-detect)", {}, ""},
          {"label_col", "string", "", "Label column to exclude", {}, ""},
          {"with_mean", "bool", "true", "Center data", {}, ""},
-         {"with_std", "bool", "true", "Scale to unit variance", {}, ""}},
+         {"with_std", "bool", "true", "Scale to unit variance", {}, ""},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse saved training statistics", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist mean and scale for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "string", "", "Path to a versioned .cyxstate.json artifact", {}, "", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::MinMaxScaler, NodeCategory::Preprocessing, "MinMax Scaler", ICON_FA_ARROWS_LEFT_RIGHT,

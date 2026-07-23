@@ -1,5 +1,7 @@
 #include "pipeline_canvas.h"
 #include "../../core/pipeline_executor.h"  // Unified Canvas Phase 2: Moved to core/
+#include "../../core/pipeline_execution_task.h"
+#include "../../core/async_task_manager.h"
 #include "gui/icons.h"
 #include "core/file_dialogs.h"
 #include <spdlog/spdlog.h>
@@ -77,8 +79,6 @@ PipelineCanvas::PipelineCanvas()
     , show_node_palette_(false)
     , selected_node_id_(-1)
     , deployment_requested_(false)
-    , execution_progress_(0.0f)
-    , execution_status_("Ready")
 {
     // Create separate ImNodes context for Data Studio
     // (separate from ML Node Editor context)
@@ -98,13 +98,7 @@ PipelineCanvas::PipelineCanvas()
     style.PinTriangleSideLength = 9.5f;
 
     // Create pipeline executor
-    executor_ = std::make_unique<PipelineExecutor>();
-
-    // Phase 8: Set up progress callback
-    executor_->SetProgressCallback([this](float progress, const std::string& status) {
-        execution_progress_ = progress;
-        execution_status_ = status;
-    });
+    executor_ = std::make_shared<PipelineExecutor>();
 
     spdlog::info("[Data Studio] PipelineCanvas initialized");
 }
@@ -442,6 +436,11 @@ void PipelineCanvas::Clear() {
 }
 
 bool PipelineCanvas::ExecutePipeline() {
+    if (IsPipelineExecutionTaskActive(pipeline_task_id_)) {
+        spdlog::warn("[Data Studio] Pipeline execution is already active (task ID: {})",
+                     pipeline_task_id_);
+        return false;
+    }
     if (!ValidatePipeline()) {
         spdlog::error("[Data Studio] Pipeline validation failed");
         return false;
@@ -450,17 +449,11 @@ bool PipelineCanvas::ExecutePipeline() {
     // Serialize pipeline to JSON
     std::string pipeline_json = SerializePipeline();
 
-    // Execute pipeline using the executor
-    spdlog::info("[Data Studio] Starting pipeline execution with {} nodes", nodes_.size());
-    bool success = executor_->ExecutePipeline(pipeline_json);
-
-    if (success) {
-        spdlog::info("[Data Studio] Pipeline execution completed successfully");
-    } else {
-        spdlog::error("[Data Studio] Pipeline execution failed: {}", executor_->GetLastError());
-    }
-
-    return success;
+    spdlog::info("[Data Studio] Queuing pipeline execution with {} nodes", nodes_.size());
+    auto submission = SubmitPipelineExecutionTask(
+        "Execute Data Pipeline", std::move(pipeline_json), executor_);
+    pipeline_task_id_ = submission.task_id;
+    return pipeline_task_id_ != 0;
 }
 
 bool PipelineCanvas::ValidatePipeline() const {
@@ -711,14 +704,21 @@ void PipelineCanvas::RenderToolbar() {
 
     ImGui::SameLine();
 
-    // Phase 8: Execute or Cancel button depending on execution state
-    if (executor_ && executor_->IsExecuting()) {
+    const auto execution_task = pipeline_task_id_ == 0
+        ? nullptr
+        : AsyncTaskManager::Instance().GetTask(pipeline_task_id_);
+    const bool execution_active = execution_task &&
+        (execution_task->GetState() == TaskState::Pending ||
+         execution_task->GetState() == TaskState::Running);
+
+    // Execute or Cancel button depending on task state.
+    if (execution_active) {
         // Cancel button (red style)
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
         if (ImGui::Button(ICON_FA_STOP " Cancel")) {
-            executor_->RequestCancel();
+            AsyncTaskManager::Instance().Cancel(pipeline_task_id_);
         }
         ImGui::PopStyleColor(3);
     } else {
@@ -758,14 +758,15 @@ void PipelineCanvas::RenderToolbar() {
     }
 
     // Phase 8: Show progress bar when executing
-    if (executor_ && executor_->IsExecuting()) {
+    if (execution_active) {
+        const auto info = execution_task->GetInfo();
         ImGui::Separator();
 
         // Progress bar
-        ImGui::ProgressBar(execution_progress_, ImVec2(-1, 0));
+        ImGui::ProgressBar(info.progress, ImVec2(-1, 0));
 
         // Status message
-        ImGui::TextWrapped("%s", execution_status_.c_str());
+        ImGui::TextWrapped("%s", info.status_message.c_str());
     }
 }
 

@@ -69,8 +69,50 @@ DataInputDialog::DataInputDialog(MLNode* node)
                 node_->parameters["file_type"],
                 detected_type_);
         }
-        if (strlen(file_path_) > 0) {
-            LoadColumnList();  // Load columns to enable label selection
+
+        // Restore parser state before reading the source schema. Column
+        // discovery is parser-dependent: for preambled CSV files the first
+        // row after skip_rows is the header. Loading columns before restoring
+        // these values leaves the label selector bound to metadata text.
+        if (node_->parameters.count("has_header")) {
+            has_header_ = node_->parameters["has_header"] == "true";
+        } else if (node_->parameters.count("header")) {
+            has_header_ = node_->parameters["header"] == "true";
+        }
+        if (node_->parameters.count("delimiter") &&
+            !node_->parameters["delimiter"].empty()) {
+            strncpy(custom_delimiter_,
+                    node_->parameters["delimiter"].c_str(),
+                    sizeof(custom_delimiter_) - 1);
+            custom_delimiter_[sizeof(custom_delimiter_) - 1] = '\0';
+        }
+        if (node_->parameters.count("missing_value_tokens")) {
+            strncpy(missing_value_tokens_,
+                    node_->parameters["missing_value_tokens"].c_str(),
+                    sizeof(missing_value_tokens_) - 1);
+            missing_value_tokens_[sizeof(missing_value_tokens_) - 1] = '\0';
+        }
+        if (node_->parameters.count("skip_rows")) {
+            try {
+                skip_rows_ = std::max(0, std::stoi(node_->parameters["skip_rows"]));
+            } catch (...) {
+                skip_rows_ = 0;
+            }
+        }
+        if (node_->parameters.count("max_rows")) {
+            try {
+                max_rows_ = std::max(0, std::stoi(node_->parameters["max_rows"]));
+            } catch (...) {
+                max_rows_ = 0;
+            }
+        }
+        if (node_->parameters.count("encoding")) {
+            try {
+                encoding_idx_ = std::clamp(
+                    std::stoi(node_->parameters["encoding"]), 0, 6);
+            } catch (...) {
+                encoding_idx_ = 0;
+            }
         }
         if (node_->parameters.count("folder_path")) {
             strncpy(folder_path_, node_->parameters["folder_path"].c_str(), sizeof(folder_path_) - 1);
@@ -88,17 +130,6 @@ DataInputDialog::DataInputDialog(MLNode* node)
                 dataset_role_idx_ = 0;
             }
         }
-        // Restore label column selection
-        if (node_->parameters.count("label_column") && !node_->parameters["label_column"].empty()) {
-            std::string label_col = node_->parameters["label_column"];
-            for (int i = 0; i < static_cast<int>(available_columns_.size()); ++i) {
-                if (available_columns_[i] == label_col) {
-                    label_column_idx_ = i;
-                    break;
-                }
-            }
-        }
-
         // Restore the Force disk-backed cache checkbox from node params.
         // Without this, the toggle state is lost every time the dialog is
         // closed, and the user silently falls back to the default auto-
@@ -135,6 +166,19 @@ DataInputDialog::DataInputDialog(MLNode* node)
             file_category_ = data_input::FileCategoryFromParam(
                 node_->parameters["file_category"],
                 file_category_);
+        }
+        if (strlen(file_path_) > 0) {
+            RefreshColumnList();
+        }
+        if (node_->parameters.count("label_column") &&
+            !node_->parameters["label_column"].empty()) {
+            const std::string& label_column = node_->parameters["label_column"];
+            for (int i = 0; i < static_cast<int>(available_columns_.size()); ++i) {
+                if (available_columns_[i] == label_column) {
+                    label_column_idx_ = i;
+                    break;
+                }
+            }
         }
 
         // Restore text dialog state. Without this, picking Text, filling
@@ -273,6 +317,7 @@ DataInputDialog::DataInputDialog(MLNode* node)
 void DataInputDialog::Reset() {
     if (!node_) return;
     node_->parameters = original_params_;
+    ResetPreviewPaging();
     preview_loaded_ = false;
     has_changes_ = false;
 }
@@ -281,6 +326,7 @@ void DataInputDialog::RenderContent() {
     // Pick up the async load result, if the worker has finished, and apply
     // it to the dialog/node state. Cheap when no load is in flight.
     PollAsyncLoadResult();
+    PollPreviewPageResult();
 
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
@@ -301,6 +347,10 @@ void DataInputDialog::RenderContent() {
         if (ImGui::BeginTabBar("DataInputTabs", ImGuiTabBarFlags_None)) {
             if (ImGui::BeginTabItem("Settings")) {
                 RenderFileSource();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Preview")) {
+                RenderPreviewPanel();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Data Profiling")) {
@@ -424,17 +474,15 @@ void DataInputDialog::RenderContent() {
     ImGui::Spacing();
     ImGui::Spacing();
     RenderDatasetSummaryPanel();
-
-    // Preview section
-    ImGui::Spacing();
-    ImGui::Spacing();
-    RenderPreviewPanel();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
 }
 
 void DataInputDialog::UnloadDataset() {
     if (loaded_dataset_name_.empty()) return;
+
+    ResetPreviewPaging();
+    preview_loaded_ = false;
 
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnloadDataset(loaded_dataset_name_);

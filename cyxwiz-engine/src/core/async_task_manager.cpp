@@ -27,8 +27,10 @@ const std::string& AsyncTask::GetErrorMessage() const {
 }
 
 void AsyncTask::RequestCancel() {
-    if (cancellable_) {
-        cancel_requested_.store(true);
+    if (cancellable_ && !cancel_requested_.exchange(true)) {
+        if (cancellation_callback_) {
+            cancellation_callback_();
+        }
         TrainingTraceCollector::Instance().RecordTaskProgress(
             id_,
             name_,
@@ -38,6 +40,10 @@ void AsyncTask::RequestCancel() {
             "cancel_requested");
         spdlog::info("Cancel requested for task '{}' (ID: {})", name_, id_);
     }
+}
+
+void AsyncTask::SetCancellationCallback(std::function<void()> callback) {
+    cancellation_callback_ = std::move(callback);
 }
 
 void AsyncTask::SetProgressCallback(ProgressCallback callback) {

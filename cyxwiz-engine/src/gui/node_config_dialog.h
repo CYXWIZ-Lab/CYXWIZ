@@ -23,8 +23,10 @@
 #include <imgui.h>
 #include "node_editor.h"
 #include "data_input_capabilities.h"
+#include "data_preview_page_cache.h"
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
+#include "../core/data_preview_service.h"
 
 namespace gui {
 
@@ -297,6 +299,11 @@ private:
     void DetectFileCategory();
     void LoadPreview();
     void LoadColumnList();
+    void RefreshColumnList();
+    bool CanPageRegisteredPreview() const;
+    void ResetPreviewPaging();
+    void RequestPreviewPage(int64_t row_index);
+    void PollPreviewPageResult();
     void UpdateRAMEstimate();
     void BrowseFile();
     void BrowseFolder();
@@ -330,6 +337,7 @@ private:
     char custom_delimiter_[8] = ",";
     bool has_header_ = true;
     char quote_char_[4] = "\"";
+    char missing_value_tokens_[128] = "na";
     int sheet_idx_ = 0;
     char sheet_range_[64] = {};
     bool json_lines_ = false;
@@ -471,6 +479,22 @@ private:
     bool preview_loaded_ = false;
     std::string preview_error_;
     float estimated_ram_mb_ = 0.0f;
+
+    struct PreviewPageLoadState {
+        std::atomic<bool> done{false};
+        uint64_t generation = 0;
+        int64_t offset = 0;
+        cyxwiz::DataPreviewPage page;
+    };
+    data_input::PreviewPageCache preview_page_cache_{100, 5};
+    std::shared_ptr<PreviewPageLoadState> preview_page_state_;
+    uint64_t preview_page_task_id_ = 0;
+    uint64_t preview_generation_ = 0;
+    int64_t preview_loading_offset_ = -1;
+    int64_t preview_failed_offset_ = -1;
+    bool preview_is_paged_ = false;
+    bool preview_page_loading_ = false;
+    std::string preview_page_error_;
 
     // STATE: Apply feedback
     bool apply_in_progress_ = false;

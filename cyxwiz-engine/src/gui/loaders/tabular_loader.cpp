@@ -206,9 +206,12 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     // Snapshot everything by value so the worker never races dialog state.
     const std::string path       = ctx.source_path;
     const std::string name       = ctx.dataset_name;
-    const std::string file_type  = NormalizeTabularFileType(ctx.detected_file_type);
+    const std::string file_type =
+        ResolveTabularFileType(ctx.detected_file_type, path);
     const bool has_header        = ctx.has_header;
     const char delim             = (file_type == "tsv") ? '\t' : ctx.delimiter;
+    const auto missing_tokens    =
+        cyxwiz::ParseMissingValueTokens(ctx.missing_value_tokens);
     const int skip_rows          = ctx.skip_rows;
     const int64_t max_rows       = ctx.max_rows;
     const bool force_disk        = ctx.force_disk_backed;
@@ -220,7 +223,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();
     return mgr.RunAsync(
         "Loading " + name,
-        [path, name, file_type, has_header, delim, skip_rows, max_rows,
+        [path, name, file_type, has_header, delim, missing_tokens, skip_rows, max_rows,
          force_disk, label_col, state]
         (cyxwiz::LambdaTask& task) {
             try {
@@ -232,7 +235,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     // in-memory vs Parquet disk-backed.
                     auto backend = reg.LoadTabularCSV(
                         path, name, has_header, delim, skip_rows, max_rows,
-                        force_disk);
+                        force_disk, missing_tokens);
                     task.ReportProgress(0.9f, "Finalizing");
 
                     if (backend == cyxwiz::DataRegistry::TabularLoadBackend::InMemory) {

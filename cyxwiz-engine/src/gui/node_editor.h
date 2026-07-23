@@ -7,6 +7,7 @@
 #include <memory>
 #include <functional>
 #include <atomic>
+#include <cstdint>
 #include <thread>
 #include <imgui.h>
 #include <nlohmann/json_fwd.hpp>
@@ -24,6 +25,7 @@ class GraphExecutor;
 class RLTrainingExecutor;
 class TrainingDashboardPanel;
 class PipelineExecutor;
+class PipelineExecutionTracker;
 }
 
 namespace gui {
@@ -1081,6 +1083,7 @@ public:
 private:
     void ShowToolbar();
     void RenderNodes();
+    void SyncPipelineExecutionVisualization();
     void RenderMinimap();
     void HandleInteractions();
     void ShowContextMenu();
@@ -1466,7 +1469,9 @@ private:
     bool rl_script_running_ = false;
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
-    std::unique_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
+    uint64_t pipeline_task_id_ = 0;
+    std::shared_ptr<cyxwiz::PipelineExecutionTracker> pipeline_execution_tracker_;
+    bool pipeline_execution_active_ = false;
     ExecutionContext execution_context_;
 
     // ===== Unified Canvas Phase 6: Execution Visualization =====

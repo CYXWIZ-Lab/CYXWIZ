@@ -8,6 +8,7 @@
 #include <atomic>
 #include <set>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 namespace gui {
@@ -19,6 +20,13 @@ namespace cyxwiz {
 // Forward declaration
 class DuckDBConnector;
 struct PipelineRuntimeSupport;
+
+enum class PipelineNodeExecutionEvent : uint8_t {
+    Pending,
+    Executing,
+    Completed,
+    Error
+};
 
 /**
  * PipelineExecutor - Executes data transformation pipelines
@@ -64,12 +72,12 @@ public:
     /**
      * Check if a pipeline is currently executing
      */
-    bool IsExecuting() const { return executing_; }
+    bool IsExecuting() const { return executing_.load(); }
 
     /**
      * Get execution progress (0.0 to 1.0)
      */
-    float GetProgress() const { return progress_; }
+    float GetProgress() const { return progress_.load(); }
 
     /**
      * Get the last error message
@@ -79,7 +87,7 @@ public:
     /**
      * Get deployment status (Phase 5 Week 7)
      */
-    bool IsDeploymentReady() const { return deployment_ready_; }
+    bool IsDeploymentReady() const { return deployment_ready_.load(); }
     const std::string& GetDeploymentDataset() const { return deployment_dataset_; }
 
     /**
@@ -95,6 +103,10 @@ public:
      * Called periodically during execution with progress updates
      */
     void SetProgressCallback(std::function<void(float, const std::string&)> callback);
+
+    /** Register typed per-node lifecycle events for canvas visualization. */
+    void SetNodeExecutionCallback(
+        std::function<void(int, PipelineNodeExecutionEvent, const std::string&)> callback);
 
     /**
      * Register a completion callback
@@ -137,20 +149,22 @@ private:
     };
 
     // Execution state
-    bool executing_;
-    float progress_;
+    std::atomic<bool> executing_;
+    std::atomic<float> progress_;
     std::string last_error_;
     bool stop_requested_;
     std::atomic<bool> cancel_requested_;  // Phase 8: Atomic cancellation flag
     std::string current_status_;          // Phase 8: Current execution status message
 
     // Deployment state (Phase 5 Week 7)
-    bool deployment_ready_;
+    std::atomic<bool> deployment_ready_;
     std::string deployment_dataset_;
 
     // Callbacks
     std::function<void(float, const std::string&)> progress_callback_;  // Phase 8: Enhanced with status message
     std::function<void(bool)> completion_callback_;
+    std::function<void(int, PipelineNodeExecutionEvent, const std::string&)>
+        node_execution_callback_;
 
     // DuckDB connector for SQL transformations
     std::unique_ptr<DuckDBConnector> duckdb_;
@@ -234,6 +248,9 @@ private:
     // Helper methods
     void UpdateProgress(float progress, const std::string& status = "");  // Phase 8: Added status parameter
     void ReportError(const std::string& error);
+    void NotifyNodeExecution(const Node& node,
+                             PipelineNodeExecutionEvent event,
+                             const std::string& status = "");
     void NotifyCompletion(bool success);
     std::string GetInputDatasetName(const Node& node, ExecutionContext& ctx);
     std::vector<std::string> GetInputDatasetNames(const Node& node,

@@ -344,3 +344,59 @@ changes are outside Track 70 scope and must remain isolated.
   no APS-specific filename or schema logic enters the engine. CSV failures now
   also point users to delimiter/header settings and explicit source-row skipping.
   Release test_data_preview_service and cyxwiz-engine build passed.
+- 2026-07-23: Completed the production parser-state refresh behind the
+  preambled-source fix. Data Input now restores header, delimiter, skip-row,
+  row-limit, and encoding settings before initial schema discovery; changes to
+  path, format, delimiter, header, or skip rows rebuild the column/label list
+  immediately while preserving a still-valid selection. Async tabular loading
+  now resolves `Auto` from the source extension, so `.csv` does not fall into
+  the Arrow loader. The supplied APS Train file was rechecked generically:
+  line 21 is a 171-column header from `class` through `eg_000`, and line 22 is
+  the first `neg` record. Release `test_data_preview_service`,
+  `test_tabular_loader_apply_context`, and `cyxwiz-engine` passed.
+- 2026-07-23: Clarified the learning-objective contract in To Fix 70. A Data
+  Input continues to emit one generic Dataset with optional target metadata.
+  Supervised plans require dataset targets; self-supervised plans derive
+  targets; unsupervised plans use no target or an explicit derived objective;
+  reinforcement learning consumes typed transition experience rather than
+  treating rewards/actions as a label column. The existing compiler remains a
+  supervised single-batch executor and must gain separate typed training-plan
+  validation before unsupervised or RL sketches are executable.
+- 2026-07-23: Moved the existing Data Input source preview out of the content
+  rendered below Settings and into a dedicated `Preview` tab beside Settings.
+  The same bounded preview loader and table/image/text renderers are reused;
+  the buried duplicate placement was removed so the grid receives the tab's
+  usable viewport instead of appearing as a separator below the dialog fold.
+- 2026-07-23: Added bounded lazy scrolling for registered Arrow and
+  Parquet-backed tabular previews. The Preview tab exposes the full virtual row
+  count, uses ImGui row clipping, requests 100-row pages on an
+  `AsyncTaskManager` worker, prefetches near page boundaries, and retains at
+  most five LRU pages (500 rows) regardless of dataset size. Hidden columns do
+  not render cell text. Page failures stop automatic retries and offer an
+  explicit retry action. Paging is invalidated on Apply, unload, reset, or
+  parser changes, and is used only when the registered source and applied
+  parser contract still match. Raw pre-Apply delimited preview remains a
+  bounded source sample until a streaming cursor/index adapter is implemented.
+- 2026-07-23: Corrected the Limit Rows checkbox so its visible state is derived
+  from persisted `max_rows`; disabling it now writes `0` (all rows), enabling
+  it defaults to 1,000, and changing it invalidates preview pages from the
+  previously applied dataset. The UI now states the current backend truth:
+  in-memory CSV produces a final capped dataset but still parses the full file
+  before slicing, while the disk-backed Parquet path does not yet enforce
+  `max_rows`. Streaming CSV row caps and a logical disk-backed row limit remain
+  production gaps and must not be confused with bounded Preview paging.
+- 2026-07-23: Implemented versioned fitted preprocessing artifacts for the
+  generic `FillMissing` and `StandardScaler` nodes. Node properties now expose
+  Fit + Transform / Transform Only, feature and label columns, state path,
+  save, and overwrite policy. Fit persists training-derived imputation values
+  or scaler mean/scale; Transform Only validates operator/configuration/schema
+  and reuses the artifact without fitting on evaluation data. Pipeline
+  validation rejects Fit + Transform behind explicit Dev/Validation/Test/
+  Inference Data Input roles and logs corrective guidance for missing paths,
+  unsaved fits, bad artifacts, all-null columns, and schema mismatches. Focused
+  routing regressions prove that test imputation uses training mean 3 rather
+  than test mean 9 and that a test value equal to the training scaler mean maps
+  to zero. Debug routing suite passed (122.8 s) and the Release engine build
+  passed. Stateful scaler caching is disabled until artifact content identity
+  participates in cache keys. File-based state reuse is the intentional first slice; typed state
+  ports and same-graph multi-input coordination remain deferred.

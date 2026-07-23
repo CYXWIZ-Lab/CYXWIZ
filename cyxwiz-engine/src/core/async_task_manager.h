@@ -75,6 +75,7 @@ public:
     // Cancel request
     void RequestCancel();
     bool IsCancelRequested() const { return cancel_requested_.load(); }
+    void SetCancellationCallback(std::function<void()> callback);
 
     // Callbacks
     void SetProgressCallback(ProgressCallback callback);
@@ -113,6 +114,7 @@ private:
 
     ProgressCallback progress_callback_;
     CompletionCallback completion_callback_;
+    std::function<void()> cancellation_callback_;
 
     std::chrono::steady_clock::time_point start_time_;
     std::chrono::steady_clock::time_point end_time_;

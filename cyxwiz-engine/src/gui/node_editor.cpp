@@ -13,6 +13,8 @@
 #include "../core/graph_executor.h"
 #include "../core/rl_training_executor.h"
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
+#include "../core/pipeline_execution_task.h"
+#include "../core/pipeline_runtime_capabilities.h"
 #include "panels/training_dashboard.h"
 #include "../core/rl_script_generator.h"
 #include "../scripting/scripting_engine.h"
@@ -253,6 +255,8 @@ NodeEditor::~NodeEditor() {
 
 void NodeEditor::Render() {
     if (!show_window_) return;
+
+    SyncPipelineExecutionVisualization();
 
     const bool training_animation_active =
         is_training_ || cyxwiz::TrainingManager::Instance().IsTrainingActive();
@@ -1091,15 +1095,39 @@ void NodeEditor::ShowToolbar() {
             GeneratePythonCode();
         }
     } else if (execution_mode_ == ExecutionMode::DuckDBPipeline) {
-        // Execute data pipeline button
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
-        if (ImGui::Button(ICON_FA_PLAY " Execute Pipeline")) {
-            ExecuteDataPipeline();
-        }
-        ImGui::PopStyleColor(2);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Execute data transformation pipeline using DuckDB");
+        const auto pipeline_task = pipeline_task_id_ == 0
+            ? nullptr
+            : cyxwiz::AsyncTaskManager::Instance().GetTask(pipeline_task_id_);
+        if (pipeline_execution_active_ && pipeline_task) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.2f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.78f, 0.28f, 0.28f, 1.0f));
+            if (ImGui::Button(ICON_FA_STOP " Cancel Pipeline")) {
+                cyxwiz::AsyncTaskManager::Instance().Cancel(pipeline_task_id_);
+            }
+            ImGui::PopStyleColor(2);
+
+            const auto task_info = pipeline_task->GetInfo();
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(190.0f);
+            char progress_overlay[32];
+            snprintf(progress_overlay, sizeof(progress_overlay), "%.0f%%",
+                     task_info.progress * 100.0f);
+            ImGui::ProgressBar(task_info.progress, ImVec2(190.0f, 0.0f),
+                               progress_overlay);
+            if (ImGui::IsItemHovered() && !task_info.status_message.empty()) {
+                ImGui::SetTooltip("%s", task_info.status_message.c_str());
+            }
+        } else {
+            // Execute data pipeline button
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
+            if (ImGui::Button(ICON_FA_PLAY " Execute Pipeline")) {
+                ExecuteDataPipeline();
+            }
+            ImGui::PopStyleColor(2);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Execute data transformation pipeline using DuckDB");
+            }
         }
     }
     ImGui::SameLine();
@@ -2851,6 +2879,21 @@ void NodeEditor::RenderNodes() {
     for (const auto& link : links_) {
         ImU32 link_color, link_hovered, link_selected;
 
+        auto src_exec_it = node_execution_states_.find(link.from_node);
+        auto dst_exec_it = node_execution_states_.find(link.to_node);
+        const NodeExecutionState src_exec = src_exec_it == node_execution_states_.end()
+            ? NodeExecutionState::Idle
+            : src_exec_it->second;
+        const NodeExecutionState dst_exec = dst_exec_it == node_execution_states_.end()
+            ? NodeExecutionState::Idle
+            : dst_exec_it->second;
+        const bool pipeline_link_flowing = pipeline_execution_active_ &&
+            src_exec == NodeExecutionState::Completed &&
+            dst_exec == NodeExecutionState::Executing;
+        const bool pipeline_link_completed =
+            src_exec == NodeExecutionState::Completed &&
+            dst_exec == NodeExecutionState::Completed;
+
         if (training_animation_active) {
             // Create pulsing amber/green effect during training
             // Pulse frequency: ~2 Hz (full cycle every 0.5 seconds)
@@ -2863,6 +2906,17 @@ void NodeEditor::RenderNodes() {
 
             link_color = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 255);
             link_hovered = IM_COL32(static_cast<int>(r), static_cast<int>(g), static_cast<int>(b), 200);
+            link_selected = IM_COL32(255, 255, 255, 255);
+        } else if (pipeline_link_flowing) {
+            const float pulse =
+                (std::sin(execution_pulse_time_ * 10.0f + link.id * 0.35f) + 1.0f) * 0.5f;
+            const int green = static_cast<int>(150.0f + 90.0f * pulse);
+            link_color = IM_COL32(45, green, 255, 255);
+            link_hovered = IM_COL32(90, 230, 255, 255);
+            link_selected = IM_COL32(255, 255, 255, 255);
+        } else if (pipeline_link_completed) {
+            link_color = IM_COL32(50, 200, 90, 240);
+            link_hovered = IM_COL32(80, 230, 120, 255);
             link_selected = IM_COL32(255, 255, 255, 255);
         } else {
             // Standard data-flow links inherit the source node's compile/train state:
@@ -4788,10 +4842,10 @@ bool NodeEditor::ExecuteDataPipeline() {
         return false;
     }
 
-    // Check if we have a pipeline executor
-    if (!pipeline_executor_) {
-        pipeline_executor_ = std::make_unique<cyxwiz::PipelineExecutor>();
-        spdlog::info("Created PipelineExecutor instance");
+    if (cyxwiz::IsPipelineExecutionTaskActive(pipeline_task_id_)) {
+        spdlog::warn("Data transformation pipeline is already running (task ID: {})",
+                     pipeline_task_id_);
+        return false;
     }
 
     // Convert node graph to JSON for PipelineExecutor
@@ -4810,74 +4864,48 @@ bool NodeEditor::ExecuteDataPipeline() {
             node_json["parameters"][key] = value;
         }
 
-        // Add inputs (connected node IDs)
-        node_json["inputs"] = nlohmann::json::array();
-        for (const auto& link : links_) {
-            // Find if this link connects TO this node
-            for (const auto& input_pin : node.inputs) {
-                if (link.to_pin == input_pin.id) {
-                    // Find the source node
-                    for (const auto& src_node : nodes_) {
-                        for (const auto& out_pin : src_node.outputs) {
-                            if (link.from_pin == out_pin.id) {
-                                node_json["inputs"].push_back(src_node.id);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add outputs (connected node IDs)
-        node_json["outputs"] = nlohmann::json::array();
-        for (const auto& link : links_) {
-            // Find if this link connects FROM this node
-            for (const auto& output_pin : node.outputs) {
-                if (link.from_pin == output_pin.id) {
-                    // Find the destination node
-                    for (const auto& dst_node : nodes_) {
-                        for (const auto& in_pin : dst_node.inputs) {
-                            if (link.to_pin == in_pin.id) {
-                                node_json["outputs"].push_back(dst_node.id);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         pipeline_json["nodes"].push_back(node_json);
     }
 
-    // Set up progress callback
-    pipeline_executor_->SetProgressCallback([](float progress, const std::string& status) {
-        spdlog::info("Pipeline progress: {:.1f}% - {}", progress * 100, status);
-    });
+    // PipelineExecutor treats this top-level list as the canonical graph
+    // connection contract. NodeLink already owns the resolved node IDs, so
+    // preserve them directly instead of deriving duplicate per-node edges.
+    pipeline_json["links"] = nlohmann::json::array();
+    for (const auto& link : links_) {
+        pipeline_json["links"].push_back({
+            {"start_node", link.from_node},
+            {"end_node", link.to_node}
+        });
+    }
 
-    // Set up completion callback
-    pipeline_executor_->SetCompletionCallback([](bool success) {
-        if (success) {
-            spdlog::info("Pipeline execution completed successfully!");
-        } else {
-            spdlog::error("Pipeline execution failed!");
-        }
-    });
-
-    // Execute the pipeline
+    // Snapshot the graph on the UI thread, then execute through the shared
+    // task system. The worker owns its PipelineExecutor, so it never reads
+    // mutable editor state and remains safe if the editor closes mid-run.
     std::string pipeline_str = pipeline_json.dump(2);
     spdlog::debug("Pipeline JSON:\n{}", pipeline_str);
-
-    bool success = pipeline_executor_->ExecutePipeline(pipeline_str);
-    if (!success) {
-        spdlog::error("Pipeline execution failed: {}", pipeline_executor_->GetLastError());
+    auto submission = cyxwiz::SubmitPipelineExecutionTask(
+        "Execute Data Pipeline", std::move(pipeline_str));
+    pipeline_task_id_ = submission.task_id;
+    pipeline_execution_tracker_ = std::move(submission.tracker);
+    pipeline_execution_active_ = pipeline_task_id_ != 0;
+    ClearExecutionStates();
+    if (pipeline_execution_active_) {
+        for (const auto& node : nodes_) {
+            SetNodeExecutionState(node.id, NodeExecutionState::Pending);
+        }
     }
-    return success;
+    spdlog::info("Data transformation pipeline queued as task ID: {}",
+                 pipeline_task_id_);
+    return pipeline_task_id_ != 0;
 }
 
 // Helper to get node type name as string for PipelineExecutor
 std::string NodeEditor::GetNodeTypeName(NodeType type) const {
+    if (const char* runtime_name =
+            cyxwiz::ResolvePipelineRuntimeLegacyTypeName(type)) {
+        return runtime_name;
+    }
+
     switch (type) {
         // Smart I/O nodes (universal data input/output)
         case NodeType::DataInput: return "DataInput";
@@ -4922,6 +4950,66 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
 }
 
 // ===== Unified Canvas Phase 6: Execution Visualization =====
+
+void NodeEditor::SyncPipelineExecutionVisualization() {
+    if (pipeline_task_id_ == 0 || !pipeline_execution_tracker_) {
+        pipeline_execution_active_ = false;
+        return;
+    }
+
+    const auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(pipeline_task_id_);
+    if (!task) {
+        pipeline_execution_active_ = false;
+        return;
+    }
+
+    const auto task_info = task->GetInfo();
+    pipeline_execution_active_ =
+        task_info.state == cyxwiz::TaskState::Pending ||
+        task_info.state == cyxwiz::TaskState::Running;
+
+    const auto snapshot = pipeline_execution_tracker_->GetSnapshot();
+    for (const auto& [node_id, event] : snapshot.node_states) {
+        switch (event) {
+            case cyxwiz::PipelineNodeExecutionEvent::Pending:
+                SetNodeExecutionState(node_id, NodeExecutionState::Pending);
+                break;
+            case cyxwiz::PipelineNodeExecutionEvent::Executing:
+                SetNodeExecutionState(node_id, NodeExecutionState::Executing);
+                break;
+            case cyxwiz::PipelineNodeExecutionEvent::Completed:
+                SetNodeExecutionState(node_id, NodeExecutionState::Completed);
+                break;
+            case cyxwiz::PipelineNodeExecutionEvent::Error: {
+                const auto status_it = snapshot.node_status.find(node_id);
+                SetNodeExecutionError(
+                    node_id,
+                    status_it == snapshot.node_status.end()
+                        ? task_info.error_message
+                        : status_it->second);
+                break;
+            }
+        }
+    }
+
+    if (task_info.state == cyxwiz::TaskState::Failed) {
+        for (auto& [node_id, state] : node_execution_states_) {
+            if (state == NodeExecutionState::Executing) {
+                SetNodeExecutionError(node_id, task_info.error_message);
+            } else if (state == NodeExecutionState::Pending) {
+                state = NodeExecutionState::Idle;
+            }
+        }
+    } else if (task_info.state == cyxwiz::TaskState::Cancelled) {
+        for (auto& [node_id, state] : node_execution_states_) {
+            if (state == NodeExecutionState::Executing ||
+                state == NodeExecutionState::Pending) {
+                state = NodeExecutionState::Idle;
+            }
+        }
+        currently_executing_node_id_ = -1;
+    }
+}
 
 void NodeEditor::SetNodeExecutionState(int node_id, NodeExecutionState state) {
     node_execution_states_[node_id] = state;

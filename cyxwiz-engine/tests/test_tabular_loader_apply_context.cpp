@@ -1,6 +1,8 @@
 #include "../src/gui/loaders/tabular_loader.h"
+#include "../src/core/csv_ingestion_options.h"
 
 #include <cstdlib>
+#include <algorithm>
 #include <iostream>
 #include <string>
 
@@ -16,6 +18,22 @@ void Check(bool condition, const std::string& message) {
 } // namespace
 
 int main() {
+    const auto missing_tokens =
+        cyxwiz::ParseMissingValueTokens(" na, ?,na , missing ");
+    Check(missing_tokens.size() == 3,
+          "missing-token parsing should trim and deduplicate values");
+    Check(missing_tokens[0] == "na" && missing_tokens[1] == "?" &&
+              missing_tokens[2] == "missing",
+          "missing-token parsing should preserve configured order");
+    const auto convert_options =
+        cyxwiz::MakeTabularCsvConvertOptions(missing_tokens);
+    Check(convert_options.strings_can_be_null,
+          "tabular CSV string columns should honor configured null values");
+    Check(std::find(convert_options.null_values.begin(),
+                    convert_options.null_values.end(), "na") !=
+              convert_options.null_values.end(),
+          "tabular CSV conversion should include lowercase na");
+
     Check(!cyxwiz::loaders::IsUnsupportedTabularFileType("csv"),
           "CSV should remain an accepted tabular loader type");
     Check(!cyxwiz::loaders::IsUnsupportedTabularFileType("tsv"),
@@ -28,6 +46,15 @@ int main() {
           "Arrow should remain an accepted tabular loader type");
     Check(!cyxwiz::loaders::IsUnsupportedTabularFileType("ipc"),
           "IPC should remain an accepted tabular loader type");
+    Check(cyxwiz::loaders::ResolveTabularFileType(
+              "auto", "D:\\datasets\\aps_failure_training_set.csv") == "csv",
+          "Auto should resolve a CSV source before async loading");
+    Check(cyxwiz::loaders::ResolveTabularFileType(
+              "AUTO", "/datasets/table.TSV") == "tsv",
+          "Auto extension resolution should be case-insensitive");
+    Check(cyxwiz::loaders::ResolveTabularFileType(
+              "parquet", "/datasets/table.csv") == "parquet",
+          "An explicit format should override the source extension");
 
     Check(cyxwiz::loaders::IsUnsupportedTabularFileType("json"),
           "JSON should fail closed before async tabular load");

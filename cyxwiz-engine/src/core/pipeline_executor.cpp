@@ -6,6 +6,7 @@
 #include "data_convert_service.h"
 #include "ner_sequence_builder.h"
 #include "node_executors/pipeline_operator_factory.h"
+#include "preprocessing_state.h"
 #include "pipeline_runtime_capabilities.h"
 #include "sequence_vocabulary.h"
 #include <arrow/api.h>
@@ -24,6 +25,7 @@
 #include <sstream>
 #include <iomanip>
 #include <future>
+#include <limits>
 #include <thread>
 #include <chrono>
 #include <set>
@@ -725,6 +727,13 @@ bool IsValidNumericLiteral(const std::string& value) {
     return result.ec == std::errc{} && result.ptr == end;
 }
 
+std::string FormatPreprocessingNumericLiteral(double value) {
+    std::ostringstream stream;
+    stream << std::setprecision(std::numeric_limits<double>::max_digits10)
+           << value;
+    return stream.str();
+}
+
 bool BuildFillMissingConstantExpression(
     const std::shared_ptr<arrow::Field>& field,
     const std::string& raw_value,
@@ -748,6 +757,17 @@ bool BuildFillMissingConstantExpression(
 
     if (IsStringArrowType(field->type())) {
         expression = QuoteSqlStringLiteral(raw_value);
+        return true;
+    }
+
+    if (field->type()->id() == arrow::Type::BOOL) {
+        const std::string normalized = ToLowerAscii(trimmed_value);
+        if (normalized != "true" && normalized != "false") {
+            error = "FillMissing: constant value '" + raw_value +
+                    "' is not boolean for column '" + field->name() + "'";
+            return false;
+        }
+        expression = normalized;
         return true;
     }
 
@@ -2882,6 +2902,11 @@ void PipelineExecutor::SetProgressCallback(std::function<void(float, const std::
     progress_callback_ = callback;
 }
 
+void PipelineExecutor::SetNodeExecutionCallback(
+    std::function<void(int, PipelineNodeExecutionEvent, const std::string&)> callback) {
+    node_execution_callback_ = std::move(callback);
+}
+
 void PipelineExecutor::SetCompletionCallback(std::function<void(bool)> callback) {
     completion_callback_ = callback;
 }
@@ -3105,6 +3130,113 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                 errors::Runtime::UnsupportedNode,
                 message);
             return false;
+        }
+    }
+
+    // Stateful preprocessing must never silently fit on validation, test, or
+    // inference inputs. Keep this graph-level so every execution surface gets
+    // the same guard and diagnostic.
+    std::map<int, const Node*> nodes_by_id;
+    for (const auto& node : nodes) {
+        nodes_by_id[node.id] = &node;
+    }
+    for (const auto& node : nodes) {
+        if (node.type != "FillMissing" &&
+            node.type != "StandardScaler") {
+            continue;
+        }
+
+        const std::string operation_mode = ToLowerAscii(TrimString(
+            ParameterOrDefault(node.parameters, "operation_mode",
+                               "fit_transform")));
+        const std::string state_path = TrimString(
+            ParameterOrDefault(node.parameters, "state_path", ""));
+        const bool save_state = OptionalBooleanParameterOrDefault(
+            node.parameters, "save_state", false);
+        if (operation_mode == "transform_only" && state_path.empty()) {
+            last_error_ = errors::FormatError(
+                errors::Runtime::InvalidParameter,
+                "Preprocessing node '" + node.name +
+                    "' is set to Transform Only but State artifact path is "
+                    "empty. Fit it on training data with Save fitted state "
+                    "enabled, then select that artifact.");
+            spdlog::error("[Preprocessing] {}", last_error_);
+            return false;
+        }
+        if (operation_mode == "fit_transform" && save_state &&
+            state_path.empty()) {
+            last_error_ = errors::FormatError(
+                errors::Runtime::InvalidParameter,
+                "Preprocessing node '" + node.name +
+                    "' has Save fitted state enabled but State artifact path "
+                    "is empty. Choose a .cyxstate.json path or disable "
+                    "saving.");
+            spdlog::error("[Preprocessing] {}", last_error_);
+            return false;
+        }
+
+        std::set<int> visited_upstream;
+        std::vector<int> pending_upstream(node.inputs.begin(),
+                                          node.inputs.end());
+        std::set<std::string> source_roles;
+        while (!pending_upstream.empty()) {
+            const int upstream_id = pending_upstream.back();
+            pending_upstream.pop_back();
+            if (!visited_upstream.insert(upstream_id).second) {
+                continue;
+            }
+            const auto upstream_it = nodes_by_id.find(upstream_id);
+            if (upstream_it == nodes_by_id.end()) {
+                continue;
+            }
+            const Node& upstream = *upstream_it->second;
+            if (upstream.type == "DataInput") {
+                source_roles.insert(ToLowerAscii(TrimString(
+                    ParameterOrDefault(upstream.parameters, "dataset_role",
+                                       "unspecified"))));
+            }
+            pending_upstream.insert(pending_upstream.end(),
+                                    upstream.inputs.begin(),
+                                    upstream.inputs.end());
+        }
+
+        if (operation_mode == "fit_transform") {
+            for (const auto& role : source_roles) {
+                if (role == "dev" || role == "validation" ||
+                    role == "test" || role == "inference") {
+                    last_error_ = errors::FormatError(
+                        errors::Runtime::InvalidParameter,
+                        "Preprocessing node '" + node.name +
+                            "' cannot Fit + Transform data whose Dataset role "
+                            "is '" + role +
+                            "'. This would leak evaluation data into fitted "
+                            "statistics. Change Mode to Transform Only and "
+                            "select the training state artifact.");
+                    spdlog::error("[Preprocessing] {}", last_error_);
+                    return false;
+                }
+            }
+            if (source_roles.empty() ||
+                source_roles.find("unspecified") != source_roles.end()) {
+                spdlog::warn(
+                    "[Preprocessing] Node '{}' will Fit + Transform, but its "
+                    "upstream Dataset role is unspecified. Set the Data Input "
+                    "role to Train so leakage protection can verify intent.",
+                    node.name);
+            }
+            if (!save_state) {
+                spdlog::warn(
+                    "[Preprocessing] Node '{}' will fit statistics without "
+                    "saving them. Validation/test data cannot reproduce this "
+                    "transform until Save fitted state and a state path are "
+                    "configured.",
+                    node.name);
+            }
+        } else {
+            spdlog::info(
+                "[Preprocessing] Node '{}' validated for Transform Only with "
+                "state artifact '{}'.",
+                node.name, state_path);
         }
     }
 
@@ -3443,8 +3575,21 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                 if (skip_it != node.parameters.end()) {
                     skip_rows = std::stoi(skip_it->second);
                 }
+                int64_t max_rows = 0;
+                auto max_rows_it = node.parameters.find("max_rows");
+                if (max_rows_it != node.parameters.end() &&
+                    !max_rows_it->second.empty()) {
+                    max_rows = std::stoll(max_rows_it->second);
+                }
+                auto missing_tokens = DefaultTabularMissingValueTokens();
+                auto missing_it = node.parameters.find("missing_value_tokens");
+                if (missing_it != node.parameters.end()) {
+                    missing_tokens = ParseMissingValueTokens(missing_it->second);
+                }
 
-                arrow_dataset = registry.LoadCSVToArrow(file_path, dataset_name, has_header, delimiter[0], skip_rows);
+                arrow_dataset = registry.LoadCSVToArrow(
+                    file_path, dataset_name, has_header, delimiter[0],
+                    skip_rows, max_rows, missing_tokens);
             } else if (file_type == "parquet") {
                 arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
             } else if (file_type == "auto" || file_type == "feather" ||
@@ -3972,20 +4117,32 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
         return false;
     }
 
-    // Get parameters
-    auto strategy_it = node.parameters.find("strategy");
-    std::string strategy =
-        (strategy_it != node.parameters.end() && !strategy_it->second.empty())
-            ? ToLowerAscii(TrimString(strategy_it->second))
-            : "mean";
-
-    auto value_it = node.parameters.find("value");
-    std::string fill_value = (value_it != node.parameters.end()) ? value_it->second : "0";
+    const std::string strategy = ToLowerAscii(TrimString(
+        ParameterOrDefault(node.parameters, "strategy", "mean")));
+    std::string fill_value =
+        ParameterOrDefault(node.parameters, "value", "");
+    if (fill_value.empty()) {
+        fill_value =
+            ParameterOrDefault(node.parameters, "fill_value", "0");
+    }
+    const std::string operation_mode = ToLowerAscii(TrimString(
+        ParameterOrDefault(node.parameters, "operation_mode",
+                           "fit_transform")));
+    const std::string state_path = TrimString(
+        ParameterOrDefault(node.parameters, "state_path", ""));
+    const bool save_state = OptionalBooleanParameterOrDefault(
+        node.parameters, "save_state", false);
+    const bool state_overwrite = OptionalBooleanParameterOrDefault(
+        node.parameters, "state_overwrite", false);
+    const std::string label_col = TrimString(
+        ParameterOrDefault(node.parameters, "label_col", ""));
 
     std::string output_dataset_name = "ds_fillmissing_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Filling missing values in '{}' with strategy: {}",
-                input_dataset_name, strategy);
+    spdlog::info(
+        "[Preprocessing] FillMissing starting mode={} strategy={} input='{}' "
+        "save_state={} state_path='{}'",
+        operation_mode, strategy, input_dataset_name, save_state, state_path);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -4001,6 +4158,72 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
             return false;
         }
 
+        if (operation_mode != "fit_transform" &&
+            operation_mode != "transform_only") {
+            ReportError(
+                "FillMissing: 'operation_mode' must be 'fit_transform' or "
+                "'transform_only' (got '" + operation_mode + "')");
+            return false;
+        }
+        if (operation_mode == "transform_only" && state_path.empty()) {
+            ReportError(
+                "FillMissing: Transform Only requires 'state_path'. Fit this "
+                "node on training data with 'Save fitted state' enabled, "
+                "then select that artifact.");
+            return false;
+        }
+        if (operation_mode == "fit_transform" && save_state &&
+            state_path.empty()) {
+            ReportError(
+                "FillMissing: 'Save fitted state' is enabled but "
+                "'state_path' is empty. Choose a .cyxstate.json path or "
+                "disable saving.");
+            return false;
+        }
+        if (strategy != "constant" && strategy != "mean" &&
+            strategy != "median" && strategy != "mode") {
+            ReportError("FillMissing: Unsupported strategy '" + strategy + "'");
+            return false;
+        }
+
+        std::vector<std::string> selected_columns = ParseCommaSeparatedNames(
+            ParameterOrDefault(node.parameters, "columns", ""));
+        if (selected_columns.empty()) {
+            for (const auto& field : input_table->schema()->fields()) {
+                if (field->name() != label_col) {
+                    selected_columns.push_back(field->name());
+                }
+            }
+        }
+        std::set<std::string> selected_set;
+        std::vector<std::string> deduplicated_columns;
+        for (const auto& column : selected_columns) {
+            if (column == label_col) {
+                spdlog::warn(
+                    "[Preprocessing] FillMissing excluded label column '{}' "
+                    "from fitted preprocessing",
+                    label_col);
+                continue;
+            }
+            if (input_table->schema()->GetFieldIndex(column) < 0) {
+                ReportError(
+                    "FillMissing: configured column '" + column +
+                    "' is not present. Update Columns or use a dataset with "
+                    "the training schema.");
+                return false;
+            }
+            if (selected_set.insert(column).second) {
+                deduplicated_columns.push_back(column);
+            }
+        }
+        selected_columns = std::move(deduplicated_columns);
+        if (selected_columns.empty()) {
+            ReportError(
+                "FillMissing: no feature columns remain after excluding the "
+                "label. Select at least one feature column.");
+            return false;
+        }
+
         // Register input table with DuckDB
         std::string temp_table = "temp_" + std::to_string(node.id);
         if (!duckdb_->RegisterTable(temp_table, input_table)) {
@@ -4008,6 +4231,158 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
             return false;
         }
 
+        FittedPreprocessingState state;
+        if (operation_mode == "transform_only") {
+            std::string state_error;
+            if (!LoadFittedPreprocessingState(
+                    state_path, "FillMissing", state, state_error)) {
+                duckdb_->UnregisterTable(temp_table);
+                ReportError("FillMissing: " + state_error);
+                return false;
+            }
+            if (!ValidateFittedPreprocessingStateSchema(
+                    state, input_table->schema(), state_error)) {
+                duckdb_->UnregisterTable(temp_table);
+                ReportError(state_error);
+                return false;
+            }
+            const auto fitted_strategy =
+                state.configuration.find("strategy");
+            if (fitted_strategy == state.configuration.end() ||
+                fitted_strategy->second != strategy) {
+                duckdb_->UnregisterTable(temp_table);
+                ReportError(
+                    "FillMissing: node strategy '" + strategy +
+                    "' does not match the fitted artifact strategy '" +
+                    (fitted_strategy == state.configuration.end()
+                         ? std::string("unknown")
+                         : fitted_strategy->second) +
+                    "'. Select the matching artifact or update Strategy.");
+                return false;
+            }
+            selected_columns.clear();
+            selected_set.clear();
+            for (const auto& feature : state.features) {
+                selected_columns.push_back(feature.name);
+                selected_set.insert(feature.name);
+            }
+            spdlog::info(
+                "[Preprocessing] FillMissing Transform Only loaded '{}' "
+                "(fit_rows={}, features={}, schema={})",
+                state_path, state.fit_rows, state.features.size(),
+                state.input_schema_fingerprint);
+        } else {
+            state.operator_name = "FillMissing";
+            state.fit_rows = input_table->num_rows();
+            state.input_schema_fingerprint =
+                FingerprintPreprocessingSchema(input_table->schema());
+            state.configuration["strategy"] = strategy;
+            state.configuration["label_col"] = label_col;
+
+            if (strategy == "constant") {
+                for (const auto& column : selected_columns) {
+                    const int field_index =
+                        input_table->schema()->GetFieldIndex(column);
+                    const auto& field =
+                        input_table->schema()->field(field_index);
+                    std::string ignored_expression;
+                    std::string constant_error;
+                    if (!BuildFillMissingConstantExpression(
+                            field, fill_value, ignored_expression,
+                            constant_error)) {
+                        duckdb_->UnregisterTable(temp_table);
+                        ReportError(constant_error);
+                        return false;
+                    }
+                    PreprocessingFeatureState feature;
+                    feature.name = column;
+                    feature.data_type = field->type()->ToString();
+                    double numeric_value = 0.0;
+                    if (IsNumericArrowType(field->type()) &&
+                        TryParseFiniteDouble(fill_value, numeric_value)) {
+                        feature.numeric_values["fill_value"] = numeric_value;
+                    } else {
+                        feature.string_values["fill_value"] = fill_value;
+                    }
+                    state.features.push_back(std::move(feature));
+                }
+            } else {
+                std::string aggregate_sql = "SELECT ";
+                for (size_t i = 0; i < selected_columns.size(); ++i) {
+                    const std::string& column = selected_columns[i];
+                    const int field_index =
+                        input_table->schema()->GetFieldIndex(column);
+                    const auto& field =
+                        input_table->schema()->field(field_index);
+                    if ((strategy == "mean" || strategy == "median") &&
+                        !IsNumericArrowType(field->type())) {
+                        duckdb_->UnregisterTable(temp_table);
+                        ReportError(
+                            "FillMissing: strategy '" + strategy +
+                            "' requires numeric column '" + column +
+                            "' (found " + field->type()->ToString() +
+                            "). Set Label column or explicitly choose numeric "
+                            "feature Columns.");
+                        return false;
+                    }
+                    if (i > 0) aggregate_sql += ", ";
+                    const std::string quoted = QuoteSqlIdentifier(column);
+                    const std::string aggregate =
+                        strategy == "mean"
+                            ? "AVG"
+                            : (strategy == "median" ? "MEDIAN" : "MODE");
+                    aggregate_sql += aggregate + "(" + quoted + ") AS " +
+                                     quoted;
+                }
+                aggregate_sql += " FROM " + temp_table;
+                auto fitted_table = duckdb_->Query(aggregate_sql);
+                if (!fitted_table || fitted_table->num_rows() != 1) {
+                    duckdb_->UnregisterTable(temp_table);
+                    ReportError(
+                        "FillMissing: could not compute fitted " + strategy +
+                        " values from training data.");
+                    return false;
+                }
+                for (int i = 0; i < fitted_table->num_columns(); ++i) {
+                    const auto& column = selected_columns[static_cast<size_t>(i)];
+                    const int field_index =
+                        input_table->schema()->GetFieldIndex(column);
+                    const auto& field =
+                        input_table->schema()->field(field_index);
+                    auto scalar_result =
+                        fitted_table->column(i)->chunk(0)->GetScalar(0);
+                    if (!scalar_result.ok() ||
+                        !scalar_result.ValueOrDie()->is_valid) {
+                        duckdb_->UnregisterTable(temp_table);
+                        ReportError(
+                            "FillMissing: column '" + column +
+                            "' has no non-null training values, so " +
+                            strategy +
+                            " cannot be fitted. Remove the column or use a "
+                            "constant fill value.");
+                        return false;
+                    }
+                    const std::string fitted_value =
+                        scalar_result.ValueOrDie()->ToString();
+                    PreprocessingFeatureState feature;
+                    feature.name = column;
+                    feature.data_type = field->type()->ToString();
+                    double numeric_value = 0.0;
+                    if (IsNumericArrowType(field->type()) &&
+                        TryParseFiniteDouble(fitted_value, numeric_value)) {
+                        feature.numeric_values["fill_value"] = numeric_value;
+                    } else {
+                        feature.string_values["fill_value"] = fitted_value;
+                    }
+                    state.features.push_back(std::move(feature));
+                }
+            }
+        }
+
+        std::map<std::string, const PreprocessingFeatureState*> feature_state;
+        for (const auto& feature : state.features) {
+            feature_state[feature.name] = &feature;
+        }
         std::vector<std::string> select_exprs;
         select_exprs.reserve(input_table->num_columns());
         for (int i = 0; i < input_table->num_columns(); ++i) {
@@ -4015,44 +4390,38 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
             const std::string quoted_column = QuoteSqlIdentifier(field->name());
             std::string expression = quoted_column;
 
-            if (strategy == "constant") {
+            const auto selected = feature_state.find(field->name());
+            if (selected != feature_state.end()) {
+                const auto* feature = selected->second;
+                std::string fitted_value;
+                const auto numeric =
+                    feature->numeric_values.find("fill_value");
+                if (numeric != feature->numeric_values.end()) {
+                    fitted_value =
+                        FormatPreprocessingNumericLiteral(numeric->second);
+                } else {
+                    const auto text =
+                        feature->string_values.find("fill_value");
+                    if (text == feature->string_values.end()) {
+                        duckdb_->UnregisterTable(temp_table);
+                        ReportError(
+                            "FillMissing: state for column '" + field->name() +
+                            "' has no fill value. Refit the artifact.");
+                        return false;
+                    }
+                    fitted_value = text->second;
+                }
                 std::string constant_expression;
                 std::string constant_error;
                 if (!BuildFillMissingConstantExpression(
-                        field, fill_value, constant_expression, constant_error)) {
+                        field, fitted_value, constant_expression,
+                        constant_error)) {
                     duckdb_->UnregisterTable(temp_table);
                     ReportError(constant_error);
                     return false;
                 }
                 expression = "COALESCE(" + quoted_column + ", " +
                              constant_expression + ")";
-            } else if (strategy == "mean") {
-                if (!IsNumericArrowType(field->type())) {
-                    duckdb_->UnregisterTable(temp_table);
-                    ReportError("FillMissing: strategy 'mean' requires numeric column '" +
-                                field->name() + "' (found " +
-                                field->type()->ToString() + ")");
-                    return false;
-                }
-                expression = "COALESCE(" + quoted_column + ", (SELECT AVG(" +
-                             quoted_column + ") FROM " + temp_table + "))";
-            } else if (strategy == "median") {
-                if (!IsNumericArrowType(field->type())) {
-                    duckdb_->UnregisterTable(temp_table);
-                    ReportError("FillMissing: strategy 'median' requires numeric column '" +
-                                field->name() + "' (found " +
-                                field->type()->ToString() + ")");
-                    return false;
-                }
-                expression = "COALESCE(" + quoted_column + ", (SELECT MEDIAN(" +
-                             quoted_column + ") FROM " + temp_table + "))";
-            } else if (strategy == "mode") {
-                expression = "COALESCE(" + quoted_column + ", (SELECT MODE(" +
-                             quoted_column + ") FROM " + temp_table + "))";
-            } else {
-                duckdb_->UnregisterTable(temp_table);
-                ReportError("FillMissing: Unsupported strategy '" + strategy + "'");
-                return false;
             }
 
             select_exprs.push_back(expression + " AS " + quoted_column);
@@ -4077,13 +4446,33 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
             return false;
         }
 
+        if (operation_mode == "fit_transform" && save_state) {
+            std::string state_error;
+            if (!SaveFittedPreprocessingState(
+                    state_path, state, state_overwrite, state_error)) {
+                ReportError(
+                    "FillMissing: failed to save fitted state: " +
+                    state_error);
+                return false;
+            }
+            spdlog::info(
+                "[Preprocessing] FillMissing saved fitted state '{}' "
+                "(fit_rows={}, features={}, strategy={}, schema={})",
+                state_path, state.fit_rows, state.features.size(), strategy,
+                state.input_schema_fingerprint);
+        }
+
         // Register result in DataRegistry
         registry.RegisterArrowTable(result_table, output_dataset_name);
 
         // Store result for downstream nodes
         ctx.node_results[node.id] = output_dataset_name;
 
-        spdlog::info("[Data Studio] FillMissing completed: {} rows", result_table->num_rows());
+        spdlog::info(
+            "[Preprocessing] FillMissing completed mode={} strategy={} "
+            "rows={} features={}",
+            operation_mode, strategy, result_table->num_rows(),
+            state.features.size());
         return true;
 
     } catch (const std::exception& e) {
@@ -4362,6 +4751,16 @@ void PipelineExecutor::UpdateProgress(float progress, const std::string& status)
 void PipelineExecutor::ReportError(const std::string& error) {
     last_error_ = error;
     spdlog::error("[Data Studio] Pipeline execution error: {}", error);
+}
+
+void PipelineExecutor::NotifyNodeExecution(
+    const Node& node,
+    PipelineNodeExecutionEvent event,
+    const std::string& status) {
+    if (node_execution_callback_) {
+        node_execution_callback_(node.id, event,
+                                 status.empty() ? node.name : status);
+    }
 }
 
 // Phase 7: Improved error message helper with actionable suggestions
@@ -5665,15 +6064,20 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
     for (const auto& node : nodes) {
         if (node.needs_execution) {
             total_nodes_to_execute++;
+            NotifyNodeExecution(node, PipelineNodeExecutionEvent::Pending);
         } else {
             // Node doesn't need execution, use cached result
             if (!node.cached_output_dataset.empty()) {
                 ctx.node_results[node.id] = node.cached_output_dataset;
                 spdlog::info("[Data Studio] Using cached result for node: {}", node.name);
                 completed.insert(node.id);
+                NotifyNodeExecution(node, PipelineNodeExecutionEvent::Completed,
+                                    "Using cached result for " + node.name);
             } else {
                 ReportError("Cached node '" + node.name +
                             "' has no cached output dataset and cannot be marked complete");
+                NotifyNodeExecution(node, PipelineNodeExecutionEvent::Error,
+                                    last_error_);
                 return false;
             }
         }
@@ -5730,6 +6134,8 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                     NodeExecutionResult result;
                     result.ctx.node_results = ctx.node_results;
                     std::lock_guard<std::mutex> lock(execution_mutex);
+                    NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Executing,
+                                        "Executing " + node->name);
                     result.success = ExecuteNode(*node, result.ctx);
                     return result;
                 }
@@ -5763,6 +6169,8 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
 
                 completed.insert(node_id);
                 nodes_executed++;
+                NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Completed,
+                                    "Completed " + node->name);
 
                 // Cache the output dataset name
                 auto result_it = ctx.node_results.find(node_id);
@@ -5781,6 +6189,12 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                            node->name, nodes_executed, total_nodes_to_execute);
             } else {
                 // Execution failed
+                if (node) {
+                    NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Error,
+                                        last_error_.empty()
+                                            ? "Pipeline node execution failed"
+                                            : last_error_);
+                }
                 return false;
             }
         }

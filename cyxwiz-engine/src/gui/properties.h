@@ -32,6 +32,7 @@ public:
     // Set the currently selected node to display properties for
     void SetSelectedNode(MLNode* node);
     void ClearSelection();
+    void ClearNodeReferences();
 
     // Set the node editor reference for graph access
     void SetNodeEditor(NodeEditor* editor) { node_editor_ = editor; }

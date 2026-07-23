@@ -1,5 +1,6 @@
 #include "preprocessing_operators.h"
 #include "../materialization_memory_guard.h"
+#include "../preprocessing_state.h"
 #include "../profiler_trace.h"
 #include "feature_matrix_utils.h"
 #include "text_column_utils.h"
@@ -348,6 +349,39 @@ bool StandardScalerOperator::Configure(
                        with_mean_, error)) return false;
     if (!ReadBoolParam(params, "with_std", true, GetName(),
                        with_std_, error)) return false;
+    const auto mode = params.find("operation_mode");
+    operation_mode_ =
+        mode == params.end() || mode->second.empty()
+            ? "fit_transform"
+            : ToLowerAscii(TrimString(mode->second));
+    if (operation_mode_ != "fit_transform" &&
+        operation_mode_ != "transform_only") {
+        error = GetName() +
+                ": 'operation_mode' must be 'fit_transform' or "
+                "'transform_only' (got '" + operation_mode_ + "')";
+        return false;
+    }
+    const auto state_path = params.find("state_path");
+    state_path_ =
+        state_path == params.end() ? "" : TrimString(state_path->second);
+    if (!ReadBoolParam(params, "save_state", false, GetName(),
+                       save_state_, error)) return false;
+    if (!ReadBoolParam(params, "state_overwrite", false, GetName(),
+                       state_overwrite_, error)) return false;
+    if (operation_mode_ == "transform_only" && state_path_.empty()) {
+        error = GetName() +
+                ": Transform Only requires 'state_path'. Fit this node on "
+                "training data with 'Save fitted state' enabled, then select "
+                "that artifact.";
+        return false;
+    }
+    if (operation_mode_ == "fit_transform" && save_state_ &&
+        state_path_.empty()) {
+        error = GetName() +
+                ": 'Save fitted state' is enabled but 'state_path' is empty. "
+                "Choose a .cyxstate.json path or disable saving.";
+        return false;
+    }
     return true;
 }
 
@@ -357,11 +391,66 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     if (!input) return arrow::Status::Invalid(GetName() + ": input is null");
 
-    ReportProgress(progress_callback_, "Resolving columns",
-                   "Resolving numeric columns for StandardScaler", 0.05);
+    ReportProgress(
+        progress_callback_, "Resolving columns",
+        "Resolving numeric columns for StandardScaler (" +
+            operation_mode_ + ")",
+        0.05);
     std::vector<std::string> resolved;
-    ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
-        input, columns_, label_col_, GetName(), resolved));
+    FittedPreprocessingState state;
+    if (operation_mode_ == "transform_only") {
+        std::string state_error;
+        if (!LoadFittedPreprocessingState(
+                state_path_, GetName(), state, state_error)) {
+            return arrow::Status::Invalid(GetName() + ": " + state_error);
+        }
+        if (!ValidateFittedPreprocessingStateSchema(
+                state, input->schema(), state_error)) {
+            return arrow::Status::Invalid(state_error);
+        }
+        const auto mean_config = state.configuration.find("with_mean");
+        const auto std_config = state.configuration.find("with_std");
+        if ((mean_config != state.configuration.end() &&
+             mean_config->second != (with_mean_ ? "true" : "false")) ||
+            (std_config != state.configuration.end() &&
+             std_config->second != (with_std_ ? "true" : "false"))) {
+            return arrow::Status::Invalid(
+                GetName() +
+                ": node options do not match the fitted artifact. Set "
+                "'Center data' and 'Scale to unit variance' to the values "
+                "used during fitting, or choose the correct artifact.");
+        }
+        for (const auto& feature : state.features) {
+            resolved.push_back(feature.name);
+        }
+        if (!columns_.empty() && columns_ != resolved) {
+            return arrow::Status::Invalid(
+                GetName() +
+                ": configured columns do not match the fitted artifact. "
+                "Keep the training column order or leave Columns empty.");
+        }
+        spdlog::info(
+            "[Preprocessing] StandardScaler Transform Only loaded '{}' "
+            "(fit_rows={}, features={}, schema={})",
+            state_path_, state.fit_rows, state.features.size(),
+            state.input_schema_fingerprint);
+    } else {
+        ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
+            input, columns_, label_col_, GetName(), resolved));
+        state.operator_name = GetName();
+        state.fit_rows = input->num_rows();
+        state.input_schema_fingerprint =
+            FingerprintPreprocessingSchema(input->schema());
+        state.configuration["with_mean"] =
+            with_mean_ ? "true" : "false";
+        state.configuration["with_std"] =
+            with_std_ ? "true" : "false";
+        state.configuration["label_col"] = label_col_;
+        spdlog::info(
+            "[Preprocessing] StandardScaler Fit + Transform starting "
+            "(rows={}, features={}, save_state={}, state_path='{}')",
+            input->num_rows(), resolved.size(), save_state_, state_path_);
+    }
     ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
         EmitPreprocessingMemoryPreflight(
             input, GetName(), static_cast<uint64_t>(resolved.size()),
@@ -377,7 +466,9 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     auto out = input;
     int transformed = 0;
-    for (const auto& name : resolved) {
+    for (size_t feature_index = 0;
+         feature_index < resolved.size(); ++feature_index) {
+        const auto& name = resolved[feature_index];
         ReportProgress(progress_callback_, "Scaling columns",
                        "Standard scaling column '" + name + "'",
                        0.20 + (0.70 * static_cast<double>(transformed) /
@@ -389,17 +480,72 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         int idx = -1;
         ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
 
-        const double mean = with_mean_ ? stats::Mean(data) : 0.0;
-        const double sd = with_std_ ? stats::StdDev(data) : 1.0;
-        const double denom = (sd == 0.0) ? 1.0 : sd;  // guard constant col
+        double mean = 0.0;
+        double denom = 1.0;
+        if (operation_mode_ == "transform_only") {
+            const auto& feature = state.features[feature_index];
+            const auto mean_it = feature.numeric_values.find("mean");
+            const auto scale_it = feature.numeric_values.find("scale");
+            if (mean_it == feature.numeric_values.end() ||
+                scale_it == feature.numeric_values.end()) {
+                return arrow::Status::Invalid(
+                    GetName() + ": state for column '" + name +
+                    "' is missing mean/scale values. Refit the artifact.");
+            }
+            mean = mean_it->second;
+            denom = scale_it->second;
+            if (!std::isfinite(mean) || !std::isfinite(denom) ||
+                denom <= 0.0) {
+                return arrow::Status::Invalid(
+                    GetName() + ": state for column '" + name +
+                    "' contains invalid mean/scale values. Refit the "
+                    "artifact.");
+            }
+        } else {
+            mean = with_mean_ ? stats::Mean(data) : 0.0;
+            const double sd = with_std_ ? stats::StdDev(data) : 1.0;
+            denom = (sd == 0.0) ? 1.0 : sd;
+            if (!std::isfinite(mean) || !std::isfinite(denom)) {
+                return arrow::Status::Invalid(
+                    GetName() + ": fitted non-finite statistics for column '" +
+                    name + "'. Fill missing/non-finite values before "
+                    "scaling.");
+            }
+            PreprocessingFeatureState feature;
+            feature.name = name;
+            feature.data_type =
+                input->schema()
+                    ->field(input->schema()->GetFieldIndex(name))
+                    ->type()
+                    ->ToString();
+            feature.numeric_values["mean"] = mean;
+            feature.numeric_values["scale"] = denom;
+            state.features.push_back(std::move(feature));
+        }
 
         for (auto& v : data) v = (v - mean) / denom;
         ARROW_ASSIGN_OR_RAISE(out, ReplaceWithDoubles(out, idx, data));
         transformed++;
     }
 
-    spdlog::info("StandardScaler: transformed {} columns (with_mean={}, with_std={})",
-                 transformed, with_mean_, with_std_);
+    if (operation_mode_ == "fit_transform" && save_state_) {
+        std::string state_error;
+        if (!SaveFittedPreprocessingState(
+                state_path_, state, state_overwrite_, state_error)) {
+            return arrow::Status::IOError(
+                GetName() + ": failed to save fitted state: " + state_error);
+        }
+        spdlog::info(
+            "[Preprocessing] StandardScaler saved fitted state '{}' "
+            "(fit_rows={}, features={}, schema={})",
+            state_path_, state.fit_rows, state.features.size(),
+            state.input_schema_fingerprint);
+    }
+
+    spdlog::info(
+        "[Preprocessing] StandardScaler completed mode={} columns={} "
+        "(with_mean={}, with_std={})",
+        operation_mode_, transformed, with_mean_, with_std_);
     ReportProgress(progress_callback_, "Complete",
                    "StandardScaler materialization complete", 1.0,
                    static_cast<uint64_t>(transformed),

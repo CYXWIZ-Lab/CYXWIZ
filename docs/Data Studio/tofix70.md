@@ -405,6 +405,64 @@ Dev batcher   -> validation at the configured training point
 Test batcher  -> final evaluation after selected checkpoint restoration
 ```
 
+### Learning objective and target contract
+
+The single Data Input `Dataset` output remains the correct source boundary for
+supervised, unsupervised, self-supervised, and reinforcement-learning work.
+Do not add a permanent Data Input label pin: a label column is optional dataset
+metadata, and not every training plan has a dataset label.
+
+The compiler must resolve a typed training plan from the objective/training
+node, not infer supervision from the model architecture:
+
+```text
+TrainingPlan
+  Supervised
+    target_source: DatasetTarget
+    target_requirement: Required
+
+  SelfSupervised
+    target_source: DerivedTarget
+    target_requirement: Derived
+
+  Unsupervised
+    target_source: None | DerivedTarget
+    target_requirement: None | Derived
+
+  Reinforcement
+    target_source: Experience
+    required_fields: observation, action, reward,
+                     next_observation, terminated/truncated
+```
+
+For supervised training, the selected loss/objective requires a resolved
+target for every evaluated role. The compiler must fail before launch when the
+target metadata is missing, the target column does not exist, role target
+types disagree, or `DataLoader.Labels` does not reach the loss target input.
+Inference-only Test data may omit a target; evaluation Test data may not.
+
+For self-supervised training, the target is produced by a declared transform
+or objective (for example masked tokens, shifted tokens, augmented views, or
+autoencoder reconstruction). The source dataset does not need a label column.
+
+For unsupervised training, clustering, embedding extraction, density
+estimation, and inference can consume features without a target. An objective
+that derives a comparison tensor must declare that derivation explicitly; the
+compiler must not silently use the last table column as a label.
+
+Reinforcement learning is a separate execution plan, not a special case of a
+supervised `Labels` tensor. Online RL receives transition experience from an
+environment/rollout buffer. Offline RL may use the same generic Dataset source,
+but maps dataset fields into a typed experience schema. Rewards, actions, and
+termination signals remain distinct semantic fields rather than being folded
+into one label column.
+
+The current `DataLoader.Data` plus optional `DataLoader.Labels` boundary remains
+the compatibility surface for supervised dataset training. A future generic
+batch artifact may carry optional targets and auxiliary fields, while RL uses
+an `ExperienceBatch`/rollout boundary. This avoids adding task-specific pins to
+Data Input and keeps the physical source layer independent of learning mode.
+
 ## Resolution rules
 
 External partitions always win. Only the Training Dataset is eligible for
@@ -692,3 +750,32 @@ Acceptance requirements:
   before any training batcher is created;
 - no role may silently fall back to "first dataset in graph" or a legacy
   registry handle.
+
+## Implemented fitted-preprocessing slice - 2026-07-23
+
+`FillMissing` and `StandardScaler` now implement the first generic production
+contract for learned tabular preprocessing:
+
+- `Fit + Transform` learns values from the current input and can persist a
+  versioned `.cyxstate.json` artifact;
+- `Transform Only` requires that artifact and reuses its training values
+  without reading evaluation statistics;
+- artifacts record operator identity/version, fit row count, selected feature
+  names and Arrow types, configuration, and an ordered schema fingerprint;
+- `FillMissing` persists mean/median/mode/constant values and excludes the
+  configured label column; `StandardScaler` persists per-feature mean and
+  scale;
+- missing, unreadable, malformed, wrong-operator, empty, schema-incompatible,
+  option-incompatible, and overwrite-conflict states fail closed with a
+  corrective user message;
+- graph validation blocks `Fit + Transform` when an upstream Data Input is
+  explicitly assigned Dev, Validation, Test, or Inference role.
+- stateful StandardScaler materialization is non-cacheable until artifact
+  content identity is included in cache keys, preventing a replaced artifact
+  at the same path from returning stale transformed data.
+
+Legacy graphs remain `fit_transform`, do not save state, and execute as before.
+This slice deliberately uses a file artifact across separate train and
+evaluation executions. Typed preprocessing-state pins and pin-aware multi-input
+execution remain future work; the runtime must not pretend that two visible
+dataset inputs currently coordinate fit/apply state inside one node.

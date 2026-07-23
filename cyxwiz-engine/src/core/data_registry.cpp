@@ -1185,7 +1185,8 @@ static std::shared_ptr<arrow::Table> CompactIntegerColumns(
 
 std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
     const std::string& path, const std::string& name,
-    bool has_header, char delimiter, int skip_rows, int64_t max_rows) {
+    bool has_header, char delimiter, int skip_rows, int64_t max_rows,
+    const std::vector<std::string>& missing_value_tokens) {
 
     std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
 
@@ -1222,7 +1223,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         auto parse_options = arrow::csv::ParseOptions::Defaults();
         parse_options.delimiter = delimiter;
 
-        auto convert_options = arrow::csv::ConvertOptions::Defaults();
+        auto convert_options = MakeTabularCsvConvertOptions(missing_value_tokens);
 
         // Handle header
         if (!has_header) {
@@ -1342,7 +1343,8 @@ static size_t GetAvailableMemoryBytes() {
 DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
     const std::string& path, const std::string& name,
     bool has_header, char delimiter, int skip_rows,
-    int64_t max_rows, bool force_disk_backed) {
+    int64_t max_rows, bool force_disk_backed,
+    const std::vector<std::string>& missing_value_tokens) {
 
     // File size check (required for dispatch decision and for logging)
     int64_t file_size_bytes = 0;
@@ -1376,20 +1378,28 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
 
     if (!use_disk_backed) {
         // Fast path: fits in RAM, use the existing in-memory loader.
-        auto dataset = LoadCSVToArrow(path, name, has_header, delimiter, skip_rows, max_rows);
+        auto dataset = LoadCSVToArrow(path, name, has_header, delimiter,
+                                      skip_rows, max_rows, missing_value_tokens);
         return dataset ? TabularLoadBackend::InMemory : TabularLoadBackend::Failed;
     }
 
     // Slow path: file is too big (or forced). Convert to a Parquet cache
     // next to the system temp dir, open it via memory-mapped reads.
-    const std::string cache_path = ParquetBackedDataset::GetCacheFilePath(path);
+    const std::string cache_signature =
+        std::string(has_header ? "header=1" : "header=0") +
+        "|delimiter=" + std::to_string(static_cast<unsigned char>(delimiter)) +
+        "|skip=" + std::to_string(skip_rows) +
+        "|nulls=" + MissingValueTokensSignature(missing_value_tokens);
+    const std::string cache_path =
+        ParquetBackedDataset::GetCacheFilePath(path, cache_signature);
 
     if (ParquetBackedDataset::IsCacheFresh(path, cache_path)) {
         spdlog::info("LoadTabularCSV: reusing existing Parquet cache at '{}'", cache_path);
     } else {
         spdlog::info("LoadTabularCSV: converting CSV to Parquet cache at '{}'", cache_path);
         if (!ParquetBackedDataset::ConvertCsvToParquet(path, cache_path,
-                                                       has_header, delimiter, skip_rows)) {
+                                                       has_header, delimiter, skip_rows,
+                                                       missing_value_tokens)) {
             spdlog::error("LoadTabularCSV: CSV-to-Parquet conversion failed for '{}'", path);
             return TabularLoadBackend::Failed;
         }

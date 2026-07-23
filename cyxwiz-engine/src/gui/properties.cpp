@@ -210,6 +210,11 @@ void Properties::ClearSelection() {
     selected_node_ = nullptr;
 }
 
+void Properties::ClearNodeReferences() {
+    selected_node_ = nullptr;
+    active_dialog_.reset();
+}
+
 void Properties::SetBackendPlacementFacts(
     std::vector<properties_truth::BackendPlacementTruthFact> facts) {
     backend_placement_facts_ = std::move(facts);

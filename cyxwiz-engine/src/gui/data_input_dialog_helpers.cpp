@@ -12,6 +12,7 @@
 
 #include "node_config_dialog.h"
 #include "data_input_preview.h"
+#include "../core/async_task_manager.h"
 #include "../core/data_preview_service.h"
 #include "../core/data_registry.h"
 
@@ -36,6 +37,7 @@ void DataInputDialog::DetectFileCategory() {
 }
 
 void DataInputDialog::LoadPreview() {
+    ResetPreviewPaging();
     preview_error_.clear();
     preview_columns_.clear();
     preview_data_.clear();
@@ -54,38 +56,10 @@ void DataInputDialog::LoadPreview() {
         return;
     }
 
-    const bool can_preview_registered_tabular =
-        source_type_ == SourceType::File &&
-        (file_category_ == FileCategory::Tabular ||
-         file_category_ == FileCategory::TimeSeries) &&
-        !loaded_dataset_name_.empty() &&
-        data_load_state_ == DataLoadState::InMemory;
-    if (can_preview_registered_tabular) {
-        cyxwiz::DataPreviewRequest request;
-        request.dataset_name = loaded_dataset_name_;
-        request.offset = 0;
-        request.row_limit = 20;
-        auto page = cyxwiz::DataPreviewService::PreviewRegisteredTabular(
-            cyxwiz::DataRegistry::Instance(), request);
-        if (!page.ok) {
-            preview_error_ = page.reason;
-            preview_loaded_ = true;
-            UpdateRAMEstimate();
-            return;
-        }
-
-        preview_backend_ = page.backend;
-        preview_total_rows_ = page.total_rows;
-        preview_next_offset_ = page.next_offset;
-        preview_has_next_ = page.has_next;
-        preview_columns_.reserve(page.schema.size());
-        for (const auto& column : page.schema) {
-            preview_columns_.push_back(column.name);
-        }
-        available_columns_ = preview_columns_;
-        preview_data_ = std::move(page.rows);
-        selected_columns_.assign(preview_columns_.size(), true);
+    if (CanPageRegisteredPreview()) {
+        preview_is_paged_ = true;
         preview_loaded_ = true;
+        RequestPreviewPage(0);
         UpdateRAMEstimate();
         return;
     }
@@ -126,6 +100,181 @@ void DataInputDialog::LoadColumnList() {
     selected_columns_.assign(table.columns.size(), true);
 
     UpdateTextLabelDistribution();
+}
+
+void DataInputDialog::RefreshColumnList() {
+    ResetPreviewPaging();
+    std::string selected_label;
+    if (label_column_idx_ >= 0 &&
+        label_column_idx_ < static_cast<int>(available_columns_.size())) {
+        selected_label = available_columns_[label_column_idx_];
+    }
+
+    preview_error_.clear();
+    preview_columns_.clear();
+    preview_data_.clear();
+    available_columns_.clear();
+    selected_columns_.clear();
+    label_column_idx_ = -1;
+
+    const bool is_delimited = detected_type_ >= 0 && detected_type_ <= 2;
+    const bool is_tabular_source =
+        source_type_ == SourceType::File &&
+        (file_category_ == FileCategory::Tabular ||
+         file_category_ == FileCategory::Text ||
+         file_category_ == FileCategory::TimeSeries);
+    if (strlen(file_path_) > 0 && is_delimited && is_tabular_source) {
+        LoadColumnList();
+    }
+
+    if (!selected_label.empty()) {
+        for (int i = 0; i < static_cast<int>(available_columns_.size()); ++i) {
+            if (available_columns_[i] == selected_label) {
+                label_column_idx_ = i;
+                break;
+            }
+        }
+    }
+    preview_loaded_ = false;
+}
+
+bool DataInputDialog::CanPageRegisteredPreview() const {
+    if (source_type_ != SourceType::File ||
+        (file_category_ != FileCategory::Tabular &&
+         file_category_ != FileCategory::TimeSeries) ||
+        loaded_dataset_name_.empty() ||
+        data_load_state_ != DataLoadState::InMemory ||
+        (loaded_backend_ != 1 && loaded_backend_ != 2) ||
+        !node_) {
+        return false;
+    }
+
+    const auto parameter_matches = [this](const char* key,
+                                           const std::string& value) {
+        const auto it = node_->parameters.find(key);
+        return it != node_->parameters.end() && it->second == value;
+    };
+    if (!parameter_matches("file_path", file_path_) ||
+        !parameter_matches("type", data_input::FileTypeParam(detected_type_)) ||
+        !parameter_matches("has_header", has_header_ ? "true" : "false") ||
+        !parameter_matches("delimiter", custom_delimiter_) ||
+        !parameter_matches("missing_value_tokens", missing_value_tokens_) ||
+        !parameter_matches("skip_rows", std::to_string(skip_rows_)) ||
+        !parameter_matches("max_rows", std::to_string(max_rows_))) {
+        return false;
+    }
+
+    const auto source_dataset =
+        cyxwiz::DataRegistry::Instance().FindTabularDatasetBySourcePath(file_path_);
+    return source_dataset && *source_dataset == loaded_dataset_name_;
+}
+
+void DataInputDialog::ResetPreviewPaging() {
+    ++preview_generation_;
+    preview_page_cache_.Clear();
+    preview_page_state_.reset();
+    preview_page_task_id_ = 0;
+    preview_loading_offset_ = -1;
+    preview_failed_offset_ = -1;
+    preview_is_paged_ = false;
+    preview_page_loading_ = false;
+    preview_page_error_.clear();
+}
+
+void DataInputDialog::RequestPreviewPage(int64_t row_index) {
+    if (!preview_is_paged_ || preview_page_loading_ ||
+        loaded_dataset_name_.empty()) {
+        return;
+    }
+
+    const int64_t offset = preview_page_cache_.AlignOffset(row_index);
+    if (offset >= preview_total_rows_ && preview_total_rows_ > 0) return;
+    if (preview_page_cache_.ContainsPage(offset)) return;
+    if (preview_failed_offset_ == offset) return;
+
+    cyxwiz::DataPreviewRequest request;
+    request.dataset_name = loaded_dataset_name_;
+    request.offset = offset;
+    request.row_limit = preview_page_cache_.PageSize();
+    request.selected_columns = preview_columns_;
+
+    auto state = std::make_shared<PreviewPageLoadState>();
+    state->generation = preview_generation_;
+    state->offset = offset;
+    preview_page_state_ = state;
+    preview_page_loading_ = true;
+    preview_loading_offset_ = offset;
+    preview_page_error_.clear();
+
+    preview_page_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Loading preview page",
+        [state, request](cyxwiz::LambdaTask&) {
+            try {
+                state->page = cyxwiz::DataPreviewService::PreviewRegisteredTabular(
+                    cyxwiz::DataRegistry::Instance(), request);
+            } catch (const std::exception& e) {
+                state->page.dataset_name = request.dataset_name;
+                state->page.reason = std::string("Preview page failed: ") + e.what();
+            } catch (...) {
+                state->page.dataset_name = request.dataset_name;
+                state->page.reason = "Preview page failed with an unknown error";
+            }
+            state->done.store(true);
+        });
+}
+
+void DataInputDialog::PollPreviewPageResult() {
+    auto state = preview_page_state_;
+    if (!state || !state->done.load()) return;
+
+    preview_page_state_.reset();
+    preview_page_task_id_ = 0;
+    preview_page_loading_ = false;
+    preview_loading_offset_ = -1;
+
+    if (!preview_is_paged_ || state->generation != preview_generation_) return;
+
+    auto& page = state->page;
+    if (!page.ok) {
+        preview_failed_offset_ = state->offset;
+        if (preview_page_cache_.PageCount() == 0) {
+            preview_error_ = page.reason.empty()
+                ? "Preview page could not be loaded"
+                : page.reason;
+        } else {
+            preview_page_error_ = page.reason.empty()
+                ? "Additional preview rows could not be loaded"
+                : page.reason;
+        }
+        return;
+    }
+
+    if (preview_columns_.empty()) {
+        preview_columns_.reserve(page.schema.size());
+        for (const auto& column : page.schema) {
+            preview_columns_.push_back(column.name);
+        }
+        available_columns_ = preview_columns_;
+        selected_columns_.assign(preview_columns_.size(), true);
+    } else if (page.schema.size() != preview_columns_.size()) {
+        preview_error_ = "Preview schema changed while paging";
+        return;
+    } else {
+        for (std::size_t i = 0; i < page.schema.size(); ++i) {
+            if (page.schema[i].name != preview_columns_[i]) {
+                preview_error_ = "Preview schema changed while paging";
+                return;
+            }
+        }
+    }
+
+    preview_backend_ = page.backend;
+    preview_total_rows_ = page.total_rows;
+    preview_next_offset_ = page.next_offset;
+    preview_has_next_ = page.has_next;
+    preview_page_cache_.PutPage(page.offset, std::move(page.rows));
+    if (preview_failed_offset_ == page.offset) preview_failed_offset_ = -1;
+    preview_page_error_.clear();
 }
 
 void DataInputDialog::UpdateRAMEstimate() {
@@ -185,10 +334,8 @@ void DataInputDialog::BrowseFile() {
         strncpy(file_path_, file, sizeof(file_path_) - 1);
         DetectFileType();
         DetectFileCategory();
-        LoadColumnList();
-        label_column_idx_ = -1;
+        RefreshColumnList();
         has_changes_ = true;
-        preview_loaded_ = false;
     }
 #else
     spdlog::warn("File browser not implemented for this platform");

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include "csv_ingestion_options.h"
 #include <map>
 #include <memory>
 #include <mutex>
@@ -433,7 +434,9 @@ public:
                                        char delimiter = ',',
                                        int skip_rows = 0,
                                        int64_t max_rows = 0,
-                                       bool force_disk_backed = false);
+                                       bool force_disk_backed = false,
+                                       const std::vector<std::string>& missing_value_tokens =
+                                           DefaultTabularMissingValueTokens());
 
     // Arrow format-specific loaders (for DataInput node)
     //
@@ -452,7 +455,9 @@ public:
     // design (not yet implemented).
     std::shared_ptr<class ArrowDataset> LoadCSVToArrow(const std::string& path, const std::string& name,
                                                         bool has_header = true, char delimiter = ',', int skip_rows = 0,
-                                                        int64_t max_rows = 0);
+                                                        int64_t max_rows = 0,
+                                                        const std::vector<std::string>& missing_value_tokens =
+                                                            DefaultTabularMissingValueTokens());
     std::shared_ptr<class ArrowDataset> LoadParquetToArrow(const std::string& path, const std::string& name);
     std::shared_ptr<class ArrowDataset> LoadJSONToArrow(const std::string& path, const std::string& name, bool json_lines = false);
     std::shared_ptr<class ArrowDataset> LoadExcelToArrow(const std::string& path, const std::string& name, int sheet_idx = 0);

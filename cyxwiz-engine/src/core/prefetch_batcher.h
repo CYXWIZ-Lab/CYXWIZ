@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <condition_variable>
 #include <mutex>
+#include <memory>
 #include <queue>
 #include <string>
 #include <thread>
@@ -17,7 +18,15 @@ namespace cyxwiz {
 class PrefetchBatcher final : public IBatcher {
 public:
     PrefetchBatcher(IBatcher& source, size_t queue_depth, std::string name)
-        : source_(source)
+        : source_(&source)
+        , queue_depth_(std::max<size_t>(1, queue_depth))
+        , name_(std::move(name)) {}
+
+    PrefetchBatcher(std::shared_ptr<IBatcher> source,
+                    size_t queue_depth,
+                    std::string name)
+        : owned_source_(std::move(source))
+        , source_(owned_source_.get())
         , queue_depth_(std::max<size_t>(1, queue_depth))
         , name_(std::move(name)) {}
 
@@ -46,7 +55,7 @@ public:
 
     void Reset() override {
         StopWorker();
-        source_.Reset();
+        source_->Reset();
 
         std::lock_guard<std::mutex> lock(mutex_);
         source_complete_ = false;
@@ -57,32 +66,32 @@ public:
     bool IsEpochComplete() const override {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!started_) {
-            return source_.IsEpochComplete();
+            return source_->IsEpochComplete();
         }
         return source_complete_ && queue_.empty();
     }
 
-    size_t GetNumBatches() const override { return source_.GetNumBatches(); }
-    size_t GetNumSamples() const override { return source_.GetNumSamples(); }
+    size_t GetNumBatches() const override { return source_->GetNumBatches(); }
+    size_t GetNumSamples() const override { return source_->GetNumSamples(); }
 
     void SetNormalization(float mean, float std_dev) override {
         StopWorker();
-        source_.SetNormalization(mean, std_dev);
+        source_->SetNormalization(mean, std_dev);
     }
 
     void SetOneHotEncoding(size_t num_classes) override {
         StopWorker();
-        source_.SetOneHotEncoding(num_classes);
+        source_->SetOneHotEncoding(num_classes);
     }
 
     void SetFlatten(bool flatten) override {
         StopWorker();
-        source_.SetFlatten(flatten);
+        source_->SetFlatten(flatten);
     }
 
     void SetPhase(BatcherPhase phase) override {
         StopWorker();
-        source_.SetPhase(phase);
+        source_->SetPhase(phase);
     }
 
 private:
@@ -131,7 +140,7 @@ private:
                 }
             }
 
-            Batch batch = source_.GetNextBatch();
+            Batch batch = source_->GetNextBatch();
 
             std::unique_lock<std::mutex> lock(mutex_);
             if (stop_requested_) {
@@ -155,7 +164,8 @@ private:
         queue_.swap(empty);
     }
 
-    IBatcher& source_;
+    std::shared_ptr<IBatcher> owned_source_;
+    IBatcher* source_ = nullptr;
     size_t queue_depth_;
     std::string name_;
 

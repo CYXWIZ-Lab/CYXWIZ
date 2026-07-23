@@ -1,6 +1,8 @@
 #include "core/arrow_dataset.h"
 #include "core/data_registry.h"
 #include "core/pipeline_executor.h"
+#include "core/pipeline_execution_task.h"
+#include "core/async_task_manager.h"
 #include "core/pipeline_runtime_capabilities.h"
 
 #include <arrow/api.h>
@@ -14,6 +16,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <thread>
 
 namespace {
 
@@ -215,6 +218,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "SentimentAnalyzer",
         "SortRows",
         "StationarityTest",
+        "StandardScaler",
         "StringManipulation",
         "TableCropper",
         "TargetEncoder",
@@ -273,6 +277,8 @@ int main() {
     registry.UnloadDataset("ds_operator_RandomForestClassifier_213");
     registry.UnloadDataset("ds_operator_GradientBoostingClassifier_219");
     registry.UnloadDataset("ds_operator_TreeModelPredictor_223");
+    registry.UnloadDataset("ds_operator_StandardScaler_5004");
+    registry.UnloadDataset("ds_operator_StandardScaler_6002");
 
     const std::string preflight_invalid_schema_json =
         R"({"nodes":[)"
@@ -331,12 +337,26 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_save_dataset_file_type.parquet";
     const fs::path missing_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_values.csv";
+    const fs::path missing_token_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_tokens.csv";
     const fs::path string_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_strings.csv";
     const fs::path mixed_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_mixed.csv";
     const fs::path missing_string_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_missing_strings.csv";
+    const fs::path preprocessing_train_csv_path =
+        fs::temp_directory_path() / "cyxwiz_preprocessing_state_train.csv";
+    const fs::path preprocessing_test_csv_path =
+        fs::temp_directory_path() / "cyxwiz_preprocessing_state_test.csv";
+    const fs::path scaler_train_csv_path =
+        fs::temp_directory_path() / "cyxwiz_scaler_state_train.csv";
+    const fs::path scaler_test_csv_path =
+        fs::temp_directory_path() / "cyxwiz_scaler_state_test.csv";
+    const fs::path fill_state_path =
+        fs::temp_directory_path() / "cyxwiz_fill_missing_state.cyxstate.json";
+    const fs::path scaler_state_path =
+        fs::temp_directory_path() / "cyxwiz_standard_scaler_state.cyxstate.json";
     const fs::path duplicates_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_duplicates.csv";
     const fs::path json_payload_csv_path =
@@ -363,9 +383,16 @@ int main() {
     fs::remove(save_dataset_csv_path);
     fs::remove(save_dataset_file_type_parquet_path);
     fs::remove(missing_csv_path);
+    fs::remove(missing_token_csv_path);
     fs::remove(string_csv_path);
     fs::remove(mixed_csv_path);
     fs::remove(missing_string_csv_path);
+    fs::remove(preprocessing_train_csv_path);
+    fs::remove(preprocessing_test_csv_path);
+    fs::remove(scaler_train_csv_path);
+    fs::remove(scaler_test_csv_path);
+    fs::remove(fill_state_path);
+    fs::remove(scaler_state_path);
     fs::remove(duplicates_csv_path);
     fs::remove(json_payload_csv_path);
     fs::remove(roc_csv_path);
@@ -415,6 +442,13 @@ int main() {
         csv << "3,\n";
     }
     {
+        std::ofstream csv(missing_token_csv_path);
+        csv << "sensor_a,sensor_b,class\n";
+        csv << "1,10,neg\n";
+        csv << "na,20,pos\n";
+        csv << "3,?,neg\n";
+    }
+    {
         std::ofstream csv(string_csv_path);
         csv << "phrase\n";
         csv << "tea cup\n";
@@ -433,6 +467,32 @@ int main() {
         csv << "tea cup,a\n";
         csv << ",b\n";
         csv << "blue mug,c\n";
+    }
+    {
+        std::ofstream csv(preprocessing_train_csv_path);
+        csv << "x,y,label\n";
+        csv << "1,10,neg\n";
+        csv << ",20,pos\n";
+        csv << "5,30,neg\n";
+    }
+    {
+        std::ofstream csv(preprocessing_test_csv_path);
+        csv << "x,y,label\n";
+        csv << ",100,neg\n";
+        csv << "9,200,pos\n";
+    }
+    {
+        std::ofstream csv(scaler_train_csv_path);
+        csv << "x,label\n";
+        csv << "1,neg\n";
+        csv << "3,pos\n";
+        csv << "5,neg\n";
+    }
+    {
+        std::ofstream csv(scaler_test_csv_path);
+        csv << "x,label\n";
+        csv << "3,neg\n";
+        csv << "103,pos\n";
     }
     {
         std::ofstream csv(duplicates_csv_path);
@@ -471,6 +531,82 @@ int main() {
     Check(table->num_rows() == 3, "operator output preserves row count");
     Check(std::fabs(ReadFirstFloatValue(table, "x") - 1.0) > 0.1,
           "operator output changed the scaled column");
+
+    const std::string missing_token_pipeline_json =
+        R"({"nodes":[)"
+        R"({"id":5001,"type":"DataInput","name":"MissingTokenInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(missing_token_csv_path.string()) +
+        R"(","type":"csv","has_header":"true","missing_value_tokens":"na,?"}},)"
+        R"({"id":5002,"type":"FillMissing","name":"Fill","parameters":{)"
+        R"("strategy":"constant","value":"0"}},)"
+        R"({"id":5003,"type":"LabelEncoder","name":"Encode","parameters":{)"
+        R"("column":"class"}},)"
+        R"({"id":5004,"type":"StandardScaler","name":"ScaleAll","parameters":{)"
+        R"("columns":"","label_col":"class","with_mean":"true","with_std":"true"}})"
+        R"(],"links":[{"start_node":5001,"end_node":5002},)"
+        R"({"start_node":5002,"end_node":5003},)"
+        R"({"start_node":5003,"end_node":5004}]})";
+
+    cyxwiz::PipelineExecutor missing_token_executor;
+    Check(missing_token_executor.ExecutePipeline(missing_token_pipeline_json),
+          "configured missing tokens should remain numeric through preprocessing: " +
+              missing_token_executor.GetLastError());
+    auto missing_token_output =
+        registry.GetArrowDataset("ds_operator_StandardScaler_5004");
+    Check(missing_token_output != nullptr,
+          "missing-token preprocessing output should be registered");
+    auto missing_token_table = missing_token_output->GetArrowTable();
+    Check(missing_token_table->schema()->GetFieldByName("sensor_a")->type()->id() ==
+              arrow::Type::FLOAT &&
+              missing_token_table->schema()->GetFieldByName("sensor_b")->type()->id() ==
+              arrow::Type::FLOAT,
+          "automatic StandardScaler should transform both numeric sensor columns");
+    Check(missing_token_table->schema()->GetFieldByName("class")->type()->id() ==
+              arrow::Type::INT32,
+          "LabelEncoder should preserve an integer class column excluded from scaling");
+    Check(missing_token_table->column(
+              missing_token_table->schema()->GetFieldIndex("sensor_a"))->null_count() == 0 &&
+              missing_token_table->column(
+              missing_token_table->schema()->GetFieldIndex("sensor_b"))->null_count() == 0,
+          "FillMissing should replace configured CSV null tokens before scaling");
+
+    const std::string async_pipeline_json =
+        R"({"nodes":[)"
+        R"({"id":6001,"type":"DataInput","name":"AsyncInput","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":6002,"type":"StandardScaler","name":"AsyncScale","parameters":{)"
+        R"("columns":"x","with_mean":"true","with_std":"true"}})"
+        R"(],"links":[{"start_node":6001,"end_node":6002}]})";
+    const auto async_submission = cyxwiz::SubmitPipelineExecutionTask(
+        "Pipeline task regression", async_pipeline_json);
+    Check(async_submission.task_id != 0,
+          "pipeline execution should return a Tasks-panel task id");
+    auto async_task = cyxwiz::AsyncTaskManager::Instance().GetTask(
+        async_submission.task_id);
+    Check(async_task != nullptr,
+          "submitted pipeline should be observable through AsyncTaskManager");
+    for (int i = 0; i < 1000; ++i) {
+        async_task = cyxwiz::AsyncTaskManager::Instance().GetTask(
+            async_submission.task_id);
+        if (async_task &&
+            async_task->GetState() != cyxwiz::TaskState::Pending &&
+            async_task->GetState() != cyxwiz::TaskState::Running) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Check(async_task && async_task->GetState() == cyxwiz::TaskState::Completed,
+          "task-backed pipeline execution should complete successfully");
+    const auto async_snapshot = async_submission.tracker->GetSnapshot();
+    Check(async_snapshot.node_states.at(6001) ==
+              cyxwiz::PipelineNodeExecutionEvent::Completed &&
+              async_snapshot.node_states.at(6002) ==
+              cyxwiz::PipelineNodeExecutionEvent::Completed,
+          "task-backed pipeline should expose completed per-node lifecycle states");
+    Check(registry.GetArrowDataset("ds_operator_StandardScaler_6002") != nullptr,
+          "task-backed pipeline should publish its runtime output");
 
     const std::string acf_json =
         R"({"nodes":[)"
@@ -4760,6 +4896,142 @@ int main() {
           "FillMissing bad numeric constant error should be specific: " +
               fill_missing_bad_numeric_constant_executor.GetLastError());
 
+    const std::string fit_missing_state_json =
+        R"({"nodes":[)"
+        R"({"id":9101,"type":"DataInput","name":"Training Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(preprocessing_train_csv_path.string()) +
+        R"(","type":"csv","has_header":"true","dataset_role":"train"}},)"
+        R"({"id":9102,"type":"FillMissing","name":"Fit Missing State","parameters":{)"
+        R"("strategy":"mean","columns":"x,y","label_col":"label",)"
+        R"("operation_mode":"fit_transform","save_state":"true",)"
+        R"("state_overwrite":"false","state_path":")" +
+        JsonEscapePath(fill_state_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9101,"end_node":9102}]})";
+
+    cyxwiz::PipelineExecutor fit_missing_state_executor;
+    Check(fit_missing_state_executor.ExecutePipeline(fit_missing_state_json),
+          "FillMissing should fit and save training means: " +
+              fit_missing_state_executor.GetLastError());
+    Check(fs::exists(fill_state_path),
+          "FillMissing fitted state artifact should be persisted");
+
+    const std::string transform_missing_state_json =
+        R"({"nodes":[)"
+        R"({"id":9103,"type":"DataInput","name":"Test Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(preprocessing_test_csv_path.string()) +
+        R"(","type":"csv","has_header":"true","dataset_role":"test"}},)"
+        R"({"id":9104,"type":"FillMissing","name":"Reuse Missing State","parameters":{)"
+        R"("strategy":"mean","columns":"x,y","label_col":"label",)"
+        R"("operation_mode":"transform_only","save_state":"false",)"
+        R"("state_path":")" + JsonEscapePath(fill_state_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9103,"end_node":9104}]})";
+
+    cyxwiz::PipelineExecutor transform_missing_state_executor;
+    Check(transform_missing_state_executor.ExecutePipeline(
+              transform_missing_state_json),
+          "FillMissing should reuse training means on test data: " +
+              transform_missing_state_executor.GetLastError());
+    auto transformed_missing =
+        registry.GetArrowDataset("ds_fillmissing_9104");
+    Check(transformed_missing != nullptr,
+          "FillMissing Transform Only output should be registered");
+    Check(std::fabs(ReadNumericValue(
+                        transformed_missing->GetArrowTable(), "x", 0) -
+                    3.0) < 0.001,
+          "FillMissing Transform Only must use training mean 3, not test mean 9");
+
+    const std::string fit_scaler_state_json =
+        R"({"nodes":[)"
+        R"({"id":9105,"type":"DataInput","name":"Scaler Training Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(scaler_train_csv_path.string()) +
+        R"(","type":"csv","has_header":"true","dataset_role":"train"}},)"
+        R"({"id":9106,"type":"StandardScaler","name":"Fit Scaler State","parameters":{)"
+        R"("columns":"x","label_col":"label","with_mean":"true",)"
+        R"("with_std":"true","operation_mode":"fit_transform",)"
+        R"("save_state":"true","state_overwrite":"false","state_path":")" +
+        JsonEscapePath(scaler_state_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9105,"end_node":9106}]})";
+
+    cyxwiz::PipelineExecutor fit_scaler_state_executor;
+    Check(fit_scaler_state_executor.ExecutePipeline(fit_scaler_state_json),
+          "StandardScaler should fit and save training statistics: " +
+              fit_scaler_state_executor.GetLastError());
+    Check(fs::exists(scaler_state_path),
+          "StandardScaler fitted state artifact should be persisted");
+
+    const std::string transform_scaler_state_json =
+        R"({"nodes":[)"
+        R"({"id":9107,"type":"DataInput","name":"Scaler Test Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(scaler_test_csv_path.string()) +
+        R"(","type":"csv","has_header":"true","dataset_role":"test"}},)"
+        R"({"id":9108,"type":"StandardScaler","name":"Reuse Scaler State","parameters":{)"
+        R"("columns":"x","label_col":"label","with_mean":"true",)"
+        R"("with_std":"true","operation_mode":"transform_only",)"
+        R"("save_state":"false","state_path":")" +
+        JsonEscapePath(scaler_state_path.string()) +
+        R"("}})"
+        R"(],"links":[{"start_node":9107,"end_node":9108}]})";
+
+    cyxwiz::PipelineExecutor transform_scaler_state_executor;
+    Check(transform_scaler_state_executor.ExecutePipeline(
+              transform_scaler_state_json),
+          "StandardScaler should reuse training statistics on test data: " +
+              transform_scaler_state_executor.GetLastError());
+    auto transformed_scaler =
+        registry.GetArrowDataset("ds_operator_StandardScaler_9108");
+    Check(transformed_scaler != nullptr,
+          "StandardScaler Transform Only output should be registered");
+    Check(std::fabs(ReadNumericValue(
+                        transformed_scaler->GetArrowTable(), "x", 0)) <
+              0.001,
+          "StandardScaler Transform Only must map training mean 3 to zero");
+
+    const std::string leakage_guard_json =
+        R"({"nodes":[)"
+        R"({"id":9109,"type":"DataInput","name":"Evaluation Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(scaler_test_csv_path.string()) +
+        R"(","type":"csv","has_header":"true","dataset_role":"test"}},)"
+        R"({"id":9110,"type":"StandardScaler","name":"Bad Evaluation Fit","parameters":{)"
+        R"("columns":"x","operation_mode":"fit_transform"}})"
+        R"(],"links":[{"start_node":9109,"end_node":9110}]})";
+
+    cyxwiz::PipelineExecutor leakage_guard_executor;
+    Check(!leakage_guard_executor.ExecutePipeline(leakage_guard_json),
+          "Fit + Transform should be rejected for test-role data");
+    Check(leakage_guard_executor.GetLastError().find(
+              "cannot Fit + Transform data whose Dataset role is 'test'") !=
+              std::string::npos,
+          "leakage guard should explain Transform Only correction: " +
+              leakage_guard_executor.GetLastError());
+
+    const std::string missing_state_path_json =
+        R"({"nodes":[)"
+        R"({"id":9111,"type":"DataInput","name":"Evaluation Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(scaler_test_csv_path.string()) +
+        R"(","type":"csv","has_header":"true","dataset_role":"test"}},)"
+        R"({"id":9112,"type":"StandardScaler","name":"Missing State Path","parameters":{)"
+        R"("columns":"x","operation_mode":"transform_only"}})"
+        R"(],"links":[{"start_node":9111,"end_node":9112}]})";
+
+    cyxwiz::PipelineExecutor missing_state_path_executor;
+    Check(!missing_state_path_executor.ExecutePipeline(
+              missing_state_path_json),
+          "Transform Only should fail before execution without a state path");
+    Check(missing_state_path_executor.GetLastError().find(
+              "Transform Only but State artifact path is empty") !=
+              std::string::npos,
+          "missing state path should include a corrective diagnostic: " +
+              missing_state_path_executor.GetLastError());
+
     const std::string string_replace_json =
         R"({"nodes":[)"
         R"({"id":65,"type":"DataInput","name":"Input","parameters":{)"
@@ -5834,6 +6106,14 @@ int main() {
     registry.UnloadDataset("ds_datainput_184");
     registry.UnloadDataset("ds_fillmissing_185");
     registry.UnloadDataset("ds_datainput_186");
+    registry.UnloadDataset("ds_datainput_9101");
+    registry.UnloadDataset("ds_fillmissing_9102");
+    registry.UnloadDataset("ds_datainput_9103");
+    registry.UnloadDataset("ds_fillmissing_9104");
+    registry.UnloadDataset("ds_datainput_9105");
+    registry.UnloadDataset("ds_operator_StandardScaler_9106");
+    registry.UnloadDataset("ds_datainput_9107");
+    registry.UnloadDataset("ds_operator_StandardScaler_9108");
     registry.UnloadDataset("ds_datainput_65");
     registry.UnloadDataset("ds_string_66");
     registry.UnloadDataset("ds_datainput_67");
@@ -5884,6 +6164,8 @@ int main() {
     registry.UnloadDataset("ds_datainput_148");
     registry.UnloadDataset("ds_datainput_150");
     registry.UnloadDataset("ds_datainput_83");
+    registry.UnloadDataset("ds_operator_StandardScaler_5004");
+    registry.UnloadDataset("ds_operator_StandardScaler_6002");
     fs::remove(csv_path);
     fs::remove(decision_tree_csv_path);
     fs::remove(decision_tree_model_path);
@@ -5896,9 +6178,17 @@ int main() {
     fs::remove(save_dataset_csv_path);
     fs::remove(save_dataset_file_type_parquet_path);
     fs::remove(missing_csv_path);
+    fs::remove(missing_token_csv_path);
     fs::remove(string_csv_path);
     fs::remove(missing_string_csv_path);
+    fs::remove(preprocessing_train_csv_path);
+    fs::remove(preprocessing_test_csv_path);
+    fs::remove(scaler_train_csv_path);
+    fs::remove(scaler_test_csv_path);
+    fs::remove(fill_state_path);
+    fs::remove(scaler_state_path);
     fs::remove(sequence_vocab_csv_path);
 
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
     return 0;
 }

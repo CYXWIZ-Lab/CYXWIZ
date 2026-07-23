@@ -122,6 +122,8 @@ set(ENGINE_SOURCES
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/preprocessing_state.cpp  # Versioned fitted preprocessing artifacts
+    src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/pipeline_runtime_capabilities.cpp  # Data Studio runtime support truth
     src/core/data_studio_execution_plan.cpp  # Track 22 typed Data Studio plan
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
@@ -1847,6 +1849,7 @@ set_target_properties(test_tree_model_predictor_operator PROPERTIES
 # ===== Test: Pipeline Operator Metadata Drift Guard =====
 add_executable(test_pipeline_operator_metadata
     tests/test_pipeline_operator_metadata.cpp
+    src/core/preprocessing_state.cpp
     src/core/data_analyzer.cpp
     src/data/data_table.cpp
     src/core/node_metadata_registry.cpp
@@ -1911,6 +1914,7 @@ set_target_properties(test_pipeline_operator_metadata PROPERTIES
 # ===== Test: Legacy PipelineExecutor operator routing =====
 add_executable(test_pipeline_executor_operator_routing
     tests/test_pipeline_executor_operator_routing.cpp
+    src/core/preprocessing_state.cpp
     src/core/arrow_dataset.cpp
     src/core/data_registry.cpp
     src/core/data_registry_core.cpp
@@ -1922,6 +1926,10 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/image_utils.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
+    src/core/pipeline_execution_task.cpp
+    src/core/async_task_manager.cpp
+    src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
     src/core/pipeline_table_materializer.cpp
@@ -1991,6 +1999,7 @@ set_target_properties(test_pipeline_executor_operator_routing PROPERTIES
 # ===== Test: Pipeline operator executor/materializer parity =====
 add_executable(test_pipeline_operator_materializer_parity
     tests/test_pipeline_operator_materializer_parity.cpp
+    src/core/preprocessing_state.cpp
     src/core/arrow_dataset.cpp
     src/core/data_registry.cpp
     src/core/data_registry_core.cpp
@@ -2071,6 +2080,7 @@ set_target_properties(test_pipeline_operator_materializer_parity PROPERTIES
 # ===== Test: DataConvert upstream dataset input =====
 add_executable(test_data_convert_pipeline_input
     tests/test_data_convert_pipeline_input.cpp
+    src/core/preprocessing_state.cpp
     src/core/arrow_dataset.cpp
     src/core/data_registry.cpp
     src/core/data_registry_core.cpp
@@ -2392,6 +2402,7 @@ target_include_directories(test_tabular_loader_apply_context PRIVATE
 target_link_libraries(test_tabular_loader_apply_context PRIVATE
     imgui::imgui
     cyxwiz-backend
+    Arrow::arrow_shared
 )
 
 if(WIN32)
@@ -2601,6 +2612,7 @@ set_target_properties(test_text_arrow_training_launch PROPERTIES
 # ===== Test: Graph Training Sequence Preflight =====
 add_executable(test_graph_training_sequence_preflight
     tests/test_graph_training_sequence_preflight.cpp
+    src/core/preprocessing_state.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/async_task_manager.cpp

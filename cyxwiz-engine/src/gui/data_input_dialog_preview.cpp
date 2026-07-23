@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -37,6 +38,17 @@ void DataInputDialog::RenderPreviewPanel() {
         ImGui::TextDisabled("Configure source and click\nLoad Preview to see data");
     } else if (!preview_error_.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", preview_error_.c_str());
+        if (preview_is_paged_ && preview_failed_offset_ >= 0) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Retry preview")) {
+                const int64_t retry_offset = preview_failed_offset_;
+                preview_failed_offset_ = -1;
+                preview_error_.clear();
+                RequestPreviewPage(retry_offset);
+            }
+        }
+    } else if (preview_is_paged_ && preview_columns_.empty()) {
+        ImGui::TextDisabled("Loading the first preview page...");
     } else {
         if (source_type_ == SourceType::File) {
             switch (file_category_) {
@@ -65,53 +77,115 @@ void DataInputDialog::RenderTabularPreview() {
         return;
     }
 
+    const std::size_t rows_in_view = preview_is_paged_
+        ? preview_page_cache_.RowCount()
+        : preview_data_.size();
     if (preview_total_rows_ > 0) {
         std::string backend_label;
         if (!preview_backend_.empty()) {
             backend_label = " (" + preview_backend_ + ")";
         }
-        ImGui::Text("%zu columns, %zu rows shown of %lld%s",
+        ImGui::Text("%zu columns, %zu rows %s of %lld%s",
                     preview_columns_.size(),
-                    preview_data_.size(),
+                    rows_in_view,
+                    preview_is_paged_ ? "cached" : "shown",
                     static_cast<long long>(preview_total_rows_),
                     backend_label.c_str());
     } else {
         ImGui::Text("%zu columns, %zu rows",
                     preview_columns_.size(),
-                    preview_data_.size());
+                    rows_in_view);
     }
-    if (preview_has_next_) {
+    if (preview_is_paged_) {
         ImGui::SameLine();
-        ImGui::TextDisabled("next offset %lld",
-                            static_cast<long long>(preview_next_offset_));
+        if (preview_page_loading_) {
+            ImGui::TextDisabled("loading rows %lld-%lld...",
+                static_cast<long long>(preview_loading_offset_ + 1),
+                static_cast<long long>(preview_loading_offset_ +
+                    preview_page_cache_.PageSize()));
+        } else {
+            ImGui::TextDisabled("scroll to load more");
+        }
     }
     ImGui::Spacing();
 
+    int64_t first_missing_row = -1;
+    int64_t last_visible_row = -1;
     if (ImGui::BeginTable("Preview", static_cast<int>(preview_columns_.size()),
         ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
         ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit,
-        ImVec2(0, ImGui::GetContentRegionAvail().y - 30))) {
+        ImVec2(0, std::max(160.0f, ImGui::GetContentRegionAvail().y - 30)))) {
 
         for (const auto& col : preview_columns_) {
             ImGui::TableSetupColumn(col.c_str(), ImGuiTableColumnFlags_WidthFixed, 80.0f);
         }
         ImGui::TableHeadersRow();
 
-        int row_idx = 0;
-        for (const auto& row : preview_data_) {
-            if (row_idx >= 20) break;
-            ImGui::TableNextRow();
-            int col_idx = 0;
-            for (const auto& cell : row) {
-                if (col_idx < static_cast<int>(preview_columns_.size())) {
-                    ImGui::TableSetColumnIndex(col_idx);
-                    ImGui::TextUnformatted(cell.c_str());
+        const int64_t row_count = preview_is_paged_
+            ? preview_total_rows_
+            : static_cast<int64_t>(preview_data_.size());
+        const int clipped_row_count = static_cast<int>(std::min<int64_t>(
+            std::max<int64_t>(0, row_count),
+            std::numeric_limits<int>::max()));
+        ImGuiListClipper clipper;
+        clipper.Begin(clipped_row_count);
+        while (clipper.Step()) {
+            for (int row_index = clipper.DisplayStart;
+                 row_index < clipper.DisplayEnd;
+                 ++row_index) {
+                last_visible_row = row_index;
+                const std::vector<std::string>* row = nullptr;
+                if (preview_is_paged_) {
+                    row = preview_page_cache_.FindRow(row_index);
+                    if (!row && first_missing_row < 0) first_missing_row = row_index;
+                } else if (row_index >= 0 &&
+                           row_index < static_cast<int>(preview_data_.size())) {
+                    row = &preview_data_[static_cast<std::size_t>(row_index)];
                 }
-                col_idx++;
+
+                ImGui::TableNextRow();
+                for (int column_index = 0;
+                     column_index < static_cast<int>(preview_columns_.size());
+                     ++column_index) {
+                    if (!ImGui::TableSetColumnIndex(column_index)) continue;
+                    if (!row) {
+                        ImGui::TextDisabled("...");
+                    } else if (column_index < static_cast<int>(row->size())) {
+                        ImGui::TextUnformatted(
+                            (*row)[static_cast<std::size_t>(column_index)].c_str());
+                    }
+                }
             }
-            row_idx++;
         }
         ImGui::EndTable();
+    }
+
+    if (preview_is_paged_ && !preview_page_loading_) {
+        if (first_missing_row >= 0) {
+            RequestPreviewPage(first_missing_row);
+        } else if (last_visible_row >= 0) {
+            const int64_t page_offset =
+                preview_page_cache_.AlignOffset(last_visible_row);
+            const int64_t next_offset =
+                page_offset + preview_page_cache_.PageSize();
+            const bool near_page_end =
+                last_visible_row + 20 >= next_offset;
+            if (near_page_end && next_offset < preview_total_rows_) {
+                RequestPreviewPage(next_offset);
+            }
+        }
+    }
+
+    if (!preview_page_error_.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f),
+                           "%s", preview_page_error_.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Retry page")) {
+            const int64_t retry_offset = preview_failed_offset_;
+            preview_failed_offset_ = -1;
+            RequestPreviewPage(retry_offset);
+        }
     }
 }
 

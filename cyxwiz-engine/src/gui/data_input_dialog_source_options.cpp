@@ -137,7 +137,6 @@ void DataInputDialog::RenderFileSource() {
     if (show_file_picker) {
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.08f, 0.14f, 0.60f));
         if (ImGui::BeginChild("FileSelection", ImVec2(0, 118), false,
                               ImGuiWindowFlags_NoScrollbar |
                                   ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -154,9 +153,8 @@ void DataInputDialog::RenderFileSource() {
             if (ImGui::InputText("##filepath", file_path_, sizeof(file_path_))) {
                 DetectFileType();
                 DetectFileCategory();
-                LoadColumnList();
+                RefreshColumnList();
                 has_changes_ = true;
-                preview_loaded_ = false;
             }
             ImGui::PopStyleVar();
             ImGui::SameLine();
@@ -181,7 +179,6 @@ void DataInputDialog::RenderFileSource() {
             }
         }
         ImGui::EndChild();
-        ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
     }
 
@@ -225,8 +222,8 @@ void DataInputDialog::RenderTabularOptions() {
                 const bool selected = detected_type_ == option.detected_type;
                 if (ImGui::Selectable(option.label, selected)) {
                     detected_type_ = option.detected_type;
+                    RefreshColumnList();
                     has_changes_ = true;
-                    preview_loaded_ = false;
                 }
                 if (selected) {
                     ImGui::SetItemDefaultFocus();
@@ -250,20 +247,33 @@ void DataInputDialog::RenderTabularOptions() {
             ImGui::SameLine(100);
             ImGui::SetNextItemWidth(50);
             if (ImGui::InputText("##delim", custom_delimiter_, sizeof(custom_delimiter_))) {
+                RefreshColumnList();
                 has_changes_ = true;
-                preview_loaded_ = false;
             }
 
             ImGui::SameLine(180);
             if (ImGui::Checkbox("Has header", &has_header_)) {
+                RefreshColumnList();
                 has_changes_ = true;
-                preview_loaded_ = false;
             }
 
             ImGui::Text("Quote char:");
             ImGui::SameLine(100);
             ImGui::SetNextItemWidth(30);
             ImGui::InputText("##quote", quote_char_, sizeof(quote_char_));
+
+            ImGui::Text("Missing tokens:");
+            ImGui::SameLine(100);
+            ImGui::SetNextItemWidth(220);
+            if (ImGui::InputText("##missingtokens", missing_value_tokens_,
+                                 sizeof(missing_value_tokens_))) {
+                has_changes_ = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Comma-separated values treated as null before type inference.\n"
+                    "Example: na,?,missing. Arrow standard null spellings remain enabled.");
+            }
         }
     }
 

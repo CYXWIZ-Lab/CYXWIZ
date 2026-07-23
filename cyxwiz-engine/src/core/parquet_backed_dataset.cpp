@@ -178,7 +178,9 @@ std::string ParquetBackedDataset::GetCacheDir() {
     return cache_dir.string();
 }
 
-std::string ParquetBackedDataset::GetCacheFilePath(const std::string& csv_path) {
+std::string ParquetBackedDataset::GetCacheFilePath(
+    const std::string& csv_path,
+    const std::string& parser_signature) {
     // Layout:  <temp>/cyxwiz/cache/<basename>_<pathhash>.parquet
     //
     // Hashing the full absolute path means the same CSV at the same location
@@ -192,7 +194,8 @@ std::string ParquetBackedDataset::GetCacheFilePath(const std::string& csv_path) 
     }
 
     const std::string abs_str = csv_abs.string();
-    const size_t hash = std::hash<std::string>{}(abs_str);
+    const size_t hash = std::hash<std::string>{}(
+        abs_str + "|" + parser_signature);
 
     const std::string stem = csv_abs.stem().string();  // filename without extension
     char hash_hex[32];
@@ -324,7 +327,8 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
                                                  const std::string& parquet_path,
                                                  bool has_header,
                                                  char delimiter,
-                                                 int skip_rows) {
+                                                 int skip_rows,
+                                                 const std::vector<std::string>& missing_value_tokens) {
     spdlog::info("ParquetBackedDataset::ConvertCsvToParquet: {} -> {}", csv_path, parquet_path);
 
     // Atomic write: stream to a .tmp path first, then rename on success.
@@ -381,7 +385,7 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
         auto parse_options = arrow::csv::ParseOptions::Defaults();
         parse_options.delimiter = delimiter;
 
-        auto convert_options = arrow::csv::ConvertOptions::Defaults();
+        auto convert_options = MakeTabularCsvConvertOptions(missing_value_tokens);
 
         auto maybe_reader = arrow::csv::StreamingReader::Make(
             arrow::io::default_io_context(), csv_input,

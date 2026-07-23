@@ -3173,6 +3173,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // Format options (dynamically shown based on file_type)
             node.parameters["delimiter"] = ",";
             node.parameters["header"] = "true";
+            node.parameters["missing_value_tokens"] = "na";
             node.parameters["sheet_name"] = "";
             node.parameters["hdf5_key"] = "";
 
@@ -3412,6 +3413,13 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
             node.parameters["strategy"] = "mean";  // mean, median, mode, constant
             node.parameters["fill_value"] = "0";
+            node.parameters["value"] = "0";
+            node.parameters["columns"] = "";
+            node.parameters["label_col"] = "";
+            node.parameters["operation_mode"] = "fit_transform";
+            node.parameters["state_path"] = "";
+            node.parameters["save_state"] = "false";
+            node.parameters["state_overwrite"] = "false";
             break;
         }
 
@@ -4460,6 +4468,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["label_col"] = "";
             node.parameters["with_mean"] = "true";
             node.parameters["with_std"] = "true";
+            node.parameters["operation_mode"] = "fit_transform";
+            node.parameters["state_path"] = "";
+            node.parameters["save_state"] = "false";
+            node.parameters["state_overwrite"] = "false";
             break;
         }
 
@@ -5361,6 +5373,13 @@ void NodeEditor::DeleteNode(int node_id) {
     if (node_it != nodes_.end()) {
         spdlog::info("Deleting node: {} (ID: {})", node_it->name, node_id);
 
+        // Properties and configuration dialogs hold raw pointers into nodes_.
+        // Erasing a vector element can invalidate pointers to this node and to
+        // any elements shifted after it, so release every such reference first.
+        if (properties_panel_) {
+            properties_panel_->ClearNodeReferences();
+        }
+
         // If this is a data input node, drop its registered dataset before
         // we erase the node — otherwise the registry entry leaks until app
         // exit (the next graph won't have a node referencing it).
@@ -5383,11 +5402,10 @@ void NodeEditor::ClearGraph() {
     SaveUndoState();
     ClearValidationState();  // Graph changed — stale compile results
 
-    // IMPORTANT: Clear properties panel selection BEFORE clearing nodes
-    // to prevent dangling pointer access (the properties panel holds a raw pointer
-    // to the selected node which becomes invalid after nodes_.clear())
+    // IMPORTANT: Clear every properties/dialog node reference BEFORE clearing
+    // nodes. Both the panel and active configuration dialog hold raw pointers.
     if (properties_panel_) {
-        properties_panel_->ClearSelection();
+        properties_panel_->ClearNodeReferences();
     }
 
     // Drop every data input node's registered dataset before we lose the

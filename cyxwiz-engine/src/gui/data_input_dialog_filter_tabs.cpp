@@ -2,6 +2,7 @@
 
 #include "node_config_dialog.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace gui {
@@ -55,8 +56,8 @@ void DataInputDialog::RenderLimitRowsTab() {
     ImGui::SetNextItemWidth(100);
     if (ImGui::InputInt("##skip", &skip_rows_)) {
         if (skip_rows_ < 0) skip_rows_ = 0;
+        RefreshColumnList();
         has_changes_ = true;
-        preview_loaded_ = false;
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(before parsing)");
@@ -65,15 +66,33 @@ void DataInputDialog::RenderLimitRowsTab() {
 
     ImGui::Spacing();
 
-    static bool limit_enabled = false;
-    ImGui::Checkbox("Limit number of rows", &limit_enabled);
+    bool limit_enabled = max_rows_ > 0;
+    if (ImGui::Checkbox("Limit number of rows", &limit_enabled)) {
+        max_rows_ = limit_enabled
+            ? (max_rows_ > 0 ? max_rows_ : 1000)
+            : 0;
+        ResetPreviewPaging();
+        preview_loaded_ = false;
+        has_changes_ = true;
+    }
     if (limit_enabled) {
         ImGui::SameLine(180);
         ImGui::SetNextItemWidth(100);
         if (ImGui::InputInt("##maxrows", &max_rows_)) {
             if (max_rows_ < 1) max_rows_ = 1;
+            ResetPreviewPaging();
+            preview_loaded_ = false;
             has_changes_ = true;
         }
+    }
+    ImGui::TextDisabled(
+        "Caps rows available to splitting/training after Apply; unchecked means all rows.");
+    if (force_disk_backed_ && max_rows_ > 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
+            "Disk-backed row limits are not enforced yet; the full dataset will remain available.");
+    } else if (max_rows_ > 0) {
+        ImGui::TextDisabled(
+            "CSV currently parses the source before slicing to this final row count.");
     }
 
     ImGui::Spacing();

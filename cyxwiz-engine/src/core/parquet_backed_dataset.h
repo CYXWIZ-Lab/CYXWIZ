@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "csv_ingestion_options.h"
 
 namespace cyxwiz {
 
@@ -46,7 +47,9 @@ public:
      *
      * Layout: <system_temp>/cyxwiz/cache/<basename>_<pathhash>.parquet
      */
-    static std::string GetCacheFilePath(const std::string& csv_path);
+    static std::string GetCacheFilePath(
+        const std::string& csv_path,
+        const std::string& parser_signature = {});
 
     /**
      * Return the cache directory path used by GetCacheFilePath. Exposed so
@@ -94,7 +97,9 @@ public:
                                      const std::string& parquet_path,
                                      bool has_header = true,
                                      char delimiter = ',',
-                                     int skip_rows = 0);
+                                     int skip_rows = 0,
+                                     const std::vector<std::string>& missing_value_tokens =
+                                         DefaultTabularMissingValueTokens());
 
     /**
      * Read a single row group as an in-memory Arrow Table.

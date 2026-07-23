@@ -3,6 +3,7 @@
 #include "../src/core/data_registry.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/gui/data_input_preview.h"
+#include "../src/gui/data_preview_page_cache.h"
 
 #include <arrow/api.h>
 
@@ -68,6 +69,23 @@ std::shared_ptr<arrow::Table> MakePreviewTable() {
 } // namespace
 
 int main() {
+    gui::data_input::PreviewPageCache page_cache(2, 2);
+    page_cache.PutPage(0, {{"r0"}, {"r1"}});
+    page_cache.PutPage(2, {{"r2"}, {"r3"}});
+    Check(page_cache.PageCount() == 2 && page_cache.RowCount() == 4,
+          "preview cache should retain only configured bounded pages");
+    Check(page_cache.FindRow(0) && (*page_cache.FindRow(0))[0] == "r0",
+          "preview cache should resolve a row by virtual dataset index");
+    page_cache.PutPage(4, {{"r4"}, {"r5"}});
+    Check(page_cache.FindRow(0) != nullptr,
+          "recently used preview page should survive LRU eviction");
+    Check(page_cache.FindRow(2) == nullptr,
+          "least-recently used preview page should be evicted");
+    Check(page_cache.FindRow(5) && (*page_cache.FindRow(5))[0] == "r5",
+          "new preview page should be available after eviction");
+    Check(page_cache.AlignOffset(5) == 4,
+          "preview row should align to its bounded page offset");
+
     const fs::path preambled_csv_path =
         fs::temp_directory_path() / "cyxwiz_preambled_preview.csv";
     {

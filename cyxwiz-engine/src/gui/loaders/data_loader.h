@@ -99,6 +99,7 @@ struct ApplyContext {
     std::string detected_file_type;
     bool has_header = true;
     char delimiter = ',';
+    std::string missing_value_tokens = "na";
     int skip_rows = 0;
     int64_t max_rows = 0;                 // 0 means "all rows"
     bool force_disk_backed = false;

@@ -35,6 +35,9 @@ class StandardScalerOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "StandardScaler"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    // Fit writes external state; Transform Only reads a mutable artifact.
+    // Re-enable caching only after artifact content identity joins cache keys.
+    bool IsCacheable() const override { return false; }
 
     bool Configure(const std::map<std::string, std::string>& params,
                    std::string& error) override;
@@ -50,6 +53,10 @@ private:
     std::string label_col_;
     bool with_mean_ = true;
     bool with_std_ = true;
+    std::string operation_mode_ = "fit_transform";
+    std::string state_path_;
+    bool save_state_ = false;
+    bool state_overwrite_ = false;
     PipelineOperatorProgressCallback progress_callback_;
 };
 

@@ -179,11 +179,8 @@ private:
     bool deployment_requested_;
 
     // Pipeline execution
-    std::unique_ptr<PipelineExecutor> executor_;
-
-    // Phase 8: Execution progress tracking
-    float execution_progress_;
-    std::string execution_status_;
+    std::shared_ptr<PipelineExecutor> executor_;
+    uint64_t pipeline_task_id_ = 0;
 
     // Rendering helpers
     void RenderNodePalette();
