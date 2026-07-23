@@ -335,3 +335,12 @@ changes are outside Track 70 scope and must remain isolated.
   boundary. Pin-connectivity negative fixtures were rewritten to preserve each
   intended compile failure without stale DataInput label pins, and the example
   guard now scans both saved-graph and template formats.
+- 2026-07-22: Reproduced the APS CSV preamble failure against the supplied
+  Train/Test files. Their real 171-column header follows 20 license/metadata
+  rows. The Apply loader already honors skip_rows=20, but source preview did
+  not; preview now skips the same physical rows, changing the setting
+  invalidates stale preview state, and the UI clarifies that the next row is
+  treated as the header. Added a generic preambled-CSV regression fixture so
+  no APS-specific filename or schema logic enters the engine. CSV failures now
+  also point users to delimiter/header settings and explicit source-row skipping.
+  Release test_data_preview_service and cyxwiz-engine build passed.

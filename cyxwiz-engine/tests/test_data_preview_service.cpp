@@ -2,11 +2,13 @@
 #include "../src/core/data_preview_service.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/parquet_backed_dataset.h"
+#include "../src/gui/data_input_preview.h"
 
 #include <arrow/api.h>
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -66,6 +68,35 @@ std::shared_ptr<arrow::Table> MakePreviewTable() {
 } // namespace
 
 int main() {
+    const fs::path preambled_csv_path =
+        fs::temp_directory_path() / "cyxwiz_preambled_preview.csv";
+    {
+        std::ofstream csv(preambled_csv_path, std::ios::binary | std::ios::trunc);
+        csv << "Dataset information\n"
+            << "Copyright notice\n"
+            << "License terms,with,commas\n"
+            << "----------------\n"
+            << "class,feature_a,feature_b\n"
+            << "neg,1,2\n"
+            << "pos,3,4\n";
+    }
+    const auto preambled_preview = gui::data_input::LoadDelimitedPreview(
+        preambled_csv_path.string(), true, ',', 1, 4);
+    Check(preambled_preview.error.empty(),
+          "preambled CSV preview should load after skipping source metadata");
+    Check(preambled_preview.columns ==
+              std::vector<std::string>({"class", "feature_a", "feature_b"}),
+          "first row after skipped metadata should become the header");
+    Check(preambled_preview.rows.size() == 2 &&
+              preambled_preview.rows[0][0] == "neg" &&
+              preambled_preview.rows[1][2] == "4",
+          "preambled CSV preview should return data rows after the header");
+    const auto over_skipped_preview = gui::data_input::LoadDelimitedPreview(
+        preambled_csv_path.string(), true, ',', 1, 50);
+    Check(over_skipped_preview.error.find("No tabular rows remain") !=
+              std::string::npos,
+          "preview should explain when skip_rows consumes the source");
+
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnregisterTabularDataset("preview_arrow");
     registry.UnregisterTabularDataset("preview_parquet");
@@ -143,6 +174,7 @@ int main() {
     registry.UnregisterTabularDataset("preview_parquet");
     std::error_code ec;
     fs::remove(parquet_path, ec);
+    fs::remove(preambled_csv_path, ec);
 
     std::cout << "Data preview service test passed\n";
     return 0;

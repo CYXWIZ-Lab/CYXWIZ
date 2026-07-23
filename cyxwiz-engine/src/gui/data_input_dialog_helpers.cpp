@@ -109,7 +109,8 @@ void DataInputDialog::LoadColumnList() {
         file_path_,
         has_header_,
         custom_delimiter_[0],
-        detected_type_);
+        detected_type_,
+        skip_rows_);
     if (!table.error.empty()) {
         preview_error_ = table.error;
         return;

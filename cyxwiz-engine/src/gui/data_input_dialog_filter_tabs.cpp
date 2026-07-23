@@ -50,15 +50,18 @@ void DataInputDialog::RenderLimitRowsTab() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::Text("Skip first N rows:");
+    ImGui::Text("Skip first N source rows:");
     ImGui::SameLine(180);
     ImGui::SetNextItemWidth(100);
     if (ImGui::InputInt("##skip", &skip_rows_)) {
         if (skip_rows_ < 0) skip_rows_ = 0;
         has_changes_ = true;
+        preview_loaded_ = false;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(excluding header)");
+    ImGui::TextDisabled("(before parsing)");
+    ImGui::TextDisabled(
+        "With Has header enabled, the next source row becomes the header.");
 
     ImGui::Spacing();
 

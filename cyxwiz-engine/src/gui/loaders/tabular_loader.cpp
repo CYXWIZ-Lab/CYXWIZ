@@ -273,7 +273,10 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         }
                     } else {
                         state->success = false;
-                        state->message = "Failed to load CSV - check file format";
+                        state->message =
+                            "Failed to load CSV. Check delimiter/header; if "
+                            "metadata precedes the header, set Skip first N "
+                            "source rows.";
                     }
                 } else {
                     // Non-CSV supported formats go straight to Arrow

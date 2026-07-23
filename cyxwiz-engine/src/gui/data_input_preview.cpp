@@ -11,6 +11,7 @@ PreviewTable LoadDelimitedPreview(
     bool has_header,
     char delimiter,
     int detected_type,
+    int skip_rows,
     int max_lines) {
     PreviewTable table;
     if (path.empty()) {
@@ -32,6 +33,19 @@ PreviewTable LoadDelimitedPreview(
     }
 
     std::string line;
+    const int rows_to_skip = std::max(0, skip_rows);
+    int rows_skipped = 0;
+    while (rows_skipped < rows_to_skip && std::getline(file, line)) {
+        ++rows_skipped;
+    }
+    if (rows_skipped < rows_to_skip ||
+        (rows_to_skip > 0 &&
+         file.peek() == std::ifstream::traits_type::eof())) {
+        table.error = "No tabular rows remain after skipping " +
+            std::to_string(rows_to_skip) + " source rows";
+        return table;
+    }
+
     int line_count = 0;
     while (std::getline(file, line) && line_count < max_lines) {
         std::vector<std::string> cells;

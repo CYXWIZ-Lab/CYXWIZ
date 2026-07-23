@@ -3177,6 +3177,7 @@ set_target_properties(test_data_convert_service PROPERTIES
 # ===== Test: Shared bounded data preview service =====
 add_executable(test_data_preview_service
     tests/test_data_preview_service.cpp
+    src/gui/data_input_preview.cpp
     src/core/data_preview_service.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp

@@ -24,6 +24,7 @@ PreviewTable LoadDelimitedPreview(
     bool has_header,
     char delimiter,
     int detected_type,
+    int skip_rows = 0,
     int max_lines = 25);
 
 LabelDistribution ComputeLabelDistribution(
