@@ -105,7 +105,7 @@ Batch ImageDatasetBatcher::GetNextBatch() {
     batch_data.reserve(actual_size * sample_dim);
     std::vector<float> batch_labels;
 
-    if (do_onehot_ && num_classes_ > 0) {
+    if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
         batch_labels.resize(actual_size * num_classes_, 0.0f);
     } else {
         batch_labels.reserve(actual_size);
@@ -172,7 +172,7 @@ Batch ImageDatasetBatcher::GetNextBatch() {
         // Flatten is default for image → Dense head
         batch_data.insert(batch_data.end(), pixels.begin(), pixels.end());
 
-        if (do_onehot_ && num_classes_ > 0) {
+        if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
             if (label >= 0 && static_cast<size_t>(label) < num_classes_) {
                 batch_labels[i * num_classes_ + label] = 1.0f;
             }
@@ -191,8 +191,10 @@ Batch ImageDatasetBatcher::GetNextBatch() {
                             batch_data.data(), DataType::Float32);
     }
 
-    if (do_onehot_ && num_classes_ > 0) {
+    if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
         batch.labels = Tensor({actual_size, num_classes_}, batch_labels.data(), DataType::Float32);
+    } else if (scalar_label_mode_) {
+        batch.labels = Tensor({actual_size, 1}, batch_labels.data(), DataType::Float32);
     } else {
         batch.labels = Tensor({actual_size}, batch_labels.data(), DataType::Float32);
     }

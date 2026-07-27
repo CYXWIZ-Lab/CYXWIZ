@@ -17,6 +17,44 @@ using json = nlohmann::json;
 constexpr const char* kArtifactType = "cyxwiz.preprocessing_state";
 constexpr int kArtifactVersion = 1;
 
+bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    if (!type) {
+        return false;
+    }
+    switch (type->id()) {
+    case arrow::Type::INT8:
+    case arrow::Type::INT16:
+    case arrow::Type::INT32:
+    case arrow::Type::INT64:
+    case arrow::Type::UINT8:
+    case arrow::Type::UINT16:
+    case arrow::Type::UINT32:
+    case arrow::Type::UINT64:
+    case arrow::Type::HALF_FLOAT:
+    case arrow::Type::FLOAT:
+    case arrow::Type::DOUBLE:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsNumericArrowTypeName(const std::string& name) {
+    return name == "int8" || name == "int16" || name == "int32" ||
+           name == "int64" || name == "uint8" || name == "uint16" ||
+           name == "uint32" || name == "uint64" ||
+           name == "halffloat" || name == "float" || name == "double";
+}
+
+bool IsStringArrowType(const std::shared_ptr<arrow::DataType>& type) {
+    return type && (type->id() == arrow::Type::STRING ||
+                    type->id() == arrow::Type::LARGE_STRING);
+}
+
+bool IsStringArrowTypeName(const std::string& name) {
+    return name == "string" || name == "large_string";
+}
+
 std::string AbsolutePathForMessage(const std::filesystem::path& path) {
     std::error_code ec;
     const auto absolute = std::filesystem::absolute(path, ec);
@@ -245,7 +283,15 @@ bool ValidateFittedPreprocessingStateSchema(
         }
         const std::string actual =
             schema->field(index)->type()->ToString();
-        if (actual != feature.data_type) {
+        const auto& actual_type = schema->field(index)->type();
+        const bool compatible_numeric =
+            IsNumericArrowTypeName(feature.data_type) &&
+            IsNumericArrowType(actual_type);
+        const bool compatible_string =
+            IsStringArrowTypeName(feature.data_type) &&
+            IsStringArrowType(actual_type);
+        if (actual != feature.data_type && !compatible_numeric &&
+            !compatible_string) {
             error = state.operator_name + ": state expects column '" +
                     feature.name + "' to have type " + feature.data_type +
                     ", but this dataset has " + actual +

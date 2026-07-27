@@ -92,48 +92,41 @@ void ParquetArrowBatcher::InitializeColumns() {
     feature_cols_.reserve(num_cols);
     label_col_idx_ = -1;
 
-    for (int i = 0; i < num_cols; ++i) {
-        const auto& field_name = schema->field(i)->name();
-        if (!label_column_.empty() && field_name == label_column_) {
-            label_col_idx_ = i;
-        } else {
-            if (field_name.rfind("__", 0) == 0 ||
-                (!partition_column_.empty() && field_name == partition_column_)) {
-                continue;
-            }
-            feature_cols_.push_back(i);
-        }
-    }
+    label_col_idx_ = ResolveLabelColumnIndex(schema, label_column_);
     if (!label_column_.empty() && label_col_idx_ < 0) {
         spdlog::warn("ParquetArrowBatcher: explicit label column '{}' not found; "
                      "falling back to common label-name auto-detection",
                      label_column_);
         label_col_idx_ = FindCommonLabelColumnIndex(schema);
         if (label_col_idx_ >= 0) {
-            feature_cols_.erase(
-                std::remove(feature_cols_.begin(), feature_cols_.end(), label_col_idx_),
-                feature_cols_.end());
             spdlog::info("ParquetArrowBatcher: auto-detected fallback label "
                          "column at index {} ('{}')",
                          label_col_idx_, schema->field(label_col_idx_)->name());
         }
     }
-    num_features_ = feature_cols_.size();
 
-    // If the caller didn't name a label column, auto-detect: assume the last
-    // column is the label (matches ArrowDatasetBatcher behavior for
-    // unsupervised vs supervised ambiguity).
+    // Legacy fallback for schemas without a conventional label name. The
+    // compiler now blocks this ambiguity for supervised graph launches, but
+    // direct batcher callers retain the historical last-column behavior.
     if (label_col_idx_ < 0 && num_cols > 1) {
         label_col_idx_ = num_cols - 1;
-        // Remove it from feature_cols_ if it crept in (it will have, since
-        // the loop above only excluded it when label_column_ was non-empty).
-        feature_cols_.erase(
-            std::remove(feature_cols_.begin(), feature_cols_.end(), label_col_idx_),
-            feature_cols_.end());
-        num_features_ = feature_cols_.size();
         spdlog::info("ParquetArrowBatcher: auto-detected label column at index {} ('{}')",
                      label_col_idx_, schema->field(label_col_idx_)->name());
     }
+
+    for (int i = 0; i < num_cols; ++i) {
+        if (i == label_col_idx_) continue;
+        const auto& field = schema->field(i);
+        const auto& field_name = field->name();
+        if (field_name.rfind("__", 0) == 0 ||
+            (!partition_column_.empty() && field_name == partition_column_)) {
+            continue;
+        }
+        if (IsNumericBatchFeatureType(field->type())) {
+            feature_cols_.push_back(i);
+        }
+    }
+    num_features_ = feature_cols_.size();
 }
 
 // -----------------------------------------------------------------------------
@@ -355,7 +348,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
     const size_t capacity = batch_size_;
     std::vector<float> batch_data(capacity * num_features_, 0.0f);
     std::vector<int> batch_labels(capacity, 0);
-    std::vector<float> batch_labels_float(regression_mode_ ? capacity : 0, 0.0f);
+    std::vector<float> batch_labels_float(scalar_label_mode_ ? capacity : 0, 0.0f);
     size_t rows_filled = 0;
 
     while (rows_filled < capacity) {
@@ -526,7 +519,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         const double* data = arr->raw_values();
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (regression_mode_) {
+                            if (scalar_label_mode_) {
                                 batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
@@ -539,7 +532,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         const float* data = arr->raw_values();
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (regression_mode_) {
+                            if (scalar_label_mode_) {
                                 batch_labels_float[rows_filled + b] = data[local_row];
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
@@ -552,7 +545,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         const int64_t* data = arr->raw_values();
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (regression_mode_) {
+                            if (scalar_label_mode_) {
                                 batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
@@ -565,7 +558,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         const int32_t* data = arr->raw_values();
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (regression_mode_) {
+                            if (scalar_label_mode_) {
                                 batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = data[local_row];
@@ -578,7 +571,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         const uint8_t* data = arr->raw_values();
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (regression_mode_) {
+                            if (scalar_label_mode_) {
                                 batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
@@ -591,7 +584,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         const uint16_t* data = arr->raw_values();
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (regression_mode_) {
+                            if (scalar_label_mode_) {
                                 batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
@@ -604,7 +597,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         const uint32_t* data = arr->raw_values();
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (regression_mode_) {
+                            if (scalar_label_mode_) {
                                 batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
@@ -617,7 +610,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         const int16_t* data = arr->raw_values();
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (regression_mode_) {
+                            if (scalar_label_mode_) {
                                 batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = data[local_row];
@@ -630,7 +623,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         const int8_t* data = arr->raw_values();
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (regression_mode_) {
+                            if (scalar_label_mode_) {
                                 batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = data[local_row];
@@ -669,8 +662,8 @@ Batch ParquetArrowBatcher::GetNextBatch() {
     std::vector<size_t> data_shape = {rows_filled, num_features_};
     batch.data = Tensor(data_shape, batch_data.data());
 
-    // Materialize the label tensor (one-hot or int-as-float)
-    if (regression_mode_ && label_col_idx_ >= 0) {
+    // Materialize scalar float, one-hot, or index labels.
+    if (scalar_label_mode_ && label_col_idx_ >= 0) {
         std::vector<size_t> label_shape = {rows_filled, 1};
         batch.labels = Tensor(label_shape, batch_labels_float.data());
     } else if (one_hot_ && label_col_idx_ >= 0) {

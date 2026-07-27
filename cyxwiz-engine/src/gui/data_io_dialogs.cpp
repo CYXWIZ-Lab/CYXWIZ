@@ -1233,7 +1233,7 @@ void DataLoaderDialog::RenderContent() {
     if (ImGui::InputText("##checkpoint_dir", checkpoint_dir_, sizeof(checkpoint_dir_))) {
         has_changes_ = true;
     }
-    ImGui::TextDisabled("  Empty uses the default run-local .cyxwiz/checkpoints path.");
+    ImGui::TextDisabled("  Empty uses the active project's checkpoints folder; without a project, runtime uses .cyxwiz/checkpoints.");
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Performance");

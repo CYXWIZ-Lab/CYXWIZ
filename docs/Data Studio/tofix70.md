@@ -2,8 +2,41 @@
 
 ## Status
 
-Open - architecture and planning ticket. No implementation is authorized by
-this document.
+Completed for the production tabular workflow - 2026-07-27.
+
+The Train/Dev/Test role resolver, Dataset-oriented split contract, external
+held-out evaluation, fitted preprocessing reuse, truthful lazy preview,
+streaming row limits, partition provenance, and checkpoint-to-test workflow
+are implemented and covered by focused regressions. APS was used only as an
+acceptance fixture; no APS path, schema, row count, or model rule is embedded
+in the engine.
+
+Completion boundary: Track 70 closes the Arrow/Parquet tabular training path
+that motivated this ticket. Extending the same typed role contract to image,
+audio, text, time-series, self-supervised, or reinforcement-learning runtimes
+is follow-up work, as are typed preprocessing-state ports and exact optimizer
+resume. Those extensions do not change the completed tabular contract.
+
+## Tracked follow-ups - not Track 70 closure blockers
+
+The following production extensions remain intentionally outside the completed
+tabular contract and require their own scoped tickets and acceptance tests:
+
+1. Extend resolved Train/Dev/Test roles to image, audio, text, and time-series
+   adapters without adding modality-specific branches to Data Split.
+2. Introduce typed training plans for self-supervised, unsupervised, and
+   reinforcement-learning execution instead of treating every objective as
+   supervised labels.
+3. Replace file-mediated fitted preprocessing handoff with typed state ports
+   and pin-aware same-graph Train/Dev/Test coordination.
+4. Add checkpoint v2 with optimizer, scheduler, RNG, sampler, graph, and
+   dataset identity required for exact training resume.
+5. Persist complete run-comparison history rather than presenting loaded
+   checkpoints as fabricated training runs.
+
+These follow-ups may reuse the Track 70 DatasetAsset, role resolver, manifest,
+and checkpoint-validation boundaries. They must not broaden or duplicate the
+core tabular loader merely to share the same UI.
 
 ## Decision statement
 
@@ -321,19 +354,19 @@ The replacement Asset Browser behavior is:
 | Current action | Target action/behavior |
 | --- | --- |
 | `Load Dataset` | Remove. Offer `Create Data Input from this source` as a convenience only; it creates/configures a Data Input node, then Data Input performs the load. |
-| `View in Table` | Replace with `Preview Data`, backed by the same shared Data Preview service used by Data Input. |
-| `Quick Preview` on a supported dataset | Route to the same `Preview Data` service; keep generic file preview only for non-dataset assets such as code/Markdown. |
+| `View in Table` / `Preview Data` | Remove the redundant context command. Selecting an already registered DatasetAsset displays the bounded side-pane preview backed by the shared Data Preview service. |
+| `Quick Preview` on a supported dataset | Hide it for dataset sources so it cannot invoke a second parser. Keep generic file preview only for non-dataset assets such as code/Markdown. |
 | `Show in Explorer` | Keep, but repair it as a file-system action with the exact selected file/folder and a visible typed failure if the OS launch fails. |
 
-`Preview Data` may open a bounded transient preview directly from a source file
-without registering a training dataset. It must use the same adapter and
-format-aware renderer contract as Data Input and must not populate DataRegistry
-as a side effect. If the dataset is already loaded through Data Input, it uses
-that DatasetAsset and its real schema/metadata.
+The Asset Browser does not parse an unregistered dataset source. The user
+chooses `Create Data Input from this source`, then uses Data Input's
+authoritative parser options and Preview tab. This keeps raw-source parsing in
+one place. Selecting a dataset already registered by Data Input shows its real
+schema and bounded page in the Asset Browser side pane without reloading it.
 
 ```text
-Asset Browser -> Preview Data -> shared DataPreviewService <- Data Input
-Asset Browser -> Create Data Input from this source -> Data Input -> DatasetAsset
+selected registered DatasetAsset -> Asset Browser side pane -> DataPreviewService
+raw dataset source -> Create Data Input -> Data Input Preview -> DatasetAsset
 ```
 
 There must be one implementation for tabular table preview, one for text,
@@ -348,11 +381,12 @@ DataPreviewService; it must not own another CSV/Excel/HDF5 loader stack.
    Data Input node.
 2. `Create Data Input from this source` creates a configured graph source but
    does not mark it loaded until Data Input succeeds.
-3. `Preview Data` in Asset Browser and Data Input produces the same schema,
-   bounded sample, support state, and renderer for the same source.
-4. Previewing a source never creates orphaned DataRegistry training state.
+3. Selecting an already registered dataset in Asset Browser shows the same
+   schema, bounded sample, support state, and renderer as Data Input.
+4. Inspecting a registered dataset never creates duplicate or orphaned
+   DataRegistry training state.
 5. Unsupported formats display one clear support/preview reason rather than a
-   failed CSV fallback.
+   failed CSV fallback in Data Input.
 6. `Show in Explorer` selects/opens the exact target and reports OS failures.
 ### Data Split - role resolution and partition provenance
 
@@ -779,3 +813,181 @@ This slice deliberately uses a file artifact across separate train and
 evaluation executions. Typed preprocessing-state pins and pin-aware multi-input
 execution remain future work; the runtime must not pretend that two visible
 dataset inputs currently coordinate fit/apply state inside one node.
+
+Schema validation compares semantic type families for fitted preprocessing:
+numeric Arrow widths are mutually compatible, as are string-width variants.
+This allows role-specific integer compaction without weakening name, feature
+order, operator, or configuration checks. Numeric-to-string and other
+cross-family changes still fail closed.
+
+The verified APS acceptance run uses two explicit graphs rather than a
+dataset-specific engine path:
+
+- Train: 60,000 rows, `Fit + Transform`, 170 sensor features, `class` excluded.
+- External Test: 16,000 rows, `Transform Only`, the same two training artifacts,
+  170 sensor features, `class` excluded.
+- Outputs: distinct Train and Test Parquet artifacts; neither evaluation
+  operator computes replacement statistics from Test.
+
+APS remains an acceptance dataset only. No APS filename, column list, row count,
+or label value is embedded in the runtime.
+
+## Implemented supervised tabular label/shape contract - 2026-07-23
+
+The DataLoader `Labels -> Loss.Targets` edge expresses target flow, but it does
+not identify which source-table field contains those targets. The selected
+Data Input label metadata and the registered Arrow/Parquet schema now complete
+that contract generically:
+
+- Data Input Apply preserves an existing label while an asynchronous or
+  disk-backed source has not yet populated the column selector;
+- when no explicit label is stored, the compiler resolves conventional label
+  names from the registered schema and records the effective Train role label;
+- an explicit label absent from the schema fails closed with `CW-D-0102`;
+- an unresolved supervised tabular label fails compile instead of silently
+  treating the final column as the target;
+- the compiler derives the model input width from numeric, non-internal
+  feature fields after excluding the resolved label;
+- the training launcher repeats label and feature-width reconciliation against
+  the effective post-materialization schema before dispatch;
+- Arrow and disk-backed Parquet batchers now use the same numeric-feature
+  selection rule.
+
+This removes the unsafe `input_size=1` fallback that could construct
+`Linear(1, ...)` while a tabular batcher emitted a wider tensor. The fix is
+schema-based and contains no APS-specific column or file logic.
+
+### Resolved-role prefetch ownership fix - 2026-07-23
+
+The first APS classifier run after the label/shape fix exposed an independent
+generic crash when both an external dataset role and `prefetch_factor > 0`
+were active. `TrainingBatcherSet` initially keeps concrete Arrow/Parquet
+batchers beside non-owning `PrefetchBatcher` wrappers for inspection. During
+the resolved-role handoff, the wrappers were retained but their concrete
+sources were destroyed, leaving dangling pointers. Training then failed with
+Windows access violation `0xc0000005` before the first batch.
+
+The handoff now transfers each concrete source into its prefetch wrapper before
+the temporary batcher set is destroyed. A focused regression moves an Arrow
+prefetch set through `TakeResolvedExternalBatchers`, reads its sample count,
+and consumes a valid batch. This lifetime correction applies equally to
+Train, Dev, and Test roles and to Arrow and Parquet sources.
+
+The follow-up APS run was stopped safely by the ownership invariant with
+`PrefetchBatcher ownership source must match its wrapped source`. The external
+Test batcher had replaced the derived Test batcher after prefetch wrappers were
+created, so the retained wrapper still named the displaced source. Explicit
+role assembly now:
+
+- derives only roles that are not externally supplied;
+- clears the displaced Arrow or Parquet role owner;
+- applies preprocessing to the final Dev/Test sources;
+- attaches prefetch wrappers only after role replacement is complete; and
+- transfers the matching concrete source into each wrapper at task handoff.
+
+Role ratios are also normalized independently of DataSplit-node presence.
+Train plus external Test maps the Train source to Train/Dev only and preserves
+all external Test rows. Train plus external Dev plus external Test maps 100% of
+the Train source to Train. The focused batcher regression replaces a derived
+Test source, attaches prefetching, performs resolved-role ownership handoff,
+and consumes a valid batch from all six rows of the replacement source.
+
+## Implemented binary classification target/decision contract - 2026-07-23
+
+The first APS classifier run reported a constant 100% accuracy even while its
+loss changed. `BCEWithLogits` itself was functional; the fault was the runtime
+contract on either side of the loss:
+
+- a one-output binary model caused the loader to one-hot encode labels with
+  width one, mapping source label `0` to `[1]` and source label `1` to `[0]`;
+- train, validation, smoke, and test metrics then applied multiclass `argmax`
+  to a one-value output, which always returns index zero.
+
+Binary losses now opt into scalar float targets with shape `[batch, 1]` and
+preserve the encoded `0/1` values. `BCEWithLogits` decisions threshold logits
+at zero; `BCELoss` decisions threshold probabilities at 0.5. Multiclass losses
+retain score/one-hot tensors and `argmax`. One shared classification-decision
+utility owns prediction, target, accuracy, and confidence semantics so train,
+validation, smoke-run, and Run Test cannot drift independently. A scalar
+binary test result also allocates a two-class confusion matrix rather than a
+one-class matrix.
+
+The scalar-target contract is forwarded through legacy, Arrow, disk-backed
+Parquet, prefetch, image, audio, and text batchers. Focused regressions verify
+that Arrow and Parquet preserve `0,1` scalar labels and that a deterministic
+four-logit fixture reports 2/4 correct rather than the old false 4/4. The
+broader training-batcher model-step suite passes on both Arrow and Parquet.
+
+This is loss- and shape-driven engine behavior. APS remains only an acceptance
+dataset; no APS filename, class ratio, or schema is embedded in the fix.
+Checkpoints produced by the invalid one-hot-width-one run must not be used.
+
+## Implemented Tools > Test external-role selection - 2026-07-24
+
+The corrected APS run early-stopped after five non-improving epochs, restored
+the best checkpoint from epoch 6, and successfully evaluated all 16,000
+external Test rows inside `TrainingExecutor` (`test_loss=0.2848`,
+`test_acc=96.11%`). Invoking Tools > Test afterward failed independently:
+the command recompiled the graph, recognized `external test=true`, but selected
+the Train dataset and reconstructed its `90/10/0` partitions. Its newly built
+test batcher therefore contained zero rows.
+
+Tools > Test now resolves the same semantic dataset roles as graph training:
+
+- when an explicit Test role exists, its dataset identity, label metadata, and
+  source node are selected instead of the Train source;
+- an explicitly supplied Test dataset is consumed in full and is not split,
+  shuffled, dropped, stratified, or class-balanced again;
+- graphs without an explicit Test source preserve their configured derived
+  test-split behavior;
+- Arrow and disk-backed Parquet follow the same typed scope contract;
+- Test loss is constructed through the same model-builder function as
+  training, preserving reduction, weights, smoothing, and binary
+  `pos_weight` settings.
+
+Focused coverage proves that a Train plus external-Test configuration selects
+the Test identity, retains every supplied row, and rebuilds
+`BCEWithLogits(pos_weight=59)`. The full Debug engine build passes. The fix is
+role-driven and contains no APS-specific name, path, row count, or schema.
+
+## Implemented local checkpoint load for testing - 2026-07-27
+
+The engine can now restore a completed model without retraining it first.
+`Tools > Checkpoints > Load Checkpoint for Testing...` accepts either a concrete
+checkpoint directory or a training-run directory containing `best`. The active
+graph is compiled through the normal compiler and model builder, then the load
+runs as a visible background task so the GUI remains responsive.
+
+Loading is transactional. The checkpoint parameter count, names, shapes, and
+data types must exactly match the model built from the current graph before any
+parameter is changed. A successful load installs a shared active model for
+`Tools > Test`; a failed load leaves the previous model untouched and reports a
+specific task error. Cancelling the background task is also transactional: a
+model that finished reading after cancellation is not installed. `Tools > Test`
+compares the current graph fingerprint with the graph used for checkpoint load
+and requires an explicit reload if the canvas changed. The Training Dashboard
+identifies the active model as a checkpoint loaded for testing, including its
+source path and recorded metrics.
+
+Run Comparison remains a comparison of completed training runs from the current
+session. A loaded checkpoint is not inserted as a fabricated training run,
+because checkpoint format v1 does not contain the dataset, timing, partition,
+and complete run metadata required by that table. Persisted run history and
+exact training resume remain follow-up work. Exact resume requires a checkpoint
+format that also stores optimizer/scheduler state, RNG and sampler progress,
+the graph snapshot, and dataset identity; the current command is intentionally
+named load-for-testing rather than resume.
+
+The APS classifier checkpoint signature (`170 -> 128 -> 64 -> 1`) matches the
+current classifier graph and can exercise this workflow, but compatibility is
+validated generically and contains no APS-specific logic.
+
+## Implemented canonical project graph directory - 2026-07-27
+
+New projects now create a `cyxgraph` directory and register the `.cyxgraph`
+asset filter. Opening an older project additively creates the missing directory
+and merges the missing default filter without removing custom filters or the
+user-created legacy `node` directory. Graph Save/Open dialogs start in the
+active project's `cyxgraph` directory. When checkpoint output is not explicitly
+configured, graph training uses the active project's `checkpoints` directory;
+the runtime `.cyxwiz/checkpoints` path remains the fallback outside a project.

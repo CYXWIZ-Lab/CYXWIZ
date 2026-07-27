@@ -1,5 +1,6 @@
 #include "core/arrow_dataset.h"
 #include "core/data_registry.h"
+#include "core/parquet_backed_dataset.h"
 #include "core/pipeline_executor.h"
 #include "core/pipeline_execution_task.h"
 #include "core/async_task_manager.h"
@@ -260,13 +261,87 @@ void CheckValidationBadSchemaRoutingCoverage() {
     }
 }
 
-} // namespace
-
-int main() {
+void CheckTrack70RowAndColumnLimits() {
     namespace fs = std::filesystem;
-    CheckValidationBadSchemaRoutingCoverage();
 
     auto& registry = cyxwiz::DataRegistry::Instance();
+    const fs::path csv_path =
+        fs::temp_directory_path() / "cyxwiz_track70_ingestion_limits.csv";
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "feature,label\n"
+            << "1,0\n"
+            << "2,0\n"
+            << "3,1\n"
+            << "4,1\n"
+            << "5,1\n";
+    }
+
+    registry.UnregisterTabularDataset("track70_limited_arrow");
+    auto limited_arrow = registry.LoadCSVToArrow(
+        csv_path.string(),
+        "track70_limited_arrow",
+        true,
+        ',',
+        0,
+        2,
+        cyxwiz::DefaultTabularMissingValueTokens(),
+        {"label"});
+    Check(limited_arrow && limited_arrow->GetNumRows() == 2 &&
+              limited_arrow->GetNumColumns() == 1 &&
+              limited_arrow->GetColumnNames()[0] == "label",
+          "in-memory CSV load should enforce row and named-column limits");
+    registry.UnregisterTabularDataset("track70_limited_arrow");
+    limited_arrow.reset();
+
+    registry.UnregisterTabularDataset("track70_limited_parquet");
+    const auto limited_backend = registry.LoadTabularCSV(
+        csv_path.string(),
+        "track70_limited_parquet",
+        true,
+        ',',
+        0,
+        3,
+        true,
+        cyxwiz::DefaultTabularMissingValueTokens(),
+        {"feature"});
+    Check(
+        limited_backend ==
+            cyxwiz::DataRegistry::TabularLoadBackend::DiskBacked,
+        "forced disk-backed CSV row-limit fixture should use Parquet");
+    auto limited_parquet =
+        registry.GetParquetBackedDataset("track70_limited_parquet");
+    Check(limited_parquet && limited_parquet->GetNumRows() == 3 &&
+              limited_parquet->GetNumColumns() == 1 &&
+              limited_parquet->GetColumnNames()[0] == "feature",
+          "disk-backed CSV should enforce row and named-column limits");
+    const std::string limited_cache_path =
+        limited_parquet ? limited_parquet->GetFilePath() : std::string{};
+    registry.UnregisterTabularDataset("track70_limited_parquet");
+    limited_parquet.reset();
+
+    std::error_code remove_error;
+    fs::remove(csv_path, remove_error);
+    if (!limited_cache_path.empty()) {
+        fs::remove(limited_cache_path, remove_error);
+    }
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    if (argc == 2 &&
+        std::string(argv[1]) == "--track70-ingestion-limits") {
+        CheckTrack70RowAndColumnLimits();
+        return 0;
+    }
+
+    namespace fs = std::filesystem;
+    CheckValidationBadSchemaRoutingCoverage();
+    CheckTrack70RowAndColumnLimits();
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_datainput_222");
     registry.UnloadDataset("ds_datainput_429");
@@ -479,7 +554,7 @@ int main() {
         std::ofstream csv(preprocessing_test_csv_path);
         csv << "x,y,label\n";
         csv << ",100,neg\n";
-        csv << "9,200,pos\n";
+        csv << "999,200,pos\n";
     }
     {
         std::ofstream csv(scaler_train_csv_path);
@@ -492,7 +567,7 @@ int main() {
         std::ofstream csv(scaler_test_csv_path);
         csv << "x,label\n";
         csv << "3,neg\n";
-        csv << "103,pos\n";
+        csv << "1003,pos\n";
     }
     {
         std::ofstream csv(duplicates_csv_path);
@@ -4942,7 +5017,7 @@ int main() {
     Check(std::fabs(ReadNumericValue(
                         transformed_missing->GetArrowTable(), "x", 0) -
                     3.0) < 0.001,
-          "FillMissing Transform Only must use training mean 3, not test mean 9");
+          "FillMissing Transform Only must use training mean 3, not test mean 999");
 
     const std::string fit_scaler_state_json =
         R"({"nodes":[)"

@@ -196,7 +196,10 @@ void DataInputDialog::RequestPreviewPage(int64_t row_index) {
     request.dataset_name = loaded_dataset_name_;
     request.offset = offset;
     request.row_limit = preview_page_cache_.PageSize();
-    request.selected_columns = preview_columns_;
+    // The dialog renders the complete registered schema. Leave the column
+    // selection empty so each page is resolved by stable column position.
+    // Round-tripping names here can change the result for legal schemas that
+    // contain duplicate or empty field names.
 
     auto state = std::make_shared<PreviewPageLoadState>();
     state->generation = preview_generation_;
@@ -249,23 +252,36 @@ void DataInputDialog::PollPreviewPageResult() {
         return;
     }
 
+    std::vector<std::string> page_columns;
+    page_columns.reserve(page.schema.size());
+    for (const auto& column : page.schema) {
+        page_columns.push_back(column.name);
+    }
+
     if (preview_columns_.empty()) {
-        preview_columns_.reserve(page.schema.size());
-        for (const auto& column : page.schema) {
-            preview_columns_.push_back(column.name);
-        }
+        preview_columns_ = page_columns;
         available_columns_ = preview_columns_;
         selected_columns_.assign(preview_columns_.size(), true);
-    } else if (page.schema.size() != preview_columns_.size()) {
-        preview_error_ = "Preview schema changed while paging";
-        return;
-    } else {
-        for (std::size_t i = 0; i < page.schema.size(); ++i) {
-            if (page.schema[i].name != preview_columns_[i]) {
-                preview_error_ = "Preview schema changed while paging";
-                return;
-            }
-        }
+    } else if (page_columns != preview_columns_) {
+        // The registered dataset may have been refreshed while a page was in
+        // flight. Treat the result as a new preview generation instead of
+        // surfacing a terminal paging error. The current page remains useful;
+        // missing pages are fetched lazily against the refreshed schema.
+        spdlog::info(
+            "DataInputDialog: preview schema refreshed for '{}' while paging "
+            "(old columns={}, new columns={})",
+            loaded_dataset_name_,
+            preview_columns_.size(),
+            page_columns.size());
+        ++preview_generation_;
+        preview_page_cache_.Clear();
+        preview_failed_offset_ = -1;
+        preview_page_error_.clear();
+        preview_error_.clear();
+        preview_columns_ = std::move(page_columns);
+        available_columns_ = preview_columns_;
+        selected_columns_.assign(preview_columns_.size(), true);
+        label_column_idx_ = -1;
     }
 
     preview_backend_ = page.backend;

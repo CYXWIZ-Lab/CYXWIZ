@@ -1,8 +1,12 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/error_codes.h"
+#include "../src/core/data_registry.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/loaders/data_loader.h"
 
+#include <arrow/api.h>
+
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -1616,6 +1620,51 @@ int main() {
     Check(!HasIssueText(config, "requires a single prediction output"),
           "BCE loss should not report output-size mismatch for one output");
 
+    std::shared_ptr<arrow::Array> sensor_a;
+    std::shared_ptr<arrow::Array> sensor_b;
+    std::shared_ptr<arrow::Array> class_label;
+    arrow::FloatBuilder sensor_a_builder;
+    arrow::Int64Builder sensor_b_builder;
+    arrow::StringBuilder class_builder;
+    Check(sensor_a_builder.Finish(&sensor_a).ok() &&
+              sensor_b_builder.Finish(&sensor_b).ok() &&
+              class_builder.Finish(&class_label).ok(),
+          "empty schema-contract arrays should build");
+    auto schema_contract_table = arrow::Table::Make(
+        arrow::schema({
+            arrow::field("sensor_a", arrow::float32()),
+            arrow::field("class", arrow::utf8()),
+            arrow::field("sensor_b", arrow::int64()),
+        }),
+        {sensor_a, class_label, sensor_b});
+    cyxwiz::DataRegistry::Instance().RegisterArrowTable(
+        schema_contract_table, "compiler_schema_contract");
+
+    auto schema_data = data;
+    schema_data.parameters["dataset_name"] = "compiler_schema_contract";
+    schema_data.parameters["file_category"] = "tabular";
+    schema_data.parameters["label_column"] = "";
+    nodes = {schema_data, binary_dense, binary_loss, optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "a registered tabular schema with a conventional label should compile");
+    Check(config.input_size == 2 && config.input_shape == std::vector<size_t>{2},
+          "compiler input width must match the two numeric batch features");
+    Check(config.dataset_roles.train.label_column == "class",
+          "compiler should auto-resolve the tabular class label");
+    Check(!HasIssueText(config, cyxwiz::IssueLevel::Warning,
+                        "No label column selected"),
+          "an auto-resolved schema label should not emit the missing-label warning");
+
+    schema_data.parameters["label_column"] = "missing_label";
+    nodes = {schema_data, binary_dense, binary_loss, optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "an explicit label absent from the registered schema should block training");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Data::RequiredLabelColumnMissing),
+          "missing explicit label should expose the stable data error code");
+
     auto second_head = Node(19,
                             gui::NodeType::Dense,
                             "Second Head",
@@ -1677,6 +1726,91 @@ int main() {
           "multi-input graph should report single dataset-source training contract");
     Check(HasIssueText(config, "typed named-batch contract"),
           "multi-input graph should point to missing named-batch contract");
+
+    auto role_train = Node(
+        60,
+        gui::NodeType::DataInput,
+        "Role Train Data",
+        {},
+        {Pin(6001, gui::PinType::Dataset, "Dataset", false)});
+    role_train.parameters["dataset_name"] = "role_train_dataset";
+    role_train.parameters["dataset_role"] = "train";
+    role_train.parameters["label_column"] = "label";
+    role_train.parameters["shape"] = "[1]";
+
+    auto role_test = Node(
+        61,
+        gui::NodeType::DataInput,
+        "Role Test Data",
+        {},
+        {Pin(6101, gui::PinType::Dataset, "Dataset", false)});
+    role_test.parameters["dataset_name"] = "role_test_dataset";
+    role_test.parameters["dataset_role"] = "test";
+    role_test.parameters["label_column"] = "label";
+    role_test.parameters["shape"] = "[1]";
+
+    auto role_split = Node(
+        62,
+        gui::NodeType::DataSplit,
+        "Role-Aware Split",
+        {Pin(6201, gui::PinType::Dataset, "Training Dataset", true),
+         Pin(6202, gui::PinType::Dataset, "Validation Dataset", false),
+         Pin(6203, gui::PinType::Dataset, "Test Dataset", false)},
+        {Pin(6204, gui::PinType::Dataset, "Partitions", false)});
+    role_split.parameters["train_ratio"] = "0.8";
+    role_split.parameters["val_ratio"] = "0.1";
+    role_split.parameters["test_ratio"] = "0.1";
+    role_split.inputs[1].is_required = false;
+    role_split.inputs[2].is_required = false;
+
+    auto role_loader = Node(
+        63,
+        gui::NodeType::DataLoader,
+        "Role-Aware Loader",
+        {Pin(6301, gui::PinType::Dataset, "Partitions", true)},
+        {Pin(6302, gui::PinType::Tensor, "Data", false),
+         Pin(6303, gui::PinType::Labels, "Labels", false)});
+
+    nodes = {role_train, role_test, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    links = {
+        Link(1, 60, 6001, 62, 6201),
+        Link(2, 61, 6101, 62, 6203),
+        Link(3, 62, 6204, 63, 6301),
+        Link(4, 63, 6302, 2, 201),
+        Link(5, 2, 202, 14, 1401),
+        Link(6, 63, 6303, 14, 1402),
+        Link(7, 14, 1403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "Train plus role-matched external Test should compile");
+    Check(!HasIssueText(config, "exactly one dataset source"),
+          "role-matched external Test must not be treated as a second Train source");
+    Check(config.dataset_roles.train.dataset_name == "role_train_dataset" &&
+              config.dataset_roles.test.dataset_name == "role_test_dataset" &&
+              config.dataset_roles.test.externally_supplied,
+          "compiler must preserve the connected external Test role");
+    Check(std::fabs(config.train_ratio - 0.9f) < 0.0001f &&
+              std::fabs(config.val_ratio - 0.1f) < 0.0001f &&
+              std::fabs(config.test_ratio) < 0.0001f,
+          "external Test must reclaim its derived split share for Train while preserving Validation");
+
+    links[1] = Link(2, 61, 6101, 62, 6201);
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "Test role wired to the Training Dataset pin should be invalid");
+    Check(HasIssueText(config, "exactly one dataset source"),
+          "misrouted Test role must retain the multi-source safety guard");
+
+    links[1] = Link(2, 61, 6101, 62, 6203);
+    links.push_back(Link(8, 61, 6101, 2, 201));
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "Test role with an extra model-input branch should be invalid");
+    Check(HasIssueText(config, "exactly one dataset source"),
+          "every selected-path branch from Test must enter its named split pin");
 
     auto side_data = second_data;
     side_data.id = 24;

@@ -1186,7 +1186,8 @@ static std::shared_ptr<arrow::Table> CompactIntegerColumns(
 std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
     const std::string& path, const std::string& name,
     bool has_header, char delimiter, int skip_rows, int64_t max_rows,
-    const std::vector<std::string>& missing_value_tokens) {
+    const std::vector<std::string>& missing_value_tokens,
+    const std::vector<std::string>& selected_columns) {
 
     std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
 
@@ -1204,42 +1205,112 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         // We pick block_size = max(file_size + 1 MB headroom, 64 MB), capped
         // at INT32_MAX since Arrow's block_size is a signed 32-bit int.
         // Files >2 GB simply fall back to multi-chunk (still correct).
-        int64_t file_size_bytes = 0;
-        try {
-            file_size_bytes = static_cast<int64_t>(fs::file_size(path));
-        } catch (...) {
-            // If we can't stat the file, fall through to a sensible default
-            file_size_bytes = 0;
+        if (max_rows <= 0) {
+            int64_t file_size_bytes = 0;
+            try {
+                file_size_bytes = static_cast<int64_t>(fs::file_size(path));
+            } catch (...) {
+                file_size_bytes = 0;
+            }
+            constexpr int64_t kMinBlock = 64 * 1024 * 1024;
+            constexpr int64_t kMaxBlock = std::numeric_limits<int32_t>::max();
+            int64_t target =
+                std::max<int64_t>(file_size_bytes + (1 << 20), kMinBlock);
+            target = std::min<int64_t>(target, kMaxBlock);
+            read_options.block_size = static_cast<int32_t>(target);
+            spdlog::info(
+                "LoadCSVToArrow: file_size={} MB, block_size={} MB (auto)",
+                file_size_bytes / (1024 * 1024),
+                read_options.block_size / (1024 * 1024));
+        } else {
+            spdlog::info(
+                "LoadCSVToArrow: streaming source with max_rows={} and "
+                "block_size={} KB",
+                max_rows,
+                read_options.block_size / 1024);
         }
-        constexpr int64_t kMinBlock = 64 * 1024 * 1024;         // 64 MB
-        constexpr int64_t kMaxBlock = std::numeric_limits<int32_t>::max();
-        int64_t target = std::max<int64_t>(file_size_bytes + (1 << 20), kMinBlock);
-        target = std::min<int64_t>(target, kMaxBlock);
-        read_options.block_size = static_cast<int32_t>(target);
-        spdlog::info("LoadCSVToArrow: file_size={} MB, block_size={} MB (auto)",
-                     file_size_bytes / (1024 * 1024),
-                     read_options.block_size / (1024 * 1024));
 
         auto parse_options = arrow::csv::ParseOptions::Defaults();
         parse_options.delimiter = delimiter;
 
         auto convert_options = MakeTabularCsvConvertOptions(missing_value_tokens);
+        convert_options.include_columns = selected_columns;
 
         // Handle header
         if (!has_header) {
             read_options.autogenerate_column_names = true;
         }
 
-        auto dataset = ArrowDataset::FromCSV(path, unique_name, read_options, parse_options, convert_options);
+        std::shared_ptr<ArrowDataset> dataset;
+        if (max_rows > 0) {
+            auto input_result = arrow::io::ReadableFile::Open(path);
+            if (!input_result.ok()) {
+                spdlog::error(
+                    "LoadCSVToArrow: cannot open '{}' for bounded streaming: {}",
+                    path,
+                    input_result.status().ToString());
+                return nullptr;
+            }
+
+            auto reader_result = arrow::csv::StreamingReader::Make(
+                arrow::io::default_io_context(),
+                input_result.ValueOrDie(),
+                read_options,
+                parse_options,
+                convert_options);
+            if (!reader_result.ok()) {
+                spdlog::error(
+                    "LoadCSVToArrow: bounded StreamingReader failed for '{}': {}",
+                    path,
+                    reader_result.status().ToString());
+                return nullptr;
+            }
+
+            auto reader = reader_result.ValueOrDie();
+            std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+            int64_t rows_read = 0;
+            while (rows_read < max_rows) {
+                std::shared_ptr<arrow::RecordBatch> batch;
+                auto status = reader->ReadNext(&batch);
+                if (!status.ok()) {
+                    spdlog::error(
+                        "LoadCSVToArrow: bounded ReadNext failed for '{}': {}",
+                        path,
+                        status.ToString());
+                    return nullptr;
+                }
+                if (!batch) break;
+
+                const int64_t remaining = max_rows - rows_read;
+                if (batch->num_rows() > remaining) {
+                    batch = batch->Slice(0, remaining);
+                }
+                rows_read += batch->num_rows();
+                batches.push_back(std::move(batch));
+            }
+
+            auto table_result =
+                arrow::Table::FromRecordBatches(reader->schema(), batches);
+            if (!table_result.ok()) {
+                spdlog::error(
+                    "LoadCSVToArrow: bounded table assembly failed for '{}': {}",
+                    path,
+                    table_result.status().ToString());
+                return nullptr;
+            }
+            dataset = std::make_shared<ArrowDataset>(
+                table_result.ValueOrDie(), unique_name);
+        } else {
+            dataset = ArrowDataset::FromCSV(
+                path, unique_name, read_options, parse_options, convert_options);
+        }
         if (!dataset) {
             spdlog::error("LoadCSVToArrow: Failed to load {}", path);
             return nullptr;
         }
 
-        // Apply row cap from Limit Rows tab. Slice is zero-copy (Arrow table
-        // buffers are shared) so this is cheap — but note that the full file
-        // was still parsed into RAM before the slice. For a true lazy row cap
-        // we'd need arrow::csv::StreamingReader; deferred.
+        // Defensively clamp the final table. The bounded path already stops
+        // its streaming reader at max_rows, so this should normally be a no-op.
         if (max_rows > 0) {
             auto table = dataset->GetArrowTable();
             if (table && table->num_rows() > max_rows) {
@@ -1253,7 +1324,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         // Compact integer columns to the smallest fitting type. For a CSV like
         // mnist_784 where Arrow promotes uint8 pixels to int64, this reduces
         // memory by 8x and makes per-batch reads 8x less data-bound. Runs
-        // after slicing so the min/max scan only looks at the kept rows.
+        // after bounded ingestion so the min/max scan only sees kept rows.
         auto compacted = CompactIntegerColumns(dataset->GetArrowTable());
         if (compacted && compacted.get() != dataset->GetArrowTable().get()) {
             dataset = std::make_shared<ArrowDataset>(compacted, unique_name);
@@ -1344,7 +1415,8 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
     const std::string& path, const std::string& name,
     bool has_header, char delimiter, int skip_rows,
     int64_t max_rows, bool force_disk_backed,
-    const std::vector<std::string>& missing_value_tokens) {
+    const std::vector<std::string>& missing_value_tokens,
+    const std::vector<std::string>& selected_columns) {
 
     // File size check (required for dispatch decision and for logging)
     int64_t file_size_bytes = 0;
@@ -1379,7 +1451,8 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
     if (!use_disk_backed) {
         // Fast path: fits in RAM, use the existing in-memory loader.
         auto dataset = LoadCSVToArrow(path, name, has_header, delimiter,
-                                      skip_rows, max_rows, missing_value_tokens);
+                                      skip_rows, max_rows, missing_value_tokens,
+                                      selected_columns);
         return dataset ? TabularLoadBackend::InMemory : TabularLoadBackend::Failed;
     }
 
@@ -1389,7 +1462,15 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
         std::string(has_header ? "header=1" : "header=0") +
         "|delimiter=" + std::to_string(static_cast<unsigned char>(delimiter)) +
         "|skip=" + std::to_string(skip_rows) +
-        "|nulls=" + MissingValueTokensSignature(missing_value_tokens);
+        "|max_rows=" + std::to_string(std::max<int64_t>(0, max_rows)) +
+        "|nulls=" + MissingValueTokensSignature(missing_value_tokens) +
+        "|columns=" + [&selected_columns]() {
+            std::string signature;
+            for (const auto& column : selected_columns) {
+                signature += std::to_string(column.size()) + ":" + column + ";";
+            }
+            return signature;
+        }();
     const std::string cache_path =
         ParquetBackedDataset::GetCacheFilePath(path, cache_signature);
 
@@ -1399,7 +1480,9 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
         spdlog::info("LoadTabularCSV: converting CSV to Parquet cache at '{}'", cache_path);
         if (!ParquetBackedDataset::ConvertCsvToParquet(path, cache_path,
                                                        has_header, delimiter, skip_rows,
-                                                       missing_value_tokens)) {
+                                                       max_rows,
+                                                       missing_value_tokens,
+                                                       selected_columns)) {
             spdlog::error("LoadTabularCSV: CSV-to-Parquet conversion failed for '{}'", path);
             return TabularLoadBackend::Failed;
         }
@@ -1416,16 +1499,6 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
     {
         std::lock_guard<std::mutex> lock(mutex_);
         RememberTabularSourcePathUnlocked(unique_name, path);
-    }
-
-    // Note: max_rows is intentionally ignored on the disk-backed path for
-    // now. Applying it would require reading a row-limit subset into memory,
-    // which defeats the purpose. When we want Limit Rows to work for large
-    // datasets, it'll be implemented via the batcher's row-group scan.
-    if (max_rows > 0) {
-        spdlog::warn("LoadTabularCSV: max_rows={} requested but ignored on disk-backed path "
-                     "(not yet supported; will be applied by the Parquet batcher in a future version)",
-                     max_rows);
     }
 
     return TabularLoadBackend::DiskBacked;

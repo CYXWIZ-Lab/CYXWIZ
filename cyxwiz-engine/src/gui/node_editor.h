@@ -1083,6 +1083,7 @@ public:
 private:
     void ShowToolbar();
     void RenderNodes();
+    void RenderHoveredNodeTooltip(int hovered_node_id);
     void SyncPipelineExecutionVisualization();
     void RenderMinimap();
     void HandleInteractions();

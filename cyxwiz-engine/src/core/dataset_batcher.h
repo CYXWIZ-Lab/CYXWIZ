@@ -142,6 +142,7 @@ public:
 
     virtual void SetNormalization(float mean, float std_dev) = 0;
     virtual void SetOneHotEncoding(size_t num_classes) = 0;
+    virtual void SetScalarLabelMode(bool /*enable*/) {}
     virtual void SetFlatten(bool flatten) = 0;
 
     // Switch between train/val/test index sets. Default: no-op (batchers
@@ -225,6 +226,7 @@ public:
     // keeping SetNormalization/SetOneHotEncoding available for old callers.
     void SetLegacyNormalization(float mean, float std);
     void SetLegacyOneHotEncoding(size_t num_classes);
+    void SetLegacyScalarLabelMode(bool enable) { scalar_label_mode_ = enable; }
 
     void SetFlatten(bool flatten) { flatten_ = flatten; }
 
@@ -299,6 +301,7 @@ private:
 
     bool one_hot_ = false;
     size_t num_classes_ = 0;
+    bool scalar_label_mode_ = false;
 
     bool flatten_ = false;
 
@@ -428,7 +431,8 @@ public:
     // The current feedforward MSELoss regression path consumes this shape
     // directly. Legacy classification callers never set this and keep the
     // existing behavior.
-    void SetRegressionMode(bool enable) { regression_mode_ = enable; }
+    void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
+    void SetRegressionMode(bool enable) { SetScalarLabelMode(enable); }
 
 private:
     std::shared_ptr<class ArrowDataset> dataset_;
@@ -465,7 +469,7 @@ private:
     bool one_hot_ = false;
     size_t num_classes_ = 10;  // Default for MNIST
     bool flatten_ = true;
-    bool regression_mode_ = false;  // Phase 4: float labels, no one-hot
+    bool scalar_label_mode_ = false;  // float [batch, 1] labels, no one-hot
 
     void ShuffleIndices();
     void InitializeColumns();

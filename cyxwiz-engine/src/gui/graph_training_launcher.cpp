@@ -216,9 +216,10 @@ std::string ResolveRuntimeArrowLabelColumn(
     const std::string& dataset_name,
     const std::string& requested_label) {
     auto arrow_ds = registry.GetArrowDataset(dataset_name);
-    if (!arrow_ds) return requested_label;
-
-    auto schema = arrow_ds->GetSchema();
+    auto parquet_ds = registry.GetParquetBackedDataset(dataset_name);
+    auto schema = arrow_ds ? arrow_ds->GetSchema()
+        : parquet_ds ? parquet_ds->GetSchema()
+        : nullptr;
     if (!schema) return requested_label;
 
     if (!requested_label.empty() &&
@@ -233,13 +234,43 @@ std::string ResolveRuntimeArrowLabelColumn(
 
     const std::string resolved = schema->field(fallback_idx)->name();
     if (resolved != requested_label) {
-        spdlog::info("StartTrainingFromGraph: resolved Arrow label column "
+        spdlog::info("StartTrainingFromGraph: resolved tabular label column "
                      "'{}' -> '{}' for materialized dataset '{}'",
                      requested_label.empty() ? "<auto>" : requested_label,
                      resolved,
                      dataset_name);
     }
     return resolved;
+}
+
+void ReconcileRuntimeTabularFeatureWidth(
+    cyxwiz::DataRegistry& registry,
+    const std::string& dataset_name,
+    const std::string& label_column,
+    cyxwiz::TrainingConfiguration& config) {
+    if (config.sequence_batch.enabled || config.is_time_series) return;
+
+    std::shared_ptr<arrow::Schema> schema;
+    if (auto arrow_ds = registry.GetArrowDataset(dataset_name)) {
+        schema = arrow_ds->GetSchema();
+    } else if (auto parquet_ds =
+                   registry.GetParquetBackedDataset(dataset_name)) {
+        schema = parquet_ds->GetSchema();
+    }
+    const int label_index = cyxwiz::ResolveLabelColumnIndex(
+        schema, label_column);
+    if (label_index < 0) return;
+
+    const size_t feature_count = cyxwiz::CountNumericBatchFeatureColumns(
+        schema, label_index);
+    if (feature_count == 0 || config.input_size == feature_count) return;
+
+    spdlog::warn(
+        "StartTrainingFromGraph: corrected compiled tabular input width "
+        "{} -> {} from runtime schema for dataset '{}'",
+        config.input_size, feature_count, dataset_name);
+    config.input_shape = {feature_count};
+    config.input_size = feature_count;
 }
 
 std::string DefaultSequenceColumn(const std::string& value,
@@ -874,6 +905,10 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
 
     std::string label_column = FindLabelColumn(
         nodes, dataset_name, config.data_source_node_id);
+    label_column = ResolveRuntimeArrowLabelColumn(
+        registry, dataset_name, label_column);
+    ReconcileRuntimeTabularFeatureWidth(
+        registry, dataset_name, label_column, config);
     if (config.dataset_roles.train.dataset_name.empty()) {
         config.dataset_roles.train.dataset_name = dataset_name;
     }
@@ -1086,6 +1121,10 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                 effective_label_column = ResolveRuntimeArrowLabelColumn(
                     registry, effective_dataset_name, effective_label_column);
             }
+
+            ReconcileRuntimeTabularFeatureWidth(
+                registry, effective_dataset_name, effective_label_column,
+                config);
 
             if (task.ShouldStop()) {
                 return;

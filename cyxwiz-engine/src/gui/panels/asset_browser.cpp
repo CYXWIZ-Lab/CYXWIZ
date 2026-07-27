@@ -694,16 +694,10 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
                     on_double_click_(item);
                 }
             }
-            // Preview Data is for already-registered DatasetAssets. Raw file
-            // peeking remains under Quick Preview and must not register data.
-            if (IsDatasetFile(item)) {
-                if (ImGui::MenuItem(ICON_FA_TABLE " Preview Data")) {
-                    SelectItem(&item, false, false);
-                    preview_path_.clear();
-                }
-            }
             // Create a configured Data Input node; Data Input Apply performs
-            // the actual load/registration.
+            // the actual load/registration and exposes the authoritative
+            // source preview. Selecting an already registered dataset still
+            // shows the bounded Dataset Preview side pane.
             if (IsDatasetFile(item)) {
                 if (ImGui::MenuItem(ICON_FA_DATABASE " Create Data Input")) {
                     CreateDataInputFromItem(item);

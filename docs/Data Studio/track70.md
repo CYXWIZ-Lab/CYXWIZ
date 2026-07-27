@@ -400,3 +400,157 @@ changes are outside Track 70 scope and must remain isolated.
   passed. Stateful scaler caching is disabled until artifact content identity
   participates in cache keys. File-based state reuse is the intentional first slice; typed state
   ports and same-graph multi-input coordination remain deferred.
+- 2026-07-23: Verified the fitted-preprocessing contract end to end with the
+  APS Train/external-Test acceptance case. Separate v0.2 graphs fitted
+  `FillMissing` and `StandardScaler` on all 60,000 training rows and transformed
+  all 16,000 held-out test rows from those saved states. Both operators covered
+  170 sensor features and excluded `class`; the test execution loaded artifacts
+  reporting `fit_rows=60000` and did not rewrite them. The resulting Train and
+  Test Parquet artifacts are distinct. Preprocessing schema validation now also
+  treats Arrow numeric-width variants as compatible numeric types (and
+  string-width variants as compatible string types), preventing legitimate
+  Train/Test integer compaction differences from rejecting Transform Only.
+  Focused routing coverage forces different integer widths across fit and
+  transform inputs and passed.
+- 2026-07-23: Fixed the supervised tabular label warning and first-batch crash
+  exposed by the APS classifier acceptance graph. `DataLoader.Labels` remains
+  the correct target-flow connection, while Data Input/schema metadata now
+  identifies the physical target column. Apply no longer clears a stored label
+  merely because an async/disk-backed selector is temporarily empty. Compile
+  auto-resolves conventional labels such as `class`, derives the exact numeric
+  feature width, and blocks missing explicit labels with `CW-D-0102` instead of
+  falling through to `Linear(1, ...)`. Launch reconciles the effective schema
+  again after materialization, and Arrow/Parquet batchers share the numeric
+  feature contract. Resolver, compiler, batcher-setup, sequence-preflight, and
+  Release engine builds passed; APS remains only an acceptance dataset.
+- 2026-07-23: Traced the subsequent APS Train access violation to resolved-role
+  prefetch ownership, not labels or model shape. Compile and batch setup were
+  correct (`class`, 170 features, `Linear(170 -> 128)`), but the role handoff
+  retained non-owning prefetch wrappers after destroying their Arrow/Parquet
+  sources. The first wrapper call dereferenced freed memory and Windows
+  reported `0xc0000005`. `TakeResolvedExternalBatchers` now transfers source
+  ownership into each wrapper before temporary owners expire. The focused
+  batcher suite covers post-handoff sample access and batch consumption with
+  prefetch enabled.
+- 2026-07-23: The new ownership invariant then exposed a late external-role
+  replacement mismatch: the external Test batcher replaced the derived Test
+  owner after its prefetch wrapper had already captured the old source.
+  Explicit tabular roles are now assembled before prefetch attachment, the
+  displaced Arrow/Parquet owner is cleared, and runtime split ratios enforce
+  the resolved mapping even without a DataSplit node. Train plus external Test
+  derives only Train/Dev from the Train source and preserves all external Test
+  rows; externally supplied Dev and Test leave the entire Train source for
+  training. The replacement-source prefetch handoff regression and focused
+  batcher suite pass.
+- 2026-07-23: Fixed the false 100% accuracy contract for scalar binary models.
+  The loss implementation was functional, but a one-output model incorrectly
+  received width-one one-hot targets (`0 -> [1]`, `1 -> [0]`) and every metric
+  used `argmax` on a one-value output. BCE/BCEWithLogits now receive preserved
+  scalar `[batch, 1]` targets; probability/logit decisions use 0.5/0.0
+  thresholds, while multiclass retains argmax. One shared decision utility is
+  used by train, validation, smoke, and test execution, and scalar binary
+  testing uses a two-class confusion matrix. Arrow and Parquet label-shape
+  regressions plus a deterministic anti-argmax accuracy fixture pass. The
+  change applies across supported modalities and contains no APS-specific
+  logic; checkpoints from the invalid run are not valid acceptance artifacts.
+- 2026-07-24: Fixed Tools > Test ignoring a supplied external Test role. The
+  accepted training run had already restored the epoch-6 best checkpoint and
+  evaluated all 16,000 external rows (`test_loss=0.2848`, `test_acc=96.11%`),
+  but the separate command selected Train and reconstructed its `90/10/0`
+  split, producing zero test batches. Test selection now uses the compiled
+  Test role identity and consumes a supplied Test dataset in full without
+  repartitioning, shuffling, dropping, stratifying, or balancing it. Derived
+  test splits retain existing behavior. TestExecutor also uses the shared loss
+  builder, preserving settings such as `BCEWithLogits pos_weight=59`.
+  Role-selection, whole-dataset, and configured-loss regressions plus the full
+  Debug engine build pass; the contract is generic across Arrow and Parquet.
+- 2026-07-27: Wired a production-safe local checkpoint workflow into the GUI.
+  The current graph is compiled through the shared model builder, checkpoint
+  tensors are validated by count/name/shape/type before atomic installation,
+  loading runs as a visible task, and the restored shared model is available to
+  Tools > Test. The Training Dashboard reports it as the active loaded model;
+  Run Comparison remains truthful session-only training history. Exact optimizer
+  resume and persisted run history are explicitly deferred to checkpoint v2.
+- 2026-07-27: Standardized project graph storage on `cyxgraph`. New projects
+  create it and register `.cyxgraph`; older projects are upgraded additively,
+  preserving custom filters and legacy folders. Save/Open graph dialogs now use
+  that project directory, and an unspecified training checkpoint path resolves
+  to the active project's `checkpoints` directory.
+- 2026-07-27: Closed the remaining `Limit Rows` ingestion gap. Bounded
+  in-memory CSV loads now stop the Arrow streaming reader at `max_rows`, and
+  disk-backed conversion stops writing Parquet after the same cap. The cap is
+  part of the Parquet cache identity, so an earlier full/unbounded cache cannot
+  be reused for a bounded load. Focused Arrow and forced disk-backed
+  regressions preserve exactly the requested number of rows.
+- 2026-07-27: Fixed lazy-preview paging falsely reporting `preview schema
+  changed while paging`. The dialog now requests the complete registered
+  schema by stable ordinal on every page instead of round-tripping mutable
+  column names. If a registered dataset is genuinely refreshed while a page
+  is in flight, the bounded cache adopts the new schema as a new generation
+  rather than terminating preview. This is format- and dataset-neutral.
+- 2026-07-27: To Fix 70 is complete for the production Arrow/Parquet tabular
+  scope. The accepted contract covers one-source derived partitions, explicit
+  Train/Dev/Test sources, held-out Test preservation, Train-fitted preprocessing,
+  role-specific validation, partition fingerprints/run comparison, modern
+  Dataset pins with legacy compatibility, bounded lazy preview, streaming row
+  limits, and checkpoint loading for later testing. Non-tabular modality
+  adapters, typed preprocessing-state ports, and exact training resume remain
+  separately scoped extensions rather than hidden Track 70 work.
+- 2026-07-27: Removed the redundant Asset Browser right-click `Preview Data`
+  command. Selecting an already registered dataset continues to show the
+  shared bounded Dataset Preview pane; raw sources use `Create Data Input`,
+  where parser options and the authoritative Preview tab are available. Data
+  Input role help is now contextual: Train explains fitting and derived
+  partitions, Dev/Validation explains validation and early stopping, and Test
+  explains final held-out evaluation and the prohibition on fitting or model
+  selection.
+- 2026-07-27: Made Data Input column inclusion truthful. The Transformation
+  tab persists included columns by name, keeps a selected label included, and
+  applies projection during CSV ingestion for both in-memory Arrow and
+  disk-backed Parquet caches. Other Arrow-backed tabular formats use the same
+  named projection after load. Limit Rows remains row-specific and now points
+  users to Transformation for columns; positional `skip first N columns` was
+  intentionally rejected because schema changes would silently select the
+  wrong features.
+- 2026-07-27: Reconciled the Asset Browser acceptance contract with the final
+  implementation. The redundant right-click `Preview Data` command is not a
+  second workflow: selecting an already registered DatasetAsset shows the
+  shared bounded side-pane preview, while an unregistered dataset source goes
+  through `Create Data Input` and Data Input's authoritative parser/Preview
+  tabs. The ticket now records non-tabular roles, typed training plans, typed
+  preprocessing-state ports, checkpoint v2 exact resume, and persisted run
+  history as explicit follow-up tickets rather than hidden closure work.
+- 2026-07-27: Added a fast Track 70-only execution mode to the existing
+  pipeline routing regression. Running
+  `test_pipeline_executor_operator_routing --track70-ingestion-limits`
+  terminates independently and verifies named projection plus row caps on both
+  backends: in-memory Arrow returns 2 rows containing only `label`; forced
+  disk-backed Parquet returns 3 rows containing only `feature`. The Debug test
+  passed in 0.7 seconds.
+- 2026-07-27: Fixed the Debug-only ImNodes scope assertion exposed while
+  stabilizing the Track 70 UI. Both the primary node editor and the legacy
+  Data Studio canvas now query `IsNodeHovered` exactly once after
+  `EndNodeEditor`, cache the node ID, and reuse it for tooltip/context-menu
+  routing. The assertion-enabled Debug engine rendered the restored graph for
+  more than 20 seconds with empty stderr and remained responsive; Debug and
+  Release engine builds passed.
+- 2026-07-27: The closure review found and fixed a scalar-binary balancing
+  reset regression. Scalar `[batch, 1]` targets are required by BCE losses, but
+  they are not regression targets and must not disable a requested training
+  sampler. `ArrowDatasetBatcher::Reset` now rebuilds balanced indices for
+  binary classification. The batcher regression resets an oversampled 8:1
+  fixture and verifies the next epoch still contains 8 negative and 8 positive
+  scalar labels; the complete Debug batcher suite passed.
+- 2026-07-27: Hardened checkpoint-to-test state during the closure review.
+  Cancellation is checked before model construction, after parameter loading,
+  and immediately before atomic installation, so a cancelled task cannot
+  replace the active model invisibly. A loaded checkpoint also retains the
+  graph fingerprint from its compatibility check; Tools > Test refuses to use
+  it after the canvas graph changes and directs the user to reload. The Debug
+  engine rebuilt successfully after both guards.
+- 2026-07-27: Final focused verification passed:
+  `test_pipeline_executor_operator_routing --track70-ingestion-limits` proved
+  named projection and bounded rows on in-memory Arrow and forced disk-backed
+  Parquet, and `test_training_batcher_setup` covered resolved roles, prefetch
+  ownership, scalar BCE targets, class-balancing reset, held-out Test selection,
+  configured binary loss, and Arrow/Parquet training batches.

@@ -73,7 +73,8 @@ public:
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
     void SetFlatten(bool flatten) override { flatten_ = flatten; }
-    void SetRegressionMode(bool enable) { regression_mode_ = enable; }
+    void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
+    void SetRegressionMode(bool enable) { SetScalarLabelMode(enable); }
 
 private:
     // Configuration
@@ -118,7 +119,7 @@ private:
     bool one_hot_ = false;
     size_t num_classes_ = 10;
     bool flatten_ = true;
-    bool regression_mode_ = false;
+    bool scalar_label_mode_ = false;
 
     std::mt19937 rng_;
 

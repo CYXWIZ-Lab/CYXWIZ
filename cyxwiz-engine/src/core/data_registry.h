@@ -436,7 +436,8 @@ public:
                                        int64_t max_rows = 0,
                                        bool force_disk_backed = false,
                                        const std::vector<std::string>& missing_value_tokens =
-                                           DefaultTabularMissingValueTokens());
+                                           DefaultTabularMissingValueTokens(),
+                                       const std::vector<std::string>& selected_columns = {});
 
     // Arrow format-specific loaders (for DataInput node)
     //
@@ -447,17 +448,15 @@ public:
     // downcast to their natural width (e.g. MNIST pixels int64 -> uint8,
     // an 8x memory saving). Users don't need to tune anything.
     //
-    // max_rows: if > 0, keep only the first max_rows rows after load (via
-    // table->Slice). Useful for training on a subset of a large dataset.
-    // 0 means "load all rows". Note that this slices after the full parse,
-    // so load-time memory is still proportional to the full file size —
-    // for a true lazy load with memory cap, see the deferred Parquet+mmap
-    // design (not yet implemented).
+    // max_rows: if > 0, stop the CSV streaming reader after the first
+    // max_rows data rows. Useful for training on a bounded subset without
+    // parsing or materializing the complete source. 0 means "load all rows".
     std::shared_ptr<class ArrowDataset> LoadCSVToArrow(const std::string& path, const std::string& name,
                                                         bool has_header = true, char delimiter = ',', int skip_rows = 0,
                                                         int64_t max_rows = 0,
                                                         const std::vector<std::string>& missing_value_tokens =
-                                                            DefaultTabularMissingValueTokens());
+                                                            DefaultTabularMissingValueTokens(),
+                                                        const std::vector<std::string>& selected_columns = {});
     std::shared_ptr<class ArrowDataset> LoadParquetToArrow(const std::string& path, const std::string& name);
     std::shared_ptr<class ArrowDataset> LoadJSONToArrow(const std::string& path, const std::string& name, bool json_lines = false);
     std::shared_ptr<class ArrowDataset> LoadExcelToArrow(const std::string& path, const std::string& name, int sheet_idx = 0);

@@ -388,6 +388,51 @@ void TestLayerNormCheckpointRoundTrip() {
     spdlog::info("  OK: LayerNorm checkpoint parameters round-trip");
 }
 
+void TestCheckpointRejectsIncompatibleModelWithoutMutation() {
+    spdlog::info("--- TestCheckpointRejectsIncompatibleModelWithoutMutation ---");
+    auto source = BuildSequentialFromConfig(MakeLayerNormConfig());
+    auto incompatible_config = MakeLayerNormConfig();
+    incompatible_config.input_size = 5;
+    incompatible_config.layers[0].parameters["normalized_shape"] = "5";
+    auto target = BuildSequentialFromConfig(incompatible_config);
+    ExpectTrue(source.ok() && target.ok(),
+               "checkpoint compatibility fixture models should build");
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_checkpoint_shape_guard_test";
+    std::filesystem::remove_all(root);
+    CheckpointManager manager(root.string());
+
+    TrainingMetrics metrics;
+    metrics.current_epoch = 2;
+    const std::string saved =
+        manager.SaveCheckpoint(*source.model, nullptr, metrics, "source");
+    ExpectTrue(!saved.empty(), "shape-guard checkpoint should save");
+
+    const auto before = target.model->GetParameters();
+    const auto loaded =
+        manager.LoadCheckpoint(*target.model, nullptr, "source");
+    ExpectTrue(!loaded.has_value(),
+               "incompatible checkpoint shape must be rejected");
+    ExpectTrue(manager.GetLastError().find("shape mismatch") !=
+                   std::string::npos,
+               "shape rejection should explain the compatibility failure");
+
+    const auto after = target.model->GetParameters();
+    ExpectEq(after.size(), before.size(),
+             "failed checkpoint load must preserve parameter count");
+    for (const auto& [name, tensor] : before) {
+        ExpectTrue(after.count(name) == 1,
+                   "failed checkpoint load must preserve parameter names");
+        ExpectTrue(after.at(name).Shape() == tensor.Shape(),
+                   "failed checkpoint load must preserve parameter shapes");
+    }
+
+    std::filesystem::remove_all(root);
+    spdlog::info("  OK: incompatible checkpoint rejected transactionally");
+}
+
 void TestTransformerDecoderCheckpointRoundTrip() {
     spdlog::info("--- TestTransformerDecoderCheckpointRoundTrip ---");
 
@@ -1131,6 +1176,7 @@ int main() {
         TestBuildSequentialLayerNorm();
         TestBuildSequentialMultiHeadAttention();
         TestLayerNormCheckpointRoundTrip();
+        TestCheckpointRejectsIncompatibleModelWithoutMutation();
         TestTransformerDecoderCheckpointRoundTrip();
         TestSyntheticBatchTabular();
         TestSyntheticBatchText();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "training_executor.h"
+#include "checkpoint_manager.h"
 #include "graph_compiler.h"
 #include "data_registry.h"
 #include "async_task_manager.h"
@@ -14,6 +15,26 @@
 namespace cyxwiz {
 
 class TrainingPlotPanel;
+
+enum class ActiveModelOrigin {
+    None,
+    TrainedInSession,
+    LoadedCheckpoint
+};
+
+struct ActiveModelInfo {
+    ActiveModelOrigin origin = ActiveModelOrigin::None;
+    std::string checkpoint_path;
+    std::string graph_fingerprint;
+    CheckpointMetadata checkpoint_metadata;
+};
+
+struct CheckpointEvaluationLoadResult {
+    bool success = false;
+    std::string error_message;
+    std::string resolved_checkpoint_path;
+    CheckpointMetadata metadata;
+};
 
 /**
  * TrainingManager - Centralized manager for ML training sessions
@@ -176,6 +197,11 @@ public:
      */
     SequentialModel* GetLastTrainedModel() { return last_trained_model_.get(); }
 
+    /** Shared ownership for asynchronous test/inference consumers. */
+    std::shared_ptr<SequentialModel> GetActiveModel() const;
+
+    ActiveModelInfo GetActiveModelInfo() const;
+
     /**
      * Get the last optimizer (preserved after training completes)
      */
@@ -189,7 +215,17 @@ public:
     /**
      * Check if there is a trained model available
      */
-    bool HasTrainedModel() const { return last_trained_model_ != nullptr; }
+    bool HasTrainedModel() const;
+
+    /**
+     * Build the active graph model, validate a local checkpoint against it,
+     * and atomically install the loaded model for Test/Export use.
+     */
+    CheckpointEvaluationLoadResult LoadCheckpointForEvaluation(
+        const TrainingConfiguration& config,
+        const std::string& checkpoint_path,
+        const std::string& graph_fingerprint = "",
+        std::function<bool()> cancel_requested = {});
 
     /**
      * Save the trained model to file
@@ -275,9 +311,10 @@ private:
     ProgressCallback on_progress_;
 
     // Preserved model after training (for export)
-    std::unique_ptr<SequentialModel> last_trained_model_;
+    std::shared_ptr<SequentialModel> last_trained_model_;
     std::unique_ptr<Optimizer> last_optimizer_;
     TrainingMetrics last_metrics_;
+    ActiveModelInfo active_model_info_;
 };
 
 } // namespace cyxwiz

@@ -91,6 +91,7 @@ public:
 
     // Path utilities (all return absolute paths)
     std::string GetScriptsPath() const;
+    std::string GetCyxGraphsPath() const;
     std::string GetModelsPath() const;
     std::string GetDatasetsPath() const;
     std::string GetCheckpointsPath() const;

@@ -1151,7 +1151,7 @@ int ResolveCrossEntropyIgnoreIndex(const TrainingConfiguration& config) {
     return -100;
 }
 
-std::unique_ptr<Loss> BuildLossFromConfig(const TrainingConfiguration& config) {
+std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& config) {
     const Reduction reduction = ResolveLossReduction(config);
     switch (config.loss_type) {
         case gui::NodeType::CrossEntropyLoss: {
@@ -1304,6 +1304,11 @@ Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
 }
 
 } // namespace
+
+std::unique_ptr<Loss> BuildLossFromConfig(
+    const TrainingConfiguration& config) {
+    return BuildLossFromConfigImpl(config);
+}
 
 BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
     BuiltModel out;

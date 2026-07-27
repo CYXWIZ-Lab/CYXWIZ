@@ -282,10 +282,10 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         // OPTIMIZED: Pre-allocate batch data as [batch_size, num_features] in row-major order
         std::vector<float> batch_data(actual_batch_size * num_features_, 0.0f);
         // Classification: int labels; regression: float labels. Only one
-        // of the two is populated based on regression_mode_.
+        // of the two is populated based on scalar_label_mode_.
         std::vector<int> batch_labels(actual_batch_size, 0);
         std::vector<float> batch_labels_float(
-            regression_mode_ ? actual_batch_size : 0, 0.0f);
+            scalar_label_mode_ ? actual_batch_size : 0, 0.0f);
 
         spdlog::debug("ArrowDatasetBatcher: Processing {} feature columns, batch_data.size()={}",
                       feature_cols_.size(), batch_data.size());
@@ -573,11 +573,9 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                     }
                 }
 
-                // Phase 4 regression mode: separate float reader that
-                // preserves fractional targets (MSELoss needs real-valued
-                // labels). The int-cast path above loses precision on
-                // anything non-integer and is wrong for TimeSeriesWindow's
-                // `y` column.
+                // Scalar-label mode preserves both fractional regression
+                // targets and binary 0/1 targets. The int-cast path above
+                // loses precision on non-integer regression labels.
                 auto read_label_float = [&](int64_t global_row_idx) -> float {
                     int64_t offset = 0;
                     for (int c = 0; c < column->num_chunks(); ++c) {
@@ -625,7 +623,7 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                 for (size_t b = 0; b < actual_batch_size; ++b) {
                     int64_t row_idx = indices_[batch_start + b];
                     if (row_idx >= 0 && row_idx < num_rows) {
-                        if (regression_mode_) {
+                        if (scalar_label_mode_) {
                             batch_labels_float[b] = read_label_float(row_idx);
                         } else {
                             batch_labels[b] = read_label(row_idx);
@@ -670,12 +668,10 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         spdlog::default_logger()->flush();
 
         // Create labels tensor
-        // Phase 4 regression: float labels tensor [batch, 1]. Takes
-        // precedence over one_hot_ because SetOneHotEncoding is called
-        // unconditionally in TrainingExecutor::Train for classification
-        // compatibility; regression_mode_ is the explicit opt-in.
-        if (regression_mode_ && !batch_labels_float.empty()) {
-            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT F - creating float regression labels [{}, 1]",
+        // Scalar float labels [batch, 1] are used for regression and binary
+        // classification. This explicit mode takes precedence over one-hot.
+        if (scalar_label_mode_ && !batch_labels_float.empty()) {
+            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT F - creating scalar float labels [{}, 1]",
                           actual_batch_size);
             spdlog::default_logger()->flush();
             std::vector<size_t> label_shape = {actual_batch_size, 1};
@@ -765,7 +761,6 @@ void ArrowDatasetBatcher::RebuildBalancedIndices() {
         balance_mode_ == "none" ||
         split_phase_ != BatcherPhase::Train ||
         !is_training_ ||
-        regression_mode_ ||
         label_col_idx_ < 0 ||
         !dataset_ ||
         base_indices_.empty()) {

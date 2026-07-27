@@ -2,6 +2,7 @@
 #include "training_executor.h"
 
 #include "arrow_dataset.h"
+#include "classification_decision.h"
 #include "prefetch_batcher.h"
 #include "split_partitioning.h"
 #include "worker_defaults.h"
@@ -148,6 +149,13 @@ std::string FormatFloatVector(const std::vector<float>& values) {
 }
 
 } // namespace
+
+void AttachTrainingBatcherPrefetchWrappers(
+    TrainingBatcherSet& batchers,
+    const TrainingConfiguration& config,
+    const char* dataset_kind) {
+    ApplyPrefetchWrappers(batchers, config, dataset_kind);
+}
 
 TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     const TrainingConfiguration& config,
@@ -388,10 +396,10 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
                                             config.preprocessing.norm_std);
     }
 
-    if (config.is_time_series) {
-        result.arrow_train->SetRegressionMode(true);
-        result.arrow_val->SetRegressionMode(true);
-        result.arrow_test->SetRegressionMode(true);
+    if (config.is_time_series || UsesScalarBinaryTargets(config.loss_type)) {
+        result.arrow_train->SetScalarLabelMode(true);
+        result.arrow_val->SetScalarLabelMode(true);
+        result.arrow_test->SetScalarLabelMode(true);
     } else if (config.preprocessing.has_onehot) {
         result.arrow_train->SetOneHotEncoding(config.preprocessing.num_classes);
         result.arrow_val->SetOneHotEncoding(config.preprocessing.num_classes);
@@ -408,7 +416,7 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
     result.train = result.arrow_train.get();
     result.val = result.arrow_val.get();
     result.test = result.arrow_test.get();
-    ApplyPrefetchWrappers(result, config, "Arrow");
+    AttachTrainingBatcherPrefetchWrappers(result, config, "Arrow");
     spdlog::info("TrainingExecutor: Arrow split samples train={} val={} test={}",
                  result.num_train_samples, result.num_val_samples, result.num_test_samples);
     return result;
@@ -482,10 +490,10 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
                                               config.preprocessing.norm_std);
     }
 
-    if (config.is_time_series) {
-        result.parquet_train->SetRegressionMode(true);
-        result.parquet_val->SetRegressionMode(true);
-        result.parquet_test->SetRegressionMode(true);
+    if (config.is_time_series || UsesScalarBinaryTargets(config.loss_type)) {
+        result.parquet_train->SetScalarLabelMode(true);
+        result.parquet_val->SetScalarLabelMode(true);
+        result.parquet_test->SetScalarLabelMode(true);
     } else if (config.preprocessing.has_onehot) {
         result.parquet_train->SetOneHotEncoding(config.preprocessing.num_classes);
         result.parquet_val->SetOneHotEncoding(config.preprocessing.num_classes);
@@ -502,7 +510,7 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     result.train = result.parquet_train.get();
     result.val = result.parquet_val.get();
     result.test = result.parquet_test.get();
-    ApplyPrefetchWrappers(result, config, "Parquet");
+    AttachTrainingBatcherPrefetchWrappers(result, config, "Parquet");
     spdlog::info("TrainingExecutor: Parquet split samples train={} val={} test={}",
                  result.num_train_samples, result.num_val_samples, result.num_test_samples);
     return result;
@@ -512,9 +520,26 @@ ResolvedExternalBatchers TakeResolvedExternalBatchers(TrainingBatcherSet batcher
     auto take = [](std::unique_ptr<IBatcher> prefetch,
                    std::unique_ptr<ArrowDatasetBatcher> arrow,
                    std::unique_ptr<ParquetArrowBatcher> parquet) {
-        if (prefetch) return std::shared_ptr<IBatcher>(std::move(prefetch));
-        if (arrow) return std::shared_ptr<IBatcher>(std::move(arrow));
-        return std::shared_ptr<IBatcher>(std::move(parquet));
+        std::shared_ptr<IBatcher> source;
+        if (arrow) {
+            source = std::shared_ptr<IBatcher>(std::move(arrow));
+        } else if (parquet) {
+            source = std::shared_ptr<IBatcher>(std::move(parquet));
+        }
+
+        if (!prefetch) {
+            return source;
+        }
+
+        // ApplyPrefetchWrappers initially uses a non-owning reference so the
+        // concrete batchers remain inspectable in TrainingBatcherSet. When the
+        // set crosses into resolved-role ownership, transfer that concrete
+        // source into the wrapper before the local owners are destroyed.
+        // Otherwise the wrapper retains a dangling pointer and crashes on its
+        // first GetNumSamples/GetNextBatch call.
+        auto* wrapper = static_cast<PrefetchBatcher*>(prefetch.get());
+        wrapper->AdoptSourceOwnership(std::move(source));
+        return std::shared_ptr<IBatcher>(std::move(prefetch));
     };
 
     ResolvedExternalBatchers resolved;

@@ -399,6 +399,7 @@ nlohmann::json EditorSettings::ToJson() const {
 
 // Static default filters
 static const std::map<std::string, std::vector<std::string>> s_default_filters = {
+    {"Graphs", {".cyxgraph"}},
     {"Scripts", {".py", ".cyx"}},
     {"Models", {".h5", ".onnx", ".pt", ".safetensors", ".bin"}},
     {"Datasets", {".csv", ".json", ".parquet", ".h5", ".arrow", ".txt"}},
@@ -590,16 +591,30 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
 
 bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
     try {
-        // Close any existing project
-        if (HasActiveProject()) {
-            CloseProject();
-        }
-
         // Verify file exists
         fs::path file_path(cyxwiz_file_path);
         if (!fs::exists(file_path)) {
             spdlog::error("Project file not found: {}", cyxwiz_file_path);
             return false;
+        }
+
+        // The Start Page may select/open a project before the main window is
+        // constructed. Application startup then asks to open that same path
+        // after the project callbacks are installed. Reopening used to close
+        // the active project and restart its asynchronous asset scan, leaving
+        // the first scan racing the close/reopen cycle. Make same-project open
+        // idempotent and preserve the already initialized project state.
+        if (HasActiveProject()) {
+            std::error_code equivalent_error;
+            const bool already_active = fs::equivalent(
+                fs::path(project_file_path_), file_path, equivalent_error);
+            if (!equivalent_error && already_active) {
+                spdlog::info(
+                    "Project already active; skipping duplicate open: {}",
+                    project_file_path_);
+                return true;
+            }
+            CloseProject();
         }
 
         // Read project file
@@ -612,9 +627,27 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
         project_root_ = file_path.parent_path().string();
         project_name_ = config_.name;
 
-        // Ensure default filters if not present
+        // Ensure the canonical graph directory exists for legacy projects.
+        // This is additive: older user-created folders are never moved or
+        // deleted during project open.
+        std::error_code graph_dir_error;
+        fs::create_directories(
+            fs::path(project_root_) / "cyxgraph", graph_dir_error);
+        if (graph_dir_error) {
+            spdlog::warn(
+                "Could not create canonical cyxgraph directory in '{}': {}",
+                project_root_, graph_dir_error.message());
+        }
+
+        // Ensure default filters if not present. Merge newly introduced
+        // canonical filters into older projects without discarding custom
+        // filters stored in the project file.
         if (config_.filters.empty()) {
             InitializeDefaultFilters();
+        } else {
+            for (const auto& [name, extensions] : s_default_filters) {
+                config_.filters.try_emplace(name, extensions);
+            }
         }
 
         spdlog::info("Project opened: {} from {}", project_name_, project_root_);
@@ -766,6 +799,11 @@ std::string ProjectManager::GetScriptsPath() const {
     return (fs::path(project_root_) / "scripts").string();
 }
 
+std::string ProjectManager::GetCyxGraphsPath() const {
+    if (!HasActiveProject()) return "";
+    return (fs::path(project_root_) / "cyxgraph").string();
+}
+
 std::string ProjectManager::GetModelsPath() const {
     if (!HasActiveProject()) return "";
     return (fs::path(project_root_) / "models").string();
@@ -816,6 +854,7 @@ std::string ProjectManager::MakeRelativePath(const std::string& absolute_path) c
 bool ProjectManager::CreateDirectoryStructure(const std::string& project_dir) {
     try {
         fs::create_directories(project_dir);
+        fs::create_directories(fs::path(project_dir) / "cyxgraph");
         fs::create_directories(fs::path(project_dir) / "scripts");
         fs::create_directories(fs::path(project_dir) / "models");
         fs::create_directories(fs::path(project_dir) / "datasets");

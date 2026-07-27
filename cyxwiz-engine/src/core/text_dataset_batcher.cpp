@@ -282,6 +282,18 @@ void TextDatasetBatcher::SetOneHotEncoding(size_t num_classes) {
     }
 }
 
+void TextDatasetBatcher::SetScalarLabelMode(bool enable) {
+    if (train_batcher_) {
+        train_batcher_->SetScalarLabelMode(enable);
+    }
+    if (val_batcher_) {
+        val_batcher_->SetScalarLabelMode(enable);
+    }
+    if (test_batcher_) {
+        test_batcher_->SetScalarLabelMode(enable);
+    }
+}
+
 void TextDatasetBatcher::SetFlatten(bool /*flatten*/) {
     // Text token tables are already flat per sample.
 }

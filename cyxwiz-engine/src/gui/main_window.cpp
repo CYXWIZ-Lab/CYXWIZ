@@ -158,6 +158,7 @@
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
+#include "../core/test_dataset_selection.h"
 #include "../core/model_converter.h"
 #include "../serving/inference_server.h"
 
@@ -171,6 +172,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <stdexcept>
 #include <sstream>
 #include <thread>
 
@@ -742,6 +744,106 @@ MainWindow::MainWindow()
             pm.SaveProject();
             spdlog::info("App theme saved to project: {}", theme_index);
         }
+    });
+
+    toolbar_->SetLoadCheckpointCallback([this]() {
+        auto& training = cyxwiz::TrainingManager::Instance();
+        auto& testing = cyxwiz::TestManager::Instance();
+        if (training.IsTrainingActive() || testing.IsTestingActive()) {
+            spdlog::error(
+                "LoadCheckpoint: stop the active training or testing task first.");
+            return;
+        }
+        if (!node_editor_) {
+            spdlog::error("LoadCheckpoint: node editor is unavailable.");
+            return;
+        }
+
+        auto& project = cyxwiz::ProjectManager::Instance();
+        const std::string default_path = project.HasActiveProject()
+            ? project.GetCheckpointsPath()
+            : std::string();
+        auto selected = cyxwiz::FileDialogs::SelectFolder(
+            "Select Checkpoint or Training Run",
+            default_path.empty() ? nullptr : default_path.c_str());
+        if (!selected) {
+            return;
+        }
+
+        const auto nodes = node_editor_->GetNodes();
+        const auto links = node_editor_->GetLinks();
+        BuildCompileResult(nodes, links);
+        if (!compile_result_success_) {
+            compile_result_mode_ = CompileResultMode::Compile;
+            show_compile_result_popup_ = true;
+            spdlog::error(
+                "LoadCheckpoint: active graph did not pass the compile gate.");
+            return;
+        }
+
+        cyxwiz::TrainingConfiguration config;
+        try {
+            cyxwiz::GraphCompiler compiler;
+            config = compiler.Compile(nodes, links);
+        } catch (const std::exception& exception) {
+            spdlog::error("LoadCheckpoint: graph compilation failed: {}",
+                          exception.what());
+            return;
+        }
+
+        std::ostringstream fingerprint;
+        fingerprint << std::hex << HashGraphStructure(nodes, links);
+        const std::string graph_fingerprint = fingerprint.str();
+        const std::string selected_path = *selected;
+        auto load_result =
+            std::make_shared<cyxwiz::CheckpointEvaluationLoadResult>();
+        std::weak_ptr<cyxwiz::TrainingPlotPanel> dashboard =
+            training_plot_panel_;
+
+        cyxwiz::AsyncTaskManager::Instance().RunAsync(
+            "Load checkpoint for testing",
+            [config = std::move(config), selected_path, graph_fingerprint,
+             load_result](cyxwiz::LambdaTask& task) {
+                task.ReportProgress(0.1f, "Inspecting checkpoint...");
+                *load_result = cyxwiz::TrainingManager::Instance()
+                    .LoadCheckpointForEvaluation(
+                        config, selected_path, graph_fingerprint,
+                        [&task]() { return task.IsCancelRequested(); });
+                if (task.IsCancelRequested()) {
+                    return;
+                }
+                if (!load_result->success) {
+                    throw std::runtime_error(load_result->error_message);
+                }
+                task.ReportProgress(1.0f, "Checkpoint loaded for testing");
+            },
+            nullptr,
+            [dashboard, load_result](bool success, const std::string& error) {
+                if (!success || !load_result->success) {
+                    spdlog::error("LoadCheckpoint: {}",
+                                  error.empty()
+                                      ? load_result->error_message
+                                      : error);
+                    return;
+                }
+
+                const bool has_validation =
+                    !load_result->metadata.val_loss_history.empty() ||
+                    !load_result->metadata.val_accuracy_history.empty() ||
+                    load_result->metadata.val_loss != 0.0f ||
+                    load_result->metadata.val_accuracy != 0.0f;
+                if (auto panel = dashboard.lock()) {
+                    panel->SetActiveCheckpointLoaded(
+                        load_result->resolved_checkpoint_path,
+                        load_result->metadata.epoch,
+                        load_result->metadata.val_loss,
+                        load_result->metadata.val_accuracy,
+                        has_validation);
+                    panel->SetVisible(true);
+                }
+                spdlog::info(
+                    "LoadCheckpoint: active model is ready for Tools > Test");
+            });
     });
 
     toolbar_->SetTogglePlotTestControlCallback([this]() {
@@ -3127,6 +3229,14 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         spdlog::info("Graph compiled successfully: {} layers, input={}, output={}",
                      config.layers.size(), config.input_size, config.output_size);
 
+        auto& project = cyxwiz::ProjectManager::Instance();
+        if (config.checkpoint_dir.empty() && project.HasActiveProject()) {
+            config.checkpoint_dir = project.GetCheckpointsPath();
+            spdlog::info(
+                "StartTrainingFromGraph: using project checkpoint directory '{}'",
+                config.checkpoint_dir);
+        }
+
         auto& registry = cyxwiz::DataRegistry::Instance();
         auto& tm = cyxwiz::TrainingManager::Instance();
 
@@ -4542,40 +4652,61 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
 
     auto& tm = cyxwiz::TrainingManager::Instance();
     if (!tm.HasTrainedModel()) {
-        spdlog::error("StartTestingFromGraph: no trained model available. Train a model first.");
+        spdlog::error(
+            "StartTestingFromGraph: no active model is available. Train a model, "
+            "or use Tools > Checkpoints > Load Checkpoint for Testing before "
+            "running Test.");
         return;
     }
 
-    std::string dataset_name = config.dataset_name;
-    for (const auto& node : nodes) {
-        if (node.type != NodeType::DataInput && node.type != NodeType::DatasetInput) {
-            continue;
-        }
-
-        auto it = node.parameters.find("dataset_name");
-        if (it == node.parameters.end() || it->second.empty()) {
-            it = node.parameters.find("dataset");
-        }
-        if (it == node.parameters.end() || it->second.empty()) {
-            continue;
-        }
-
-        if (node.id == config.data_source_node_id || dataset_name.empty()) {
-            dataset_name = it->second;
-            if (node.id == config.data_source_node_id) {
-                break;
-            }
+    const auto active_model_info = tm.GetActiveModelInfo();
+    if (active_model_info.origin ==
+            cyxwiz::ActiveModelOrigin::LoadedCheckpoint &&
+        !active_model_info.graph_fingerprint.empty()) {
+        std::ostringstream fingerprint;
+        fingerprint << std::hex << HashGraphStructure(nodes, links);
+        if (fingerprint.str() != active_model_info.graph_fingerprint) {
+            spdlog::error(
+                "StartTestingFromGraph: the canvas graph changed after the "
+                "checkpoint was loaded. Reload the checkpoint against the "
+                "current graph before testing.");
+            return;
         }
     }
-    std::string label_column = FindTestingLabelColumn(
-        nodes, dataset_name, config.data_source_node_id);
+
+    const auto test_selection =
+        cyxwiz::ResolveGraphTestDataset(config);
+    std::string dataset_name = test_selection.dataset_name;
+    const int test_source_node_id = test_selection.source_node_id >= 0
+        ? test_selection.source_node_id
+        : config.data_source_node_id;
+    std::string label_column = test_selection.label_column;
+    if (label_column.empty()) {
+        label_column = FindTestingLabelColumn(
+            nodes, dataset_name, test_source_node_id);
+    }
     if (dataset_name.empty()) {
         spdlog::error("StartTestingFromGraph: no dataset loaded. Configure the Data Input node first.");
         return;
     }
+    config.dataset_name = dataset_name;
+    config.data_source_node_id = test_source_node_id;
+    spdlog::info(
+        "StartTestingFromGraph: selected dataset '{}' from source node {} "
+        "with scope={}",
+        dataset_name,
+        test_source_node_id,
+        test_selection.scope ==
+                cyxwiz::TestDatasetScope::EntireProvidedDataset
+            ? "entire_provided_dataset"
+            : "configured_test_split");
 
-    auto* raw_model = tm.GetLastTrainedModel();
-    auto model = std::shared_ptr<cyxwiz::SequentialModel>(raw_model, [](cyxwiz::SequentialModel*) {});
+    auto model = tm.GetActiveModel();
+    if (!model) {
+        spdlog::error(
+            "StartTestingFromGraph: active model became unavailable before testing.");
+        return;
+    }
 
     auto on_complete = [this](const cyxwiz::TestingMetrics& metrics) {
         if (test_results_panel_) {
@@ -4584,14 +4715,17 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         }
     };
 
+    const int test_batch_size = config.batch_size;
     auto& registry = cyxwiz::DataRegistry::Instance();
     bool started = false;
     if (auto arrow_dataset = registry.GetArrowDataset(dataset_name)) {
         started = cyxwiz::TestManager::Instance().StartTestingArrow(
-            std::move(config), std::move(arrow_dataset), label_column, config.batch_size, model, on_complete);
+            std::move(config), std::move(arrow_dataset), label_column,
+            test_selection.scope, test_batch_size, model, on_complete);
     } else if (auto parquet_dataset = registry.GetParquetBackedDataset(dataset_name)) {
         started = cyxwiz::TestManager::Instance().StartTestingParquet(
-            std::move(config), std::move(parquet_dataset), label_column, config.batch_size, model, on_complete);
+            std::move(config), std::move(parquet_dataset), label_column,
+            test_selection.scope, test_batch_size, model, on_complete);
     } else if (registry.IsTextDataset(dataset_name)) {
         const auto* text_entry = registry.GetTextDatasetEntry(dataset_name);
         if (!text_entry) {
@@ -4600,7 +4734,7 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         }
 
         started = cyxwiz::TestManager::Instance().StartTestingText(
-            std::move(config), *text_entry, config.batch_size, model, on_complete);
+            std::move(config), *text_entry, test_batch_size, model, on_complete);
     } else {
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {
@@ -4610,7 +4744,7 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         }
 
         started = cyxwiz::TestManager::Instance().StartTesting(
-            std::move(config), dataset, config.batch_size, model, on_complete);
+            std::move(config), dataset, test_batch_size, model, on_complete);
     }
 
     if (started) {

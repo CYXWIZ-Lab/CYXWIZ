@@ -37,6 +37,7 @@
 #include <chrono>
 #include <arrow/api.h>
 #include <arrow/table.h>
+#include <nlohmann/json.hpp>
 
 namespace fs = std::filesystem;
 
@@ -170,12 +171,42 @@ DataInputDialog::DataInputDialog(MLNode* node)
         if (strlen(file_path_) > 0) {
             RefreshColumnList();
         }
+        if (node_->parameters.count("selected_columns") &&
+            !available_columns_.empty()) {
+            try {
+                const auto persisted = nlohmann::json::parse(
+                    node_->parameters["selected_columns"]);
+                if (persisted.is_array() && !persisted.empty()) {
+                    std::unordered_set<std::string> included;
+                    for (const auto& value : persisted) {
+                        if (value.is_string()) {
+                            included.insert(value.get<std::string>());
+                        }
+                    }
+                    selected_columns_.assign(available_columns_.size(), false);
+                    for (std::size_t i = 0; i < available_columns_.size(); ++i) {
+                        selected_columns_[i] =
+                            included.count(available_columns_[i]) > 0;
+                    }
+                    select_all_columns_ = std::all_of(
+                        selected_columns_.begin(), selected_columns_.end(),
+                        [](bool selected) { return selected; });
+                }
+            } catch (const std::exception& e) {
+                spdlog::warn(
+                    "DataInputDialog: ignored invalid selected_columns: {}",
+                    e.what());
+            }
+        }
         if (node_->parameters.count("label_column") &&
             !node_->parameters["label_column"].empty()) {
             const std::string& label_column = node_->parameters["label_column"];
             for (int i = 0; i < static_cast<int>(available_columns_.size()); ++i) {
                 if (available_columns_[i] == label_column) {
                     label_column_idx_ = i;
+                    if (i < static_cast<int>(selected_columns_.size())) {
+                        selected_columns_[static_cast<std::size_t>(i)] = true;
+                    }
                     break;
                 }
             }

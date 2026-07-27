@@ -36,6 +36,11 @@ struct BuiltExecutableModel {
 // debug sanity check).
 BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config);
 
+// Build only the configured loss. Test and training execution share this so
+// reduction, class weights, label smoothing, and BCE pos_weight cannot drift.
+std::unique_ptr<Loss> BuildLossFromConfig(
+    const TrainingConfiguration& config);
+
 // Build the narrow executable model interface. Sequential configs wrap the
 // existing SequentialModel; configs with graph_op_node_ids use the graph-plan
 // executable path.

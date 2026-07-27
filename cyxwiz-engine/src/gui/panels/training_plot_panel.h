@@ -79,6 +79,11 @@ public:
                              float checkpoint_val_loss = 0.0f,
                              float checkpoint_val_accuracy = 0.0f,
                              int checkpoint_epoch = 0);
+    void SetActiveCheckpointLoaded(const std::string& checkpoint_path,
+                                   int checkpoint_epoch,
+                                   float validation_loss,
+                                   float validation_accuracy,
+                                   bool has_validation_metrics);
 
     // Per-batch progress updates (thread-safe). Called from TrainingManager's
     // batch_cb so the dashboard shows live activity inside an epoch instead of
@@ -188,6 +193,7 @@ private:
     float checkpoint_val_loss_ = 0.0f;
     float checkpoint_val_accuracy_ = 0.0f;
     int checkpoint_epoch_ = 0;
+    bool active_checkpoint_loaded_ = false;
     std::vector<float> epoch_times_;  // For averaging
     bool last_render_visible_ = false;
     mutable size_t sampled_read_events_ = 0;

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <chrono>
 #include <iomanip>
+#include <algorithm>
 
 namespace cyxwiz {
 
@@ -140,6 +141,24 @@ void PipelineCanvas::Render() {
 
     ImNodes::EndNodeEditor();
 
+    // Hover queries are only valid after EndNodeEditor. Query once and
+    // share the cached id between the tooltip and context menu.
+    int hovered_node_id = -1;
+    const bool is_node_hovered =
+        ImNodes::IsNodeHovered(&hovered_node_id);
+    if (is_node_hovered) {
+        const auto hovered_it = std::find_if(
+            nodes_.begin(), nodes_.end(),
+            [hovered_node_id](const Node& node) {
+                return node.id == hovered_node_id;
+            });
+        if (hovered_it != nodes_.end()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted(GetNodeTooltip(hovered_it->type).c_str());
+            ImGui::EndTooltip();
+        }
+    }
+
     // Handle link creation
     HandleLinkCreation();
 
@@ -152,7 +171,7 @@ void PipelineCanvas::Render() {
     }
 
     // Context menu
-    RenderContextMenu();
+    RenderContextMenu(is_node_hovered ? hovered_node_id : -1);
 }
 
 void PipelineCanvas::RenderNode(const Node& node) {
@@ -187,13 +206,6 @@ void PipelineCanvas::RenderNode(const Node& node) {
 
     ImNodes::EndNode();
 
-    // Phase 7: Show tooltip when hovering over node
-    int hovered_id = node.id;
-    if (ImNodes::IsNodeHovered(&hovered_id) && hovered_id == node.id) {
-        ImGui::BeginTooltip();
-        ImGui::TextUnformatted(GetNodeTooltip(node.type).c_str());
-        ImGui::EndTooltip();
-    }
 }
 
 void PipelineCanvas::RenderNodePalette() {
@@ -247,13 +259,10 @@ void PipelineCanvas::RenderNodePalette() {
     }
 }
 
-void PipelineCanvas::RenderContextMenu() {
-    int hovered_node = -1;
-    if (ImNodes::IsNodeHovered(&hovered_node)) {
-        if (ImGui::IsMouseClicked(1)) {  // Right click
-            selected_node_id_ = hovered_node;
-            ImGui::OpenPopup("Node Context Menu");
-        }
+void PipelineCanvas::RenderContextMenu(int hovered_node_id) {
+    if (hovered_node_id >= 0 && ImGui::IsMouseClicked(1)) {
+        selected_node_id_ = hovered_node_id;
+        ImGui::OpenPopup("Node Context Menu");
     }
 
     if (ImGui::BeginPopup("Node Context Menu")) {

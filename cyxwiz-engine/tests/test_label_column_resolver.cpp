@@ -49,6 +49,25 @@ int main() {
     });
     Check(cyxwiz::FindCommonLabelColumnIndex(first_match_schema) == 1,
           "first common label column should win");
+    Check(cyxwiz::ResolveLabelColumnIndex(first_match_schema, "y") == 2,
+          "an explicit label should take precedence over common-name order");
+    Check(cyxwiz::ResolveLabelColumnName(first_match_schema) == "target",
+          "an empty selection should resolve the first common label name");
+    Check(cyxwiz::ResolveLabelColumnIndex(first_match_schema, "missing") == -1,
+          "an invalid explicit label must not silently select another column");
+
+    auto tabular_schema = arrow::schema({
+        arrow::field("class", arrow::utf8()),
+        arrow::field("sensor_a", arrow::float64()),
+        arrow::field("sensor_b", arrow::int64()),
+        arrow::field("comment", arrow::utf8()),
+        arrow::field("__partition__", arrow::int8()),
+    });
+    const int tabular_label =
+        cyxwiz::ResolveLabelColumnIndex(tabular_schema, "class");
+    Check(cyxwiz::CountNumericBatchFeatureColumns(
+              tabular_schema, tabular_label) == 2,
+          "feature width should match numeric batch columns while excluding label and internal columns");
 
     auto no_label_schema = arrow::schema({
         arrow::field("text", arrow::utf8()),

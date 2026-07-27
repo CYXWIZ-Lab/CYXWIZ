@@ -287,6 +287,17 @@ void DataInputDialog::RenderTabularOptions() {
             "Dev / Validation",
             "Test"
         };
+        static constexpr const char* kRoleDescriptions[] = {
+            "Fits the model and learned preprocessing state. When Dev or Test "
+            "is not supplied separately, Data Split may derive those partitions "
+            "from this dataset according to its configured policy.",
+            "Used during training for validation metrics, early stopping, and "
+            "model selection. This external dataset is validated against Train, "
+            "used in full, and is never internally split or used to fit preprocessing.",
+            "Reserved for final held-out evaluation after training. This external "
+            "dataset is validated against Train, used in full, and is never used "
+            "for fitting, early stopping, model selection, or preprocessing statistics."
+        };
 
         ImGui::Text("Role:");
         ImGui::SameLine(120);
@@ -307,8 +318,10 @@ void DataInputDialog::RenderTabularOptions() {
             ImGui::EndCombo();
         }
 
-        ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
-            "Dev/Test sources are validated against Train and are not internally split.");
+        ImGui::PushStyleColor(
+            ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("%s", kRoleDescriptions[role_preview_idx]);
+        ImGui::PopStyleColor();
     }
 
 
@@ -340,6 +353,9 @@ void DataInputDialog::RenderTabularOptions() {
                 bool is_selected = (label_column_idx_ == i);
                 if (ImGui::Selectable(available_columns_[i].c_str(), is_selected)) {
                     label_column_idx_ = i;
+                    if (i < static_cast<int>(selected_columns_.size())) {
+                        selected_columns_[static_cast<std::size_t>(i)] = true;
+                    }
                     has_changes_ = true;
                 }
                 if (is_selected) {
@@ -370,6 +386,9 @@ void DataInputDialog::RenderTabularOptions() {
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Use")) {
                         label_column_idx_ = i;
+                        if (i < static_cast<int>(selected_columns_.size())) {
+                            selected_columns_[static_cast<std::size_t>(i)] = true;
+                        }
                         has_changes_ = true;
                     }
                     break;

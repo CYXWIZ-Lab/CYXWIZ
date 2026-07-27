@@ -97,11 +97,15 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadCheckpoint(
     Optimizer* optimizer,
     const std::string& checkpoint_name)
 {
+    last_error_.clear();
+
     // Find checkpoint path
     fs::path checkpoint_path;
     if (checkpoint_name.empty()) {
         std::string latest = GetLatestCheckpoint();
         if (latest.empty()) {
+            last_error_ = "No checkpoints were found in '" +
+                          checkpoint_dir_.string() + "'.";
             spdlog::warn("CheckpointManager: No checkpoints found");
             return std::nullopt;
         }
@@ -111,6 +115,8 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadCheckpoint(
     }
 
     if (!fs::exists(checkpoint_path)) {
+        last_error_ = "Checkpoint directory was not found: " +
+                      checkpoint_path.string();
         spdlog::error("CheckpointManager: Checkpoint not found: {}", checkpoint_path.string());
         return std::nullopt;
     }
@@ -120,12 +126,20 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadCheckpoint(
     // Load metadata
     auto metadata = LoadMetadata(checkpoint_path);
     if (!metadata) {
+        if (last_error_.empty()) {
+            last_error_ = "Checkpoint metadata is missing or invalid at '" +
+                          checkpoint_path.string() + "'.";
+        }
         spdlog::error("CheckpointManager: Failed to load metadata");
         return std::nullopt;
     }
 
     // Load model parameters
     if (!LoadModelParameters(checkpoint_path, model)) {
+        if (last_error_.empty()) {
+            last_error_ = "Checkpoint model parameters are invalid at '" +
+                          checkpoint_path.string() + "'.";
+        }
         spdlog::error("CheckpointManager: Failed to load model parameters");
         return std::nullopt;
     }
@@ -281,6 +295,8 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadMetadata(const fs::path
         fs::path metadata_path = dir / "metadata.json";
         std::ifstream file(metadata_path);
         if (!file.is_open()) {
+            last_error_ = "Checkpoint metadata file is unreadable: " +
+                          metadata_path.string();
             return std::nullopt;
         }
 
@@ -316,6 +332,8 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadMetadata(const fs::path
 
         return metadata;
     } catch (const std::exception& e) {
+        last_error_ = "Checkpoint metadata is invalid: " +
+                      std::string(e.what());
         spdlog::error("CheckpointManager: Error loading metadata: {}", e.what());
         return std::nullopt;
     }
@@ -378,6 +396,8 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, SequentialModel
     try {
         fs::path model_dir = dir / "model";
         if (!fs::exists(model_dir)) {
+            last_error_ = "Checkpoint model directory was not found: " +
+                          model_dir.string();
             spdlog::error("CheckpointManager: Model directory not found: {}", model_dir.string());
             return false;
         }
@@ -385,6 +405,8 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, SequentialModel
         // Load manifest
         fs::path manifest_path = model_dir / "manifest.json";
         if (!fs::exists(manifest_path)) {
+            last_error_ = "Checkpoint parameter manifest was not found: " +
+                          manifest_path.string();
             spdlog::error("CheckpointManager: Manifest not found");
             return false;
         }
@@ -392,6 +414,11 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, SequentialModel
         std::ifstream manifest_file(manifest_path);
         json manifest;
         manifest_file >> manifest;
+        if (!manifest.is_object()) {
+            last_error_ = "Checkpoint parameter manifest must be a JSON object: " +
+                          manifest_path.string();
+            return false;
+        }
 
         // Load parameters
         std::map<std::string, Tensor> params;
@@ -399,18 +426,53 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, SequentialModel
             fs::path tensor_path = model_dir / filename;
             auto tensor = LoadTensor(tensor_path);
             if (!tensor) {
+                if (last_error_.empty()) {
+                    last_error_ = "Could not load checkpoint parameter '" +
+                                  param_name.get<std::string>() + "'.";
+                }
                 spdlog::error("CheckpointManager: Failed to load parameter: {}", param_name.get<std::string>());
                 return false;
             }
             params[param_name.get<std::string>()] = std::move(*tensor);
         }
 
-        // Set parameters in model
+        // Validate the complete checkpoint before mutating the destination
+        // model. A failed load must leave the previously active model intact.
+        const auto expected = model.GetParameters();
+        if (expected.size() != params.size()) {
+            last_error_ = "Checkpoint parameter count (" +
+                          std::to_string(params.size()) +
+                          ") does not match the active graph model (" +
+                          std::to_string(expected.size()) + ").";
+            return false;
+        }
+        for (const auto& [name, expected_tensor] : expected) {
+            const auto found = params.find(name);
+            if (found == params.end()) {
+                last_error_ = "Checkpoint is missing model parameter '" +
+                              name + "'.";
+                return false;
+            }
+            if (found->second.Shape() != expected_tensor.Shape()) {
+                last_error_ = "Checkpoint shape mismatch for parameter '" +
+                              name + "'.";
+                return false;
+            }
+            if (found->second.GetDataType() != expected_tensor.GetDataType()) {
+                last_error_ = "Checkpoint data type mismatch for parameter '" +
+                              name + "'.";
+                return false;
+            }
+        }
+
+        // Set parameters only after compatibility has passed for every tensor.
         model.SetParameters(params);
 
         spdlog::debug("CheckpointManager: Loaded {} parameters", params.size());
         return true;
     } catch (const std::exception& e) {
+        last_error_ = "Checkpoint parameter loading failed: " +
+                      std::string(e.what());
         spdlog::error("CheckpointManager: Error loading model parameters: {}", e.what());
         return false;
     }
@@ -470,22 +532,38 @@ std::optional<Tensor> CheckpointManager::LoadTensor(const fs::path& path) {
     try {
         std::ifstream file(path, std::ios::binary);
         if (!file.is_open()) {
+            last_error_ = "Checkpoint tensor is unreadable: " + path.string();
             return std::nullopt;
         }
 
         // Read header
         uint32_t ndims;
         file.read(reinterpret_cast<char*>(&ndims), sizeof(ndims));
+        if (!file.good() || ndims > 16) {
+            last_error_ = "Checkpoint tensor has an invalid rank header: " +
+                          path.string();
+            return std::nullopt;
+        }
 
         std::vector<size_t> shape(ndims);
         for (uint32_t i = 0; i < ndims; ++i) {
             uint64_t d;
             file.read(reinterpret_cast<char*>(&d), sizeof(d));
+            if (!file.good() || d == 0) {
+                last_error_ = "Checkpoint tensor has an invalid shape header: " +
+                              path.string();
+                return std::nullopt;
+            }
             shape[i] = static_cast<size_t>(d);
         }
 
         uint32_t dtype;
         file.read(reinterpret_cast<char*>(&dtype), sizeof(dtype));
+        if (!file.good()) {
+            last_error_ = "Checkpoint tensor has an invalid data type header: " +
+                          path.string();
+            return std::nullopt;
+        }
 
         // Create tensor with shape
         Tensor tensor(shape, static_cast<DataType>(dtype));
@@ -494,9 +572,15 @@ std::optional<Tensor> CheckpointManager::LoadTensor(const fs::path& path) {
         float* data = tensor.Data<float>();
         size_t num_elements = tensor.NumElements();
         file.read(reinterpret_cast<char*>(data), num_elements * sizeof(float));
+        if (!file.good()) {
+            last_error_ = "Checkpoint tensor data is truncated: " + path.string();
+            return std::nullopt;
+        }
 
         return tensor;
     } catch (const std::exception& e) {
+        last_error_ = "Checkpoint tensor loading failed for '" + path.string() +
+                      "': " + e.what();
         spdlog::error("CheckpointManager: Error loading tensor: {}", e.what());
         return std::nullopt;
     }

@@ -4,6 +4,7 @@
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
+#include "label_column_resolver.h"
 #include "graph_topology_utils.h"
 #include "worker_defaults.h"
 #include "node_metadata_registry.h"
@@ -1838,8 +1839,61 @@ void ValidateSingleDatasetSourceForSelectedLoss(
     const auto loss_ancestors = CollectAncestorNodeIds(selected_loss->id, links);
     std::vector<const gui::MLNode*> selected_sources;
     for (const auto& node : nodes) {
-        if (IsDatasetSourceType(node.type) &&
-            loss_ancestors.count(node.id) > 0) {
+        if (!IsDatasetSourceType(node.type) ||
+            loss_ancestors.count(node.id) == 0) {
+            continue;
+        }
+
+        const std::string role = DatasetRoleFromNode(node);
+        const char* expected_split_input = nullptr;
+        if (role == "dev" || role == "validation") {
+            expected_split_input = "Validation Dataset";
+        } else if (role == "test") {
+            expected_split_input = "Test Dataset";
+        }
+
+        bool saw_selected_path_route = false;
+        bool all_routes_match_role = expected_split_input != nullptr;
+        if (expected_split_input) {
+            for (const auto& link : links) {
+                if (link.from_node != node.id ||
+                    loss_ancestors.count(link.to_node) == 0) {
+                    continue;
+                }
+                saw_selected_path_route = true;
+
+                const gui::MLNode* target = nullptr;
+                for (const auto& candidate : nodes) {
+                    if (candidate.id == link.to_node) {
+                        target = &candidate;
+                        break;
+                    }
+                }
+                if (!target || target->type != gui::NodeType::DataSplit) {
+                    all_routes_match_role = false;
+                    break;
+                }
+                bool route_matches_role = false;
+                for (const auto& input : target->inputs) {
+                    if (input.id == link.to_pin &&
+                        input.name == expected_split_input) {
+                        route_matches_role = true;
+                        break;
+                    }
+                }
+                if (!route_matches_role) {
+                    all_routes_match_role = false;
+                    break;
+                }
+            }
+        }
+        const bool role_matched_split_route =
+            saw_selected_path_route && all_routes_match_role;
+
+        // Dev/Test sources routed through their named Data Split inputs are
+        // evaluation roles, not additional model inputs. Any other route still
+        // counts as a source on the selected training path and fails below.
+        if (!role_matched_split_route) {
             selected_sources.push_back(&node);
         }
     }
@@ -2944,7 +2998,7 @@ TrainingConfiguration GraphCompiler::Compile(
             }
             const std::string role = DatasetRoleFromNode(node);
             ResolvedDatasetRole* resolved = nullptr;
-            if (role == "dev") {
+            if (role == "dev" || role == "validation") {
                 resolved = &config.dataset_roles.dev;
             } else if (role == "test") {
                 resolved = &config.dataset_roles.test;
@@ -3051,14 +3105,55 @@ TrainingConfiguration GraphCompiler::Compile(
             labels_from_structure = cat_loader->LabelsFromStructure();
         }
 
-        const std::string label_col = dataset_node->parameters.count("label_column")
+        const std::string requested_label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
             : std::string();
-        if (label_col.empty() && !labels_from_structure) {
-            AddIssue(config, IssueLevel::Warning,
-                     "No label column selected - training will use the last "
-                     "column as label by default",
+
+        std::shared_ptr<arrow::Schema> tabular_schema;
+        auto& data_registry = DataRegistry::Instance();
+        if (auto arrow_dataset =
+                data_registry.GetArrowDataset(config.dataset_name)) {
+            tabular_schema = arrow_dataset->GetSchema();
+        } else if (auto parquet_dataset =
+                       data_registry.GetParquetBackedDataset(config.dataset_name)) {
+            tabular_schema = parquet_dataset->GetSchema();
+        }
+
+        const int resolved_label_index = ResolveLabelColumnIndex(
+            tabular_schema, requested_label_col);
+        const std::string resolved_label_col = resolved_label_index >= 0
+            ? tabular_schema->field(resolved_label_index)->name()
+            : std::string{};
+        config.dataset_roles.train.label_column = resolved_label_col;
+
+        if (!requested_label_col.empty() && tabular_schema &&
+            resolved_label_index < 0 && !labels_from_structure) {
+            AddIssue(config, IssueLevel::Error,
+                     "Selected label column '" + requested_label_col +
+                         "' is not present in registered dataset '" +
+                         config.dataset_name + "'",
+                     dataset_node->id, dataset_node->name,
+                     errors::Data::RequiredLabelColumnMissing);
+        } else if (requested_label_col.empty() &&
+                   !resolved_label_col.empty()) {
+            AddIssue(config, IssueLevel::Info,
+                     "Auto-resolved label column '" + resolved_label_col +
+                         "' from the registered dataset schema",
                      dataset_node->id, dataset_node->name);
+        } else if (requested_label_col.empty() && !labels_from_structure) {
+            const IssueLevel level = tabular_schema
+                ? IssueLevel::Error
+                : IssueLevel::Warning;
+            AddIssue(config, level,
+                     tabular_schema
+                         ? "No label column selected and no common label name "
+                           "was found in the registered dataset schema"
+                         : "No label column selected - apply the Data Input "
+                           "node so the compiler can inspect its schema",
+                     dataset_node->id, dataset_node->name,
+                     tabular_schema
+                         ? errors::Data::RequiredLabelColumnMissing
+                         : "");
         }
 
         // Extract input shape from dataset node
@@ -3117,6 +3212,32 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.input_size *= dim;
             }
         }
+
+        // Tabular Data Input nodes do not need a manually-entered shape.
+        // Derive the exact feature width from the same numeric-column
+        // contract used by Arrow batchers. This prevents a silent
+        // Linear(1, ...) fallback followed by a native dimension mismatch
+        // when the first real batch contains many columns.
+        if (tabular_schema && config.input_shape.empty() &&
+            resolved_label_index >= 0) {
+            const size_t feature_count = CountNumericBatchFeatureColumns(
+                tabular_schema, resolved_label_index);
+            if (feature_count == 0) {
+                AddIssue(config, IssueLevel::Error,
+                         "Registered dataset '" + config.dataset_name +
+                             "' has no numeric feature columns after excluding "
+                             "label column '" + resolved_label_col + "'",
+                         dataset_node->id, dataset_node->name,
+                         errors::Data::ColumnTypeMismatch);
+            } else {
+                config.input_shape = {feature_count};
+                config.input_size = feature_count;
+                spdlog::info(
+                    "GraphCompiler: derived tabular input width {} from "
+                    "dataset '{}' (label='{}')",
+                    feature_count, config.dataset_name, resolved_label_col);
+            }
+        }
     }
 
     // Extract split ratios from the DataSplit node on the selected data path.
@@ -3145,6 +3266,25 @@ TrainingConfiguration GraphCompiler::Compile(
         } catch (const std::exception& e) {
             spdlog::warn("GraphCompiler: DataSplit param parse error ({}) - using defaults", e.what());
         }
+    }
+    if (config.has_data_split &&
+        (config.dataset_roles.dev.IsSupplied() ||
+         config.dataset_roles.test.IsSupplied())) {
+        if (config.dataset_roles.dev.IsSupplied()) {
+            config.val_ratio = 0.0f;
+        }
+        if (config.dataset_roles.test.IsSupplied()) {
+            config.test_ratio = 0.0f;
+        }
+        config.train_ratio =
+            std::max(0.0f, 1.0f - config.val_ratio - config.test_ratio);
+        spdlog::info(
+            "GraphCompiler: resolved supplied dataset roles - "
+            "derived train={:.2f}, val={:.2f}, test={:.2f}; "
+            "external dev={}, external test={}",
+            config.train_ratio, config.val_ratio, config.test_ratio,
+            config.dataset_roles.dev.IsSupplied(),
+            config.dataset_roles.test.IsSupplied());
     }
     if (config.has_data_split) {
         spdlog::info("GraphCompiler: DataSplit node found - train={:.2f}, val={:.2f}, test={:.2f}, seed={}, stratified={}",

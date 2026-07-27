@@ -2,6 +2,7 @@
 
 #include "../../core/arrow_dataset.h"
 #include "../../core/async_task_manager.h"
+#include "../../core/classification_decision.h"
 #include "../../core/data_registry.h"
 #include "../../core/dataset_audit.h"
 #include "../../core/graph_compiler.h"  // PreprocessingDomain
@@ -216,6 +217,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const int64_t max_rows       = ctx.max_rows;
     const bool force_disk        = ctx.force_disk_backed;
     const std::string label_col  = ctx.label_column;
+    const auto selected_columns  = ctx.selected_columns;
 
     state->dataset_name = name;
     state->source_path  = path;
@@ -224,7 +226,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     return mgr.RunAsync(
         "Loading " + name,
         [path, name, file_type, has_header, delim, missing_tokens, skip_rows, max_rows,
-         force_disk, label_col, state]
+         force_disk, label_col, selected_columns, state]
         (cyxwiz::LambdaTask& task) {
             try {
                 task.ReportProgress(0.1f, "Reading " + file_type);
@@ -235,7 +237,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     // in-memory vs Parquet disk-backed.
                     auto backend = reg.LoadTabularCSV(
                         path, name, has_header, delim, skip_rows, max_rows,
-                        force_disk, missing_tokens);
+                        force_disk, missing_tokens, selected_columns);
                     task.ReportProgress(0.9f, "Finalizing");
 
                     if (backend == cyxwiz::DataRegistry::TabularLoadBackend::InMemory) {
@@ -291,6 +293,20 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         // auto/feather/arrow/ipc use Arrow's table loader.
                         dataset = reg.LoadArrowTable(path, name);
                     }
+                    if (dataset && !selected_columns.empty()) {
+                        auto projected = dataset->SelectColumns(selected_columns);
+                        if (!projected ||
+                            projected->GetNumColumns() !=
+                                static_cast<int64_t>(selected_columns.size())) {
+                            reg.UnregisterTabularDataset(name);
+                            dataset.reset();
+                            state->message =
+                                "Selected columns do not match the loaded schema";
+                        } else {
+                            dataset = reg.RegisterArrowTable(
+                                projected->GetArrowTable(), name);
+                        }
+                    }
                     task.ReportProgress(0.9f, "Finalizing");
 
                     if (dataset) {
@@ -307,8 +323,10 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         state->audit_issue_lines = cyxwiz::FormatAuditIssueLines(audit);
                     } else {
                         state->success = false;
-                        state->message = "Failed to load " + file_type +
-                                         " - check file format";
+                        if (state->message.empty()) {
+                            state->message = "Failed to load " + file_type +
+                                             " - check file format";
+                        }
                     }
                 }
             } catch (const std::exception& e) {
@@ -445,11 +463,36 @@ bool TabularLoader::LaunchTraining(
             return false;
         }
 
+        // Explicit Dev/Test roles replace splits derived from Train. Delay
+        // prefetch wrapping until those replacements are final so each wrapper
+        // and its owning concrete source cannot diverge.
+        auto assembly_config = config;
+        assembly_config.prefetch_factor = 0;
+        assembly_config.has_data_split = true;
+        if (config.dataset_roles.dev.IsSupplied()) {
+            assembly_config.val_ratio = 0.0f;
+        }
+        if (config.dataset_roles.test.IsSupplied()) {
+            assembly_config.test_ratio = 0.0f;
+        }
+        assembly_config.train_ratio = std::max(
+            0.0f,
+            1.0f - assembly_config.val_ratio - assembly_config.test_ratio);
+        config.train_ratio = assembly_config.train_ratio;
+        config.val_ratio = assembly_config.val_ratio;
+        config.test_ratio = assembly_config.test_ratio;
+        spdlog::info(
+            "TabularLoader: explicit role mapping uses Train split "
+            "train={:.2f}, dev={:.2f}, test={:.2f}; "
+            "external dev={}, external test={}",
+            config.train_ratio, config.val_ratio, config.test_ratio,
+            config.dataset_roles.dev.IsSupplied(),
+            config.dataset_roles.test.IsSupplied());
         auto batchers = train_arrow
             ? BuildArrowTrainingBatchers(
-                  config, train_arrow, train_role_label, batch_size)
+                  assembly_config, train_arrow, train_role_label, batch_size)
             : BuildParquetTrainingBatchers(
-                  config, train_parquet, train_role_label, batch_size);
+                  assembly_config, train_parquet, train_role_label, batch_size);
 
         auto make_arrow_role = [&](std::shared_ptr<cyxwiz::ArrowDataset> ds,
                                    const std::string& role_label) {
@@ -468,19 +511,23 @@ bool TabularLoader::LaunchTraining(
         };
 
         if (dev_arrow) {
+            batchers.parquet_val.reset();
             batchers.arrow_val = make_arrow_role(
                 dev_arrow, config.dataset_roles.dev.label_column);
             batchers.val = batchers.arrow_val.get();
         } else if (dev_parquet) {
+            batchers.arrow_val.reset();
             batchers.parquet_val = make_parquet_role(
                 dev_parquet, config.dataset_roles.dev.label_column);
             batchers.val = batchers.parquet_val.get();
         }
         if (test_arrow) {
+            batchers.parquet_test.reset();
             batchers.arrow_test = make_arrow_role(
                 test_arrow, config.dataset_roles.test.label_column);
             batchers.test = batchers.arrow_test.get();
         } else if (test_parquet) {
+            batchers.arrow_test.reset();
             batchers.parquet_test = make_parquet_role(
                 test_parquet, config.dataset_roles.test.label_column);
             batchers.test = batchers.parquet_test.get();
@@ -492,13 +539,14 @@ bool TabularLoader::LaunchTraining(
                 b->SetNormalization(config.preprocessing.norm_mean,
                                     config.preprocessing.norm_std);
             }
-            if (config.is_time_series) {
+            if (config.is_time_series ||
+                UsesScalarBinaryTargets(config.loss_type)) {
                 if (auto* arrow_b =
                         dynamic_cast<cyxwiz::ArrowDatasetBatcher*>(b)) {
-                    arrow_b->SetRegressionMode(true);
+                    arrow_b->SetScalarLabelMode(true);
                 } else if (auto* parquet_b =
                                dynamic_cast<cyxwiz::ParquetArrowBatcher*>(b)) {
-                    parquet_b->SetRegressionMode(true);
+                    parquet_b->SetScalarLabelMode(true);
                 }
             } else if (config.preprocessing.has_onehot) {
                 b->SetOneHotEncoding(config.preprocessing.num_classes);
@@ -508,6 +556,12 @@ bool TabularLoader::LaunchTraining(
         };
         apply_role_transforms(batchers.val);
         apply_role_transforms(batchers.test);
+        batchers.num_val_samples =
+            batchers.val ? batchers.val->GetNumSamples() : 0;
+        batchers.num_test_samples =
+            batchers.test ? batchers.test->GetNumSamples() : 0;
+        AttachTrainingBatcherPrefetchWrappers(
+            batchers, config, "explicit tabular roles");
 
         return tm.StartTrainingExternal(
             std::move(config), TakeResolvedExternalBatchers(std::move(batchers)),
@@ -605,6 +659,7 @@ std::vector<ParamSchema> TabularLoader::NodeParams() const {
         {"delimiter",         ",",      "Column separator"},
         {"skip_rows",         "0",      "Rows to skip at file start"},
         {"max_rows",          "0",      "Max rows to load (0 = all)"},
+        {"selected_columns",  "[]",     "JSON array of included column names"},
         {"encoding",          "0",      "Text encoding index"},
         {"label_column",      "",       "Column name used as training label"},
         {"force_disk_backed", "false",  "Force Parquet disk-backed cache"},

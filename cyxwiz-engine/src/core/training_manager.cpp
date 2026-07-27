@@ -1,4 +1,6 @@
 #include "training_manager.h"
+#include "classification_decision.h"
+#include "model_builder.h"
 
 #include <cstdint>
 #include "crash_run_recorder.h"
@@ -14,6 +16,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 
 namespace cyxwiz {
 
@@ -215,6 +218,152 @@ bool TrainingManager::StartTrainingExternal(
         std::move(executor), epochs, batch_size, plot_panel,
         std::move(node_editor_callback),
         "Training Model (Resolved Roles)", "Training from resolved dataset roles");
+}
+
+std::shared_ptr<SequentialModel> TrainingManager::GetActiveModel() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_trained_model_;
+}
+
+ActiveModelInfo TrainingManager::GetActiveModelInfo() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return active_model_info_;
+}
+
+bool TrainingManager::HasTrainedModel() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_trained_model_ != nullptr;
+}
+
+CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
+    const TrainingConfiguration& config,
+    const std::string& checkpoint_path,
+    const std::string& graph_fingerprint,
+    std::function<bool()> cancel_requested) {
+    CheckpointEvaluationLoadResult result;
+    namespace fs = std::filesystem;
+
+    const auto was_cancelled = [&cancel_requested]() {
+        return cancel_requested && cancel_requested();
+    };
+
+    if (was_cancelled()) {
+        result.error_message = "Checkpoint loading was cancelled.";
+        return result;
+    }
+
+    if (IsTrainingActive()) {
+        result.error_message =
+            "Cannot load a checkpoint while training is active.";
+        return result;
+    }
+    if (!config.is_valid) {
+        result.error_message =
+            "The active graph must compile before loading a checkpoint.";
+        return result;
+    }
+    if (checkpoint_path.empty()) {
+        result.error_message = "Checkpoint path is empty.";
+        return result;
+    }
+
+    std::error_code ec;
+    fs::path resolved = fs::absolute(fs::path(checkpoint_path), ec);
+    if (ec || !fs::is_directory(resolved, ec)) {
+        result.error_message = "Checkpoint directory was not found: " +
+                               checkpoint_path;
+        return result;
+    }
+    if (!fs::exists(resolved / "metadata.json", ec) &&
+        fs::exists(resolved / "best" / "metadata.json", ec)) {
+        resolved /= "best";
+    }
+    if (!fs::exists(resolved / "metadata.json", ec)) {
+        result.error_message =
+            "Select a checkpoint directory containing metadata.json, or a "
+            "training-run directory containing best/metadata.json.";
+        return result;
+    }
+
+    auto built = BuildSequentialFromConfig(config);
+    if (!built.ok() || !built.model) {
+        result.error_message = built.error_message.empty()
+            ? "The active graph could not build a sequential model for this checkpoint."
+            : built.error_message;
+        return result;
+    }
+
+    if (was_cancelled()) {
+        result.error_message = "Checkpoint loading was cancelled.";
+        return result;
+    }
+
+    CheckpointManager manager(resolved.parent_path().string());
+    auto metadata = manager.LoadCheckpoint(
+        *built.model, nullptr, resolved.filename().string());
+    if (!metadata) {
+        result.error_message = manager.GetLastError().empty()
+            ? "Checkpoint loading failed."
+            : manager.GetLastError();
+        return result;
+    }
+
+    if (was_cancelled()) {
+        result.error_message =
+            "Checkpoint loading was cancelled; the active model was not replaced.";
+        return result;
+    }
+
+    auto loaded_model = std::shared_ptr<SequentialModel>(std::move(built.model));
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (was_cancelled()) {
+            result.error_message =
+                "Checkpoint loading was cancelled; the active model was not replaced.";
+            return result;
+        }
+        if (is_training_.load()) {
+            result.error_message =
+                "Training started while the checkpoint was loading; the "
+                "active model was not replaced.";
+            return result;
+        }
+
+        last_trained_model_ = std::move(loaded_model);
+        last_optimizer_.reset();
+        last_metrics_ = TrainingMetrics{};
+        last_metrics_.current_epoch = metadata->epoch;
+        last_metrics_.current_batch = metadata->global_step;
+        last_metrics_.train_loss = metadata->train_loss;
+        last_metrics_.train_accuracy = metadata->train_accuracy;
+        last_metrics_.val_loss = metadata->val_loss;
+        last_metrics_.val_accuracy = metadata->val_accuracy;
+        last_metrics_.loss_history = metadata->loss_history;
+        last_metrics_.accuracy_history = metadata->accuracy_history;
+        last_metrics_.val_loss_history = metadata->val_loss_history;
+        last_metrics_.val_accuracy_history = metadata->val_accuracy_history;
+        last_metrics_.has_validation_metrics =
+            !metadata->val_loss_history.empty() ||
+            !metadata->val_accuracy_history.empty() ||
+            metadata->val_loss != 0.0f || metadata->val_accuracy != 0.0f;
+        last_metrics_.checkpoint_used = resolved.string();
+
+        active_model_info_ = ActiveModelInfo{};
+        active_model_info_.origin = ActiveModelOrigin::LoadedCheckpoint;
+        active_model_info_.checkpoint_path = resolved.string();
+        active_model_info_.graph_fingerprint = graph_fingerprint;
+        active_model_info_.checkpoint_metadata = *metadata;
+    }
+
+    result.success = true;
+    result.resolved_checkpoint_path = resolved.string();
+    result.metadata = *metadata;
+    spdlog::info(
+        "TrainingManager: Loaded checkpoint '{}' for evaluation (epoch={}, val_loss={:.4f})",
+        result.resolved_checkpoint_path,
+        result.metadata.epoch,
+        result.metadata.val_loss);
+    return result;
 }
 bool TrainingManager::StartTrainingArrow(
     TrainingConfiguration config,
@@ -431,7 +580,10 @@ bool TrainingManager::StartTrainingImage(
         batcher->SetNormalization(config.preprocessing.norm_mean,
                                   config.preprocessing.norm_std);
     }
-    if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
+    if (UsesScalarBinaryTargets(config.loss_type)) {
+        batcher->SetScalarLabelMode(true);
+    } else if (config.preprocessing.has_onehot &&
+               config.preprocessing.num_classes > 0) {
         batcher->SetOneHotEncoding(config.preprocessing.num_classes);
     }
 
@@ -496,7 +648,10 @@ bool TrainingManager::StartTrainingAudio(
         batcher->SetNormalization(config.preprocessing.norm_mean,
                                   config.preprocessing.norm_std);
     }
-    if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
+    if (UsesScalarBinaryTargets(config.loss_type)) {
+        batcher->SetScalarLabelMode(true);
+    } else if (config.preprocessing.has_onehot &&
+               config.preprocessing.num_classes > 0) {
         batcher->SetOneHotEncoding(config.preprocessing.num_classes);
     }
 
@@ -569,7 +724,10 @@ bool TrainingManager::StartTrainingText(
 
     // Hand preprocessing / one-hot hints through to the batcher —
     // same pattern as the image/audio paths.
-    if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
+    if (UsesScalarBinaryTargets(config.loss_type)) {
+        batcher->SetScalarLabelMode(true);
+    } else if (config.preprocessing.has_onehot &&
+               config.preprocessing.num_classes > 0) {
         batcher->SetOneHotEncoding(config.preprocessing.num_classes);
     }
 
@@ -894,6 +1052,9 @@ void TrainingManager::TrainingThreadFunc(
             last_trained_model_ = current_executor_->ReleaseModel();
             last_optimizer_ = current_executor_->ReleaseOptimizer();
             last_metrics_ = final_metrics;
+            active_model_info_ = ActiveModelInfo{};
+            active_model_info_.origin = ActiveModelOrigin::TrainedInSession;
+            active_model_info_.checkpoint_path = final_metrics.checkpoint_used;
             spdlog::info("TrainingManager: Preserved trained model for export (success={}, stopped={})",
                          success, stop_requested_.load());
         }
@@ -913,6 +1074,7 @@ void TrainingManager::ClearTrainedModel() {
     last_trained_model_.reset();
     last_optimizer_.reset();
     last_metrics_ = TrainingMetrics();
+    active_model_info_ = ActiveModelInfo{};
     spdlog::info("TrainingManager: Cleared preserved trained model");
 }
 

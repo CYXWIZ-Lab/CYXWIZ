@@ -3,6 +3,7 @@
 #include "graph_compiler.h"
 #include "dataset_batcher.h"
 #include "data_registry.h"
+#include "test_dataset_selection.h"
 #include "text_dataset_batcher.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/sequential.h>
@@ -109,8 +110,14 @@ public:
      * @param dataset Dataset handle from DataRegistry
      */
     TestExecutor(TrainingConfiguration config, DatasetHandle dataset);
-    TestExecutor(TrainingConfiguration config, std::shared_ptr<ArrowDataset> arrow_dataset, std::string label_column);
-    TestExecutor(TrainingConfiguration config, std::shared_ptr<ParquetBackedDataset> parquet_dataset, std::string label_column);
+    TestExecutor(TrainingConfiguration config,
+                 std::shared_ptr<ArrowDataset> arrow_dataset,
+                 std::string label_column,
+                 TestDatasetScope dataset_scope);
+    TestExecutor(TrainingConfiguration config,
+                 std::shared_ptr<ParquetBackedDataset> parquet_dataset,
+                 std::string label_column,
+                 TestDatasetScope dataset_scope);
     TestExecutor(TrainingConfiguration config, const DataRegistry::TextDatasetEntry& text_entry);
 
     ~TestExecutor();
@@ -162,6 +169,8 @@ private:
     bool use_text_dataset_ = false;
     bool use_arrow_dataset_ = false;
     bool use_parquet_dataset_ = false;
+    TestDatasetScope dataset_scope_ =
+        TestDatasetScope::ConfiguredTestSplit;
     std::string arrow_label_column_;
     std::string parquet_label_column_;
 
@@ -222,16 +231,6 @@ private:
      * Compute loss between predictions and targets
      */
     float ComputeLoss(const Tensor& predictions, const Tensor& targets);
-
-    /**
-     * Get the predicted class (argmax)
-     */
-    int ArgMax(const float* data, size_t size);
-
-    /**
-     * Get confidence (softmax probability) for predicted class
-     */
-    float GetConfidence(const float* data, size_t size, int predicted_class);
 
     /**
      * Apply preprocessing to batch data

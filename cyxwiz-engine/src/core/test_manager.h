@@ -64,6 +64,7 @@ public:
         TrainingConfiguration config,
         std::shared_ptr<ArrowDataset> dataset,
         std::string label_column,
+        TestDatasetScope dataset_scope,
         int batch_size,
         std::shared_ptr<SequentialModel> model = nullptr,
         TestCompleteCallback on_complete = nullptr
@@ -72,6 +73,7 @@ public:
         TrainingConfiguration config,
         std::shared_ptr<ParquetBackedDataset> dataset,
         std::string label_column,
+        TestDatasetScope dataset_scope,
         int batch_size,
         std::shared_ptr<SequentialModel> model = nullptr,
         TestCompleteCallback on_complete = nullptr

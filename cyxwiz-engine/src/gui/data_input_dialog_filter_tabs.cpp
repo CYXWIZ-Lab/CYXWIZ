@@ -18,8 +18,10 @@ void DataInputDialog::RenderTransformationTab() {
 
     if (ImGui::Checkbox("Include all columns", &select_all_columns_)) {
         has_changes_ = true;
-        for (size_t i = 0; i < selected_columns_.size(); i++) {
-            selected_columns_[i] = select_all_columns_;
+        if (select_all_columns_) {
+            for (size_t i = 0; i < selected_columns_.size(); i++) {
+                selected_columns_[i] = true;
+            }
         }
     }
 
@@ -28,13 +30,35 @@ void DataInputDialog::RenderTransformationTab() {
         ImGui::Text("Select columns to include:");
         ImGui::BeginChild("ColumnList", ImVec2(0, 200), true);
         for (size_t i = 0; i < available_columns_.size() && i < selected_columns_.size(); i++) {
+            const bool is_label =
+                label_column_idx_ >= 0 &&
+                i == static_cast<std::size_t>(label_column_idx_);
+            if (is_label) {
+                selected_columns_[i] = true;
+                ImGui::BeginDisabled();
+            }
             bool selected = selected_columns_[i];
             if (ImGui::Checkbox(available_columns_[i].c_str(), &selected)) {
                 selected_columns_[i] = selected;
                 has_changes_ = true;
             }
+            if (is_label) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(label)");
+                ImGui::EndDisabled();
+            }
         }
         ImGui::EndChild();
+    }
+
+    if (!available_columns_.empty()) {
+        const std::size_t included = select_all_columns_
+            ? available_columns_.size()
+            : static_cast<std::size_t>(std::count(
+                  selected_columns_.begin(), selected_columns_.end(), true));
+        ImGui::TextDisabled(
+            "%zu of %zu columns will be loaded. Selection is stored by name.",
+            included, available_columns_.size());
     }
 
     if (available_columns_.empty() && strlen(file_path_) > 0) {
@@ -87,13 +111,12 @@ void DataInputDialog::RenderLimitRowsTab() {
     }
     ImGui::TextDisabled(
         "Caps rows available to splitting/training after Apply; unchecked means all rows.");
-    if (force_disk_backed_ && max_rows_ > 0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
-            "Disk-backed row limits are not enforced yet; the full dataset will remain available.");
-    } else if (max_rows_ > 0) {
+    if (max_rows_ > 0) {
         ImGui::TextDisabled(
-            "CSV currently parses the source before slicing to this final row count.");
+            "CSV ingestion stops after this many data rows for both memory and disk-backed modes.");
     }
+    ImGui::TextDisabled(
+        "To include or exclude columns by name, use the Transformation tab.");
 
     ImGui::Spacing();
     ImGui::Separator();

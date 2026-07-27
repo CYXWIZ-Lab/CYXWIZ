@@ -7,6 +7,7 @@
 #include "node_editor.h"
 #include "node_import_guardrails.h"
 #include "../core/file_dialogs.h"
+#include "../core/project_manager.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <filesystem>
@@ -1116,7 +1117,11 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
 // ========== Cross-Platform File Dialogs ==========
 
 void NodeEditor::ShowSaveDialog() {
-    auto result = cyxwiz::FileDialogs::SaveGraph();
+    auto& project = cyxwiz::ProjectManager::Instance();
+    const std::string default_path =
+        project.HasActiveProject() ? project.GetCyxGraphsPath() : std::string();
+    auto result = cyxwiz::FileDialogs::SaveGraph(
+        default_path.empty() ? nullptr : default_path.c_str());
     if (result) {
         if (SaveGraph(*result)) {
             spdlog::info("Graph successfully saved");
@@ -1125,7 +1130,11 @@ void NodeEditor::ShowSaveDialog() {
 }
 
 void NodeEditor::ShowLoadDialog() {
-    auto result = cyxwiz::FileDialogs::OpenGraph();
+    auto& project = cyxwiz::ProjectManager::Instance();
+    const std::string default_path =
+        project.HasActiveProject() ? project.GetCyxGraphsPath() : std::string();
+    auto result = cyxwiz::FileDialogs::OpenGraph(
+        default_path.empty() ? nullptr : default_path.c_str());
     if (result) {
         if (LoadGraph(*result)) {
             spdlog::info("Graph successfully loaded");

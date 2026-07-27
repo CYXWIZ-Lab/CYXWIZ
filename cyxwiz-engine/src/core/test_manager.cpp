@@ -112,6 +112,7 @@ bool TestManager::StartTestingArrow(
     TrainingConfiguration config,
     std::shared_ptr<ArrowDataset> dataset,
     std::string label_column,
+    TestDatasetScope dataset_scope,
     int batch_size,
     std::shared_ptr<SequentialModel> model,
     TestCompleteCallback on_complete)
@@ -130,7 +131,9 @@ bool TestManager::StartTestingArrow(
     }
 
     // Create executor
-    auto executor = std::make_unique<TestExecutor>(std::move(config), std::move(dataset), std::move(label_column));
+    auto executor = std::make_unique<TestExecutor>(
+        std::move(config), std::move(dataset), std::move(label_column),
+        dataset_scope);
 
     // Set model if provided
     if (model) {
@@ -197,6 +200,7 @@ bool TestManager::StartTestingParquet(
     TrainingConfiguration config,
     std::shared_ptr<ParquetBackedDataset> dataset,
     std::string label_column,
+    TestDatasetScope dataset_scope,
     int batch_size,
     std::shared_ptr<SequentialModel> model,
     TestCompleteCallback on_complete)
@@ -212,7 +216,8 @@ bool TestManager::StartTestingParquet(
     }
 
     auto executor = std::make_unique<TestExecutor>(
-        std::move(config), std::move(dataset), std::move(label_column));
+        std::move(config), std::move(dataset), std::move(label_column),
+        dataset_scope);
     if (model) {
         executor->SetModel(model);
     }

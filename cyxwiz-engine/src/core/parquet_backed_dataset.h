@@ -98,8 +98,10 @@ public:
                                      bool has_header = true,
                                      char delimiter = ',',
                                      int skip_rows = 0,
+                                     int64_t max_rows = 0,
                                      const std::vector<std::string>& missing_value_tokens =
-                                         DefaultTabularMissingValueTokens());
+                                         DefaultTabularMissingValueTokens(),
+                                     const std::vector<std::string>& selected_columns = {});
 
     /**
      * Read a single row group as an in-memory Arrow Table.

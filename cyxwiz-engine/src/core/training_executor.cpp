@@ -1,4 +1,5 @@
 #include "training_executor.h"
+#include "classification_decision.h"
 #include "checkpoint_manager.h"
 #include "crash_run_recorder.h"
 #include "error_codes.h"
@@ -448,7 +449,10 @@ void TrainingExecutor::Train(
                                                        config_.preprocessing.norm_std);
         }
 
-        if (config_.preprocessing.has_onehot) {
+        if (UsesScalarBinaryTargets(config_.loss_type)) {
+            legacy_train_batcher->SetLegacyScalarLabelMode(true);
+            legacy_val_batcher->SetLegacyScalarLabelMode(true);
+        } else if (config_.preprocessing.has_onehot) {
             legacy_train_batcher->SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
             legacy_val_batcher->SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
         }
@@ -1049,25 +1053,11 @@ void TrainingExecutor::RunTrainingEpoch(
         const float* pred_data = predictions.Data<float>();
         const float* target_data = batch.labels.Data<float>();
 
-        for (size_t b = 0; b < batch.size; ++b) {
-            int pred_class = 0, true_class = 0;
-            float max_pred = pred_data[b * config_.output_size];
-            float max_target = target_data[b * config_.output_size];
-
-            // Start from c=0 to properly compare all classes including class 0
-            for (size_t c = 0; c < config_.output_size; ++c) {
-                if (pred_data[b * config_.output_size + c] > max_pred) {
-                    max_pred = pred_data[b * config_.output_size + c];
-                    pred_class = static_cast<int>(c);
-                }
-                if (target_data[b * config_.output_size + c] > max_target) {
-                    max_target = target_data[b * config_.output_size + c];
-                    true_class = static_cast<int>(c);
-                }
-            }
-            if (pred_class == true_class) correct++;
-            total++;
-        }
+        const auto accuracy_count = CountClassificationDecisions(
+            pred_data, target_data, batch.size, config_.output_size,
+            ClassificationDecisionModeForLoss(config_.loss_type));
+        correct += static_cast<int>(accuracy_count.correct);
+        total += static_cast<int>(accuracy_count.total);
 
         // Backward pass
         CrashRunRecorder::Instance().MarkStage(
@@ -1168,25 +1158,11 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
         const float* pred_data = predictions.Data<float>();
         const float* target_data = batch.labels.Data<float>();
 
-        for (size_t b = 0; b < batch.size; ++b) {
-            int pred_class = 0, true_class = 0;
-            float max_pred = pred_data[b * config_.output_size];
-            float max_target = target_data[b * config_.output_size];
-
-            // Start from c=0 to properly compare all classes including class 0
-            for (size_t c = 0; c < config_.output_size; ++c) {
-                if (pred_data[b * config_.output_size + c] > max_pred) {
-                    max_pred = pred_data[b * config_.output_size + c];
-                    pred_class = static_cast<int>(c);
-                }
-                if (target_data[b * config_.output_size + c] > max_target) {
-                    max_target = target_data[b * config_.output_size + c];
-                    true_class = static_cast<int>(c);
-                }
-            }
-            if (pred_class == true_class) correct++;
-            total++;
-        }
+        const auto accuracy_count = CountClassificationDecisions(
+            pred_data, target_data, batch.size, config_.output_size,
+            ClassificationDecisionModeForLoss(config_.loss_type));
+        correct += static_cast<int>(accuracy_count.correct);
+        total += static_cast<int>(accuracy_count.total);
     }
 
     float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
@@ -1231,27 +1207,9 @@ float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor&
     const float* pred_data = predictions.Data<float>();
     const float* target_data = targets.Data<float>();
 
-    int correct = 0;
-    for (size_t b = 0; b < batch_size; ++b) {
-        int pred_class = 0, true_class = 0;
-        float max_pred = pred_data[b * num_classes];
-        float max_target = target_data[b * num_classes];
-
-        // Start from c=0 to properly compare all classes including class 0
-        for (size_t c = 0; c < num_classes; ++c) {
-            if (pred_data[b * num_classes + c] > max_pred) {
-                max_pred = pred_data[b * num_classes + c];
-                pred_class = static_cast<int>(c);
-            }
-            if (target_data[b * num_classes + c] > max_target) {
-                max_target = target_data[b * num_classes + c];
-                true_class = static_cast<int>(c);
-            }
-        }
-        if (pred_class == true_class) correct++;
-    }
-
-    return static_cast<float>(correct) / batch_size;
+    return ClassificationAccuracy(
+        pred_data, target_data, batch_size, num_classes,
+        ClassificationDecisionModeForLoss(config_.loss_type));
 }
 
 void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -1865,24 +1823,11 @@ void TrainingExecutor::RunTrainingEpochArrow(
         const float* pred_data = predictions.Data<float>();
         const float* target_data = batch.labels.Data<float>();
 
-        for (size_t b = 0; b < batch.size; ++b) {
-            int pred_class = 0, true_class = 0;
-            float max_pred = pred_data[b * config_.output_size];
-            float max_target = target_data[b * config_.output_size];
-
-            for (size_t c = 0; c < config_.output_size; ++c) {
-                if (pred_data[b * config_.output_size + c] > max_pred) {
-                    max_pred = pred_data[b * config_.output_size + c];
-                    pred_class = static_cast<int>(c);
-                }
-                if (target_data[b * config_.output_size + c] > max_target) {
-                    max_target = target_data[b * config_.output_size + c];
-                    true_class = static_cast<int>(c);
-                }
-            }
-            if (pred_class == true_class) correct++;
-            total++;
-        }
+        const auto accuracy_count = CountClassificationDecisions(
+            pred_data, target_data, batch.size, config_.output_size,
+            ClassificationDecisionModeForLoss(config_.loss_type));
+        correct += static_cast<int>(accuracy_count.correct);
+        total += static_cast<int>(accuracy_count.total);
 
         // Backward pass
         CrashRunRecorder::Instance().MarkStage(
@@ -2000,24 +1945,11 @@ std::pair<float, float> TrainingExecutor::EvaluateArrowBatcher(IBatcher& batcher
         const float* pred_data = predictions.Data<float>();
         const float* target_data = batch.labels.Data<float>();
 
-        for (size_t b = 0; b < batch.size; ++b) {
-            int pred_class = 0, true_class = 0;
-            float max_pred = pred_data[b * config_.output_size];
-            float max_target = target_data[b * config_.output_size];
-
-            for (size_t c = 0; c < config_.output_size; ++c) {
-                if (pred_data[b * config_.output_size + c] > max_pred) {
-                    max_pred = pred_data[b * config_.output_size + c];
-                    pred_class = static_cast<int>(c);
-                }
-                if (target_data[b * config_.output_size + c] > max_target) {
-                    max_target = target_data[b * config_.output_size + c];
-                    true_class = static_cast<int>(c);
-                }
-            }
-            if (pred_class == true_class) correct++;
-            total++;
-        }
+        const auto accuracy_count = CountClassificationDecisions(
+            pred_data, target_data, batch.size, config_.output_size,
+            ClassificationDecisionModeForLoss(config_.loss_type));
+        correct += static_cast<int>(accuracy_count.correct);
+        total += static_cast<int>(accuracy_count.total);
     }
 
     float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;

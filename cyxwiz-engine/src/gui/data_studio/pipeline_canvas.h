@@ -187,7 +187,7 @@ private:
     bool RenderQuickAddItem(const QuickAddNode& item);
     void RenderNode(const Node& node);
     void RenderToolbar();  // Phase 7: Toolbar with Save/Load buttons
-    void RenderContextMenu();
+    void RenderContextMenu(int hovered_node_id);
     void HandleNodeCreation();
     void HandleLinkCreation();
     void HandleNodeDeletion();

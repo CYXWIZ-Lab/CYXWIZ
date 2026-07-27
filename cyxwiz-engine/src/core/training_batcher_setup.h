@@ -65,6 +65,11 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     const std::string& label_column,
     int batch_size);
 
+void AttachTrainingBatcherPrefetchWrappers(
+    TrainingBatcherSet& batchers,
+    const TrainingConfiguration& config,
+    const char* dataset_kind);
+
 ResolvedExternalBatchers TakeResolvedExternalBatchers(TrainingBatcherSet batchers);
 
 } // namespace cyxwiz

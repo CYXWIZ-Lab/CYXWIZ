@@ -32,6 +32,7 @@ public:
 
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
+    void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
     void SetFlatten(bool flatten) override;
     void SetPhase(BatcherPhase phase) override;
 
@@ -52,6 +53,7 @@ private:
 
     size_t num_classes_ = 0;
     bool do_onehot_ = false;
+    bool scalar_label_mode_ = false;
 
     // Separate train/val index sets (shuffled split at construction).
     std::vector<size_t> train_indices_;

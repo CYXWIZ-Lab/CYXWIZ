@@ -1,12 +1,16 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/classification_decision.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
+#include "../src/core/test_dataset_selection.h"
 #include "../src/core/training_batcher_setup.h"
+#include "../src/core/training_executor.h"
 #include "../src/core/worker_defaults.h"
 
 #include <arrow/api.h>
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
+#include <cyxwiz/losses/probability.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -252,6 +256,28 @@ std::vector<size_t> CountOneHotLabels(cyxwiz::IBatcher& batcher,
                 }
             }
             ++counts[best];
+        }
+    }
+    return counts;
+}
+
+std::vector<size_t> CountScalarBinaryLabels(cyxwiz::IBatcher& batcher,
+                                            const std::string& label) {
+    std::vector<size_t> counts(2, 0);
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) break;
+        Check(batch.labels.Shape().size() == 2,
+              label + " labels should be 2D");
+        Check(batch.labels.Shape()[1] == 1,
+              label + " labels should be scalar [batch, 1]");
+        const float* values = batch.labels.Data<float>();
+        for (size_t row = 0; row < batch.labels.Shape()[0]; ++row) {
+            const float value = values[row];
+            Check(value == 0.0f || value == 1.0f,
+                  label + " labels should contain encoded 0/1 values");
+            ++counts[static_cast<size_t>(value)];
         }
     }
     return counts;
@@ -686,6 +712,151 @@ int main() {
     auto parquet_prefetch_after_reset = parquet_prefetch_batchers.train->GetNextBatch();
     CheckFeatureAndLabelShapes(parquet_prefetch_after_reset, 2, 2, 2,
                                "prefetch Parquet after reset");
+
+    auto resolved_prefetch_source = cyxwiz::BuildArrowTrainingBatchers(
+        parquet_prefetch_config,
+        MakeDataset(),
+        "label",
+        /*batch_size=*/2);
+    auto resolved_prefetch = cyxwiz::TakeResolvedExternalBatchers(
+        std::move(resolved_prefetch_source));
+    Check(resolved_prefetch.train != nullptr &&
+              resolved_prefetch.train->GetNumSamples() == 3,
+          "resolved-role handoff must retain the prefetch source lifetime");
+    auto resolved_prefetch_batch = resolved_prefetch.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(resolved_prefetch_batch, 2, 2, 2,
+                               "resolved-role prefetch handoff");
+
+    auto external_role_config = MakeConfig();
+    external_role_config.prefetch_factor = 2;
+    auto external_role_assembly_config = external_role_config;
+    external_role_assembly_config.prefetch_factor = 0;
+    auto external_role_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        external_role_assembly_config,
+        MakeDataset(),
+        "label",
+        /*batch_size=*/2);
+    external_role_batchers.arrow_test =
+        std::make_unique<cyxwiz::ArrowDatasetBatcher>(
+            MakeMultiGroupDataset(), "label", 2, false, 1.0f, true, "", 0, 0,
+            cyxwiz::BatcherPhase::Train, 0.0f, 42);
+    external_role_batchers.parquet_test.reset();
+    external_role_batchers.test = external_role_batchers.arrow_test.get();
+    external_role_batchers.test->SetOneHotEncoding(
+        external_role_config.output_size);
+    external_role_batchers.num_test_samples =
+        external_role_batchers.test->GetNumSamples();
+    cyxwiz::AttachTrainingBatcherPrefetchWrappers(
+        external_role_batchers,
+        external_role_config,
+        "explicit tabular roles");
+    Check(external_role_batchers.prefetch_test != nullptr,
+          "external Test replacement should receive a fresh prefetch wrapper");
+    auto resolved_external_role = cyxwiz::TakeResolvedExternalBatchers(
+        std::move(external_role_batchers));
+    Check(resolved_external_role.test != nullptr &&
+              resolved_external_role.test->GetNumSamples() == 6,
+          "external Test handoff must retain the replacement source");
+    auto resolved_external_test_batch =
+        resolved_external_role.test->GetNextBatch();
+    CheckFeatureAndLabelShapes(resolved_external_test_batch, 2, 2, 2,
+                               "external Test prefetch handoff");
+
+    auto binary_config = MakeConfig();
+    binary_config.output_size = 1;
+    binary_config.loss_type = gui::NodeType::BCEWithLogits;
+    auto binary_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        binary_config, MakeDataset(), "label", /*batch_size=*/2);
+    auto binary_batch = binary_batchers.train->GetNextBatch();
+    Check(binary_batch.labels.Shape() == std::vector<size_t>({2, 1}),
+          "BCEWithLogits labels must be scalar float [batch, 1], not one-hot");
+    const float* binary_labels = binary_batch.labels.Data<float>();
+    Check(binary_labels[0] == 0.0f && binary_labels[1] == 1.0f,
+          "binary scalar labels must preserve encoded 0/1 values");
+
+    auto balanced_binary_config = balanced_loader_config;
+    balanced_binary_config.output_size = 1;
+    balanced_binary_config.loss_type = gui::NodeType::BCEWithLogits;
+    auto balanced_binary_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        balanced_binary_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    const auto balanced_binary_counts = CountScalarBinaryLabels(
+        *balanced_binary_batchers.train, "balanced binary train");
+    Check(balanced_binary_counts == std::vector<size_t>({8, 8}),
+          "binary scalar-label mode must preserve class balancing after reset");
+
+    auto test_role_config = binary_config;
+    test_role_config.dataset_name = "train_dataset";
+    test_role_config.data_source_node_id = 1;
+    test_role_config.dataset_roles.train = {
+        "train_dataset", "label", 1, true};
+    test_role_config.dataset_roles.test = {
+        "external_test_dataset", "label", 14, true};
+    const auto test_selection =
+        cyxwiz::ResolveGraphTestDataset(test_role_config);
+    Check(test_selection.dataset_name == "external_test_dataset" &&
+              test_selection.label_column == "label" &&
+              test_selection.source_node_id == 14 &&
+              test_selection.scope ==
+                  cyxwiz::TestDatasetScope::EntireProvidedDataset,
+          "Tools > Test must select the supplied Test role, not Train");
+
+    const auto entire_test_config = cyxwiz::ConfigureTestDatasetScope(
+        test_role_config, test_selection.scope);
+    Check(entire_test_config.train_ratio == 1.0f &&
+              entire_test_config.val_ratio == 0.0f &&
+              entire_test_config.test_ratio == 0.0f &&
+              !entire_test_config.shuffle &&
+              !entire_test_config.balance_classes,
+          "supplied Test role must consume every row without reshuffling or balancing");
+    auto entire_test_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        entire_test_config, MakeDataset(), "label", /*batch_size=*/2);
+    Check(entire_test_batchers.train->GetNumSamples() == 4,
+          "entire provided Test dataset must retain all rows");
+
+    test_role_config.loss_params["pos_weight"] = "59";
+    auto configured_binary_loss =
+        cyxwiz::BuildLossFromConfig(test_role_config);
+    auto* weighted_binary_loss =
+        dynamic_cast<cyxwiz::BCEWithLogitsLoss*>(
+            configured_binary_loss.get());
+    Check(weighted_binary_loss &&
+              weighted_binary_loss->GetPosWeight() == 59.0f,
+          "Tools > Test must reuse BCEWithLogits pos_weight from training");
+
+    {
+        auto binary_parquet_batchers =
+            cyxwiz::BuildParquetTrainingBatchers(
+                binary_config, parquet_dataset, "label", /*batch_size=*/2);
+        auto binary_parquet_batch =
+            binary_parquet_batchers.train->GetNextBatch();
+        Check(binary_parquet_batch.labels.Shape() ==
+                  std::vector<size_t>({2, 1}),
+              "Parquet BCEWithLogits labels must be scalar float [batch, 1]");
+        const float* binary_parquet_labels =
+            binary_parquet_batch.labels.Data<float>();
+        Check(binary_parquet_labels[0] == 0.0f &&
+                  binary_parquet_labels[1] == 1.0f,
+              "Parquet binary labels must preserve encoded 0/1 values");
+    }
+
+    const float binary_logits[] = {-2.0f, 2.0f, 0.1f, -0.1f};
+    const float binary_targets[] = {0.0f, 1.0f, 0.0f, 1.0f};
+    const auto binary_accuracy = cyxwiz::CountClassificationDecisions(
+        binary_logits, binary_targets, 4, 1,
+        cyxwiz::ClassificationDecisionMode::BinaryLogit);
+    Check(binary_accuracy.correct == 2 && binary_accuracy.total == 4,
+          "binary-logit accuracy must threshold logits instead of using argmax");
+
+    const float multiclass_scores[] = {0.1f, 0.8f, 0.1f, 0.7f, 0.2f, 0.1f};
+    const float multiclass_targets[] = {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    const auto multiclass_accuracy = cyxwiz::CountClassificationDecisions(
+        multiclass_scores, multiclass_targets, 2, 3,
+        cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    Check(multiclass_accuracy.correct == 2 && multiclass_accuracy.total == 2,
+          "multiclass accuracy must retain argmax behavior");
 
     auto ts_arrow_dataset = MakeTimeSeriesDataset();
     auto ts_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(

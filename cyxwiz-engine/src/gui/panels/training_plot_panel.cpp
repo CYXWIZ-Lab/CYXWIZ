@@ -458,6 +458,25 @@ void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds,
     checkpoint_val_loss_ = checkpoint_val_loss;
     checkpoint_val_accuracy_ = checkpoint_val_accuracy;
     checkpoint_epoch_ = checkpoint_epoch;
+    active_checkpoint_loaded_ = false;
+}
+
+void TrainingPlotPanel::SetActiveCheckpointLoaded(
+    const std::string& checkpoint_path,
+    int checkpoint_epoch,
+    float validation_loss,
+    float validation_accuracy,
+    bool has_validation_metrics) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    is_training_ = false;
+    is_preparing_ = false;
+    preparation_failed_ = false;
+    checkpoint_used_ = checkpoint_path;
+    checkpoint_epoch_ = checkpoint_epoch;
+    checkpoint_val_loss_ = validation_loss;
+    checkpoint_val_accuracy_ = validation_accuracy;
+    has_checkpoint_validation_metrics_ = has_validation_metrics;
+    active_checkpoint_loaded_ = true;
 }
 
 void TrainingPlotPanel::SetBatchProgress(int current_epoch, int current_batch,
@@ -1478,6 +1497,11 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
             "No completed training runs recorded in this session.");
         ImGui::TextDisabled(
             "Completed graph training runs will appear here for comparison.");
+        if (active_checkpoint_loaded_) {
+            ImGui::TextDisabled(
+                "The loaded checkpoint is active for testing, but loading is "
+                "not a new training run and is not inserted here.");
+        }
         return;
     }
 
@@ -1501,6 +1525,11 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
     ImGui::TextDisabled(
         "Partition Match is relative to the top-ranked run; different manifests "
         "are not directly comparable.");
+    if (active_checkpoint_loaded_) {
+        ImGui::TextDisabled(
+            "A checkpoint loaded for testing is shown under Active model state; "
+            "it is not counted as a new run.");
+    }
 
     if (ImGui::BeginTable(
             "TrainingRunComparisonTable",
@@ -1723,6 +1752,10 @@ void TrainingPlotPanel::RenderTrainingStatus() {
             ImGui::Text("COMPLETED");
         }
         ImGui::PopStyleColor();
+    } else if (active_checkpoint_loaded_) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.85f, 0.55f, 1.0f));
+        ImGui::Text("MODEL LOADED");
+        ImGui::PopStyleColor();
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
         ImGui::Text("IDLE");
@@ -1788,11 +1821,13 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         }
     }
 
-    if (!is_training_ && total_training_time_ > 0 && !checkpoint_used_.empty()) {
+    if (!is_training_ && !checkpoint_used_.empty()) {
         ImGui::Spacing();
         ImGui::SeparatorText("Active model state");
         ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
-                           "Best validation checkpoint restored");
+                           active_checkpoint_loaded_
+                               ? "Checkpoint loaded for testing"
+                               : "Best validation checkpoint restored");
         if (checkpoint_epoch_ > 0 && has_checkpoint_validation_metrics_) {
             ImGui::Text("Checkpoint epoch: %d", checkpoint_epoch_);
             ImGui::Text("Checkpoint validation: loss %.4f, accuracy %.2f%%",

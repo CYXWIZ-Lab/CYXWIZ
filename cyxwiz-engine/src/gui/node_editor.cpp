@@ -406,9 +406,16 @@ void NodeEditor::Render() {
 
         ImNodes::EndNodeEditor();
 
+        // Hover queries are only valid after EndNodeEditor. Query once and
+        // reuse the result for tooltips and context-menu routing.
+        int hovered_node_id = -1;
+        const bool is_node_hovered =
+            ImNodes::IsNodeHovered(&hovered_node_id);
+
         // Pin hover tooltip for all nodes (after EndNodeEditor)
         int hovered_pin_id = -1;
-        if (ImNodes::IsPinHovered(&hovered_pin_id)) {
+        const bool is_pin_hovered = ImNodes::IsPinHovered(&hovered_pin_id);
+        if (is_pin_hovered) {
             const MLNode* hovered_node = nullptr;
             const NodePin* hovered_pin = nullptr;
             bool hovered_is_input = false;
@@ -444,12 +451,15 @@ void NodeEditor::Render() {
             }
         }
 
+        // A pin tooltip is more specific than its parent node tooltip.
+        if (is_node_hovered && !is_pin_hovered) {
+            RenderHoveredNodeTooltip(hovered_node_id);
+        }
+
         // === Handle right-click context menu AFTER EndNodeEditor ===
         // IsNodeHovered() only works after EndNodeEditor() is called
         // Skip if right-click was on a frame (frame menu already shown)
         if (right_click_detected && !frame_right_clicked_) {
-            int hovered_node_id = -1;
-            bool is_node_hovered = ImNodes::IsNodeHovered(&hovered_node_id);
             if (is_node_hovered && hovered_node_id >= 0) {
                 // Right-click on node - show node-specific menu
                 right_clicked_node_id_ = hovered_node_id;
@@ -2492,68 +2502,6 @@ void NodeEditor::RenderNodes() {
 
         ImNodes::EndNode();
 
-        // Check if this node is hovered for documentation tooltip
-        int hovered_node_id = -1;
-        if (ImNodes::IsNodeHovered(&hovered_node_id) && hovered_node_id == node.id) {
-            // Unified Canvas Phase 6: Show execution state in tooltip
-            if (has_exec_state && exec_state != NodeExecutionState::Idle) {
-                ImGui::BeginTooltip();
-
-                // Show execution status
-                if (exec_state == NodeExecutionState::Executing) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), ICON_FA_SPINNER " Executing...");
-                } else if (exec_state == NodeExecutionState::Completed) {
-                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f), ICON_FA_CHECK " Completed");
-                } else if (exec_state == NodeExecutionState::Error) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), ICON_FA_TIMES " Error");
-
-                    // Show error message if available
-                    auto error_it = node_execution_errors_.find(node.id);
-                    if (error_it != node_execution_errors_.end()) {
-                        ImGui::Separator();
-                        ImGui::TextWrapped("%s", error_it->second.c_str());
-                    }
-                } else if (exec_state == NodeExecutionState::Pending) {
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), ICON_FA_CLOCK " Pending...");
-                }
-
-                ImGui::Separator();
-                ImGui::EndTooltip();
-            }
-
-            // Show node documentation
-            if (is_training_ && hovered_node_id == active_trace_node_id) {
-                ImGui::BeginTooltip();
-                ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f),
-                                   "Active training node");
-                if (!active_trace_task_name.empty()) {
-                    ImGui::Text("Task: %s", active_trace_task_name.c_str());
-                }
-                if (!active_trace_stage.empty()) {
-                    ImGui::Text("Stage: %s", active_trace_stage.c_str());
-                }
-                if (!active_trace_message.empty()) {
-                    ImGui::TextWrapped("%s", active_trace_message.c_str());
-                }
-                if (active_trace_progress > 0.0f) {
-                    ImGui::ProgressBar(active_trace_progress, ImVec2(220.0f, 0.0f));
-                }
-                if (active_trace_total > 0) {
-                    ImGui::Text("Items: %llu / %llu",
-                                static_cast<unsigned long long>(active_trace_processed),
-                                static_cast<unsigned long long>(active_trace_total));
-                }
-                if (active_trace_memory > 0) {
-                    const double mib =
-                        static_cast<double>(active_trace_memory) /
-                        (1024.0 * 1024.0);
-                    ImGui::Text("Estimated memory: %.1f MiB", mib);
-                }
-                ImGui::EndTooltip();
-            }
-            NodeDocumentationManager::Instance().RenderTooltip(node.type);
-        }
-
         // Draw selection glow effect for selected nodes (skip for KNIME-style)
         bool skip_glow = true;  // All nodes are KNIME-style now
         if (!skip_glow && ImNodes::IsNodeSelected(node.id)) {
@@ -2969,6 +2917,92 @@ void NodeEditor::RenderNodes() {
             pending_positions_.clear();
         }
     }
+}
+
+void NodeEditor::RenderHoveredNodeTooltip(int hovered_node_id) {
+    const auto node_it = std::find_if(
+        nodes_.begin(), nodes_.end(),
+        [hovered_node_id](const MLNode& node) {
+            return node.id == hovered_node_id;
+        });
+    if (node_it == nodes_.end()) {
+        return;
+    }
+
+    const MLNode& node = *node_it;
+    const auto exec_state_it = node_execution_states_.find(node.id);
+    const bool has_exec_state = exec_state_it != node_execution_states_.end();
+    const NodeExecutionState exec_state = has_exec_state
+        ? exec_state_it->second
+        : NodeExecutionState::Idle;
+
+    if (has_exec_state && exec_state != NodeExecutionState::Idle) {
+        ImGui::BeginTooltip();
+        if (exec_state == NodeExecutionState::Executing) {
+            ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f),
+                               ICON_FA_SPINNER " Executing...");
+        } else if (exec_state == NodeExecutionState::Completed) {
+            ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.4f, 1.0f),
+                               ICON_FA_CHECK " Completed");
+        } else if (exec_state == NodeExecutionState::Error) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                               ICON_FA_TIMES " Error");
+            const auto error_it = node_execution_errors_.find(node.id);
+            if (error_it != node_execution_errors_.end()) {
+                ImGui::Separator();
+                ImGui::TextWrapped("%s", error_it->second.c_str());
+            }
+        } else if (exec_state == NodeExecutionState::Pending) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                               ICON_FA_CLOCK " Pending...");
+        }
+        ImGui::Separator();
+        ImGui::EndTooltip();
+    }
+
+    if (is_training_) {
+        const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+        const auto active_it = std::find_if(
+            trace.recent_events.rbegin(), trace.recent_events.rend(),
+            [](const auto& event) { return event.node_id >= 0; });
+        if (active_it != trace.recent_events.rend() &&
+            active_it->node_id == hovered_node_id) {
+            ImGui::BeginTooltip();
+            ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f),
+                               "Active training node");
+            if (!active_it->task_name.empty()) {
+                ImGui::Text("Task: %s", active_it->task_name.c_str());
+            }
+            const std::string& stage = active_it->task_stage.empty()
+                ? active_it->stage
+                : active_it->task_stage;
+            if (!stage.empty()) {
+                ImGui::Text("Stage: %s", stage.c_str());
+            }
+            if (!active_it->message.empty()) {
+                ImGui::TextWrapped("%s", active_it->message.c_str());
+            }
+            if (active_it->task_progress > 0.0f) {
+                ImGui::ProgressBar(active_it->task_progress,
+                                   ImVec2(220.0f, 0.0f));
+            }
+            if (active_it->total_items > 0) {
+                ImGui::Text(
+                    "Items: %llu / %llu",
+                    static_cast<unsigned long long>(active_it->processed_items),
+                    static_cast<unsigned long long>(active_it->total_items));
+            }
+            if (active_it->estimated_memory_bytes > 0) {
+                const double mib =
+                    static_cast<double>(active_it->estimated_memory_bytes) /
+                    (1024.0 * 1024.0);
+                ImGui::Text("Estimated memory: %.1f MiB", mib);
+            }
+            ImGui::EndTooltip();
+        }
+    }
+
+    NodeDocumentationManager::Instance().RenderTooltip(node.type);
 }
 
 void NodeEditor::HandleInteractions() {

@@ -177,7 +177,15 @@ Batch DatasetBatcher::GetNextBatch() {
         static bool warned_once = false; if (!warned_once) { spdlog::warn("DatasetBatcher: Using deprecated SetNormalization(). Consider using preprocessing pipeline instead."); warned_once = true; }
     }
 
-    if (one_hot_) {
+    if (scalar_label_mode_) {
+        std::vector<float> scalar_labels;
+        scalar_labels.reserve(batch_labels.size());
+        for (int label : batch_labels) {
+            scalar_labels.push_back(static_cast<float>(label));
+        }
+        batch.labels = Tensor(
+            {batch_labels.size(), 1}, scalar_labels.data(), DataType::Float32);
+    } else if (one_hot_) {
         batch.labels = LabelsToOneHot(batch_labels);
     } else {
         batch.labels = LabelsToTensor(batch_labels);

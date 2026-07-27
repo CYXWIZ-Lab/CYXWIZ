@@ -1,4 +1,6 @@
 #include "test_executor.h"
+#include "classification_decision.h"
+#include "model_builder.h"
 #include "training_batcher_setup.h"
 
 #include <cstdint>
@@ -136,10 +138,12 @@ TestExecutor::TestExecutor(TrainingConfiguration config, DatasetHandle dataset)
 TestExecutor::TestExecutor(
     TrainingConfiguration config,
     std::shared_ptr<ArrowDataset> arrow_dataset,
-    std::string label_column)
+    std::string label_column,
+    TestDatasetScope dataset_scope)
     : config_(std::move(config))
     , arrow_dataset_(std::move(arrow_dataset))
     , use_arrow_dataset_(true)
+    , dataset_scope_(dataset_scope)
     , arrow_label_column_(std::move(label_column))
 {
     spdlog::info("TestExecutor: Created for Arrow dataset with {} layers, input_size={}, output_size={}",
@@ -148,10 +152,12 @@ TestExecutor::TestExecutor(
 TestExecutor::TestExecutor(
     TrainingConfiguration config,
     std::shared_ptr<ParquetBackedDataset> parquet_dataset,
-    std::string label_column)
+    std::string label_column,
+    TestDatasetScope dataset_scope)
     : config_(std::move(config))
     , parquet_dataset_(std::move(parquet_dataset))
     , use_parquet_dataset_(true)
+    , dataset_scope_(dataset_scope)
     , parquet_label_column_(std::move(label_column))
 {
     spdlog::info("TestExecutor: Created for Parquet-backed dataset with {} layers, input_size={}, output_size={}",
@@ -539,39 +545,18 @@ bool TestExecutor::Initialize(int /*batch_size*/) {
         return false;
     }
 
-    // Create loss function based on config (for loss computation, not training)
-    switch (config_.loss_type) {
-        case gui::NodeType::CrossEntropyLoss:
-            loss_ = CreateLoss(LossType::CrossEntropy);
-            break;
-        case gui::NodeType::FocalLoss:
-            loss_ = CreateLoss(LossType::Focal);
-            break;
-        case gui::NodeType::SoftDiceLoss:
-            loss_ = CreateLoss(LossType::SoftDice);
-            break;
-        case gui::NodeType::TverskyLoss:
-            loss_ = CreateLoss(LossType::Tversky);
-            break;
-        case gui::NodeType::JaccardLoss:
-            loss_ = CreateLoss(LossType::Jaccard);
-            break;
-        case gui::NodeType::MSELoss:
-            loss_ = CreateLoss(LossType::MSE);
-            break;
-        case gui::NodeType::BCELoss:
-            loss_ = CreateLoss(LossType::BinaryCrossEntropy);
-            break;
-        case gui::NodeType::BCEWithLogits:
-            loss_ = CreateLoss(LossType::BCEWithLogits);
-            break;
-        default:
-            loss_ = CreateLoss(LossType::CrossEntropy);
-            break;
+    try {
+        loss_ = BuildLossFromConfig(config_);
+    } catch (const std::exception& e) {
+        spdlog::error(
+            "TestExecutor: failed to build configured loss: {}", e.what());
+        return false;
     }
 
     // Initialize confusion matrix
-    int num_classes = static_cast<int>(config_.output_size);
+    int num_classes = UsesScalarBinaryTargets(config_.loss_type)
+        ? 2
+        : static_cast<int>(config_.output_size);
     UpdateMetrics([num_classes](TestingMetrics& m) {
         m.confusion_matrix.Resize(num_classes);
         m.per_class_metrics.resize(num_classes);
@@ -637,17 +622,23 @@ void TestExecutor::Test(
     std::unique_ptr<ParquetArrowBatcher> parquet_test_batcher;
 
     if (use_arrow_dataset_) {
-        TrainingConfiguration test_config = config_;
-        test_config.prefetch_factor = 0;
+        TrainingConfiguration test_config =
+            ConfigureTestDatasetScope(config_, dataset_scope_);
         auto batchers = BuildArrowTrainingBatchers(
             test_config, arrow_dataset_, arrow_label_column_, batch_size);
-        arrow_test_batcher = std::move(batchers.arrow_test);
+        arrow_test_batcher =
+            dataset_scope_ == TestDatasetScope::EntireProvidedDataset
+                ? std::move(batchers.arrow_train)
+                : std::move(batchers.arrow_test);
     } else if (use_parquet_dataset_) {
-        TrainingConfiguration test_config = config_;
-        test_config.prefetch_factor = 0;
+        TrainingConfiguration test_config =
+            ConfigureTestDatasetScope(config_, dataset_scope_);
         auto batchers = BuildParquetTrainingBatchers(
             test_config, parquet_dataset_, parquet_label_column_, batch_size);
-        parquet_test_batcher = std::move(batchers.parquet_test);
+        parquet_test_batcher =
+            dataset_scope_ == TestDatasetScope::EntireProvidedDataset
+                ? std::move(batchers.parquet_train)
+                : std::move(batchers.parquet_test);
     } else if (use_text_dataset_) {
         text_test_batcher = std::make_unique<TextDatasetBatcher>(
             text_entry_,
@@ -668,7 +659,10 @@ void TestExecutor::Test(
         text_test_batcher->SetPhase(BatcherPhase::Test);
         text_test_batcher->Reset();
 
-        if (config_.preprocessing.has_onehot && config_.preprocessing.num_classes > 0) {
+        if (UsesScalarBinaryTargets(config_.loss_type)) {
+            text_test_batcher->SetScalarLabelMode(true);
+        } else if (config_.preprocessing.has_onehot &&
+                   config_.preprocessing.num_classes > 0) {
             text_test_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
         } else if (config_.output_size > 0) {
             text_test_batcher->SetOneHotEncoding(config_.output_size);
@@ -683,7 +677,9 @@ void TestExecutor::Test(
                                                         config_.preprocessing.norm_std);
         }
 
-        if (config_.preprocessing.has_onehot) {
+        if (UsesScalarBinaryTargets(config_.loss_type)) {
+            legacy_test_batcher->SetLegacyScalarLabelMode(true);
+        } else if (config_.preprocessing.has_onehot) {
             legacy_test_batcher->SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
         }
 
@@ -704,8 +700,14 @@ void TestExecutor::Test(
         m.total_batches = static_cast<int>(total_batches);
     });
 
-    spdlog::info("TestExecutor: Starting testing with batch_size={}, {} batches",
-                 batch_size, total_batches);
+    spdlog::info(
+        "TestExecutor: Starting testing with batch_size={}, {} batches, "
+        "dataset_scope={}",
+        batch_size,
+        total_batches,
+        dataset_scope_ == TestDatasetScope::EntireProvidedDataset
+            ? "entire_provided_dataset"
+            : "configured_test_split");
 
     if (total_batches == 0) {
         const std::string message =
@@ -819,19 +821,23 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
     const float* pred_data = predictions.Data<float>();
     const float* target_data = batch.labels.Data<float>();
 
-    size_t num_classes = config_.output_size;
+    const size_t output_width = config_.output_size;
+    const auto decision_mode =
+        ClassificationDecisionModeForLoss(config_.loss_type);
 
     for (size_t b = 0; b < batch.size; ++b) {
-        // Get prediction (argmax)
-        const float* sample_pred = pred_data + b * num_classes;
-        int pred_class = ArgMax(sample_pred, num_classes);
+        const float* sample_pred = pred_data + b * output_width;
+        int pred_class = ClassificationPredictedClass(
+            sample_pred, output_width, decision_mode);
 
         // Get ground truth (argmax of one-hot or direct class index)
-        const float* sample_target = target_data + b * num_classes;
-        int true_class = ArgMax(sample_target, num_classes);
+        const float* sample_target = target_data + b * output_width;
+        int true_class = ClassificationTargetClass(
+            sample_target, output_width, decision_mode);
 
         // Get confidence
-        float confidence = GetConfidence(sample_pred, num_classes, pred_class);
+        float confidence = ClassificationConfidence(
+            sample_pred, output_width, pred_class, decision_mode);
 
         // Update metrics
         UpdateMetrics([pred_class, true_class, confidence](TestingMetrics& m) {
@@ -943,45 +949,6 @@ float TestExecutor::ComputeLoss(const Tensor& predictions, const Tensor& targets
     Tensor loss_tensor = loss_->Forward(predictions, targets);
     const float* loss_data = loss_tensor.Data<float>();
     return loss_data[0];
-}
-
-int TestExecutor::ArgMax(const float* data, size_t size) {
-    if (size == 0) return 0;
-
-    int max_idx = 0;
-    float max_val = data[0];
-    for (size_t i = 1; i < size; ++i) {
-        if (data[i] > max_val) {
-            max_val = data[i];
-            max_idx = static_cast<int>(i);
-        }
-    }
-    return max_idx;
-}
-
-float TestExecutor::GetConfidence(const float* data, size_t size, int predicted_class) {
-    if (size == 0 || predicted_class < 0 || predicted_class >= static_cast<int>(size)) {
-        return 0.0f;
-    }
-
-    // If output is already softmax (sums to ~1), return directly
-    float sum = 0.0f;
-    for (size_t i = 0; i < size; ++i) {
-        sum += data[i];
-    }
-
-    if (std::abs(sum - 1.0f) < 0.1f) {
-        // Already normalized
-        return data[predicted_class];
-    }
-
-    // Apply softmax
-    float max_val = *std::max_element(data, data + size);
-    float exp_sum = 0.0f;
-    for (size_t i = 0; i < size; ++i) {
-        exp_sum += std::exp(data[i] - max_val);
-    }
-    return std::exp(data[predicted_class] - max_val) / exp_sum;
 }
 
 void TestExecutor::Stop() {

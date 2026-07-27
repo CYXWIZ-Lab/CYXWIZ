@@ -61,11 +61,8 @@ void ToolbarPanel::RenderToolsMenu() {
 
         // ==================== Checkpoints ====================
         if (ImGui::BeginMenu(ICON_FA_CLOCK_ROTATE_LEFT " Checkpoints")) {
-            if (ImGui::MenuItem("Resume from Checkpoint...")) {
-                if (resume_checkpoint_callback_) resume_checkpoint_callback_();
-            }
-            if (ImGui::MenuItem("Save Checkpoint...")) {
-                if (save_checkpoint_callback_) save_checkpoint_callback_();
+            if (ImGui::MenuItem("Load Checkpoint for Testing...")) {
+                if (load_checkpoint_callback_) load_checkpoint_callback_();
             }
             ImGui::EndMenu();
         }

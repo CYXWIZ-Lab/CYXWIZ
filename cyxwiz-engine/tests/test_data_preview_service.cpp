@@ -115,6 +115,21 @@ int main() {
               std::string::npos,
           "preview should explain when skip_rows consumes the source");
 
+    const fs::path limited_parquet_path =
+        fs::temp_directory_path() / "cyxwiz_limited_csv_cache.parquet";
+    Check(cyxwiz::ParquetBackedDataset::ConvertCsvToParquet(
+              preambled_csv_path.string(),
+              limited_parquet_path.string(),
+              true,
+              ',',
+              4,
+              1),
+          "disk-backed CSV conversion should accept a bounded row limit");
+    auto limited_parquet = cyxwiz::ParquetBackedDataset::Open(
+        limited_parquet_path.string(), "limited_parquet");
+    Check(limited_parquet && limited_parquet->GetNumRows() == 1,
+          "disk-backed CSV conversion should preserve exactly max_rows rows");
+
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnregisterTabularDataset("preview_arrow");
     registry.UnregisterTabularDataset("preview_parquet");
@@ -192,6 +207,8 @@ int main() {
     registry.UnregisterTabularDataset("preview_parquet");
     std::error_code ec;
     fs::remove(parquet_path, ec);
+    limited_parquet.reset();
+    fs::remove(limited_parquet_path, ec);
     fs::remove(preambled_csv_path, ec);
 
     std::cout << "Data preview service test passed\n";

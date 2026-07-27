@@ -102,6 +102,7 @@ struct ApplyContext {
     std::string missing_value_tokens = "na";
     int skip_rows = 0;
     int64_t max_rows = 0;                 // 0 means "all rows"
+    std::vector<std::string> selected_columns; // empty means all columns
     bool force_disk_backed = false;
     bool json_lines = false;
     int excel_sheet_idx = 0;

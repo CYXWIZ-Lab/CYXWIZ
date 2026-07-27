@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "classification_decision.h"
 #include "data_registry.h"
 #include "error_codes.h"
 #include "label_column_resolver.h"
@@ -37,7 +38,9 @@ bool HasNonFinite(const Tensor& t) {
     return false;
 }
 
-float Accuracy(const Tensor& predictions, const Tensor& targets) {
+float Accuracy(const Tensor& predictions,
+               const Tensor& targets,
+               ClassificationDecisionMode mode) {
     const auto& shape = predictions.Shape();
     if (shape.size() != 2 || shape[0] == 0 || shape[1] == 0) {
         return 0.0f;
@@ -45,30 +48,9 @@ float Accuracy(const Tensor& predictions, const Tensor& targets) {
 
     const size_t batch_size = shape[0];
     const size_t num_classes = shape[1];
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
-    int correct = 0;
-
-    for (size_t b = 0; b < batch_size; ++b) {
-        int pred_class = 0;
-        int true_class = 0;
-        float max_pred = pred[b * num_classes];
-        float max_target = target[b * num_classes];
-        for (size_t c = 0; c < num_classes; ++c) {
-            if (pred[b * num_classes + c] > max_pred) {
-                max_pred = pred[b * num_classes + c];
-                pred_class = static_cast<int>(c);
-            }
-            if (target[b * num_classes + c] > max_target) {
-                max_target = target[b * num_classes + c];
-                true_class = static_cast<int>(c);
-            }
-        }
-        if (pred_class == true_class) {
-            correct++;
-        }
-    }
-    return static_cast<float>(correct) / static_cast<float>(batch_size);
+    return ClassificationAccuracy(
+        predictions.Data<float>(), targets.Data<float>(),
+        batch_size, num_classes, mode);
 }
 
 float L2Norm(const Tensor& t) {
@@ -289,7 +271,10 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         return result;
     }
 
-    if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
+    if (UsesScalarBinaryTargets(config.loss_type)) {
+        batcher->SetScalarLabelMode(true);
+    } else if (config.preprocessing.has_onehot &&
+               config.preprocessing.num_classes > 0) {
         batcher->SetOneHotEncoding(config.preprocessing.num_classes);
     } else if (config.output_size > 0) {
         batcher->SetOneHotEncoding(config.output_size);
@@ -357,7 +342,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             loss_sum += loss;
         }
 
-        result.last_accuracy = Accuracy(predictions, batch.labels);
+        result.last_accuracy = Accuracy(
+            predictions, batch.labels,
+            ClassificationDecisionModeForLoss(config.loss_type));
 
         auto loss_record = MakeSmokeRecord(
             run_id, "SmokeRun.Loss", DebugTraceRole::Loss,

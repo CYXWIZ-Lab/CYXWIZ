@@ -49,6 +49,7 @@ public:
 
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
+    void SetScalarLabelMode(bool enable) override;
     void SetFlatten(bool flatten) override;
     void SetPhase(BatcherPhase phase) override;
 

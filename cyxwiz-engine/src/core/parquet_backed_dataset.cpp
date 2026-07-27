@@ -328,8 +328,14 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
                                                  bool has_header,
                                                  char delimiter,
                                                  int skip_rows,
-                                                 const std::vector<std::string>& missing_value_tokens) {
-    spdlog::info("ParquetBackedDataset::ConvertCsvToParquet: {} -> {}", csv_path, parquet_path);
+                                                 int64_t max_rows,
+                                                 const std::vector<std::string>& missing_value_tokens,
+                                                 const std::vector<std::string>& selected_columns) {
+    spdlog::info(
+        "ParquetBackedDataset::ConvertCsvToParquet: {} -> {} (max_rows={})",
+        csv_path,
+        parquet_path,
+        max_rows);
 
     // Atomic write: stream to a .tmp path first, then rename on success.
     // This prevents three failure modes:
@@ -386,6 +392,7 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
         parse_options.delimiter = delimiter;
 
         auto convert_options = MakeTabularCsvConvertOptions(missing_value_tokens);
+        convert_options.include_columns = selected_columns;
 
         auto maybe_reader = arrow::csv::StreamingReader::Make(
             arrow::io::default_io_context(), csv_input,
@@ -451,6 +458,10 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
         int64_t total_rows = 0;
         int batches_written = 0;
         while (true) {
+            if (max_rows > 0 && total_rows >= max_rows) {
+                break;
+            }
+
             std::shared_ptr<arrow::RecordBatch> batch;
             auto read_status = reader->ReadNext(&batch);
             if (!read_status.ok()) {
@@ -460,6 +471,13 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
                 return false;
             }
             if (!batch) break;  // end of input
+
+            if (max_rows > 0) {
+                const int64_t remaining = max_rows - total_rows;
+                if (batch->num_rows() > remaining) {
+                    batch = batch->Slice(0, remaining);
+                }
+            }
 
             // WriteRecordBatch would be nicer but requires wrapping in a Table
             // because FileWriter's direct batch API varies across Arrow versions.

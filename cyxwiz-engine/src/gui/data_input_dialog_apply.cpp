@@ -10,6 +10,7 @@
 #include <string>
 #include <unordered_set>
 
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
 namespace fs = std::filesystem;
@@ -135,12 +136,21 @@ void DataInputDialog::Apply() {
             node_->parameters["json_path"] = json_path_;
         }
 
-        // Label column for ML training
+        // Label column for ML training. Disk-backed and other asynchronous
+        // sources may not have populated available_columns_ yet. In that
+        // state, preserve a previously selected label instead of silently
+        // replacing it with an empty string. A populated selector with
+        // index -1 still means the user deliberately chose "(None)".
+        std::string effective_label_column;
         if (label_column_idx_ >= 0 && label_column_idx_ < static_cast<int>(available_columns_.size())) {
-            node_->parameters["label_column"] = available_columns_[label_column_idx_];
-        } else {
-            node_->parameters["label_column"] = "";
+            effective_label_column = available_columns_[label_column_idx_];
+        } else if (available_columns_.empty()) {
+            auto existing_label = node_->parameters.find("label_column");
+            if (existing_label != node_->parameters.end()) {
+                effective_label_column = existing_label->second;
+            }
         }
+        node_->parameters["label_column"] = effective_label_column;
 
         // Auto-generate description
         if (strlen(file_path_) > 0) {
@@ -385,6 +395,43 @@ void DataInputDialog::Apply() {
         }
         loaded_dataset_name_ = GenerateDatasetName();
 
+        std::vector<std::string> included_columns;
+        if (!select_all_columns_) {
+            for (std::size_t i = 0;
+                 i < available_columns_.size() && i < selected_columns_.size();
+                 ++i) {
+                if (selected_columns_[i]) {
+                    included_columns.push_back(available_columns_[i]);
+                }
+            }
+            if (included_columns.empty()) {
+                apply_status_message_ =
+                    "Select at least one column in the Transformation tab";
+                apply_success_ = false;
+                apply_status_timer_ = 7.0f;
+                apply_in_progress_ = false;
+                spdlog::warn("DataInputDialog: column projection is empty");
+                return;
+            }
+
+            const std::string& label_column = node_->parameters["label_column"];
+            if (!label_column.empty() &&
+                std::find(included_columns.begin(), included_columns.end(),
+                          label_column) == included_columns.end()) {
+                apply_status_message_ =
+                    "The selected label column must remain included";
+                apply_success_ = false;
+                apply_status_timer_ = 7.0f;
+                apply_in_progress_ = false;
+                spdlog::warn(
+                    "DataInputDialog: selected label column '{}' was excluded",
+                    label_column);
+                return;
+            }
+        }
+        node_->parameters["selected_columns"] =
+            nlohmann::json(included_columns).dump();
+
         cyxwiz::loaders::ApplyContext ctx;
         ctx.dataset_name          = loaded_dataset_name_;
         ctx.source_path           = file_path_;
@@ -400,14 +447,11 @@ void DataInputDialog::Apply() {
         ctx.missing_value_tokens = missing_value_tokens_;
         ctx.skip_rows          = skip_rows_;
         ctx.max_rows           = (max_rows_ > 0) ? static_cast<int64_t>(max_rows_) : 0;
+        ctx.selected_columns   = included_columns;
         ctx.force_disk_backed  = force_disk_backed_;
         ctx.json_lines         = json_lines_;
         ctx.excel_sheet_idx    = sheet_idx_;
-        ctx.label_column       =
-            (label_column_idx_ >= 0 &&
-             label_column_idx_ < static_cast<int>(available_columns_.size()))
-                ? available_columns_[label_column_idx_]
-                : std::string();
+        ctx.label_column       = node_->parameters["label_column"];
 
         std::string err;
         if (!loader->ValidateApplyContext(ctx, err)) {

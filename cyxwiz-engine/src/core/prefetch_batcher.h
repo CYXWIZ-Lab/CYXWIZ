@@ -7,6 +7,7 @@
 #include <mutex>
 #include <memory>
 #include <queue>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -74,6 +75,16 @@ public:
     size_t GetNumBatches() const override { return source_->GetNumBatches(); }
     size_t GetNumSamples() const override { return source_->GetNumSamples(); }
 
+    void AdoptSourceOwnership(std::shared_ptr<IBatcher> source) {
+        StopWorker();
+        if (!source || source.get() != source_) {
+            throw std::invalid_argument(
+                "PrefetchBatcher ownership source must match its wrapped source");
+        }
+        owned_source_ = std::move(source);
+        source_ = owned_source_.get();
+    }
+
     void SetNormalization(float mean, float std_dev) override {
         StopWorker();
         source_->SetNormalization(mean, std_dev);
@@ -82,6 +93,11 @@ public:
     void SetOneHotEncoding(size_t num_classes) override {
         StopWorker();
         source_->SetOneHotEncoding(num_classes);
+    }
+
+    void SetScalarLabelMode(bool enable) override {
+        StopWorker();
+        source_->SetScalarLabelMode(enable);
     }
 
     void SetFlatten(bool flatten) override {

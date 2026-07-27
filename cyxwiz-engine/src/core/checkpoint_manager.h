@@ -94,6 +94,9 @@ public:
         const std::string& checkpoint_name = ""
     );
 
+    /** Detailed failure from the most recent save/load operation. */
+    const std::string& GetLastError() const { return last_error_; }
+
     /**
      * Save as "best" checkpoint if validation loss improved
      * @param model The model to save
@@ -155,6 +158,7 @@ private:
     float best_val_loss_ = std::numeric_limits<float>::infinity();
     size_t max_to_keep_ = 5;  // Keep last 5 checkpoints by default
     bool auto_save_best_ = true;
+    std::string last_error_;
 
     // Internal helpers
 
