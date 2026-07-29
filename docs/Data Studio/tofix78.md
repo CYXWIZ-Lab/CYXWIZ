@@ -54,6 +54,11 @@ construction.
 - Prefetch wrappers own or retain their actual modality source; replacing a
   role cannot leave a wrapper around a destroyed source.
 - Target contracts may be column-based, structured, graph-generated, or absent.
+- Derived time-series roles use deterministic chronological boundaries rather
+  than random row splitting. Input/target windows cannot cross role boundaries;
+  an explicit purge/gap is applied when horizons would otherwise overlap.
+- An external time-series Dev or Test source is preserved in full and is never
+  folded into or randomly resampled with Train.
 
 ## Modality slices
 
@@ -87,6 +92,9 @@ batcher and test foundation. Do not modify all adapters in one change.
   ownership.
 - Role-specific preprocessing and augmentation cannot fit or mutate state on
   evaluation sources.
+- A time-series adapter proves stable chronological Train/Dev/Test ordering,
+  no window or forecast-horizon leakage across derived role boundaries, and
+  full preservation of supplied Dev/Test sources.
 - Existing tabular role tests remain unchanged and pass.
 
 ## Non-goals

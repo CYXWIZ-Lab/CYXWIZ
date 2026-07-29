@@ -1,24 +1,20 @@
 # Track 70 - Code Audit and Implementation Log for To Fix 70
 
-## Next-session handoff - 2026-07-27
+## Closure handoff - 2026-07-29
 
-Track70 is open. Resume at Phase 5b; phases 1-4 and Phase 5a are implemented
-and verified. Pending, in order:
+Track70 is closed for its verified Arrow/Parquet production-data scope. Do not
+resume Phase 5b in this log. The deep audit findings have independent owners:
 
-1. registered text/image/audio preview adapters behind the existing bounded,
-   cancellable typed preview contract;
-2. external role-aware runtime adapters for image/audio/text/time-series plus
-   explicit chronological time-series partition policy;
-3. typed learning-objective `TrainingPlan`; and
-4. integrated Train-fitted preprocessing state applied unchanged to resolved
-   Dev/Test roles.
+1. `tofix77` - typed Train-fit/evaluation-transform preprocessing state;
+2. `tofix78` - non-tabular roles and chronological time-series partitions;
+3. `tofix79` - typed objective-family and reinforcement-learning dispatch; and
+4. `tofix80` - registered text/image/audio preview adapters.
 
-Do not restore Asset Browser direct loading, add another preview parser, infer
-roles from disconnected Data Inputs, or silently migrate saved legacy pins.
-The verification baseline is `test_data_preview_service` passing, the Debug
-engine building, and 2,372 assertions across 271 `cyxwiz-tests` cases passing.
-Current Track70 changes are not yet committed and share a dirty worktree with
-unrelated user changes, so stage only reviewed paths.
+Checkpoint v2 and persisted run history remain separately owned by `tofix75`
+and `tofix76`. Closing Track70 does not mark any follow-up complete. Preserve
+the Track70 invariants: do not restore Asset Browser direct loading, add a
+second preview parser, infer roles from disconnected Data Inputs, or silently
+migrate saved legacy pins.
 
 ## Purpose
 
@@ -30,11 +26,12 @@ document.
 
 ### Correction to the previous closure record
 
-Track 70 is reopened. The earlier log entry declaring the Arrow/Parquet slice
-complete treated several original mandatory requirements as non-blocking
-follow-ups without first revising this ticket's scope or acceptance criteria.
-The code scan below distinguishes working production slices from the full
-contract and records the remaining work explicitly.
+Track 70 was reopened on 2026-07-27 because an earlier log entry declared the
+Arrow/Parquet slice complete without revising the broader scope or acceptance
+criteria. The code scan below distinguished the working production slice from
+the full contract. On 2026-07-29, that distinction was resolved through a
+formal scope split; the audit remains historical evidence rather than a current
+handoff.
 
 This audit is based on implementation and focused-test evidence, not APS-only
 behavior. APS remains a generic acceptance fixture.
@@ -249,10 +246,11 @@ Focused evidence:
   topology rules; and
 - the complete Debug `cyxwiz-engine` target builds successfully.
 
-Next: phase 3 must complete manifest truth and the Data Split inspector. The
-typed manifest needs durable source/content and feature-schema fingerprints,
-resolved row counts, compatibility/leakage status, and a stable fingerprint
-using the Data Split seed, method, and stratification. Track 70 remains open.
+At that point, phase 3 still had to complete manifest truth and the Data Split
+inspector. The typed manifest needed durable source/content and feature-schema
+fingerprints, resolved row counts, compatibility/leakage status, and a stable
+fingerprint using the Data Split seed, method, and stratification. Track 70
+therefore remained open at that phase boundary.
 
 ### Phase 3 implementation result - 2026-07-27
 
@@ -287,9 +285,9 @@ Focused evidence:
 - Debug `test_graph_compiler_deferred_nodes` and the complete Debug
   `cyxwiz-engine` target build pass.
 
-Phase 4 follows below. Track 70 remains open after migration because preview
-parity, generic modality execution, typed learning plans, and integrated
-role-aware preprocessing state are still outstanding.
+Phase 4 followed below. Track 70 remained open at that phase boundary because
+preview parity, generic modality execution, typed learning plans, and
+integrated role-aware preprocessing state were still outstanding.
 
 ### Phase 4 implementation result - 2026-07-27
 
@@ -357,9 +355,10 @@ Verification evidence:
 - the complete Debug `cyxwiz-engine` target builds successfully; and
 - Debug `cyxwiz-tests` passes 2,372 assertions in 271 test cases.
 
-Next: complete phase 5 with registered text, image, and audio preview adapters.
-These should implement the existing preview contract rather than adding raw
-file parsers or another registration path. Track 70 remains open.
+At that phase boundary, the next work was registered text, image, and audio
+preview adapters using the existing preview contract rather than raw-file
+parsers or another registration path. The formal scope split now assigns that
+work to To Fix 80.
 
 ## Audit snapshot - 2026-07-20
 
@@ -538,8 +537,9 @@ changes are outside Track 70 scope and must remain isolated.
 - 2026-07-21: Do not expose a Data Input Train/Dev/Test role selector until
   the guarded tabular Arrow path above is proven. Image, audio, text, and
   mixed Arrow/Parquet role dispatch remain pending. The shared preview/Table
-  Viewer and legacy Data Split pin migration are separate remaining Track 70
-  work.
+  Viewer and legacy Data Split pin migration were separate remaining Track 70
+  work at that point; later entries record their implementation or formal
+  follow-up ownership.
 
 - 2026-07-21: Existing Release 	est_training_batcher_setup.exe passed (Arrow/Parquet partition and balancing coverage). Full engine regeneration is currently blocked by access-denied writes under uild/ and cpkg during CMake configure. The guarded tabular Arrow explicit-role dispatch is present but awaits a successful rebuild.
 
@@ -965,6 +965,9 @@ changes are outside Track 70 scope and must remain isolated.
   owns checkpoint v2 and exact resume; `tofix76` owns persisted run history;
   `tofix77` owns typed preprocessing-state ports; `tofix78` owns non-tabular
   role/partition contracts; and `tofix79` owns target-free estimator and RL
-  objective-family dispatch. The dependency order is 75 -> 76 -> 77 -> 78 ->
-  79. These are follow-up capabilities, not blockers or hidden exceptions to
-  the verified Arrow/Parquet tabular phase.
+  objective-family dispatch. `tofix80` now explicitly owns the registered
+  text/image/audio preview adapters that were omitted from the first follow-up
+  map. To Fix 78 explicitly owns chronological, leakage-safe time-series
+  partitioning. The training dependency order remains 75 -> 76 -> 77 -> 78 ->
+  79; To Fix 80 is independent. These are follow-up capabilities, not hidden
+  exceptions to the verified Arrow/Parquet tabular phase.

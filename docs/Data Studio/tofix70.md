@@ -2,34 +2,29 @@
 
 ## Status
 
-Reopened - partial implementation; deep completion audit recorded 2026-07-27.
+Closed - the verified Arrow/Parquet production-data phase is complete. The
+broader architecture extensions identified by the 2026-07-27 deep audit were
+formally removed from this ticket on 2026-07-29 and assigned to independent
+follow-up tickets with their own acceptance criteria.
 
-### Next-session handoff - 2026-07-27
+### Closure and follow-up handoff - 2026-07-29
 
-Resume after Phase 5a. Do not repeat phases 1-4 or the registered-tabular
-preview work. The remaining implementation order is:
+Do not resume Phase 5b inside To Fix 70. Phases 1-4, tabular preview parity,
+the generic ingestion/cache/cancellation work, and the Electricity production
+acceptance are retained as the completed Track70 implementation record.
 
-1. finish Phase 5 with registered text, image, and audio preview adapters using
-   the existing `DataPreviewRequest`/`DataPreviewPage` contract and shared
-   renderer boundary; do not add raw-file registry or parser paths;
-2. extend `ResolvedDatasetPartitions` external Dev/Test consumption from
-   Arrow/Parquet to image, audio, text, and time-series adapters, including a
-   chronological time-series split policy;
-3. introduce a typed `TrainingPlan` for supervised, self-supervised,
-   unsupervised, and reinforcement objectives; and
-4. integrate Train-fit/Dev-Test-apply preprocessing state into the resolved
-   role runtime instead of relying only on manually saved artifact files.
+Remaining capabilities have exactly one owner:
 
-Verification baseline at handoff: Debug `test_data_preview_service` passes,
-Debug `cyxwiz-engine` builds, and `cyxwiz-tests` passes 2,372 assertions in 271
-test cases. The working tree contains the complete uncommitted Track70 phases
-1-5a plus unrelated user work; review/stage by explicit path before committing.
+- `tofix75`: checkpoint v2 and exact resume;
+- `tofix76`: persisted run history;
+- `tofix77`: typed preprocessing state;
+- `tofix78`: non-tabular roles and chronological time-series partitions;
+- `tofix79`: objective-family dispatch and reinforcement learning; and
+- `tofix80`: registered text/image/audio preview adapters.
 
-The earlier statement that Track 70 was complete for a production tabular
-workflow is withdrawn. A useful Arrow/Parquet supervised slice exists, but it
-does not yet implement the ticket's authoritative Data Input -> Partition
-Policy -> Data Loader boundary. The detailed evidence and acceptance matrix
-are recorded in `track70.md` under `Deep completion audit - 2026-07-27`.
+This is a formal scope revision, not a claim that those extensions are already
+implemented. The 2026-07-27 audit remains below as historical evidence; its
+open findings are superseded only by the explicit ticket ownership above.
 
 Implemented and retained:
 
@@ -121,13 +116,13 @@ Phase 5a tabular preview parity completed 2026-07-27:
 - Show in Explorer success/failure is visible in the Asset Browser status bar
   instead of being log-only.
 
-Track 70 remains open because the implementation still contradicts or only
-partially satisfies mandatory parts of this document:
+The 2026-07-27 audit identified four capabilities outside the verified
+Arrow/Parquet production phase:
 
-1. Registered image and audio previews remain explicitly unwired. The tabular
-   slice now shares one bounded renderer between Data Input and Asset Browser,
-   has cooperative cancellation and page-local null metadata, and reports
-   Explorer launch failures visibly.
+1. Registered text, image, and audio previews remain explicitly unwired. The
+   tabular slice now shares one bounded renderer between Data Input and Asset
+   Browser, has cooperative cancellation and page-local null metadata, and
+   reports Explorer launch failures visibly.
 2. External role execution remains tabular-specific. Image, audio, and text
    training construct their batchers from one source and ratios and ignore the
    optional external role sources.
@@ -136,10 +131,13 @@ partially satisfies mandatory parts of this document:
 4. Learned preprocessing reuse is file-mediated rather than an integrated,
    role-aware Train-fit/Dev-Test-apply runtime contract.
 
-Checkpoint v2 exact optimizer resume and persisted run-history storage remain
-separate follow-ups because they are not required by the original acceptance
-criteria. The four open items above remain Track 70 work unless this ticket is
-formally split and its acceptance criteria are revised.
+The 2026-07-29 scope revision formally split these findings instead of hiding
+them behind a false closure: preview adapters are owned by `tofix80`,
+non-tabular roles and chronological partitions by `tofix78`, objective-family
+dispatch by `tofix79`, and typed preprocessing state by `tofix77`. Checkpoint
+v2 and persisted run history remain separately owned by `tofix75` and
+`tofix76`. None of these tickets is complete merely because To Fix 70 is
+closed.
 
 ## Decision statement
 
@@ -1209,10 +1207,13 @@ extensions. They have independent contracts and acceptance tests:
    semantics;
 4. `tofix78` - non-tabular dataset roles and typed partition contracts;
 5. `tofix79` - objective-family dispatch for target-free estimators and
-   reinforcement learning.
+   reinforcement learning; and
+6. `tofix80` - registered non-tabular preview adapters.
 
 Recommended implementation order is 75, 76, 77, 78, then 79. Checkpoint and
 run identities establish persistence first; typed state and modality roles then
 extend data semantics; objective-family dispatch builds on those contracts.
-Each ticket must preserve existing tabular, checkpoint-for-testing, and
-supervised training behavior while it is introduced.
+To Fix 80 is independent of that training dependency chain and may proceed in
+parallel once its registered-asset preview contract is respected. Each ticket
+must preserve existing tabular, checkpoint-for-testing, and supervised
+training behavior while it is introduced.
