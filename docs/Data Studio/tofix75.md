@@ -34,10 +34,28 @@ Release verification passed:
   unsupported version without model mutation;
 - the complete backend unit executable passed 2,366 assertions in 272 cases.
 
-The next slice is the v2 manifest and atomic payload inventory. The engine must
-not expose `Resume Training` until optimizer payload serialization, runtime
-cursor/RNG state, and end-to-end interrupted-versus-uninterrupted equivalence
-also pass.
+The v2 manifest and atomic inventory slice is also implemented:
+
+- `CheckpointManifestV2` records run/checkpoint identity, graph/dataset/
+  partition fingerprints, training cursor, algorithm identities, runtime-state
+  declarations, and typed payload descriptors;
+- validation separates a structurally valid manifest from one that declares
+  all exact-resume state, so an incomplete inventory cannot enable Resume;
+- payload paths must be safe and relative, payload sizes must be non-zero, and
+  SHA-256 inventory values must have the expected form;
+- model, optimizer, runtime, graph, and dataset payloads are required for an
+  exact-resume declaration, with conditional scheduler and early-stopping
+  state plus mandatory RNG and sampler state;
+- `manifest.json` is written through a unique temporary file and atomic rename,
+  and an already published manifest is immutable;
+- focused coverage proves complete/incomplete classification, path traversal
+  rejection, atomic publication, round-trip loading, and fail-closed future
+  schema handling.
+
+The next slice is actual payload serialization and hash verification, beginning
+with model plus Adam state. The engine must not expose `Resume Training` until
+runtime cursor/RNG/sampler state and end-to-end interrupted-versus-
+uninterrupted equivalence also pass.
 
 ## Decision statement
 

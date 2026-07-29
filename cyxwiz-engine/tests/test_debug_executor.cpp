@@ -10,6 +10,7 @@
 #include "../src/core/model_builder.h"
 #include "../src/core/synthetic_batch.h"
 #include "../src/core/graph_compiler.h"
+#include "../src/core/checkpoint_manifest.h"
 #include "../src/core/checkpoint_manager.h"
 
 #include <cyxwiz/loss.h>
@@ -505,6 +506,114 @@ void TestCheckpointFormatCapabilitiesFailClosed() {
 
     std::filesystem::remove_all(root);
     spdlog::info("  OK: v1 capabilities are truthful and future formats fail closed");
+}
+
+CheckpointManifestV2 MakeCompleteCheckpointManifestV2() {
+    CheckpointManifestV2 manifest;
+    manifest.checkpoint_id = "checkpoint-1";
+    manifest.run_id = "run-1";
+    manifest.created_at = "2026-07-29T17:00:00Z";
+    manifest.engine_version = "test-engine";
+    manifest.backend_version = "test-backend";
+    manifest.graph_fingerprint = "graph-fingerprint";
+    manifest.dataset_fingerprint = "dataset-fingerprint";
+    manifest.partition_fingerprint = "partition-fingerprint";
+    manifest.model_type = "Sequential";
+    manifest.optimizer_type = "Adam";
+    manifest.loss_type = "MSE";
+    manifest.precision = "float32";
+    manifest.completed_epoch = 2;
+    manifest.next_batch = 3;
+    manifest.optimizer_step = 11;
+    manifest.rng_state_present = true;
+    manifest.sampler_state_present = true;
+
+    const std::string hash(64, 'a');
+    const auto add_payload = [&](CheckpointPayloadKind kind,
+                                 const std::string& path) {
+        manifest.payloads.push_back({kind, path, 10, hash, true});
+    };
+    add_payload(CheckpointPayloadKind::ModelParameters, "model/state.bin");
+    add_payload(CheckpointPayloadKind::OptimizerState, "optimizer/state.bin");
+    add_payload(CheckpointPayloadKind::RuntimeState, "runtime/state.json");
+    add_payload(CheckpointPayloadKind::GraphSnapshot, "graph.cyxgraph");
+    add_payload(CheckpointPayloadKind::DatasetManifest, "dataset.json");
+    return manifest;
+}
+
+void TestCheckpointManifestV2AtomicContract() {
+    spdlog::info("--- TestCheckpointManifestV2AtomicContract ---");
+    auto manifest = MakeCompleteCheckpointManifestV2();
+    const auto validation = ValidateCheckpointManifestV2(manifest);
+    ExpectTrue(validation.valid, "complete v2 manifest should be valid");
+    ExpectTrue(validation.declares_exact_resume_state,
+               "complete v2 inventory should declare exact-resume state");
+
+    auto incomplete = manifest;
+    incomplete.payloads.erase(
+        std::remove_if(incomplete.payloads.begin(), incomplete.payloads.end(),
+                       [](const CheckpointPayloadDescriptor& payload) {
+                           return payload.kind ==
+                                  CheckpointPayloadKind::OptimizerState;
+                       }),
+        incomplete.payloads.end());
+    const auto incomplete_validation = ValidateCheckpointManifestV2(incomplete);
+    ExpectTrue(incomplete_validation.valid,
+               "incomplete resume inventory may remain structurally valid");
+    ExpectTrue(!incomplete_validation.declares_exact_resume_state,
+               "missing optimizer payload must disable exact resume");
+
+    auto optional_optimizer = manifest;
+    for (auto& payload : optional_optimizer.payloads) {
+        if (payload.kind == CheckpointPayloadKind::OptimizerState) {
+            payload.required = false;
+        }
+    }
+    ExpectTrue(
+        !ValidateCheckpointManifestV2(optional_optimizer)
+             .declares_exact_resume_state,
+        "optional optimizer payload must not satisfy exact-resume inventory");
+
+    auto unsafe = manifest;
+    unsafe.payloads.front().relative_path = "../escape.bin";
+    ExpectTrue(!ValidateCheckpointManifestV2(unsafe).valid,
+               "v2 manifest must reject escaping payload paths");
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_checkpoint_manifest_v2_test";
+    std::filesystem::remove_all(root);
+    std::string error;
+    ExpectTrue(SaveCheckpointManifestV2Atomic(root, manifest, error),
+               "v2 manifest should publish atomically");
+    ExpectTrue(error.empty(), "successful v2 manifest save should clear error");
+    ExpectTrue(!SaveCheckpointManifestV2Atomic(root, manifest, error),
+               "published v2 manifest must be immutable");
+
+    error.clear();
+    const auto loaded = LoadCheckpointManifestV2(root, error);
+    ExpectTrue(loaded.has_value(), "published v2 manifest should load");
+    ExpectTrue(loaded->checkpoint_id == manifest.checkpoint_id &&
+                   loaded->payloads.size() == manifest.payloads.size(),
+               "v2 manifest identity and inventory should round-trip");
+
+    const auto manifest_path = root / "manifest.json";
+    {
+        std::ifstream input(manifest_path);
+        nlohmann::json value;
+        input >> value;
+        value["schema_version"] = 3;
+        std::ofstream output(manifest_path, std::ios::trunc);
+        output << value.dump(2);
+    }
+    error.clear();
+    ExpectTrue(!LoadCheckpointManifestV2(root, error).has_value(),
+               "future v2 manifest schema must fail closed");
+    ExpectTrue(error.find("schema_version must be 2") != std::string::npos,
+               "future schema rejection should identify the version contract");
+
+    std::filesystem::remove_all(root);
+    spdlog::info("  OK: v2 manifest validates, publishes atomically, and fails closed");
 }
 
 void TestTransformerDecoderCheckpointRoundTrip() {
@@ -1252,6 +1361,7 @@ int main() {
         TestLayerNormCheckpointRoundTrip();
         TestCheckpointRejectsIncompatibleModelWithoutMutation();
         TestCheckpointFormatCapabilitiesFailClosed();
+        TestCheckpointManifestV2AtomicContract();
         TestTransformerDecoderCheckpointRoundTrip();
         TestSyntheticBatchTabular();
         TestSyntheticBatchText();

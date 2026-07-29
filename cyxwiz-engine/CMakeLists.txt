@@ -218,6 +218,7 @@ set(ENGINE_SOURCES
     src/utils/shape_utils.cpp
     src/utils/labeling_utils.cpp
     src/core/test_manager.cpp
+    src/core/checkpoint_manifest.cpp
     src/core/checkpoint_manager.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
@@ -589,6 +590,7 @@ set(ENGINE_HEADERS
     src/core/node_executors/ts_column_utils.h
     src/core/pipeline_materializer.h
     src/core/test_manager.h
+    src/core/checkpoint_manifest.h
     src/core/checkpoint_manager.h
     src/core/model_format.h
     src/core/model_exporter.h
@@ -1178,6 +1180,7 @@ add_executable(test_debug_executor
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/model_builder.cpp
+    src/core/checkpoint_manifest.cpp
     src/core/checkpoint_manager.cpp
     src/core/training_batcher_setup.cpp
     src/core/synthetic_batch.cpp
