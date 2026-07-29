@@ -1197,3 +1197,22 @@ the full-source Data Input, stopped before downstream windowing and exports,
 and entered the cancelled task state. Both previously accepted metric artifacts
 kept the same hashes, timestamps, and sizes, proving that cancellation did not
 publish partial or falsely successful output.
+
+## Separate Track70 follow-up ticket map - 2026-07-29
+
+Track70's completed production-data phase is not reopened by the following
+extensions. They have independent contracts and acceptance tests:
+
+1. `tofix75` - checkpoint format v2 and exact training resume;
+2. `tofix76` - persisted project run history and reproducible run manifests;
+3. `tofix77` - typed preprocessing-state ports and fit/transform graph
+   semantics;
+4. `tofix78` - non-tabular dataset roles and typed partition contracts;
+5. `tofix79` - objective-family dispatch for target-free estimators and
+   reinforcement learning.
+
+Recommended implementation order is 75, 76, 77, 78, then 79. Checkpoint and
+run identities establish persistence first; typed state and modality roles then
+extend data semantics; objective-family dispatch builds on those contracts.
+Each ticket must preserve existing tabular, checkpoint-for-testing, and
+supervised training behavior while it is introduced.

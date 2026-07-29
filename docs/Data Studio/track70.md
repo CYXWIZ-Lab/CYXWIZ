@@ -960,3 +960,11 @@ changes are outside Track 70 scope and must remain isolated.
   cancelled task state. The previously accepted daily and weekly CSV artifacts
   retained their exact SHA-256 hashes, timestamps, and sizes. This confirms a
   cancelled pipeline cannot publish a false successful downstream result.
+- 2026-07-29: Closed the completed Track70 production-data phase and assigned
+  its remaining architecture extensions to independent tickets. `tofix75`
+  owns checkpoint v2 and exact resume; `tofix76` owns persisted run history;
+  `tofix77` owns typed preprocessing-state ports; `tofix78` owns non-tabular
+  role/partition contracts; and `tofix79` owns target-free estimator and RL
+  objective-family dispatch. The dependency order is 75 -> 76 -> 77 -> 78 ->
+  79. These are follow-up capabilities, not blockers or hidden exceptions to
+  the verified Arrow/Parquet tabular phase.
