@@ -2,9 +2,10 @@
 
 ## Status
 
-In progress - first Track70 follow-up. The format-capability guard and the
-backend Adam state contract are implemented. Checkpoint v2 files, complete
-runtime state, and the Resume Training GUI are not implemented yet.
+In progress - first Track70 follow-up. The format-capability guard, v2 manifest
+contract, backend Adam state contract, and verified model/Adam payload archives
+are implemented. Complete checkpoint assembly, runtime state, and the Resume
+Training GUI are not implemented yet.
 
 ## Implemented foundation - 2026-07-29
 
@@ -52,10 +53,30 @@ The v2 manifest and atomic inventory slice is also implemented:
   rejection, atomic publication, round-trip loading, and fail-closed future
   schema handling.
 
-The next slice is actual payload serialization and hash verification, beginning
-with model plus Adam state. The engine must not expose `Resume Training` until
-runtime cursor/RNG/sampler state and end-to-end interrupted-versus-
-uninterrupted equivalence also pass.
+The first v2 payload slice is also implemented:
+
+- model parameters and backend-owned optimizer state share one typed named-
+  tensor archive instead of duplicating tensor formats;
+- each tensor records its name, full shape, data type, and exact byte size, so
+  payload I/O no longer assumes every tensor is `Float32`;
+- payloads are written to a unique temporary path, hashed with streaming
+  SHA-256, measured, and atomically renamed into an immutable final path;
+- reads verify the descriptor path, file type, exact size, and SHA-256 before
+  parsing or mutating a model/optimizer;
+- model parameter count, names, shapes, and data types are checked before
+  installation, while Adam delegates final transactional validation to its
+  backend state contract;
+- Adam state at step zero is valid even though it has no moment tensors;
+- focused Release coverage proves model round-trip, Adam exact-next-step
+  equivalence, step-zero round-trip, hexadecimal hash-case compatibility, and
+  corrupted-payload rejection without model mutation.
+
+The full Release engine builds successfully with this payload layer. The next
+slice is runtime payload state: training cursor, RNG, sampler/shuffler,
+scheduler, precision/gradient scaler, and early stopping, followed by complete
+manifest assembly and transactional checkpoint publication. The engine must
+not expose `Resume Training` until end-to-end interrupted-versus-uninterrupted
+equivalence also passes.
 
 ## Decision statement
 

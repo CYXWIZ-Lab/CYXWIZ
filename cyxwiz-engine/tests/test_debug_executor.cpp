@@ -11,6 +11,7 @@
 #include "../src/core/synthetic_batch.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/checkpoint_manifest.h"
+#include "../src/core/checkpoint_payload_io.h"
 #include "../src/core/checkpoint_manager.h"
 
 #include <cyxwiz/loss.h>
@@ -20,6 +21,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -614,6 +616,140 @@ void TestCheckpointManifestV2AtomicContract() {
 
     std::filesystem::remove_all(root);
     spdlog::info("  OK: v2 manifest validates, publishes atomically, and fails closed");
+}
+
+void TestCheckpointPayloadV2RoundTripAndCorruptionGuard() {
+    spdlog::info("--- TestCheckpointPayloadV2RoundTripAndCorruptionGuard ---");
+    auto source = BuildSequentialFromConfig(MakeLayerNormConfig());
+    auto target = BuildSequentialFromConfig(MakeLayerNormConfig());
+    ExpectTrue(source.ok() && target.ok(),
+               "v2 model payload fixture models should build");
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_checkpoint_payload_v2_test";
+    std::filesystem::remove_all(root);
+    std::string error;
+
+    CheckpointPayloadDescriptor model_descriptor;
+    if (!SaveModelPayloadV2(root, "model/state.bin", *source.model,
+                            model_descriptor, error)) {
+        throw std::runtime_error("v2 model payload save failed: " + error);
+    }
+    ExpectTrue(model_descriptor.sha256.size() == 64 &&
+                   VerifyCheckpointPayloadFile(root, model_descriptor, error),
+               "v2 model payload should have a verified SHA-256");
+    auto uppercase_hash_descriptor = model_descriptor;
+    std::transform(uppercase_hash_descriptor.sha256.begin(),
+                   uppercase_hash_descriptor.sha256.end(),
+                   uppercase_hash_descriptor.sha256.begin(),
+                   [](unsigned char value) {
+                       return static_cast<char>(std::toupper(value));
+                   });
+    ExpectTrue(VerifyCheckpointPayloadFile(
+                   root, uppercase_hash_descriptor, error),
+               "v2 payload verification should accept hexadecimal hash case");
+    if (!LoadModelPayloadV2(root, model_descriptor, *target.model, error)) {
+        throw std::runtime_error("v2 model payload load failed: " + error);
+    }
+
+    const auto source_parameters = source.model->GetParameters();
+    const auto loaded_parameters = target.model->GetParameters();
+    ExpectEq(loaded_parameters.size(), source_parameters.size(),
+             "v2 model payload parameter count");
+    for (const auto& [name, expected] : source_parameters) {
+        const auto& actual = loaded_parameters.at(name);
+        ExpectTrue(actual.Shape() == expected.Shape(),
+                   "v2 model payload parameter shape");
+        const float* expected_data = expected.Data<float>();
+        const float* actual_data = actual.Data<float>();
+        for (size_t index = 0; index < expected.NumElements(); ++index) {
+            ExpectNear(actual_data[index], expected_data[index], 1e-7f,
+                       "v2 model payload parameter value");
+        }
+    }
+
+    float parameter_data[] = {1.0f, -2.0f};
+    float gradient_data[] = {0.5f, -1.0f};
+    std::map<std::string, Tensor> original_parameters;
+    std::map<std::string, Tensor> gradients;
+    original_parameters.emplace(
+        "w", Tensor({2}, parameter_data, DataType::Float32));
+    gradients.emplace("w", Tensor({2}, gradient_data, DataType::Float32));
+    AdamOptimizer original_optimizer(0.001, 0.9, 0.999, 1e-8);
+    original_optimizer.Step(original_parameters, gradients);
+
+    CheckpointPayloadDescriptor optimizer_descriptor;
+    if (!SaveOptimizerPayloadV2(root, "optimizer/state.bin",
+                                original_optimizer, optimizer_descriptor,
+                                error)) {
+        throw std::runtime_error("v2 Adam payload save failed: " + error);
+    }
+    AdamOptimizer resumed_optimizer(0.001, 0.9, 0.999, 1e-8);
+    if (!LoadOptimizerPayloadV2(root, optimizer_descriptor,
+                                resumed_optimizer, error)) {
+        throw std::runtime_error("v2 Adam payload load failed: " + error);
+    }
+    auto resumed_parameters = original_parameters;
+    original_optimizer.Step(original_parameters, gradients);
+    resumed_optimizer.Step(resumed_parameters, gradients);
+    const float* expected_next = original_parameters.at("w").Data<float>();
+    const float* actual_next = resumed_parameters.at("w").Data<float>();
+    ExpectNear(actual_next[0], expected_next[0], 1e-7f,
+               "v2 Adam payload exact next step value 0");
+    ExpectNear(actual_next[1], expected_next[1], 1e-7f,
+               "v2 Adam payload exact next step value 1");
+
+    AdamOptimizer unstepped_optimizer(0.001, 0.9, 0.999, 1e-8);
+    CheckpointPayloadDescriptor unstepped_descriptor;
+    if (!SaveOptimizerPayloadV2(root, "optimizer/step-zero.bin",
+                                unstepped_optimizer, unstepped_descriptor,
+                                error)) {
+        throw std::runtime_error("v2 step-zero Adam payload save failed: " +
+                                 error);
+    }
+    AdamOptimizer restored_unstepped_optimizer(0.001, 0.9, 0.999, 1e-8);
+    if (!LoadOptimizerPayloadV2(root, unstepped_descriptor,
+                                restored_unstepped_optimizer, error)) {
+        throw std::runtime_error("v2 step-zero Adam payload load failed: " +
+                                 error);
+    }
+    OptimizerState restored_unstepped_state;
+    ExpectTrue(restored_unstepped_optimizer.ExportState(
+                   restored_unstepped_state, error) &&
+                   restored_unstepped_state.step_count == 0 &&
+                   restored_unstepped_state.tensors.empty(),
+               "v2 Adam payload should preserve valid step-zero state");
+
+    const auto before_corruption = target.model->GetParameters();
+    const auto model_path = root / model_descriptor.relative_path;
+    {
+        std::fstream file(model_path,
+                          std::ios::binary | std::ios::in | std::ios::out);
+        file.seekg(-1, std::ios::end);
+        char byte = 0;
+        file.read(&byte, 1);
+        byte ^= 0x5a;
+        file.seekp(-1, std::ios::end);
+        file.write(&byte, 1);
+    }
+    ExpectTrue(!LoadModelPayloadV2(
+                   root, model_descriptor, *target.model, error),
+               "corrupted v2 model payload must be rejected");
+    ExpectTrue(error.find("SHA-256 mismatch") != std::string::npos,
+               "corrupted v2 payload should identify hash mismatch");
+    const auto after_corruption = target.model->GetParameters();
+    for (const auto& [name, before] : before_corruption) {
+        const float* before_data = before.Data<float>();
+        const float* after_data = after_corruption.at(name).Data<float>();
+        for (size_t index = 0; index < before.NumElements(); ++index) {
+            ExpectNear(after_data[index], before_data[index], 0.0f,
+                       "corrupted payload must not mutate active model");
+        }
+    }
+
+    std::filesystem::remove_all(root);
+    spdlog::info("  OK: v2 model/Adam payloads round-trip and corruption is transactional");
 }
 
 void TestTransformerDecoderCheckpointRoundTrip() {
@@ -1362,6 +1498,7 @@ int main() {
         TestCheckpointRejectsIncompatibleModelWithoutMutation();
         TestCheckpointFormatCapabilitiesFailClosed();
         TestCheckpointManifestV2AtomicContract();
+        TestCheckpointPayloadV2RoundTripAndCorruptionGuard();
         TestTransformerDecoderCheckpointRoundTrip();
         TestSyntheticBatchTabular();
         TestSyntheticBatchText();

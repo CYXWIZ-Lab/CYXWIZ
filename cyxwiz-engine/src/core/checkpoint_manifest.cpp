@@ -18,18 +18,6 @@ namespace {
 
 constexpr const char* kCheckpointFormat = "cyxwiz_checkpoint";
 
-bool IsSafeRelativePath(const std::string& value) {
-    if (value.empty()) return false;
-    const fs::path path(value);
-    if (path.is_absolute() || path.has_root_name() || path.has_root_directory()) {
-        return false;
-    }
-    for (const auto& part : path) {
-        if (part == ".." || part == ".") return false;
-    }
-    return true;
-}
-
 bool IsSha256(const std::string& value) {
     return value.size() == 64 &&
            std::all_of(value.begin(), value.end(), [](unsigned char ch) {
@@ -165,6 +153,18 @@ std::optional<CheckpointPayloadKind> CheckpointPayloadKindFromString(
     return std::nullopt;
 }
 
+bool IsSafeCheckpointPayloadPath(const std::string& value) {
+    if (value.empty()) return false;
+    const fs::path path(value);
+    if (path.is_absolute() || path.has_root_name() || path.has_root_directory()) {
+        return false;
+    }
+    for (const auto& part : path) {
+        if (part == ".." || part == ".") return false;
+    }
+    return true;
+}
+
 CheckpointManifestValidation ValidateCheckpointManifestV2(
     const CheckpointManifestV2& manifest)
 {
@@ -199,7 +199,7 @@ CheckpointManifestValidation ValidateCheckpointManifestV2(
     std::set<std::string> paths;
     for (const auto& payload : manifest.payloads) {
         if (payload.required) required_kinds.insert(payload.kind);
-        if (!IsSafeRelativePath(payload.relative_path)) {
+        if (!IsSafeCheckpointPayloadPath(payload.relative_path)) {
             result.errors.push_back("payload path must be a safe relative path: " +
                                     payload.relative_path);
         } else if (!paths.insert(payload.relative_path).second) {

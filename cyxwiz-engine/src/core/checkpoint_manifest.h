@@ -73,6 +73,8 @@ std::string ToString(CheckpointPayloadKind kind);
 std::optional<CheckpointPayloadKind> CheckpointPayloadKindFromString(
     const std::string& value);
 
+bool IsSafeCheckpointPayloadPath(const std::string& value);
+
 CheckpointManifestValidation ValidateCheckpointManifestV2(
     const CheckpointManifestV2& manifest);
 
