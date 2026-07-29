@@ -162,6 +162,27 @@ std::shared_ptr<cyxwiz::ArrowDataset> MakeTimeSeriesDataset() {
     return std::make_shared<cyxwiz::ArrowDataset>(table, "batcher_setup_ts");
 }
 
+std::shared_ptr<cyxwiz::ArrowDataset> MakeMultiStepTimeSeriesDataset() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("y", arrow::float32()),
+        arrow::field("y_1", arrow::float32()),
+        arrow::field("y_2", arrow::float32()),
+        arrow::field("__partition__", arrow::int8()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f}),
+        FinishFloatArray({10.0f, 20.0f, 30.0f, 40.0f}),
+        FinishFloatArray({1.5f, 2.5f, 3.5f, 4.5f}),
+        FinishFloatArray({2.5f, 3.5f, 4.5f, 5.5f}),
+        FinishFloatArray({3.5f, 4.5f, 5.5f, 6.5f}),
+        FinishInt8Array({0, 0, 0, 1}),
+    }, 4);
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "batcher_setup_ts_multistep");
+}
+
 std::shared_ptr<cyxwiz::ArrowDataset> MakeMultiGroupTimeSeriesDataset() {
     auto schema = arrow::schema({
         arrow::field("x0", arrow::float32()),
@@ -193,6 +214,13 @@ cyxwiz::TrainingConfiguration MakeTimeSeriesConfig() {
     config.is_time_series = true;
     config.input_size = 2;
     config.output_size = 1;
+    return config;
+}
+
+cyxwiz::TrainingConfiguration MakeMultiStepTimeSeriesConfig() {
+    auto config = MakeTimeSeriesConfig();
+    config.output_size = 3;
+    config.time_series_target_width = 3;
     return config;
 }
 
@@ -653,12 +681,16 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_training_batcher_setup.parquet";
     const fs::path ts_parquet_path =
         fs::temp_directory_path() / "cyxwiz_training_batcher_setup_ts.parquet";
+    const fs::path multi_step_ts_parquet_path =
+        fs::temp_directory_path() /
+        "cyxwiz_training_batcher_setup_ts_multistep.parquet";
     const fs::path multi_parquet_path =
         fs::temp_directory_path() / "cyxwiz_training_batcher_setup_multi.parquet";
     const fs::path multi_ts_parquet_path =
         fs::temp_directory_path() / "cyxwiz_training_batcher_setup_ts_multi.parquet";
     fs::remove(parquet_path);
     fs::remove(ts_parquet_path);
+    fs::remove(multi_step_ts_parquet_path);
     fs::remove(multi_parquet_path);
     fs::remove(multi_ts_parquet_path);
 
@@ -727,40 +759,105 @@ int main() {
     CheckFeatureAndLabelShapes(resolved_prefetch_batch, 2, 2, 2,
                                "resolved-role prefetch handoff");
 
+    cyxwiz::ResolvedTabularDatasets resolved_datasets;
+    resolved_datasets.train_arrow = MakeDataset();
+    resolved_datasets.test_parquet = parquet_dataset;
+
     auto external_role_config = MakeConfig();
+    external_role_config.has_data_split = true;
     external_role_config.prefetch_factor = 2;
-    auto external_role_assembly_config = external_role_config;
-    external_role_assembly_config.prefetch_factor = 0;
-    auto external_role_batchers = cyxwiz::BuildArrowTrainingBatchers(
-        external_role_assembly_config,
-        MakeDataset(),
-        "label",
-        /*batch_size=*/2);
-    external_role_batchers.arrow_test =
-        std::make_unique<cyxwiz::ArrowDatasetBatcher>(
-            MakeMultiGroupDataset(), "label", 2, false, 1.0f, true, "", 0, 0,
-            cyxwiz::BatcherPhase::Train, 0.0f, 42);
-    external_role_batchers.parquet_test.reset();
-    external_role_batchers.test = external_role_batchers.arrow_test.get();
-    external_role_batchers.test->SetOneHotEncoding(
-        external_role_config.output_size);
-    external_role_batchers.num_test_samples =
-        external_role_batchers.test->GetNumSamples();
-    cyxwiz::AttachTrainingBatcherPrefetchWrappers(
-        external_role_batchers,
-        external_role_config,
-        "explicit tabular roles");
-    Check(external_role_batchers.prefetch_test != nullptr,
-          "external Test replacement should receive a fresh prefetch wrapper");
+    external_role_config.dataset_roles.train = {
+        "resolved_train_arrow", "label", 1, true};
+    external_role_config.dataset_roles.test = {
+        "resolved_test_parquet", "label", 2, true};
+    external_role_config.dataset_roles.policy.train_ratio = 0.75f;
+    external_role_config.dataset_roles.policy.dev_ratio = 0.25f;
+    external_role_config.dataset_roles.policy.test_ratio = 0.0f;
+    external_role_config.dataset_roles.policy.seed = 17;
+    auto resolved_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        external_role_config, resolved_datasets, /*batch_size=*/2);
+    Check(resolved_build.ok(), resolved_build.error_message);
+    Check(resolved_build.batchers.arrow_train != nullptr &&
+              resolved_build.batchers.parquet_test != nullptr,
+          "typed partition builder should support mixed Arrow Train and Parquet Test");
+    Check(resolved_build.batchers.num_train_samples == 3 &&
+              resolved_build.batchers.num_val_samples == 1 &&
+              resolved_build.batchers.num_test_samples == 4,
+          "typed partition builder must derive Dev only and preserve every external Test row");
+    Check(external_role_config.dataset_roles.manifest.train_rows == 3 &&
+              external_role_config.dataset_roles.manifest.dev_rows == 1 &&
+              external_role_config.dataset_roles.manifest.test_rows == 4 &&
+              external_role_config.dataset_roles.manifest.manifest_fingerprint.size() == 16,
+          "typed partition builder must finalize exact runtime rows and manifest identity");
+    Check(resolved_build.batchers.prefetch_train != nullptr &&
+              resolved_build.batchers.prefetch_test != nullptr,
+          "typed partition builder should attach prefetch only after final role assembly");
     auto resolved_external_role = cyxwiz::TakeResolvedExternalBatchers(
-        std::move(external_role_batchers));
+        std::move(resolved_build.batchers));
     Check(resolved_external_role.test != nullptr &&
-              resolved_external_role.test->GetNumSamples() == 6,
-          "external Test handoff must retain the replacement source");
+              resolved_external_role.test->GetNumSamples() == 4,
+          "typed external Test handoff must retain its Parquet owner");
     auto resolved_external_test_batch =
         resolved_external_role.test->GetNextBatch();
     CheckFeatureAndLabelShapes(resolved_external_test_batch, 2, 2, 2,
-                               "external Test prefetch handoff");
+                               "typed external Test prefetch handoff");
+
+    auto train_only_config = MakeConfig();
+    train_only_config.dataset_roles.train = {
+        "train_only_arrow", "label", 10, true};
+    train_only_config.dataset_roles.policy.train_ratio = 0.5f;
+    train_only_config.dataset_roles.policy.dev_ratio = 0.25f;
+    train_only_config.dataset_roles.policy.test_ratio = 0.25f;
+    cyxwiz::ResolvedTabularDatasets train_only_datasets;
+    train_only_datasets.train_arrow = MakeDataset();
+    auto train_only_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        train_only_config, train_only_datasets, /*batch_size=*/2);
+    Check(train_only_build.ok(), train_only_build.error_message);
+    Check(train_only_build.batchers.num_train_samples == 2 &&
+              train_only_build.batchers.num_val_samples == 1 &&
+              train_only_build.batchers.num_test_samples == 1,
+          "Train-only typed partitions must derive Dev and Test only from Train");
+
+    auto train_dev_config = MakeConfig();
+    train_dev_config.dataset_roles.train = {
+        "train_dev_train_arrow", "label", 20, true};
+    train_dev_config.dataset_roles.dev = {
+        "train_dev_external_arrow", "label", 21, true};
+    train_dev_config.dataset_roles.policy.train_ratio = 0.75f;
+    train_dev_config.dataset_roles.policy.dev_ratio = 0.0f;
+    train_dev_config.dataset_roles.policy.test_ratio = 0.25f;
+    cyxwiz::ResolvedTabularDatasets train_dev_datasets;
+    train_dev_datasets.train_arrow = MakeDataset();
+    train_dev_datasets.dev_arrow = MakeDataset();
+    auto train_dev_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        train_dev_config, train_dev_datasets, /*batch_size=*/2);
+    Check(train_dev_build.ok(), train_dev_build.error_message);
+    Check(train_dev_build.batchers.num_train_samples == 3 &&
+              train_dev_build.batchers.num_val_samples == 4 &&
+              train_dev_build.batchers.num_test_samples == 1,
+          "Train+Dev typed partitions must preserve Dev and derive Test only from Train");
+
+    auto all_external_config = MakeConfig();
+    all_external_config.dataset_roles.train = {
+        "all_external_train_arrow", "label", 30, true};
+    all_external_config.dataset_roles.dev = {
+        "all_external_dev_arrow", "label", 31, true};
+    all_external_config.dataset_roles.test = {
+        "all_external_test_parquet", "label", 32, true};
+    all_external_config.dataset_roles.policy.train_ratio = 1.0f;
+    all_external_config.dataset_roles.policy.dev_ratio = 0.0f;
+    all_external_config.dataset_roles.policy.test_ratio = 0.0f;
+    cyxwiz::ResolvedTabularDatasets all_external_datasets;
+    all_external_datasets.train_arrow = MakeDataset();
+    all_external_datasets.dev_arrow = MakeDataset();
+    all_external_datasets.test_parquet = parquet_dataset;
+    auto all_external_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        all_external_config, all_external_datasets, /*batch_size=*/2);
+    Check(all_external_build.ok(), all_external_build.error_message);
+    Check(all_external_build.batchers.num_train_samples == 4 &&
+              all_external_build.batchers.num_val_samples == 4 &&
+              all_external_build.batchers.num_test_samples == 4,
+          "Train+Dev+Test typed partitions must preserve every external role in full");
 
     auto binary_config = MakeConfig();
     binary_config.output_size = 1;
@@ -888,6 +985,60 @@ int main() {
     auto ts_parquet_batch = ts_parquet_batchers.train->GetNextBatch();
     CheckFeatureAndLabelShapes(ts_parquet_batch, 2, 2, 1, "time-series Parquet");
 
+    auto multi_step_arrow_dataset = MakeMultiStepTimeSeriesDataset();
+    auto multi_step_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        MakeMultiStepTimeSeriesConfig(), multi_step_arrow_dataset,
+        "ignored_label", /*batch_size=*/2);
+    auto multi_step_arrow_batch =
+        multi_step_arrow_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(
+        multi_step_arrow_batch, 2, 2, 3, "multi-step time-series Arrow");
+    const float* arrow_targets = multi_step_arrow_batch.labels.Data<float>();
+    Check(arrow_targets[0] == 1.5f && arrow_targets[1] == 2.5f &&
+              arrow_targets[2] == 3.5f && arrow_targets[3] == 2.5f,
+          "Arrow multi-step labels should be row-major ordered horizons");
+
+    Check(multi_step_arrow_dataset->ExportParquet(
+              multi_step_ts_parquet_path.string()),
+          "multi-step time-series table should export to Parquet");
+    auto multi_step_parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        multi_step_ts_parquet_path.string(),
+        "batcher_setup_ts_multistep_parquet");
+    Check(multi_step_parquet_dataset != nullptr,
+          "multi-step time-series Parquet dataset should open");
+    auto multi_step_parquet_batchers = cyxwiz::BuildParquetTrainingBatchers(
+        MakeMultiStepTimeSeriesConfig(), multi_step_parquet_dataset,
+        "ignored_label", /*batch_size=*/2);
+    auto multi_step_parquet_batch =
+        multi_step_parquet_batchers.train->GetNextBatch();
+    CheckFeatureAndLabelShapes(
+        multi_step_parquet_batch, 2, 2, 3,
+        "multi-step time-series Parquet");
+    const float* parquet_targets = multi_step_parquet_batch.labels.Data<float>();
+    Check(parquet_targets[0] == 1.5f && parquet_targets[1] == 2.5f &&
+              parquet_targets[2] == 3.5f && parquet_targets[3] == 2.5f,
+          "Parquet multi-step labels should be row-major ordered horizons");
+
+    auto multi_step_model_config = MakeMultiStepTimeSeriesConfig();
+    multi_step_model_config.input_shape = {2};
+    multi_step_model_config.loss_type = gui::NodeType::MSELoss;
+    multi_step_model_config.optimizer_type = gui::NodeType::Adam;
+    multi_step_model_config.learning_rate = 0.001f;
+    cyxwiz::CompiledLayer multi_step_dense;
+    multi_step_dense.type = gui::NodeType::Dense;
+    multi_step_dense.units = 3;
+    multi_step_model_config.layers.push_back(multi_step_dense);
+    RunModelTrainValidationSmoke(
+        *multi_step_arrow_batchers.train,
+        *multi_step_arrow_batchers.val,
+        multi_step_model_config,
+        "multi-step Arrow model-step");
+    RunModelTrainValidationSmoke(
+        *multi_step_parquet_batchers.train,
+        *multi_step_parquet_batchers.val,
+        multi_step_model_config,
+        "multi-step Parquet model-step");
+
     auto multi_source = MakeMultiGroupDataset();
     WriteParquetWithRowGroupSize(*multi_source, multi_parquet_path.string(), 2);
     auto multi_parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
@@ -988,19 +1139,30 @@ int main() {
     multi_ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     loop_arrow_batchers = cyxwiz::TrainingBatcherSet{};
     loop_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    resolved_external_role = cyxwiz::ResolvedExternalBatchers{};
+    resolved_datasets = cyxwiz::ResolvedTabularDatasets{};
+    train_only_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    train_only_datasets = cyxwiz::ResolvedTabularDatasets{};
+    train_dev_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    train_dev_datasets = cyxwiz::ResolvedTabularDatasets{};
+    all_external_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    all_external_datasets = cyxwiz::ResolvedTabularDatasets{};
     parquet_dataset.reset();
     ts_parquet_dataset.reset();
     multi_parquet_dataset.reset();
     multi_ts_parquet_dataset.reset();
+    multi_step_parquet_dataset.reset();
     parquet_source.reset();
     ts_arrow_dataset.reset();
     multi_source.reset();
     multi_ts_source.reset();
+    multi_step_arrow_dataset.reset();
 
     fs::remove(parquet_path);
     fs::remove(ts_parquet_path);
     fs::remove(multi_parquet_path);
     fs::remove(multi_ts_parquet_path);
+    fs::remove(multi_step_ts_parquet_path);
     fs::remove_all(work_dir);
 
     std::cout << "Training batcher setup passed\n";

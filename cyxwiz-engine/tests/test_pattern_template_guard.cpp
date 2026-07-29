@@ -427,6 +427,38 @@ void CheckSerializedPinIndexGuard() {
           "non-integer pin indices should be rejected");
 }
 
+void CheckDataBoundaryVersionGuard() {
+    nlohmann::json legacy_graph = nlohmann::json::object();
+    Check(gui::detail::PreserveLegacyDataBoundaryPins(legacy_graph),
+          "unversioned saved graphs must preserve legacy data-boundary pins");
+
+    legacy_graph["data_boundary_version"] = 1;
+    Check(gui::detail::PreserveLegacyDataBoundaryPins(legacy_graph),
+          "explicit Data Boundary v1 must remain preserved");
+
+    nlohmann::json modern_graph = {
+        {"data_boundary_version", gui::detail::kCurrentDataBoundaryVersion}};
+    Check(!gui::detail::PreserveLegacyDataBoundaryPins(modern_graph),
+          "Data Boundary v2 must recreate modern Dataset pins");
+
+    nlohmann::json malformed_graph = {{"data_boundary_version", "2"}};
+    Check(gui::detail::PreserveLegacyDataBoundaryPins(malformed_graph),
+          "malformed boundary versions must fail safe to preserved legacy pins");
+
+    nlohmann::json future_graph = {{"data_boundary_version", 3}};
+    Check(gui::detail::PreserveLegacyDataBoundaryPins(future_graph),
+          "unknown future boundary versions must not be reinterpreted as v2");
+
+    nlohmann::json legacy_test_link = {{"from_pin_index", 5}};
+    int index = -1;
+    Check(gui::detail::ResolveSerializedPinIndex(
+              legacy_test_link, "from_pin_index", 6, index) && index == 5,
+          "preserved six-output Data Split must retain its Test Labels link");
+    Check(!gui::detail::ResolveSerializedPinIndex(
+              legacy_test_link, "from_pin_index", 1, index),
+          "the same legacy link must not be silently applied to Dataset v2");
+}
+
 } // namespace
 
 int main() {
@@ -633,6 +665,7 @@ int main() {
     CheckExampleDataBoundaryPins();
     CheckModernPinConnectivityFixtures();
     CheckSerializedPinIndexGuard();
+    CheckDataBoundaryVersionGuard();
 
     std::cout << "Pattern template guard passed\n";
     return 0;

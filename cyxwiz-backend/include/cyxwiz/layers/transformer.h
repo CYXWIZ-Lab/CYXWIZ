@@ -68,6 +68,7 @@ public:
     void SetTraining(bool training) override;
 
     static Tensor GenerateCausalMask(int size);
+    Tensor GetLastMemoryGradient() const;
 
 private:
     int d_model_;

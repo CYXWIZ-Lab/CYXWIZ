@@ -1187,7 +1187,10 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
     const std::string& path, const std::string& name,
     bool has_header, char delimiter, int skip_rows, int64_t max_rows,
     const std::vector<std::string>& missing_value_tokens,
-    const std::vector<std::string>& selected_columns) {
+    const std::vector<std::string>& selected_columns,
+    char decimal_point,
+    bool use_threads,
+    const CsvProgressCallback& progress_callback) {
 
     std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
 
@@ -1195,6 +1198,7 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         // Configure CSV reading options
         auto read_options = arrow::csv::ReadOptions::Defaults();
         read_options.skip_rows = skip_rows;
+        read_options.use_threads = use_threads;
 
         // Auto-size block_size so the entire file loads as a single Arrow
         // chunk whenever possible. Single-chunk columns hit the fast
@@ -1205,23 +1209,35 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         // We pick block_size = max(file_size + 1 MB headroom, 64 MB), capped
         // at INT32_MAX since Arrow's block_size is a signed 32-bit int.
         // Files >2 GB simply fall back to multi-chunk (still correct).
+        int64_t file_size_bytes = 0;
+        try {
+            file_size_bytes = static_cast<int64_t>(fs::file_size(path));
+        } catch (...) {
+            file_size_bytes = 0;
+        }
         if (max_rows <= 0) {
-            int64_t file_size_bytes = 0;
-            try {
-                file_size_bytes = static_cast<int64_t>(fs::file_size(path));
-            } catch (...) {
-                file_size_bytes = 0;
-            }
-            constexpr int64_t kMinBlock = 64 * 1024 * 1024;
+            constexpr int64_t kResponsiveMaxBlock = 64 * 1024 * 1024;
             constexpr int64_t kMaxBlock = std::numeric_limits<int32_t>::max();
-            int64_t target =
-                std::max<int64_t>(file_size_bytes + (1 << 20), kMinBlock);
-            target = std::min<int64_t>(target, kMaxBlock);
+            int64_t target = 0;
+            if (use_threads) {
+                target = std::max<int64_t>(
+                    file_size_bytes + (1 << 20), kResponsiveMaxBlock);
+                target = std::min<int64_t>(target, kMaxBlock);
+            } else {
+                // Interactive loads already run on a background worker. Use
+                // bounded streaming blocks rather than one source-sized block
+                // so parsing cannot monopolize every Arrow worker or demand a
+                // second source-sized allocation. Exact sizing also avoids an
+                // Arrow 21 non-threaded empty-block failure on small files.
+                target = std::clamp<int64_t>(
+                    file_size_bytes, 1, kResponsiveMaxBlock);
+            }
             read_options.block_size = static_cast<int32_t>(target);
             spdlog::info(
-                "LoadCSVToArrow: file_size={} MB, block_size={} MB (auto)",
+                "LoadCSVToArrow: file_size={} MB, block_size={} MB, threads={}",
                 file_size_bytes / (1024 * 1024),
-                read_options.block_size / (1024 * 1024));
+                read_options.block_size / (1024 * 1024),
+                use_threads);
         } else {
             spdlog::info(
                 "LoadCSVToArrow: streaming source with max_rows={} and "
@@ -1233,7 +1249,8 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         auto parse_options = arrow::csv::ParseOptions::Defaults();
         parse_options.delimiter = delimiter;
 
-        auto convert_options = MakeTabularCsvConvertOptions(missing_value_tokens);
+        auto convert_options = MakeTabularCsvConvertOptions(
+            missing_value_tokens, decimal_point);
         convert_options.include_columns = selected_columns;
 
         // Handle header
@@ -1241,69 +1258,125 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
             read_options.autogenerate_column_names = true;
         }
 
-        std::shared_ptr<ArrowDataset> dataset;
-        if (max_rows > 0) {
-            auto input_result = arrow::io::ReadableFile::Open(path);
-            if (!input_result.ok()) {
-                spdlog::error(
-                    "LoadCSVToArrow: cannot open '{}' for bounded streaming: {}",
-                    path,
-                    input_result.status().ToString());
-                return nullptr;
-            }
+        const bool preflight_widen_integers =
+            file_size_bytes > read_options.block_size &&
+            CsvSourceSamplesContainDecimalValues(
+                path, decimal_point, read_options.block_size);
+        if (preflight_widen_integers) {
+            spdlog::info(
+                "LoadCSVToArrow: schema preflight found decimal values beyond "
+                "the inference block; widening inferred integer columns before parsing");
+        }
 
-            auto reader_result = arrow::csv::StreamingReader::Make(
-                arrow::io::default_io_context(),
-                input_result.ValueOrDie(),
-                read_options,
-                parse_options,
-                convert_options);
+        bool cancelled = false;
+        auto load_table_attempt = [&](bool promote_inferred_integers,
+                                      bool is_retry,
+                                      size_t& promoted_integer_columns,
+                                      std::string& attempt_error)
+            -> std::shared_ptr<arrow::Table> {
+            std::shared_ptr<arrow::io::ReadableFile> input_source;
+            auto reader_result = MakeStableCsvStreamingReader(
+                path, read_options, parse_options, convert_options,
+                &promoted_integer_columns, promote_inferred_integers,
+                &input_source);
             if (!reader_result.ok()) {
-                spdlog::error(
-                    "LoadCSVToArrow: bounded StreamingReader failed for '{}': {}",
-                    path,
-                    reader_result.status().ToString());
+                attempt_error = "reader creation failed: " +
+                    reader_result.status().ToString();
                 return nullptr;
             }
 
             auto reader = reader_result.ValueOrDie();
             std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
             int64_t rows_read = 0;
-            while (rows_read < max_rows) {
+            while (max_rows <= 0 || rows_read < max_rows) {
                 std::shared_ptr<arrow::RecordBatch> batch;
                 auto status = reader->ReadNext(&batch);
                 if (!status.ok()) {
-                    spdlog::error(
-                        "LoadCSVToArrow: bounded ReadNext failed for '{}': {}",
-                        path,
-                        status.ToString());
+                    attempt_error = "stream read failed: " + status.ToString();
                     return nullptr;
                 }
                 if (!batch) break;
 
-                const int64_t remaining = max_rows - rows_read;
-                if (batch->num_rows() > remaining) {
-                    batch = batch->Slice(0, remaining);
+                if (max_rows > 0) {
+                    const int64_t remaining = max_rows - rows_read;
+                    if (batch->num_rows() > remaining) {
+                        batch = batch->Slice(0, remaining);
+                    }
                 }
                 rows_read += batch->num_rows();
                 batches.push_back(std::move(batch));
+
+                if (progress_callback && file_size_bytes > 0 && input_source) {
+                    auto position = input_source->Tell();
+                    if (position.ok()) {
+                        const float source_fraction = std::clamp(
+                            static_cast<float>(position.ValueOrDie()) /
+                                static_cast<float>(file_size_bytes),
+                            0.0f, 1.0f);
+                        const float base = is_retry ? 0.8f : 0.0f;
+                        const float span = is_retry ? 0.19f : 0.99f;
+                        const std::string message = is_retry
+                            ? "Reading CSV with widened numeric schema"
+                            : (promote_inferred_integers
+                                ? "Reading CSV with preflight schema"
+                                : "Reading CSV");
+                        if (!progress_callback(base + span * source_fraction,
+                                               message)) {
+                            cancelled = true;
+                            attempt_error = "cancelled";
+                            return nullptr;
+                        }
+                    }
+                }
             }
 
-            auto table_result =
-                arrow::Table::FromRecordBatches(reader->schema(), batches);
-            if (!table_result.ok()) {
-                spdlog::error(
-                    "LoadCSVToArrow: bounded table assembly failed for '{}': {}",
-                    path,
-                    table_result.status().ToString());
+            auto result = arrow::Table::FromRecordBatches(
+                reader->schema(), batches);
+            if (!result.ok()) {
+                attempt_error = "table assembly failed: " +
+                    result.status().ToString();
                 return nullptr;
             }
-            dataset = std::make_shared<ArrowDataset>(
-                table_result.ValueOrDie(), unique_name);
-        } else {
-            dataset = ArrowDataset::FromCSV(
-                path, unique_name, read_options, parse_options, convert_options);
+            return result.ValueOrDie();
+        };
+
+        size_t promoted_integer_columns = 0;
+        std::string initial_error;
+        auto table = load_table_attempt(
+            preflight_widen_integers, false,
+            promoted_integer_columns, initial_error);
+        if (!table) {
+            if (cancelled) return nullptr;
+            if (preflight_widen_integers) {
+                spdlog::error(
+                    "LoadCSVToArrow: preflight schema read failed for '{}': {}",
+                    path, initial_error);
+                return nullptr;
+            }
+            if (progress_callback &&
+                !progress_callback(0.8f, "Retrying with widened numeric schema")) {
+                return nullptr;
+            }
+            std::string retry_error;
+            table = load_table_attempt(
+                true, true, promoted_integer_columns, retry_error);
+            if (!table) {
+                if (cancelled) return nullptr;
+                spdlog::error(
+                    "LoadCSVToArrow: read failed for '{}': {}; numeric fallback also failed: {}",
+                    path, initial_error, retry_error);
+                return nullptr;
+            }
+            spdlog::info(
+                "LoadCSVToArrow: initial read failed for '{}' ({}); retry succeeded after promoting {} inferred integer columns",
+                path, initial_error, promoted_integer_columns);
         }
+        if (progress_callback &&
+            !progress_callback(0.99f, "Optimizing loaded columns")) {
+            return nullptr;
+        }
+        std::shared_ptr<ArrowDataset> dataset = std::make_shared<ArrowDataset>(
+            table, unique_name);
         if (!dataset) {
             spdlog::error("LoadCSVToArrow: Failed to load {}", path);
             return nullptr;
@@ -1336,6 +1409,9 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
 
         spdlog::info("LoadCSVToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
                     path, unique_name, dataset->GetNumRows(), dataset->GetNumColumns());
+        if (progress_callback) {
+            (void)progress_callback(1.0f, "CSV loaded");
+        }
         return dataset;
 
     } catch (const std::exception& e) {
@@ -1397,6 +1473,41 @@ static size_t GetAvailableMemoryBytes() {
 #endif
 }
 
+static bool PersistArrowCacheAtomically(
+    const std::shared_ptr<ArrowDataset>& dataset,
+    const std::string& cache_path) {
+    if (!dataset || cache_path.empty()) return false;
+
+    const auto thread_hash = std::hash<std::thread::id>{}(
+        std::this_thread::get_id());
+    const auto nonce = std::chrono::steady_clock::now()
+        .time_since_epoch().count();
+    const std::string temporary_path = cache_path + ".tmp." +
+        std::to_string(thread_hash) + "." + std::to_string(nonce);
+
+    try {
+        const fs::path parent = fs::path(cache_path).parent_path();
+        if (!parent.empty()) fs::create_directories(parent);
+        if (!dataset->ExportParquet(temporary_path)) {
+            std::error_code cleanup_error;
+            fs::remove(temporary_path, cleanup_error);
+            return false;
+        }
+
+        if (fs::exists(cache_path)) {
+            fs::remove(cache_path);
+        }
+        fs::rename(temporary_path, cache_path);
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::warn("PersistArrowCacheAtomically: cache write failed for '{}': {}",
+                     cache_path, e.what());
+        std::error_code cleanup_error;
+        fs::remove(temporary_path, cleanup_error);
+        return false;
+    }
+}
+
 // -----------------------------------------------------------------------------
 // LoadTabularCSV - automatic in-memory vs disk-backed dispatcher
 //
@@ -1404,9 +1515,12 @@ static size_t GetAvailableMemoryBytes() {
 //   - If force_disk_backed is true, always take the Parquet path.
 //   - If file_size < 0.75 * available RAM, take the in-memory Arrow path
 //     (LoadCSVToArrow). This is the fast common case.
-//   - Otherwise, convert the CSV to a Snappy-compressed Parquet cache in
-//     the system temp dir (with mtime-based cache freshness check), open
-//     it via memory-mapped reads, and register as ParquetBackedDataset.
+//   - Otherwise, convert the CSV to a Snappy-compressed persistent Parquet
+//     cache (with parser-contract identity and mtime freshness), open it via
+//     memory-mapped reads, and register as ParquetBackedDataset.
+// In-memory loads use the same cache contract for fast restoration after an
+// application restart. The UI supplies the active project's cache directory;
+// headless callers fall back to the system temp directory.
 //
 // On success the dataset is queryable via the matching accessor. The caller
 // uses the returned TabularLoadBackend tag to know which map to query.
@@ -1416,7 +1530,14 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
     bool has_header, char delimiter, int skip_rows,
     int64_t max_rows, bool force_disk_backed,
     const std::vector<std::string>& missing_value_tokens,
-    const std::vector<std::string>& selected_columns) {
+    const std::vector<std::string>& selected_columns,
+    char decimal_point,
+    bool use_threads,
+    const CsvProgressCallback& progress_callback,
+    std::string* load_status,
+    const std::string& cache_directory) {
+
+    if (load_status) load_status->clear();
 
     // File size check (required for dispatch decision and for logging)
     int64_t file_size_bytes = 0;
@@ -1441,28 +1562,13 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
                  force_disk_backed ? "true" : "false",
                  use_disk_backed ? "disk-backed" : "in-memory");
 
-    // Clear any stale entries under the same name in the OTHER map before
-    // (re-)registering. Without this, repeatedly re-Applying a dataset
-    // (especially when toggling the Force disk-backed flag) leaves orphan
-    // entries in both maps and MainWindow::StartTrainingFromGraph routes
-    // to whichever one it checks first, which is usually the stale one.
-    UnregisterTabularDataset(name);
-
-    if (!use_disk_backed) {
-        // Fast path: fits in RAM, use the existing in-memory loader.
-        auto dataset = LoadCSVToArrow(path, name, has_header, delimiter,
-                                      skip_rows, max_rows, missing_value_tokens,
-                                      selected_columns);
-        return dataset ? TabularLoadBackend::InMemory : TabularLoadBackend::Failed;
-    }
-
-    // Slow path: file is too big (or forced). Convert to a Parquet cache
-    // next to the system temp dir, open it via memory-mapped reads.
     const std::string cache_signature =
         std::string(has_header ? "header=1" : "header=0") +
         "|delimiter=" + std::to_string(static_cast<unsigned char>(delimiter)) +
+        "|decimal=" + std::to_string(static_cast<unsigned char>(decimal_point)) +
         "|skip=" + std::to_string(skip_rows) +
         "|max_rows=" + std::to_string(std::max<int64_t>(0, max_rows)) +
+        "|source_size=" + std::to_string(file_size_bytes) +
         "|nulls=" + MissingValueTokensSignature(missing_value_tokens) +
         "|columns=" + [&selected_columns]() {
             std::string signature;
@@ -1471,21 +1577,105 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
             }
             return signature;
         }();
-    const std::string cache_path =
-        ParquetBackedDataset::GetCacheFilePath(path, cache_signature);
+    const std::string cache_path = ParquetBackedDataset::GetCacheFilePath(
+        path, cache_signature, cache_directory);
+    const bool cache_is_fresh =
+        ParquetBackedDataset::IsCacheFresh(path, cache_path);
 
-    if (ParquetBackedDataset::IsCacheFresh(path, cache_path)) {
+    if (!use_disk_backed) {
+        if (cache_is_fresh) {
+            if (progress_callback &&
+                !progress_callback(0.05f, "Restoring persistent ingestion cache")) {
+                return TabularLoadBackend::Failed;
+            }
+            const std::string final_name =
+                name.empty() ? fs::path(path).stem().string() : name;
+            auto cached_dataset = ArrowDataset::FromParquet(
+                cache_path, final_name);
+            if (cached_dataset) {
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    arrow_datasets_[final_name] = cached_dataset;
+                    parquet_backed_datasets_.erase(final_name);
+                    RememberTabularSourcePathUnlocked(final_name, path);
+                }
+                if (load_status) {
+                    *load_status = "Restored from persistent ingestion cache";
+                }
+                spdlog::info(
+                    "LoadTabularCSV: persistent cache hit '{}' -> '{}' ({} rows, {} cols)",
+                    cache_path, final_name,
+                    cached_dataset->GetNumRows(), cached_dataset->GetNumColumns());
+                if (progress_callback) {
+                    (void)progress_callback(1.0f, "Persistent cache restored");
+                }
+                return TabularLoadBackend::InMemory;
+            }
+            spdlog::warn(
+                "LoadTabularCSV: persistent cache '{}' could not be opened; rebuilding from source",
+                cache_path);
+        }
+
+        // First load: parse into Arrow, then persist that exact canonical
+        // table for restart-safe restoration. Cache failure is non-fatal.
+        auto dataset = LoadCSVToArrow(path, name, has_header, delimiter,
+                                      skip_rows, max_rows, missing_value_tokens,
+                                      selected_columns, decimal_point,
+                                      use_threads, progress_callback);
+        if (!dataset) {
+            // LoadCSVToArrow only publishes after parsing succeeds, so an
+            // earlier valid registration remains available on failure.
+            return TabularLoadBackend::Failed;
+        }
+        {
+            // Backend switches are committed only after the replacement is
+            // ready. This avoids a registry gap while a large CSV is parsed.
+            std::lock_guard<std::mutex> lock(mutex_);
+            parquet_backed_datasets_.erase(dataset->GetName());
+        }
+        if (progress_callback) {
+            (void)progress_callback(0.995f, "Writing persistent ingestion cache");
+        }
+        const bool cache_written =
+            PersistArrowCacheAtomically(dataset, cache_path);
+        if (cache_written) {
+            spdlog::info(
+                "LoadTabularCSV: persistent ingestion cache ready at '{}'",
+                cache_path);
+            if (load_status) {
+                *load_status = "Loaded in memory; persistent cache ready";
+            }
+        } else {
+            spdlog::warn(
+                "LoadTabularCSV: dataset loaded, but persistent cache write failed for '{}'",
+                cache_path);
+            if (load_status) *load_status = "Loaded in memory";
+        }
+        return TabularLoadBackend::InMemory;
+    }
+
+    // Disk-backed runtime: use the same persistent cache but keep it mapped.
+    if (cache_is_fresh) {
         spdlog::info("LoadTabularCSV: reusing existing Parquet cache at '{}'", cache_path);
+        if (load_status) *load_status = "Opened persistent ingestion cache";
+        if (progress_callback &&
+            !progress_callback(0.95f, "Opening existing Parquet cache")) {
+            return TabularLoadBackend::Failed;
+        }
     } else {
         spdlog::info("LoadTabularCSV: converting CSV to Parquet cache at '{}'", cache_path);
         if (!ParquetBackedDataset::ConvertCsvToParquet(path, cache_path,
                                                        has_header, delimiter, skip_rows,
                                                        max_rows,
                                                        missing_value_tokens,
-                                                       selected_columns)) {
+                                                       selected_columns,
+                                                       decimal_point,
+                                                       use_threads,
+                                                       progress_callback)) {
             spdlog::error("LoadTabularCSV: CSV-to-Parquet conversion failed for '{}'", path);
             return TabularLoadBackend::Failed;
         }
+        if (load_status) *load_status = "Created persistent ingestion cache";
     }
 
     std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
@@ -1498,7 +1688,14 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
     RegisterParquetBacked(unique_name, pq_dataset);
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // As above, remove the superseded backend only after the new one is
+        // open and registered. Consumers always see a valid dataset.
+        arrow_datasets_.erase(unique_name);
         RememberTabularSourcePathUnlocked(unique_name, path);
+    }
+
+    if (progress_callback) {
+        (void)progress_callback(1.0f, "Disk-backed dataset ready");
     }
 
     return TabularLoadBackend::DiskBacked;

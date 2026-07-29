@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <vector>
@@ -18,6 +19,19 @@
 namespace cyxwiz {
 
 namespace fs = std::filesystem;
+
+namespace {
+
+uint64_t StableCacheHash(const std::string& value) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (const unsigned char byte : value) {
+        hash ^= static_cast<uint64_t>(byte);
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+}  // namespace
 
 ParquetBackedDataset::ParquetBackedDataset(const std::string& name, const std::string& path)
     : name_(name), file_path_(path) {}
@@ -180,8 +194,11 @@ std::string ParquetBackedDataset::GetCacheDir() {
 
 std::string ParquetBackedDataset::GetCacheFilePath(
     const std::string& csv_path,
-    const std::string& parser_signature) {
-    // Layout:  <temp>/cyxwiz/cache/<basename>_<pathhash>.parquet
+    const std::string& parser_signature,
+    const std::string& cache_directory) {
+    // Layout: <cache-root>/<basename>_<stable-contract-hash>.parquet.
+    // The cache root is project-scoped when supplied and otherwise falls back
+    // to <temp>/cyxwiz/cache for headless/test callers.
     //
     // Hashing the full absolute path means the same CSV at the same location
     // maps to the same cache file, but two CSVs with the same basename in
@@ -194,14 +211,23 @@ std::string ParquetBackedDataset::GetCacheFilePath(
     }
 
     const std::string abs_str = csv_abs.string();
-    const size_t hash = std::hash<std::string>{}(
-        abs_str + "|" + parser_signature);
+    const uint64_t hash = StableCacheHash(abs_str + "|" + parser_signature);
 
     const std::string stem = csv_abs.stem().string();  // filename without extension
     char hash_hex[32];
-    snprintf(hash_hex, sizeof(hash_hex), "%016zx", hash);
+    snprintf(hash_hex, sizeof(hash_hex), "%016llx",
+             static_cast<unsigned long long>(hash));
 
-    fs::path cache_file = fs::path(GetCacheDir()) / (stem + "_" + hash_hex + ".parquet");
+    const fs::path cache_root = cache_directory.empty()
+        ? fs::path(GetCacheDir())
+        : fs::path(cache_directory);
+    try {
+        fs::create_directories(cache_root);
+    } catch (const std::exception& e) {
+        spdlog::warn("GetCacheFilePath: could not create cache directory '{}': {}",
+                     cache_root.string(), e.what());
+    }
+    fs::path cache_file = cache_root / (stem + "_" + hash_hex + ".parquet");
     return cache_file.string();
 }
 
@@ -330,7 +356,10 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
                                                  int skip_rows,
                                                  int64_t max_rows,
                                                  const std::vector<std::string>& missing_value_tokens,
-                                                 const std::vector<std::string>& selected_columns) {
+                                                 const std::vector<std::string>& selected_columns,
+                                                 char decimal_point,
+                                                 bool use_threads,
+                                                 const CsvProgressCallback& progress_callback) {
     spdlog::info(
         "ParquetBackedDataset::ConvertCsvToParquet: {} -> {} (max_rows={})",
         csv_path,
@@ -347,6 +376,12 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
     //   3. Power loss mid-write (the temp file has no effect on the
     //      final cache path; next load just rebuilds).
     const std::string tmp_path = parquet_path + ".tmp";
+    int64_t csv_source_size = 0;
+    try {
+        csv_source_size = static_cast<int64_t>(fs::file_size(csv_path));
+    } catch (...) {
+        csv_source_size = 0;
+    }
 
     // Clean up any stale .tmp from a previous aborted run.
     try {
@@ -370,17 +405,9 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
         // 1) Open the CSV as a streaming reader. StreamingReader yields
         //    record batches one at a time so memory stays bounded to a
         //    single batch rather than the full file.
-        auto maybe_csv_input = arrow::io::ReadableFile::Open(csv_path);
-        if (!maybe_csv_input.ok()) {
-            spdlog::error("ConvertCsvToParquet: cannot open CSV {}: {}",
-                          csv_path, maybe_csv_input.status().ToString());
-            cleanup_tmp();
-            return false;
-        }
-        auto csv_input = maybe_csv_input.ValueOrDie();
-
         auto read_options = arrow::csv::ReadOptions::Defaults();
         read_options.skip_rows = skip_rows;
+        read_options.use_threads = use_threads;
         if (!has_header) {
             read_options.autogenerate_column_names = true;
         }
@@ -391,146 +418,238 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
         auto parse_options = arrow::csv::ParseOptions::Defaults();
         parse_options.delimiter = delimiter;
 
-        auto convert_options = MakeTabularCsvConvertOptions(missing_value_tokens);
+        auto convert_options = MakeTabularCsvConvertOptions(
+            missing_value_tokens, decimal_point);
         convert_options.include_columns = selected_columns;
 
-        auto maybe_reader = arrow::csv::StreamingReader::Make(
-            arrow::io::default_io_context(), csv_input,
-            read_options, parse_options, convert_options);
-        if (!maybe_reader.ok()) {
-            spdlog::error("ConvertCsvToParquet: StreamingReader::Make failed for {}: {}",
-                          csv_path, maybe_reader.status().ToString());
-            cleanup_tmp();
-            return false;
-        }
-        auto reader = maybe_reader.ValueOrDie();
-
-        // 2) Open the Parquet output file and create a FileWriter using the
-        //    schema we just got from the CSV reader. Writes go to tmp_path,
-        //    not parquet_path, so the final cache file only appears after a
-        //    successful rename at the end.
-        auto schema = reader->schema();
-        if (!schema) {
-            spdlog::error("ConvertCsvToParquet: CSV reader returned null schema");
-            cleanup_tmp();
-            return false;
+        const bool preflight_widen_integers =
+            csv_source_size > read_options.block_size &&
+            CsvSourceSamplesContainDecimalValues(
+                csv_path, decimal_point, read_options.block_size);
+        if (preflight_widen_integers) {
+            spdlog::info(
+                "ConvertCsvToParquet: schema preflight found later decimal "
+                "values; widening inferred integer columns before conversion");
         }
 
-        // Ensure the output parent directory exists
-        try {
+        int64_t total_rows = 0;
+        int batches_written = 0;
+        bool converted = false;
+        const int max_attempts = preflight_widen_integers ? 1 : 2;
+        for (int attempt = 0; attempt < max_attempts && !converted; ++attempt) {
+          const bool is_retry = !preflight_widen_integers && attempt > 0;
+          const bool promote_inferred_integers =
+              preflight_widen_integers || is_retry;
+            size_t promoted_integer_columns = 0;
+            std::shared_ptr<arrow::io::ReadableFile> input_source;
+            auto maybe_reader = MakeStableCsvStreamingReader(
+                csv_path, read_options, parse_options, convert_options,
+                &promoted_integer_columns, promote_inferred_integers,
+                &input_source);
+          if (!maybe_reader.ok()) {
+            spdlog::error(
+                "ConvertCsvToParquet: stable StreamingReader failed for {}: {}",
+                csv_path, maybe_reader.status().ToString());
+            cleanup_tmp();
+            return false;
+          }
+          if (promoted_integer_columns > 0) {
+            spdlog::info("ConvertCsvToParquet: promoted {} inferred integer "
+                         "columns to float64 for stable full-source parsing",
+                         promoted_integer_columns);
+          }
+          auto reader = maybe_reader.ValueOrDie();
+
+          // 2) Open the Parquet output file and create a FileWriter using the
+          //    schema we just got from the CSV reader. Writes go to tmp_path,
+          //    not parquet_path, so the final cache file only appears after a
+          //    successful rename at the end.
+          auto schema = reader->schema();
+          if (!schema) {
+            spdlog::error(
+                "ConvertCsvToParquet: CSV reader returned null schema");
+            cleanup_tmp();
+            return false;
+          }
+
+          // Ensure the output parent directory exists
+          try {
             auto parent = fs::path(tmp_path).parent_path();
-            if (!parent.empty()) fs::create_directories(parent);
-        } catch (...) {
+            if (!parent.empty())
+              fs::create_directories(parent);
+          } catch (...) {
             // Not fatal; the FileOutputStream::Open will fail loudly if so.
-        }
+          }
 
-        auto maybe_pq_output = arrow::io::FileOutputStream::Open(tmp_path);
-        if (!maybe_pq_output.ok()) {
-            spdlog::error("ConvertCsvToParquet: FileOutputStream::Open failed for {}: {}",
-                          tmp_path, maybe_pq_output.status().ToString());
+          auto maybe_pq_output = arrow::io::FileOutputStream::Open(tmp_path);
+          if (!maybe_pq_output.ok()) {
+            spdlog::error(
+                "ConvertCsvToParquet: FileOutputStream::Open failed for {}: {}",
+                tmp_path, maybe_pq_output.status().ToString());
             cleanup_tmp();
             return false;
-        }
-        auto pq_output = maybe_pq_output.ValueOrDie();
+          }
+          auto pq_output = maybe_pq_output.ValueOrDie();
 
-        // Snappy compression: fast encode/decode, good ratio on numeric data
-        // (typically 3-5x smaller than raw CSV for ML datasets).
-        auto writer_props = parquet::WriterProperties::Builder()
-            .compression(parquet::Compression::SNAPPY)
-            ->build();
-        auto arrow_props = parquet::ArrowWriterProperties::Builder().build();
+          // Snappy compression: fast encode/decode, good ratio on numeric data
+          // (typically 3-5x smaller than raw CSV for ML datasets).
+          auto writer_props = parquet::WriterProperties::Builder()
+                                  .compression(parquet::Compression::SNAPPY)
+                                  ->build();
+          auto arrow_props = parquet::ArrowWriterProperties::Builder().build();
 
-        // Arrow 21+: FileWriter::Open returns Result<unique_ptr<FileWriter>>
-        // (earlier versions took an out-param unique_ptr).
-        auto maybe_writer = parquet::arrow::FileWriter::Open(
-            *schema, arrow::default_memory_pool(), pq_output,
-            writer_props, arrow_props);
-        if (!maybe_writer.ok()) {
+          // Arrow 21+: FileWriter::Open returns Result<unique_ptr<FileWriter>>
+          // (earlier versions took an out-param unique_ptr).
+          auto maybe_writer = parquet::arrow::FileWriter::Open(
+              *schema, arrow::default_memory_pool(), pq_output, writer_props,
+              arrow_props);
+          if (!maybe_writer.ok()) {
             spdlog::error("ConvertCsvToParquet: FileWriter::Open failed: {}",
                           maybe_writer.status().ToString());
             cleanup_tmp();
             return false;
-        }
-        std::unique_ptr<parquet::arrow::FileWriter> writer = std::move(maybe_writer).ValueOrDie();
+          }
+          std::unique_ptr<parquet::arrow::FileWriter> writer =
+              std::move(maybe_writer).ValueOrDie();
 
-        // 3) Streaming loop: read a record batch from CSV, write to Parquet,
-        //    repeat until the CSV reader is exhausted.
-        int64_t total_rows = 0;
-        int batches_written = 0;
-        while (true) {
+          // 3) Streaming loop: read a record batch from CSV, write to Parquet,
+          //    repeat until the CSV reader is exhausted.
+          total_rows = 0;
+          batches_written = 0;
+          bool read_failed = false;
+          while (true) {
             if (max_rows > 0 && total_rows >= max_rows) {
-                break;
+              break;
             }
 
             std::shared_ptr<arrow::RecordBatch> batch;
             auto read_status = reader->ReadNext(&batch);
             if (!read_status.ok()) {
-                spdlog::error("ConvertCsvToParquet: ReadNext failed at batch {}: {}",
-                              batches_written, read_status.ToString());
-                cleanup_tmp();
-                return false;
+              spdlog::warn("ConvertCsvToParquet: ReadNext failed at batch {} "
+                           "on attempt {}: {}",
+                           batches_written, attempt + 1,
+                           read_status.ToString());
+              read_failed = true;
+              break;
             }
-            if (!batch) break;  // end of input
+            if (!batch)
+              break; // end of input
 
             if (max_rows > 0) {
-                const int64_t remaining = max_rows - total_rows;
-                if (batch->num_rows() > remaining) {
-                    batch = batch->Slice(0, remaining);
-                }
+              const int64_t remaining = max_rows - total_rows;
+              if (batch->num_rows() > remaining) {
+                batch = batch->Slice(0, remaining);
+              }
             }
 
             // WriteRecordBatch would be nicer but requires wrapping in a Table
-            // because FileWriter's direct batch API varies across Arrow versions.
-            // Table::Make is cheap — it's just a metadata wrapper, no data copy.
+            // because FileWriter's direct batch API varies across Arrow
+            // versions. Table::Make is cheap — it's just a metadata wrapper, no
+            // data copy.
             auto table = arrow::Table::FromRecordBatches(schema, {batch});
             if (!table.ok()) {
-                spdlog::error("ConvertCsvToParquet: Table::FromRecordBatches failed: {}",
-                              table.status().ToString());
-                cleanup_tmp();
-                return false;
+              spdlog::error(
+                  "ConvertCsvToParquet: Table::FromRecordBatches failed: {}",
+                  table.status().ToString());
+              cleanup_tmp();
+              return false;
             }
-            auto write_status = writer->WriteTable(*table.ValueOrDie(), batch->num_rows());
+            auto write_status =
+                writer->WriteTable(*table.ValueOrDie(), batch->num_rows());
             if (!write_status.ok()) {
-                spdlog::error("ConvertCsvToParquet: WriteTable failed at batch {}: {}",
-                              batches_written, write_status.ToString());
-                cleanup_tmp();
-                return false;
+              spdlog::error(
+                  "ConvertCsvToParquet: WriteTable failed at batch {}: {}",
+                  batches_written, write_status.ToString());
+              cleanup_tmp();
+              return false;
             }
 
-            total_rows += batch->num_rows();
-            batches_written++;
-        }
+                total_rows += batch->num_rows();
+                batches_written++;
 
-        // 4) Close the writer (flushes footer, etc.)
-        auto close_status = writer->Close();
-        if (!close_status.ok()) {
-            spdlog::error("ConvertCsvToParquet: writer->Close() failed: {}", close_status.ToString());
+                if (progress_callback && csv_source_size > 0 && input_source) {
+                    auto position = input_source->Tell();
+                    if (position.ok()) {
+                        const float source_fraction = std::clamp(
+                            static_cast<float>(position.ValueOrDie()) /
+                                static_cast<float>(csv_source_size),
+                            0.0f, 1.0f);
+                        const float base = is_retry ? 0.8f : 0.0f;
+                        const float span = is_retry ? 0.19f : 0.99f;
+                        if (!progress_callback(
+                                base + span * source_fraction,
+                                is_retry
+                                    ? "Caching CSV with widened numeric schema"
+                                    : (promote_inferred_integers
+                                        ? "Caching CSV with preflight schema"
+                                        : "Caching CSV as Parquet"))) {
+                            (void)writer->Close();
+                            writer.reset();
+                            (void)pq_output->Close();
+                            pq_output.reset();
+                            cleanup_tmp();
+                            return false;
+                        }
+                    }
+                }
+            }
+
+          if (read_failed) {
+            (void)writer->Close();
+            writer.reset();
+            (void)pq_output->Close();
+                pq_output.reset();
+                cleanup_tmp();
+                if (!preflight_widen_integers && attempt == 0 &&
+                    progress_callback &&
+                    !progress_callback(0.8f,
+                                       "Retrying cache with widened numeric schema")) {
+                    return false;
+                }
+                continue;
+          }
+
+          // 4) Close the writer (flushes footer, etc.)
+          auto close_status = writer->Close();
+          if (!close_status.ok()) {
+            spdlog::error("ConvertCsvToParquet: writer->Close() failed: {}",
+                          close_status.ToString());
             cleanup_tmp();
             return false;
-        }
+          }
 
-        // 4b) Release the writer and the underlying output stream before
-        //     attempting the rename. Windows won't rename a file that any
-        //     process still has a handle on, and Arrow's FileOutputStream
-        //     holds the OS handle open until it's explicitly Close()d OR
-        //     its last shared_ptr reference is dropped. writer->Close()
-        //     only closes the writer's own state, not the underlying sink.
-        //
-        //     Step one: drop the writer. It holds an internal reference
-        //     to pq_output; dropping it releases that reference.
-        writer.reset();
+          // 4b) Release the writer and the underlying output stream before
+          //     attempting the rename. Windows won't rename a file that any
+          //     process still has a handle on, and Arrow's FileOutputStream
+          //     holds the OS handle open until it's explicitly Close()d OR
+          //     its last shared_ptr reference is dropped. writer->Close()
+          //     only closes the writer's own state, not the underlying sink.
+          //
+          //     Step one: drop the writer. It holds an internal reference
+          //     to pq_output; dropping it releases that reference.
+          writer.reset();
 
-        //     Step two: explicitly Close() the output stream and drop
-        //     its shared_ptr. Either of these alone might be enough on
-        //     some platforms, but doing both is defensive and matches
-        //     Arrow's documented lifecycle.
-        auto pq_close_status = pq_output->Close();
-        if (!pq_close_status.ok()) {
-            spdlog::warn("ConvertCsvToParquet: pq_output->Close() returned non-OK: {}",
-                         pq_close_status.ToString());
+          //     Step two: explicitly Close() the output stream and drop
+          //     its shared_ptr. Either of these alone might be enough on
+          //     some platforms, but doing both is defensive and matches
+          //     Arrow's documented lifecycle.
+          auto pq_close_status = pq_output->Close();
+          if (!pq_close_status.ok()) {
+            spdlog::warn(
+                "ConvertCsvToParquet: pq_output->Close() returned non-OK: {}",
+                pq_close_status.ToString());
             // Non-fatal — the handle is still dropped below.
+          }
+          pq_output.reset();
+          converted = true;
         }
-        pq_output.reset();
+
+        if (!converted) {
+          spdlog::error("ConvertCsvToParquet: CSV read failed with both "
+                        "inferred and numeric fallback schemas");
+          cleanup_tmp();
+          return false;
+        }
 
         // 5) Atomic rename .tmp -> final cache path. This is the point where
         //    the cache becomes visible to IsCacheFresh on subsequent loads.
@@ -566,6 +685,9 @@ bool ParquetBackedDataset::ConvertCsvToParquet(const std::string& csv_path,
                      csv_size / (1024.0 * 1024.0),
                      parquet_size / (1024.0 * 1024.0),
                      ratio);
+        if (progress_callback) {
+            (void)progress_callback(1.0f, "Parquet cache ready");
+        }
 
         // Run cache hygiene right after a fresh write so the directory
         // doesn't grow unbounded across many CSV-> Parquet conversions

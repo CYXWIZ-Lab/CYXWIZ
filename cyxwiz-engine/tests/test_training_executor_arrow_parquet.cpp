@@ -5,6 +5,7 @@
 #include "../src/core/sequence_tag_metrics.h"
 #include "../src/core/sequence_training_step.h"
 #include "../src/core/sequence_vocabulary.h"
+#include "../src/core/test_executor.h"
 #include "../src/core/training_executor.h"
 
 #include <arrow/api.h>
@@ -69,6 +70,25 @@ std::shared_ptr<arrow::Table> MakeTrainingTable() {
         6);
 }
 
+std::shared_ptr<arrow::Table> MakeRegressionTable() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("target", arrow::float32()),
+        arrow::field("target_1", arrow::float32()),
+    });
+
+    return arrow::Table::Make(
+        schema,
+        {
+            FinishFloatArray({0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f}),
+            FinishFloatArray({1.0f, 0.8f, 0.6f, 0.4f, 0.2f, 0.0f}),
+            FinishFloatArray({1.5f, 1.7f, 1.9f, 2.1f, 2.3f, 2.5f}),
+            FinishFloatArray({-0.5f, -0.1f, 0.3f, 0.7f, 1.1f, 1.5f}),
+        },
+        6);
+}
+
 void WriteParquetWithRowGroupSize(const cyxwiz::ArrowDataset& dataset,
                                   const std::string& path,
                                   int64_t row_group_size) {
@@ -105,6 +125,21 @@ cyxwiz::TrainingConfiguration MakeConfig(const std::filesystem::path& checkpoint
     dense.type = gui::NodeType::Dense;
     dense.units = 2;
     config.layers.push_back(dense);
+    return config;
+}
+
+cyxwiz::TrainingConfiguration MakeRegressionConfig(
+    const std::filesystem::path& checkpoint_dir) {
+    auto config = MakeConfig(checkpoint_dir);
+    config.dataset_name = "training_executor_regression";
+    config.output_size = 2;
+    config.loss_type = gui::NodeType::MSELoss;
+    config.target.required_by_objective = true;
+    config.target.origin = cyxwiz::TargetOrigin::DatasetColumn;
+    config.target.value_kind = cyxwiz::TargetValueKind::Continuous;
+    config.target.primary_column = "target";
+    config.target.width = 2;
+    config.layers.front().units = 2;
     return config;
 }
 
@@ -696,6 +731,77 @@ void RunExecutor(cyxwiz::TrainingExecutor& executor,
           label + " final validation loss should be finite");
 }
 
+void TestObjectiveAwareRegressionMetrics(
+    const std::filesystem::path& checkpoint_dir) {
+    const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
+        MakeRegressionTable(), "training_executor_regression");
+    const auto config = MakeRegressionConfig(checkpoint_dir);
+    Check(cyxwiz::UsesContinuousTargetMetrics(config),
+          "continuous target contract should select regression metrics");
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "target");
+    bool completed = false;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        1,
+        2,
+        nullptr,
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            final_metrics = metrics;
+            completed = true;
+        });
+
+    Check(completed, "regression executor should complete");
+    Check(std::isfinite(final_metrics.train_mae),
+          "regression train MAE should be finite");
+    Check(std::isfinite(final_metrics.train_rmse),
+          "regression train RMSE should be finite");
+    Check(std::isfinite(final_metrics.val_mae),
+          "regression validation MAE should be finite");
+    Check(std::isfinite(final_metrics.val_rmse),
+          "regression validation RMSE should be finite");
+    Check(final_metrics.mae_history.size() == 1,
+          "regression should store one MAE point per epoch");
+    Check(final_metrics.rmse_history.size() == 1,
+          "regression should store one RMSE point per epoch");
+    Check(final_metrics.val_mae_history.size() == 1,
+          "regression should store validation MAE history");
+    Check(final_metrics.val_rmse_history.size() == 1,
+          "regression should store validation RMSE history");
+    Check(final_metrics.accuracy_history.empty(),
+          "regression must not manufacture classification accuracy history");
+    Check(final_metrics.val_accuracy_history.empty(),
+          "regression must not manufacture validation accuracy history");
+    CheckNear(final_metrics.train_accuracy, 0.0, 0.0,
+              "regression train accuracy should remain unset");
+    CheckNear(final_metrics.val_accuracy, 0.0, 0.0,
+              "regression validation accuracy should remain unset");
+}
+
+void TestRegressionMetricAccumulator(
+    const std::filesystem::path&) {
+    cyxwiz::RegressionMetricAccumulator metrics;
+    const float predictions[] = {2.0f, -1.0f, 4.0f, 6.0f};
+    const float targets[] = {1.0f, 1.0f, 5.0f, 3.0f};
+    metrics.Add(predictions, targets, 4);
+
+    Check(metrics.value_count == 4,
+          "regression metrics should count every target horizon");
+    CheckNear(metrics.Mae(), 1.75, 1e-6,
+              "regression metrics should compute elementwise MAE");
+    CheckNear(metrics.Rmse(), std::sqrt(3.75), 1e-6,
+              "regression metrics should compute elementwise RMSE");
+
+    metrics.Reset();
+    Check(metrics.value_count == 0,
+          "regression metrics reset should clear the target count");
+    CheckNear(metrics.Mae(), 0.0, 0.0,
+              "empty regression metrics should have zero MAE");
+    CheckNear(metrics.Rmse(), 0.0, 0.0,
+              "empty regression metrics should have zero RMSE");
+}
+
 } // namespace
 
 int main() {
@@ -750,6 +856,10 @@ int main() {
         cyxwiz::TrainingExecutor arrow_executor(config, dataset, "label");
         RunExecutor(arrow_executor, "Arrow TrainingExecutor");
     }
+
+    TestObjectiveAwareRegressionMetrics(work_dir / "regression_checkpoints");
+    TestRegressionMetricAccumulator(
+        work_dir / "regression_test_checkpoints");
 
     {
         auto scheduled_validation_config = config;

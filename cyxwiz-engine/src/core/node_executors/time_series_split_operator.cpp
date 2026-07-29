@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,6 +57,64 @@ bool ReadFloatParam(
     return true;
 }
 
+bool ReadInt64Param(
+    const std::map<std::string, std::string>& params,
+    const char* key,
+    int64_t default_value,
+    int64_t& out,
+    std::string& error) {
+    auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        out = default_value;
+        return true;
+    }
+    try {
+        size_t consumed = 0;
+        out = std::stoll(it->second, &consumed);
+        if (consumed != it->second.size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+    } catch (...) {
+        error = std::string("TimeSeriesSplit: '") + key +
+                "' is not a valid integer: " + it->second;
+        return false;
+    }
+    return true;
+}
+
+arrow::Result<std::vector<int64_t>> ReadRequiredInt64Column(
+    const std::shared_ptr<arrow::Table>& input,
+    const char* name) {
+    auto column = input->GetColumnByName(name);
+    if (!column) {
+        return arrow::Status::Invalid(
+            "TimeSeriesSplit: boundary_policy=targets_within_partition "
+            "requires TimeSeriesWindow metadata column '", name,
+            "'. Re-run the upstream window node or use boundary_policy=window_rows "
+            "only for a legacy workflow.");
+    }
+    if (column->type()->id() != arrow::Type::INT64) {
+        return arrow::Status::TypeError(
+            "TimeSeriesSplit: metadata column '", name,
+            "' must be int64 (got ", column->type()->ToString(), ")");
+    }
+
+    std::vector<int64_t> values;
+    values.reserve(static_cast<size_t>(column->length()));
+    for (const auto& chunk : column->chunks()) {
+        auto array = std::static_pointer_cast<arrow::Int64Array>(chunk);
+        for (int64_t row = 0; row < array->length(); ++row) {
+            if (array->IsNull(row)) {
+                return arrow::Status::Invalid(
+                    "TimeSeriesSplit: metadata column '", name,
+                    "' contains a null value");
+            }
+            values.push_back(array->Value(row));
+        }
+    }
+    return values;
+}
+
 } // namespace
 
 bool TimeSeriesSplitOperator::Configure(
@@ -65,10 +124,43 @@ bool TimeSeriesSplitOperator::Configure(
     train_ratio_ = 0.8f;
     val_ratio_ = 0.1f;
     test_ratio_ = 0.1f;
+    boundary_policy_ = "window_rows";
+    train_end_source_row_ = -1;
+    val_end_source_row_ = -1;
 
     if (!ReadFloatParam(params, "train_ratio", 0.8f, train_ratio_, error)) return false;
     if (!ReadFloatParam(params, "val_ratio",   0.1f, val_ratio_,   error)) return false;
     if (!ReadFloatParam(params, "test_ratio",  0.1f, test_ratio_,  error)) return false;
+
+    auto policy_it = params.find("boundary_policy");
+    if (policy_it != params.end() && !policy_it->second.empty()) {
+        boundary_policy_ = policy_it->second;
+    }
+    if (boundary_policy_ != "window_rows" &&
+        boundary_policy_ != "targets_within_partition") {
+        error = "TimeSeriesSplit: boundary_policy must be 'window_rows' or "
+                "'targets_within_partition' (got '" + boundary_policy_ + "')";
+        return false;
+    }
+
+    if (!ReadInt64Param(params, "train_end_source_row", -1,
+                        train_end_source_row_, error)) return false;
+    if (!ReadInt64Param(params, "val_end_source_row", -1,
+                        val_end_source_row_, error)) return false;
+    const bool has_train_end = train_end_source_row_ >= 0;
+    const bool has_val_end = val_end_source_row_ >= 0;
+    if (has_train_end != has_val_end) {
+        error = "TimeSeriesSplit: train_end_source_row and val_end_source_row "
+                "must be provided together";
+        return false;
+    }
+    if (has_train_end &&
+        (train_end_source_row_ <= 0 ||
+         val_end_source_row_ <= train_end_source_row_)) {
+        error = "TimeSeriesSplit: explicit source boundaries require "
+                "0 < train_end_source_row < val_end_source_row";
+        return false;
+    }
 
     if (train_ratio_ < 0.0f || val_ratio_ < 0.0f || test_ratio_ < 0.0f) {
         error = "TimeSeriesSplit: all ratios must be >= 0";
@@ -113,6 +205,113 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         return arrow::Status::Invalid(
             "TimeSeriesSplit: input table has zero rows - upstream TimeSeriesWindow "
             "probably produced no windows");
+    }
+
+    if (boundary_policy_ == "targets_within_partition") {
+        ReportProgress(progress_callback_, "plan_split",
+                       "Planning target-contained chronological split", 0.30f,
+                       0, static_cast<uint64_t>(n), static_cast<uint64_t>(n));
+
+        ARROW_ASSIGN_OR_RAISE(
+            auto target_starts,
+            ReadRequiredInt64Column(input, "__target_start_index"));
+        ARROW_ASSIGN_OR_RAISE(
+            auto target_ends,
+            ReadRequiredInt64Column(input, "__target_end_index"));
+        if (target_starts.size() != static_cast<size_t>(n) ||
+            target_ends.size() != static_cast<size_t>(n)) {
+            return arrow::Status::Invalid(
+                "TimeSeriesSplit: target-bound metadata row count does not "
+                "match the window table");
+        }
+
+        const int64_t source_rows = target_ends.back() + 1;
+        if (source_rows <= 0) {
+            return arrow::Status::Invalid(
+                "TimeSeriesSplit: invalid source row count derived from "
+                "__target_end_index");
+        }
+
+        const bool has_explicit_boundaries = train_end_source_row_ >= 0;
+        const int64_t train_end = has_explicit_boundaries
+            ? train_end_source_row_
+            : static_cast<int64_t>(std::floor(source_rows * train_ratio_));
+        const int64_t val_end = has_explicit_boundaries
+            ? val_end_source_row_
+            : train_end +
+                static_cast<int64_t>(std::floor(source_rows * val_ratio_));
+        if (train_end <= 0 || val_end <= train_end || val_end > source_rows) {
+            return arrow::Status::Invalid(
+                "TimeSeriesSplit: source-row boundaries must satisfy 0 < train_end (",
+                train_end, ") < val_end (", val_end,
+                ") <= source rows (", source_rows, ")");
+        }
+
+        int64_t train_count = 0;
+        int64_t val_count = 0;
+        int64_t test_count = 0;
+        int64_t purged_count = 0;
+        int64_t previous_start = -1;
+        std::vector<int8_t> assignments;
+        assignments.reserve(static_cast<size_t>(n));
+        for (int64_t row = 0; row < n; ++row) {
+            const int64_t target_start =
+                target_starts[static_cast<size_t>(row)];
+            const int64_t target_end = target_ends[static_cast<size_t>(row)];
+            if (target_start < 0 || target_end < target_start ||
+                target_end >= source_rows || target_start < previous_start) {
+                return arrow::Status::Invalid(
+                    "TimeSeriesSplit: invalid or non-monotonic target bounds at "
+                    "window row ", row, " (start=", target_start,
+                    ", end=", target_end, ")");
+            }
+            previous_start = target_start;
+
+            int8_t partition = -1;
+            if (target_end < train_end) {
+                partition = 0;
+                ++train_count;
+            } else if (target_start >= train_end && target_end < val_end) {
+                partition = 1;
+                ++val_count;
+            } else if (target_start >= val_end) {
+                partition = 2;
+                ++test_count;
+            } else {
+                ++purged_count;
+            }
+            assignments.push_back(partition);
+        }
+
+        arrow::Int8Builder builder(arrow::default_memory_pool());
+        ARROW_RETURN_NOT_OK(builder.Reserve(n));
+        ReportProgress(progress_callback_, "write_partitions",
+                       "Writing target-contained partition assignments", 0.60f,
+                       0, static_cast<uint64_t>(n), static_cast<uint64_t>(n));
+        for (int8_t assignment : assignments) {
+            ARROW_RETURN_NOT_OK(builder.Append(assignment));
+        }
+        std::shared_ptr<arrow::Array> partition_array;
+        ARROW_RETURN_NOT_OK(builder.Finish(&partition_array));
+        auto partition_chunked =
+            std::make_shared<arrow::ChunkedArray>(partition_array);
+        auto partition_field = arrow::field(kPartitionColumnName, arrow::int8());
+        ARROW_ASSIGN_OR_RAISE(
+            auto out_table,
+            input->AddColumn(input->num_columns(), partition_field,
+                             partition_chunked));
+
+        spdlog::info(
+            "TimeSeriesSplit: {} windows -> train={}, val={}, test={}, purged={} "
+            "(policy=targets_within_partition, train_end={}, val_end={}, "
+            "source_rows={}, explicit={})",
+            n, train_count, val_count, test_count, purged_count,
+            train_end, val_end, source_rows, has_explicit_boundaries);
+        ReportProgress(progress_callback_, "complete",
+                       "Leakage-safe time-series split complete", 1.0f,
+                       static_cast<uint64_t>(n), static_cast<uint64_t>(n),
+                       static_cast<uint64_t>(n));
+        return out_table;
     }
 
     int64_t train_count = static_cast<int64_t>(std::floor(n * train_ratio_));

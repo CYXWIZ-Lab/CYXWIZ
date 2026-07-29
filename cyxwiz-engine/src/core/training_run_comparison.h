@@ -78,7 +78,9 @@ inline std::string TrainingRunComparisonCsvHeader() {
            "train_source_name,dev_source_name,test_source_name,"
            "train_origin,dev_origin,test_origin,"
            "train_label_column,dev_label_column,test_label_column,"
-           "partition_manifest_fingerprint,"
+           "partition_manifest_fingerprint,dev_schema_compatibility,"
+           "test_schema_compatibility,dev_leakage_status,test_leakage_status,"
+           "dev_partition_status_reason,test_partition_status_reason,"
            "bidirectional,hidden_size,num_layers,"
            "save_best_checkpoint,early_stopping_patience,checkpoint_dir,"
            "checkpoint_used,has_validation_metrics,has_test_metrics,"
@@ -145,6 +147,12 @@ inline std::string TrainingRunComparisonToCsvRow(
         << EscapeTrainingRunComparisonCsvField(record.dev_label_column) << ','
         << EscapeTrainingRunComparisonCsvField(record.test_label_column) << ','
         << EscapeTrainingRunComparisonCsvField(record.partition_manifest_fingerprint) << ','
+        << EscapeTrainingRunComparisonCsvField(record.dev_schema_compatibility) << ','
+        << EscapeTrainingRunComparisonCsvField(record.test_schema_compatibility) << ','
+        << EscapeTrainingRunComparisonCsvField(record.dev_leakage_status) << ','
+        << EscapeTrainingRunComparisonCsvField(record.test_leakage_status) << ','
+        << EscapeTrainingRunComparisonCsvField(record.dev_partition_status_reason) << ','
+        << EscapeTrainingRunComparisonCsvField(record.test_partition_status_reason) << ','
         << (record.bidirectional ? "true" : "false") << ','
         << record.hidden_size << ','
         << record.num_layers << ','
@@ -208,22 +216,6 @@ inline std::string ResolveTrainingRunCheckpointDisplay(
     return "default .cyxwiz/checkpoints run folder";
 }
 
-inline std::string TrainingRunComparisonHex(uint64_t value) {
-    std::ostringstream out;
-    out << std::hex << std::setw(16) << std::setfill('0') << value;
-    return out.str();
-}
-
-inline std::string TrainingRunComparisonStableFingerprint(
-    const std::string& text) {
-    uint64_t hash = 14695981039346656037ull;
-    for (unsigned char ch : text) {
-        hash ^= static_cast<uint64_t>(ch);
-        hash *= 1099511628211ull;
-    }
-    return TrainingRunComparisonHex(hash);
-}
-
 inline std::string EscapeTrainingRunPartitionPart(const std::string& value) {
     std::ostringstream out;
     for (char ch : value) {
@@ -271,26 +263,45 @@ inline std::string BuildTrainingRunPartitionFingerprint(
     const TrainingConfiguration& config,
     const TrainingMetrics& metrics,
     const TrainingRunComparisonRecord& record) {
-    std::ostringstream out;
-    out << "partition_manifest_schema=track70.v1\n";
-    out << "train_source=" << EscapeTrainingRunPartitionPart(record.train_source_name) << "\n";
-    out << "dev_source=" << EscapeTrainingRunPartitionPart(record.dev_source_name) << "\n";
-    out << "test_source=" << EscapeTrainingRunPartitionPart(record.test_source_name) << "\n";
-    out << "train_origin=" << record.train_origin << "\n";
-    out << "dev_origin=" << record.dev_origin << "\n";
-    out << "test_origin=" << record.test_origin << "\n";
-    out << "train_label=" << EscapeTrainingRunPartitionPart(record.train_label_column) << "\n";
-    out << "dev_label=" << EscapeTrainingRunPartitionPart(record.dev_label_column) << "\n";
-    out << "test_label=" << EscapeTrainingRunPartitionPart(record.test_label_column) << "\n";
-    out << "train_ratio=" << config.train_ratio << "\n";
-    out << "val_ratio=" << config.val_ratio << "\n";
-    out << "test_ratio=" << config.test_ratio << "\n";
-    out << "seed=" << config.dataloader_seed << "\n";
-    out << "shuffle=" << (config.shuffle ? "true" : "false") << "\n";
-    out << "train_rows=" << metrics.train_sample_count << "\n";
-    out << "dev_rows=" << metrics.val_sample_count << "\n";
-    out << "test_rows=" << metrics.test_sample_count << "\n";
-    return TrainingRunComparisonStableFingerprint(out.str());
+    auto manifest = config.dataset_roles.manifest;
+    const auto fallback_source_fingerprint = [](const std::string& name) {
+        return name.empty()
+            ? std::string{}
+            : StablePartitionFingerprint("dataset_reference.v1\n" + name);
+    };
+    if (manifest.training_source_fingerprint.empty()) {
+        manifest.training_source_fingerprint =
+            fallback_source_fingerprint(record.train_source_name);
+    }
+    if (manifest.validation_source_fingerprint.empty()) {
+        manifest.validation_source_fingerprint =
+            fallback_source_fingerprint(record.dev_source_name);
+    }
+    if (manifest.test_source_fingerprint.empty()) {
+        manifest.test_source_fingerprint =
+            fallback_source_fingerprint(record.test_source_name);
+    }
+    if (manifest.feature_schema_fingerprint.empty()) {
+        manifest.feature_schema_fingerprint =
+            config.dataset_roles.train.feature_schema_fingerprint;
+    }
+    manifest.train_origin = PartitionOrigin::External;
+    manifest.dev_origin = record.dev_origin == "external"
+        ? PartitionOrigin::External : PartitionOrigin::Derived;
+    manifest.test_origin = record.test_origin == "external"
+        ? PartitionOrigin::External : PartitionOrigin::Derived;
+    manifest.label_column = record.train_label_column;
+    manifest.split_method = config.dataset_roles.policy.method;
+    manifest.train_ratio = config.train_ratio;
+    manifest.dev_ratio = config.val_ratio;
+    manifest.test_ratio = config.test_ratio;
+    manifest.seed = config.split_seed;
+    manifest.shuffle = config.dataset_roles.policy.shuffle;
+    manifest.stratified = config.dataset_roles.policy.stratified;
+    manifest.train_rows = static_cast<int64_t>(metrics.train_sample_count);
+    manifest.dev_rows = static_cast<int64_t>(metrics.val_sample_count);
+    manifest.test_rows = static_cast<int64_t>(metrics.test_sample_count);
+    return BuildPartitionManifestFingerprint(manifest);
 }
 
 inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
@@ -342,6 +353,17 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
         config.dataset_roles.test, train_label);
     record.partition_manifest_fingerprint =
         BuildTrainingRunPartitionFingerprint(config, metrics, record);
+    const auto& manifest = config.dataset_roles.manifest;
+    record.dev_schema_compatibility =
+        PartitionCompatibilityName(manifest.dev_compatibility);
+    record.test_schema_compatibility =
+        PartitionCompatibilityName(manifest.test_compatibility);
+    record.dev_leakage_status =
+        PartitionLeakageStatusName(manifest.dev_leakage);
+    record.test_leakage_status =
+        PartitionLeakageStatusName(manifest.test_leakage);
+    record.dev_partition_status_reason = manifest.dev_status_reason;
+    record.test_partition_status_reason = manifest.test_status_reason;
 
     record.save_best_checkpoint = config.save_best_checkpoint;
     record.early_stopping_patience = config.early_stopping_patience;

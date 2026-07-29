@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -154,6 +155,90 @@ arrow::Result<std::shared_ptr<arrow::Array>> BuildStringArray(
     std::shared_ptr<arrow::Array> array;
     ARROW_RETURN_NOT_OK(builder.Finish(&array));
     return array;
+}
+
+arrow::Result<std::vector<int8_t>> ReadPartitionMetadataAsInt8(
+    const std::shared_ptr<arrow::ChunkedArray>& column,
+    const std::string& op_name) {
+    if (!column) {
+        return arrow::Status::KeyError(
+            op_name + ": __partition__ column is missing");
+    }
+
+    std::vector<int8_t> values;
+    values.reserve(static_cast<size_t>(column->length()));
+    const auto append_value = [&](int64_t value) -> arrow::Status {
+        if (value < std::numeric_limits<int8_t>::min() ||
+            value > std::numeric_limits<int8_t>::max()) {
+            return arrow::Status::Invalid(
+                op_name + ": __partition__ value " +
+                std::to_string(value) + " is outside int8 range");
+        }
+        values.push_back(static_cast<int8_t>(value));
+        return arrow::Status::OK();
+    };
+
+    for (const auto& chunk : column->chunks()) {
+        for (int64_t row = 0; row < chunk->length(); ++row) {
+            if (chunk->IsNull(row)) {
+                return arrow::Status::Invalid(
+                    op_name + ": __partition__ contains nulls");
+            }
+            switch (chunk->type_id()) {
+            case arrow::Type::INT8:
+                ARROW_RETURN_NOT_OK(append_value(
+                    std::static_pointer_cast<arrow::Int8Array>(chunk)->Value(row)));
+                break;
+            case arrow::Type::INT16:
+                ARROW_RETURN_NOT_OK(append_value(
+                    std::static_pointer_cast<arrow::Int16Array>(chunk)->Value(row)));
+                break;
+            case arrow::Type::INT32:
+                ARROW_RETURN_NOT_OK(append_value(
+                    std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(row)));
+                break;
+            case arrow::Type::INT64:
+                ARROW_RETURN_NOT_OK(append_value(
+                    std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(row)));
+                break;
+            case arrow::Type::UINT8:
+                ARROW_RETURN_NOT_OK(append_value(
+                    std::static_pointer_cast<arrow::UInt8Array>(chunk)->Value(row)));
+                break;
+            case arrow::Type::UINT16:
+                ARROW_RETURN_NOT_OK(append_value(
+                    std::static_pointer_cast<arrow::UInt16Array>(chunk)->Value(row)));
+                break;
+            case arrow::Type::UINT32: {
+                const uint32_t value =
+                    std::static_pointer_cast<arrow::UInt32Array>(chunk)->Value(row);
+                if (value > static_cast<uint32_t>(
+                                std::numeric_limits<int8_t>::max())) {
+                    return arrow::Status::Invalid(
+                        op_name + ": __partition__ value is outside int8 range");
+                }
+                ARROW_RETURN_NOT_OK(append_value(static_cast<int64_t>(value)));
+                break;
+            }
+            case arrow::Type::UINT64: {
+                const uint64_t value =
+                    std::static_pointer_cast<arrow::UInt64Array>(chunk)->Value(row);
+                if (value > static_cast<uint64_t>(
+                                std::numeric_limits<int8_t>::max())) {
+                    return arrow::Status::Invalid(
+                        op_name + ": __partition__ value is outside int8 range");
+                }
+                ARROW_RETURN_NOT_OK(append_value(static_cast<int64_t>(value)));
+                break;
+            }
+            default:
+                return arrow::Status::TypeError(
+                    op_name + ": __partition__ must be an integer column "
+                    "(got '" + chunk->type()->ToString() + "')");
+            }
+        }
+    }
+    return values;
 }
 
 bool ParseSignalColumn(const std::map<std::string, std::string>& params,
@@ -982,6 +1067,301 @@ SeasonalityDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    static_cast<uint64_t>(periods.size()));
     return arrow::Table::Make(schema, {
         period_arr, strength_arr, primary_arr, has_arr, analysis_arr});
+}
+
+// ============================================================================
+// SeasonalNaiveOperator
+// ============================================================================
+
+bool SeasonalNaiveOperator::Configure(
+    const std::map<std::string, std::string>& params,
+    std::string& error) {
+    seasonal_period_ = 0;
+    const auto it = params.find("seasonal_period");
+    if (it == params.end() || it->second.empty()) {
+        error = GetName() + ": 'seasonal_period' parameter is required";
+        return false;
+    }
+    try {
+        size_t consumed = 0;
+        seasonal_period_ = std::stoi(it->second, &consumed);
+        if (consumed != it->second.size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+    } catch (...) {
+        error = GetName() + ": 'seasonal_period' is not a valid integer: " +
+                it->second;
+        return false;
+    }
+    if (seasonal_period_ < 1) {
+        error = GetName() + ": seasonal_period must be >= 1";
+        return false;
+    }
+    return true;
+}
+
+arrow::Result<std::shared_ptr<arrow::Schema>>
+SeasonalNaiveOperator::InferOutputSchema(
+    const std::shared_ptr<arrow::Schema>& input_schema) {
+    if (!input_schema) {
+        return arrow::Status::Invalid(GetName() + ": input schema is null");
+    }
+
+    std::vector<std::shared_ptr<arrow::Field>> fields = {
+        arrow::field("window_index", arrow::int64()),
+        arrow::field("horizon", arrow::int32()),
+        arrow::field("actual", arrow::float64()),
+        arrow::field("prediction", arrow::float64()),
+        arrow::field("error", arrow::float64()),
+    };
+    if (input_schema->GetFieldIndex("__target_start_index") >= 0) {
+        fields.push_back(arrow::field("__target_index", arrow::int64()));
+    }
+    if (input_schema->GetFieldIndex("__partition__") >= 0) {
+        fields.push_back(arrow::field("__partition__", arrow::int8()));
+    }
+    return arrow::schema(std::move(fields));
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>>
+SeasonalNaiveOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz SeasonalNaive Materializer");
+    if (!input || !input->schema()) {
+        return arrow::Status::Invalid(GetName() + ": input table is null");
+    }
+    if (seasonal_period_ < 1) {
+        return arrow::Status::Invalid(
+            GetName() + ": Apply called before Configure succeeded");
+    }
+    if (input->num_rows() == 0) {
+        return arrow::Status::Invalid(GetName() + ": input table has zero rows");
+    }
+
+    const auto schema = input->schema();
+    int input_width = 0;
+    while (schema->GetFieldIndex("x_" + std::to_string(input_width)) >= 0) {
+        ++input_width;
+    }
+    if (input_width == 0) {
+        return arrow::Status::Invalid(
+            GetName() + ": expected TimeSeriesWindow feature column 'x_0'");
+    }
+    if (seasonal_period_ > input_width) {
+        return arrow::Status::Invalid(
+            GetName() + ": seasonal_period (" +
+            std::to_string(seasonal_period_) +
+            ") exceeds available input width (" +
+            std::to_string(input_width) + ")");
+    }
+
+    std::vector<std::string> target_names;
+    if (schema->GetFieldIndex("y") < 0) {
+        return arrow::Status::Invalid(
+            GetName() + ": expected TimeSeriesWindow target column 'y'");
+    }
+    target_names.push_back("y");
+    for (int horizon = 1;; ++horizon) {
+        const std::string name = "y_" + std::to_string(horizon);
+        if (schema->GetFieldIndex(name) < 0) break;
+        target_names.push_back(name);
+    }
+
+    std::vector<std::vector<float>> seasonal_inputs;
+    seasonal_inputs.reserve(static_cast<size_t>(seasonal_period_));
+    const int seasonal_start = input_width - seasonal_period_;
+    for (int offset = 0; offset < seasonal_period_; ++offset) {
+        const std::string name =
+            "x_" + std::to_string(seasonal_start + offset);
+        std::vector<float> values;
+        std::string bad_type;
+        if (!ReadColumnAsFloat(input->GetColumnByName(name), values, bad_type)) {
+            return arrow::Status::TypeError(
+                GetName() + ": feature column '" + name +
+                "' must be numeric (got '" + bad_type + "')");
+        }
+        seasonal_inputs.push_back(std::move(values));
+    }
+
+    std::vector<std::vector<float>> targets;
+    targets.reserve(target_names.size());
+    for (const auto& name : target_names) {
+        std::vector<float> values;
+        std::string bad_type;
+        if (!ReadColumnAsFloat(input->GetColumnByName(name), values, bad_type)) {
+            return arrow::Status::TypeError(
+                GetName() + ": target column '" + name +
+                "' must be numeric (got '" + bad_type + "')");
+        }
+        targets.push_back(std::move(values));
+    }
+
+    const int64_t input_rows = input->num_rows();
+    const int64_t horizon_count = static_cast<int64_t>(targets.size());
+    if (input_rows > std::numeric_limits<int64_t>::max() / horizon_count) {
+        return arrow::Status::CapacityError(
+            GetName() + ": expanded output row count overflows int64");
+    }
+    const int64_t output_rows = input_rows * horizon_count;
+    const bool has_target_index =
+        schema->GetFieldIndex("__target_start_index") >= 0;
+    const bool has_partition = schema->GetFieldIndex("__partition__") >= 0;
+    const uint64_t output_columns =
+        5ULL + (has_target_index ? 1ULL : 0ULL) +
+        (has_partition ? 1ULL : 0ULL);
+    const auto estimate = EstimateDenseMaterializationMemory(
+        static_cast<uint64_t>(output_rows), output_columns, sizeof(double));
+    const auto decision = EvaluateMaterializationMemory(
+        estimate, DetectMaterializationMemorySnapshot());
+    const std::string preflight_message =
+        BuildTimeSeriesAnalysisMemoryPreflightMessage(
+            GetName(), estimate, decision,
+            "reduce source rows or forecast horizon, filter to one partition, "
+            "or use a future chunked baseline materializer");
+    if (progress_callback_) {
+        PipelineOperatorProgress event;
+        event.stage = "SeasonalNaive memory preflight";
+        event.message = preflight_message;
+        event.status = MaterializationMemoryProgressStatus(decision.risk);
+        event.progress = 0.03f;
+        event.estimated_memory_bytes = estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(decision.risk);
+        event.total_items = static_cast<uint64_t>(output_rows);
+        progress_callback_(event);
+    }
+    if (decision.blocked) {
+        return arrow::Status::CapacityError(
+            "Materialization blocked: " + preflight_message);
+    }
+
+    std::vector<int64_t> target_starts;
+    if (has_target_index) {
+        auto column = input->GetColumnByName("__target_start_index");
+        if (!column || column->type()->id() != arrow::Type::INT64) {
+            return arrow::Status::TypeError(
+                GetName() + ": __target_start_index must be int64");
+        }
+        target_starts.reserve(static_cast<size_t>(input_rows));
+        for (const auto& chunk : column->chunks()) {
+            auto array = std::static_pointer_cast<arrow::Int64Array>(chunk);
+            for (int64_t row = 0; row < array->length(); ++row) {
+                if (array->IsNull(row)) {
+                    return arrow::Status::Invalid(
+                        GetName() + ": __target_start_index contains nulls");
+                }
+                target_starts.push_back(array->Value(row));
+            }
+        }
+    }
+
+    std::vector<int8_t> partitions;
+    if (has_partition) {
+        auto column = input->GetColumnByName("__partition__");
+        ARROW_ASSIGN_OR_RAISE(
+            partitions, ReadPartitionMetadataAsInt8(column, GetName()));
+    }
+
+    arrow::Int64Builder window_builder;
+    arrow::Int32Builder horizon_builder;
+    arrow::DoubleBuilder actual_builder;
+    arrow::DoubleBuilder prediction_builder;
+    arrow::DoubleBuilder error_builder;
+    arrow::Int64Builder target_index_builder;
+    arrow::Int8Builder partition_builder;
+    ARROW_RETURN_NOT_OK(window_builder.Reserve(output_rows));
+    ARROW_RETURN_NOT_OK(horizon_builder.Reserve(output_rows));
+    ARROW_RETURN_NOT_OK(actual_builder.Reserve(output_rows));
+    ARROW_RETURN_NOT_OK(prediction_builder.Reserve(output_rows));
+    ARROW_RETURN_NOT_OK(error_builder.Reserve(output_rows));
+    if (has_target_index) {
+        ARROW_RETURN_NOT_OK(target_index_builder.Reserve(output_rows));
+    }
+    if (has_partition) {
+        ARROW_RETURN_NOT_OK(partition_builder.Reserve(output_rows));
+    }
+
+    ReportProgress(progress_callback_, "Generating forecasts",
+                   "Repeating the latest seasonal cycle across forecast horizons",
+                   0.10, 0, static_cast<uint64_t>(output_rows),
+                   estimate.estimated_peak_bytes);
+    int64_t written = 0;
+    for (int64_t row = 0; row < input_rows; ++row) {
+        for (int64_t horizon = 0; horizon < horizon_count; ++horizon) {
+            const float actual = targets[static_cast<size_t>(horizon)]
+                                      [static_cast<size_t>(row)];
+            const float prediction =
+                seasonal_inputs[static_cast<size_t>(
+                    horizon % static_cast<int64_t>(seasonal_period_))]
+                               [static_cast<size_t>(row)];
+            ARROW_RETURN_NOT_OK(window_builder.Append(row));
+            ARROW_RETURN_NOT_OK(
+                horizon_builder.Append(static_cast<int32_t>(horizon + 1)));
+            if (std::isfinite(actual) && std::isfinite(prediction)) {
+                ARROW_RETURN_NOT_OK(actual_builder.Append(actual));
+                ARROW_RETURN_NOT_OK(prediction_builder.Append(prediction));
+                ARROW_RETURN_NOT_OK(
+                    error_builder.Append(static_cast<double>(actual) -
+                                         static_cast<double>(prediction)));
+            } else {
+                ARROW_RETURN_NOT_OK(actual_builder.AppendNull());
+                ARROW_RETURN_NOT_OK(prediction_builder.AppendNull());
+                ARROW_RETURN_NOT_OK(error_builder.AppendNull());
+            }
+            if (has_target_index) {
+                ARROW_RETURN_NOT_OK(target_index_builder.Append(
+                    target_starts[static_cast<size_t>(row)] + horizon));
+            }
+            if (has_partition) {
+                ARROW_RETURN_NOT_OK(partition_builder.Append(
+                    partitions[static_cast<size_t>(row)]));
+            }
+            ++written;
+        }
+        if ((row + 1) == input_rows || ((row + 1) % 256) == 0) {
+            ReportProgress(
+                progress_callback_, "Generating forecasts",
+                "Writing long-form seasonal-naive predictions",
+                0.10 + 0.85 * static_cast<double>(row + 1) /
+                           static_cast<double>(input_rows),
+                static_cast<uint64_t>(written),
+                static_cast<uint64_t>(output_rows),
+                estimate.estimated_peak_bytes);
+        }
+    }
+
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    arrays.reserve(static_cast<size_t>(output_columns));
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(window_builder.Finish(&array));
+    arrays.push_back(std::move(array));
+    ARROW_RETURN_NOT_OK(horizon_builder.Finish(&array));
+    arrays.push_back(std::move(array));
+    ARROW_RETURN_NOT_OK(actual_builder.Finish(&array));
+    arrays.push_back(std::move(array));
+    ARROW_RETURN_NOT_OK(prediction_builder.Finish(&array));
+    arrays.push_back(std::move(array));
+    ARROW_RETURN_NOT_OK(error_builder.Finish(&array));
+    arrays.push_back(std::move(array));
+    if (has_target_index) {
+        ARROW_RETURN_NOT_OK(target_index_builder.Finish(&array));
+        arrays.push_back(std::move(array));
+    }
+    if (has_partition) {
+        ARROW_RETURN_NOT_OK(partition_builder.Finish(&array));
+        arrays.push_back(std::move(array));
+    }
+
+    ARROW_ASSIGN_OR_RAISE(auto output_schema, InferOutputSchema(schema));
+    spdlog::info(
+        "SeasonalNaive: {} windows x {} horizons -> {} prediction rows "
+        "(period={}, input_width={}, partition_metadata={})",
+        input_rows, horizon_count, output_rows, seasonal_period_, input_width,
+        has_partition);
+    ReportProgress(progress_callback_, "Complete",
+                   "SeasonalNaive forecast materialization complete", 1.0,
+                   static_cast<uint64_t>(output_rows),
+                   static_cast<uint64_t>(output_rows),
+                   estimate.estimated_peak_bytes);
+    return arrow::Table::Make(output_schema, std::move(arrays), output_rows);
 }
 
 } // namespace cyxwiz

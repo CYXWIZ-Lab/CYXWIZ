@@ -1246,6 +1246,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"output_path", "file", "", "Output data file", {}, "*.csv;*.tsv;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc"},
          {"output_format", "enum", "auto", "Output format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
          {"delimiter", "enum", "auto", "CSV delimiter", {"auto", ",", "\\t", ";", "|"}, ""},
+         {"decimal_point", "enum", ".", "Input decimal separator", {".", ","}, ""},
          {"allow_newlines_in_values", "bool", "true", "Allow quoted multiline CSV values", {}, ""},
          {"compression", "enum", "snappy", "Parquet compression", {"none", "snappy", "gzip", "zstd", "brotli"}, ""},
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
@@ -1801,7 +1802,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         {{"Data", PinType::Dataset, true, "Input data"}},
         {{"Scaled", PinType::Dataset, true, "Standardized data"}},
         {{"columns", "string", "", "Columns to scale (empty = numeric auto-detect)", {}, ""},
-         {"label_col", "string", "", "Label column to exclude", {}, ""},
+           {"label_col", "string", "", "Label column to exclude", {}, ""},
+           {"exclude_columns", "string", "", "Additional columns to exclude from numeric auto-detect (comma-separated)", {}, ""},
          {"with_mean", "bool", "true", "Center data", {}, ""},
          {"with_std", "bool", "true", "Scale to unit variance", {}, ""},
          {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse saved training statistics", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
@@ -2915,12 +2917,12 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
     RegisterNode({NodeType::TimeSeriesWindow, NodeCategory::TimeSeries, "Sliding Window", ICON_FA_CHART_LINE,
         {"window", "sliding", "sequence"}, 0, false, "Create sliding windows", "", "",
         {{"Data", PinType::Dataset, true, "Input time-ordered table"}},
-        {{"Windowed", PinType::Dataset, true, "Windowed table with x_* feature columns and y label"}},
+        {{"Windowed", PinType::Dataset, true, "Windowed table with x_* features, ordered y targets, and hidden target bounds"}},
         {{"value_col", "string", "", "Numeric source/target column", {}, ""},
          {"feature_cols", "string", "", "Extra numeric feature columns to window", {}, ""},
          {"time_col", "string", "", "Optional numeric time column", {}, ""},
          {"input_width", "int", "12", "Lookback steps per sample", {}, ""},
-         {"label_width", "int", "1", "Forecast steps (v1 requires 1)", {}, ""},
+         {"label_width", "int", "1", "Ordered forecast target steps", {}, ""},
          {"shift", "int", "1", "Forecast offset", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -2948,7 +2950,18 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
         {{"Partitioned", PinType::Dataset, true, "Input table plus __partition__ split column"}},
         {{"train_ratio", "float", "0.8", "Train ratio", {}, ""},
          {"val_ratio", "float", "0.1", "Validation ratio", {}, ""},
-         {"test_ratio", "float", "0.1", "Test ratio", {}, ""}},
+         {"test_ratio", "float", "0.1", "Test ratio", {}, ""},
+         {"boundary_policy", "enum", "targets_within_partition", "Window boundary policy", {"targets_within_partition", "window_rows"}, ""},
+         {"train_end_source_row", "int", "-1", "Exclusive Train source-row boundary (-1 uses ratios)", {}, ""},
+         {"val_end_source_row", "int", "-1", "Exclusive Validation source-row boundary (-1 uses ratios)", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SeasonalNaive, NodeCategory::TimeSeries, "Seasonal Naive", ICON_FA_REPEAT,
+        {"seasonal", "naive", "baseline", "forecast", "rolling"}, 0, false,
+        "Repeat the latest seasonal cycle as a deterministic forecast baseline", "", "",
+        {{"Windowed", PinType::Dataset, true, "Sliding Window output with x_* history and ordered y targets"}},
+        {{"Predictions", PinType::Dataset, true, "Long-form actual/prediction rows for filtering and Regression Metrics"}},
+        {{"seasonal_period", "int", "1", "Observations in one seasonal cycle", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LogTransform, NodeCategory::TimeSeries, "Log Transform", ICON_FA_CHART_LINE,

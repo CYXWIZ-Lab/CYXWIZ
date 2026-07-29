@@ -583,6 +583,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::TimeSeriesWindow:
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
+            case NodeType::SeasonalNaive:
             case NodeType::SignalScope:
             case NodeType::VisualizeData:
             case NodeType::LearningCurvesNode:
@@ -1989,6 +1990,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::TimeSeriesWindow:
         case NodeType::TimeSeriesFeatures:
         case NodeType::TimeSeriesSplit:
+        case NodeType::SeasonalNaive:
             return ICON_FA_CHART_LINE;
 
         // Audio

@@ -71,6 +71,8 @@ bool TrainingManager::StartTrainingCommon(
     stop_requested_.store(false);
     const bool sequence_mode =
         executor && executor->GetConfig().sequence_batch.enabled;
+    const bool regression_mode =
+        executor && UsesRegressionMetrics(executor->GetConfig());
 
     if (node_editor_callback) {
         node_editor_callback(true);
@@ -78,7 +80,8 @@ bool TrainingManager::StartTrainingCommon(
 
     if (auto panel = plot_panel.lock()) {
         panel->Clear();
-        panel->ShowCustomMetrics(sequence_mode);
+        panel->ShowAccuracyPlot(!regression_mode);
+        panel->ShowCustomMetrics(sequence_mode || regression_mode);
         panel->SetTrainingState(true, 0, epochs, 0.0f, 0.0f);
         panel->SetVisible(true);
     }
@@ -336,22 +339,38 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         last_metrics_.current_batch = metadata->global_step;
         last_metrics_.train_loss = metadata->train_loss;
         last_metrics_.train_accuracy = metadata->train_accuracy;
+        last_metrics_.train_mae = metadata->train_mae;
+        last_metrics_.train_rmse = metadata->train_rmse;
         last_metrics_.val_loss = metadata->val_loss;
         last_metrics_.val_accuracy = metadata->val_accuracy;
+        last_metrics_.val_mae = metadata->val_mae;
+        last_metrics_.val_rmse = metadata->val_rmse;
         last_metrics_.loss_history = metadata->loss_history;
         last_metrics_.accuracy_history = metadata->accuracy_history;
+        last_metrics_.mae_history = metadata->mae_history;
+        last_metrics_.rmse_history = metadata->rmse_history;
         last_metrics_.val_loss_history = metadata->val_loss_history;
         last_metrics_.val_accuracy_history = metadata->val_accuracy_history;
+        last_metrics_.val_mae_history = metadata->val_mae_history;
+        last_metrics_.val_rmse_history = metadata->val_rmse_history;
         last_metrics_.has_validation_metrics =
             !metadata->val_loss_history.empty() ||
             !metadata->val_accuracy_history.empty() ||
-            metadata->val_loss != 0.0f || metadata->val_accuracy != 0.0f;
+            !metadata->val_mae_history.empty() ||
+            !metadata->val_rmse_history.empty() ||
+            metadata->val_loss != 0.0f || metadata->val_accuracy != 0.0f ||
+            metadata->val_mae != 0.0f || metadata->val_rmse != 0.0f;
         last_metrics_.checkpoint_used = resolved.string();
 
         active_model_info_ = ActiveModelInfo{};
         active_model_info_.origin = ActiveModelOrigin::LoadedCheckpoint;
         active_model_info_.checkpoint_path = resolved.string();
         active_model_info_.graph_fingerprint = graph_fingerprint;
+        active_model_info_.effective_dataset_name = config.dataset_name;
+        active_model_info_.effective_label_column =
+            config.dataset_roles.train.label_column.empty()
+                ? config.target.primary_column
+                : config.dataset_roles.train.label_column;
         active_model_info_.checkpoint_metadata = *metadata;
     }
 
@@ -838,22 +857,45 @@ void TrainingManager::TrainingThreadFunc(
         TrainingMetrics seq_metrics;
         const bool sequence_mode =
             exec && exec->GetConfig().sequence_batch.enabled;
+        const bool regression_mode =
+            exec && UsesRegressionMetrics(exec->GetConfig());
+        const TrainingMetrics objective_metrics = exec
+            ? exec->GetMetrics()
+            : TrainingMetrics{};
         {
             std::lock_guard<std::mutex> lock(metrics_mutex_);
             cached_metrics_.current_epoch = epoch;
             cached_metrics_.train_loss = train_loss;
-            cached_metrics_.train_accuracy = train_acc;
+            if (regression_mode) {
+                cached_metrics_.train_mae = objective_metrics.train_mae;
+                cached_metrics_.train_rmse = objective_metrics.train_rmse;
+                cached_metrics_.mae_history.push_back(
+                    objective_metrics.train_mae);
+                cached_metrics_.rmse_history.push_back(
+                    objective_metrics.train_rmse);
+            } else {
+                cached_metrics_.train_accuracy = train_acc;
+                cached_metrics_.accuracy_history.push_back(train_acc);
+            }
             cached_metrics_.epoch_time_seconds = epoch_time;
             cached_metrics_.loss_history.push_back(train_loss);
-            cached_metrics_.accuracy_history.push_back(train_acc);
             if (val_loss >= 0.0f) {
                 cached_metrics_.val_loss = val_loss;
                 cached_metrics_.val_loss_history.push_back(val_loss);
                 cached_metrics_.has_validation_metrics = true;
             }
             if (val_acc >= 0.0f) {
-                cached_metrics_.val_accuracy = val_acc;
-                cached_metrics_.val_accuracy_history.push_back(val_acc);
+                if (regression_mode) {
+                    cached_metrics_.val_mae = objective_metrics.val_mae;
+                    cached_metrics_.val_rmse = objective_metrics.val_rmse;
+                    cached_metrics_.val_mae_history.push_back(
+                        objective_metrics.val_mae);
+                    cached_metrics_.val_rmse_history.push_back(
+                        objective_metrics.val_rmse);
+                } else {
+                    cached_metrics_.val_accuracy = val_acc;
+                    cached_metrics_.val_accuracy_history.push_back(val_acc);
+                }
                 cached_metrics_.has_validation_metrics = true;
             }
 
@@ -882,8 +924,25 @@ void TrainingManager::TrainingThreadFunc(
                 TrainingTraceStage::UIPlotUpdate, epoch, 0, 0,
                 train_loss, train_acc);
             panel->AddLossPoint(epoch, static_cast<double>(train_loss), static_cast<double>(val_loss));
-            // Convert accuracy from fraction (0-1) to percentage (0-100) for display
-            panel->AddAccuracyPoint(epoch, static_cast<double>(train_acc) * 100.0, static_cast<double>(val_acc) * 100.0);
+            if (regression_mode) {
+                panel->ShowAccuracyPlot(false);
+                panel->AddCustomMetric("Train MAE", epoch,
+                    objective_metrics.train_mae);
+                panel->AddCustomMetric("Train RMSE", epoch,
+                    objective_metrics.train_rmse);
+                if (val_loss >= 0.0f) {
+                    panel->AddCustomMetric("Val MAE", epoch,
+                        objective_metrics.val_mae);
+                    panel->AddCustomMetric("Val RMSE", epoch,
+                        objective_metrics.val_rmse);
+                }
+            } else {
+                panel->ShowAccuracyPlot(true);
+                // Convert accuracy from fraction (0-1) to percentage (0-100).
+                panel->AddAccuracyPoint(epoch,
+                    static_cast<double>(train_acc) * 100.0,
+                    static_cast<double>(val_acc) * 100.0);
+            }
             // Update training state with timing info
             panel->SetTrainingState(true, epoch, epochs, epoch_time, samples_per_sec);
             if (sequence_mode) {
@@ -909,8 +968,19 @@ void TrainingManager::TrainingThreadFunc(
             on_progress_(epoch, train_loss, train_acc);
         }
 
-        spdlog::info("Epoch {}: loss={:.4f}, acc={:.2f}%, val_loss={:.4f}, val_acc={:.2f}% ({:.1f}s)",
-                     epoch, train_loss, train_acc * 100, val_loss, val_acc * 100, epoch_time);
+        if (regression_mode) {
+            spdlog::info(
+                "Epoch {}: loss={:.4f}, mae={:.4f}, rmse={:.4f}, "
+                "val_loss={:.4f}, val_mae={:.4f}, val_rmse={:.4f} ({:.1f}s)",
+                epoch, train_loss, objective_metrics.train_mae,
+                objective_metrics.train_rmse, val_loss,
+                objective_metrics.val_mae, objective_metrics.val_rmse,
+                epoch_time);
+        } else {
+            spdlog::info("Epoch {}: loss={:.4f}, acc={:.2f}%, val_loss={:.4f}, val_acc={:.2f}% ({:.1f}s)",
+                         epoch, train_loss, train_acc * 100, val_loss,
+                         val_acc * 100, epoch_time);
+        }
     };
 
     TrainingMetrics final_metrics;
@@ -933,8 +1003,10 @@ void TrainingManager::TrainingThreadFunc(
             // epoch x-axis (epoch - 1 + batch/total) so the loss curve draws
             // smoothly during long epochs (e.g. audio at 8 min/epoch) instead
             // of staying empty until the first epoch finishes.
-            auto batch_callback = [this, plot_panel](int epoch, int batch, int total_batches,
-                                                      float batch_loss, float batch_acc) {
+            auto batch_callback = [this, plot_panel, &exec](int epoch, int batch, int total_batches,
+                                                       float batch_loss, float batch_acc) {
+                const bool regression_mode =
+                    exec && UsesRegressionMetrics(exec->GetConfig());
                 {
                     std::lock_guard<std::mutex> lock(metrics_mutex_);
                     cached_metrics_.current_epoch = epoch;
@@ -959,9 +1031,12 @@ void TrainingManager::TrainingThreadFunc(
                         panel->AddLossPoint(frac_epoch,
                                             static_cast<double>(batch_loss),
                                             -1.0);
-                        panel->AddAccuracyPoint(frac_epoch,
-                                                static_cast<double>(batch_acc) * 100.0,
-                                                -1.0);
+                        if (!regression_mode) {
+                            panel->AddAccuracyPoint(
+                                frac_epoch,
+                                static_cast<double>(batch_acc) * 100.0,
+                                -1.0);
+                        }
                     }
                 }
             };
@@ -983,6 +1058,8 @@ void TrainingManager::TrainingThreadFunc(
     float total_training_time = std::chrono::duration<float>(training_end_time - training_start_time).count();
 
     // Get final metrics
+    const bool completed_regression_mode =
+        exec && UsesRegressionMetrics(exec->GetConfig());
     {
         std::lock_guard<std::mutex> lock(metrics_mutex_);
         if (final_metrics.total_epochs == 0) {
@@ -990,8 +1067,12 @@ void TrainingManager::TrainingThreadFunc(
         } else {
             final_metrics.loss_history = cached_metrics_.loss_history;
             final_metrics.accuracy_history = cached_metrics_.accuracy_history;
+            final_metrics.mae_history = cached_metrics_.mae_history;
+            final_metrics.rmse_history = cached_metrics_.rmse_history;
             final_metrics.val_loss_history = cached_metrics_.val_loss_history;
             final_metrics.val_accuracy_history = cached_metrics_.val_accuracy_history;
+            final_metrics.val_mae_history = cached_metrics_.val_mae_history;
+            final_metrics.val_rmse_history = cached_metrics_.val_rmse_history;
         }
         cached_metrics_.is_training = false;
         cached_metrics_.is_complete = !stop_requested_.load();
@@ -1055,13 +1136,24 @@ void TrainingManager::TrainingThreadFunc(
             active_model_info_ = ActiveModelInfo{};
             active_model_info_.origin = ActiveModelOrigin::TrainedInSession;
             active_model_info_.checkpoint_path = final_metrics.checkpoint_used;
+            const auto& completed_config = current_executor_->GetConfig();
+            active_model_info_.effective_dataset_name =
+                completed_config.dataset_name;
+            active_model_info_.effective_label_column =
+                completed_config.dataset_roles.train.label_column.empty()
+                    ? completed_config.target.primary_column
+                    : completed_config.dataset_roles.train.label_column;
             spdlog::info("TrainingManager: Preserved trained model for export (success={}, stopped={})",
                          success, stop_requested_.load());
         }
         current_executor_.reset();
     }
 
-    if (success) {
+    if (success && completed_regression_mode) {
+        spdlog::info(
+            "TrainingManager: Training completed! Final MAE: {:.4f}, RMSE: {:.4f}",
+            final_metrics.train_mae, final_metrics.train_rmse);
+    } else if (success) {
         spdlog::info("TrainingManager: Training completed! Final acc: {:.2f}%",
                      final_metrics.train_accuracy * 100);
     } else {

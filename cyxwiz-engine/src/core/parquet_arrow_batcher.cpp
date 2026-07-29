@@ -9,9 +9,63 @@
 #include <algorithm>
 #include <cstring>
 #include <numeric>
+#include <stdexcept>
 #include <thread>
 
 namespace cyxwiz {
+
+namespace {
+
+float ReadParquetNumericValue(
+    const std::shared_ptr<arrow::ChunkedArray>& column,
+    size_t row) {
+    if (!column) return 0.0f;
+    int64_t local = static_cast<int64_t>(row);
+    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
+        const auto& chunk = column->chunk(chunk_index);
+        if (local >= chunk->length()) {
+            local -= chunk->length();
+            continue;
+        }
+        if (chunk->IsNull(local)) return 0.0f;
+        switch (chunk->type_id()) {
+        case arrow::Type::FLOAT:
+            return std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(local);
+        case arrow::Type::DOUBLE:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(local));
+        case arrow::Type::INT64:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(local));
+        case arrow::Type::INT32:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(local));
+        case arrow::Type::INT16:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::Int16Array>(chunk)->Value(local));
+        case arrow::Type::INT8:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::Int8Array>(chunk)->Value(local));
+        case arrow::Type::UINT64:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::UInt64Array>(chunk)->Value(local));
+        case arrow::Type::UINT32:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::UInt32Array>(chunk)->Value(local));
+        case arrow::Type::UINT16:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::UInt16Array>(chunk)->Value(local));
+        case arrow::Type::UINT8:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::UInt8Array>(chunk)->Value(local));
+        default:
+            return 0.0f;
+        }
+    }
+    return 0.0f;
+}
+
+}  // namespace
 
 // -----------------------------------------------------------------------------
 // Constructor
@@ -91,6 +145,7 @@ void ParquetArrowBatcher::InitializeColumns() {
     feature_cols_.clear();
     feature_cols_.reserve(num_cols);
     label_col_idx_ = -1;
+    label_col_indices_.clear();
 
     label_col_idx_ = ResolveLabelColumnIndex(schema, label_column_);
     if (!label_column_.empty() && label_col_idx_ < 0) {
@@ -113,9 +168,13 @@ void ParquetArrowBatcher::InitializeColumns() {
         spdlog::info("ParquetArrowBatcher: auto-detected label column at index {} ('{}')",
                      label_col_idx_, schema->field(label_col_idx_)->name());
     }
+    if (label_col_idx_ >= 0) {
+        label_col_indices_.push_back(label_col_idx_);
+    }
 
     for (int i = 0; i < num_cols; ++i) {
-        if (i == label_col_idx_) continue;
+        if (std::find(label_col_indices_.begin(), label_col_indices_.end(), i) !=
+            label_col_indices_.end()) continue;
         const auto& field = schema->field(i);
         const auto& field_name = field->name();
         if (field_name.rfind("__", 0) == 0 ||
@@ -127,6 +186,47 @@ void ParquetArrowBatcher::InitializeColumns() {
         }
     }
     num_features_ = feature_cols_.size();
+}
+
+void ParquetArrowBatcher::SetRegressionTargetWidth(
+    size_t width, const std::string& target_base) {
+    if (width < 1) {
+        throw std::invalid_argument(
+            "ParquetArrowBatcher regression target width must be at least 1");
+    }
+    auto schema = dataset_ ? dataset_->GetSchema() : nullptr;
+    if (!schema || label_col_idx_ < 0) {
+        throw std::invalid_argument(
+            "ParquetArrowBatcher cannot configure regression targets without a primary target");
+    }
+
+    const std::string base =
+        target_base.empty() ? label_column_ : target_base;
+    label_col_indices_.clear();
+    label_col_indices_.push_back(label_col_idx_);
+    for (size_t target = 1; target < width; ++target) {
+        const std::string name = base + "_" + std::to_string(target);
+        const int index = schema->GetFieldIndex(name);
+        if (index < 0) {
+            throw std::invalid_argument(
+                "ParquetArrowBatcher missing ordered regression target column '" +
+                name + "'");
+        }
+        label_col_indices_.push_back(index);
+    }
+
+    feature_cols_.erase(
+        std::remove_if(feature_cols_.begin(), feature_cols_.end(),
+            [&](int index) {
+                return std::find(label_col_indices_.begin(),
+                                 label_col_indices_.end(), index) !=
+                       label_col_indices_.end();
+            }),
+        feature_cols_.end());
+    num_features_ = feature_cols_.size();
+    spdlog::info(
+        "ParquetArrowBatcher: configured {} ordered regression targets and {} features",
+        label_col_indices_.size(), num_features_);
 }
 
 // -----------------------------------------------------------------------------
@@ -348,7 +448,10 @@ Batch ParquetArrowBatcher::GetNextBatch() {
     const size_t capacity = batch_size_;
     std::vector<float> batch_data(capacity * num_features_, 0.0f);
     std::vector<int> batch_labels(capacity, 0);
-    std::vector<float> batch_labels_float(scalar_label_mode_ ? capacity : 0, 0.0f);
+    const size_t regression_target_width =
+        std::max<size_t>(1, label_col_indices_.size());
+    std::vector<float> batch_labels_float(
+        scalar_label_mode_ ? capacity * regression_target_width : 0, 0.0f);
     size_t rows_filled = 0;
 
     while (rows_filled < capacity) {
@@ -520,7 +623,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
                             if (scalar_label_mode_) {
-                                batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
+                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
                             }
@@ -533,7 +636,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
                             if (scalar_label_mode_) {
-                                batch_labels_float[rows_filled + b] = data[local_row];
+                                batch_labels_float[(rows_filled + b) * regression_target_width] = data[local_row];
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
                             }
@@ -546,7 +649,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
                             if (scalar_label_mode_) {
-                                batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
+                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
                             }
@@ -559,7 +662,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
                             if (scalar_label_mode_) {
-                                batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
+                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = data[local_row];
                             }
@@ -572,7 +675,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
                             if (scalar_label_mode_) {
-                                batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
+                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
                             }
@@ -585,7 +688,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
                             if (scalar_label_mode_) {
-                                batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
+                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
                             }
@@ -598,7 +701,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
                             if (scalar_label_mode_) {
-                                batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
+                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
                             }
@@ -611,7 +714,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
                             if (scalar_label_mode_) {
-                                batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
+                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = data[local_row];
                             }
@@ -624,7 +727,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         for (size_t b = 0; b < rows_this_sweep; ++b) {
                             const size_t local_row = current_row_indices_[current_row_cursor_ + b];
                             if (scalar_label_mode_) {
-                                batch_labels_float[rows_filled + b] = static_cast<float>(data[local_row]);
+                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
                             } else {
                                 batch_labels[rows_filled + b] = data[local_row];
                             }
@@ -635,6 +738,21 @@ Batch ParquetArrowBatcher::GetNextBatch() {
                         spdlog::warn("ParquetArrowBatcher: unsupported label type {}",
                                      chunk->type()->ToString());
                         break;
+                }
+            }
+        }
+
+        if (scalar_label_mode_ && label_col_indices_.size() > 1) {
+            for (size_t target = 1; target < label_col_indices_.size(); ++target) {
+                const int column_index = label_col_indices_[target];
+                if (column_index < 0 || column_index >= num_cols_in_table) continue;
+                const auto& target_column = current_table_->column(column_index);
+                for (size_t b = 0; b < rows_this_sweep; ++b) {
+                    const size_t local_row =
+                        current_row_indices_[current_row_cursor_ + b];
+                    batch_labels_float[
+                        (rows_filled + b) * regression_target_width + target] =
+                        ReadParquetNumericValue(target_column, local_row);
                 }
             }
         }
@@ -664,7 +782,8 @@ Batch ParquetArrowBatcher::GetNextBatch() {
 
     // Materialize scalar float, one-hot, or index labels.
     if (scalar_label_mode_ && label_col_idx_ >= 0) {
-        std::vector<size_t> label_shape = {rows_filled, 1};
+        std::vector<size_t> label_shape = {
+            rows_filled, regression_target_width};
         batch.labels = Tensor(label_shape, batch_labels_float.data());
     } else if (one_hot_ && label_col_idx_ >= 0) {
         std::vector<float> onehot(rows_filled * num_classes_, 0.0f);

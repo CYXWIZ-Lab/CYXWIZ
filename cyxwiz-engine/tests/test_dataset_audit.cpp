@@ -5,6 +5,7 @@
 #include <arrow/api.h>
 
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -167,18 +168,36 @@ void WriteMonoWav16(const fs::path& path,
 
 void TestTabularAudit() {
     auto dataset = MakeArrowDataset();
-    auto result = DatasetAudit::AuditTabular("audit_arrow", dataset, "label");
+    float last_progress = -1.0f;
+    DatasetAuditOptions options;
+    options.max_numeric_samples_per_column = 2;
+    options.report_progress = [&](float progress, const std::string&) {
+        assert(progress >= last_progress);
+        last_progress = progress;
+    };
+    auto result = DatasetAudit::AuditTabular(
+        "audit_arrow", dataset, "label", options);
 
     assert(!result.HasErrors());
+    assert(!result.cancelled);
+    assert(last_progress == 1.0f);
     assert(result.sample_count == 4);
     assert(result.feature_count == 3);
     assert(result.class_count == 2);
     assert(HasIssue(result, DatasetAuditSeverity::Warning, "constant_column"));
+    assert(HasIssue(result, DatasetAuditSeverity::Info,
+                    "numeric_health_scan_sampled"));
     assert(FormatAuditSummary(result) == "Audit: 1 warning.");
 
     auto missing_label = DatasetAudit::AuditTabular("audit_arrow", dataset, "missing");
     assert(missing_label.HasErrors());
     assert(HasIssue(missing_label, DatasetAuditSeverity::Error, "label_column_not_found"));
+
+    DatasetAuditOptions cancelled_options;
+    cancelled_options.should_cancel = [] { return true; };
+    auto cancelled = DatasetAudit::AuditTabular(
+        "audit_arrow", dataset, "label", cancelled_options);
+    assert(cancelled.cancelled);
 }
 
 void TestTabularDegenerateRefusal() {
@@ -188,6 +207,53 @@ void TestTabularDegenerateRefusal() {
     assert(result.HasErrors());
     assert(HasIssue(result, DatasetAuditSeverity::Error,
                     "too_many_degenerate_columns"));
+}
+
+void TestWideTabularAuditIsBounded() {
+    constexpr int64_t kRows = 140256;
+    constexpr int kColumns = 371;
+
+    std::vector<double> values(static_cast<size_t>(kRows));
+    for (int64_t row = 0; row < kRows; ++row) {
+        values[static_cast<size_t>(row)] =
+            static_cast<double>(row % 17);
+    }
+    arrow::DoubleBuilder builder;
+    RequireArrowStatus(builder.AppendValues(values));
+    std::shared_ptr<arrow::Array> array;
+    RequireArrowStatus(builder.Finish(&array));
+
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    fields.reserve(kColumns);
+    arrays.reserve(kColumns);
+    for (int column = 0; column < kColumns; ++column) {
+        fields.push_back(arrow::field(
+            "load_" + std::to_string(column), arrow::float64()));
+        arrays.push_back(array);
+    }
+    auto table = arrow::Table::Make(
+        arrow::schema(std::move(fields)), std::move(arrays), kRows);
+    auto dataset = std::make_shared<ArrowDataset>(table, "wide_audit");
+
+    float last_progress = -1.0f;
+    DatasetAuditOptions options;
+    options.report_progress = [&](float progress, const std::string&) {
+        assert(progress >= last_progress);
+        last_progress = progress;
+    };
+    const auto started = std::chrono::steady_clock::now();
+    auto result = DatasetAudit::AuditTabular(
+        "wide_audit", dataset, "", options);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - started);
+
+    assert(!result.cancelled);
+    assert(!result.HasErrors());
+    assert(last_progress == 1.0f);
+    assert(elapsed.count() < 15);
+    assert(HasIssue(result, DatasetAuditSeverity::Info,
+                    "numeric_health_scan_sampled"));
 }
 
 void TestImageAudit() {
@@ -403,6 +469,7 @@ void TestTextParquetSkipsPlainTextSampleAudit() {
 int main() {
     TestTabularAudit();
     TestTabularDegenerateRefusal();
+    TestWideTabularAuditIsBounded();
     TestImageAudit();
     TestImageSampleAudit();
     TestAudioSampleAudit();

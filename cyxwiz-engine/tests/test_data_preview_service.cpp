@@ -39,15 +39,15 @@ std::shared_ptr<arrow::Array> FinishInt64Array(
     return array;
 }
 
-std::shared_ptr<arrow::Array> FinishStringArray(
-    const std::vector<std::string>& values) {
+std::shared_ptr<arrow::Array> FinishNullableLabelArray() {
     arrow::StringBuilder builder;
-    for (const auto& value : values) {
-        auto status = builder.Append(value);
-        Check(status.ok(), status.ToString());
-    }
+    Check(builder.Append("a").ok(), "append label a");
+    Check(builder.Append("b").ok(), "append label b");
+    Check(builder.AppendNull().ok(), "append null label");
+    Check(builder.Append("d").ok(), "append label d");
+    Check(builder.Append("e").ok(), "append label e");
     std::shared_ptr<arrow::Array> array;
-    auto status = builder.Finish(&array);
+    const auto status = builder.Finish(&array);
     Check(status.ok(), status.ToString());
     return array;
 }
@@ -62,7 +62,7 @@ std::shared_ptr<arrow::Table> MakePreviewTable() {
         schema,
         {FinishInt64Array({1, 2, 3, 4, 5}),
          FinishInt64Array({10, 20, 30, 40, 50}),
-         FinishStringArray({"a", "b", "c", "d", "e"})},
+         FinishNullableLabelArray()},
         5);
 }
 
@@ -146,6 +146,8 @@ int main() {
     auto page = cyxwiz::DataPreviewService::PreviewRegisteredTabular(
         registry, request);
     Check(page.ok, page.reason);
+    Check(page.status == cyxwiz::DataPreviewStatus::Ready,
+          "successful preview should have Ready status");
     Check(page.backend == "Arrow", "Arrow page should report backend");
     Check(page.total_rows == 5, "Arrow total rows should be preserved");
     Check(page.offset == 1, "Arrow offset should echo request");
@@ -157,11 +159,26 @@ int main() {
           "Arrow selected schema should be ordered");
     Check(page.rows[0][0] == "2" && page.rows[0][1] == "b",
           "Arrow preview should start at offset");
+    Check(page.rows[1][1] == "<null>" &&
+              page.schema[1].sampled_values == 2 &&
+              page.schema[1].sampled_nulls == 1,
+          "preview schema should report page-local null counts");
+
+    cyxwiz::DataPreviewRequest cancelled_request;
+    cancelled_request.dataset_name = "preview_arrow";
+    cancelled_request.row_limit = 2;
+    cancelled_request.cancel_requested = []() { return true; };
+    const auto cancelled = cyxwiz::DataPreviewService::PreviewRegisteredTabular(
+        registry, cancelled_request);
+    Check(!cancelled.ok &&
+              cancelled.status == cyxwiz::DataPreviewStatus::Cancelled,
+          "cooperatively cancelled preview should return typed Cancelled status");
 
     request.selected_columns = {"missing"};
     auto missing = cyxwiz::DataPreviewService::PreviewRegisteredTabular(
         registry, request);
     Check(!missing.ok &&
+              missing.status == cyxwiz::DataPreviewStatus::InvalidRequest &&
               missing.reason.find("missing") != std::string::npos,
           "missing preview column should produce typed failure");
 
@@ -200,6 +217,7 @@ int main() {
     auto unknown = cyxwiz::DataPreviewService::PreviewRegisteredTabular(
         registry, unknown_request);
     Check(!unknown.ok &&
+              unknown.status == cyxwiz::DataPreviewStatus::Unsupported &&
               unknown.reason.find("registered tabular") != std::string::npos,
           "unknown dataset should produce unsupported reason");
 

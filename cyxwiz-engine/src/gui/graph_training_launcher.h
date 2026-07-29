@@ -45,6 +45,10 @@ using GraphTrainingDispatch = std::function<bool(
     std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback)>;
 
+// Shared cache policy for graph preprocessing used by Train and checkpoint
+// evaluation preparation.
+cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig();
+
 GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     const std::vector<MLNode>& nodes,
     const std::vector<NodeLink>& links,

@@ -1,5 +1,5 @@
 #include "arrow_dataset.h"
-#include <arrow/csv/reader.h>
+#include <arrow/csv/api.h>
 #include <arrow/io/file.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
@@ -298,26 +298,15 @@ bool ArrowDataset::ExportCSV(const std::string& path) const {
     }
     std::shared_ptr<arrow::io::FileOutputStream> output = maybe_output.ValueOrDie();
 
-    // Write CSV (simplified - for production use arrow::csv::WriteCSV with options)
-    // Note: arrow::csv::WriteCSV is available in newer Arrow versions
-    // For now, we'll use a simple implementation
-
-    // Write header
-    std::string header;
-    for (int i = 0; i < table_->num_columns(); ++i) {
-        if (i > 0) header += ",";
-        header += table_->schema()->field(i)->name();
-    }
-    header += "\n";
-    auto status = output->Write(header);
+    auto write_options = arrow::csv::WriteOptions::Defaults();
+    write_options.delimiter = ',';
+    write_options.include_header = true;
+    auto status = arrow::csv::WriteCSV(*table_, write_options, output.get());
     if (!status.ok()) {
-        spdlog::error("Failed to write CSV header: {}", status.ToString());
+        spdlog::error("Failed to write CSV data: {}", status.ToString());
+        (void)output->Close();
         return false;
     }
-
-    // For a full implementation, we'd convert the table to CSV format
-    // This is simplified - in production, use arrow::csv::WriteCSV
-    spdlog::warn("CSV export is simplified - consider using arrow::csv::WriteCSV for production");
 
     status = output->Close();
     if (!status.ok()) {
@@ -325,7 +314,8 @@ bool ArrowDataset::ExportCSV(const std::string& path) const {
         return false;
     }
 
-    spdlog::info("CSV exported successfully");
+    spdlog::info("CSV exported successfully: {} rows, {} columns",
+                 table_->num_rows(), table_->num_columns());
     return true;
 }
 

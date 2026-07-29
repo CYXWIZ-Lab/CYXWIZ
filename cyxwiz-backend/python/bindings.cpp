@@ -842,6 +842,8 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("backward", &cyxwiz::TransformerDecoderLayer::Backward,
              py::arg("grad_output"),
              "Backward pass")
+        .def("get_last_memory_gradient", &cyxwiz::TransformerDecoderLayer::GetLastMemoryGradient,
+             "Get gradient with respect to encoder memory after backward")
         .def("get_parameters", &cyxwiz::TransformerDecoderLayer::GetParameters,
              "Get all layer parameters")
         .def("set_parameters", &cyxwiz::TransformerDecoderLayer::SetParameters,

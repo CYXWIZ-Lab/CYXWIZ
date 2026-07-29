@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -8,10 +9,20 @@ namespace cyxwiz {
 
 class DataRegistry;
 
+enum class DataPreviewStatus {
+    Ready,
+    InvalidRequest,
+    Unsupported,
+    Cancelled,
+    Failed,
+};
+
 struct DataPreviewColumn {
     std::string name;
     std::string type;
     bool nullable = false;
+    int64_t sampled_values = 0;
+    int64_t sampled_nulls = 0;
 };
 
 struct DataPreviewRequest {
@@ -19,10 +30,12 @@ struct DataPreviewRequest {
     int64_t offset = 0;
     int64_t row_limit = 20;
     std::vector<std::string> selected_columns;
+    std::function<bool()> cancel_requested;
 };
 
 struct DataPreviewPage {
     bool ok = false;
+    DataPreviewStatus status = DataPreviewStatus::Failed;
     std::string reason;
     std::string backend;
     std::string dataset_name;

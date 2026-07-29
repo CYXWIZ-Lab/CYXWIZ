@@ -245,16 +245,11 @@ int main() {
           "the selected DataInput must resolve as the Train dataset role");
     Check(config.dataset_roles.train.source_node_id == 1,
           "the Train dataset role must retain its source node id");
-    Check(!config.dataset_roles.train.externally_supplied,
-          "the current primary DataInput is not an external role override");
-    Check(config.dataset_roles.dev.dataset_name == "deferred_guard_dev" &&
-              config.dataset_roles.dev.source_node_id == 6 &&
-              config.dataset_roles.dev.externally_supplied,
-          "the compiler must resolve the supplied Dev dataset role");
-    Check(config.dataset_roles.test.dataset_name == "deferred_guard_test" &&
-              config.dataset_roles.test.source_node_id == 7 &&
-              config.dataset_roles.test.externally_supplied,
-          "the compiler must resolve the supplied Test dataset role");
+    Check(config.dataset_roles.train.externally_supplied,
+          "the connected physical Train source must retain external origin");
+    Check(!config.dataset_roles.dev.IsSupplied() &&
+              !config.dataset_roles.test.IsSupplied(),
+          "disconnected legacy role hints must not affect resolved partitions");
 
     Check(!config.is_valid, "training path with template TensorBatchMatMul must be invalid");
     Check(HasIssueText(config, "template/deferred"),
@@ -1656,8 +1651,95 @@ int main() {
                         "No label column selected"),
           "an auto-resolved schema label should not emit the missing-label warning");
 
+    auto generated_target_table = arrow::Table::Make(
+        arrow::schema({arrow::field("MT_320", arrow::float32())}),
+        {sensor_a});
+    cyxwiz::DataRegistry::Instance().RegisterArrowTable(
+        generated_target_table, "compiler_generated_target");
+
+    auto forecast_data = Node(
+        30,
+        gui::NodeType::DataInput,
+        "Forecast Source",
+        {},
+        {Pin(3001, gui::PinType::Dataset, "Dataset", false)});
+    forecast_data.parameters["dataset_name"] = "compiler_generated_target";
+    forecast_data.parameters["file_category"] = "timeseries";
+    forecast_data.parameters["label_column"] = "";
+
+    auto forecast_window = Node(
+        31,
+        gui::NodeType::TimeSeriesWindow,
+        "Forecast Window",
+        {Pin(3101, gui::PinType::Dataset, "Data", true)},
+        {Pin(3102, gui::PinType::Dataset, "Windowed", false)});
+    forecast_window.parameters["value_col"] = "MT_320";
+    forecast_window.parameters["input_width"] = "2";
+    forecast_window.parameters["label_width"] = "2";
+
+    auto forecast_loader = Node(
+        32,
+        gui::NodeType::DataLoader,
+        "Forecast Loader",
+        {Pin(3201, gui::PinType::Dataset, "Dataset", true)},
+        {Pin(3202, gui::PinType::Tensor, "Features", false),
+         Pin(3203, gui::PinType::Labels, "Labels", false)});
+
+    auto forecast_dense = Node(
+        33,
+        gui::NodeType::Dense,
+        "Forecast Head",
+        {Pin(3301, gui::PinType::Tensor, "Input", true)},
+        {Pin(3302, gui::PinType::Tensor, "Output", false)});
+    forecast_dense.parameters["units"] = "2";
+
+    auto forecast_loss = Node(
+        34,
+        gui::NodeType::MSELoss,
+        "Forecast Loss",
+        {Pin(3401, gui::PinType::Tensor, "Predictions", true),
+         Pin(3402, gui::PinType::Labels, "Targets", true)},
+        {Pin(3403, gui::PinType::Loss, "Loss", false)});
+
+    auto forecast_optimizer = Node(
+        35,
+        gui::NodeType::Adam,
+        "Forecast Adam",
+        {Pin(3501, gui::PinType::Loss, "Loss", true)},
+        {});
+
+    nodes = {forecast_data, forecast_window, forecast_loader, forecast_dense,
+             forecast_loss, forecast_optimizer};
+    links = {
+        Link(300, 30, 3001, 31, 3101),
+        Link(301, 31, 3102, 32, 3201),
+        Link(302, 32, 3202, 33, 3301),
+        Link(303, 33, 3302, 34, 3401),
+        Link(304, 32, 3203, 34, 3402),
+        Link(305, 34, 3403, 35, 3501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.target.required_by_objective,
+          "MSE objective should declare that it requires targets");
+    Check(config.target.origin == cyxwiz::TargetOrigin::GraphGenerated,
+          "TimeSeriesWindow should resolve graph-generated target provenance");
+    Check(config.target.producer_node_id == 31 &&
+              config.target.primary_column == "y" &&
+              config.target.width == 2,
+          "generated target contract should retain producer, column, and width");
+    Check(!HasIssueCode(config,
+                        cyxwiz::errors::Data::RequiredLabelColumnMissing),
+          "generated forecast targets should suppress raw-label errors");
+
     schema_data.parameters["label_column"] = "missing_label";
     nodes = {schema_data, binary_dense, binary_loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 14, 1401),
+        Link(3, 1, 102, 14, 1402),
+        Link(4, 14, 1403, 5, 501),
+    };
     config = compiler.Compile(nodes, links, true);
     Check(!config.is_valid,
           "an explicit label absent from the registered schema should block training");
@@ -1734,7 +1816,7 @@ int main() {
         {},
         {Pin(6001, gui::PinType::Dataset, "Dataset", false)});
     role_train.parameters["dataset_name"] = "role_train_dataset";
-    role_train.parameters["dataset_role"] = "train";
+    role_train.parameters["dataset_role"] = "test";
     role_train.parameters["label_column"] = "label";
     role_train.parameters["shape"] = "[1]";
 
@@ -1745,7 +1827,7 @@ int main() {
         {},
         {Pin(6101, gui::PinType::Dataset, "Dataset", false)});
     role_test.parameters["dataset_name"] = "role_test_dataset";
-    role_test.parameters["dataset_role"] = "test";
+    role_test.parameters["dataset_role"] = "train";
     role_test.parameters["label_column"] = "label";
     role_test.parameters["shape"] = "[1]";
 
@@ -1791,11 +1873,74 @@ int main() {
     Check(config.dataset_roles.train.dataset_name == "role_train_dataset" &&
               config.dataset_roles.test.dataset_name == "role_test_dataset" &&
               config.dataset_roles.test.externally_supplied,
-          "compiler must preserve the connected external Test role");
+          "named Data Split pins must override stale Data Input role hints");
     Check(std::fabs(config.train_ratio - 0.9f) < 0.0001f &&
               std::fabs(config.val_ratio - 0.1f) < 0.0001f &&
               std::fabs(config.test_ratio) < 0.0001f,
           "external Test must reclaim its derived split share for Train while preserving Validation");
+    Check(config.dataset_roles.policy.seed == 42 &&
+              config.dataset_roles.policy.stratified == false &&
+              config.dataset_roles.policy.train_ratio == config.train_ratio &&
+              config.dataset_roles.manifest.test_origin ==
+                  cyxwiz::PartitionOrigin::External &&
+              config.dataset_roles.manifest.dev_origin ==
+                  cyxwiz::PartitionOrigin::Derived,
+          "typed partition policy and manifest origins must reflect topology");
+
+    auto role_dev = Node(
+        64,
+        gui::NodeType::DataInput,
+        "Role Validation Data",
+        {},
+        {Pin(6401, gui::PinType::Dataset, "Dataset", false)});
+    role_dev.parameters["dataset_name"] = "role_dev_dataset";
+    role_dev.parameters["dataset_role"] = "train";
+    role_dev.parameters["label_column"] = "label";
+    role_dev.parameters["shape"] = "[1]";
+
+    nodes = {role_train, role_dev, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    links = {
+        Link(1, 60, 6001, 62, 6201),
+        Link(2, 64, 6401, 62, 6202),
+        Link(3, 62, 6204, 63, 6301),
+        Link(4, 63, 6302, 2, 201),
+        Link(5, 2, 202, 14, 1401),
+        Link(6, 63, 6303, 14, 1402),
+        Link(7, 14, 1403, 5, 501),
+    };
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid && config.dataset_roles.dev.IsSupplied() &&
+              !config.dataset_roles.test.IsSupplied() &&
+              std::fabs(config.train_ratio - 0.9f) < 0.0001f &&
+              std::fabs(config.val_ratio) < 0.0001f &&
+              std::fabs(config.test_ratio - 0.1f) < 0.0001f,
+          "Train plus external Dev must preserve Dev and derive only Test from Train");
+
+    nodes = {role_train, role_dev, role_test, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    links.insert(links.begin() + 2, Link(8, 61, 6101, 62, 6203));
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid && config.dataset_roles.dev.IsSupplied() &&
+              config.dataset_roles.test.IsSupplied() &&
+              std::fabs(config.train_ratio - 1.0f) < 0.0001f &&
+              std::fabs(config.val_ratio) < 0.0001f &&
+              std::fabs(config.test_ratio) < 0.0001f &&
+              config.dataset_roles.policy.method ==
+                  cyxwiz::PartitionSplitMethod::None,
+          "external Train, Dev, and Test must be preserved without internal splitting");
+
+    nodes = {role_train, role_test, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    links = {
+        Link(1, 60, 6001, 62, 6201),
+        Link(2, 61, 6101, 62, 6203),
+        Link(3, 62, 6204, 63, 6301),
+        Link(4, 63, 6302, 2, 201),
+        Link(5, 2, 202, 14, 1401),
+        Link(6, 63, 6303, 14, 1402),
+        Link(7, 14, 1403, 5, 501),
+    };
 
     links[1] = Link(2, 61, 6101, 62, 6201);
     config = compiler.Compile(nodes, links, true);
@@ -1918,8 +2063,8 @@ int main() {
           "compiler should preserve DataSplit.stratified=true in training config");
     Check(HasIssueText(config,
                        cyxwiz::IssueLevel::Info,
-                       "DataSplit Train/Val/Test tensor pins are legacy compatibility pins"),
-          "compiler should report the DataSplit legacy-pin compatibility note");
+                       "resolves its named Dataset inputs"),
+          "compiler should describe the modern Data Split partition contract");
     Check(!HasIssueText(config, "DataSplit.stratified=true is not implemented"),
           "compiler should not warn that implemented DataSplit stratification is ignored");
     Check(config.balance_classes,

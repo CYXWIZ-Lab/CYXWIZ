@@ -553,6 +553,17 @@ bool TestExecutor::Initialize(int /*batch_size*/) {
         return false;
     }
 
+    const bool regression_mode = UsesContinuousTargetMetrics(config_);
+    UpdateMetrics([regression_mode](TestingMetrics& m) {
+        m.regression_mode = regression_mode;
+    });
+
+    // Classification-only detail structures. Continuous targets use
+    // MAE/RMSE across every output value instead of class decisions.
+    if (regression_mode) {
+        return true;
+    }
+
     // Initialize confusion matrix
     int num_classes = UsesScalarBinaryTargets(config_.loss_type)
         ? 2
@@ -594,19 +605,33 @@ void TestExecutor::Test(
 
     // Initialize
     if (!Initialize(batch_size)) {
-        spdlog::error("TestExecutor: Failed to initialize");
+        const std::string detail =
+            "TestExecutor could not initialize the model or "
+            "configured loss";
+        UpdateMetrics([&detail](TestingMetrics& m) {
+            m.is_testing = false;
+            m.is_complete = false;
+            m.status_message = "Testing failed: " + detail;
+        });
+        spdlog::error("TestExecutor: {}", detail);
         is_testing_.store(false);
-        return;
+        throw std::runtime_error(detail);
     }
 
     // Setup metrics
-    UpdateMetrics([](TestingMetrics& m) {
+    regression_metrics_.Reset();
+    const bool regression_mode = UsesContinuousTargetMetrics(config_);
+    UpdateMetrics([regression_mode](TestingMetrics& m) {
         m.current_batch = 0;
         m.total_batches = 0;
         m.total_samples = 0;
         m.correct_predictions = 0;
         m.test_loss = 0.0f;
         m.test_accuracy = 0.0f;
+        m.regression_mode = regression_mode;
+        m.test_mae = 0.0f;
+        m.test_rmse = 0.0f;
+        m.total_target_values = 0;
         m.is_testing = true;
         m.is_complete = false;
         m.status_message = "Starting testing...";
@@ -781,8 +806,10 @@ void TestExecutor::Test(
     float total_time = std::chrono::duration<float>(end_time - start_time).count();
 
     // Compute final metrics
-    ComputePerClassMetrics();
-    ComputeAggregateMetrics();
+    if (!regression_mode) {
+        ComputePerClassMetrics();
+        ComputeAggregateMetrics();
+    }
 
     TestingMetrics final_metrics = GetMetrics();
     float samples_per_sec = final_metrics.total_samples > 0 ?
@@ -802,11 +829,17 @@ void TestExecutor::Test(
     // Log results
     final_metrics = GetMetrics();
     spdlog::info("TestExecutor: Testing complete");
-    spdlog::info("  Accuracy: {:.2f}%", final_metrics.test_accuracy * 100);
     spdlog::info("  Loss: {:.4f}", final_metrics.test_loss);
+    if (final_metrics.regression_mode) {
+        spdlog::info("  MAE: {:.4f}", final_metrics.test_mae);
+        spdlog::info("  RMSE: {:.4f}", final_metrics.test_rmse);
+    } else {
+        spdlog::info("  Accuracy: {:.2f}%",
+                     final_metrics.test_accuracy * 100);
+        spdlog::info("  Macro F1: {:.4f}", final_metrics.macro_f1);
+    }
     spdlog::info("  Samples: {}", final_metrics.total_samples);
     spdlog::info("  Time: {:.2f}s ({:.0f} samples/sec)", total_time, samples_per_sec);
-    spdlog::info("  Macro F1: {:.4f}", final_metrics.macro_f1);
 
     // Complete callback
     if (complete_cb) {
@@ -822,6 +855,18 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
     const float* target_data = batch.labels.Data<float>();
 
     const size_t output_width = config_.output_size;
+    if (UsesContinuousTargetMetrics(config_)) {
+        const size_t value_count = batch.size * output_width;
+        regression_metrics_.Add(pred_data, target_data, value_count);
+        UpdateMetrics([this, &batch, value_count](TestingMetrics& m) {
+            m.total_samples += static_cast<int>(batch.size);
+            m.total_target_values += value_count;
+            m.test_mae = regression_metrics_.Mae();
+            m.test_rmse = regression_metrics_.Rmse();
+        });
+        return;
+    }
+
     const auto decision_mode =
         ClassificationDecisionModeForLoss(config_.loss_type);
 

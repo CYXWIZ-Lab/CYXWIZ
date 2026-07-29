@@ -599,6 +599,21 @@ Tensor TransformerDecoderLayer::Backward(const Tensor& grad_output) {
     return AddSameShape(grad_before_self_residual, grad_self);
 }
 
+Tensor TransformerDecoderLayer::GetLastMemoryGradient() const {
+    if (!cached_has_cross_attention_) {
+        throw std::runtime_error(
+            "TransformerDecoderLayer memory gradient requires a forward pass with encoder memory");
+    }
+
+    const Tensor grad_key = cross_attn_->GetLastKeyGradient();
+    const Tensor grad_value = cross_attn_->GetLastValueGradient();
+    if (grad_key.Shape().empty() || grad_value.Shape().empty()) {
+        throw std::runtime_error(
+            "TransformerDecoderLayer memory gradient requires backward after forward_with_memory");
+    }
+
+    return AddSameShape(grad_key, grad_value);
+}
 std::map<std::string, Tensor> TransformerDecoderLayer::GetParameters() {
     std::map<std::string, Tensor> params;
 

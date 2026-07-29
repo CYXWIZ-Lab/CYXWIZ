@@ -38,6 +38,8 @@ namespace gui { struct MLNode; }
 namespace cyxwiz {
     struct TrainingConfiguration;
     class TrainingPlotPanel;
+    class ArrowDataset;
+    class ParquetBackedDataset;
     enum class PreprocessingDomain;  // defined in core/graph_compiler.h
 }
 
@@ -73,6 +75,10 @@ struct AsyncLoadState {
     size_t bytes = 0;
     std::string message;             // user-facing status line (success or error)
     std::string dataset_name;        // registry key the worker registered under
+    std::string previous_dataset_name; // prior valid key retained until success
+    std::shared_ptr<cyxwiz::ArrowDataset> previous_arrow_dataset;
+    std::shared_ptr<cyxwiz::ParquetBackedDataset> previous_parquet_dataset;
+    std::string previous_source_path;
     std::string source_path;         // file_path or folder_path that was loaded
     int num_classes = 0;             // set by image/audio/text loaders
     int vocab_size = 0;              // set by text loader
@@ -99,6 +105,10 @@ struct ApplyContext {
     std::string detected_file_type;
     bool has_header = true;
     char delimiter = ',';
+    char decimal_point = '.';
+    // Data Input already runs on an AsyncTaskManager worker. Keep nested
+    // Arrow CSV parsing off for interactive loads so rendering retains CPU.
+    bool use_threads = false;
     std::string missing_value_tokens = "na";
     int skip_rows = 0;
     int64_t max_rows = 0;                 // 0 means "all rows"

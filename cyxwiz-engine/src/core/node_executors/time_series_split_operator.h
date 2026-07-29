@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include <cstdint>
 #include <utility>
 
 namespace cyxwiz {
@@ -14,6 +15,13 @@ namespace cyxwiz {
  *   0 = train    (first `train_ratio` fraction of rows)
  *   1 = val      (next `val_ratio` fraction of rows)
  *   2 = test     (remaining rows)
+ *  -1 = purged   (target crosses a chronological boundary)
+ *
+ * New nodes use `boundary_policy=targets_within_partition`. Hidden target
+ * bounds emitted by TimeSeriesWindow are compared with source-row boundaries,
+ * and a window is assigned only when its complete target lies in one
+ * partition. Legacy saved graphs without that policy retain window-row ratio
+ * assignment through `boundary_policy=window_rows`.
  *
  * Row order is preserved — assignment is purely based on row index, NOT a
  * random shuffle. This is the hard guarantee against temporal leakage:
@@ -60,6 +68,9 @@ private:
     float train_ratio_ = 0.8f;
     float val_ratio_   = 0.1f;
     float test_ratio_  = 0.1f;
+    std::string boundary_policy_ = "window_rows";
+    int64_t train_end_source_row_ = -1;
+    int64_t val_end_source_row_ = -1;
     PipelineOperatorProgressCallback progress_callback_;
 };
 

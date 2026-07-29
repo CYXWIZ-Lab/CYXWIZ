@@ -15,13 +15,20 @@ namespace cyxwiz {
 namespace {
 
 constexpr int64_t kMaxPreviewRows = 200;
+constexpr const char* kPreviewCancelled = "preview request cancelled";
 
 DataPreviewPage FailPreview(std::string dataset_name,
-                             std::string reason) {
+                             std::string reason,
+                             DataPreviewStatus status = DataPreviewStatus::Failed) {
     DataPreviewPage page;
     page.dataset_name = std::move(dataset_name);
     page.reason = std::move(reason);
+    page.status = status;
     return page;
+}
+
+bool IsCancelled(const DataPreviewRequest& request) {
+    return request.cancel_requested && request.cancel_requested();
 }
 
 std::string ScalarToPreviewString(const std::shared_ptr<arrow::Scalar>& scalar) {
@@ -85,6 +92,7 @@ void FillSchema(const std::shared_ptr<arrow::Schema>& schema,
 bool AppendRowsFromTable(const std::shared_ptr<arrow::Table>& table,
                          int64_t row_limit,
                          const std::vector<int>& column_indices,
+                         const DataPreviewRequest& request,
                          DataPreviewPage& page,
                          std::string& error) {
     if (!table) {
@@ -97,9 +105,16 @@ bool AppendRowsFromTable(const std::shared_ptr<arrow::Table>& table,
     page.rows.reserve(page.rows.size() + static_cast<size_t>(capped_rows));
 
     for (int64_t row = 0; row < capped_rows; ++row) {
+        if (IsCancelled(request)) {
+            error = kPreviewCancelled;
+            return false;
+        }
         std::vector<std::string> out_row;
         out_row.reserve(column_indices.size());
-        for (int column_index : column_indices) {
+        for (size_t output_column = 0;
+             output_column < column_indices.size();
+             ++output_column) {
+            const int column_index = column_indices[output_column];
             if (column_index < 0 || column_index >= table->num_columns()) {
                 error = "preview column index is out of range";
                 return false;
@@ -123,12 +138,23 @@ bool AppendRowsFromTable(const std::shared_ptr<arrow::Table>& table,
                     error = scalar.status().ToString();
                     return false;
                 }
-                out_row.push_back(ScalarToPreviewString(scalar.ValueOrDie()));
+                const auto value = scalar.ValueOrDie();
+                if (output_column < page.schema.size()) {
+                    auto& preview_column = page.schema[output_column];
+                    ++preview_column.sampled_values;
+                    if (!value || !value->is_valid) ++preview_column.sampled_nulls;
+                }
+                out_row.push_back(ScalarToPreviewString(value));
                 found_chunk = true;
                 break;
             }
             if (!found_chunk) {
                 out_row.emplace_back("<null>");
+                if (output_column < page.schema.size()) {
+                    auto& preview_column = page.schema[output_column];
+                    ++preview_column.sampled_values;
+                    ++preview_column.sampled_nulls;
+                }
             }
         }
         page.rows.push_back(std::move(out_row));
@@ -139,6 +165,10 @@ bool AppendRowsFromTable(const std::shared_ptr<arrow::Table>& table,
 
 DataPreviewPage PreviewArrowDataset(const std::shared_ptr<ArrowDataset>& dataset,
                                     const DataPreviewRequest& request) {
+    if (IsCancelled(request)) {
+        return FailPreview(request.dataset_name, kPreviewCancelled,
+                           DataPreviewStatus::Cancelled);
+    }
     auto table = dataset ? dataset->GetArrowTable() : nullptr;
     if (!table) {
         return FailPreview(request.dataset_name, "registered Arrow dataset has no table");
@@ -148,18 +178,21 @@ DataPreviewPage PreviewArrowDataset(const std::shared_ptr<ArrowDataset>& dataset
     const int64_t limit = std::min<int64_t>(
         std::max<int64_t>(0, request.row_limit), kMaxPreviewRows);
     if (offset > table->num_rows()) {
-        return FailPreview(request.dataset_name, "preview offset is beyond row count");
+        return FailPreview(request.dataset_name, "preview offset is beyond row count",
+                           DataPreviewStatus::InvalidRequest);
     }
 
     std::string error;
     auto column_indices = ResolveColumnIndices(
         table->schema(), request.selected_columns, error);
     if (!error.empty()) {
-        return FailPreview(request.dataset_name, error);
+        return FailPreview(request.dataset_name, error,
+                           DataPreviewStatus::InvalidRequest);
     }
 
     DataPreviewPage page;
     page.ok = true;
+    page.status = DataPreviewStatus::Ready;
     page.backend = "Arrow";
     page.dataset_name = request.dataset_name;
     page.total_rows = table->num_rows();
@@ -168,8 +201,11 @@ DataPreviewPage PreviewArrowDataset(const std::shared_ptr<ArrowDataset>& dataset
     FillSchema(table->schema(), column_indices, page);
 
     const auto sliced = table->Slice(offset, limit);
-    if (!AppendRowsFromTable(sliced, limit, column_indices, page, error)) {
-        return FailPreview(request.dataset_name, error);
+    if (!AppendRowsFromTable(sliced, limit, column_indices, request, page, error)) {
+        return FailPreview(request.dataset_name, error,
+                           error == kPreviewCancelled
+                               ? DataPreviewStatus::Cancelled
+                               : DataPreviewStatus::Failed);
     }
 
     page.has_next = offset + page.rows_returned < page.total_rows;
@@ -180,6 +216,10 @@ DataPreviewPage PreviewArrowDataset(const std::shared_ptr<ArrowDataset>& dataset
 DataPreviewPage PreviewParquetDataset(
     const std::shared_ptr<ParquetBackedDataset>& dataset,
     const DataPreviewRequest& request) {
+    if (IsCancelled(request)) {
+        return FailPreview(request.dataset_name, kPreviewCancelled,
+                           DataPreviewStatus::Cancelled);
+    }
     if (!dataset) {
         return FailPreview(request.dataset_name, "registered Parquet dataset is unavailable");
     }
@@ -188,18 +228,21 @@ DataPreviewPage PreviewParquetDataset(
     const int64_t limit = std::min<int64_t>(
         std::max<int64_t>(0, request.row_limit), kMaxPreviewRows);
     if (offset > dataset->GetNumRows()) {
-        return FailPreview(request.dataset_name, "preview offset is beyond row count");
+        return FailPreview(request.dataset_name, "preview offset is beyond row count",
+                           DataPreviewStatus::InvalidRequest);
     }
 
     std::string error;
     auto column_indices = ResolveColumnIndices(
         dataset->GetSchema(), request.selected_columns, error);
     if (!error.empty()) {
-        return FailPreview(request.dataset_name, error);
+        return FailPreview(request.dataset_name, error,
+                           DataPreviewStatus::InvalidRequest);
     }
 
     DataPreviewPage page;
     page.ok = true;
+    page.status = DataPreviewStatus::Ready;
     page.backend = "Parquet";
     page.dataset_name = request.dataset_name;
     page.total_rows = dataset->GetNumRows();
@@ -210,6 +253,10 @@ DataPreviewPage PreviewParquetDataset(
     int64_t rows_to_skip = offset;
     int64_t rows_needed = limit;
     for (int group = 0; group < dataset->GetNumRowGroups() && rows_needed > 0; ++group) {
+        if (IsCancelled(request)) {
+            return FailPreview(request.dataset_name, kPreviewCancelled,
+                               DataPreviewStatus::Cancelled);
+        }
         const int64_t group_rows = dataset->GetRowGroupSize(group);
         if (rows_to_skip >= group_rows) {
             rows_to_skip -= group_rows;
@@ -224,8 +271,11 @@ DataPreviewPage PreviewParquetDataset(
         const int64_t take = std::min<int64_t>(
             rows_needed, group_table->num_rows() - rows_to_skip);
         auto sliced = group_table->Slice(rows_to_skip, take);
-        if (!AppendRowsFromTable(sliced, take, column_indices, page, error)) {
-            return FailPreview(request.dataset_name, error);
+        if (!AppendRowsFromTable(sliced, take, column_indices, request, page, error)) {
+            return FailPreview(request.dataset_name, error,
+                               error == kPreviewCancelled
+                                   ? DataPreviewStatus::Cancelled
+                                   : DataPreviewStatus::Failed);
         }
         rows_needed -= take;
         rows_to_skip = 0;
@@ -243,7 +293,8 @@ DataPreviewPage DataPreviewService::PreviewRegisteredTabular(
     DataRegistry& registry,
     const DataPreviewRequest& request) {
     if (request.dataset_name.empty()) {
-        return FailPreview({}, "dataset name is empty");
+        return FailPreview({}, "dataset name is empty",
+                           DataPreviewStatus::InvalidRequest);
     }
     if (auto arrow_dataset = registry.GetArrowDataset(request.dataset_name)) {
         return PreviewArrowDataset(arrow_dataset, request);
@@ -253,7 +304,8 @@ DataPreviewPage DataPreviewService::PreviewRegisteredTabular(
     }
     return FailPreview(
         request.dataset_name,
-        "dataset is not a registered tabular Arrow or Parquet source");
+        "dataset is not a registered tabular Arrow or Parquet source",
+        DataPreviewStatus::Unsupported);
 }
 
 } // namespace cyxwiz

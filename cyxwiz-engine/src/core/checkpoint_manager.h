@@ -23,8 +23,12 @@ struct CheckpointMetadata {
     // Metrics at checkpoint time
     float train_loss = 0.0f;
     float train_accuracy = 0.0f;
+    float train_mae = 0.0f;
+    float train_rmse = 0.0f;
     float val_loss = 0.0f;
     float val_accuracy = 0.0f;
+    float val_mae = 0.0f;
+    float val_rmse = 0.0f;
 
     // Model architecture info
     std::string model_name;
@@ -34,8 +38,12 @@ struct CheckpointMetadata {
     // History
     std::vector<float> loss_history;
     std::vector<float> accuracy_history;
+    std::vector<float> mae_history;
+    std::vector<float> rmse_history;
     std::vector<float> val_loss_history;
     std::vector<float> val_accuracy_history;
+    std::vector<float> val_mae_history;
+    std::vector<float> val_rmse_history;
 
     // Timestamp
     std::string timestamp;

@@ -120,6 +120,38 @@ bool ShouldRunValidationEpoch(const TrainingConfiguration& config,
            epoch % validation_freq == 0;
 }
 
+struct RegressionAccumulator {
+    double absolute_error_sum = 0.0;
+    double squared_error_sum = 0.0;
+    size_t element_count = 0;
+
+    void Add(const float* predictions,
+             const float* targets,
+             size_t count) {
+        if (!predictions || !targets) return;
+        for (size_t i = 0; i < count; ++i) {
+            const double error =
+                static_cast<double>(predictions[i]) - targets[i];
+            absolute_error_sum += std::abs(error);
+            squared_error_sum += error * error;
+        }
+        element_count += count;
+    }
+
+    float Mae() const {
+        return element_count > 0
+            ? static_cast<float>(absolute_error_sum / element_count)
+            : 0.0f;
+    }
+
+    float Rmse() const {
+        return element_count > 0
+            ? static_cast<float>(
+                  std::sqrt(squared_error_sum / element_count))
+            : 0.0f;
+    }
+};
+
 } // namespace
 
 // ============================================================================
@@ -501,6 +533,11 @@ void TrainingExecutor::Train(
         m.val_sample_count = num_val_samples;
         m.test_sample_count = num_test_samples;
     });
+    FinalizePartitionManifest(
+        config_.dataset_roles,
+        static_cast<int64_t>(num_train_samples),
+        static_cast<int64_t>(num_val_samples),
+        static_cast<int64_t>(num_test_samples));
 
     spdlog::info("TrainingExecutor: Starting training for {} epochs, batch_size={}, samples={}",
                  epochs, batch_size, num_train_samples);
@@ -563,6 +600,7 @@ void TrainingExecutor::Train(
     checkpoint_manager = std::make_unique<CheckpointManager>(checkpoint_root.string());
 
     // Training loop
+    const bool regression_metrics = UsesRegressionMetrics(config_);
     for (int epoch = 1; epoch <= epochs; ++epoch) {
         spdlog::debug("TrainingExecutor: Epoch {} starting", epoch);
         if (ShouldStop()) break;
@@ -676,10 +714,20 @@ void TrainingExecutor::Train(
             m.epoch_time_seconds = epoch_time;
             m.samples_per_second = samples_per_sec;
             m.loss_history.push_back(m.train_loss);
-            m.accuracy_history.push_back(m.train_accuracy);
+            if (regression_metrics) {
+                m.mae_history.push_back(m.train_mae);
+                m.rmse_history.push_back(m.train_rmse);
+            } else {
+                m.accuracy_history.push_back(m.train_accuracy);
+            }
             if (validation_ran_this_epoch) {
                 m.val_loss_history.push_back(m.val_loss);
-                m.val_accuracy_history.push_back(m.val_accuracy);
+                if (regression_metrics) {
+                    m.val_mae_history.push_back(m.val_mae);
+                    m.val_rmse_history.push_back(m.val_rmse);
+                } else {
+                    m.val_accuracy_history.push_back(m.val_accuracy);
+                }
             }
         });
 
@@ -691,7 +739,18 @@ void TrainingExecutor::Train(
                      epoch_time);
         }
 
-        if (validation_ran_this_epoch) {
+        if (validation_ran_this_epoch && regression_metrics) {
+            spdlog::info(
+                "Epoch {}/{}: loss={:.4f}, mae={:.4f}, rmse={:.4f}, "
+                "val_loss={:.4f}, val_mae={:.4f}, val_rmse={:.4f} "
+                "({:.1f}s, {:.0f} samples/sec)",
+                epoch, epochs, current.train_loss, current.train_mae,
+                current.train_rmse, current.val_loss, current.val_mae,
+                current.val_rmse, epoch_time, samples_per_sec);
+            TrainingTraceCollector::Instance().RecordValidationMetrics(
+                epoch, current.train_loss, 0.0f, current.val_loss, 0.0f,
+                epoch_time * 1000.0f);
+        } else if (validation_ran_this_epoch) {
             spdlog::info("Epoch {}/{}: loss={:.4f}, acc={:.2f}%, val_loss={:.4f}, val_acc={:.2f}% ({:.1f}s, {:.0f} samples/sec)",
                          epoch, epochs, current.train_loss, current.train_accuracy * 100,
                          current.val_loss, current.val_accuracy * 100, epoch_time, samples_per_sec);
@@ -702,6 +761,14 @@ void TrainingExecutor::Train(
                 current.val_loss,
                 current.val_accuracy,
                 epoch_time * 1000.0f);
+        } else if (regression_metrics) {
+            spdlog::info(
+                "Epoch {}/{}: loss={:.4f}, mae={:.4f}, rmse={:.4f}, "
+                "validation skipped (validation_freq={}) "
+                "({:.1f}s, {:.0f} samples/sec)",
+                epoch, epochs, current.train_loss, current.train_mae,
+                current.train_rmse, validation_freq, epoch_time,
+                samples_per_sec);
         } else {
             spdlog::info("Epoch {}/{}: loss={:.4f}, acc={:.2f}%, validation skipped (validation_freq={}) ({:.1f}s, {:.0f} samples/sec)",
                          epoch, epochs, current.train_loss, current.train_accuracy * 100,
@@ -828,26 +895,42 @@ void TrainingExecutor::Train(
                 final_metrics.current_batch = restored->global_step;
                 final_metrics.train_loss = restored->train_loss;
                 final_metrics.train_accuracy = restored->train_accuracy;
+                final_metrics.train_mae = restored->train_mae;
+                final_metrics.train_rmse = restored->train_rmse;
                 final_metrics.val_loss = restored->val_loss;
                 final_metrics.val_accuracy = restored->val_accuracy;
+                final_metrics.val_mae = restored->val_mae;
+                final_metrics.val_rmse = restored->val_rmse;
                 final_metrics.has_validation_metrics = true;
                 final_metrics.loss_history = restored->loss_history;
                 final_metrics.accuracy_history = restored->accuracy_history;
+                final_metrics.mae_history = restored->mae_history;
+                final_metrics.rmse_history = restored->rmse_history;
                 final_metrics.val_loss_history = restored->val_loss_history;
                 final_metrics.val_accuracy_history = restored->val_accuracy_history;
+                final_metrics.val_mae_history = restored->val_mae_history;
+                final_metrics.val_rmse_history = restored->val_rmse_history;
                 final_metrics.checkpoint_used = best_checkpoint;
                 UpdateMetrics([&](TrainingMetrics& m) {
                     m.current_epoch = restored->epoch;
                     m.current_batch = restored->global_step;
                     m.train_loss = restored->train_loss;
                     m.train_accuracy = restored->train_accuracy;
+                    m.train_mae = restored->train_mae;
+                    m.train_rmse = restored->train_rmse;
                     m.val_loss = restored->val_loss;
                     m.val_accuracy = restored->val_accuracy;
+                    m.val_mae = restored->val_mae;
+                    m.val_rmse = restored->val_rmse;
                     m.has_validation_metrics = true;
                     m.loss_history = restored->loss_history;
                     m.accuracy_history = restored->accuracy_history;
+                    m.mae_history = restored->mae_history;
+                    m.rmse_history = restored->rmse_history;
                     m.val_loss_history = restored->val_loss_history;
                     m.val_accuracy_history = restored->val_accuracy_history;
+                    m.val_mae_history = restored->val_mae_history;
+                    m.val_rmse_history = restored->val_rmse_history;
                     m.checkpoint_used = best_checkpoint;
                     m.terminal_status = terminal_status;
                     m.terminal_reason = terminal_reason;
@@ -871,18 +954,32 @@ void TrainingExecutor::Train(
         active_test_ibatcher->GetNumSamples() > 0) {
         model_->SetTraining(false);
         active_test_ibatcher->SetPhase(test_batcher_phase);
-        const auto [test_loss, test_acc] = EvaluateArrowBatcher(*active_test_ibatcher);
+        const auto test_evaluation = EvaluateArrowBatcher(*active_test_ibatcher);
         active_test_ibatcher->SetPhase(train_batcher_phase);
-        UpdateMetrics([test_loss, test_acc](TrainingMetrics& m) {
-            m.test_loss = test_loss;
-            m.test_accuracy = test_acc;
+        UpdateMetrics([test_evaluation](TrainingMetrics& m) {
+            m.test_loss = test_evaluation.loss;
+            m.test_accuracy = test_evaluation.accuracy;
+            m.test_mae = test_evaluation.mae;
+            m.test_rmse = test_evaluation.rmse;
             m.has_test_metrics = true;
         });
-        final_metrics.test_loss = test_loss;
-        final_metrics.test_accuracy = test_acc;
+        final_metrics.test_loss = test_evaluation.loss;
+        final_metrics.test_accuracy = test_evaluation.accuracy;
+        final_metrics.test_mae = test_evaluation.mae;
+        final_metrics.test_rmse = test_evaluation.rmse;
         final_metrics.has_test_metrics = true;
-        spdlog::info("TrainingExecutor: Held-out test metrics test_loss={:.4f}, test_acc={:.2f}% ({} samples)",
-                     test_loss, test_acc * 100.0f, active_test_ibatcher->GetNumSamples());
+        if (regression_metrics) {
+            spdlog::info(
+                "TrainingExecutor: Held-out test metrics test_loss={:.4f}, "
+                "test_mae={:.4f}, test_rmse={:.4f} ({} samples)",
+                test_evaluation.loss, test_evaluation.mae,
+                test_evaluation.rmse,
+                active_test_ibatcher->GetNumSamples());
+        } else {
+            spdlog::info("TrainingExecutor: Held-out test metrics test_loss={:.4f}, test_acc={:.2f}% ({} samples)",
+                         test_evaluation.loss, test_evaluation.accuracy * 100.0f,
+                         active_test_ibatcher->GetNumSamples());
+        }
     } else if (!stop_requested_.load() && active_test_ibatcher) {
         spdlog::warn("TrainingExecutor: configured test split produced 0 held-out samples; "
                      "test metrics were skipped");
@@ -952,6 +1049,8 @@ void TrainingExecutor::RunTrainingEpoch(
     BatchCallback batch_cb)
 {
     float epoch_loss = 0.0f;
+    const bool regression_metrics = UsesRegressionMetrics(config_);
+    RegressionAccumulator regression;
     int correct = 0;
     int total = 0;
     int batch_num = 0;
@@ -1049,15 +1148,19 @@ void TrainingExecutor::RunTrainingEpoch(
             std::isfinite(batch_loss) ? "" : "Training loss became NaN or Inf.");
         epoch_loss += batch_loss;
 
-        // Compute accuracy
+        // Compute objective-appropriate metrics.
         const float* pred_data = predictions.Data<float>();
         const float* target_data = batch.labels.Data<float>();
-
-        const auto accuracy_count = CountClassificationDecisions(
-            pred_data, target_data, batch.size, config_.output_size,
-            ClassificationDecisionModeForLoss(config_.loss_type));
-        correct += static_cast<int>(accuracy_count.correct);
-        total += static_cast<int>(accuracy_count.total);
+        if (regression_metrics) {
+            regression.Add(pred_data, target_data,
+                           batch.size * config_.output_size);
+        } else {
+            const auto accuracy_count = CountClassificationDecisions(
+                pred_data, target_data, batch.size, config_.output_size,
+                ClassificationDecisionModeForLoss(config_.loss_type));
+            correct += static_cast<int>(accuracy_count.correct);
+            total += static_cast<int>(accuracy_count.total);
+        }
 
         // Backward pass
         CrashRunRecorder::Instance().MarkStage(
@@ -1073,16 +1176,25 @@ void TrainingExecutor::RunTrainingEpoch(
 
         // Update metrics
         float current_loss = epoch_loss / batch_num;
-        float current_acc = static_cast<float>(correct) / total;
+        float current_acc = total > 0
+            ? static_cast<float>(correct) / total : 0.0f;
+        const float current_mae = regression.Mae();
+        const float current_rmse = regression.Rmse();
 
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
             batch_loss, current_acc, batcher.IsEpochComplete());
 
-        UpdateMetrics([batch_num, current_loss, current_acc](TrainingMetrics& m) {
+        UpdateMetrics([batch_num, current_loss, current_acc,
+                       current_mae, current_rmse,
+                       regression_metrics](TrainingMetrics& m) {
             m.current_batch = batch_num;
             m.train_loss = current_loss;
             m.train_accuracy = current_acc;
+            if (regression_metrics) {
+                m.train_mae = current_mae;
+                m.train_rmse = current_rmse;
+            }
         });
 
         // Periodic progress log - mirror of RunTrainingEpochArrow's
@@ -1096,11 +1208,19 @@ void TrainingExecutor::RunTrainingEpoch(
             const float rate = elapsed_ms > 0
                 ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
                 : 0.0f;
-            spdlog::info("Epoch {} [{}/{}] loss={:.4f} acc={:.2f}% "
-                         "({:.1f}s, {:.1f} batches/s)",
-                         epoch, batch_num, total_batches,
-                         current_loss, current_acc * 100.0f,
-                         elapsed_s, rate);
+            if (regression_metrics) {
+                spdlog::info(
+                    "Epoch {} [{}/{}] loss={:.4f} mae={:.4f} rmse={:.4f} "
+                    "({:.1f}s, {:.1f} batches/s)",
+                    epoch, batch_num, total_batches, current_loss,
+                    current_mae, current_rmse, elapsed_s, rate);
+            } else {
+                spdlog::info("Epoch {} [{}/{}] loss={:.4f} acc={:.2f}% "
+                             "({:.1f}s, {:.1f} batches/s)",
+                             epoch, batch_num, total_batches,
+                             current_loss, current_acc * 100.0f,
+                             elapsed_s, rate);
+            }
         }
 
         // Batch callback
@@ -1118,10 +1238,17 @@ void TrainingExecutor::RunTrainingEpoch(
     // Final epoch metrics
     float final_loss = batch_num > 0 ? epoch_loss / batch_num : 0.0f;
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
+    const float final_mae = regression.Mae();
+    const float final_rmse = regression.Rmse();
 
-    UpdateMetrics([final_loss, final_acc](TrainingMetrics& m) {
+    UpdateMetrics([final_loss, final_acc, final_mae, final_rmse,
+                   regression_metrics](TrainingMetrics& m) {
         m.train_loss = final_loss;
         m.train_accuracy = final_acc;
+        if (regression_metrics) {
+            m.train_mae = final_mae;
+            m.train_rmse = final_rmse;
+        }
     });
     CrashRunRecorder::Instance().MarkStage(
         TrainingTraceStage::EpochComplete, epoch, batch_num,
@@ -1133,6 +1260,8 @@ void TrainingExecutor::RunTrainingEpoch(
 
 void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
     float val_loss = 0.0f;
+    const bool regression_metrics = UsesRegressionMetrics(config_);
+    RegressionAccumulator regression;
     int correct = 0;
     int total = 0;
     int batch_num = 0;
@@ -1154,23 +1283,34 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
         float batch_loss = ComputeLoss(predictions, batch.labels);
         val_loss += batch_loss;
 
-        // Compute accuracy
+        // Compute objective-appropriate metrics.
         const float* pred_data = predictions.Data<float>();
         const float* target_data = batch.labels.Data<float>();
-
-        const auto accuracy_count = CountClassificationDecisions(
-            pred_data, target_data, batch.size, config_.output_size,
-            ClassificationDecisionModeForLoss(config_.loss_type));
-        correct += static_cast<int>(accuracy_count.correct);
-        total += static_cast<int>(accuracy_count.total);
+        if (regression_metrics) {
+            regression.Add(pred_data, target_data,
+                           batch.size * config_.output_size);
+        } else {
+            const auto accuracy_count = CountClassificationDecisions(
+                pred_data, target_data, batch.size, config_.output_size,
+                ClassificationDecisionModeForLoss(config_.loss_type));
+            correct += static_cast<int>(accuracy_count.correct);
+            total += static_cast<int>(accuracy_count.total);
+        }
     }
 
     float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
+    const float final_mae = regression.Mae();
+    const float final_rmse = regression.Rmse();
 
-    UpdateMetrics([final_loss, final_acc](TrainingMetrics& m) {
+    UpdateMetrics([final_loss, final_acc, final_mae, final_rmse,
+                   regression_metrics](TrainingMetrics& m) {
         m.val_loss = final_loss;
         m.val_accuracy = final_acc;
+        if (regression_metrics) {
+            m.val_mae = final_mae;
+            m.val_rmse = final_rmse;
+        }
         m.has_validation_metrics = true;
     });
 }
@@ -1702,6 +1842,8 @@ void TrainingExecutor::RunTrainingEpochArrow(
     spdlog::debug("RunTrainingEpochArrow: Entered, epoch={}", epoch);
 
     float epoch_loss = 0.0f;
+    const bool regression_metrics = UsesRegressionMetrics(config_);
+    RegressionAccumulator regression;
     int correct = 0;
     int total = 0;
     int batch_num = 0;
@@ -1823,11 +1965,16 @@ void TrainingExecutor::RunTrainingEpochArrow(
         const float* pred_data = predictions.Data<float>();
         const float* target_data = batch.labels.Data<float>();
 
-        const auto accuracy_count = CountClassificationDecisions(
-            pred_data, target_data, batch.size, config_.output_size,
-            ClassificationDecisionModeForLoss(config_.loss_type));
-        correct += static_cast<int>(accuracy_count.correct);
-        total += static_cast<int>(accuracy_count.total);
+        if (regression_metrics) {
+            regression.Add(
+                pred_data, target_data, batch.size * config_.output_size);
+        } else {
+            const auto accuracy_count = CountClassificationDecisions(
+                pred_data, target_data, batch.size, config_.output_size,
+                ClassificationDecisionModeForLoss(config_.loss_type));
+            correct += static_cast<int>(accuracy_count.correct);
+            total += static_cast<int>(accuracy_count.total);
+        }
 
         // Backward pass
         CrashRunRecorder::Instance().MarkStage(
@@ -1843,16 +1990,23 @@ void TrainingExecutor::RunTrainingEpochArrow(
 
         // Update metrics
         float current_loss = epoch_loss / batch_num;
-        float current_acc = static_cast<float>(correct) / total;
+        float current_acc = total > 0
+            ? static_cast<float>(correct) / total
+            : 0.0f;
+        const float current_mae = regression.Mae();
+        const float current_rmse = regression.Rmse();
 
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
             batch_loss, current_acc, batcher.IsEpochComplete());
 
-        UpdateMetrics([batch_num, current_loss, current_acc](TrainingMetrics& m) {
+        UpdateMetrics([batch_num, current_loss, current_acc,
+                       current_mae, current_rmse](TrainingMetrics& m) {
             m.current_batch = batch_num;
             m.train_loss = current_loss;
             m.train_accuracy = current_acc;
+            m.train_mae = current_mae;
+            m.train_rmse = current_rmse;
         });
 
         // Periodic progress log so the user knows training is alive.
@@ -1868,11 +2022,20 @@ void TrainingExecutor::RunTrainingEpochArrow(
             const float rate = elapsed_ms > 0
                 ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
                 : 0.0f;
-            spdlog::info("Epoch {} [{}/{}] loss={:.4f} acc={:.2f}% "
-                         "({:.1f}s, {:.1f} batches/s)",
-                         epoch, batch_num, total_batches,
-                         current_loss, current_acc * 100.0f,
-                         elapsed_s, rate);
+            if (regression_metrics) {
+                spdlog::info(
+                    "Epoch {} [{}/{}] loss={:.4f} mae={:.4f} rmse={:.4f} "
+                    "({:.1f}s, {:.1f} batches/s)",
+                    epoch, batch_num, total_batches,
+                    current_loss, current_mae, current_rmse,
+                    elapsed_s, rate);
+            } else {
+                spdlog::info("Epoch {} [{}/{}] loss={:.4f} acc={:.2f}% "
+                             "({:.1f}s, {:.1f} batches/s)",
+                             epoch, batch_num, total_batches,
+                             current_loss, current_acc * 100.0f,
+                             elapsed_s, rate);
+            }
         }
 
         // Batch callback
@@ -1890,10 +2053,14 @@ void TrainingExecutor::RunTrainingEpochArrow(
     // Final epoch metrics
     float final_loss = batch_num > 0 ? epoch_loss / batch_num : 0.0f;
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
+    const float final_mae = regression.Mae();
+    const float final_rmse = regression.Rmse();
 
-    UpdateMetrics([final_loss, final_acc](TrainingMetrics& m) {
+    UpdateMetrics([final_loss, final_acc, final_mae, final_rmse](TrainingMetrics& m) {
         m.train_loss = final_loss;
         m.train_accuracy = final_acc;
+        m.train_mae = final_mae;
+        m.train_rmse = final_rmse;
     });
     if (batch_num > 0) {
         spdlog::info(
@@ -1911,8 +2078,11 @@ void TrainingExecutor::RunTrainingEpochArrow(
         static_cast<int>(total_batches), final_loss, final_acc);
 }
 
-std::pair<float, float> TrainingExecutor::EvaluateArrowBatcher(IBatcher& batcher) {
+ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
+    IBatcher& batcher) {
     float val_loss = 0.0f;
+    const bool regression_metrics = UsesRegressionMetrics(config_);
+    RegressionAccumulator regression;
     int correct = 0;
     int total = 0;
     int batch_num = 0;
@@ -1945,11 +2115,16 @@ std::pair<float, float> TrainingExecutor::EvaluateArrowBatcher(IBatcher& batcher
         const float* pred_data = predictions.Data<float>();
         const float* target_data = batch.labels.Data<float>();
 
-        const auto accuracy_count = CountClassificationDecisions(
-            pred_data, target_data, batch.size, config_.output_size,
-            ClassificationDecisionModeForLoss(config_.loss_type));
-        correct += static_cast<int>(accuracy_count.correct);
-        total += static_cast<int>(accuracy_count.total);
+        if (regression_metrics) {
+            regression.Add(
+                pred_data, target_data, batch.size * config_.output_size);
+        } else {
+            const auto accuracy_count = CountClassificationDecisions(
+                pred_data, target_data, batch.size, config_.output_size,
+                ClassificationDecisionModeForLoss(config_.loss_type));
+            correct += static_cast<int>(accuracy_count.correct);
+            total += static_cast<int>(accuracy_count.total);
+        }
     }
 
     float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
@@ -1963,15 +2138,17 @@ std::pair<float, float> TrainingExecutor::EvaluateArrowBatcher(IBatcher& batcher
             fetch_max_ms);
     }
 
-    return {final_loss, final_acc};
+    return {final_loss, final_acc, regression.Mae(), regression.Rmse()};
 }
 
 void TrainingExecutor::RunValidationArrow(IBatcher& batcher) {
-    const auto [final_loss, final_acc] = EvaluateArrowBatcher(batcher);
+    const auto evaluation = EvaluateArrowBatcher(batcher);
 
-    UpdateMetrics([final_loss, final_acc](TrainingMetrics& m) {
-        m.val_loss = final_loss;
-        m.val_accuracy = final_acc;
+    UpdateMetrics([evaluation](TrainingMetrics& m) {
+        m.val_loss = evaluation.loss;
+        m.val_accuracy = evaluation.accuracy;
+        m.val_mae = evaluation.mae;
+        m.val_rmse = evaluation.rmse;
         m.has_validation_metrics = true;
     });
 }

@@ -286,6 +286,7 @@ GetPipelineOperatorRuntimeCapabilities() {
         {"PACFNode", gui::NodeType::PACFNode},
         {"StationarityTest", gui::NodeType::StationarityTest},
         {"SeasonalityDetector", gui::NodeType::SeasonalityDetector},
+        {"SeasonalNaive", gui::NodeType::SeasonalNaive},
         {"ARIMAForecaster", gui::NodeType::ARIMAForecaster},
         {"ExponentialSmoothing", gui::NodeType::ExponentialSmoothing},
     };
@@ -779,6 +780,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"DataOutput", "file_type", "csv", {"csv", "parquet"}},
         {"DataConvert", "input_format", "auto", {"auto", "csv", "tsv", "json", "jsonl", "ndjson", "txt", "text", "arff", "npy", "h5", "hdf5", "parquet", "feather", "arrow", "ipc"}},
         {"DataConvert", "output_format", "auto", {"auto", "csv", "tsv", "json", "jsonl", "ndjson", "txt", "text", "arff", "npy", "h5", "hdf5", "parquet", "feather", "arrow", "ipc"}},
+        {"DataConvert", "decimal_point", ".", {".", ","}},
         {"DataConvert", "compression", "snappy", {"none", "snappy", "gzip", "zstd", "brotli"}},
         {"SaveDataset", "format", "csv", {"csv", "parquet"}},
         {"SaveDataset", "file_type", "csv", {"csv", "parquet"}},
@@ -822,6 +824,8 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"TimeSeriesDecomposition", "method", "additive", {"additive", "multiplicative"}},
         {"TimeSeriesDecomposition", "algorithm", "classical", {"classical", "stl"}},
         {"ExponentialSmoothing", "method", "simple", {"simple", "holt", "holt_winters"}},
+        {"TimeSeriesSplit", "boundary_policy", "targets_within_partition",
+         {"targets_within_partition", "window_rows"}},
     };
     return capabilities;
 }
@@ -846,7 +850,10 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"CellExtractor", "row", 0, false},
         {"CellUpdater", "row", 0, false},
         {"TimeSeriesWindow", "input_width", 1, false},
+        {"TimeSeriesWindow", "label_width", 1, false},
         {"TimeSeriesWindow", "shift", 1, false},
+        {"TimeSeriesSplit", "train_end_source_row", -1, false},
+        {"TimeSeriesSplit", "val_end_source_row", -1, false},
         {"TimeSeriesFeatures", "lag_values", 1, true},
         {"TimeSeriesFeatures", "rolling_windows", 1, true},
         {"Differencing", "lag", 1, false},

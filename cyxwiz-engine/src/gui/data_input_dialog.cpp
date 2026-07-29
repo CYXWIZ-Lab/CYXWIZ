@@ -87,6 +87,11 @@ DataInputDialog::DataInputDialog(MLNode* node)
                     sizeof(custom_delimiter_) - 1);
             custom_delimiter_[sizeof(custom_delimiter_) - 1] = '\0';
         }
+        if (node_->parameters.count("decimal_point") &&
+            !node_->parameters["decimal_point"].empty()) {
+            const char decimal_point = node_->parameters["decimal_point"][0];
+            decimal_point_ = (decimal_point == ',') ? ',' : '.';
+        }
         if (node_->parameters.count("missing_value_tokens")) {
             strncpy(missing_value_tokens_,
                     node_->parameters["missing_value_tokens"].c_str(),
@@ -120,16 +125,6 @@ DataInputDialog::DataInputDialog(MLNode* node)
         }
         if (node_->parameters.count("dataset_name")) {
             strncpy(dataset_name_, node_->parameters["dataset_name"].c_str(), sizeof(dataset_name_) - 1);
-        }
-        if (node_->parameters.count("dataset_role")) {
-            const std::string& role = node_->parameters["dataset_role"];
-            if (role == "dev") {
-                dataset_role_idx_ = 1;
-            } else if (role == "test") {
-                dataset_role_idx_ = 2;
-            } else {
-                dataset_role_idx_ = 0;
-            }
         }
         // Restore the Force disk-backed cache checkbox from node params.
         // Without this, the toggle state is lost every time the dialog is

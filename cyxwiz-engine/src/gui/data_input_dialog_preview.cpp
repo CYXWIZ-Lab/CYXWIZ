@@ -2,12 +2,13 @@
 
 #include "node_config_dialog.h"
 #include "data_input_preview.h"
+#include "data_preview_table_renderer.h"
+#include "../core/async_task_manager.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
-#include <limits>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -103,62 +104,53 @@ void DataInputDialog::RenderTabularPreview() {
                 static_cast<long long>(preview_loading_offset_ + 1),
                 static_cast<long long>(preview_loading_offset_ +
                     preview_page_cache_.PageSize()));
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Cancel preview load")) {
+                if (preview_page_task_id_ != 0) {
+                    cyxwiz::AsyncTaskManager::Instance().Cancel(preview_page_task_id_);
+                }
+                ++preview_generation_;
+                preview_page_state_.reset();
+                preview_page_task_id_ = 0;
+                preview_page_loading_ = false;
+                preview_loading_offset_ = -1;
+                preview_failed_offset_ = -1;
+                preview_page_error_ = "Preview request cancelled";
+            }
         } else {
             ImGui::TextDisabled("scroll to load more");
         }
     }
     ImGui::Spacing();
 
-    int64_t first_missing_row = -1;
-    int64_t last_visible_row = -1;
-    if (ImGui::BeginTable("Preview", static_cast<int>(preview_columns_.size()),
-        ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
-        ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit,
-        ImVec2(0, std::max(160.0f, ImGui::GetContentRegionAvail().y - 30)))) {
-
-        for (const auto& col : preview_columns_) {
-            ImGui::TableSetupColumn(col.c_str(), ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        }
-        ImGui::TableHeadersRow();
-
-        const int64_t row_count = preview_is_paged_
-            ? preview_total_rows_
-            : static_cast<int64_t>(preview_data_.size());
-        const int clipped_row_count = static_cast<int>(std::min<int64_t>(
-            std::max<int64_t>(0, row_count),
-            std::numeric_limits<int>::max()));
-        ImGuiListClipper clipper;
-        clipper.Begin(clipped_row_count);
-        while (clipper.Step()) {
-            for (int row_index = clipper.DisplayStart;
-                 row_index < clipper.DisplayEnd;
-                 ++row_index) {
-                last_visible_row = row_index;
-                const std::vector<std::string>* row = nullptr;
-                if (preview_is_paged_) {
-                    row = preview_page_cache_.FindRow(row_index);
-                    if (!row && first_missing_row < 0) first_missing_row = row_index;
-                } else if (row_index >= 0 &&
-                           row_index < static_cast<int>(preview_data_.size())) {
-                    row = &preview_data_[static_cast<std::size_t>(row_index)];
-                }
-
-                ImGui::TableNextRow();
-                for (int column_index = 0;
-                     column_index < static_cast<int>(preview_columns_.size());
-                     ++column_index) {
-                    if (!ImGui::TableSetColumnIndex(column_index)) continue;
-                    if (!row) {
-                        ImGui::TextDisabled("...");
-                    } else if (column_index < static_cast<int>(row->size())) {
-                        ImGui::TextUnformatted(
-                            (*row)[static_cast<std::size_t>(column_index)].c_str());
-                    }
-                }
-            }
-        }
-        ImGui::EndTable();
+    std::vector<cyxwiz::DataPreviewColumn> preview_schema;
+    preview_schema.reserve(preview_columns_.size());
+    for (const auto& name : preview_columns_) {
+        cyxwiz::DataPreviewColumn column;
+        column.name = name;
+        preview_schema.push_back(std::move(column));
     }
+    const int64_t row_count = preview_is_paged_
+        ? preview_total_rows_
+        : static_cast<int64_t>(preview_data_.size());
+    const auto table_result = RenderDataPreviewTable(
+        "data_input",
+        preview_schema,
+        0,
+        row_count,
+        [this](int64_t row_index) -> const DataPreviewRow* {
+            if (preview_is_paged_) {
+                return preview_page_cache_.FindRow(row_index);
+            }
+            if (row_index < 0 ||
+                row_index >= static_cast<int64_t>(preview_data_.size())) {
+                return nullptr;
+            }
+            return &preview_data_[static_cast<size_t>(row_index)];
+        },
+        ImVec2(0, std::max(160.0f, ImGui::GetContentRegionAvail().y - 30)));
+    const int64_t first_missing_row = table_result.first_missing_row;
+    const int64_t last_visible_row = table_result.last_visible_row;
 
     if (preview_is_paged_ && !preview_page_loading_) {
         if (first_missing_row >= 0) {

@@ -1892,7 +1892,7 @@ void AddDataConvertTruth(NodeTruthReport& report,
         true,
         true,
         true,
-        "DataConvert writes a file and reloads it into a registered Arrow dataset."));
+        "DataConvert writes a file and registers the typed in-memory result without reparsing it."));
     report.properties.push_back(ResolveStringProperty(
         node,
         "Input format",
@@ -1911,11 +1911,20 @@ void AddDataConvertTruth(NodeTruthReport& report,
         true,
         true,
         false));
+    report.properties.push_back(ResolveStringProperty(
+        node,
+        "Input decimal separator",
+        "decimal_point",
+        ".",
+        TruthOwner::Loader,
+        true,
+        true,
+        false));
     report.properties.push_back(BuildReadOnlyRuntimeTruth(
         "Runtime result",
         "convert_result",
         "file plus registered dataset",
-        "On success, DataConvert writes the output file, reloads it, and registers ds_dataconvert_<node id>."));
+        "On success, DataConvert writes the output file and registers the typed table as ds_dataconvert_<node id>. A fresh cached output is reparsed only when no in-memory table exists."));
 }
 
 void AddDeployToNodeEditorTruth(NodeTruthReport& report, const MLNode& node) {

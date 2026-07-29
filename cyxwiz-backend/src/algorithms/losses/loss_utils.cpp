@@ -394,17 +394,21 @@ af::array ApplyReduction(const af::array& loss, Reduction reduction) {
         case Reduction::None:
             return loss;
         case Reduction::Mean: {
-            af::array result = af::mean(loss);
+            // ArrayFire's single-argument reduction operates on the first
+            // non-singleton dimension. Loss::Mean is a global reduction, so
+            // flatten first to produce exactly one scalar for tensors such as
+            // [batch, forecast_horizon].
+            af::array result = af::mean(af::flat(loss));
             result.eval();
             return result;
         }
         case Reduction::Sum: {
-            af::array result = af::sum(loss);
+            af::array result = af::sum(af::flat(loss));
             result.eval();
             return result;
         }
         default: {
-            af::array result = af::mean(loss);
+            af::array result = af::mean(af::flat(loss));
             result.eval();
             return result;
         }

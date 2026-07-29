@@ -323,6 +323,16 @@ std::optional<std::string> DataRegistry::FindTabularDatasetBySourcePath(
     return name;
 }
 
+std::optional<std::string> DataRegistry::GetTabularSourcePath(
+    const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tabular_source_paths_by_name_.find(name);
+    if (it == tabular_source_paths_by_name_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
 void DataRegistry::RememberTabularSourcePathUnlocked(
     const std::string& name, const std::string& path) {
     const std::string normalized = NormalizeTabularSourcePath(path);
@@ -537,6 +547,27 @@ void DataRegistry::UnregisterTextDataset(const std::string& name) {
         text_dataset_entries_.erase(it);
         spdlog::debug("UnregisterTextDataset '{}'", name);
     }
+}
+
+void DataRegistry::RestoreTabularDataset(
+    const std::string& name,
+    std::shared_ptr<ArrowDataset> arrow_dataset,
+    std::shared_ptr<ParquetBackedDataset> parquet_dataset,
+    const std::string& source_path) {
+    if (name.empty() || (!arrow_dataset && !parquet_dataset)) return;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    arrow_datasets_.erase(name);
+    parquet_backed_datasets_.erase(name);
+    if (arrow_dataset) {
+        arrow_datasets_[name] = std::move(arrow_dataset);
+    } else {
+        parquet_backed_datasets_[name] = std::move(parquet_dataset);
+    }
+    RememberTabularSourcePathUnlocked(name, source_path);
+    spdlog::info(
+        "RestoreTabularDataset: restored prior valid registration '{}'",
+        name);
 }
 
 void DataRegistry::ClearAllTabularDatasets() {

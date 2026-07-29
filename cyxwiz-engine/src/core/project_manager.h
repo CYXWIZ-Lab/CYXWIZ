@@ -94,6 +94,7 @@ public:
     std::string GetCyxGraphsPath() const;
     std::string GetModelsPath() const;
     std::string GetDatasetsPath() const;
+    std::string GetIngestionCachePath() const;
     std::string GetCheckpointsPath() const;
     std::string GetExportsPath() const;
     std::string GetPluginsPath() const;

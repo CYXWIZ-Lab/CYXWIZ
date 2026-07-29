@@ -2,6 +2,7 @@
 #include "../src/core/node_executors/count_vectorizer_operator.h"
 #include "../src/core/node_executors/pca_operator.h"
 #include "../src/core/node_executors/time_series_features_operator.h"
+#include "../src/core/node_executors/time_series_split_operator.h"
 #include "../src/core/node_executors/time_series_window_operator.h"
 
 #include <arrow/api.h>
@@ -85,6 +86,18 @@ std::shared_ptr<arrow::Table> MakeTimeSeriesTable() {
         FinishFloatArray({10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f}),
         FinishFloatArray({0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f}),
     }, 6);
+}
+
+std::shared_ptr<arrow::Table> MakeLongTimeSeriesTable() {
+    std::vector<float> values;
+    values.reserve(15);
+    for (int i = 0; i < 15; ++i) {
+        values.push_back(static_cast<float>(i));
+    }
+    auto schema = arrow::schema({
+        arrow::field("value", arrow::float32()),
+    });
+    return arrow::Table::Make(schema, {FinishFloatArray(values)}, 15);
 }
 
 void TestCountVectorizerResetsOptionalLabelAndMaxFeatures() {
@@ -372,8 +385,89 @@ void TestTimeSeriesWindowClearsOptionalFeatureAndTimeColumns() {
           "second time-series window configure should clear stale feature_cols");
     Check(second_table->GetColumnByName("__window_start_time") == nullptr,
           "second time-series window configure should clear stale time_col");
-    Check(second_table->num_columns() == 3,
-          "second time-series window configure should emit x_0, x_1, y only");
+    Check(second_table->num_columns() == 5,
+          "second time-series window configure should emit x_0, x_1, y and hidden target bounds");
+}
+
+void TestTimeSeriesWindowEmitsOrderedMultiStepTargets() {
+    cyxwiz::TimeSeriesWindowOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"value_col", "value"},
+        {"input_width", "2"},
+        {"label_width", "3"},
+        {"shift", "1"},
+    }, error), error);
+
+    auto result = op.Apply(MakeTimeSeriesTable());
+    Check(result.ok(), result.status().ToString());
+    auto table = result.ValueOrDie();
+    Check(table->num_rows() == 2,
+          "six values with lookback 2 and horizon 3 should produce two windows");
+    Check(table->num_columns() == 7,
+          "multi-step window should emit features, targets, and hidden target bounds");
+
+    const std::vector<std::string> target_names = {"y", "y_1", "y_2"};
+    const std::vector<std::vector<float>> expected = {
+        {3.0f, 4.0f},
+        {4.0f, 5.0f},
+        {5.0f, 6.0f},
+    };
+    for (size_t target = 0; target < target_names.size(); ++target) {
+        auto column = table->GetColumnByName(target_names[target]);
+        Check(column && column->num_chunks() == 1,
+              "ordered target column should exist: " + target_names[target]);
+        auto values = std::static_pointer_cast<arrow::FloatArray>(
+            column->chunk(0));
+        for (int64_t row = 0; row < table->num_rows(); ++row) {
+            Check(values->Value(row) == expected[target][static_cast<size_t>(row)],
+                  "multi-step target values must preserve forecast order");
+        }
+    }
+
+    auto starts = std::static_pointer_cast<arrow::Int64Array>(
+        table->GetColumnByName("__target_start_index")->chunk(0));
+    auto ends = std::static_pointer_cast<arrow::Int64Array>(
+        table->GetColumnByName("__target_end_index")->chunk(0));
+    Check(starts->Value(0) == 2 && ends->Value(0) == 4,
+          "first multi-step window should preserve its exact source target bounds");
+    Check(starts->Value(1) == 3 && ends->Value(1) == 5,
+          "second multi-step window should preserve its exact source target bounds");
+}
+
+void TestTimeSeriesSplitPurgesCrossBoundaryTargets() {
+    cyxwiz::TimeSeriesWindowOperator window;
+    std::string error;
+    Check(window.Configure({
+        {"value_col", "value"},
+        {"input_width", "4"},
+        {"label_width", "3"},
+        {"shift", "1"},
+    }, error), error);
+    auto windowed = window.Apply(MakeLongTimeSeriesTable());
+    Check(windowed.ok(), windowed.status().ToString());
+
+    cyxwiz::TimeSeriesSplitOperator split;
+    Check(split.Configure({
+        {"train_ratio", "0.5"},
+        {"val_ratio", "0.25"},
+        {"test_ratio", "0.25"},
+        {"boundary_policy", "targets_within_partition"},
+        {"train_end_source_row", "7"},
+        {"val_end_source_row", "11"},
+    }, error), error);
+    auto result = split.Apply(windowed.ValueOrDie());
+    Check(result.ok(), result.status().ToString());
+
+    auto partitions = std::static_pointer_cast<arrow::Int8Array>(
+        result.ValueOrDie()->GetColumnByName("__partition__")->chunk(0));
+    const std::vector<int8_t> expected = {0, -1, -1, 1, 1, -1, -1, 2, 2};
+    Check(partitions->length() == static_cast<int64_t>(expected.size()),
+          "target-contained split should preserve every window row");
+    for (int64_t row = 0; row < partitions->length(); ++row) {
+        Check(partitions->Value(row) == expected[static_cast<size_t>(row)],
+              "target-contained split should purge only boundary-crossing targets");
+    }
 }
 
 } // namespace
@@ -387,6 +481,8 @@ int main() {
     TestPcaEmitsMemoryPreflight();
     TestTimeSeriesFeaturesClearsStaleFeatureLists();
     TestTimeSeriesWindowClearsOptionalFeatureAndTimeColumns();
+    TestTimeSeriesWindowEmitsOrderedMultiStepTargets();
+    TestTimeSeriesSplitPurgesCrossBoundaryTargets();
     std::cout << "Operator Configure reset regressions passed\n";
     return 0;
 }

@@ -2,6 +2,7 @@
 #include "training_trace_collector.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 
 namespace cyxwiz {
 
@@ -74,7 +75,21 @@ TaskInfo AsyncTask::GetInfo() const {
 }
 
 void AsyncTask::ReportProgress(float progress, const std::string& message) {
-    progress_.store(std::clamp(progress, 0.0f, 1.0f));
+    float normalized = progress_.load();
+    if (std::isfinite(progress)) {
+        normalized = std::clamp(progress, 0.0f, 1.0f);
+    } else {
+        spdlog::warn(
+            "Task '{}' (ID: {}) ignored non-finite progress value",
+            name_, id_);
+    }
+
+    // A task's overall progress cannot move backwards when an inner phase
+    // restarts or reports a local fraction. Status text may still change.
+    float current = progress_.load();
+    while (normalized > current &&
+           !progress_.compare_exchange_weak(current, normalized)) {
+    }
 
     if (!message.empty()) {
         std::lock_guard<std::mutex> lock(message_mutex_);

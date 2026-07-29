@@ -38,6 +38,19 @@ bool IsSequenceMetricName(const std::string& name) {
            name == "Val Entity F1";
 }
 
+bool IsRegressionMetricName(const std::string& name) {
+    return name == "Train MAE" || name == "Val MAE" ||
+           name == "Train RMSE" || name == "Val RMSE";
+}
+
+bool IsValidationMetricName(const std::string& name) {
+    return name.rfind("Val ", 0) == 0 ||
+           name.rfind("Validation ", 0) == 0;
+}
+
+constexpr float kTrainingPlotMinHeight = 390.0f;
+constexpr float kTrainingPlotMaxHeight = 520.0f;
+
 std::string FormatTraceBytes(uint64_t bytes) {
     std::ostringstream out;
     out.setf(std::ios::fixed);
@@ -196,7 +209,7 @@ void TrainingPlotPanel::Render() {
     }
 
     // Larger default size for better visibility
-    ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(1000, 800), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin(name_.c_str(), &visible_)) {
         ImGui::End();
@@ -372,7 +385,10 @@ void TrainingPlotPanel::ClearRunComparisonRecords() {
 
 void TrainingPlotPanel::Clear() {
     std::lock_guard<std::mutex> lock(data_mutex_);
+    ClearLocked();
+}
 
+void TrainingPlotPanel::ClearLocked() {
     train_loss_.epochs.clear();
     train_loss_.values.clear();
     val_loss_.epochs.clear();
@@ -513,7 +529,11 @@ void TrainingPlotPanel::SetMaxPoints(size_t max_points) {
 
 void TrainingPlotPanel::ExportToCSV(const std::string& filepath) {
     std::lock_guard<std::mutex> lock(data_mutex_);
+    ExportToCSVLocked(filepath);
+}
 
+void TrainingPlotPanel::ExportToCSVLocked(
+    const std::string& filepath) const {
     std::ofstream file(filepath);
     if (!file.is_open()) {
         return;
@@ -687,27 +707,55 @@ void TrainingPlotPanel::RenderLossPlot() {
     const bool show_pair =
         show_accuracy_plot_ && !train_accuracy_.values.empty();
     float plot_height = show_pair
-        ? std::clamp((available_height - 36.0f) * 0.50f, 300.0f, 420.0f)
-        : std::max(340.0f, available_height - 90.0f);
+        ? std::clamp((available_height - 36.0f) * 0.50f,
+                     kTrainingPlotMinHeight, kTrainingPlotMaxHeight)
+        : std::max(kTrainingPlotMinHeight, available_height - 90.0f);
 
     if (ImPlot::BeginPlot("Loss", ImVec2(-1, plot_height))) {
         ImPlot::SetupAxes("Epoch", "Loss", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+        if (log_loss_scale_) {
+            ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
+        }
 
-        if (auto_scale_ && follow_current_epoch_ && !train_loss_.epochs.empty()) {
+        if (auto_scale_ && !train_loss_.epochs.empty()) {
             const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_loss_);
-            ImPlot::SetupAxisLimits(ImAxis_X1, min_epoch, max_epoch, ImGuiCond_Always);
+            ImPlot::SetupAxisLimits(
+                ImAxis_X1, min_epoch, max_epoch,
+                follow_current_epoch_ ? ImGuiCond_Always : ImGuiCond_Once);
 
             ValueRange range = CalculateVisibleRange(train_loss_, val_loss_, min_epoch, max_epoch);
-            double padding = (range.max - range.min) * 0.1;
-            if (padding < 0.01) padding = 0.1;
-            ImPlot::SetupAxisLimits(ImAxis_Y1,
-                std::max(0.0, range.min - padding),
-                range.max + padding,
-                ImGuiCond_Always);
-        } else if (auto_scale_ && !train_loss_.epochs.empty()) {
-            const double max_epoch = std::max(1.0, train_loss_.epochs.back());
-            ImPlot::SetupAxisLimits(
-                ImAxis_X1, 0.0, max_epoch + 1.0, ImGuiCond_Once);
+            if (log_loss_scale_) {
+                double min_positive = std::numeric_limits<double>::max();
+                const auto include_positive = [&](const MetricSeries& series) {
+                    const size_t count =
+                        std::min(series.epochs.size(), series.values.size());
+                    for (size_t i = 0; i < count; ++i) {
+                        if (series.epochs[i] < min_epoch ||
+                            series.epochs[i] > max_epoch ||
+                            series.values[i] <= 0.0) {
+                            continue;
+                        }
+                        min_positive = std::min(min_positive, series.values[i]);
+                    }
+                };
+                include_positive(train_loss_);
+                include_positive(val_loss_);
+                if (min_positive == std::numeric_limits<double>::max()) {
+                    min_positive = 1.0e-6;
+                }
+                const double lower = std::max(1.0e-12, min_positive / 1.25);
+                const double upper = std::max(lower * 10.0, range.max * 1.25);
+                ImPlot::SetupAxisLimits(
+                    ImAxis_Y1, lower, upper, ImGuiCond_Always);
+            } else {
+                double padding = (range.max - range.min) * 0.1;
+                if (padding < 0.01) padding = 0.1;
+                ImPlot::SetupAxisLimits(
+                    ImAxis_Y1,
+                    std::max(0.0, range.min - padding),
+                    range.max + padding,
+                    ImGuiCond_Always);
+            }
         }
 
         // Plot training loss
@@ -736,6 +784,13 @@ void TrainingPlotPanel::RenderLossPlot() {
                            val_loss_.epochs.data(),
                            val_loss_.values.data(),
                            static_cast<int>(val_loss_.values.size()));
+            ImPlot::SetNextMarkerStyle(
+                ImPlotMarker_Circle, 5.0f, val_loss_.color,
+                1.5f, val_loss_.color);
+            ImPlot::PlotScatter("##Validation Loss Points",
+                                val_loss_.epochs.data(),
+                                val_loss_.values.data(),
+                                static_cast<int>(val_loss_.values.size()));
             if (show_smoothed_curves_ &&
                 static_cast<int>(val_loss_.values.size()) >= smoothing_window_) {
                 auto smoothed =
@@ -759,8 +814,9 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
     const bool show_pair =
         show_loss_plot_ && !train_loss_.values.empty();
     float plot_height = show_pair
-        ? std::clamp(available_height - 40.0f, 300.0f, 420.0f)
-        : std::max(340.0f, available_height - 90.0f);
+        ? std::clamp(available_height - 40.0f,
+                     kTrainingPlotMinHeight, kTrainingPlotMaxHeight)
+        : std::max(kTrainingPlotMinHeight, available_height - 90.0f);
 
     if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, plot_height))) {
         ImPlot::SetupAxes("Epoch", "Accuracy (%)", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
@@ -826,6 +882,7 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
 
 void TrainingPlotPanel::RenderCustomMetricsPlot() {
     bool has_sequence_metrics = false;
+    bool has_regression_metrics = false;
     bool has_non_sequence_metrics = false;
     for (const auto& metric : custom_metrics_) {
         if (metric.values.empty()) {
@@ -836,18 +893,22 @@ void TrainingPlotPanel::RenderCustomMetricsPlot() {
         } else {
             has_non_sequence_metrics = true;
         }
+        if (IsRegressionMetricName(metric.name)) {
+            has_regression_metrics = true;
+        }
     }
 
     const char* plot_title =
         has_sequence_metrics && !has_non_sequence_metrics
             ? "Sequence Metrics"
-            : "Custom Metrics";
+            : (has_regression_metrics ? "Regression Metrics" : "Custom Metrics");
     const char* y_label =
         has_sequence_metrics && !has_non_sequence_metrics
             ? "Score (%)"
-            : "Value";
+            : (has_regression_metrics ? "Error" : "Value");
 
-    if (ImPlot::BeginPlot(plot_title, ImVec2(-1, 250))) {
+    if (ImPlot::BeginPlot(
+            plot_title, ImVec2(-1, kTrainingPlotMinHeight))) {
         // Enable zoom and pan on both axes
         ImPlot::SetupAxes("Epoch", y_label, ImPlotAxisFlags_None, ImPlotAxisFlags_None);
 
@@ -858,6 +919,17 @@ void TrainingPlotPanel::RenderCustomMetricsPlot() {
                                metric.epochs.data(),
                                metric.values.data(),
                                static_cast<int>(metric.values.size()));
+                if (IsValidationMetricName(metric.name)) {
+                    ImPlot::SetNextMarkerStyle(
+                        ImPlotMarker_Circle, 5.0f, metric.color,
+                        1.5f, metric.color);
+                    const std::string point_id =
+                        "##" + metric.name + " Points";
+                    ImPlot::PlotScatter(
+                        point_id.c_str(), metric.epochs.data(),
+                        metric.values.data(),
+                        static_cast<int>(metric.values.size()));
+                }
             }
         }
 
@@ -873,12 +945,12 @@ void TrainingPlotPanel::RenderControls() {
 #endif
 
     if (ImGui::Button("Clear All")) {
-        Clear();
+        ClearLocked();
     }
     ImGui::SameLine();
 
     if (ImGui::Button("Export CSV")) {
-        ExportToCSV("training_metrics.csv");
+        ExportToCSVLocked("training_metrics.csv");
     }
     ImGui::SameLine();
 
@@ -899,6 +971,13 @@ void TrainingPlotPanel::RenderControls() {
     }
     ImGui::SameLine();
     ImGui::Checkbox("Show Loss", &show_loss_plot_);
+    ImGui::SameLine();
+    ImGui::Checkbox("Log Loss", &log_loss_scale_);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Use a logarithmic loss axis to compare large early losses with "
+            "smaller later losses. Metric values are unchanged.");
+    }
     ImGui::SameLine();
     ImGui::Checkbox("Show Accuracy", &show_accuracy_plot_);
     ImGui::SameLine();
@@ -1533,7 +1612,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 
     if (ImGui::BeginTable(
             "TrainingRunComparisonTable",
-            26,
+            27,
             ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
                 ImGuiTableFlags_Resizable |
@@ -1550,6 +1629,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TableSetupColumn("Role Labels");
         ImGui::TableSetupColumn("Partition ID");
         ImGui::TableSetupColumn("Partition Match");
+        ImGui::TableSetupColumn("Role Checks");
         ImGui::TableSetupColumn("Model");
         ImGui::TableSetupColumn("Architecture");
         ImGui::TableSetupColumn("Epochs");
@@ -1636,6 +1716,26 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
                 ImGui::SetTooltip(
                     "Not directly comparable: this run used a different "
                     "partition manifest than the top-ranked run.");
+            }
+
+            ImGui::TableNextColumn();
+            const std::string role_checks =
+                "Dev " + record.dev_schema_compatibility + "/" +
+                record.dev_leakage_status + " | Test " +
+                record.test_schema_compatibility + "/" +
+                record.test_leakage_status;
+            ImGui::TextUnformatted(role_checks.c_str());
+            if (ImGui::IsItemHovered() &&
+                (!record.dev_partition_status_reason.empty() ||
+                 !record.test_partition_status_reason.empty())) {
+                ImGui::SetTooltip(
+                    "Dev: %s\nTest: %s",
+                    record.dev_partition_status_reason.empty()
+                        ? "no additional detail"
+                        : record.dev_partition_status_reason.c_str(),
+                    record.test_partition_status_reason.empty()
+                        ? "no additional detail"
+                        : record.test_partition_status_reason.c_str());
             }
 
             ImGui::TableNextColumn();

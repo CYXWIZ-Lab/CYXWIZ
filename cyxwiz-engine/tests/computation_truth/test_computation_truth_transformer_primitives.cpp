@@ -1859,6 +1859,181 @@ void TestTransformerDecoderCausalForwardParity() {
                       "TransformerDecoder causal grad_linear2_bias matches PyTorch");
 }
 
+void TestTransformerDecoderCrossAttentionBackwardParity() {
+    const std::vector<float> input_values = {
+        0.2f, -0.1f, 0.4f, 0.7f,
+        -0.3f, 0.5f, 0.1f, -0.2f,
+    };
+    const std::vector<float> memory_values = {
+        0.1f, 0.0f, -0.2f, 0.3f,
+        0.5f, -0.4f, 0.2f, 0.1f,
+        -0.1f, 0.3f, 0.6f, -0.5f,
+    };
+    const std::vector<float> W_q = {
+        0.10f, 0.20f, -0.10f, 0.00f,
+        0.00f, 0.15f, 0.25f, -0.05f,
+        -0.20f, 0.05f, 0.30f, 0.10f,
+        0.05f, -0.10f, 0.20f, 0.25f,
+    };
+    const std::vector<float> W_k = {
+        0.05f, -0.15f, 0.10f, 0.20f,
+        0.20f, 0.00f, -0.10f, 0.05f,
+        0.10f, 0.25f, 0.05f, -0.20f,
+        -0.05f, 0.10f, 0.15f, 0.30f,
+    };
+    const std::vector<float> W_v = {
+        0.30f, -0.10f, 0.05f, 0.00f,
+        -0.20f, 0.25f, 0.10f, 0.15f,
+        0.05f, 0.00f, 0.20f, -0.10f,
+        0.10f, 0.30f, -0.15f, 0.05f,
+    };
+    const std::vector<float> W_o = {
+        0.20f, 0.10f, -0.05f, 0.30f,
+        -0.10f, 0.25f, 0.15f, 0.05f,
+        0.05f, -0.20f, 0.35f, 0.10f,
+        0.30f, 0.00f, -0.10f, 0.20f,
+    };
+    const std::vector<float> b_q = {0.01f, -0.02f, 0.03f, 0.04f};
+    const std::vector<float> b_k = {-0.03f, 0.02f, 0.01f, -0.01f};
+    const std::vector<float> b_v = {0.05f, -0.04f, 0.02f, 0.03f};
+    const std::vector<float> b_o = {0.01f, 0.02f, -0.03f, 0.04f};
+    const std::vector<float> norm1_gamma = {1.0f, 1.1f, 0.9f, 1.2f};
+    const std::vector<float> norm1_beta = {0.01f, -0.02f, 0.03f, -0.04f};
+    const std::vector<float> norm2_gamma = {0.8f, 1.0f, 1.2f, 0.7f};
+    const std::vector<float> norm2_beta = {-0.03f, 0.04f, -0.01f, 0.02f};
+    const std::vector<float> norm3_gamma = {1.05f, 0.95f, 1.15f, 0.85f};
+    const std::vector<float> norm3_beta = {0.0f, 0.02f, -0.02f, 0.01f};
+    const std::vector<float> linear1_weights = {
+        0.10f, -0.20f, 0.30f, 0.05f,
+        -0.15f, 0.25f, 0.10f, -0.05f,
+        0.20f, 0.05f, -0.10f, 0.15f,
+    };
+    const std::vector<float> linear1_bias = {0.01f, -0.02f, 0.03f};
+    const std::vector<float> linear2_weights = {
+        0.30f, -0.10f, 0.20f,
+        -0.05f, 0.25f, 0.10f,
+        0.15f, 0.05f, -0.20f,
+        0.10f, 0.30f, -0.15f,
+    };
+    const std::vector<float> linear2_bias = {0.02f, -0.01f, 0.04f, -0.03f};
+
+    cyxwiz::TransformerDecoderLayer decoder(4, 2, 3, 0.0f, false);
+    decoder.SetTraining(false);
+    decoder.SetParameters({
+        {"self_attn.W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"self_attn.b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.W_q", cyxwiz::Tensor({4, 4}, W_q.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.W_k", cyxwiz::Tensor({4, 4}, W_k.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.W_v", cyxwiz::Tensor({4, 4}, W_v.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.W_o", cyxwiz::Tensor({4, 4}, W_o.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.b_q", cyxwiz::Tensor({4}, b_q.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.b_k", cyxwiz::Tensor({4}, b_k.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.b_v", cyxwiz::Tensor({4}, b_v.data(), cyxwiz::DataType::Float32)},
+        {"cross_attn.b_o", cyxwiz::Tensor({4}, b_o.data(), cyxwiz::DataType::Float32)},
+        {"norm1.gamma", cyxwiz::Tensor({4}, norm1_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm1.beta", cyxwiz::Tensor({4}, norm1_beta.data(), cyxwiz::DataType::Float32)},
+        {"norm2.gamma", cyxwiz::Tensor({4}, norm2_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm2.beta", cyxwiz::Tensor({4}, norm2_beta.data(), cyxwiz::DataType::Float32)},
+        {"norm3.gamma", cyxwiz::Tensor({4}, norm3_gamma.data(), cyxwiz::DataType::Float32)},
+        {"norm3.beta", cyxwiz::Tensor({4}, norm3_beta.data(), cyxwiz::DataType::Float32)},
+        {"linear1.weights", cyxwiz::Tensor({3, 4}, linear1_weights.data(), cyxwiz::DataType::Float32)},
+        {"linear1.bias", cyxwiz::Tensor({3}, linear1_bias.data(), cyxwiz::DataType::Float32)},
+        {"linear2.weights", cyxwiz::Tensor({4, 3}, linear2_weights.data(), cyxwiz::DataType::Float32)},
+        {"linear2.bias", cyxwiz::Tensor({4}, linear2_bias.data(), cyxwiz::DataType::Float32)},
+    });
+
+    const cyxwiz::Tensor input({1, 2, 4}, input_values.data(),
+                               cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor memory({1, 3, 4}, memory_values.data(),
+                                cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = decoder.Forward(input, memory);
+    CheckShape(output, {1, 2, 4}, "TransformerDecoder cross-attention output");
+
+    const float expected_output[] = {
+        -0.1108354f, -1.3908184f, 0.3091779f, 1.1187297f,
+        -1.0845308f, 1.5602998f, -0.0639310f, -0.4577387f,
+    };
+    CheckTensorNear(output, expected_output, 2e-5f,
+                    "TransformerDecoder cross-attention output matches PyTorch");
+
+    const std::vector<float> grad_output_values = {
+        0.11f, -0.07f, 0.05f, -0.03f,
+        -0.02f, 0.13f, -0.09f, 0.04f,
+    };
+    const cyxwiz::Tensor grad_output({1, 2, 4}, grad_output_values.data(),
+                                     cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = decoder.Backward(grad_output);
+    const cyxwiz::Tensor grad_memory = decoder.GetLastMemoryGradient();
+    CheckShape(grad_input, {1, 2, 4}, "TransformerDecoder cross-attention grad_input");
+    CheckShape(grad_memory, {1, 3, 4}, "TransformerDecoder cross-attention grad_memory");
+
+    const float expected_grad_input[] = {
+        0.2997231f, -0.2459072f, 0.1425121f, -0.1774454f,
+        0.0776569f, 0.1385615f, -0.3691436f, 0.1711676f,
+    };
+    const float expected_grad_memory[] = {
+        0.0009836f, 0.0031291f, -0.0024391f, 0.0022289f,
+        0.0006546f, 0.0032182f, -0.0024161f, 0.0023227f,
+        0.0011581f, 0.0028049f, -0.0026626f, 0.0026197f,
+    };
+    const float expected_grad_cross_wq[] = {
+        0.0001165f, -0.0005348f, 0.0000141f, 0.0004248f,
+        0.0000974f, -0.0004456f, 0.0000116f, 0.0003537f,
+        0.0002753f, -0.0005305f, -0.0000207f, 0.0002784f,
+        -0.0000987f, 0.0001600f, 0.0000096f, -0.0000699f,
+    };
+    const float expected_grad_cross_wv[] = {
+        0.0031881f, -0.0006214f, 0.0038614f, -0.0006620f,
+        0.0033354f, -0.0010944f, 0.0030533f, -0.0000174f,
+        -0.0055675f, 0.0009362f, -0.0072312f, 0.0015334f,
+        0.0036406f, -0.0006405f, 0.0045610f, -0.0008591f,
+    };
+    const float expected_grad_cross_wo[] = {
+        0.0119523f, -0.0069417f, 0.0077599f, 0.0005672f,
+        -0.0030776f, 0.0016376f, -0.0020684f, -0.0002189f,
+        -0.0085484f, 0.0052571f, -0.0054129f, -0.0002634f,
+        -0.0003263f, 0.0000470f, -0.0002787f, -0.0000848f,
+    };
+    const float expected_grad_norm2_gamma[] = {
+        -0.0567869f, 0.1607771f, -0.0030102f, -0.1536209f,
+    };
+    const float expected_grad_norm3_gamma[] = {
+        0.0090464f, 0.3147329f, 0.0177502f, -0.0611429f,
+    };
+    const float expected_grad_linear2_bias[] = {
+        0.1406779f, -0.0405878f, -0.0738999f, -0.0261903f,
+    };
+
+    CheckTensorNear(grad_input, expected_grad_input, 2e-4f,
+                    "TransformerDecoder cross-attention grad_input matches PyTorch");
+    CheckTensorNear(grad_memory, expected_grad_memory, 2e-4f,
+                    "TransformerDecoder cross-attention grad_memory matches PyTorch");
+    const auto decoder_gradients = decoder.GetParameters();
+    CheckGradientNear(decoder_gradients, "cross_attn.grad_W_q",
+                      expected_grad_cross_wq, 2e-4f,
+                      "TransformerDecoder cross-attention grad_W_q matches PyTorch");
+    CheckGradientNear(decoder_gradients, "cross_attn.grad_W_v",
+                      expected_grad_cross_wv, 2e-4f,
+                      "TransformerDecoder cross-attention grad_W_v matches PyTorch");
+    CheckGradientNear(decoder_gradients, "cross_attn.grad_W_o",
+                      expected_grad_cross_wo, 2e-4f,
+                      "TransformerDecoder cross-attention grad_W_o matches PyTorch");
+    CheckGradientNear(decoder_gradients, "norm2.grad_gamma",
+                      expected_grad_norm2_gamma, 2e-4f,
+                      "TransformerDecoder cross-attention grad_norm2_gamma matches PyTorch");
+    CheckGradientNear(decoder_gradients, "norm3.grad_gamma",
+                      expected_grad_norm3_gamma, 2e-4f,
+                      "TransformerDecoder cross-attention grad_norm3_gamma matches PyTorch");
+    CheckGradientNear(decoder_gradients, "linear2.grad_bias",
+                      expected_grad_linear2_bias, 2e-4f,
+                      "TransformerDecoder cross-attention grad_linear2_bias matches PyTorch");
+}
 void TestTransformerDecoderTwoBlockCausalStackBackwardParity() {
     const std::vector<float> input_values = {
         0.2f, -0.1f, 0.4f, 0.7f,
@@ -2328,6 +2503,7 @@ int main() {
         TestTransformerEncoderTwoBlockStackBackwardParity();
         TestBertEncoderHeadLogitParity();
         TestTransformerDecoderCausalForwardParity();
+        TestTransformerDecoderCrossAttentionBackwardParity();
         TestTransformerDecoderTwoBlockCausalStackBackwardParity();
         TestGenerationSamplingDistributionParity();
         TestTinyCausalLanguageModelLogitsAndLossParity();

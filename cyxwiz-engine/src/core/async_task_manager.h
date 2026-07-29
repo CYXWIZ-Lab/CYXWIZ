@@ -85,7 +85,9 @@ public:
     TaskInfo GetInfo() const;
 
 protected:
-    // Call from Execute() to update progress
+    // Call from Execute() with overall task progress in [0, 1]. Values are
+    // clamped, non-finite values are ignored, and displayed progress is
+    // monotonic across nested phases.
     void ReportProgress(float progress, const std::string& message = "");
 
     // Call from Execute() to check if should stop

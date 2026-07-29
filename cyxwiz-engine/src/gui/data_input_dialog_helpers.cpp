@@ -158,6 +158,7 @@ bool DataInputDialog::CanPageRegisteredPreview() const {
         !parameter_matches("type", data_input::FileTypeParam(detected_type_)) ||
         !parameter_matches("has_header", has_header_ ? "true" : "false") ||
         !parameter_matches("delimiter", custom_delimiter_) ||
+        !parameter_matches("decimal_point", std::string(1, decimal_point_)) ||
         !parameter_matches("missing_value_tokens", missing_value_tokens_) ||
         !parameter_matches("skip_rows", std::to_string(skip_rows_)) ||
         !parameter_matches("max_rows", std::to_string(max_rows_))) {
@@ -170,6 +171,9 @@ bool DataInputDialog::CanPageRegisteredPreview() const {
 }
 
 void DataInputDialog::ResetPreviewPaging() {
+    if (preview_page_task_id_ != 0) {
+        cyxwiz::AsyncTaskManager::Instance().Cancel(preview_page_task_id_);
+    }
     ++preview_generation_;
     preview_page_cache_.Clear();
     preview_page_state_.reset();
@@ -211,10 +215,14 @@ void DataInputDialog::RequestPreviewPage(int64_t row_index) {
 
     preview_page_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
         "Loading preview page",
-        [state, request](cyxwiz::LambdaTask&) {
+        [state, request](cyxwiz::LambdaTask& task) {
             try {
+                auto cancellable_request = request;
+                cancellable_request.cancel_requested = [&task]() {
+                    return task.ShouldStop();
+                };
                 state->page = cyxwiz::DataPreviewService::PreviewRegisteredTabular(
-                    cyxwiz::DataRegistry::Instance(), request);
+                    cyxwiz::DataRegistry::Instance(), cancellable_request);
             } catch (const std::exception& e) {
                 state->page.dataset_name = request.dataset_name;
                 state->page.reason = std::string("Preview page failed: ") + e.what();

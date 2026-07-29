@@ -263,6 +263,7 @@ set(ENGINE_SOURCES
     src/gui/node_config_dialog.cpp
     src/gui/data_input_capabilities.cpp
     src/gui/data_input_preview.cpp
+    src/gui/data_preview_table_renderer.cpp
     src/gui/data_input_dialog_preview.cpp
     src/gui/data_input_dialog_profile.cpp
     src/gui/data_input_dialog_helpers.cpp
@@ -1617,6 +1618,7 @@ add_executable(test_operator_configure_resets
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/time_series_features_operator.cpp
+    src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
 )
 

@@ -62,6 +62,21 @@ std::shared_ptr<arrow::Table> MakePreprocessingTable() {
     });
 }
 
+std::shared_ptr<arrow::Table> MakeMultiTargetPreprocessingTable() {
+    auto schema = arrow::schema({
+        arrow::field("x_0", arrow::float64()),
+        arrow::field("x_1", arrow::float64()),
+        arrow::field("y", arrow::float64()),
+        arrow::field("y_1", arrow::float64()),
+    });
+    return arrow::Table::Make(schema, {
+        FinishDoubleArray({1.0, 2.0, 3.0, 4.0}),
+        FinishDoubleArray({2.0, 4.0, 6.0, 8.0}),
+        FinishDoubleArray({10.0, 20.0, 30.0, 40.0}),
+        FinishDoubleArray({11.0, 21.0, 31.0, 41.0}),
+    });
+}
+
 double ReadNumericValue(const std::shared_ptr<arrow::Table>& table,
                         const std::string& column_name,
                         int64_t row_index) {
@@ -289,10 +304,46 @@ void TestStandardScalerEmitsMemoryPreflight() {
           "StandardScaler preflight test should preserve row count");
 }
 
+void TestStandardScalerExcludesMultipleTargetColumns() {
+    cyxwiz::StandardScalerOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"columns", ""},
+        {"label_col", "y"},
+        {"exclude_columns", "y_1"},
+        {"with_mean", "true"},
+        {"with_std", "true"},
+    }, error), error);
+
+    auto result = op.Apply(MakeMultiTargetPreprocessingTable());
+    Check(result.ok(), result.status().ToString());
+    auto output = result.ValueOrDie();
+    Check(std::abs(ReadNumericValue(output, "x_0", 0) - 1.0) > 0.1,
+          "StandardScaler should transform auto-detected feature x_0");
+    Check(std::abs(ReadNumericValue(output, "x_1", 0) - 2.0) > 0.1,
+          "StandardScaler should transform auto-detected feature x_1");
+    Check(ReadNumericValue(output, "y", 0) == 10.0,
+          "StandardScaler should preserve the primary target");
+    Check(ReadNumericValue(output, "y_1", 0) == 11.0,
+          "StandardScaler should preserve additional excluded targets");
+
+    Check(op.Configure({
+        {"columns", ""},
+        {"exclude_columns", "missing_target"},
+    }, error), error);
+    auto invalid = op.Apply(MakeMultiTargetPreprocessingTable());
+    Check(!invalid.ok() &&
+              invalid.status().ToString().find(
+                  "excluded column 'missing_target' not found") !=
+                  std::string::npos,
+          "StandardScaler should reject a misspelled excluded column");
+}
+
 } // namespace
 
 int main() {
     TestStandardScalerEmitsMemoryPreflight();
+    TestStandardScalerExcludesMultipleTargetColumns();
 
     const auto csv_path = std::filesystem::temp_directory_path() /
         "cyxwiz_operator_materializer_parity.csv";

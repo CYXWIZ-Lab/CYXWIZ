@@ -26,6 +26,11 @@ struct ActiveModelInfo {
     ActiveModelOrigin origin = ActiveModelOrigin::None;
     std::string checkpoint_path;
     std::string graph_fingerprint;
+    // The prepared dataset actually consumed by training. This can differ
+    // from the raw DataInput registry name when graph preprocessing was
+    // materialized (windowing, partitioning, scaling, encoding, ...).
+    std::string effective_dataset_name;
+    std::string effective_label_column;
     CheckpointMetadata checkpoint_metadata;
 };
 

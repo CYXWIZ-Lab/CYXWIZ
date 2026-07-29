@@ -10,6 +10,7 @@
 #include "pipeline_runtime_capabilities.h"
 #include "sequence_vocabulary.h"
 #include <arrow/api.h>
+#include <arrow/compute/api.h>
 #include <arrow/csv/api.h>
 #include <arrow/scalar.h>
 #include <arrow/table.h>
@@ -613,6 +614,67 @@ std::vector<std::string> ParseCommaSeparatedNames(const std::string& value) {
     return result;
 }
 
+bool ResolveDataInputColumnProjection(
+    const std::map<std::string, std::string>& parameters,
+    std::vector<std::string>& columns,
+    std::string& error) {
+    columns.clear();
+
+    auto selected_it = parameters.find("selected_columns");
+    if (selected_it != parameters.end() &&
+        !TrimString(selected_it->second).empty()) {
+        const std::string serialized = TrimString(selected_it->second);
+        if (serialized == "*") {
+            return true;
+        }
+        try {
+            const auto parsed = nlohmann::json::parse(serialized);
+            if (!parsed.is_array()) {
+                error = "DataInput: selected_columns must be a JSON array of column names";
+                return false;
+            }
+            for (const auto& item : parsed) {
+                if (!item.is_string()) {
+                    error = "DataInput: selected_columns contains a non-string value";
+                    return false;
+                }
+                const std::string name = TrimString(item.get<std::string>());
+                if (name.empty()) {
+                    error = "DataInput: selected_columns contains an empty column name";
+                    return false;
+                }
+                if (std::find(columns.begin(), columns.end(), name) ==
+                    columns.end()) {
+                    columns.push_back(name);
+                }
+            }
+            // The dialog serializes an empty array to mean all columns.
+            return true;
+        } catch (const nlohmann::json::exception& e) {
+            error = "DataInput: invalid selected_columns JSON: " +
+                    std::string(e.what());
+            return false;
+        }
+    }
+
+    // Backward-compatible fallback for graphs that predate the canonical
+    // selected_columns JSON parameter.
+    auto columns_it = parameters.find("columns");
+    if (columns_it == parameters.end()) {
+        return true;
+    }
+    const std::string legacy = TrimString(columns_it->second);
+    if (legacy.empty() || legacy == "*") {
+        return true;
+    }
+    columns = ParseCommaSeparatedNames(legacy);
+    if (columns.empty()) {
+        error = "DataInput: columns projection does not contain a valid column name";
+        return false;
+    }
+    return true;
+}
+
 bool ResolveExistingColumns(const std::shared_ptr<arrow::Table>& table,
                             const std::string& node_type,
                             const std::string& columns,
@@ -1092,13 +1154,113 @@ bool BuildFilterRowsConditionExpression(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& condition,
     std::string& expression,
-    std::string& error) {
+    std::string& error,
+    std::vector<FilterConditionToken>* validated_tokens = nullptr) {
     std::vector<FilterConditionToken> tokens;
     if (!TokenizeFilterRowsCondition(condition, tokens, error)) {
         return false;
     }
     FilterRowsConditionParser parser(table, tokens);
-    return parser.Parse(expression, error);
+    if (!parser.Parse(expression, error)) {
+        return false;
+    }
+    if (validated_tokens) {
+        *validated_tokens = std::move(tokens);
+    }
+    return true;
+}
+
+enum class ArrowFilterRowsAttempt {
+    Unsupported,
+    Applied,
+};
+
+ArrowFilterRowsAttempt TryApplyArrowEqualityFilter(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::vector<FilterConditionToken>& tokens,
+    std::shared_ptr<arrow::Table>& result) {
+    result.reset();
+    if (!table || !table->schema() || tokens.size() != 4 ||
+        tokens[0].kind != FilterConditionTokenKind::Identifier ||
+        tokens[1].kind != FilterConditionTokenKind::ComparisonOperator ||
+        tokens[1].value != "=" ||
+        tokens[3].kind != FilterConditionTokenKind::End) {
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+
+    const int column_index =
+        table->schema()->GetFieldIndex(tokens[0].value);
+    if (column_index < 0) {
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+    const auto field = table->schema()->field(column_index);
+    if (!field || !field->type()) {
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+
+    std::shared_ptr<arrow::Scalar> literal;
+    if (tokens[2].kind == FilterConditionTokenKind::NumericLiteral &&
+        IsNumericArrowType(field->type())) {
+        auto scalar_result =
+            arrow::Scalar::Parse(field->type(), tokens[2].value);
+        if (!scalar_result.ok()) {
+            spdlog::debug(
+                "[Data Studio] FilterRows Arrow scalar parse unavailable for "
+                "'{}' (type={}): {}",
+                field->name(), field->type()->ToString(),
+                scalar_result.status().ToString());
+            return ArrowFilterRowsAttempt::Unsupported;
+        }
+        literal = *scalar_result;
+    } else {
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+
+    std::vector<std::shared_ptr<arrow::Array>> mask_chunks;
+    mask_chunks.reserve(
+        static_cast<size_t>(table->column(column_index)->num_chunks()));
+    for (const auto& chunk : table->column(column_index)->chunks()) {
+        arrow::BooleanBuilder builder;
+        auto status = builder.Reserve(chunk->length());
+        if (!status.ok()) {
+            return ArrowFilterRowsAttempt::Unsupported;
+        }
+        for (int64_t row = 0; row < chunk->length(); ++row) {
+            if (chunk->IsNull(row)) {
+                status = builder.AppendNull();
+            } else {
+                auto value_result = chunk->GetScalar(row);
+                if (!value_result.ok()) {
+                    return ArrowFilterRowsAttempt::Unsupported;
+                }
+                status = builder.Append((*value_result)->Equals(*literal));
+            }
+            if (!status.ok()) {
+                return ArrowFilterRowsAttempt::Unsupported;
+            }
+        }
+        std::shared_ptr<arrow::Array> mask_chunk;
+        status = builder.Finish(&mask_chunk);
+        if (!status.ok()) {
+            return ArrowFilterRowsAttempt::Unsupported;
+        }
+        mask_chunks.push_back(std::move(mask_chunk));
+    }
+    auto mask = std::make_shared<arrow::ChunkedArray>(
+        std::move(mask_chunks), arrow::boolean());
+
+    auto filter_result = arrow::compute::Filter(
+        arrow::Datum(table), arrow::Datum(mask),
+        arrow::compute::FilterOptions::Defaults());
+    if (!filter_result.ok() || filter_result->kind() != arrow::Datum::TABLE) {
+        spdlog::debug(
+            "[Data Studio] FilterRows Arrow filtering unavailable for '{}': {}",
+            field->name(), filter_result.status().ToString());
+        return ArrowFilterRowsAttempt::Unsupported;
+    }
+
+    result = filter_result->table();
+    return ArrowFilterRowsAttempt::Applied;
 }
 
 bool RequireColumnKind(const std::shared_ptr<arrow::Table>& table,
@@ -2383,6 +2545,29 @@ bool HasSupportedParameterValues(
 
         const std::string file_type =
             NormalizeDataInputFileType(parameters);
+        if (source_type == "file" &&
+            (file_type == "csv" || file_type == "tsv")) {
+            const auto delimiter_it = parameters.find("delimiter");
+            const std::string delimiter =
+                delimiter_it != parameters.end() && !delimiter_it->second.empty()
+                    ? delimiter_it->second
+                    : (file_type == "tsv" ? "\t" : ",");
+            const auto decimal_it = parameters.find("decimal_point");
+            const std::string decimal_point =
+                decimal_it != parameters.end() && !decimal_it->second.empty()
+                    ? decimal_it->second
+                    : ".";
+            if (delimiter.size() != 1 || decimal_point.size() != 1) {
+                error =
+                    "DataInput delimiter and decimal_point must each be one character";
+                return false;
+            }
+            if (delimiter[0] == decimal_point[0]) {
+                error =
+                    "DataInput delimiter and decimal_point must be different";
+                return false;
+            }
+        }
         const auto skip_rows_it = parameters.find("skip_rows");
         if (source_type == "file" && skip_rows_it != parameters.end() &&
             !skip_rows_it->second.empty() &&
@@ -2560,6 +2745,38 @@ bool ValidateOptionalRoleColumnListKind(
     return true;
 }
 
+bool ValidateOptionalRoleColumnListExists(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::string& node_type,
+    const std::map<std::string, std::string>& parameters,
+    const char* parameter_name,
+    const std::string& role,
+    std::string& error) {
+    auto it = parameters.find(parameter_name);
+    if (it == parameters.end() || it->second.empty()) {
+        return true;
+    }
+    if (!table || !table->schema()) {
+        error = node_type + ": input table schema is unavailable";
+        return false;
+    }
+
+    const std::vector<std::string> columns =
+        ParseCommaSeparatedNames(it->second);
+    if (columns.empty()) {
+        error = node_type + ": no " + role + " columns were provided";
+        return false;
+    }
+    for (const auto& column : columns) {
+        if (table->schema()->GetFieldIndex(column) < 0) {
+            error = node_type + ": " + role + " column '" + column +
+                    "' not found";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ValidateSignalColumnInputSchema(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& node_type,
@@ -2641,8 +2858,16 @@ bool ValidateNumericColumnsWithLabelInputSchema(
                                            error)) {
         return false;
     }
-    return ValidateOptionalRoleColumnExists(
-        table, node_type, parameters, "label_col", "label", error);
+    if (!ValidateOptionalRoleColumnExists(
+            table, node_type, parameters, "label_col", "label", error)) {
+        return false;
+    }
+    if (node_type == "StandardScaler") {
+        return ValidateOptionalRoleColumnListExists(
+            table, node_type, parameters, "exclude_columns", "excluded",
+            error);
+    }
+    return true;
 }
 
 bool ValidateOutlierDetectorInputSchema(
@@ -3553,6 +3778,19 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
             const std::string& file_path = path_it->second;
             spdlog::info("[Pipeline] DataInput loading file: {}", file_path);
 
+            std::vector<std::string> selected_columns;
+            std::string projection_error;
+            if (!ResolveDataInputColumnProjection(
+                    node.parameters, selected_columns, projection_error)) {
+                ReportError(projection_error);
+                return false;
+            }
+            if (!selected_columns.empty()) {
+                spdlog::info(
+                    "[Pipeline] DataInput applying source column projection: {} column(s)",
+                    selected_columns.size());
+            }
+
             // Get file type and options from parameters
             std::string file_type =
                 NormalizeDataInputFileType(node.parameters);
@@ -3586,10 +3824,18 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                 if (missing_it != node.parameters.end()) {
                     missing_tokens = ParseMissingValueTokens(missing_it->second);
                 }
+                char decimal_point = '.';
+                auto decimal_it = node.parameters.find("decimal_point");
+                if (decimal_it != node.parameters.end() &&
+                    !decimal_it->second.empty()) {
+                    decimal_point = decimal_it->second[0];
+                }
 
                 arrow_dataset = registry.LoadCSVToArrow(
                     file_path, dataset_name, has_header, delimiter[0],
-                    skip_rows, max_rows, missing_tokens);
+                    skip_rows, max_rows, missing_tokens, selected_columns,
+                    decimal_point,
+                    false);
             } else if (file_type == "parquet") {
                 arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
             } else if (file_type == "auto" || file_type == "feather" ||
@@ -3717,6 +3963,9 @@ bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ct
     options.has_header = OptionalBooleanParameterOrDefault(
         node.parameters, "has_header",
         OptionalBooleanParameterOrDefault(node.parameters, "header", true));
+    const std::string decimal_point = ParameterOrDefault(
+        node.parameters, "decimal_point", ".");
+    options.decimal_point = decimal_point.empty() ? '.' : decimal_point.front();
     options.allow_newlines_in_values = OptionalBooleanParameterOrDefault(
         node.parameters, "allow_newlines_in_values", true);
     options.skip_rows = static_cast<int>(OptionalIntegerParameterOrDefault(
@@ -3731,6 +3980,7 @@ bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ct
         node.parameters, "create_parent_dirs", true);
     options.write_manifest = OptionalBooleanParameterOrDefault(
         node.parameters, "write_manifest", true);
+    options.retain_output_table = true;
 
     try {
         std::string input_label = options.input_path;
@@ -3773,8 +4023,10 @@ bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ct
         }
 
         const std::string dataset_name = "ds_dataconvert_" + std::to_string(node.id);
-        auto output_dataset = LoadDataConvertOutputDataset(
-            result.output_path, dataset_name, options.output_format);
+        auto output_dataset = result.output_table
+            ? std::make_shared<ArrowDataset>(result.output_table, dataset_name)
+            : LoadDataConvertOutputDataset(
+                  result.output_path, dataset_name, options.output_format);
         if (!output_dataset || !output_dataset->GetArrowTable()) {
             ReportError("DataConvert: conversion succeeded, but generated output could not be loaded: " +
                         result.output_path);
@@ -3833,27 +4085,39 @@ bool PipelineExecutor::ExecuteFilterRows(const Node& node, ExecutionContext& ctx
         auto input_table = input_dataset->GetArrowTable();
         std::string filter_expression;
         std::string filter_error;
+        std::vector<FilterConditionToken> validated_tokens;
         if (!BuildFilterRowsConditionExpression(input_table, condition,
                                                 filter_expression,
-                                                filter_error)) {
+                                                filter_error,
+                                                &validated_tokens)) {
             ReportError(filter_error);
             return false;
         }
 
-        // Register input table with DuckDB
-        std::string temp_table = "temp_" + std::to_string(node.id);
-        if (!duckdb_->RegisterTable(temp_table, input_table)) {
-            ReportError("FilterRows: Failed to register table with DuckDB");
-            return false;
+        std::shared_ptr<arrow::Table> result_table;
+        const auto arrow_attempt = TryApplyArrowEqualityFilter(
+            input_table, validated_tokens, result_table);
+        if (arrow_attempt == ArrowFilterRowsAttempt::Applied) {
+            spdlog::info(
+                "[Data Studio] FilterRows used Arrow-native numeric equality");
+        } else {
+            // Preserve the general SQL path for compound expressions,
+            // inequalities, and Arrow types/kernels outside the narrow fast
+            // path.
+            std::string temp_table = "temp_" + std::to_string(node.id);
+            if (!duckdb_->RegisterTable(temp_table, input_table)) {
+                ReportError("FilterRows: Failed to register table with DuckDB");
+                return false;
+            }
+
+            std::string sql = "SELECT * FROM " + temp_table + " WHERE " +
+                              filter_expression;
+            result_table = duckdb_->Query(sql);
+
+            duckdb_->UnregisterTable(temp_table);
+            spdlog::info(
+                "[Data Studio] FilterRows used DuckDB expression fallback");
         }
-
-        // Execute WHERE query
-        std::string sql = "SELECT * FROM " + temp_table + " WHERE " +
-                          filter_expression;
-        auto result_table = duckdb_->Query(sql);
-
-        // Unregister temp table
-        duckdb_->UnregisterTable(temp_table);
 
         if (!result_table) {
             ReportError("FilterRows: Query execution failed");
@@ -7074,6 +7338,11 @@ bool PipelineExecutor::ExecuteRegressionMetrics(const Node& node, ExecutionConte
             (std::fabs(ss_total) <= 1e-12)
                 ? (std::fabs(sum_squared_error) <= 1e-12 ? 1.0 : 0.0)
                 : (1.0 - (sum_squared_error / ss_total));
+
+        spdlog::info(
+            "[Data Studio] RegressionMetricsNode: count={}, MSE={:.10g}, "
+            "RMSE={:.10g}, MAE={:.10g}, R2={:.10g}",
+            count, mse, rmse, mae, r2);
 
         std::vector<std::string> metrics;
         auto metrics_it = node.parameters.find("metrics");

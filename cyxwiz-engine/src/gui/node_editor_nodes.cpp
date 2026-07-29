@@ -287,6 +287,7 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::TimeSeriesWindow:
         case NodeType::TimeSeriesFeatures:
         case NodeType::TimeSeriesSplit:
+        case NodeType::SeasonalNaive:
         case NodeType::LogTransform:
         case NodeType::Differencing:
         case NodeType::TimeSeriesDecomposition:
@@ -2562,8 +2563,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             out.is_input = false;
             out.description =
                 "Windowed Arrow table with x_* feature columns and a "
-                "y label column. Optional __window_start_time metadata "
-                "is emitted when time_col is set.";
+                "y label column plus ordered y_1.. targets when "
+                "label_width > 1. Hidden target-bound metadata supports "
+                "leakage-safe chronological splitting. Optional "
+                "__window_start_time metadata is emitted when time_col is set.";
             node.outputs.push_back(out);
             // Phase 4 canonical params read by TimeSeriesWindowOperator.
             // value_col is required and has no reasonable default; the
@@ -2647,6 +2650,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["train_ratio"] = "0.8";
             node.parameters["val_ratio"] = "0.1";
             node.parameters["test_ratio"] = "0.1";
+            node.parameters["boundary_policy"] = "targets_within_partition";
+            // Optional exact source-row cutoffs. -1 uses ratios against the
+            // original source timeline reconstructed from window metadata.
+            node.parameters["train_end_source_row"] = "-1";
+            node.parameters["val_end_source_row"] = "-1";
             break;
         }
 
@@ -3215,6 +3223,30 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
+        case NodeType::SeasonalNaive: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "Windowed";
+            in.is_input = true;
+            in.description =
+                "Canonical Sliding Window table containing x_* history and "
+                "ordered y targets. Time-series split metadata is optional.";
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Dataset;
+            out.name = "Predictions";
+            out.is_input = false;
+            out.description =
+                "Long-form actual and seasonal-naive prediction rows. "
+                "Filter __partition__ = 2 for held-out testing, then connect "
+                "to Regression Metrics.";
+            node.outputs.push_back(out);
+            node.parameters["seasonal_period"] = "1";
+            break;
+        }
+
         case NodeType::DataConvert: {
             NodePin input_pin;
             input_pin.id = next_pin_id_++;
@@ -3239,6 +3271,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["output_path"] = "";
             node.parameters["output_format"] = "auto";
             node.parameters["delimiter"] = "auto";
+            node.parameters["decimal_point"] = ".";
             node.parameters["header"] = "true";
             node.parameters["allow_newlines_in_values"] = "true";
             node.parameters["skip_rows"] = "0";
@@ -4398,20 +4431,17 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::RegressionMetricsNode: {
-            // RegressionMetricsNode - Compute regression metrics
-            NodePin pred_in;
-            pred_in.id = next_pin_id_++;
-            pred_in.type = PinType::Tensor;
-            pred_in.name = "Predictions";
-            pred_in.is_input = true;
-            node.inputs.push_back(pred_in);
-
-            NodePin truth_in;
-            truth_in.id = next_pin_id_++;
-            truth_in.type = PinType::Tensor;
-            truth_in.name = "Ground Truth";
-            truth_in.is_input = true;
-            node.inputs.push_back(truth_in);
+            // Runtime contract: one table containing both numeric columns.
+            // The older two-Tensor canvas shape could not connect to the
+            // implemented PipelineExecutor or the typed metadata contract.
+            NodePin data_in;
+            data_in.id = next_pin_id_++;
+            data_in.type = PinType::Dataset;
+            data_in.name = "Data";
+            data_in.is_input = true;
+            data_in.description =
+                "Table containing numeric actual and predicted columns.";
+            node.inputs.push_back(data_in);
 
             NodePin metrics_out;
             metrics_out.id = next_pin_id_++;
@@ -4420,7 +4450,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             metrics_out.is_input = false;
             node.outputs.push_back(metrics_out);
 
-            node.parameters["metrics"] = "mse,rmse,mae,r2";  // Comma-separated metrics to compute
+            node.parameters["actual_col"] = "";
+            node.parameters["predicted_col"] = "";
+            node.parameters["metrics"] = "mse,rmse,mae,r2";
             break;
         }
 
@@ -5741,6 +5773,8 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(255, 179, 0, 255);
         case NodeType::TimeSeriesSplit:
             return IM_COL32(255, 196, 0, 255);
+        case NodeType::SeasonalNaive:
+            return IM_COL32(255, 183, 32, 255);
         case NodeType::LogTransform:
             return IM_COL32(255, 213, 0, 255);
         case NodeType::Differencing:

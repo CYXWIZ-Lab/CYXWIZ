@@ -1,6 +1,7 @@
 #include "data_convert_service.h"
 
 #include "arrow_dataset.h"
+#include "csv_ingestion_options.h"
 #include "error_codes.h"
 
 #include <arrow/api.h>
@@ -314,21 +315,69 @@ arrow::csv::ParseOptions BuildParseOptions(const DataConvertOptions& options,
     return parse_options;
 }
 
-std::shared_ptr<ArrowDataset> LoadDelimited(
+std::shared_ptr<ArrowDataset> LoadDelimitedAttempt(
     const DataConvertOptions& options,
     DataConvertFormat format,
+    bool promote_inferred_integers,
     std::string& error) {
-    auto dataset = ArrowDataset::FromCSV(
+    auto convert_options = MakeTabularCsvConvertOptions(
+        DefaultTabularMissingValueTokens(), options.decimal_point);
+    size_t promoted_integer_columns = 0;
+    auto reader_result = MakeStableCsvStreamingReader(
         options.input_path,
-        "data_convert_input",
         BuildReadOptions(options),
         BuildParseOptions(options, format),
-        arrow::csv::ConvertOptions::Defaults());
-    if (!dataset || !dataset->GetArrowTable()) {
-        error = "Delimited file read failed. Check the path, delimiter, header setting, and row consistency.";
+        convert_options,
+        &promoted_integer_columns,
+        promote_inferred_integers);
+    if (!reader_result.ok()) {
+        error = "Delimited file reader creation failed: " +
+            reader_result.status().ToString();
         return nullptr;
     }
-    return dataset;
+    if (promoted_integer_columns > 0) {
+        spdlog::info(
+            "DataConvert: promoted {} inferred integer columns to float64 for stable full-source parsing",
+            promoted_integer_columns);
+    }
+
+    auto reader = reader_result.ValueOrDie();
+    std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+    while (true) {
+        std::shared_ptr<arrow::RecordBatch> batch;
+        auto status = reader->ReadNext(&batch);
+        if (!status.ok()) {
+            error = "Delimited file read failed: " + status.ToString();
+            return nullptr;
+        }
+        if (!batch) break;
+        batches.push_back(std::move(batch));
+    }
+    auto table_result = arrow::Table::FromRecordBatches(
+        reader->schema(), batches);
+    if (!table_result.ok()) {
+        error = "Delimited table assembly failed: " +
+            table_result.status().ToString();
+        return nullptr;
+    }
+    return std::make_shared<ArrowDataset>(
+        table_result.ValueOrDie(), "data_convert_input");
+}
+
+std::shared_ptr<ArrowDataset> LoadDelimited(
+    const DataConvertOptions& options, DataConvertFormat format,
+    std::string& error) {
+    std::string first_error;
+    auto result = LoadDelimitedAttempt(options, format, false, first_error);
+    if (result) return result;
+    result = LoadDelimitedAttempt(options, format, true, error);
+    if (!result) {
+        error = first_error + "; numeric fallback failed: " + error;
+    } else {
+        spdlog::warn("DataConvert: numeric schema fallback succeeded after: {}",
+                     first_error);
+    }
+    return result;
 }
 
 std::shared_ptr<ArrowDataset> LoadJsonLines(const DataConvertOptions& options,
@@ -1592,6 +1641,7 @@ std::string BuildSettingsHashInput(const DataConvertOptions& options,
         << FormatName(input_format) << "|"
         << FormatName(output_format) << "|"
         << options.delimiter << "|"
+        << options.decimal_point << "|"
         << options.auto_detect_delimiter << "|"
         << options.has_header << "|"
         << options.allow_newlines_in_values << "|"
@@ -1631,6 +1681,10 @@ bool WriteManifest(const DataConvertOptions& options,
         {"columns", result.columns},
         {"compression", options.parquet_compression},
         {"delimiter", std::string(1, result.detected_delimiter)},
+        {"input_decimal_point", std::string(1, options.decimal_point)},
+        {"output_delimiter", output_format == DataConvertFormat::Tsv ? "tab" :
+            (output_format == DataConvertFormat::Csv ? "," : "not_applicable")},
+        {"output_decimal_point", IsDelimitedFormat(output_format) ? "." : "not_applicable"},
         {"delimiter_mode", options.auto_detect_delimiter ? "auto" : "manual"},
         {"allow_newlines_in_values", options.allow_newlines_in_values},
         {"settings_hash", SimpleSettingsHash(options, input_format, output_format)},
@@ -1959,6 +2013,9 @@ DataConvertResult DataConvertService::Convert(const DataConvertOptions& options)
     result.rows_read = table->num_rows();
     result.rows_written = table->num_rows();
     result.columns = table->num_columns();
+    if (options.retain_output_table) {
+        result.output_table = table;
+    }
     result.output_path = options.output_path;
     if (std::filesystem::exists(output_path, ec)) {
         result.bytes_written = static_cast<int64_t>(

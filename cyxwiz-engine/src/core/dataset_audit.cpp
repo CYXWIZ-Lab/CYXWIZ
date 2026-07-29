@@ -18,6 +18,7 @@
 #include <memory>
 #include <map>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 
@@ -55,6 +56,149 @@ bool IsNumericType(arrow::Type::type id) {
             return true;
         default:
             return false;
+    }
+}
+
+template <typename ArrowType>
+bool IsTypedColumnConstant(
+    const std::shared_ptr<arrow::ChunkedArray>& column,
+    const std::function<bool()>& should_cancel,
+    bool& cancelled) {
+    using ArrayType = typename arrow::TypeTraits<ArrowType>::ArrayType;
+    using ValueType = typename ArrowType::c_type;
+
+    bool saw_value = false;
+    ValueType first_value{};
+    int64_t visited = 0;
+    for (const auto& chunk : column->chunks()) {
+        auto values = std::static_pointer_cast<ArrayType>(chunk);
+        for (int64_t row = 0; row < values->length(); ++row, ++visited) {
+            if ((visited & 4095) == 0 && should_cancel && should_cancel()) {
+                cancelled = true;
+                return false;
+            }
+            if (values->IsNull(row)) continue;
+            const ValueType value = values->Value(row);
+            if (!saw_value) {
+                first_value = value;
+                saw_value = true;
+            } else if (value != first_value) {
+                return false;
+            }
+        }
+    }
+    return saw_value;
+}
+
+bool IsNumericColumnConstant(
+    const std::shared_ptr<arrow::ChunkedArray>& column,
+    const std::function<bool()>& should_cancel,
+    bool& cancelled) {
+    switch (column->type()->id()) {
+        case arrow::Type::HALF_FLOAT:
+            return IsTypedColumnConstant<arrow::HalfFloatType>(
+                column, should_cancel, cancelled);
+        case arrow::Type::FLOAT:
+            return IsTypedColumnConstant<arrow::FloatType>(
+                column, should_cancel, cancelled);
+        case arrow::Type::DOUBLE:
+            return IsTypedColumnConstant<arrow::DoubleType>(
+                column, should_cancel, cancelled);
+        case arrow::Type::INT8:
+            return IsTypedColumnConstant<arrow::Int8Type>(
+                column, should_cancel, cancelled);
+        case arrow::Type::INT16:
+            return IsTypedColumnConstant<arrow::Int16Type>(
+                column, should_cancel, cancelled);
+        case arrow::Type::INT32:
+            return IsTypedColumnConstant<arrow::Int32Type>(
+                column, should_cancel, cancelled);
+        case arrow::Type::INT64:
+            return IsTypedColumnConstant<arrow::Int64Type>(
+                column, should_cancel, cancelled);
+        case arrow::Type::UINT8:
+            return IsTypedColumnConstant<arrow::UInt8Type>(
+                column, should_cancel, cancelled);
+        case arrow::Type::UINT16:
+            return IsTypedColumnConstant<arrow::UInt16Type>(
+                column, should_cancel, cancelled);
+        case arrow::Type::UINT32:
+            return IsTypedColumnConstant<arrow::UInt32Type>(
+                column, should_cancel, cancelled);
+        case arrow::Type::UINT64:
+            return IsTypedColumnConstant<arrow::UInt64Type>(
+                column, should_cancel, cancelled);
+        default:
+            return false;
+    }
+}
+
+struct NumericHealthSample {
+    bool saw_nan = false;
+    bool saw_inf = false;
+};
+
+template <typename ArrowType>
+NumericHealthSample SampleTypedColumnHealth(
+    const std::shared_ptr<arrow::ChunkedArray>& column,
+    int64_t sample_count,
+    const std::function<bool()>& should_cancel,
+    bool& cancelled) {
+    using ArrayType = typename arrow::TypeTraits<ArrowType>::ArrayType;
+    using ValueType = typename ArrowType::c_type;
+
+    NumericHealthSample health;
+    const int64_t length = column->length();
+    size_t chunk_index = 0;
+    int64_t chunk_start = 0;
+    for (int64_t sample = 0; sample < sample_count; ++sample) {
+        if ((sample & 255) == 0 && should_cancel && should_cancel()) {
+            cancelled = true;
+            return health;
+        }
+        const int64_t row = sample_count == length
+            ? sample
+            : (sample_count <= 1
+                ? 0
+                : static_cast<int64_t>(
+                    (static_cast<long double>(sample) * (length - 1)) /
+                    (sample_count - 1)));
+        while (chunk_index < column->num_chunks() &&
+               row >= chunk_start + column->chunk(
+                   static_cast<int>(chunk_index))->length()) {
+            chunk_start += column->chunk(
+                static_cast<int>(chunk_index))->length();
+            ++chunk_index;
+        }
+        if (chunk_index >= column->num_chunks()) break;
+
+        auto values = std::static_pointer_cast<ArrayType>(
+            column->chunk(static_cast<int>(chunk_index)));
+        const int64_t local_row = row - chunk_start;
+        if (values->IsNull(local_row)) continue;
+        if constexpr (std::is_floating_point_v<ValueType>) {
+            const double value = static_cast<double>(values->Value(local_row));
+            health.saw_nan |= std::isnan(value);
+            health.saw_inf |= !std::isfinite(value) && !std::isnan(value);
+        }
+    }
+    return health;
+}
+
+NumericHealthSample SampleNumericColumnHealth(
+    const std::shared_ptr<arrow::ChunkedArray>& column,
+    int64_t sample_count,
+    const std::function<bool()>& should_cancel,
+    bool& cancelled) {
+    switch (column->type()->id()) {
+        case arrow::Type::FLOAT:
+            return SampleTypedColumnHealth<arrow::FloatType>(
+                column, sample_count, should_cancel, cancelled);
+        case arrow::Type::DOUBLE:
+            return SampleTypedColumnHealth<arrow::DoubleType>(
+                column, sample_count, should_cancel, cancelled);
+        default:
+            return {};
     }
 }
 
@@ -816,6 +960,7 @@ std::string ScalarKey(const std::shared_ptr<arrow::Scalar>& scalar) {
 void AuditArrowColumns(DatasetAuditResult& result,
                        const std::shared_ptr<arrow::Table>& table,
                        const std::string& label_column,
+                       const DatasetAuditOptions& options,
                        bool enforce_degenerate_threshold = true) {
     if (!table) {
         result.Add(DatasetAuditSeverity::Error,
@@ -826,8 +971,21 @@ void AuditArrowColumns(DatasetAuditResult& result,
 
     int feature_columns = 0;
     int degenerate_feature_columns = 0;
+    bool sampled_numeric_values = false;
+
+    const auto should_cancel = [&]() {
+        return options.should_cancel && options.should_cancel();
+    };
+    if (options.report_progress) {
+        options.report_progress(0.0f, "Auditing columns");
+    }
 
     for (int i = 0; i < table->num_columns(); ++i) {
+        if (should_cancel()) {
+            result.cancelled = true;
+            return;
+        }
+
         auto column = table->column(i);
         if (!column) continue;
 
@@ -850,56 +1008,52 @@ void AuditArrowColumns(DatasetAuditResult& result,
             if (degenerate) {
                 ++degenerate_feature_columns;
             }
+            if (options.report_progress) {
+                options.report_progress(
+                    0.9f * static_cast<float>(i + 1) /
+                        static_cast<float>(std::max(1, table->num_columns())),
+                    "Auditing column " + std::to_string(i + 1) + "/" +
+                        std::to_string(table->num_columns()));
+            }
             continue;
         }
 
-        bool saw_value = false;
-        bool saw_nan = false;
-        bool saw_inf = false;
-        bool saw_different = false;
-        double first_value = 0.0;
-
-        for (const auto& chunk : column->chunks()) {
-            if (!chunk) continue;
-            for (int64_t row = 0; row < chunk->length(); ++row) {
-                if (chunk->IsNull(row)) continue;
-
-                auto scalar_result = chunk->GetScalar(row);
-                if (!scalar_result.ok()) continue;
-                double value = 0.0;
-                try {
-                    value = std::stod((*scalar_result)->ToString());
-                } catch (...) {
-                    continue;
-                }
-                if (std::isnan(value)) {
-                    saw_nan = true;
-                    continue;
-                }
-                if (!std::isfinite(value)) {
-                    saw_inf = true;
-                    continue;
-                }
-                if (!saw_value) {
-                    saw_value = true;
-                    first_value = value;
-                } else if (value != first_value) {
-                    saw_different = true;
-                }
-            }
+        bool constant_scan_cancelled = false;
+        const bool exact_constant = IsNumericColumnConstant(
+            column, options.should_cancel, constant_scan_cancelled);
+        if (constant_scan_cancelled) {
+            result.cancelled = true;
+            return;
         }
 
-        if (saw_nan) {
+        const int64_t length = column->length();
+        const int64_t configured_limit =
+            options.max_numeric_samples_per_column;
+        const int64_t sample_count = configured_limit <= 0
+            ? length
+            : std::min(length, configured_limit);
+        sampled_numeric_values |= sample_count < length;
+
+        bool health_scan_cancelled = false;
+        const auto health = SampleNumericColumnHealth(
+            column, sample_count, options.should_cancel,
+            health_scan_cancelled);
+        if (health_scan_cancelled) {
+            result.cancelled = true;
+            return;
+        }
+
+        if (health.saw_nan) {
             result.Add(DatasetAuditSeverity::Warning,
                        "nan_values",
                        "Column '" + name + "' contains NaN values.");
         }
-        if (saw_inf) {
+        if (health.saw_inf) {
             result.Add(DatasetAuditSeverity::Warning,
                        "infinite_values",
                        "Column '" + name + "' contains infinite values.");
         }
-        if (saw_value && !saw_different && name != label_column) {
+        if (exact_constant && name != label_column) {
             result.Add(DatasetAuditSeverity::Warning,
                        "constant_column",
                        "Column '" + name + "' is constant.");
@@ -909,6 +1063,23 @@ void AuditArrowColumns(DatasetAuditResult& result,
         if (degenerate) {
             ++degenerate_feature_columns;
         }
+
+        if (options.report_progress) {
+            options.report_progress(
+                0.9f * static_cast<float>(i + 1) /
+                    static_cast<float>(std::max(1, table->num_columns())),
+                "Auditing column " + std::to_string(i + 1) + "/" +
+                    std::to_string(table->num_columns()));
+        }
+    }
+
+    if (sampled_numeric_values) {
+        result.Add(
+            DatasetAuditSeverity::Info,
+            "numeric_health_scan_sampled",
+            "Numeric NaN/infinity checks sampled up to " +
+                std::to_string(options.max_numeric_samples_per_column) +
+                " evenly spaced values per column; constant checks used the complete columns.");
     }
 
     if (enforce_degenerate_threshold &&
@@ -924,7 +1095,8 @@ void AuditArrowColumns(DatasetAuditResult& result,
 
 void AuditArrowLabels(DatasetAuditResult& result,
                       const std::shared_ptr<arrow::Table>& table,
-                      const std::string& label_column) {
+                      const std::string& label_column,
+                      const DatasetAuditOptions& options) {
     if (label_column.empty()) {
         result.Add(DatasetAuditSeverity::Warning,
                    "missing_label_column",
@@ -949,6 +1121,11 @@ void AuditArrowLabels(DatasetAuditResult& result,
     for (const auto& chunk : column->chunks()) {
         if (!chunk || scanned >= scan_limit) continue;
         for (int64_t row = 0; row < chunk->length() && scanned < scan_limit; ++row, ++scanned) {
+            if ((scanned & 255) == 0 && options.should_cancel &&
+                options.should_cancel()) {
+                result.cancelled = true;
+                return;
+            }
             if (chunk->IsNull(row)) {
                 ++null_labels;
                 continue;
@@ -956,6 +1133,12 @@ void AuditArrowLabels(DatasetAuditResult& result,
             auto scalar_result = chunk->GetScalar(row);
             if (!scalar_result.ok()) continue;
             ++counts[ScalarKey(*scalar_result)];
+            if (options.report_progress && (scanned & 1023) == 0) {
+                options.report_progress(
+                    0.9f + 0.1f * static_cast<float>(scanned + 1) /
+                        static_cast<float>(std::max<int64_t>(1, scan_limit)),
+                    "Auditing labels");
+            }
         }
     }
 
@@ -1035,7 +1218,8 @@ void DatasetAuditResult::Add(DatasetAuditSeverity severity,
 DatasetAuditResult DatasetAudit::AuditTabular(
     const std::string& dataset_name,
     const std::shared_ptr<ArrowDataset>& dataset,
-    const std::string& label_column) {
+    const std::string& label_column,
+    const DatasetAuditOptions& options) {
     DatasetAuditResult result;
     result.dataset_name = dataset_name;
     result.domain = "tabular";
@@ -1058,8 +1242,13 @@ DatasetAuditResult DatasetAudit::AuditTabular(
     }
 
     auto table = dataset->GetArrowTable();
-    AuditArrowColumns(result, table, label_column);
-    AuditArrowLabels(result, table, label_column);
+    AuditArrowColumns(result, table, label_column, options);
+    if (result.cancelled) return result;
+    AuditArrowLabels(result, table, label_column, options);
+    if (result.cancelled) return result;
+    if (options.report_progress) {
+        options.report_progress(1.0f, "Audit complete");
+    }
     return result;
 }
 

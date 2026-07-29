@@ -10,6 +10,28 @@
 
 namespace gui::detail {
 
+inline constexpr int kLegacyDataBoundaryVersion = 1;
+inline constexpr int kCurrentDataBoundaryVersion = 2;
+
+inline int ReadSerializedDataBoundaryVersion(const nlohmann::json& graph_json) {
+    if (!graph_json.contains("data_boundary_version")) {
+        return kLegacyDataBoundaryVersion;
+    }
+    const auto& value = graph_json["data_boundary_version"];
+    if (!value.is_number_integer()) {
+        return kLegacyDataBoundaryVersion;
+    }
+    const int version = value.get<int>();
+    return version == kCurrentDataBoundaryVersion
+        ? kCurrentDataBoundaryVersion
+        : kLegacyDataBoundaryVersion;
+}
+
+inline bool PreserveLegacyDataBoundaryPins(const nlohmann::json& graph_json) {
+    return ReadSerializedDataBoundaryVersion(graph_json) <
+           kCurrentDataBoundaryVersion;
+}
+
 inline bool HasImportGuardParam(const std::map<std::string, std::string>& params,
                                 const char* key) {
     return params.find(key) != params.end();

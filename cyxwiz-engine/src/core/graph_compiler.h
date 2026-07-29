@@ -2,6 +2,7 @@
 
 #include "bert_encoder_contract.h"
 #include "compiled_graph_plan.h"
+#include "dataset_partitions.h"
 #include "metric_learning_graph_contract.h"
 #include "../gui/node_editor.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -241,6 +242,52 @@ struct ValidationIssue {
     std::string error_code;            // optional stable CW-* code
 };
 
+/**
+ * Where the training objective obtains its target signal.
+ *
+ * A target is not necessarily a label column on the raw Data Input. Forecast
+ * windows and self-supervised operators can generate targets inside the graph,
+ * media loaders can derive them from dataset structure, and reinforcement
+ * learning obtains them from environment transitions.
+ */
+enum class TargetOrigin {
+    Unresolved,
+    DatasetColumn,
+    DatasetStructure,
+    GraphGenerated,
+    Environment
+};
+
+enum class TargetValueKind {
+    Unspecified,
+    Continuous,
+    Categorical,
+    TokenIds,
+    EnvironmentSignal
+};
+
+struct TargetContract {
+    // False for target-free estimators/objectives. Current tensor loss nodes
+    // require targets; future estimator and RL compilers can express their
+    // different contracts without reintroducing a blanket label requirement.
+    bool required_by_objective = false;
+    TargetOrigin origin = TargetOrigin::Unresolved;
+    TargetValueKind value_kind = TargetValueKind::Unspecified;
+    int producer_node_id = -1;
+    std::string producer_node_name;
+    std::string primary_column;
+    size_t width = 0;
+
+    bool IsResolved() const {
+        return !required_by_objective ||
+               origin != TargetOrigin::Unresolved;
+    }
+
+    bool IsGeneratedByGraph() const {
+        return origin == TargetOrigin::GraphGenerated;
+    }
+};
+
 namespace BackendPlacementStatus {
 inline constexpr const char* Gpu = "gpu";
 inline constexpr const char* Cpu = "cpu";
@@ -363,24 +410,6 @@ struct PinMemoryTransferStatus {
 };
 
 /**
- * A physical dataset source resolved to a semantic training role.
- * Derived Dev/Test roles leave dataset_name empty and are partitioned from Train.
- */
-struct ResolvedDatasetRole {
-    std::string dataset_name;
-    std::string label_column;
-    int source_node_id = -1;
-    bool externally_supplied = false;
-    bool IsSupplied() const { return !dataset_name.empty(); }
-};
-
-struct ResolvedDatasetRoles {
-    ResolvedDatasetRole train;
-    ResolvedDatasetRole dev;
-    ResolvedDatasetRole test;
-};
-
-/**
  * Complete training configuration extracted from graph
  */
 struct TrainingConfiguration {
@@ -414,7 +443,8 @@ struct TrainingConfiguration {
     // Dataset configuration
     std::string dataset_name;           // Name of dataset in DataRegistry
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
-    ResolvedDatasetRoles dataset_roles;  // Train plus optional supplied Dev/Test
+    ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
+    TargetContract target;              // Objective target provenance
 
     // DataSplit configuration (from DataSplit node, or defaults if absent)
     float train_ratio = 0.8f;
@@ -480,6 +510,9 @@ struct TrainingConfiguration {
     // partition column must drive index selection instead of train_split
     // slicing, and that the label column is the auto-emitted `y` column.
     bool is_time_series = false;
+    // Ordered target width emitted by TimeSeriesWindow. One preserves the
+    // historical scalar `y`; wider outputs use `y`, `y_1`, ... in order.
+    size_t time_series_target_width = 1;
 
     // Loss function
     int loss_node_id = -1;              // Selected loss node
@@ -581,6 +614,16 @@ struct TrainingConfiguration {
         }
     }
 };
+
+inline bool UsesContinuousTargetMetrics(
+    const TrainingConfiguration& config) {
+    if (config.target.value_kind == TargetValueKind::Continuous) return true;
+    if (config.target.value_kind != TargetValueKind::Unspecified) return false;
+    return config.loss_type == gui::NodeType::MSELoss ||
+           config.loss_type == gui::NodeType::L1Loss ||
+           config.loss_type == gui::NodeType::SmoothL1Loss ||
+           config.loss_type == gui::NodeType::HuberLoss;
+}
 
 /**
  * GraphCompiler - Compiles visual node graph into executable training configuration

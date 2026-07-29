@@ -434,6 +434,12 @@ public:
     void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
     void SetRegressionMode(bool enable) { SetScalarLabelMode(enable); }
 
+    // Configure ordered regression targets. Width one consumes the primary
+    // label; wider targets consume `<base>`, `<base>_1`, ... and remove every
+    // target from the feature tensor. Throws when the schema is incomplete.
+    void SetRegressionTargetWidth(
+        size_t width, const std::string& target_base = {});
+
 private:
     std::shared_ptr<class ArrowDataset> dataset_;
     std::string label_column_;
@@ -460,6 +466,7 @@ private:
     // Feature and label column indices
     std::vector<int> feature_cols_;
     int label_col_idx_ = -1;
+    std::vector<int> label_col_indices_;
     size_t num_features_ = 0;
 
     // Preprocessing

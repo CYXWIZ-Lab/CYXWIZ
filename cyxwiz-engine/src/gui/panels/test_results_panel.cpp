@@ -17,8 +17,18 @@ void TestResultsPanel::SetResults(const TestingMetrics& results) {
     std::lock_guard<std::mutex> lock(results_mutex_);
     results_ = results;
     has_results_ = true;
-    spdlog::info("TestResultsPanel: Received results with accuracy {:.2f}%",
-                 results.test_accuracy * 100);
+    if (results.regression_mode) {
+        spdlog::info(
+            "TestResultsPanel: Received regression results (MAE={:.6f}, "
+            "RMSE={:.6f})",
+            results.test_mae,
+            results.test_rmse);
+    } else {
+        spdlog::info(
+            "TestResultsPanel: Received classification results with accuracy "
+            "{:.2f}%",
+            results.test_accuracy * 100);
+    }
 }
 
 void TestResultsPanel::Clear() {
@@ -37,6 +47,29 @@ void TestResultsPanel::Render() {
             ImGui::TextDisabled("No test results available.");
             ImGui::TextDisabled("Run a test using Train > Run Test.");
         } else {
+            bool failed = false;
+            std::string failure_message;
+            bool regression_mode = false;
+            {
+                std::lock_guard<std::mutex> lock(results_mutex_);
+                failed = !results_.is_complete &&
+                         !results_.status_message.empty();
+                failure_message = results_.status_message;
+                regression_mode = results_.regression_mode;
+            }
+            if (failed) {
+                ImGui::TextColored(ImVec4(0.95f, 0.3f, 0.3f, 1.0f),
+                                   "Test failed");
+                ImGui::Separator();
+                ImGui::TextWrapped("%s", failure_message.c_str());
+                ImGui::Spacing();
+                ImGui::TextDisabled(
+                    "Open Tasks for the failed testing task and inspect "
+                    "engine_log.txt for technical details.");
+                ImGui::End();
+                return;
+            }
+
             RenderToolbar();
 
             ImGui::Separator();
@@ -49,19 +82,22 @@ void TestResultsPanel::Render() {
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_TABLE " Confusion Matrix")) {
+                if (!regression_mode &&
+                    ImGui::BeginTabItem(ICON_FA_TABLE " Confusion Matrix")) {
                     selected_tab_ = 1;
                     RenderConfusionMatrixTab();
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_LIST_UL " Per-Class Metrics")) {
+                if (!regression_mode &&
+                    ImGui::BeginTabItem(ICON_FA_LIST_UL " Per-Class Metrics")) {
                     selected_tab_ = 2;
                     RenderPerClassTab();
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_MAGNIFYING_GLASS " Predictions")) {
+                if (!regression_mode &&
+                    ImGui::BeginTabItem(ICON_FA_MAGNIFYING_GLASS " Predictions")) {
                     selected_tab_ = 3;
                     RenderPredictionsTab();
                     ImGui::EndTabItem();
@@ -96,8 +132,14 @@ void TestResultsPanel::RenderToolbar() {
 
     // Quick stats
     std::lock_guard<std::mutex> lock(results_mutex_);
-    ImVec4 acc_color = GetAccuracyColor(results_.test_accuracy);
-    ImGui::TextColored(acc_color, "Accuracy: %.2f%%", results_.test_accuracy * 100);
+    if (results_.regression_mode) {
+        ImGui::Text("MAE: %.4f | RMSE: %.4f",
+                    results_.test_mae, results_.test_rmse);
+    } else {
+        ImVec4 acc_color = GetAccuracyColor(results_.test_accuracy);
+        ImGui::TextColored(acc_color, "Accuracy: %.2f%%",
+                           results_.test_accuracy * 100);
+    }
     ImGui::SameLine();
     ImGui::Text("| Samples: %d", results_.total_samples);
     ImGui::SameLine();
@@ -109,6 +151,37 @@ void TestResultsPanel::RenderOverviewTab() {
 
     // Main metrics section
     ImGui::BeginChild("OverviewMetrics", ImVec2(0, 0), true);
+
+    if (results_.regression_mode) {
+        ImGui::Text("Regression Evaluation");
+        ImGui::Separator();
+        ImGui::Text("Test Loss");
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(170);
+        ImGui::Text("%.4f", results_.test_loss);
+        ImGui::Text("MAE");
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(170);
+        ImGui::Text("%.4f", results_.test_mae);
+        ImGui::Text("RMSE");
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(170);
+        ImGui::Text("%.4f", results_.test_rmse);
+        ImGui::Text("Forecast windows");
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(170);
+        ImGui::Text("%d", results_.total_samples);
+        ImGui::Text("Target values");
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(170);
+        ImGui::Text("%zu", results_.total_target_values);
+        ImGui::Text("Evaluation time");
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(170);
+        ImGui::Text("%.3fs", results_.total_time_seconds);
+        ImGui::EndChild();
+        return;
+    }
 
     // Accuracy with large display
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);  // Use default font

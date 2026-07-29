@@ -647,12 +647,30 @@ void TestTrainingRunComparisonRecord() {
     config.early_stopping_patience = 3;
     config.checkpoint_dir = "runs/sentiment";
     config.dataloader_seed = 123;
+    config.split_seed = 17;
     config.shuffle = false;
     config.dataset_roles.train.dataset_name = "sentiment_v1";
     config.dataset_roles.train.label_column = "label";
     config.dataset_roles.test.dataset_name = "sentiment_test_v1";
     config.dataset_roles.test.label_column = "label";
     config.dataset_roles.test.externally_supplied = true;
+    config.dataset_roles.policy.method =
+        cyxwiz::PartitionSplitMethod::Random;
+    config.dataset_roles.policy.shuffle = false;
+    config.dataset_roles.manifest.training_source_fingerprint = "train-content-v1";
+    config.dataset_roles.manifest.validation_source_fingerprint = "train-content-v1";
+    config.dataset_roles.manifest.test_source_fingerprint = "test-content-v1";
+    config.dataset_roles.manifest.feature_schema_fingerprint = "features-v1";
+    config.dataset_roles.manifest.dev_compatibility =
+        cyxwiz::PartitionCompatibility::Compatible;
+    config.dataset_roles.manifest.test_compatibility =
+        cyxwiz::PartitionCompatibility::Compatible;
+    config.dataset_roles.manifest.dev_leakage =
+        cyxwiz::PartitionLeakageStatus::Passed;
+    config.dataset_roles.manifest.test_leakage =
+        cyxwiz::PartitionLeakageStatus::Unavailable;
+    config.dataset_roles.manifest.test_status_reason =
+        "no shared stable identifier and exact-row scan limit exceeded";
     cyxwiz::CompiledLayer gru;
     gru.type = gui::NodeType::GRU;
     gru.parameters["hidden_size"] = "96";
@@ -732,6 +750,12 @@ void TestTrainingRunComparisonRecord() {
           "run comparison should record role label columns");
     Check(record.partition_manifest_fingerprint.size() == 16,
           "run comparison should include stable partition fingerprint");
+    Check(record.dev_schema_compatibility == "compatible" &&
+              record.test_schema_compatibility == "compatible" &&
+              record.dev_leakage_status == "passed" &&
+              record.test_leakage_status == "unavailable" &&
+              !record.test_partition_status_reason.empty(),
+          "run comparison should preserve structured role validation status");
     const auto repeated_record = cyxwiz::MakeTrainingRunComparisonRecord(
         "run-001", config, metrics, 12.5f,
         metrics.checkpoint_used,
@@ -739,6 +763,66 @@ void TestTrainingRunComparisonRecord() {
     Check(repeated_record.partition_manifest_fingerprint ==
               record.partition_manifest_fingerprint,
           "same partition manifest inputs should produce same fingerprint");
+    auto changed_loader_seed_config = config;
+    changed_loader_seed_config.dataloader_seed = 999;
+    const auto changed_loader_seed_record =
+        cyxwiz::MakeTrainingRunComparisonRecord(
+            "run-001", changed_loader_seed_config, metrics, 12.5f,
+            metrics.checkpoint_used, "complete");
+    Check(changed_loader_seed_record.partition_manifest_fingerprint ==
+              record.partition_manifest_fingerprint,
+          "Data Loader seed must not change the partition manifest");
+    auto changed_split_seed_config = config;
+    changed_split_seed_config.split_seed = 18;
+    const auto changed_split_seed_record =
+        cyxwiz::MakeTrainingRunComparisonRecord(
+            "run-001", changed_split_seed_config, metrics, 12.5f,
+            metrics.checkpoint_used, "complete");
+    Check(changed_split_seed_record.partition_manifest_fingerprint !=
+              record.partition_manifest_fingerprint,
+          "Data Split seed must change the partition manifest");
+    auto changed_source_config = config;
+    changed_source_config.dataset_roles.manifest.test_source_fingerprint =
+        "test-content-v2";
+    const auto changed_source_record =
+        cyxwiz::MakeTrainingRunComparisonRecord(
+            "run-001", changed_source_config, metrics, 12.5f,
+            metrics.checkpoint_used, "complete");
+    Check(changed_source_record.partition_manifest_fingerprint !=
+              record.partition_manifest_fingerprint,
+          "source content identity must change the partition manifest");
+    auto changed_schema_config = config;
+    changed_schema_config.dataset_roles.manifest.feature_schema_fingerprint =
+        "features-v2";
+    const auto changed_schema_record =
+        cyxwiz::MakeTrainingRunComparisonRecord(
+            "run-001", changed_schema_config, metrics, 12.5f,
+            metrics.checkpoint_used, "complete");
+    Check(changed_schema_record.partition_manifest_fingerprint !=
+              record.partition_manifest_fingerprint,
+          "feature schema identity must change the partition manifest");
+    auto changed_method_config = config;
+    changed_method_config.dataset_roles.policy.method =
+        cyxwiz::PartitionSplitMethod::TimeOrdered;
+    const auto changed_method_record =
+        cyxwiz::MakeTrainingRunComparisonRecord(
+            "run-001", changed_method_config, metrics, 12.5f,
+            metrics.checkpoint_used, "complete");
+    Check(changed_method_record.partition_manifest_fingerprint !=
+              record.partition_manifest_fingerprint,
+          "split method must change the partition manifest");
+    auto changed_stratified_config = config;
+    changed_stratified_config.stratified = true;
+    changed_stratified_config.dataset_roles.policy.stratified = true;
+    changed_stratified_config.dataset_roles.policy.method =
+        cyxwiz::PartitionSplitMethod::Stratified;
+    const auto changed_stratified_record =
+        cyxwiz::MakeTrainingRunComparisonRecord(
+            "run-001", changed_stratified_config, metrics, 12.5f,
+            metrics.checkpoint_used, "complete");
+    Check(changed_stratified_record.partition_manifest_fingerprint !=
+              record.partition_manifest_fingerprint,
+          "stratification must change the partition manifest");
     auto changed_metrics = metrics;
     changed_metrics.test_sample_count = 151;
     const auto changed_record = cyxwiz::MakeTrainingRunComparisonRecord(
@@ -787,6 +871,9 @@ void TestTrainingRunComparisonRecord() {
           "run comparison CSV should include stable header");
     Check(csv.find("partition_manifest_fingerprint") != std::string::npos,
           "run comparison CSV should include partition manifest column");
+    Check(csv.find("test_leakage_status") != std::string::npos &&
+              csv.find("exact-row scan limit exceeded") != std::string::npos,
+          "run comparison CSV should include structured role-check disclosure");
     Check(csv.find("run-001,complete,sentiment_v1,text,true,GRU") !=
               std::string::npos,
           "run comparison CSV should include record row");

@@ -585,6 +585,10 @@ enum class NodeType {
     // ===== Appended Classic ML Inference Nodes =====
     TreeModelPredictor, // Apply a saved tree-family model artifact
 
+    // ===== Appended Time-Series Baseline Nodes =====
+    // Appended to preserve existing serialized numeric NodeType ids.
+    SeasonalNaive,      // Repeat the latest seasonal cycle over future horizons
+
     // Special sentinel value
     Unknown
 };
@@ -677,6 +681,14 @@ struct NodeLink {
     int to_node;
     int to_pin;
     LinkType type = LinkType::TensorFlow;  // Connection type for visual styling
+};
+
+struct DataBoundaryMigrationResult {
+    bool success = false;
+    int nodes_migrated = 0;
+    int links_removed = 0;
+    int links_rerouted = 0;
+    std::string message;
 };
 
 // Graph snapshot for undo/redo
@@ -961,6 +973,11 @@ public:
     // Load pattern template format as graph (converts string IDs to int, resolves parameters)
     bool LoadPatternAsGraph(const nlohmann::json& j);
 
+    // Legacy Data Input/Split/Loader graphs retain their original pin layout
+    // until the user explicitly requests this migration.
+    bool HasLegacyDataBoundary() const;
+    DataBoundaryMigrationResult MigrateLegacyDataBoundary();
+
     // Get current graph as JSON string (for export to .cyxmodel)
     std::string GetGraphJson() const;
 
@@ -1131,6 +1148,7 @@ private:
 
     // Pin lookup optimization
     void RebuildPinLookup();
+    void RebuildDataBoundaryPins(MLNode& node, bool legacy_contract);
 
     // File operations
     bool SaveGraph(const std::string& filepath);

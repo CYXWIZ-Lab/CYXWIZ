@@ -34,6 +34,12 @@ struct TrainingRunComparisonRecord {
     std::string dev_label_column;
     std::string test_label_column;
     std::string partition_manifest_fingerprint;
+    std::string dev_schema_compatibility;
+    std::string test_schema_compatibility;
+    std::string dev_leakage_status;
+    std::string test_leakage_status;
+    std::string dev_partition_status_reason;
+    std::string test_partition_status_reason;
     bool bidirectional = false;
     int hidden_size = 0;
     int num_layers = 0;

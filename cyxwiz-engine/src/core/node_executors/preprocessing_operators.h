@@ -50,6 +50,7 @@ public:
 
 private:
     std::vector<std::string> columns_;
+    std::vector<std::string> exclude_columns_;
     std::string label_col_;
     bool with_mean_ = true;
     bool with_std_ = true;

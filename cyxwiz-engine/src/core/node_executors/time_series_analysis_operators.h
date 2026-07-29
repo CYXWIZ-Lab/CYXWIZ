@@ -235,4 +235,43 @@ private:
     PipelineOperatorProgressCallback progress_callback_;
 };
 
+/**
+ * SeasonalNaiveOperator - deterministic rolling forecast baseline.
+ *
+ * Consumes the canonical wide table emitted by TimeSeriesWindow:
+ * `x_0..x_N`, `y`, `y_1..y_H`. For every input window it repeats the
+ * most recent complete seasonal cycle and emits one long-form row per
+ * forecast horizon:
+ *
+ *   window_index, horizon, actual, prediction, error
+ *
+ * TimeSeriesSplit metadata is carried forward when present, so FilterRows
+ * can select `__partition__ = 2` before RegressionMetrics evaluates the
+ * held-out test baseline. Target indices are also preserved as
+ * `__target_index` when TimeSeriesWindow metadata is available.
+ *
+ * Params:
+ *   seasonal_period (required, int >= 1) - observations per cycle.
+ */
+class SeasonalNaiveOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "SeasonalNaive"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+
+    bool Configure(const std::map<std::string, std::string>& params,
+                   std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
+        const std::shared_ptr<arrow::Table>& input) override;
+    arrow::Result<std::shared_ptr<arrow::Schema>> InferOutputSchema(
+        const std::shared_ptr<arrow::Schema>& input_schema) override;
+
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+
+private:
+    int seasonal_period_ = 0;
+    PipelineOperatorProgressCallback progress_callback_;
+};
+
 } // namespace cyxwiz

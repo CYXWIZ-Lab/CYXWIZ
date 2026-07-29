@@ -6,6 +6,7 @@
 #endif
 
 #include <cstdlib>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -105,12 +106,57 @@ int main() {
     Check(fs::exists(parquet_path.string() + ".manifest.json"),
           "manifest should exist");
 
+    const fs::path late_decimal_csv_path = work_dir / "late_decimal.csv";
+    const fs::path late_decimal_parquet_path =
+        work_dir / "late_decimal.parquet";
+    {
+        std::ofstream csv(late_decimal_csv_path, std::ios::binary);
+        csv << "feature;label\n";
+        for (int row = 0; row < 300000; ++row) {
+            csv << "0;0\n";
+        }
+        csv << "3,5;1\n";
+    }
+
+    cyxwiz::DataConvertOptions late_decimal_options;
+    late_decimal_options.input_path = late_decimal_csv_path.string();
+    late_decimal_options.input_format = "csv";
+    late_decimal_options.output_path = late_decimal_parquet_path.string();
+    late_decimal_options.output_format = "parquet";
+    late_decimal_options.delimiter = ';';
+    late_decimal_options.decimal_point = ',';
+    late_decimal_options.overwrite = true;
+    late_decimal_options.retain_output_table = true;
+    auto late_decimal_result =
+        cyxwiz::DataConvertService::Convert(late_decimal_options);
+    Check(late_decimal_result.ok,
+          "late decimal conversion should succeed with a stable numeric schema: " +
+              late_decimal_result.error);
+    Check(late_decimal_result.output_table &&
+              late_decimal_result.output_table->num_rows() == 300001,
+          "late decimal conversion should retain every source row");
+    Check(late_decimal_result.output_table &&
+              late_decimal_result.output_table->schema()->field(0)->type()->id() ==
+                  arrow::Type::DOUBLE,
+          "integer-looking first blocks should promote to float64 before full parsing");
+    if (late_decimal_result.output_table) {
+        auto scalar_result =
+            late_decimal_result.output_table->column(0)->GetScalar(300000);
+        Check(scalar_result.ok() &&
+                  std::abs(std::static_pointer_cast<arrow::DoubleScalar>(
+                               scalar_result.ValueOrDie())->value - 3.5) < 1e-12,
+              "late comma-decimal value should be parsed numerically");
+    }
+
     auto parquet = cyxwiz::ArrowDataset::FromParquet(
         parquet_path.string(), "converted");
     Check(parquet != nullptr, "converted Parquet should load");
     Check(parquet->GetNumRows() == 3, "converted Parquet row count should match");
     Check(parquet->GetNumColumns() == 3,
           "converted Parquet column count should match");
+    Check(parquet->GetArrowTable()->schema()->field(0)->type()->id() ==
+              arrow::Type::INT64,
+          "integer-only columns should retain their inferred integer type");
 
     const fs::path memory_csv_path = work_dir / "memory_input.csv";
     cyxwiz::DataConvertOptions memory_to_csv;

@@ -10,10 +10,66 @@
 #include <map>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 
 namespace cyxwiz {
+
+namespace {
+
+float ReadNumericChunkedValue(
+    const std::shared_ptr<arrow::ChunkedArray>& column,
+    int64_t global_row_idx) {
+    if (!column || global_row_idx < 0) return 0.0f;
+    int64_t offset = 0;
+    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
+        const auto& chunk = column->chunk(chunk_index);
+        const int64_t chunk_length = chunk->length();
+        if (global_row_idx >= offset + chunk_length) {
+            offset += chunk_length;
+            continue;
+        }
+        const int64_t local = global_row_idx - offset;
+        if (chunk->IsNull(local)) return 0.0f;
+        switch (chunk->type_id()) {
+        case arrow::Type::FLOAT:
+            return std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(local);
+        case arrow::Type::DOUBLE:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(local));
+        case arrow::Type::INT64:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(local));
+        case arrow::Type::INT32:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(local));
+        case arrow::Type::INT16:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::Int16Array>(chunk)->Value(local));
+        case arrow::Type::INT8:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::Int8Array>(chunk)->Value(local));
+        case arrow::Type::UINT64:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::UInt64Array>(chunk)->Value(local));
+        case arrow::Type::UINT32:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::UInt32Array>(chunk)->Value(local));
+        case arrow::Type::UINT16:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::UInt16Array>(chunk)->Value(local));
+        case arrow::Type::UINT8:
+            return static_cast<float>(
+                std::static_pointer_cast<arrow::UInt8Array>(chunk)->Value(local));
+        default:
+            return 0.0f;
+        }
+    }
+    return 0.0f;
+}
+
+}  // namespace
 
 // ArrowDatasetBatcher Implementation
 
@@ -165,6 +221,7 @@ void ArrowDatasetBatcher::InitializeColumns() {
 
     feature_cols_.clear();
     label_col_idx_ = -1;
+    label_col_indices_.clear();
 
     // First pass: find explicit label column or auto-detect
     for (int i = 0; i < schema->num_fields(); ++i) {
@@ -196,9 +253,14 @@ void ArrowDatasetBatcher::InitializeColumns() {
         }
     }
 
-    // Second pass: collect feature columns (all numeric except label)
+    if (label_col_idx_ >= 0) {
+        label_col_indices_.push_back(label_col_idx_);
+    }
+
+    // Second pass: collect feature columns (all numeric except labels)
     for (int i = 0; i < schema->num_fields(); ++i) {
-        if (i == label_col_idx_) continue;  // Skip label column
+        if (std::find(label_col_indices_.begin(), label_col_indices_.end(), i) !=
+            label_col_indices_.end()) continue;
 
         auto field = schema->field(i);
         // Skip internal metadata columns (double-underscore prefix) and
@@ -230,6 +292,47 @@ void ArrowDatasetBatcher::InitializeColumns() {
     num_features_ = feature_cols_.size();
     spdlog::info("ArrowDatasetBatcher: {} feature columns, label_col={}",
                  num_features_, label_col_idx_);
+}
+
+void ArrowDatasetBatcher::SetRegressionTargetWidth(
+    size_t width, const std::string& target_base) {
+    if (width < 1) {
+        throw std::invalid_argument(
+            "ArrowDatasetBatcher regression target width must be at least 1");
+    }
+    if (!dataset_ || !dataset_->GetSchema() || label_col_idx_ < 0) {
+        throw std::invalid_argument(
+            "ArrowDatasetBatcher cannot configure regression targets without a primary target");
+    }
+
+    auto schema = dataset_->GetSchema();
+    const std::string base =
+        target_base.empty() ? label_column_ : target_base;
+    label_col_indices_.clear();
+    label_col_indices_.push_back(label_col_idx_);
+    for (size_t target = 1; target < width; ++target) {
+        const std::string name = base + "_" + std::to_string(target);
+        const int index = schema->GetFieldIndex(name);
+        if (index < 0) {
+            throw std::invalid_argument(
+                "ArrowDatasetBatcher missing ordered regression target column '" +
+                name + "'");
+        }
+        label_col_indices_.push_back(index);
+    }
+
+    feature_cols_.erase(
+        std::remove_if(feature_cols_.begin(), feature_cols_.end(),
+            [&](int index) {
+                return std::find(label_col_indices_.begin(),
+                                 label_col_indices_.end(), index) !=
+                       label_col_indices_.end();
+            }),
+        feature_cols_.end());
+    num_features_ = feature_cols_.size();
+    spdlog::info(
+        "ArrowDatasetBatcher: configured {} ordered regression targets and {} features",
+        label_col_indices_.size(), num_features_);
 }
 
 Batch ArrowDatasetBatcher::GetNextBatch() {
@@ -284,8 +387,13 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         // Classification: int labels; regression: float labels. Only one
         // of the two is populated based on scalar_label_mode_.
         std::vector<int> batch_labels(actual_batch_size, 0);
+        const size_t regression_target_width =
+            std::max<size_t>(1, label_col_indices_.size());
         std::vector<float> batch_labels_float(
-            scalar_label_mode_ ? actual_batch_size : 0, 0.0f);
+            scalar_label_mode_
+                ? actual_batch_size * regression_target_width
+                : 0,
+            0.0f);
 
         spdlog::debug("ArrowDatasetBatcher: Processing {} feature columns, batch_data.size()={}",
                       feature_cols_.size(), batch_data.size());
@@ -624,10 +732,27 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                     int64_t row_idx = indices_[batch_start + b];
                     if (row_idx >= 0 && row_idx < num_rows) {
                         if (scalar_label_mode_) {
-                            batch_labels_float[b] = read_label_float(row_idx);
+                            batch_labels_float[b * regression_target_width] =
+                                read_label_float(row_idx);
                         } else {
                             batch_labels[b] = read_label(row_idx);
                         }
+                    }
+                }
+            }
+        }
+
+        if (scalar_label_mode_ && label_col_indices_.size() > 1) {
+            for (size_t target = 1; target < label_col_indices_.size(); ++target) {
+                const int column_index = label_col_indices_[target];
+                if (column_index < 0 || column_index >= num_cols) continue;
+                const auto& target_column = table->column(column_index);
+                for (size_t b = 0; b < actual_batch_size; ++b) {
+                    const int64_t row_idx = indices_[batch_start + b];
+                    if (row_idx >= 0 && row_idx < num_rows) {
+                        batch_labels_float[
+                            b * regression_target_width + target] =
+                            ReadNumericChunkedValue(target_column, row_idx);
                     }
                 }
             }
@@ -668,13 +793,14 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         spdlog::default_logger()->flush();
 
         // Create labels tensor
-        // Scalar float labels [batch, 1] are used for regression and binary
-        // classification. This explicit mode takes precedence over one-hot.
+        // Float labels [batch, target_width] are used for regression and
+        // scalar binary classification. This mode takes precedence over one-hot.
         if (scalar_label_mode_ && !batch_labels_float.empty()) {
-            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT F - creating scalar float labels [{}, 1]",
-                          actual_batch_size);
+            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT F - creating float labels [{}, {}]",
+                          actual_batch_size, regression_target_width);
             spdlog::default_logger()->flush();
-            std::vector<size_t> label_shape = {actual_batch_size, 1};
+            std::vector<size_t> label_shape = {
+                actual_batch_size, regression_target_width};
             batch.labels = Tensor(label_shape, batch_labels_float.data());
             spdlog::debug("ArrowDatasetBatcher: CHECKPOINT G - float labels tensor created");
             spdlog::default_logger()->flush();

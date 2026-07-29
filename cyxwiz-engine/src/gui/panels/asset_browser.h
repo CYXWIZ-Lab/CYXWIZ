@@ -85,6 +85,8 @@ public:
     void SetShowDatasetPreview(bool show) { show_dataset_preview_ = show; }
 
 private:
+    enum class AssetActionStatus { None, Success, Error };
+
     // UI Rendering
     void RenderToolbar();
     void RenderDirectoryView();
@@ -182,6 +184,8 @@ private:
     std::string preview_path_;
     std::string preview_dataset_name_;
     AssetItem* hovered_dataset_item_ = nullptr;
+    AssetActionStatus asset_action_status_ = AssetActionStatus::None;
+    std::string asset_action_message_;
 
     // Clipboard state
     std::string clipboard_path_;      // Path of copied/cut file

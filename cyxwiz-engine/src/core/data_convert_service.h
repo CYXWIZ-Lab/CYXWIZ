@@ -33,6 +33,7 @@ struct DataConvertOptions {
     std::string input_format = "auto";
     std::string output_format = "parquet";
     char delimiter = ',';
+    char decimal_point = '.';
     bool auto_detect_delimiter = false;
     bool has_header = true;
     bool allow_newlines_in_values = true;
@@ -44,6 +45,7 @@ struct DataConvertOptions {
     bool create_parent_dirs = true;
     bool write_manifest = true;
     int preview_rows = 20;
+    bool retain_output_table = false;
     std::shared_ptr<arrow::Table> input_table;
 };
 
@@ -58,6 +60,7 @@ struct DataConvertResult {
     int64_t columns = 0;
     int64_t bytes_written = 0;
     char detected_delimiter = ',';
+    std::shared_ptr<arrow::Table> output_table;
 };
 
 class DataConvertService {

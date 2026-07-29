@@ -49,7 +49,8 @@ public:
      */
     static std::string GetCacheFilePath(
         const std::string& csv_path,
-        const std::string& parser_signature = {});
+        const std::string& parser_signature = {},
+        const std::string& cache_directory = {});
 
     /**
      * Return the cache directory path used by GetCacheFilePath. Exposed so
@@ -101,7 +102,10 @@ public:
                                      int64_t max_rows = 0,
                                      const std::vector<std::string>& missing_value_tokens =
                                          DefaultTabularMissingValueTokens(),
-                                     const std::vector<std::string>& selected_columns = {});
+                                     const std::vector<std::string>& selected_columns = {},
+                                     char decimal_point = '.',
+                                     bool use_threads = true,
+                                     const CsvProgressCallback& progress_callback = {});
 
     /**
      * Read a single row group as an in-memory Arrow Table.

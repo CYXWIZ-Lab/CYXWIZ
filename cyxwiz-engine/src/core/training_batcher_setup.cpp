@@ -354,8 +354,11 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
                          partitioned.status().ToString());
         }
     }
+    const bool continuous_target = UsesContinuousTargetMetrics(config);
     const std::string effective_label =
-        config.is_time_series ? "y" : label_column;
+        !config.target.primary_column.empty()
+            ? config.target.primary_column
+            : (config.is_time_series ? "y" : label_column);
     const float effective_val_ratio =
         !partition_col.empty() ? 0.0f :
         (config.has_data_split ? config.val_ratio : 0.0f);
@@ -366,7 +369,7 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
         partition_col, /*partition_value=*/0, num_workers,
         BatcherPhase::Train, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed),
-        config.balance_classes && !config.is_time_series,
+        config.balance_classes && !continuous_target,
         config.balance_mode,
         config.balance_target,
         static_cast<uint32_t>(std::max(0, config.balance_seed)));
@@ -383,6 +386,21 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
         BatcherPhase::Test, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed));
 
+    if (continuous_target) {
+        const size_t target_width =
+            config.target.width > 0
+                ? config.target.width
+                : (config.is_time_series
+                       ? config.time_series_target_width
+                       : std::max<size_t>(1, config.output_size));
+        result.arrow_train->SetRegressionTargetWidth(
+            target_width, effective_label);
+        result.arrow_val->SetRegressionTargetWidth(
+            target_width, effective_label);
+        result.arrow_test->SetRegressionTargetWidth(
+            target_width, effective_label);
+    }
+
     if (config.drop_last) {
         spdlog::warn("TrainingExecutor: drop_last=true requested but ArrowDatasetBatcher "
                      "does not yet support it - last partial batch will be kept");
@@ -396,7 +414,7 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
                                             config.preprocessing.norm_std);
     }
 
-    if (config.is_time_series || UsesScalarBinaryTargets(config.loss_type)) {
+    if (continuous_target || UsesScalarBinaryTargets(config.loss_type)) {
         result.arrow_train->SetScalarLabelMode(true);
         result.arrow_val->SetScalarLabelMode(true);
         result.arrow_test->SetScalarLabelMode(true);
@@ -448,13 +466,16 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
                      "for disk-backed Parquet datasets yet; falling back to "
                      "row-group train/validation/test slicing");
     }
-    if (config.balance_classes && !config.is_time_series) {
+    const bool continuous_target = UsesContinuousTargetMetrics(config);
+    if (config.balance_classes && !continuous_target) {
         spdlog::warn("TrainingExecutor: DataLoader class balancing is not "
                      "available for disk-backed Parquet datasets yet; training "
                      "uses the row-group train split without resampling");
     }
     const std::string effective_label =
-        config.is_time_series ? "y" : label_column;
+        !config.target.primary_column.empty()
+            ? config.target.primary_column
+            : (config.is_time_series ? "y" : label_column);
     const float effective_val_ratio =
         config.has_data_split ? config.val_ratio : 0.0f;
 
@@ -477,6 +498,21 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         BatcherPhase::Test, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed));
 
+    if (continuous_target) {
+        const size_t target_width =
+            config.target.width > 0
+                ? config.target.width
+                : (config.is_time_series
+                       ? config.time_series_target_width
+                       : std::max<size_t>(1, config.output_size));
+        result.parquet_train->SetRegressionTargetWidth(
+            target_width, effective_label);
+        result.parquet_val->SetRegressionTargetWidth(
+            target_width, effective_label);
+        result.parquet_test->SetRegressionTargetWidth(
+            target_width, effective_label);
+    }
+
     if (config.drop_last) {
         spdlog::warn("TrainingExecutor: drop_last=true requested but ParquetArrowBatcher "
                      "does not yet support it - last partial batch will be kept");
@@ -490,7 +526,7 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
                                               config.preprocessing.norm_std);
     }
 
-    if (config.is_time_series || UsesScalarBinaryTargets(config.loss_type)) {
+    if (continuous_target || UsesScalarBinaryTargets(config.loss_type)) {
         result.parquet_train->SetScalarLabelMode(true);
         result.parquet_val->SetScalarLabelMode(true);
         result.parquet_test->SetScalarLabelMode(true);
@@ -513,6 +549,175 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     AttachTrainingBatcherPrefetchWrappers(result, config, "Parquet");
     spdlog::info("TrainingExecutor: Parquet split samples train={} val={} test={}",
                  result.num_train_samples, result.num_val_samples, result.num_test_samples);
+    return result;
+}
+
+ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
+    TrainingConfiguration& config,
+    const ResolvedTabularDatasets& datasets,
+    int batch_size) {
+    ResolvedTabularBatcherBuildResult result;
+    const auto& partitions = config.dataset_roles;
+    if (!partitions.train.IsSupplied()) {
+        result.error_message =
+            "resolved tabular partitions do not contain a Training source";
+        return result;
+    }
+
+    if (!datasets.train_arrow && !datasets.train_parquet) {
+        result.error_message = "Training Dataset '" +
+            partitions.train.dataset_name +
+            "' is not a registered Arrow or Parquet source";
+        return result;
+    }
+    if (partitions.dev.IsSupplied() &&
+        !datasets.dev_arrow && !datasets.dev_parquet) {
+        result.error_message = "Validation Dataset '" +
+            partitions.dev.dataset_name +
+            "' is not a registered Arrow or Parquet source";
+        return result;
+    }
+    if (partitions.test.IsSupplied() &&
+        !datasets.test_arrow && !datasets.test_parquet) {
+        result.error_message = "Test Dataset '" +
+            partitions.test.dataset_name +
+            "' is not a registered Arrow or Parquet source";
+        return result;
+    }
+
+    config.train_ratio = partitions.policy.train_ratio;
+    config.val_ratio = partitions.policy.dev_ratio;
+    config.test_ratio = partitions.policy.test_ratio;
+    config.split_seed = partitions.policy.seed;
+    config.stratified = partitions.policy.stratified;
+    config.has_data_split = true;
+
+    // Construct derived roles from Train without prefetch wrappers. Supplied
+    // roles are installed before wrappers are attached, keeping each wrapper
+    // and its concrete owner in one final assembly step.
+    auto assembly_config = config;
+    assembly_config.prefetch_factor = 0;
+    const bool external_dev = partitions.dev.IsSupplied();
+    const bool external_test = partitions.test.IsSupplied();
+
+    // ArrowDatasetBatcher and ParquetArrowBatcher express derived slices as
+    // Train, then Val, then Test. If Dev is supplied but Test is not, build the
+    // remaining Train-derived holdout in the Val slot and move that owner to
+    // Test before installing the external Dev owner below.
+    if (external_dev && !external_test) {
+        assembly_config.val_ratio = partitions.policy.test_ratio;
+        assembly_config.test_ratio = 0.0f;
+    }
+    result.batchers = datasets.train_arrow
+        ? BuildArrowTrainingBatchers(
+              assembly_config,
+              datasets.train_arrow,
+              partitions.train.label_column,
+              batch_size)
+        : BuildParquetTrainingBatchers(
+              assembly_config,
+              datasets.train_parquet,
+              partitions.train.label_column,
+              batch_size);
+
+    if (external_dev && !external_test) {
+        result.batchers.arrow_test = std::move(result.batchers.arrow_val);
+        result.batchers.parquet_test = std::move(result.batchers.parquet_val);
+        result.batchers.val = nullptr;
+        result.batchers.test = result.batchers.arrow_test
+            ? static_cast<IBatcher*>(result.batchers.arrow_test.get())
+            : static_cast<IBatcher*>(result.batchers.parquet_test.get());
+    }
+
+    const int num_workers = ClampNumWorkersToPlatform(config.num_workers);
+    const auto make_arrow_role = [&](const std::shared_ptr<ArrowDataset>& dataset,
+                                     const std::string& label_column) {
+        return std::make_unique<ArrowDatasetBatcher>(
+            dataset, label_column, batch_size, false, 1.0f, true, "", 0,
+            num_workers, BatcherPhase::Train, 0.0f,
+            static_cast<uint32_t>(config.dataloader_seed));
+    };
+    const auto make_parquet_role = [&, batch_size](
+        const std::shared_ptr<ParquetBackedDataset>& dataset,
+        const std::string& label_column) {
+        return std::make_unique<ParquetArrowBatcher>(
+            dataset, label_column, batch_size, false, 1.0f, true, "", 0,
+            num_workers, BatcherPhase::Train, 0.0f,
+            static_cast<uint32_t>(config.dataloader_seed));
+    };
+
+    if (datasets.dev_arrow) {
+        result.batchers.parquet_val.reset();
+        result.batchers.arrow_val = make_arrow_role(
+            datasets.dev_arrow, partitions.dev.label_column);
+        result.batchers.val = result.batchers.arrow_val.get();
+    } else if (datasets.dev_parquet) {
+        result.batchers.arrow_val.reset();
+        result.batchers.parquet_val = make_parquet_role(
+            datasets.dev_parquet, partitions.dev.label_column);
+        result.batchers.val = result.batchers.parquet_val.get();
+    }
+    if (datasets.test_arrow) {
+        result.batchers.parquet_test.reset();
+        result.batchers.arrow_test = make_arrow_role(
+            datasets.test_arrow, partitions.test.label_column);
+        result.batchers.test = result.batchers.arrow_test.get();
+    } else if (datasets.test_parquet) {
+        result.batchers.arrow_test.reset();
+        result.batchers.parquet_test = make_parquet_role(
+            datasets.test_parquet, partitions.test.label_column);
+        result.batchers.test = result.batchers.parquet_test.get();
+    }
+
+    const auto apply_role_transforms = [&](IBatcher* batcher) {
+        if (!batcher) return;
+        if (config.preprocessing.has_normalization) {
+            batcher->SetNormalization(config.preprocessing.norm_mean,
+                                      config.preprocessing.norm_std);
+        }
+        if (config.is_time_series || UsesScalarBinaryTargets(config.loss_type)) {
+            if (auto* arrow_batcher =
+                    dynamic_cast<ArrowDatasetBatcher*>(batcher)) {
+                arrow_batcher->SetScalarLabelMode(true);
+            } else if (auto* parquet_batcher =
+                           dynamic_cast<ParquetArrowBatcher*>(batcher)) {
+                parquet_batcher->SetScalarLabelMode(true);
+            }
+        } else if (config.preprocessing.has_onehot) {
+            batcher->SetOneHotEncoding(config.preprocessing.num_classes);
+        } else {
+            batcher->SetOneHotEncoding(config.output_size);
+        }
+    };
+    if (partitions.dev.IsSupplied()) {
+        apply_role_transforms(result.batchers.val);
+    }
+    if (partitions.test.IsSupplied()) {
+        apply_role_transforms(result.batchers.test);
+    }
+
+    result.batchers.num_train_samples = result.batchers.train
+        ? result.batchers.train->GetNumSamples() : 0;
+    result.batchers.num_val_samples = result.batchers.val
+        ? result.batchers.val->GetNumSamples() : 0;
+    result.batchers.num_test_samples = result.batchers.test
+        ? result.batchers.test->GetNumSamples() : 0;
+    FinalizePartitionManifest(
+        config.dataset_roles,
+        static_cast<int64_t>(result.batchers.num_train_samples),
+        static_cast<int64_t>(result.batchers.num_val_samples),
+        static_cast<int64_t>(result.batchers.num_test_samples));
+    AttachTrainingBatcherPrefetchWrappers(
+        result.batchers, config, "resolved tabular partitions");
+
+    spdlog::info(
+        "Resolved tabular partitions: train={} dev={} test={} samples; "
+        "external dev={}, external test={}",
+        result.batchers.num_train_samples,
+        result.batchers.num_val_samples,
+        result.batchers.num_test_samples,
+        partitions.dev.IsSupplied(),
+        partitions.test.IsSupplied());
     return result;
 }
 

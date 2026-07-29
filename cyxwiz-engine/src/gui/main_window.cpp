@@ -166,6 +166,7 @@
 #include <imgui_internal.h>
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
+#include <algorithm>
 #include <cfloat>
 #include <chrono>
 #include <filesystem>
@@ -802,12 +803,61 @@ MainWindow::MainWindow()
 
         cyxwiz::AsyncTaskManager::Instance().RunAsync(
             "Load checkpoint for testing",
-            [config = std::move(config), selected_path, graph_fingerprint,
-             load_result](cyxwiz::LambdaTask& task) {
-                task.ReportProgress(0.1f, "Inspecting checkpoint...");
+            [config = std::move(config), nodes, links, selected_path,
+             graph_fingerprint, load_result](cyxwiz::LambdaTask& task) {
+                auto evaluation_config = config;
+                task.ReportProgress(0.05f,
+                                    "Preparing evaluation dataset...");
+                std::string effective_dataset_name =
+                    evaluation_config.dataset_name;
+                if (effective_dataset_name.empty()) {
+                    effective_dataset_name =
+                        evaluation_config.dataset_roles.train.dataset_name;
+                }
+                if (effective_dataset_name.empty()) {
+                    throw std::runtime_error(
+                        "Checkpoint testing cannot resolve the graph's "
+                        "source dataset. Apply the Data Input node first.");
+                }
+
+                auto& registry = cyxwiz::DataRegistry::Instance();
+                const auto materialized =
+                    cyxwiz::PipelineMaterializer::Materialize(
+                        nodes, links, registry, effective_dataset_name,
+                        GraphMaterializationCacheConfig(),
+                        [&task](
+                            const cyxwiz::PipelineOperatorProgress& event) {
+                            const float progress =
+                                0.05f + 0.55f *
+                                    std::clamp(event.progress, 0.0f, 1.0f);
+                            task.ReportProgress(
+                                progress,
+                                event.message.empty()
+                                    ? event.stage
+                                    : event.message);
+                        });
+                if (!materialized.success) {
+                    throw std::runtime_error(
+                        "Checkpoint evaluation preprocessing failed: " +
+                        materialized.error_message);
+                }
+                if (!materialized.effective_dataset_name.empty()) {
+                    effective_dataset_name =
+                        materialized.effective_dataset_name;
+                }
+                std::string effective_label =
+                    evaluation_config.dataset_roles.train.label_column.empty()
+                        ? evaluation_config.target.primary_column
+                        : evaluation_config.dataset_roles.train.label_column;
+                evaluation_config.dataset_name = effective_dataset_name;
+                evaluation_config.dataset_roles.train.dataset_name =
+                    effective_dataset_name;
+                evaluation_config.dataset_roles.train.label_column =
+                    effective_label;
+                task.ReportProgress(0.65f, "Inspecting checkpoint...");
                 *load_result = cyxwiz::TrainingManager::Instance()
                     .LoadCheckpointForEvaluation(
-                        config, selected_path, graph_fingerprint,
+                        evaluation_config, selected_path, graph_fingerprint,
                         [&task]() { return task.IsCancelRequested(); });
                 if (task.IsCancelRequested()) {
                     return;
@@ -971,9 +1021,16 @@ MainWindow::MainWindow()
     });
 
     cyxwiz::TestManager::Instance().SetOnTestingEnd([this](bool success, const cyxwiz::TestingMetrics& metrics) {
-        if (success && test_results_panel_) {
+        if (test_results_panel_) {
             test_results_panel_->SetResults(metrics);
             test_results_panel_->Show();
+        }
+        if (!success) {
+            spdlog::error(
+                "Testing failed and was surfaced in Test Results: {}",
+                metrics.status_message.empty()
+                    ? "unknown testing failure"
+                    : metrics.status_message);
         }
     });
 
@@ -4681,6 +4738,20 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         ? test_selection.source_node_id
         : config.data_source_node_id;
     std::string label_column = test_selection.label_column;
+    if (!active_model_info.effective_dataset_name.empty()) {
+        dataset_name = active_model_info.effective_dataset_name;
+        if (!active_model_info.effective_label_column.empty()) {
+            label_column = active_model_info.effective_label_column;
+        }
+        config.dataset_name = dataset_name;
+        config.dataset_roles.train.dataset_name = dataset_name;
+        config.dataset_roles.train.label_column = label_column;
+        spdlog::info(
+            "StartTestingFromGraph: reusing active model's effective "
+            "dataset '{}' (label='{}')",
+            dataset_name,
+            label_column);
+    }
     if (label_column.empty()) {
         label_column = FindTestingLabelColumn(
             nodes, dataset_name, test_source_node_id);

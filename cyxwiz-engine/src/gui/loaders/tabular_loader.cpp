@@ -9,6 +9,7 @@
 #include "../../core/ner_sequence_builder.h"
 #include "../../core/node_executors/text_column_utils.h"
 #include "../../core/parquet_backed_dataset.h"
+#include "../../core/project_manager.h"
 #include "../../core/training_manager.h"
 #include "../../core/training_batcher_setup.h"
 
@@ -185,6 +186,16 @@ bool TabularLoader::ValidateApplyContext(const ApplyContext& ctx,
         err = UnsupportedTabularFileTypeMessage(file_type);
         return false;
     }
+    if ((file_type == "csv" || file_type == "tsv") &&
+        (ctx.delimiter == '\0' || ctx.decimal_point == '\0')) {
+        err = "CSV delimiter and decimal separator must each be one character";
+        return false;
+    }
+    if ((file_type == "csv" || file_type == "tsv") &&
+        ctx.delimiter == ctx.decimal_point) {
+        err = "CSV delimiter and decimal separator must be different";
+        return false;
+    }
     return true;
 }
 
@@ -192,18 +203,8 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                                         std::shared_ptr<AsyncLoadState> state) {
     if (!state) return 0;
 
-    // Cross-Apply cleanup: if the user re-Applies with a different file,
-    // the new auto-generated dataset_name differs from the old one
-    // (both are derived from the file stem). LoadTabularCSV will
-    // UnregisterTabularDataset(new_name) on entry, but it doesn't know
-    // about the old one — so we clear it here before launching the
-    // worker. Same guarantee the pre-refactor inline code provided.
-    auto& registry = cyxwiz::DataRegistry::Instance();
-    if (!ctx.previous_dataset_name.empty() &&
-        ctx.previous_dataset_name != ctx.dataset_name) {
-        registry.UnregisterTabularDataset(ctx.previous_dataset_name);
-    }
-
+    // Keep the prior registration alive while the replacement loads. The UI
+    // removes it only after this worker succeeds and the dataset passes audit.
     // Snapshot everything by value so the worker never races dialog state.
     const std::string path       = ctx.source_path;
     const std::string name       = ctx.dataset_name;
@@ -211,6 +212,8 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
         ResolveTabularFileType(ctx.detected_file_type, path);
     const bool has_header        = ctx.has_header;
     const char delim             = (file_type == "tsv") ? '\t' : ctx.delimiter;
+    const char decimal_point     = ctx.decimal_point;
+    const bool use_threads       = ctx.use_threads;
     const auto missing_tokens    =
         cyxwiz::ParseMissingValueTokens(ctx.missing_value_tokens);
     const int skip_rows          = ctx.skip_rows;
@@ -218,26 +221,62 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const bool force_disk        = ctx.force_disk_backed;
     const std::string label_col  = ctx.label_column;
     const auto selected_columns  = ctx.selected_columns;
+    const std::string ingestion_cache_directory =
+        cyxwiz::ProjectManager::Instance().GetIngestionCachePath();
 
     state->dataset_name = name;
+    state->previous_dataset_name = ctx.previous_dataset_name;
     state->source_path  = path;
+    if (!ctx.previous_dataset_name.empty()) {
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        state->previous_arrow_dataset =
+            registry.GetArrowDataset(ctx.previous_dataset_name);
+        state->previous_parquet_dataset =
+            registry.GetParquetBackedDataset(ctx.previous_dataset_name);
+        if (auto previous_source =
+                registry.GetTabularSourcePath(ctx.previous_dataset_name)) {
+            state->previous_source_path = *previous_source;
+        }
+    }
 
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();
     return mgr.RunAsync(
         "Loading " + name,
-        [path, name, file_type, has_header, delim, missing_tokens, skip_rows, max_rows,
-         force_disk, label_col, selected_columns, state]
+        [path, name, file_type, has_header, delim, decimal_point, use_threads,
+         missing_tokens, skip_rows, max_rows, force_disk, label_col,
+         selected_columns, ingestion_cache_directory, state]
         (cyxwiz::LambdaTask& task) {
             try {
-                task.ReportProgress(0.1f, "Reading " + file_type);
+                task.ReportProgress(0.05f, "Preparing " + file_type + " source");
                 auto& reg = cyxwiz::DataRegistry::Instance();
+                const cyxwiz::CsvProgressCallback csv_progress = [&task](
+                    float source_progress, const std::string& message) {
+                    task.ReportProgress(
+                        0.05f + 0.83f *
+                            std::clamp(source_progress, 0.0f, 1.0f),
+                        message);
+                    return !task.ShouldStop();
+                };
+                cyxwiz::DatasetAuditOptions audit_options;
+                audit_options.should_cancel = [&task]() {
+                    return task.ShouldStop();
+                };
+                audit_options.report_progress = [&task](
+                    float audit_progress, const std::string& message) {
+                    task.ReportProgress(
+                        0.9f + 0.09f * std::clamp(audit_progress, 0.0f, 1.0f),
+                        message);
+                };
 
                 if (file_type == "csv" || file_type == "tsv") {
                     // CSV family — LoadTabularCSV auto-picks Arrow
                     // in-memory vs Parquet disk-backed.
+                    std::string load_status;
                     auto backend = reg.LoadTabularCSV(
                         path, name, has_header, delim, skip_rows, max_rows,
-                        force_disk, missing_tokens, selected_columns);
+                        force_disk, missing_tokens, selected_columns,
+                        decimal_point, use_threads, csv_progress, &load_status,
+                        ingestion_cache_directory);
                     task.ReportProgress(0.9f, "Finalizing");
 
                     if (backend == cyxwiz::DataRegistry::TabularLoadBackend::InMemory) {
@@ -248,8 +287,11 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                             state->rows    = ds->GetNumRows();
                             state->cols    = ds->GetNumColumns();
                             state->bytes   = ds->GetMemoryUsage();
-                            state->message = "Loaded in memory";
-                            auto audit = cyxwiz::DatasetAudit::AuditTabular(name, ds, label_col);
+                            state->message = load_status.empty()
+                                ? "Loaded in memory"
+                                : load_status;
+                            auto audit = cyxwiz::DatasetAudit::AuditTabular(
+                                name, ds, label_col, audit_options);
                             state->audit_errors = audit.ErrorCount();
                             state->audit_warnings = audit.WarningCount();
                             state->audit_message = cyxwiz::FormatAuditSummary(audit);
@@ -266,7 +308,9 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                             state->rows    = pq->GetNumRows();
                             state->cols    = pq->GetNumColumns();
                             state->bytes   = pq->GetMemoryUsage();
-                            state->message = "Loaded via Parquet cache";
+                            state->message = load_status.empty()
+                                ? "Loaded via Parquet cache"
+                                : load_status;
                             auto audit = cyxwiz::DatasetAudit::AuditParquet(name, pq, label_col);
                             state->audit_errors = audit.ErrorCount();
                             state->audit_warnings = audit.WarningCount();
@@ -316,7 +360,8 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         state->cols    = dataset->GetNumColumns();
                         state->bytes   = dataset->GetMemoryUsage();
                         state->message = "Loaded " + file_type;
-                        auto audit = cyxwiz::DatasetAudit::AuditTabular(name, dataset, label_col);
+                        auto audit = cyxwiz::DatasetAudit::AuditTabular(
+                            name, dataset, label_col, audit_options);
                         state->audit_errors = audit.ErrorCount();
                         state->audit_warnings = audit.WarningCount();
                         state->audit_message = cyxwiz::FormatAuditSummary(audit);
@@ -428,143 +473,39 @@ bool TabularLoader::LaunchTraining(
     const bool has_external_role = config.dataset_roles.dev.IsSupplied() ||
                                    config.dataset_roles.test.IsSupplied();
     if (has_external_role && !config.sequence_batch.enabled) {
-        const std::string train_role_name =
-            config.dataset_roles.train.dataset_name.empty()
-                ? dataset_name
-                : config.dataset_roles.train.dataset_name;
-        const std::string train_role_label =
-            config.dataset_roles.train.label_column.empty()
-                ? label_column
-                : config.dataset_roles.train.label_column;
-
-        auto train_arrow = registry.GetArrowDataset(train_role_name);
-        auto train_parquet = registry.GetParquetBackedDataset(train_role_name);
-        auto dev_arrow = config.dataset_roles.dev.IsSupplied()
-            ? registry.GetArrowDataset(config.dataset_roles.dev.dataset_name)
-            : nullptr;
-        auto dev_parquet = config.dataset_roles.dev.IsSupplied()
-            ? registry.GetParquetBackedDataset(config.dataset_roles.dev.dataset_name)
-            : nullptr;
-        auto test_arrow = config.dataset_roles.test.IsSupplied()
-            ? registry.GetArrowDataset(config.dataset_roles.test.dataset_name)
-            : nullptr;
-        auto test_parquet = config.dataset_roles.test.IsSupplied()
-            ? registry.GetParquetBackedDataset(config.dataset_roles.test.dataset_name)
-            : nullptr;
-
-        const bool missing_train = !train_arrow && !train_parquet;
-        const bool missing_dev = config.dataset_roles.dev.IsSupplied() &&
-            !dev_arrow && !dev_parquet;
-        const bool missing_test = config.dataset_roles.test.IsSupplied() &&
-            !test_arrow && !test_parquet;
-        if (missing_train || missing_dev || missing_test) {
-            spdlog::error("TabularLoader: explicit tabular roles require "
-                          "registered Arrow or Parquet-backed sources");
+        if (!config.dataset_roles.train.IsSupplied()) {
+            config.dataset_roles.train.dataset_name = dataset_name;
+            config.dataset_roles.train.label_column = label_column;
+        }
+        ResolvedTabularDatasets datasets;
+        datasets.train_arrow = registry.GetArrowDataset(
+            config.dataset_roles.train.dataset_name);
+        datasets.train_parquet = registry.GetParquetBackedDataset(
+            config.dataset_roles.train.dataset_name);
+        if (config.dataset_roles.dev.IsSupplied()) {
+            datasets.dev_arrow = registry.GetArrowDataset(
+                config.dataset_roles.dev.dataset_name);
+            datasets.dev_parquet = registry.GetParquetBackedDataset(
+                config.dataset_roles.dev.dataset_name);
+        }
+        if (config.dataset_roles.test.IsSupplied()) {
+            datasets.test_arrow = registry.GetArrowDataset(
+                config.dataset_roles.test.dataset_name);
+            datasets.test_parquet = registry.GetParquetBackedDataset(
+                config.dataset_roles.test.dataset_name);
+        }
+        auto built = BuildResolvedTabularTrainingBatchers(
+            config, datasets, batch_size);
+        if (!built.ok()) {
+            spdlog::error(
+                "TabularLoader: could not build resolved partitions: {}",
+                built.error_message);
             return false;
         }
 
-        // Explicit Dev/Test roles replace splits derived from Train. Delay
-        // prefetch wrapping until those replacements are final so each wrapper
-        // and its owning concrete source cannot diverge.
-        auto assembly_config = config;
-        assembly_config.prefetch_factor = 0;
-        assembly_config.has_data_split = true;
-        if (config.dataset_roles.dev.IsSupplied()) {
-            assembly_config.val_ratio = 0.0f;
-        }
-        if (config.dataset_roles.test.IsSupplied()) {
-            assembly_config.test_ratio = 0.0f;
-        }
-        assembly_config.train_ratio = std::max(
-            0.0f,
-            1.0f - assembly_config.val_ratio - assembly_config.test_ratio);
-        config.train_ratio = assembly_config.train_ratio;
-        config.val_ratio = assembly_config.val_ratio;
-        config.test_ratio = assembly_config.test_ratio;
-        spdlog::info(
-            "TabularLoader: explicit role mapping uses Train split "
-            "train={:.2f}, dev={:.2f}, test={:.2f}; "
-            "external dev={}, external test={}",
-            config.train_ratio, config.val_ratio, config.test_ratio,
-            config.dataset_roles.dev.IsSupplied(),
-            config.dataset_roles.test.IsSupplied());
-        auto batchers = train_arrow
-            ? BuildArrowTrainingBatchers(
-                  assembly_config, train_arrow, train_role_label, batch_size)
-            : BuildParquetTrainingBatchers(
-                  assembly_config, train_parquet, train_role_label, batch_size);
-
-        auto make_arrow_role = [&](std::shared_ptr<cyxwiz::ArrowDataset> ds,
-                                   const std::string& role_label) {
-            return std::make_unique<cyxwiz::ArrowDatasetBatcher>(
-                ds, role_label, batch_size, false, 1.0f, true, "", 0,
-                config.num_workers, cyxwiz::BatcherPhase::Train, 0.0f,
-                static_cast<uint32_t>(config.dataloader_seed));
-        };
-        auto make_parquet_role = [&, batch_size](
-            std::shared_ptr<cyxwiz::ParquetBackedDataset> ds,
-            const std::string& role_label) {
-            return std::make_unique<cyxwiz::ParquetArrowBatcher>(
-                ds, role_label, batch_size, false, 1.0f, true, "", 0,
-                config.num_workers, cyxwiz::BatcherPhase::Train, 0.0f,
-                static_cast<uint32_t>(config.dataloader_seed));
-        };
-
-        if (dev_arrow) {
-            batchers.parquet_val.reset();
-            batchers.arrow_val = make_arrow_role(
-                dev_arrow, config.dataset_roles.dev.label_column);
-            batchers.val = batchers.arrow_val.get();
-        } else if (dev_parquet) {
-            batchers.arrow_val.reset();
-            batchers.parquet_val = make_parquet_role(
-                dev_parquet, config.dataset_roles.dev.label_column);
-            batchers.val = batchers.parquet_val.get();
-        }
-        if (test_arrow) {
-            batchers.parquet_test.reset();
-            batchers.arrow_test = make_arrow_role(
-                test_arrow, config.dataset_roles.test.label_column);
-            batchers.test = batchers.arrow_test.get();
-        } else if (test_parquet) {
-            batchers.arrow_test.reset();
-            batchers.parquet_test = make_parquet_role(
-                test_parquet, config.dataset_roles.test.label_column);
-            batchers.test = batchers.parquet_test.get();
-        }
-
-        auto apply_role_transforms = [&](cyxwiz::IBatcher* b) {
-            if (!b) return;
-            if (config.preprocessing.has_normalization) {
-                b->SetNormalization(config.preprocessing.norm_mean,
-                                    config.preprocessing.norm_std);
-            }
-            if (config.is_time_series ||
-                UsesScalarBinaryTargets(config.loss_type)) {
-                if (auto* arrow_b =
-                        dynamic_cast<cyxwiz::ArrowDatasetBatcher*>(b)) {
-                    arrow_b->SetScalarLabelMode(true);
-                } else if (auto* parquet_b =
-                               dynamic_cast<cyxwiz::ParquetArrowBatcher*>(b)) {
-                    parquet_b->SetScalarLabelMode(true);
-                }
-            } else if (config.preprocessing.has_onehot) {
-                b->SetOneHotEncoding(config.preprocessing.num_classes);
-            } else {
-                b->SetOneHotEncoding(config.output_size);
-            }
-        };
-        apply_role_transforms(batchers.val);
-        apply_role_transforms(batchers.test);
-        batchers.num_val_samples =
-            batchers.val ? batchers.val->GetNumSamples() : 0;
-        batchers.num_test_samples =
-            batchers.test ? batchers.test->GetNumSamples() : 0;
-        AttachTrainingBatcherPrefetchWrappers(
-            batchers, config, "explicit tabular roles");
-
         return tm.StartTrainingExternal(
-            std::move(config), TakeResolvedExternalBatchers(std::move(batchers)),
+            std::move(config),
+            TakeResolvedExternalBatchers(std::move(built.batchers)),
             epochs, batch_size, plot_panel, std::move(node_editor_callback));
     }
     if (config.sequence_batch.enabled) {

@@ -29,6 +29,27 @@ TEST_CASE("Core losses compute CPU forward reductions", "[loss]") {
     REQUIRE(smooth_l1_loss.Data<float>()[2] == Catch::Approx(2.5f));
 }
 
+TEST_CASE("Mean loss globally reduces multi-output tensors", "[loss]") {
+    float pred_values[] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f
+    };
+    float target_values[] = {
+        0.0f, 2.0f, 4.0f,
+        2.0f, 5.0f, 8.0f
+    };
+    cyxwiz::Tensor predictions({2, 3}, pred_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets({2, 3}, target_values, cyxwiz::DataType::Float32);
+
+    auto mse = cyxwiz::CreateLoss(cyxwiz::LossType::MSE, cyxwiz::Reduction::Mean);
+    cyxwiz::Tensor loss = mse->Forward(predictions, targets);
+    cyxwiz::Tensor grad = mse->Backward(predictions, targets);
+
+    REQUIRE(loss.NumElements() == 1);
+    REQUIRE(loss.Data<float>()[0] == Catch::Approx(10.0f / 6.0f));
+    REQUIRE(grad.Shape() == predictions.Shape());
+}
+
 TEST_CASE("Core losses compute CPU backward values", "[loss]") {
     float pred_values[] = {1.0f, 3.0f, -2.0f};
     float target_values[] = {0.0f, 1.0f, 1.0f};

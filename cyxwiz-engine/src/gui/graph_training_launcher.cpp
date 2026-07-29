@@ -533,8 +533,15 @@ bool ValidateSuppliedRoleLeakage(
     const cyxwiz::ResolvedDatasetRole& train_role,
     const cyxwiz::ResolvedDatasetRole& role,
     const char* role_name,
-    GraphTrainingLaunchResult& launch_result) {
-    if (!role.IsSupplied()) return true;
+    GraphTrainingLaunchResult& launch_result,
+    cyxwiz::PartitionLeakageStatus& status,
+    std::string& status_reason) {
+    status_reason.clear();
+    if (!role.IsSupplied()) {
+        status = cyxwiz::PartitionLeakageStatus::Passed;
+        status_reason = "derived from Training Dataset by partition policy";
+        return true;
+    }
 
     constexpr int64_t kMaxIdentifierScanRows = 1000000;
     constexpr int64_t kMaxExactRowScanRows = 20000;
@@ -544,6 +551,8 @@ bool ValidateSuppliedRoleLeakage(
     auto train_label = ResolveRoleLabelField(train_schema, train_role.label_column);
     auto role_label = ResolveRoleLabelField(role_schema, role.label_column);
     if (!train_schema || !role_schema || !train_label || !role_label) {
+        status = cyxwiz::PartitionLeakageStatus::Unavailable;
+        status_reason = "schema or label metadata was unavailable";
         return true;
     }
 
@@ -559,6 +568,8 @@ bool ValidateSuppliedRoleLeakage(
             spdlog::warn(
                 "Track70: skipped {} overlap check against Training dataset '{}' using identifier '{}': {}",
                 role_name, train_role.dataset_name, id_column, reason);
+            status = cyxwiz::PartitionLeakageStatus::Unavailable;
+            status_reason = reason;
             return true;
         }
 
@@ -570,6 +581,8 @@ bool ValidateSuppliedRoleLeakage(
             spdlog::warn(
                 "Track70: skipped {} overlap check for dataset '{}' using identifier '{}': {}",
                 role_name, role.dataset_name, id_column, reason);
+            status = cyxwiz::PartitionLeakageStatus::Unavailable;
+            status_reason = reason;
             return true;
         }
 
@@ -584,9 +597,15 @@ bool ValidateSuppliedRoleLeakage(
                         id_column + "' with value " + id +
                         ". External " + role_name +
                         " data must not duplicate Training rows.");
+                status = cyxwiz::PartitionLeakageStatus::Failed;
+                status_reason = "overlap detected on identifier column '" +
+                    id_column + "'";
                 return false;
             }
         }
+        status = cyxwiz::PartitionLeakageStatus::Passed;
+        status_reason = "no overlap found on identifier column '" +
+            id_column + "'";
         return true;
     }
 
@@ -604,6 +623,8 @@ bool ValidateSuppliedRoleLeakage(
         spdlog::warn(
             "Track70: {} overlap check for dataset '{}' could not find a shared stable identifier and skipped exact-row comparison for {} combined rows",
             role_name, role.dataset_name, train_rows + role_rows);
+        status = cyxwiz::PartitionLeakageStatus::Unavailable;
+        status_reason = "no shared stable identifier and exact-row scan limit exceeded";
         return true;
     }
 
@@ -629,6 +650,8 @@ bool ValidateSuppliedRoleLeakage(
         spdlog::warn(
             "Track70: skipped exact-row {} overlap check for Training dataset '{}': {}",
             role_name, train_role.dataset_name, reason);
+        status = cyxwiz::PartitionLeakageStatus::Unavailable;
+        status_reason = reason;
         return true;
     }
 
@@ -640,6 +663,8 @@ bool ValidateSuppliedRoleLeakage(
         spdlog::warn(
             "Track70: skipped exact-row {} overlap check for dataset '{}': {}",
             role_name, role.dataset_name, reason);
+        status = cyxwiz::PartitionLeakageStatus::Unavailable;
+        status_reason = reason;
         return true;
     }
 
@@ -653,10 +678,14 @@ bool ValidateSuppliedRoleLeakage(
                     train_role.dataset_name +
                     "'. External " + role_name +
                     " data must not duplicate Training rows.");
+            status = cyxwiz::PartitionLeakageStatus::Failed;
+            status_reason = "an exact duplicate row overlaps Training Dataset";
             return false;
         }
     }
 
+    status = cyxwiz::PartitionLeakageStatus::Passed;
+    status_reason = "bounded exact-row comparison found no overlap";
     return true;
 }
 
@@ -775,25 +804,35 @@ bool ValidateSuppliedRoleSchema(
     return true;
 }
 
-bool ValidateSuppliedRoleSchemas(
-    cyxwiz::DataRegistry& registry,
-    const cyxwiz::ResolvedDatasetRoles& roles,
-    GraphTrainingLaunchResult& launch_result) {
-    return ValidateSuppliedRoleSchema(
-               registry, roles.train, roles.dev, "Dev", launch_result) &&
-           ValidateSuppliedRoleSchema(
-               registry, roles.train, roles.test, "Test", launch_result);
-}
-
 bool ValidateSuppliedRolePreflight(
     cyxwiz::DataRegistry& registry,
-    const cyxwiz::ResolvedDatasetRoles& roles,
+    cyxwiz::ResolvedDatasetRoles& roles,
     GraphTrainingLaunchResult& launch_result) {
-    return ValidateSuppliedRoleSchemas(registry, roles, launch_result) &&
-           ValidateSuppliedRoleLeakage(
-               registry, roles.train, roles.dev, "Dev", launch_result) &&
-           ValidateSuppliedRoleLeakage(
-               registry, roles.train, roles.test, "Test", launch_result);
+    auto& manifest = roles.manifest;
+    if (!ValidateSuppliedRoleSchema(
+            registry, roles.train, roles.dev, "Dev", launch_result)) {
+        manifest.dev_compatibility =
+            cyxwiz::PartitionCompatibility::Incompatible;
+        manifest.dev_status_reason = launch_result.error_message;
+        return false;
+    }
+    manifest.dev_compatibility = cyxwiz::PartitionCompatibility::Compatible;
+    if (!ValidateSuppliedRoleSchema(
+            registry, roles.train, roles.test, "Test", launch_result)) {
+        manifest.test_compatibility =
+            cyxwiz::PartitionCompatibility::Incompatible;
+        manifest.test_status_reason = launch_result.error_message;
+        return false;
+    }
+    manifest.test_compatibility = cyxwiz::PartitionCompatibility::Compatible;
+    if (!ValidateSuppliedRoleLeakage(
+            registry, roles.train, roles.dev, "Dev", launch_result,
+            manifest.dev_leakage, manifest.dev_status_reason)) {
+        return false;
+    }
+    return ValidateSuppliedRoleLeakage(
+        registry, roles.train, roles.test, "Test", launch_result,
+        manifest.test_leakage, manifest.test_status_reason);
 }
 
 bool ValidateSequenceLaunchColumns(
@@ -866,6 +905,10 @@ void SetBlockedStatus(GraphTrainingLaunchResult& result,
 }
 
 } // namespace
+
+cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig() {
+    return DefaultMaterializationCacheConfig();
+}
 
 GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     const std::vector<MLNode>& nodes,

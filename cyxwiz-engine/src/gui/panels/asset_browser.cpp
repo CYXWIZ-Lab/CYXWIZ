@@ -1,5 +1,6 @@
 #include "asset_browser.h"
 #include "../icons.h"
+#include "../data_preview_table_renderer.h"
 #include "../../core/project_manager.h"
 #include <imgui.h>
 #include <filesystem>
@@ -823,6 +824,14 @@ void AssetBrowserPanel::RenderStatusBar() {
     } else {
         ImGui::Text("%d items | No project", total_items);
     }
+    if (asset_action_status_ != AssetActionStatus::None &&
+        !asset_action_message_.empty()) {
+        ImGui::SameLine();
+        const ImVec4 color = asset_action_status_ == AssetActionStatus::Error
+            ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f)
+            : ImVec4(0.5f, 0.9f, 0.5f, 1.0f);
+        ImGui::TextColored(color, "| %s", asset_action_message_.c_str());
+    }
 }
 
 void AssetBrowserPanel::RenderNewScriptDialog() {
@@ -1321,8 +1330,12 @@ void AssetBrowserPanel::OpenInExplorer() {
     const std::string target = context_menu_item_->absolute_path;
     if (LaunchAssetInFileBrowser(target, context_menu_item_->is_directory)) {
         spdlog::info("AssetBrowser: opened file browser for '{}'", target);
+        asset_action_status_ = AssetActionStatus::Success;
+        asset_action_message_ = "Opened in file browser";
     } else {
         spdlog::error("AssetBrowser: failed to open file browser for '{}'", target);
+        asset_action_status_ = AssetActionStatus::Error;
+        asset_action_message_ = "Could not open the selected asset in the file browser";
     }
 }
 
@@ -1674,12 +1687,13 @@ void AssetBrowserPanel::RenderDatasetPreview() {
             DataPreviewRequest request;
             request.dataset_name = *dataset_name;
             request.offset = 0;
-            request.row_limit = 5;
+            request.row_limit = 20;
             current_preview_ = DataPreviewService::PreviewRegisteredTabular(registry, request);
             if (current_preview_.ok) {
                 preview_dataset_name_ = *dataset_name;
             }
         } else {
+            current_preview_.status = DataPreviewStatus::Unsupported;
             current_preview_.reason = "Dataset file is not registered yet. Use Create Data Input, then Apply.";
         }
     }
@@ -1697,6 +1711,14 @@ void AssetBrowserPanel::RenderDatasetPreview() {
 
     if (!current_preview_.ok) {
         ImGui::Spacing();
+        const char* status = current_preview_.status == DataPreviewStatus::Unsupported
+            ? "Unsupported"
+            : (current_preview_.status == DataPreviewStatus::InvalidRequest
+                   ? "Invalid request"
+                   : (current_preview_.status == DataPreviewStatus::Cancelled
+                          ? "Cancelled"
+                          : "Failed"));
+        ImGui::TextDisabled("Preview status: %s", status);
         ImGui::TextWrapped("%s", current_preview_.reason.c_str());
     } else {
         ImGui::Spacing();
@@ -1709,19 +1731,26 @@ void AssetBrowserPanel::RenderDatasetPreview() {
         }
 
         ImGui::Separator();
-        if (!current_preview_.schema.empty()) {
-            ImGui::Text("Columns:");
-            for (size_t i = 0; i < current_preview_.schema.size() && i < 5; ++i) {
-                const auto& column = current_preview_.schema[i];
-                ImGui::BulletText("%s", column.name.c_str());
-            }
-            if (current_preview_.schema.size() > 5) {
-                ImGui::Text("  ... and %zu more", current_preview_.schema.size() - 5);
-            }
-        }
+        gui::RenderDataPreviewTable(
+            "asset_browser",
+            current_preview_.schema,
+            current_preview_.offset,
+            current_preview_.rows_returned,
+            [this](int64_t absolute_row) -> const gui::DataPreviewRow* {
+                const int64_t local_row = absolute_row - current_preview_.offset;
+                if (local_row < 0 ||
+                    local_row >= static_cast<int64_t>(current_preview_.rows.size())) {
+                    return nullptr;
+                }
+                return &current_preview_.rows[static_cast<size_t>(local_row)];
+            },
+            ImVec2(0, 240.0f));
     }
 
     ImGui::Separator();
+    if (ImGui::Button("Refresh Preview", ImVec2(-1, 0))) {
+        preview_path_.clear();
+    }
     if (ImGui::Button("Create Data Input", ImVec2(-1, 0))) {
         CreateDataInputFromItem(*dataset_item);
     }

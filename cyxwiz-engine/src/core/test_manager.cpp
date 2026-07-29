@@ -7,6 +7,29 @@
 
 namespace cyxwiz {
 
+namespace {
+
+std::string TestingTaskMetricSummary(const TestingMetrics& metrics) {
+    if (metrics.regression_mode) {
+        return " - MAE: " + std::to_string(metrics.test_mae) +
+               " - RMSE: " + std::to_string(metrics.test_rmse);
+    }
+    return " - Acc: " +
+           std::to_string(static_cast<int>(metrics.test_accuracy * 100)) +
+           "%";
+}
+
+void FinishTestingTrackingTask(LambdaTask& task) {
+    const auto final_metrics = TestManager::Instance().GetCurrentMetrics();
+    if (!final_metrics.is_complete &&
+        final_metrics.status_message.rfind("Testing failed", 0) == 0) {
+        throw std::runtime_error(final_metrics.status_message);
+    }
+    task.MarkCompleted();
+}
+
+} // namespace
+
 TestManager& TestManager::Instance() {
     static TestManager instance;
     return instance;
@@ -73,16 +96,10 @@ bool TestManager::StartTesting(
                 task.ReportProgress(progress,
                     "Batch " + std::to_string(metrics.current_batch) + "/" +
                     std::to_string(metrics.total_batches) +
-                    " - Acc: " + std::to_string(static_cast<int>(metrics.test_accuracy * 100)) + "%");
+                    TestingTaskMetricSummary(metrics));
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            const auto final_metrics = TestManager::Instance().GetCurrentMetrics();
-            if (!final_metrics.is_complete &&
-                final_metrics.status_message.rfind("Testing failed", 0) == 0) {
-                task.MarkCompleted(final_metrics.status_message, "failed");
-            } else {
-                task.MarkCompleted();
-            }
+            FinishTestingTrackingTask(task);
         },
         nullptr,  // progress callback
         nullptr   // completion callback
@@ -161,16 +178,10 @@ bool TestManager::StartTestingArrow(
                 task.ReportProgress(progress,
                     "Batch " + std::to_string(metrics.current_batch) + "/" +
                     std::to_string(metrics.total_batches) +
-                    " - Acc: " + std::to_string(static_cast<int>(metrics.test_accuracy * 100)) + "%");
+                    TestingTaskMetricSummary(metrics));
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            const auto final_metrics = TestManager::Instance().GetCurrentMetrics();
-            if (!final_metrics.is_complete &&
-                final_metrics.status_message.rfind("Testing failed", 0) == 0) {
-                task.MarkCompleted(final_metrics.status_message, "failed");
-            } else {
-                task.MarkCompleted();
-            }
+            FinishTestingTrackingTask(task);
         },
         nullptr,  // progress callback
         nullptr   // completion callback
@@ -240,16 +251,10 @@ bool TestManager::StartTestingParquet(
                 task.ReportProgress(progress,
                     "Batch " + std::to_string(metrics.current_batch) + "/" +
                     std::to_string(metrics.total_batches) +
-                    " - Acc: " + std::to_string(static_cast<int>(metrics.test_accuracy * 100)) + "%");
+                    TestingTaskMetricSummary(metrics));
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            const auto final_metrics = TestManager::Instance().GetCurrentMetrics();
-            if (!final_metrics.is_complete &&
-                final_metrics.status_message.rfind("Testing failed", 0) == 0) {
-                task.MarkCompleted(final_metrics.status_message, "failed");
-            } else {
-                task.MarkCompleted();
-            }
+            FinishTestingTrackingTask(task);
         },
         nullptr,
         nullptr
@@ -311,16 +316,10 @@ bool TestManager::StartTestingText(
                 task.ReportProgress(progress,
                     "Batch " + std::to_string(metrics.current_batch) + "/" +
                     std::to_string(metrics.total_batches) +
-                    " - Acc: " + std::to_string(static_cast<int>(metrics.test_accuracy * 100)) + "%");
+                    TestingTaskMetricSummary(metrics));
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            const auto final_metrics = TestManager::Instance().GetCurrentMetrics();
-            if (!final_metrics.is_complete &&
-                final_metrics.status_message.rfind("Testing failed", 0) == 0) {
-                task.MarkCompleted(final_metrics.status_message, "failed");
-            } else {
-                task.MarkCompleted();
-            }
+            FinishTestingTrackingTask(task);
         },
         nullptr,
         nullptr
@@ -443,11 +442,10 @@ void TestManager::TestingThreadFunc(
     // Get final metrics
     {
         std::lock_guard<std::mutex> lock(metrics_mutex_);
-        if (final_metrics.is_complete) {
-            cached_metrics_ = final_metrics;
-        }
+        cached_metrics_ = final_metrics;
         cached_metrics_.is_testing = false;
-        cached_metrics_.is_complete = !stop_requested_.load();
+        cached_metrics_.is_complete =
+            final_metrics.is_complete && !stop_requested_.load();
     }
 
     // Store last results
@@ -478,10 +476,21 @@ void TestManager::TestingThreadFunc(
     }
 
     if (success) {
-        spdlog::info("TestManager: Testing completed! Accuracy: {:.2f}%",
-                     final_metrics.test_accuracy * 100);
+        if (final_metrics.regression_mode) {
+            spdlog::info(
+                "TestManager: Regression testing completed! "
+                "MAE: {:.4f}, RMSE: {:.4f}",
+                final_metrics.test_mae, final_metrics.test_rmse);
+        } else {
+            spdlog::info("TestManager: Testing completed! Accuracy: {:.2f}%",
+                         final_metrics.test_accuracy * 100);
+        }
     } else {
-        spdlog::info("TestManager: Testing stopped");
+        spdlog::error(
+            "TestManager: {}",
+            final_metrics.status_message.empty()
+                ? "Testing stopped"
+                : final_metrics.status_message);
     }
 }
 
@@ -500,41 +509,53 @@ bool TestManager::ExportResultsToCSV(const std::string& filepath) {
     // Write overview
     file << "Test Results Summary\n";
     file << "Metric,Value\n";
-    file << "Accuracy," << std::fixed << std::setprecision(4) << last_results_.test_accuracy << "\n";
+    file << "Objective," <<
+        (last_results_.regression_mode ? "regression" : "classification") <<
+        "\n";
     file << "Loss," << last_results_.test_loss << "\n";
     file << "Total Samples," << last_results_.total_samples << "\n";
-    file << "Macro Precision," << last_results_.macro_precision << "\n";
-    file << "Macro Recall," << last_results_.macro_recall << "\n";
-    file << "Macro F1," << last_results_.macro_f1 << "\n";
-    file << "Weighted F1," << last_results_.weighted_f1 << "\n";
+    if (last_results_.regression_mode) {
+        file << "Target Values," << last_results_.total_target_values << "\n";
+        file << "MAE," << last_results_.test_mae << "\n";
+        file << "RMSE," << last_results_.test_rmse << "\n";
+    } else {
+        file << "Accuracy," << std::fixed << std::setprecision(4)
+             << last_results_.test_accuracy << "\n";
+        file << "Macro Precision," << last_results_.macro_precision << "\n";
+        file << "Macro Recall," << last_results_.macro_recall << "\n";
+        file << "Macro F1," << last_results_.macro_f1 << "\n";
+        file << "Weighted F1," << last_results_.weighted_f1 << "\n";
+    }
     file << "Time (seconds)," << last_results_.total_time_seconds << "\n";
     file << "Samples/sec," << last_results_.samples_per_second << "\n";
 
-    file << "\nPer-Class Metrics\n";
-    file << "Class,Precision,Recall,F1,Support\n";
-    for (const auto& cm : last_results_.per_class_metrics) {
-        file << cm.class_name << ","
-             << cm.precision << ","
-             << cm.recall << ","
-             << cm.f1_score << ","
-             << cm.support << "\n";
-    }
+    if (!last_results_.regression_mode) {
+        file << "\nPer-Class Metrics\n";
+        file << "Class,Precision,Recall,F1,Support\n";
+        for (const auto& cm : last_results_.per_class_metrics) {
+            file << cm.class_name << ","
+                 << cm.precision << ","
+                 << cm.recall << ","
+                 << cm.f1_score << ","
+                 << cm.support << "\n";
+        }
 
-    file << "\nConfusion Matrix\n";
-    const auto& conf = last_results_.confusion_matrix;
-    file << ",";
-    for (int j = 0; j < conf.num_classes; ++j) {
-        file << "Pred_" << j;
-        if (j < conf.num_classes - 1) file << ",";
-    }
-    file << "\n";
-    for (int i = 0; i < conf.num_classes; ++i) {
-        file << "Actual_" << i << ",";
+        file << "\nConfusion Matrix\n";
+        const auto& conf = last_results_.confusion_matrix;
+        file << ",";
         for (int j = 0; j < conf.num_classes; ++j) {
-            file << conf.matrix[i][j];
+            file << "Pred_" << j;
             if (j < conf.num_classes - 1) file << ",";
         }
         file << "\n";
+        for (int i = 0; i < conf.num_classes; ++i) {
+            file << "Actual_" << i << ",";
+            for (int j = 0; j < conf.num_classes; ++j) {
+                file << conf.matrix[i][j];
+                if (j < conf.num_classes - 1) file << ",";
+            }
+            file << "\n";
+        }
     }
 
     file.close();
@@ -551,13 +572,21 @@ bool TestManager::ExportResultsToJSON(const std::string& filepath) {
     nlohmann::json j;
 
     // Overview
-    j["accuracy"] = last_results_.test_accuracy;
+    j["objective"] =
+        last_results_.regression_mode ? "regression" : "classification";
     j["loss"] = last_results_.test_loss;
     j["total_samples"] = last_results_.total_samples;
-    j["macro_precision"] = last_results_.macro_precision;
-    j["macro_recall"] = last_results_.macro_recall;
-    j["macro_f1"] = last_results_.macro_f1;
-    j["weighted_f1"] = last_results_.weighted_f1;
+    if (last_results_.regression_mode) {
+        j["total_target_values"] = last_results_.total_target_values;
+        j["mae"] = last_results_.test_mae;
+        j["rmse"] = last_results_.test_rmse;
+    } else {
+        j["accuracy"] = last_results_.test_accuracy;
+        j["macro_precision"] = last_results_.macro_precision;
+        j["macro_recall"] = last_results_.macro_recall;
+        j["macro_f1"] = last_results_.macro_f1;
+        j["weighted_f1"] = last_results_.weighted_f1;
+    }
     j["time_seconds"] = last_results_.total_time_seconds;
     j["samples_per_second"] = last_results_.samples_per_second;
 

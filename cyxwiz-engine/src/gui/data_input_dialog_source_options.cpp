@@ -257,6 +257,27 @@ void DataInputDialog::RenderTabularOptions() {
                 has_changes_ = true;
             }
 
+            ImGui::Text("Decimal separator:");
+            ImGui::SameLine(140);
+            ImGui::SetNextItemWidth(110);
+            const char* decimal_label =
+                decimal_point_ == ',' ? "Comma (,)" : "Dot (.)";
+            if (ImGui::BeginCombo("##decimalpoint", decimal_label)) {
+                if (ImGui::Selectable("Dot (.)", decimal_point_ == '.')) {
+                    decimal_point_ = '.';
+                    has_changes_ = true;
+                }
+                if (ImGui::Selectable("Comma (,)", decimal_point_ == ',')) {
+                    decimal_point_ = ',';
+                    has_changes_ = true;
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Controls numeric parsing only. It is separate from the field delimiter.");
+            }
+
             ImGui::Text("Quote char:");
             ImGui::SameLine(100);
             ImGui::SetNextItemWidth(30);
@@ -277,51 +298,35 @@ void DataInputDialog::RenderTabularOptions() {
         }
     }
 
-    if (ImGui::CollapsingHeader("Dataset Role", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
-            "Assign how this loaded table participates in training.");
-        ImGui::Spacing();
+    if (ImGui::CollapsingHeader(
+            "Dataset Assignment", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextColored(
+            ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
+            "This Data Input always produces one role-neutral Dataset.");
+        ImGui::TextWrapped(
+            "There is deliberately no role selector here. The connection to "
+            "Data Split is the single source of truth:");
+        ImGui::BulletText("Training Dataset: model fitting source");
+        ImGui::BulletText(
+            "Validation Dataset: optional external validation/dev source");
+        ImGui::BulletText(
+            "Test Dataset: optional held-out final evaluation source");
+        ImGui::TextWrapped(
+            "Open Data Split properties after connecting the sources to "
+            "review the resolved Train/Validation/Test manifest.");
 
-        static constexpr const char* kRoleLabels[] = {
-            "Train (default)",
-            "Dev / Validation",
-            "Test"
-        };
-        static constexpr const char* kRoleDescriptions[] = {
-            "Fits the model and learned preprocessing state. When Dev or Test "
-            "is not supplied separately, Data Split may derive those partitions "
-            "from this dataset according to its configured policy.",
-            "Used during training for validation metrics, early stopping, and "
-            "model selection. This external dataset is validated against Train, "
-            "used in full, and is never internally split or used to fit preprocessing.",
-            "Reserved for final held-out evaluation after training. This external "
-            "dataset is validated against Train, used in full, and is never used "
-            "for fitting, early stopping, model selection, or preprocessing statistics."
-        };
-
-        ImGui::Text("Role:");
-        ImGui::SameLine(120);
-        ImGui::SetNextItemWidth(200);
-        const int role_preview_idx =
-            (dataset_role_idx_ >= 0 && dataset_role_idx_ < 3) ? dataset_role_idx_ : 0;
-        if (ImGui::BeginCombo("##datasetrole", kRoleLabels[role_preview_idx])) {
-            for (int i = 0; i < static_cast<int>(sizeof(kRoleLabels) / sizeof(kRoleLabels[0])); ++i) {
-                const bool selected = dataset_role_idx_ == i;
-                if (ImGui::Selectable(kRoleLabels[i], selected)) {
-                    dataset_role_idx_ = i;
-                    has_changes_ = true;
-                }
-                if (selected) {
-                    ImGui::SetItemDefaultFocus();
-                }
-            }
-            ImGui::EndCombo();
+        const auto legacy_role = node_->parameters.find("dataset_role");
+        if (legacy_role != node_->parameters.end() &&
+            !legacy_role->second.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.70f, 0.25f, 1.0f),
+                "Legacy role hint '%s' is ignored.",
+                legacy_role->second.c_str());
+            ImGui::TextWrapped(
+                "Reconnect this Dataset to the intended named Data Split "
+                "input. Apply removes the obsolete hint.");
         }
-
-        ImGui::PushStyleColor(
-            ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("%s", kRoleDescriptions[role_preview_idx]);
-        ImGui::PopStyleColor();
     }
 
 

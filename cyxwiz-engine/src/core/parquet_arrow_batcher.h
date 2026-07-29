@@ -75,6 +75,8 @@ public:
     void SetFlatten(bool flatten) override { flatten_ = flatten; }
     void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
     void SetRegressionMode(bool enable) { SetScalarLabelMode(enable); }
+    void SetRegressionTargetWidth(
+        size_t width, const std::string& target_base = {});
 
 private:
     // Configuration
@@ -93,6 +95,7 @@ private:
     // Column layout (populated by InitializeColumns at construction)
     std::vector<int> feature_cols_;   // column indices that carry feature data
     int label_col_idx_ = -1;          // column index of the label column, -1 = none
+    std::vector<int> label_col_indices_;  // ordered regression target columns
     size_t num_features_ = 0;
 
     // Row group assignment: which row groups this batcher is allowed to read

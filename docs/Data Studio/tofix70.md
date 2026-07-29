@@ -2,41 +2,144 @@
 
 ## Status
 
-Completed for the production tabular workflow - 2026-07-27.
+Reopened - partial implementation; deep completion audit recorded 2026-07-27.
 
-The Train/Dev/Test role resolver, Dataset-oriented split contract, external
-held-out evaluation, fitted preprocessing reuse, truthful lazy preview,
-streaming row limits, partition provenance, and checkpoint-to-test workflow
-are implemented and covered by focused regressions. APS was used only as an
-acceptance fixture; no APS path, schema, row count, or model rule is embedded
-in the engine.
+### Next-session handoff - 2026-07-27
 
-Completion boundary: Track 70 closes the Arrow/Parquet tabular training path
-that motivated this ticket. Extending the same typed role contract to image,
-audio, text, time-series, self-supervised, or reinforcement-learning runtimes
-is follow-up work, as are typed preprocessing-state ports and exact optimizer
-resume. Those extensions do not change the completed tabular contract.
+Resume after Phase 5a. Do not repeat phases 1-4 or the registered-tabular
+preview work. The remaining implementation order is:
 
-## Tracked follow-ups - not Track 70 closure blockers
+1. finish Phase 5 with registered text, image, and audio preview adapters using
+   the existing `DataPreviewRequest`/`DataPreviewPage` contract and shared
+   renderer boundary; do not add raw-file registry or parser paths;
+2. extend `ResolvedDatasetPartitions` external Dev/Test consumption from
+   Arrow/Parquet to image, audio, text, and time-series adapters, including a
+   chronological time-series split policy;
+3. introduce a typed `TrainingPlan` for supervised, self-supervised,
+   unsupervised, and reinforcement objectives; and
+4. integrate Train-fit/Dev-Test-apply preprocessing state into the resolved
+   role runtime instead of relying only on manually saved artifact files.
 
-The following production extensions remain intentionally outside the completed
-tabular contract and require their own scoped tickets and acceptance tests:
+Verification baseline at handoff: Debug `test_data_preview_service` passes,
+Debug `cyxwiz-engine` builds, and `cyxwiz-tests` passes 2,372 assertions in 271
+test cases. The working tree contains the complete uncommitted Track70 phases
+1-5a plus unrelated user work; review/stage by explicit path before committing.
 
-1. Extend resolved Train/Dev/Test roles to image, audio, text, and time-series
-   adapters without adding modality-specific branches to Data Split.
-2. Introduce typed training plans for self-supervised, unsupervised, and
-   reinforcement-learning execution instead of treating every objective as
-   supervised labels.
-3. Replace file-mediated fitted preprocessing handoff with typed state ports
-   and pin-aware same-graph Train/Dev/Test coordination.
-4. Add checkpoint v2 with optimizer, scheduler, RNG, sampler, graph, and
-   dataset identity required for exact training resume.
-5. Persist complete run-comparison history rather than presenting loaded
-   checkpoints as fabricated training runs.
+The earlier statement that Track 70 was complete for a production tabular
+workflow is withdrawn. A useful Arrow/Parquet supervised slice exists, but it
+does not yet implement the ticket's authoritative Data Input -> Partition
+Policy -> Data Loader boundary. The detailed evidence and acceptance matrix
+are recorded in `track70.md` under `Deep completion audit - 2026-07-27`.
 
-These follow-ups may reuse the Track 70 DatasetAsset, role resolver, manifest,
-and checkpoint-validation boundaries. They must not broaden or duplicate the
-core tabular loader merely to share the same UI.
+Implemented and retained:
+
+- new Data Input, Data Split, and Data Loader nodes expose the intended Dataset
+  pin layout;
+- one-source tabular splitting and Train plus external Test execution work for
+  Arrow/Parquet, including whole-dataset held-out testing;
+- role-specific tabular schema/label validation and bounded tabular Data Input
+  preview exist;
+- fitted Fill Missing/Standard Scaler artifacts can be saved and reapplied in
+  separate Data Studio executions;
+- binary targets, prefetch ownership, class balancing, row limits, checkpoint
+  loading, and the ImNodes Debug assertion received valid generic fixes.
+
+Phase 1 topology correction completed 2026-07-27:
+
+- Data Input is role-neutral and no longer writes a `dataset_role` parameter;
+- legacy role parameters are ignored with compiler migration guidance;
+- Train, Validation, and Test sources resolve only from their connected named
+  Data Split inputs, so disconnected sources cannot enter a run;
+- typed `DatasetSourceRef`, `SplitPolicy`, `ResolvedDatasetPartitions`, and
+  `PartitionManifest` contracts now exist and the compiler populates their
+  resolved source, policy, and origin fields; and
+- focused regressions cover Train+Test, Train+Dev, Train+Dev+Test, stale role
+  hints, and disconnected legacy role hints.
+
+Phase 2 tabular runtime handoff completed 2026-07-27:
+
+- the tabular launcher resolves the typed Train/Dev/Test identities to explicit
+  Arrow or Parquet dataset handles once, then passes them to the core batcher
+  assembly API;
+- the core consumes `ResolvedDatasetPartitions` policy and role identities,
+  derives only absent roles from Train, installs supplied Dev/Test sources in
+  full, and attaches prefetch after the final owners are assembled;
+- the prior launcher-owned sequence of building ratio-based batchers and then
+  replacing Dev/Test batchers has been removed; and
+- focused coverage proves Train-only, Train+Test, Train+Dev, and
+  Train+Dev+Test resolution. The mixed in-memory Arrow Train plus disk-backed
+  Parquet Test case produces 3 Train, 1 derived Dev, and all 4 external Test
+  rows, including safe prefetch ownership after handoff.
+
+Phase 3 tabular manifest truth completed 2026-07-27:
+
+- `PartitionManifest` v2 now carries file content-version identity, complete
+  and feature-schema fingerprints, split method/seed/stratification, role
+  origins, resolution reasons, schema compatibility, structured leakage-check
+  status/reasons, and resolved row counts;
+- the compiler populates registered tabular provenance and deterministic
+  pre-batch counts, while batch assembly and the executor finalize exact
+  runtime Train/Dev/Test counts;
+- Run Comparison now fingerprints the typed manifest rather than maintaining a
+  second display-name hash. The Data Split seed is authoritative; changing the
+  Data Loader seed alone does not change partition identity;
+- the Data Split dialog exposes the active graph's resolved sources, origins,
+  row counts, preservation/derivation reasons, schema status, source/schema
+  IDs, policy, and manifest ID; and
+- training preflight records compatible/incompatible schema state and whether
+  leakage checking passed, failed, or was unavailable with a reason. Run
+  Comparison and CSV export preserve those role-check facts.
+
+Phase 4 safe legacy graph migration completed 2026-07-27:
+
+- saved graphs now carry an explicit `data_boundary_version`; new Dataset-pin
+  graphs save as v2, while a graph retaining preserved legacy pins remains v1;
+- unversioned and explicit v1 graphs recreate the historical Data Input,
+  six-output Data Split, and Data Loader pin layouts before restoring links,
+  so obsolete high pin indices are not silently discarded;
+- the Data Split properties show a prominent legacy notice and require an
+  explicit `Migrate graph to Dataset v2` action;
+- migration rewrites the standard Data Input -> Data Split -> Data Loader
+  boundary, removes redundant legacy label-chain links, reroutes model-facing
+  label consumers to `DataLoader.Labels`, and is undoable; and
+- ambiguous or lossy layouts fail closed with a concrete reason, including
+  connected legacy Validation/Test canvas branches, bypassed Split/Loader
+  boundaries, missing pins, and multiple downstream loaders.
+
+Phase 5a tabular preview parity completed 2026-07-27:
+
+- Data Input and Asset Browser now render tabular values through one bounded
+  ImGui table primitive; Asset Browser no longer discards the rows returned by
+  `DataPreviewService` and shows the first 20 registered rows;
+- `DataPreviewRequest` has a cooperative cancellation callback and
+  `DataPreviewPage` returns typed Ready, InvalidRequest, Unsupported,
+  Cancelled, or Failed status;
+- Data Input cancels obsolete/in-flight page tasks when preview state resets
+  and exposes a Cancel action during lazy paging;
+- each returned column reports page-local sampled-value and null counts, which
+  the shared renderer summarizes without scanning the full dataset; and
+- Show in Explorer success/failure is visible in the Asset Browser status bar
+  instead of being log-only.
+
+Track 70 remains open because the implementation still contradicts or only
+partially satisfies mandatory parts of this document:
+
+1. Registered image and audio previews remain explicitly unwired. The tabular
+   slice now shares one bounded renderer between Data Input and Asset Browser,
+   has cooperative cancellation and page-local null metadata, and reports
+   Explorer launch failures visibly.
+2. External role execution remains tabular-specific. Image, audio, and text
+   training construct their batchers from one source and ratios and ignore the
+   optional external role sources.
+3. Typed supervised/self-supervised/unsupervised/reinforcement
+   `TrainingPlan` resolution is absent.
+4. Learned preprocessing reuse is file-mediated rather than an integrated,
+   role-aware Train-fit/Dev-Test-apply runtime contract.
+
+Checkpoint v2 exact optimizer resume and persisted run-history storage remain
+separate follow-ups because they are not required by the original acceptance
+criteria. The four open items above remain Track 70 work unless this ticket is
+formally split and its acceptance criteria are revised.
 
 ## Decision statement
 
@@ -281,6 +384,18 @@ for each loaded source, including any cache location and reason. In particular,
 the current CSV policy may choose in-memory loading for files below its RAM
 safety threshold or disk-backed Parquet caching for large/forced-disk loads;
 format-specific paths must be audited rather than assumed to stream.
+
+CSV ingestion caches are derived data, not training state. They live in the
+project's `cache/ingestion` directory, while learned parameters and resumable
+run state remain under `checkpoints`. A cache key must include the stable source
+path and effective parser contract (delimiter, decimal separator, header,
+skipped/limited rows, null tokens, and selected columns). Source changes or
+parser changes invalidate the cache. Both in-memory and disk-backed loading use
+this contract so reopening a project can restore the canonical Arrow table from
+Parquet without reparsing an unchanged source. Large-source schema inference
+must use bounded preflight sampling before the full parse, retaining the
+widen-and-retry path only as a fallback for unsampled late numeric values.
+
 ### Mandatory Data Preview
 
 Data Input must provide a read-only preview after a source is loaded. Users
@@ -982,6 +1097,35 @@ The APS classifier checkpoint signature (`170 -> 128 -> 64 -> 1`) matches the
 current classifier graph and can exercise this workflow, but compatibility is
 validated generically and contains no APS-specific logic.
 
+## Implemented locale-aware CSV ingestion and responsive Time Series loading - 2026-07-27
+
+The Electricity Load Diagrams acceptance source exposed two coupled generic
+ingestion defects. Its semicolon field delimiter was already honored, but the
+comma decimal radix was not part of the saved parser contract. Arrow therefore
+inferred measurement columns as strings, increasing materialization cost and
+making the 678 MB interactive Time Series load appear frozen despite running
+through the task manager.
+
+Data Input Format Options now has an independent Decimal separator choice for
+dot or comma. The value is saved on the node, restored on reopen, included in
+registered-preview freshness and Parquet cache identity, and passed through
+Data Input Apply, pipeline execution, in-memory Arrow ingestion, and streaming
+CSV-to-Parquet conversion. Delimiter and decimal separator must each be one
+character and cannot be the same.
+
+Interactive Data Input and pipeline CSV loads remain background tasks but no
+longer create nested Arrow parser work across the global CPU pool. They use the
+existing single-threaded StreamingReader with bounded 64 MB source blocks;
+non-interactive registry callers keep the parallel default. This is category-
+neutral behavior shared by Tabular and Time Series inputs.
+
+Focused regression coverage proves that a semicolon source containing
+`71,7703` and `-2,5` materializes as Arrow doubles in both the in-memory and
+forced disk-backed Parquet paths while using the responsive parser contract.
+The Debug engine and data-preview regression build and pass. Final acceptance
+still requires reloading the real 678 MB source in the GUI and confirming that
+the window continues to repaint and the Tasks panel remains usable throughout.
+
 ## Implemented canonical project graph directory - 2026-07-27
 
 New projects now create a `cyxgraph` directory and register the `.cyxgraph`
@@ -991,3 +1135,65 @@ user-created legacy `node` directory. Graph Save/Open dialogs start in the
 active project's `cyxgraph` directory. When checkpoint output is not explicitly
 configured, graph training uses the active project's `checkpoints` directory;
 the runtime `.cyxwiz/checkpoints` path remains the fallback outside a project.
+
+## Target provenance and non-X/Y objective follow-up - 2026-07-28
+
+The neural graph compiler no longer equates “objective target” with “label
+column selected on Data Input.” It records whether the selected objective
+requires targets and resolves their origin as dataset column, dataset
+structure, graph-generated, or environment. TimeSeriesWindow and causal
+language-model generation currently resolve graph-generated targets.
+
+Remaining production work is deliberately separate from the immediate
+forecast fix:
+
+- dispatch target-free estimator fitting (for example PCA/K-Means) through an
+  estimator objective contract instead of requiring a tensor loss/optimizer;
+- dispatch reinforcement learning through an environment-transition contract
+  containing observation, action, reward, next observation, termination, and
+  truncation rather than a label pin;
+- extend the compiler-owned target-producer registry as new self-supervised,
+  reconstruction, contrastive, and multi-task operators become executable;
+- evolve the UI wording from legacy `Labels` to `Targets` without breaking
+  saved pin IDs or old graphs.
+
+Until those runtimes exist, `Train` remains the executable tensor-loss path;
+target-free Data Studio estimators continue through pipeline execution. The
+compiler must fail honestly for an unsupported objective family rather than
+asking the user to invent a label.
+
+## Implemented Arrow-native numeric equality filtering - 2026-07-29
+
+The full-period Electricity v0.7 graph isolated a generic Data Studio
+performance defect: filtering a 139,489 x 771 Arrow table with the simple
+condition `__partition__ = 2` spent about 43.4 seconds registering and copying
+the wide table through DuckDB. Window construction itself took only about 7.6
+seconds.
+
+Filter Rows now reuses the already validated condition tokens and applies a
+narrow Arrow-native path when the complete expression is one numeric column
+equal to one numeric scalar. It constructs a typed boolean mask, preserves
+null-as-not-selected SQL WHERE behavior, and filters the original Arrow table
+without widening compact integer fields or changing schema/column order.
+Compound expressions, inequalities, string comparisons, unsupported scalar
+forms, and Arrow failures continue through the existing validated DuckDB path.
+
+Focused Release regression coverage verifies:
+
+- numeric equality uses the Arrow-native path;
+- null comparisons are dropped;
+- schema and column order are unchanged;
+- compound numeric expressions still use DuckDB; and
+- existing string equality remains correct through DuckDB fallback.
+
+The rebuilt Release engine reran the unchanged v0.7 graph after restart. Filter
+Rows completed in about 0.144 seconds, the full graph completed in about 11.7
+seconds, and all 1,686,720-value daily/weekly metrics and four-row CSV exports
+were identical. The optimization is generic and contains no Electricity-only
+logic.
+
+The final cancellation acceptance also passed. Task ID 6 was cancelled during
+the full-source Data Input, stopped before downstream windowing and exports,
+and entered the cancelled task state. Both previously accepted metric artifacts
+kept the same hashes, timestamps, and sizes, proving that cancellation did not
+publish partial or falsely successful output.

@@ -42,6 +42,24 @@ struct TrainingInputSizeResolution {
     bool has_separate_label_column = false;
 };
 
+struct ResolvedTabularBatcherBuildResult {
+    TrainingBatcherSet batchers;
+    std::string error_message;
+
+    bool ok() const {
+        return error_message.empty() && batchers.train != nullptr;
+    }
+};
+
+struct ResolvedTabularDatasets {
+    std::shared_ptr<ArrowDataset> train_arrow;
+    std::shared_ptr<ParquetBackedDataset> train_parquet;
+    std::shared_ptr<ArrowDataset> dev_arrow;
+    std::shared_ptr<ParquetBackedDataset> dev_parquet;
+    std::shared_ptr<ArrowDataset> test_arrow;
+    std::shared_ptr<ParquetBackedDataset> test_parquet;
+};
+
 TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     const TrainingConfiguration& config,
     size_t num_columns);
@@ -63,6 +81,11 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     const TrainingConfiguration& config,
     std::shared_ptr<ParquetBackedDataset> dataset,
     const std::string& label_column,
+    int batch_size);
+
+ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
+    TrainingConfiguration& config,
+    const ResolvedTabularDatasets& datasets,
     int batch_size);
 
 void AttachTrainingBatcherPrefetchWrappers(

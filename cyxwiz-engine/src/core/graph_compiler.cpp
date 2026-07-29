@@ -18,6 +18,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <iomanip>
 #include <limits>
 #include <queue>
@@ -68,9 +69,278 @@ std::string DatasetRoleFromNode(const gui::MLNode& node) {
     return it == node.parameters.end() ? std::string{} : it->second;
 }
 
-bool IsTrainDatasetSource(const gui::MLNode& node) {
-    const std::string role = DatasetRoleFromNode(node);
-    return role.empty() || role == "train";
+const gui::MLNode* FindNodeById(
+    const std::vector<gui::MLNode>& nodes,
+    int node_id) {
+    for (const auto& node : nodes) {
+        if (node.id == node_id) return &node;
+    }
+    return nullptr;
+}
+
+const gui::NodePin* FindInputPinByName(
+    const gui::MLNode& node,
+    const std::string& pin_name) {
+    for (const auto& pin : node.inputs) {
+        if (pin.name == pin_name) return &pin;
+    }
+    return nullptr;
+}
+
+const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const gui::MLNode& split_node,
+    const std::string& pin_name,
+    bool* has_connection = nullptr,
+    bool* has_multiple_sources = nullptr) {
+    if (has_connection) *has_connection = false;
+    if (has_multiple_sources) *has_multiple_sources = false;
+
+    const auto* input_pin = FindInputPinByName(split_node, pin_name);
+    if (!input_pin) return nullptr;
+
+    const gui::MLNode* resolved = nullptr;
+    for (const auto& link : links) {
+        if (link.to_node != split_node.id || link.to_pin != input_pin->id) {
+            continue;
+        }
+        if (has_connection) *has_connection = true;
+
+        const auto* source = FindNodeById(nodes, link.from_node);
+        if (!source || !IsDatasetSourceType(source->type)) {
+            continue;
+        }
+        if (resolved && resolved->id != source->id) {
+            if (has_multiple_sources) *has_multiple_sources = true;
+            return nullptr;
+        }
+        resolved = source;
+    }
+    return resolved;
+}
+
+bool IsLossNodeType(gui::NodeType type);
+
+bool SplitReachesLoss(
+    const gui::MLNode& split_node,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links) {
+    const auto reachable = CollectReachableNodeIds(split_node.id, links);
+    for (const auto& node : nodes) {
+        if (IsLossNodeType(node.type) && reachable.count(node.id) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+DatasetModality DatasetModalityFromNode(const gui::MLNode& node) {
+    const auto category = node.parameters.find("file_category");
+    if (category == node.parameters.end()) return DatasetModality::Unknown;
+    if (category->second == "image") return DatasetModality::Image;
+    if (category->second == "audio") return DatasetModality::Audio;
+    if (category->second == "text") return DatasetModality::Text;
+    if (category->second == "timeseries") return DatasetModality::TimeSeries;
+    if (category->second == "tabular") return DatasetModality::Tabular;
+    return DatasetModality::Unknown;
+}
+
+DatasetStorageKind DatasetStorageKindFromRegistry(
+    const std::string& dataset_name) {
+    if (dataset_name.empty()) return DatasetStorageKind::Unknown;
+    auto& registry = DataRegistry::Instance();
+    if (registry.GetArrowDataset(dataset_name)) {
+        return DatasetStorageKind::InMemoryArrow;
+    }
+    if (registry.GetParquetBackedDataset(dataset_name)) {
+        return DatasetStorageKind::DiskBackedParquet;
+    }
+    if (registry.IsImageDataset(dataset_name)) {
+        return DatasetStorageKind::ImageCached;
+    }
+    if (registry.IsAudioDataset(dataset_name)) {
+        return DatasetStorageKind::AudioCached;
+    }
+    if (registry.IsTextDataset(dataset_name)) {
+        return DatasetStorageKind::TextCached;
+    }
+    return DatasetStorageKind::Unknown;
+}
+
+std::string FingerprintArrowSchema(
+    const std::shared_ptr<arrow::Schema>& schema,
+    const std::string& label_column,
+    bool features_only) {
+    if (!schema) return {};
+    std::ostringstream identity;
+    identity << (features_only ? "feature_schema.v1\n" : "schema.v1\n");
+    for (const auto& field : schema->fields()) {
+        if (features_only &&
+            (field->name() == label_column ||
+             field->name().rfind("__", 0) == 0)) {
+            continue;
+        }
+        identity << field->name() << ':' << field->type()->ToString()
+                 << ':' << (field->nullable() ? "nullable" : "required")
+                 << '\n';
+    }
+    return StablePartitionFingerprint(identity.str());
+}
+
+std::string FingerprintFileIdentity(const std::string& source_path) {
+    if (source_path.empty()) return {};
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path path(source_path);
+    if (!fs::exists(path, ec) || ec) return {};
+    const auto size = fs::is_regular_file(path, ec)
+        ? static_cast<uintmax_t>(fs::file_size(path, ec))
+        : uintmax_t{0};
+    if (ec) return {};
+    const auto modified = fs::last_write_time(path, ec);
+    if (ec) return {};
+    std::ostringstream identity;
+    identity << "file_identity.v1\n"
+             << fs::absolute(path, ec).lexically_normal().generic_string() << '\n'
+             << size << '\n'
+             << modified.time_since_epoch().count() << '\n';
+    return ec ? std::string{} : StablePartitionFingerprint(identity.str());
+}
+
+void PopulateDatasetSourceProvenance(DatasetSourceRef& source) {
+    if (!source.IsSupplied()) return;
+    auto& registry = DataRegistry::Instance();
+    std::shared_ptr<arrow::Schema> schema;
+    if (auto arrow_dataset = registry.GetArrowDataset(source.dataset_name)) {
+        source.storage_kind = DatasetStorageKind::InMemoryArrow;
+        source.row_count = arrow_dataset->GetNumRows();
+        schema = arrow_dataset->GetSchema();
+    } else if (auto parquet_dataset =
+                   registry.GetParquetBackedDataset(source.dataset_name)) {
+        source.storage_kind = DatasetStorageKind::DiskBackedParquet;
+        source.row_count = parquet_dataset->GetNumRows();
+        schema = parquet_dataset->GetSchema();
+    }
+    source.schema_fingerprint = FingerprintArrowSchema(
+        schema, source.label_column, false);
+    source.feature_schema_fingerprint = FingerprintArrowSchema(
+        schema, source.label_column, true);
+    if (auto source_path = registry.GetTabularSourcePath(source.dataset_name)) {
+        source.source_fingerprint = FingerprintFileIdentity(*source_path);
+    }
+}
+
+DatasetSourceRef DatasetSourceFromNode(
+    const gui::MLNode& node,
+    bool externally_supplied) {
+    DatasetSourceRef source;
+    source.dataset_name = DatasetNameFromNode(node);
+    source.source_node_id = node.id;
+    source.externally_supplied = externally_supplied;
+    source.modality = DatasetModalityFromNode(node);
+    source.storage_kind =
+        DatasetStorageKindFromRegistry(source.dataset_name);
+    return source;
+}
+
+void FinalizeResolvedPartitionContract(TrainingConfiguration& config) {
+    auto& partitions = config.dataset_roles;
+    PopulateDatasetSourceProvenance(partitions.train);
+    PopulateDatasetSourceProvenance(partitions.dev);
+    PopulateDatasetSourceProvenance(partitions.test);
+    auto& policy = partitions.policy;
+    policy.train_ratio = config.train_ratio;
+    policy.dev_ratio = config.val_ratio;
+    policy.test_ratio = config.test_ratio;
+    policy.seed = config.split_seed;
+    policy.stratified = config.stratified && !config.is_time_series;
+
+    const bool all_roles_external =
+        partitions.dev.IsSupplied() && partitions.test.IsSupplied();
+    if (all_roles_external) {
+        policy.method = PartitionSplitMethod::None;
+        policy.shuffle = false;
+    } else if (config.is_time_series) {
+        policy.method = PartitionSplitMethod::TimeOrdered;
+        policy.shuffle = false;
+    } else if (policy.stratified) {
+        policy.method = PartitionSplitMethod::Stratified;
+        // The existing stratified partitioner currently shares Data Loader's
+        // shuffle flag. Phase 2 will move this setting fully into SplitPolicy.
+        policy.shuffle = config.shuffle;
+    } else {
+        policy.method = PartitionSplitMethod::Random;
+        // Ratio slicing is deterministic and contiguous when no stratified
+        // partition column is generated.
+        policy.shuffle = false;
+    }
+
+    auto& manifest = partitions.manifest;
+    manifest.train_origin = PartitionOrigin::External;
+    manifest.dev_origin = partitions.dev.IsSupplied()
+        ? PartitionOrigin::External
+        : PartitionOrigin::Derived;
+    manifest.test_origin = partitions.test.IsSupplied()
+        ? PartitionOrigin::External
+        : PartitionOrigin::Derived;
+    manifest.dev_resolution_reason = partitions.dev.IsSupplied()
+        ? "preserved in full from the connected Validation Dataset input"
+        : "derived only from Training Dataset using Data Split policy";
+    manifest.test_resolution_reason = partitions.test.IsSupplied()
+        ? "preserved in full from the connected Test Dataset input"
+        : "derived only from Training Dataset using Data Split policy";
+    manifest.label_column = partitions.train.label_column;
+    manifest.split_method = policy.method;
+    manifest.train_ratio = config.train_ratio;
+    manifest.dev_ratio = config.val_ratio;
+    manifest.test_ratio = config.test_ratio;
+    manifest.seed = config.split_seed;
+    manifest.shuffle = policy.shuffle;
+    manifest.stratified = policy.stratified;
+    manifest.training_source_fingerprint =
+        partitions.train.source_fingerprint;
+    manifest.validation_source_fingerprint = partitions.dev.IsSupplied()
+        ? partitions.dev.source_fingerprint
+        : partitions.train.source_fingerprint;
+    manifest.test_source_fingerprint = partitions.test.IsSupplied()
+        ? partitions.test.source_fingerprint
+        : partitions.train.source_fingerprint;
+    manifest.feature_schema_fingerprint =
+        partitions.train.feature_schema_fingerprint;
+
+    const auto compatibility_with_train = [&](const DatasetSourceRef& role) {
+        if (!role.IsSupplied()) return PartitionCompatibility::Compatible;
+        if (partitions.train.schema_fingerprint.empty() ||
+            role.schema_fingerprint.empty()) {
+            return PartitionCompatibility::Unknown;
+        }
+        return partitions.train.schema_fingerprint == role.schema_fingerprint
+            ? PartitionCompatibility::Compatible
+            : PartitionCompatibility::Unknown;
+    };
+    manifest.dev_compatibility = compatibility_with_train(partitions.dev);
+    manifest.test_compatibility = compatibility_with_train(partitions.test);
+
+    int64_t compile_train_rows = -1;
+    int64_t compile_dev_rows = partitions.dev.IsSupplied()
+        ? partitions.dev.row_count : -1;
+    int64_t compile_test_rows = partitions.test.IsSupplied()
+        ? partitions.test.row_count : -1;
+    if (partitions.train.row_count >= 0 &&
+        policy.method != PartitionSplitMethod::Stratified) {
+        const int64_t source_rows = partitions.train.row_count;
+        compile_train_rows = static_cast<int64_t>(
+            static_cast<double>(source_rows) * policy.train_ratio);
+        int64_t derived_dev_rows = static_cast<int64_t>(
+            static_cast<double>(source_rows) * policy.dev_ratio);
+        int64_t derived_test_rows = std::max<int64_t>(
+            0, source_rows - compile_train_rows - derived_dev_rows);
+        if (!partitions.dev.IsSupplied()) compile_dev_rows = derived_dev_rows;
+        if (!partitions.test.IsSupplied()) compile_test_rows = derived_test_rows;
+    }
+    FinalizePartitionManifest(
+        partitions, compile_train_rows, compile_dev_rows, compile_test_rows);
 }
 
 bool IsOutputNodeType(gui::NodeType type) {
@@ -237,6 +507,60 @@ bool IsLossNodeType(gui::NodeType type) {
            type == gui::NodeType::SoftDiceLoss ||
            type == gui::NodeType::TverskyLoss ||
            type == gui::NodeType::JaccardLoss;
+}
+
+bool IsTrueParameter(const gui::MLNode& node, const char* key) {
+    const auto it = node.parameters.find(key);
+    if (it == node.parameters.end()) return false;
+    std::string value = it->second;
+    std::transform(
+        value.begin(), value.end(), value.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value == "true" || value == "1" || value == "yes" ||
+           value == "on";
+}
+
+TargetContract InferTargetContract(
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& training_path_ids,
+    const gui::MLNode* loss_node) {
+    TargetContract contract;
+
+    // Every currently executable tensor loss consumes an external target
+    // stream. Future target-free estimator objectives should leave this false;
+    // RL compilers should resolve Environment rather than a dataset label.
+    contract.required_by_objective =
+        loss_node && IsLossNodeType(loss_node->type);
+
+    for (const auto& node : nodes) {
+        if (training_path_ids.count(node.id) == 0) continue;
+
+        if (node.type == gui::NodeType::TimeSeriesWindow) {
+            contract.origin = TargetOrigin::GraphGenerated;
+            contract.value_kind = TargetValueKind::Continuous;
+            contract.producer_node_id = node.id;
+            contract.producer_node_name = node.name;
+            contract.primary_column = "y";
+            contract.width = ParsePositiveSizeParam(
+                node, "label_width", 1);
+            return contract;
+        }
+
+        // Causal language-model targets are shifted/generated from the input
+        // token sequence. They are not a raw Data Input label column either.
+        if (IsTrueParameter(node, "create_causal_lm_targets") ||
+            IsTrueParameter(node, "sequence_create_causal_lm_targets")) {
+            contract.origin = TargetOrigin::GraphGenerated;
+            contract.value_kind = TargetValueKind::TokenIds;
+            contract.producer_node_id = node.id;
+            contract.producer_node_name = node.name;
+            contract.primary_column = "target_ids";
+            contract.width = 1;
+            return contract;
+        }
+    }
+
+    return contract;
 }
 
 bool IsSupportedOptimizerNodeType(gui::NodeType type) {
@@ -1844,56 +2168,38 @@ void ValidateSingleDatasetSourceForSelectedLoss(
             continue;
         }
 
-        const std::string role = DatasetRoleFromNode(node);
-        const char* expected_split_input = nullptr;
-        if (role == "dev" || role == "validation") {
-            expected_split_input = "Validation Dataset";
-        } else if (role == "test") {
-            expected_split_input = "Test Dataset";
-        }
-
         bool saw_selected_path_route = false;
-        bool all_routes_match_role = expected_split_input != nullptr;
-        if (expected_split_input) {
-            for (const auto& link : links) {
-                if (link.from_node != node.id ||
-                    loss_ancestors.count(link.to_node) == 0) {
-                    continue;
-                }
-                saw_selected_path_route = true;
+        bool all_routes_are_evaluation_inputs = true;
+        for (const auto& link : links) {
+            if (link.from_node != node.id ||
+                loss_ancestors.count(link.to_node) == 0) {
+                continue;
+            }
+            saw_selected_path_route = true;
 
-                const gui::MLNode* target = nullptr;
-                for (const auto& candidate : nodes) {
-                    if (candidate.id == link.to_node) {
-                        target = &candidate;
-                        break;
-                    }
-                }
-                if (!target || target->type != gui::NodeType::DataSplit) {
-                    all_routes_match_role = false;
-                    break;
-                }
-                bool route_matches_role = false;
-                for (const auto& input : target->inputs) {
-                    if (input.id == link.to_pin &&
-                        input.name == expected_split_input) {
-                        route_matches_role = true;
-                        break;
-                    }
-                }
-                if (!route_matches_role) {
-                    all_routes_match_role = false;
-                    break;
-                }
+            const gui::MLNode* target = FindNodeById(nodes, link.to_node);
+            if (!target || target->type != gui::NodeType::DataSplit) {
+                all_routes_are_evaluation_inputs = false;
+                break;
+            }
+            const auto* validation_pin =
+                FindInputPinByName(*target, "Validation Dataset");
+            const auto* test_pin = FindInputPinByName(*target, "Test Dataset");
+            const bool is_evaluation_input =
+                (validation_pin && link.to_pin == validation_pin->id) ||
+                (test_pin && link.to_pin == test_pin->id);
+            if (!is_evaluation_input) {
+                all_routes_are_evaluation_inputs = false;
+                break;
             }
         }
-        const bool role_matched_split_route =
-            saw_selected_path_route && all_routes_match_role;
+        const bool topology_assigned_evaluation_role =
+            saw_selected_path_route && all_routes_are_evaluation_inputs;
 
         // Dev/Test sources routed through their named Data Split inputs are
         // evaluation roles, not additional model inputs. Any other route still
         // counts as a source on the selected training path and fails below.
-        if (!role_matched_split_route) {
+        if (!topology_assigned_evaluation_role) {
             selected_sources.push_back(&node);
         }
     }
@@ -2909,6 +3215,25 @@ TrainingConfiguration GraphCompiler::Compile(
         loss_node = FindLossNode(nodes);
     }
     const gui::MLNode* optimizer_node = FindOptimizerNode(nodes);
+    std::unordered_set<int> training_path_ids;
+    if (dataset_node && loss_node) {
+        const auto loss_ancestors = CollectAncestorNodeIds(loss_node->id, links);
+        for (int node_id : dataset_reachable) {
+            if (loss_ancestors.count(node_id) > 0) {
+                training_path_ids.insert(node_id);
+            }
+        }
+    }
+    config.target = InferTargetContract(
+        nodes, training_path_ids, loss_node);
+    if (config.target.IsGeneratedByGraph()) {
+        spdlog::info(
+            "GraphCompiler: target contract resolved from graph node '{}' "
+            "(column='{}', width={}); a raw Data Input label is not required",
+            config.target.producer_node_name,
+            config.target.primary_column,
+            config.target.width);
+    }
 
     if (nodes.empty()) {
         AddIssue(config,
@@ -2989,35 +3314,86 @@ TrainingConfiguration GraphCompiler::Compile(
         // older DatasetInput dialog and is now obsolete — fall back to it
         // only if dataset_name is empty, so older project files still load.
         config.dataset_name = DatasetNameFromNode(*dataset_node);
-        config.dataset_roles.train.dataset_name = config.dataset_name;
-        config.dataset_roles.train.source_node_id = dataset_node->id;
+        config.dataset_roles.train = DatasetSourceFromNode(
+            *dataset_node, /*externally_supplied=*/true);
+
+        const gui::MLNode* role_split = FindFirstReachableNodeOfType(
+            nodes, dataset_reachable, gui::NodeType::DataSplit);
+        if (role_split) {
+            bool train_has_connection = false;
+            bool train_has_multiple_sources = false;
+            const auto* topology_train = FindDatasetSourceConnectedToSplitInput(
+                nodes, links, *role_split, "Training Dataset",
+                &train_has_connection, &train_has_multiple_sources);
+            if (train_has_multiple_sources) {
+                AddIssue(config, IssueLevel::Error,
+                         "Data Split 'Training Dataset' accepts exactly one "
+                         "Dataset source",
+                         role_split->id, role_split->name,
+                         errors::Compiler::InvalidConnectivity);
+            } else if (train_has_connection && !topology_train) {
+                AddIssue(config, IssueLevel::Error,
+                         "Training role must originate from one Data Input "
+                         "Dataset output",
+                         role_split->id, role_split->name,
+                         errors::Compiler::InvalidConnectivity);
+            } else if (topology_train && topology_train->id != dataset_node->id) {
+                AddIssue(config, IssueLevel::Error,
+                         "Selected Training Dataset does not match the source "
+                         "connected to Data Split",
+                         role_split->id, role_split->name,
+                         errors::Compiler::InvalidConnectivity);
+            }
+
+            const auto resolve_optional_role = [&](
+                const char* pin_name,
+                const char* role_name,
+                DatasetSourceRef& output) {
+                bool has_connection = false;
+                bool has_multiple_sources = false;
+                const auto* source = FindDatasetSourceConnectedToSplitInput(
+                    nodes, links, *role_split, pin_name,
+                    &has_connection, &has_multiple_sources);
+                if (has_multiple_sources) {
+                    AddIssue(config, IssueLevel::Error,
+                             std::string("Data Split '") + pin_name +
+                                 "' accepts exactly one Dataset source",
+                             role_split->id, role_split->name,
+                             errors::Compiler::InvalidConnectivity);
+                    return;
+                }
+                if (has_connection && !source) {
+                    AddIssue(config, IssueLevel::Error,
+                             std::string(role_name) +
+                                 " role must originate from one Data Input "
+                                 "Dataset output",
+                             role_split->id, role_split->name,
+                             errors::Compiler::InvalidConnectivity);
+                    return;
+                }
+                if (source) {
+                    output = DatasetSourceFromNode(
+                        *source, /*externally_supplied=*/true);
+                }
+            };
+            resolve_optional_role(
+                "Validation Dataset", "Validation", config.dataset_roles.dev);
+            resolve_optional_role(
+                "Test Dataset", "Test", config.dataset_roles.test);
+        }
 
         for (const auto& node : nodes) {
-            if (!IsDatasetSourceType(node.type)) {
-                continue;
-            }
-            const std::string role = DatasetRoleFromNode(node);
-            ResolvedDatasetRole* resolved = nullptr;
-            if (role == "dev" || role == "validation") {
-                resolved = &config.dataset_roles.dev;
-            } else if (role == "test") {
-                resolved = &config.dataset_roles.test;
-            } else {
-                continue;
-            }
-
-            if (resolved->IsSupplied()) {
-                AddIssue(config, IssueLevel::Error,
-                         "More than one Data Input is configured for the '" +
-                             role + "' dataset role",
-                         node.id, node.name,
-                         errors::Compiler::InvalidConnectivity);
-                continue;
-            }
-
-            resolved->dataset_name = DatasetNameFromNode(node);
-            resolved->source_node_id = node.id;
-            resolved->externally_supplied = true;
+            if (!IsDatasetSourceType(node.type)) continue;
+            const std::string legacy_role = DatasetRoleFromNode(node);
+            if (legacy_role.empty()) continue;
+            AddIssue(
+                config,
+                IssueLevel::Info,
+                "Legacy Data Input dataset_role='" + legacy_role +
+                    "' is ignored. Dataset roles are assigned by the named "
+                    "Training/Validation/Test inputs on Data Split.",
+                node.id,
+                node.name);
         }
 
         // === New error checks tied to the dataset node ===
@@ -3126,21 +3502,53 @@ TrainingConfiguration GraphCompiler::Compile(
             : std::string{};
         config.dataset_roles.train.label_column = resolved_label_col;
 
+        if (!config.target.IsGeneratedByGraph()) {
+            if (!resolved_label_col.empty()) {
+                config.target.origin = TargetOrigin::DatasetColumn;
+                config.target.producer_node_id = dataset_node->id;
+                config.target.producer_node_name = dataset_node->name;
+                config.target.primary_column = resolved_label_col;
+                config.target.width = 1;
+            } else if (labels_from_structure) {
+                config.target.origin = TargetOrigin::DatasetStructure;
+                config.target.producer_node_id = dataset_node->id;
+                config.target.producer_node_name = dataset_node->name;
+                config.target.width = 1;
+            }
+        }
+
         if (!requested_label_col.empty() && tabular_schema &&
             resolved_label_index < 0 && !labels_from_structure) {
-            AddIssue(config, IssueLevel::Error,
-                     "Selected label column '" + requested_label_col +
-                         "' is not present in registered dataset '" +
-                         config.dataset_name + "'",
-                     dataset_node->id, dataset_node->name,
-                     errors::Data::RequiredLabelColumnMissing);
+            if (config.target.IsGeneratedByGraph()) {
+                AddIssue(config, IssueLevel::Warning,
+                         "Selected source label column '" + requested_label_col +
+                             "' is not present in registered dataset '" +
+                             config.dataset_name + "', but it is not used because "
+                             "node '" + config.target.producer_node_name +
+                             "' generates the objective targets",
+                         dataset_node->id, dataset_node->name);
+            } else {
+                AddIssue(config,
+                         config.target.required_by_objective
+                             ? IssueLevel::Error
+                             : IssueLevel::Warning,
+                         "Selected label column '" + requested_label_col +
+                             "' is not present in registered dataset '" +
+                             config.dataset_name + "'",
+                         dataset_node->id, dataset_node->name,
+                         config.target.required_by_objective
+                             ? errors::Data::RequiredLabelColumnMissing
+                             : "");
+            }
         } else if (requested_label_col.empty() &&
                    !resolved_label_col.empty()) {
             AddIssue(config, IssueLevel::Info,
                      "Auto-resolved label column '" + resolved_label_col +
                          "' from the registered dataset schema",
                      dataset_node->id, dataset_node->name);
-        } else if (requested_label_col.empty() && !labels_from_structure) {
+        } else if (requested_label_col.empty() && !labels_from_structure &&
+                   config.target.required_by_objective &&
+                   !config.target.IsResolved()) {
             const IssueLevel level = tabular_schema
                 ? IssueLevel::Error
                 : IssueLevel::Warning;
@@ -3246,9 +3654,8 @@ TrainingConfiguration GraphCompiler::Compile(
         config.has_data_split = true;
         AddIssue(config,
                  IssueLevel::Info,
-                 "DataSplit Train/Val/Test tensor pins are legacy compatibility "
-                 "pins; runtime validation and test evaluation use "
-                 "compiler-resolved dataset partitions.",
+                 "Data Split resolves its named Dataset inputs into one "
+                 "Train/Validation/Test partition contract for Data Loader.",
                  split_node->id,
                  split_node->name);
         try {
@@ -3400,15 +3807,6 @@ TrainingConfiguration GraphCompiler::Compile(
         spdlog::info("GraphCompiler: No DataLoader node - using defaults (batch_size=32, epochs=10, shuffle=true, drop_last=false, log_interval=10, validation_freq=1, seed=42, grad_accum_steps=1)");
     }
 
-    std::unordered_set<int> training_path_ids;
-    if (dataset_node && loss_node) {
-        const auto loss_ancestors = CollectAncestorNodeIds(loss_node->id, links);
-        for (int node_id : dataset_reachable) {
-            if (loss_ancestors.count(node_id) > 0) {
-                training_path_ids.insert(node_id);
-            }
-        }
-    }
     if (loss_node) {
         const auto loss_reachable = CollectReachableNodeIds(loss_node->id, links);
         if (const gui::MLNode* path_optimizer_node =
@@ -3464,6 +3862,16 @@ TrainingConfiguration GraphCompiler::Compile(
                 try { input_width = std::stoi(iw_it->second); }
                 catch (...) { /* fall back to default */ }
             }
+            int label_width = 1;
+            auto lw_it = node.parameters.find("label_width");
+            if (lw_it != node.parameters.end() && !lw_it->second.empty()) {
+                try { label_width = std::stoi(lw_it->second); }
+                catch (...) { /* runtime parameter validation reports it */ }
+            }
+            if (label_width > 0) {
+                config.time_series_target_width =
+                    static_cast<size_t>(label_width);
+            }
             // Multivariate: input_size = input_width * (1 + num_feature_cols).
             // feature_cols is comma-separated; count non-empty tokens.
             // Single-variate (empty feature_cols) keeps input_size = input_width.
@@ -3485,11 +3893,14 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.input_shape = {static_cast<size_t>(total_input)};
             }
             spdlog::info("GraphCompiler: TimeSeriesWindow found - regression mode, "
-                         "input_size={} (input_width={} x num_features={})",
-                         config.input_size, input_width, num_features);
+                         "input_size={} (input_width={} x num_features={}), "
+                         "target_width={}",
+                         config.input_size, input_width, num_features,
+                         config.time_series_target_width);
             break;
         }
     }
+    FinalizeResolvedPartitionContract(config);
 
     // === Early domain detection ===
     // Shape inference below needs the dataset domain before it sees the
@@ -3699,10 +4110,42 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
+    if (config.is_time_series && config.output_size > 0 &&
+        config.output_size != config.time_series_target_width) {
+        AddIssue(
+            config,
+            IssueLevel::Error,
+            "TimeSeriesWindow target width (" +
+                std::to_string(config.time_series_target_width) +
+                ") does not match the model output width (" +
+                std::to_string(config.output_size) +
+                "). Set the final projection to the forecast horizon.",
+            -1,
+            "",
+            errors::Compiler::LabelOutputShapeMismatch);
+    }
+
     // Extract loss configuration
     if (loss_node) {
         config.loss_type = loss_node->type;
         config.loss_params = loss_node->parameters;
+
+        // Resolve target semantics once, at compile time. Target-producing
+        // graph operators may already be more specific; otherwise the
+        // objective supplies the narrow default used by runtime metrics.
+        if (config.target.value_kind == TargetValueKind::Unspecified) {
+            switch (config.loss_type) {
+                case gui::NodeType::MSELoss:
+                case gui::NodeType::L1Loss:
+                case gui::NodeType::SmoothL1Loss:
+                case gui::NodeType::HuberLoss:
+                    config.target.value_kind = TargetValueKind::Continuous;
+                    break;
+                default:
+                    config.target.value_kind = TargetValueKind::Categorical;
+                    break;
+            }
+        }
 
         const auto unsupported_sample_weight_params = PresentUnsupportedParameters(
             loss_node->parameters,
@@ -4352,10 +4795,25 @@ std::vector<int> GraphCompiler::GetInputNodes(
 const gui::MLNode* GraphCompiler::FindDatasetInputNode(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links) const {
+    // Modern graphs assign the Training role exclusively through the named
+    // Data Split input. Prefer that topology before any legacy fallback so a
+    // stale Data Input `dataset_role` parameter cannot select the run source.
+    for (const auto& node : nodes) {
+        if (node.type != gui::NodeType::DataSplit ||
+            !SplitReachesLoss(node, nodes, links)) {
+            continue;
+        }
+        if (const auto* training_source =
+                FindDatasetSourceConnectedToSplitInput(
+                    nodes, links, node, "Training Dataset")) {
+            return training_source;
+        }
+    }
+
     const gui::MLNode* first_source = nullptr;
     const gui::MLNode* first_connected_source = nullptr;
     for (const auto& node : nodes) {
-        if (!IsDatasetSourceType(node.type) || !IsTrainDatasetSource(node)) {
+        if (!IsDatasetSourceType(node.type)) {
             continue;
         }
 
@@ -4761,6 +5219,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::TimeSeriesWindow,   PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::TimeSeriesFeatures, PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::TimeSeriesSplit,    PreprocessingDomain::TimeSeries,  nullptr},
+    {gui::NodeType::SeasonalNaive,      PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::LogTransform,       PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::Differencing,       PreprocessingDomain::TimeSeries,  nullptr},
 };
@@ -5241,12 +5700,6 @@ void GraphCompiler::ValidateRequiredOutputsConnected(
     }
 
     for (const auto& node : nodes) {
-        // Supplied Dev/Test datasets are semantic runtime roles, not tensor
-        // producers in the Train model path. Their outputs intentionally have
-        // no canvas consumer until the role-aware launcher builds batchers.
-        if (IsDatasetSourceType(node.type) && !IsTrainDatasetSource(node)) {
-            continue;
-        }
         for (const auto& pin : node.outputs) {
             if (!pin.is_required) continue;
             if (connected_output_pins.count(pin.id) > 0) continue;

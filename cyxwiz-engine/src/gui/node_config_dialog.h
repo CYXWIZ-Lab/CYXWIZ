@@ -27,6 +27,7 @@
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
 #include "../core/data_preview_service.h"
+#include "../core/dataset_partitions.h"
 
 namespace gui {
 
@@ -335,6 +336,7 @@ private:
     // STATE: Tabular format options
     int delimiter_idx_ = 0;
     char custom_delimiter_[8] = ",";
+    char decimal_point_ = '.';
     bool has_header_ = true;
     char quote_char_[4] = "\"";
     char missing_value_tokens_[128] = "na";
@@ -411,9 +413,6 @@ private:
     std::vector<std::string> available_columns_;
     std::vector<bool> selected_columns_;
     int label_column_idx_ = -1;  // Index of label/target column (-1 = none selected)
-    // Track70 dataset role persisted as node parameter `dataset_role`.
-    // 0=train/default, 1=dev/validation, 2=test.
-    int dataset_role_idx_ = 0;
 
     // STATE: Row filter
     int skip_rows_ = 0;
@@ -576,8 +575,10 @@ private:
 class DataConvertDialog : public NodeConfigDialog {
 public:
     DataConvertDialog(MLNode* node);
+    ~DataConvertDialog() override;
     void Apply() override;
     void Reset() override;
+    bool IsBusy() const override { return preview_loading_; }
     ImVec2 GetDefaultSize() const override { return ImVec2(820, 620); }
 
 protected:
@@ -593,15 +594,23 @@ private:
     void RenderLogsTab();
     cyxwiz::DataConvertOptions BuildOptions() const;
     void PreviewInput();
+    void PollPreviewResult();
+    void CancelPreview();
     void RunConversion();
     void SetStatus(std::string message, bool is_error);
     void AddLogLine(const std::string& message);
+
+    struct PreviewLoadState {
+        std::atomic<bool> done{false};
+        cyxwiz::DataConvertPreview result;
+    };
 
     char input_path_[512] = {};
     char output_path_[512] = {};
     int input_format_ = 0;
     int output_format_ = 0;
     char delimiter_[8] = ",";
+    char decimal_point_ = '.';
     bool auto_detect_delimiter_ = true;
     bool has_header_ = true;
     bool allow_newlines_in_values_ = true;
@@ -613,6 +622,9 @@ private:
     bool write_manifest_ = true;
     cyxwiz::DataConvertPreview preview_;
     cyxwiz::DataConvertResult last_result_;
+    std::shared_ptr<PreviewLoadState> preview_load_state_;
+    uint64_t preview_task_id_ = 0;
+    bool preview_loading_ = false;
     std::string status_message_ = "Not run";
     bool status_is_error_ = false;
     std::vector<std::string> log_lines_;
@@ -662,17 +674,23 @@ public:
     DataSplitDialog(MLNode* node);
     void Apply() override;
     void Reset() override;
-    ImVec2 GetDefaultSize() const override { return ImVec2(520, 420); }
+    ImVec2 GetDefaultSize() const override { return ImVec2(620, 620); }
 
 protected:
     void RenderContent() override;
 
 private:
+    void RefreshResolvedManifest();
+
     float train_ratio_ = 0.8f;
     float val_ratio_ = 0.1f;
     float test_ratio_ = 0.1f;
     int seed_ = 42;
     bool stratified_ = true;
+    bool resolution_attempted_ = false;
+    cyxwiz::ResolvedDatasetPartitions resolved_partitions_;
+    std::string resolution_status_;
+    std::string migration_status_;
 };
 
 /**

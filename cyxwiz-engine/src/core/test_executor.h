@@ -10,6 +10,7 @@
 #include <cyxwiz/loss.h>
 #include <functional>
 #include <atomic>
+#include <cmath>
 #include <mutex>
 #include <memory>
 #include <vector>
@@ -20,6 +21,45 @@ namespace cyxwiz {
 
 class ArrowDataset;
 class ParquetBackedDataset;
+
+struct RegressionMetricAccumulator {
+    double absolute_error_sum = 0.0;
+    double squared_error_sum = 0.0;
+    size_t value_count = 0;
+
+    void Reset() {
+        absolute_error_sum = 0.0;
+        squared_error_sum = 0.0;
+        value_count = 0;
+    }
+
+    void Add(const float* predictions,
+             const float* targets,
+             size_t count) {
+        for (size_t i = 0; i < count; ++i) {
+            const double error =
+                static_cast<double>(predictions[i]) -
+                static_cast<double>(targets[i]);
+            absolute_error_sum += std::abs(error);
+            squared_error_sum += error * error;
+        }
+        value_count += count;
+    }
+
+    float Mae() const {
+        return value_count == 0
+            ? 0.0f
+            : static_cast<float>(
+                  absolute_error_sum / static_cast<double>(value_count));
+    }
+
+    float Rmse() const {
+        return value_count == 0
+            ? 0.0f
+            : static_cast<float>(std::sqrt(
+                  squared_error_sum / static_cast<double>(value_count)));
+    }
+};
 
 /**
  * Per-class metrics for detailed analysis
@@ -67,6 +107,10 @@ struct TestingMetrics {
     float macro_recall = 0.0f;
     float macro_f1 = 0.0f;
     float weighted_f1 = 0.0f;
+    bool regression_mode = false;
+    float test_mae = 0.0f;
+    float test_rmse = 0.0f;
+    size_t total_target_values = 0;
 
     // Detailed results
     ConfusionMatrix confusion_matrix;
@@ -184,6 +228,7 @@ private:
     // Model and loss (no optimizer needed for testing)
     std::shared_ptr<SequentialModel> model_;
     std::unique_ptr<Loss> loss_;
+    RegressionMetricAccumulator regression_metrics_;
 
     // Internal methods
 

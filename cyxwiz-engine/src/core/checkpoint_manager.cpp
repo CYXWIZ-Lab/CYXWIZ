@@ -51,12 +51,20 @@ std::string CheckpointManager::SaveCheckpoint(
     metadata.global_step = metrics.current_batch;
     metadata.train_loss = metrics.train_loss;
     metadata.train_accuracy = metrics.train_accuracy;
+    metadata.train_mae = metrics.train_mae;
+    metadata.train_rmse = metrics.train_rmse;
     metadata.val_loss = metrics.val_loss;
     metadata.val_accuracy = metrics.val_accuracy;
+    metadata.val_mae = metrics.val_mae;
+    metadata.val_rmse = metrics.val_rmse;
     metadata.loss_history = metrics.loss_history;
     metadata.accuracy_history = metrics.accuracy_history;
+    metadata.mae_history = metrics.mae_history;
+    metadata.rmse_history = metrics.rmse_history;
     metadata.val_loss_history = metrics.val_loss_history;
     metadata.val_accuracy_history = metrics.val_accuracy_history;
+    metadata.val_mae_history = metrics.val_mae_history;
+    metadata.val_rmse_history = metrics.val_rmse_history;
 
     // Add timestamp
     auto now = std::chrono::system_clock::now();
@@ -259,8 +267,12 @@ bool CheckpointManager::SaveMetadata(const fs::path& dir, const CheckpointMetada
         j["global_step"] = metadata.global_step;
         j["train_loss"] = metadata.train_loss;
         j["train_accuracy"] = metadata.train_accuracy;
+        j["train_mae"] = metadata.train_mae;
+        j["train_rmse"] = metadata.train_rmse;
         j["val_loss"] = metadata.val_loss;
         j["val_accuracy"] = metadata.val_accuracy;
+        j["val_mae"] = metadata.val_mae;
+        j["val_rmse"] = metadata.val_rmse;
         j["model_name"] = metadata.model_name;
         j["optimizer_type"] = metadata.optimizer_type;
         j["learning_rate"] = metadata.learning_rate;
@@ -269,8 +281,12 @@ bool CheckpointManager::SaveMetadata(const fs::path& dir, const CheckpointMetada
         // Save history arrays
         j["loss_history"] = metadata.loss_history;
         j["accuracy_history"] = metadata.accuracy_history;
+        j["mae_history"] = metadata.mae_history;
+        j["rmse_history"] = metadata.rmse_history;
         j["val_loss_history"] = metadata.val_loss_history;
         j["val_accuracy_history"] = metadata.val_accuracy_history;
+        j["val_mae_history"] = metadata.val_mae_history;
+        j["val_rmse_history"] = metadata.val_rmse_history;
 
         fs::path metadata_path = dir / "metadata.json";
         std::ofstream file(metadata_path);
@@ -309,8 +325,12 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadMetadata(const fs::path
         metadata.global_step = j.value("global_step", 0);
         metadata.train_loss = j.value("train_loss", 0.0f);
         metadata.train_accuracy = j.value("train_accuracy", 0.0f);
+        metadata.train_mae = j.value("train_mae", 0.0f);
+        metadata.train_rmse = j.value("train_rmse", 0.0f);
         metadata.val_loss = j.value("val_loss", 0.0f);
         metadata.val_accuracy = j.value("val_accuracy", 0.0f);
+        metadata.val_mae = j.value("val_mae", 0.0f);
+        metadata.val_rmse = j.value("val_rmse", 0.0f);
         metadata.model_name = j.value("model_name", "");
         metadata.optimizer_type = j.value("optimizer_type", "");
         metadata.learning_rate = j.value("learning_rate", 0.0f);
@@ -323,11 +343,23 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadMetadata(const fs::path
         if (j.contains("accuracy_history")) {
             metadata.accuracy_history = j["accuracy_history"].get<std::vector<float>>();
         }
+        if (j.contains("mae_history")) {
+            metadata.mae_history = j["mae_history"].get<std::vector<float>>();
+        }
+        if (j.contains("rmse_history")) {
+            metadata.rmse_history = j["rmse_history"].get<std::vector<float>>();
+        }
         if (j.contains("val_loss_history")) {
             metadata.val_loss_history = j["val_loss_history"].get<std::vector<float>>();
         }
         if (j.contains("val_accuracy_history")) {
             metadata.val_accuracy_history = j["val_accuracy_history"].get<std::vector<float>>();
+        }
+        if (j.contains("val_mae_history")) {
+            metadata.val_mae_history = j["val_mae_history"].get<std::vector<float>>();
+        }
+        if (j.contains("val_rmse_history")) {
+            metadata.val_rmse_history = j["val_rmse_history"].get<std::vector<float>>();
         }
 
         return metadata;

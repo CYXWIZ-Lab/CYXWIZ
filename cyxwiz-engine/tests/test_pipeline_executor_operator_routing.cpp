@@ -4,16 +4,19 @@
 #include "core/pipeline_executor.h"
 #include "core/pipeline_execution_task.h"
 #include "core/async_task_manager.h"
+#include "core/csv_ingestion_options.h"
 #include "core/pipeline_runtime_capabilities.h"
 
 #include <arrow/api.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <set>
 #include <string>
 #include <vector>
@@ -26,6 +29,39 @@ void Check(bool condition, const std::string& message) {
         std::cerr << "FAIL: " << message << '\n';
         std::exit(1);
     }
+}
+
+void CheckAsyncTaskProgressContract() {
+    cyxwiz::LambdaTask task(
+        "progress contract", [](cyxwiz::LambdaTask&) {});
+    task.ReportProgress(0.4f, "phase one");
+    Check(std::abs(task.GetProgress() - 0.4f) < 1e-6f,
+          "task progress should preserve a valid fraction");
+    task.ReportProgress(0.2f, "nested phase restart");
+    Check(std::abs(task.GetProgress() - 0.4f) < 1e-6f,
+          "task progress should not move backwards");
+    task.ReportProgress(std::numeric_limits<float>::quiet_NaN(),
+                        "invalid producer value");
+    Check(std::abs(task.GetProgress() - 0.4f) < 1e-6f,
+          "task progress should ignore non-finite values");
+    task.ReportProgress(2.0f, "over-complete producer value");
+    Check(task.GetProgress() == 1.0f,
+          "task progress should clamp values above one");
+}
+
+void CheckProgressSeries(const std::vector<float>& values,
+                         const std::string& context) {
+    Check(!values.empty(), context + " should report progress");
+    float previous = -1.0f;
+    for (float value : values) {
+        Check(std::isfinite(value) && value >= 0.0f && value <= 1.0f,
+              context + " progress should remain in [0, 1]");
+        Check(value >= previous,
+              context + " progress should be monotonic");
+        previous = value;
+    }
+    Check(std::abs(values.back() - 1.0f) < 1e-6f,
+          context + " should finish at one");
 }
 
 double ReadFirstFloatValue(const std::shared_ptr<arrow::Table>& table,
@@ -278,6 +314,7 @@ void CheckTrack70RowAndColumnLimits() {
     }
 
     registry.UnregisterTabularDataset("track70_limited_arrow");
+    std::vector<float> arrow_progress;
     auto limited_arrow = registry.LoadCSVToArrow(
         csv_path.string(),
         "track70_limited_arrow",
@@ -286,15 +323,45 @@ void CheckTrack70RowAndColumnLimits() {
         0,
         2,
         cyxwiz::DefaultTabularMissingValueTokens(),
-        {"label"});
+        {"label"},
+        '.',
+        false,
+        [&](float progress, const std::string&) {
+            arrow_progress.push_back(progress);
+            return true;
+        });
     Check(limited_arrow && limited_arrow->GetNumRows() == 2 &&
               limited_arrow->GetNumColumns() == 1 &&
               limited_arrow->GetColumnNames()[0] == "label",
           "in-memory CSV load should enforce row and named-column limits");
+    CheckProgressSeries(arrow_progress, "in-memory CSV load");
     registry.UnregisterTabularDataset("track70_limited_arrow");
     limited_arrow.reset();
 
+    // Re-Apply must be transactional: a cancelled replacement keeps the
+    // previously registered dataset available under the same key.
+    registry.UnregisterTabularDataset("track70_transactional_arrow");
+    auto prior_arrow = registry.LoadCSVToArrow(
+        csv_path.string(), "track70_transactional_arrow", true, ',', 0, 2,
+        cyxwiz::DefaultTabularMissingValueTokens(), {}, '.', false);
+    Check(prior_arrow && prior_arrow->GetNumRows() == 2,
+          "transaction fixture should register its initial dataset");
+    const auto cancelled_backend = registry.LoadTabularCSV(
+        csv_path.string(), "track70_transactional_arrow", true, ',', 0, 5,
+        false, cyxwiz::DefaultTabularMissingValueTokens(), {}, '.', false,
+        [](float, const std::string&) { return false; });
+    auto retained_arrow =
+        registry.GetArrowDataset("track70_transactional_arrow");
+    Check(cancelled_backend ==
+              cyxwiz::DataRegistry::TabularLoadBackend::Failed &&
+              retained_arrow == prior_arrow && retained_arrow->GetNumRows() == 2,
+          "cancelled re-Apply should retain the previous registered dataset");
+    registry.UnregisterTabularDataset("track70_transactional_arrow");
+    retained_arrow.reset();
+    prior_arrow.reset();
+
     registry.UnregisterTabularDataset("track70_limited_parquet");
+    std::vector<float> parquet_progress;
     const auto limited_backend = registry.LoadTabularCSV(
         csv_path.string(),
         "track70_limited_parquet",
@@ -304,11 +371,18 @@ void CheckTrack70RowAndColumnLimits() {
         3,
         true,
         cyxwiz::DefaultTabularMissingValueTokens(),
-        {"feature"});
+        {"feature"},
+        '.',
+        false,
+        [&](float progress, const std::string&) {
+            parquet_progress.push_back(progress);
+            return true;
+        });
     Check(
         limited_backend ==
             cyxwiz::DataRegistry::TabularLoadBackend::DiskBacked,
         "forced disk-backed CSV row-limit fixture should use Parquet");
+    CheckProgressSeries(parquet_progress, "disk-backed CSV load");
     auto limited_parquet =
         registry.GetParquetBackedDataset("track70_limited_parquet");
     Check(limited_parquet && limited_parquet->GetNumRows() == 3 &&
@@ -320,10 +394,163 @@ void CheckTrack70RowAndColumnLimits() {
     registry.UnregisterTabularDataset("track70_limited_parquet");
     limited_parquet.reset();
 
+    const fs::path decimal_csv_path =
+        fs::temp_directory_path() / "cyxwiz_track70_decimal_comma.csv";
+    {
+        std::ofstream csv(decimal_csv_path, std::ios::binary | std::ios::trunc);
+        csv << "load;target\n"
+            << "71,7703;1\n"
+            << "-2,5;0\n";
+    }
+
+    registry.UnregisterTabularDataset("track70_decimal_arrow");
+    auto decimal_arrow = registry.LoadCSVToArrow(
+        decimal_csv_path.string(),
+        "track70_decimal_arrow",
+        true,
+        ';',
+        0,
+        0,
+        cyxwiz::DefaultTabularMissingValueTokens(),
+        {},
+        ',',
+        false);
+    Check(decimal_arrow &&
+              decimal_arrow->GetSchema()->field(0)->type()->id() ==
+                  arrow::Type::DOUBLE &&
+              std::abs(ReadNumericValue(
+                           decimal_arrow->GetArrowTable(), "load", 0) -
+                       71.7703) < 1e-9,
+          "semicolon CSV should infer comma-decimal values as numeric on the responsive path");
+    registry.UnregisterTabularDataset("track70_decimal_arrow");
+    decimal_arrow.reset();
+
+    registry.UnregisterTabularDataset("track70_decimal_parquet");
+    const auto decimal_backend = registry.LoadTabularCSV(
+        decimal_csv_path.string(),
+        "track70_decimal_parquet",
+        true,
+        ';',
+        0,
+        0,
+        true,
+        cyxwiz::DefaultTabularMissingValueTokens(),
+        {},
+        ',',
+        false);
+    Check(
+        decimal_backend ==
+            cyxwiz::DataRegistry::TabularLoadBackend::DiskBacked,
+        "forced disk-backed comma-decimal fixture should use Parquet");
+    auto decimal_parquet =
+        registry.GetParquetBackedDataset("track70_decimal_parquet");
+    auto decimal_table = decimal_parquet
+        ? decimal_parquet->ReadRowGroup(0)
+        : nullptr;
+    Check(decimal_table &&
+              decimal_table->schema()->field(0)->type()->id() ==
+                  arrow::Type::DOUBLE &&
+              std::abs(ReadNumericValue(decimal_table, "load", 1) + 2.5) <
+                  1e-9,
+          "disk-backed CSV should preserve comma-decimal numeric values");
+    const std::string decimal_cache_path =
+        decimal_parquet ? decimal_parquet->GetFilePath() : std::string{};
+    registry.UnregisterTabularDataset("track70_decimal_parquet");
+    decimal_parquet.reset();
+
+    const fs::path preflight_path =
+        fs::temp_directory_path() / "cyxwiz_track70_schema_preflight.csv";
+    {
+        std::ofstream csv(preflight_path, std::ios::binary | std::ios::trunc);
+        csv << "load;target\n";
+        for (int i = 0; i < 200; ++i) {
+            csv << (i % 10 == 0 ? "71,5" : "71") << ";1\n";
+        }
+    }
+    Check(cyxwiz::CsvSourceSamplesContainDecimalValues(
+              preflight_path.string(), ',', 0, 128, 8),
+          "bounded schema preflight should detect decimal values outside the header");
+
+    const fs::path cache_source_path =
+        fs::temp_directory_path() / "cyxwiz_track70_persistent_cache.csv";
+    const auto write_cache_source = [&](int first_value) {
+        std::ofstream csv(
+            cache_source_path, std::ios::binary | std::ios::trunc);
+        csv << "feature,label\n"
+            << first_value << ",0\n"
+            << "2,1\n";
+    };
+    write_cache_source(1);
+
+    registry.UnregisterTabularDataset("track70_persistent_cache");
+    std::string initial_cache_status;
+    const auto initial_cache_backend = registry.LoadTabularCSV(
+        cache_source_path.string(), "track70_persistent_cache", true, ',',
+        0, 0, false, cyxwiz::DefaultTabularMissingValueTokens(), {}, '.',
+        false, {}, &initial_cache_status);
+    Check(initial_cache_backend ==
+              cyxwiz::DataRegistry::TabularLoadBackend::InMemory &&
+              initial_cache_status.find("persistent cache ready") !=
+                  std::string::npos,
+          "first in-memory ingestion should create a persistent cache");
+    registry.UnregisterTabularDataset("track70_persistent_cache");
+
+    std::string restored_cache_status;
+    const auto restored_cache_backend = registry.LoadTabularCSV(
+        cache_source_path.string(), "track70_persistent_cache", true, ',',
+        0, 0, false, cyxwiz::DefaultTabularMissingValueTokens(), {}, '.',
+        false, {}, &restored_cache_status);
+    Check(restored_cache_backend ==
+              cyxwiz::DataRegistry::TabularLoadBackend::InMemory &&
+              restored_cache_status ==
+                  "Restored from persistent ingestion cache",
+          "second in-memory ingestion should restore the persistent cache");
+    registry.UnregisterTabularDataset("track70_persistent_cache");
+
+    write_cache_source(9);
+    fs::last_write_time(
+        cache_source_path,
+        fs::file_time_type::clock::now() + std::chrono::seconds(2));
+    std::string invalidated_cache_status;
+    const auto invalidated_cache_backend = registry.LoadTabularCSV(
+        cache_source_path.string(), "track70_persistent_cache", true, ',',
+        0, 0, false, cyxwiz::DefaultTabularMissingValueTokens(), {}, '.',
+        false, {}, &invalidated_cache_status);
+    auto invalidated_dataset =
+        registry.GetArrowDataset("track70_persistent_cache");
+    Check(invalidated_cache_backend ==
+              cyxwiz::DataRegistry::TabularLoadBackend::InMemory &&
+              invalidated_cache_status !=
+                  "Restored from persistent ingestion cache" &&
+              invalidated_dataset &&
+              std::abs(ReadNumericValue(
+                           invalidated_dataset->GetArrowTable(),
+                           "feature", 0) - 9.0) < 1e-9,
+          "source modification should invalidate and rebuild the ingestion cache");
+    registry.UnregisterTabularDataset("track70_persistent_cache");
+    invalidated_dataset.reset();
+
     std::error_code remove_error;
     fs::remove(csv_path, remove_error);
+    fs::remove(decimal_csv_path, remove_error);
+    fs::remove(preflight_path, remove_error);
+    fs::remove(cache_source_path, remove_error);
     if (!limited_cache_path.empty()) {
         fs::remove(limited_cache_path, remove_error);
+    }
+    if (!decimal_cache_path.empty()) {
+        fs::remove(decimal_cache_path, remove_error);
+    }
+    const fs::path cache_root = cyxwiz::ParquetBackedDataset::GetCacheDir();
+    if (fs::exists(cache_root)) {
+        for (const auto& entry : fs::directory_iterator(cache_root)) {
+            if (!entry.is_regular_file()) continue;
+            const std::string filename = entry.path().filename().string();
+            if (filename.rfind("cyxwiz_track70_persistent_cache_", 0) == 0 ||
+                filename.rfind("cyxwiz_track70_schema_preflight_", 0) == 0) {
+                fs::remove(entry.path(), remove_error);
+            }
+        }
     }
 }
 
@@ -332,11 +559,13 @@ void CheckTrack70RowAndColumnLimits() {
 int main(int argc, char** argv) {
     if (argc == 2 &&
         std::string(argv[1]) == "--track70-ingestion-limits") {
+        CheckAsyncTaskProgressContract();
         CheckTrack70RowAndColumnLimits();
         return 0;
     }
 
     namespace fs = std::filesystem;
+    CheckAsyncTaskProgressContract();
     CheckValidationBadSchemaRoutingCoverage();
     CheckTrack70RowAndColumnLimits();
 
@@ -583,6 +812,24 @@ int main(int argc, char** argv) {
             csv << (10 + i + (i % 4)) << "\n";
         }
     }
+
+    const std::string projected_data_input_json =
+        R"({"nodes":[)"
+        R"({"id":9903,"type":"DataInput","name":"ProjectedInput","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true","selected_columns":"[\"x\"]"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor projected_data_input_executor;
+    Check(projected_data_input_executor.ExecutePipeline(projected_data_input_json),
+          "DataInput selected_columns projection should execute: " +
+              projected_data_input_executor.GetLastError());
+    auto projected_data_input = registry.GetArrowDataset("ds_datainput_9903");
+    Check(projected_data_input != nullptr,
+          "projected DataInput dataset should be registered");
+    Check(projected_data_input->GetNumColumns() == 1 &&
+              projected_data_input->GetSchema()->field(0)->name() == "x",
+          "PipelineExecutor DataInput must honor the canonical selected_columns projection");
 
     const std::string pipeline_json =
         R"({"nodes":[)"
@@ -3130,6 +3377,38 @@ int main(int argc, char** argv) {
     Check(ReadNumericValue(filtered_table, "x", 0) == 2.0,
           "FilterRows numeric condition should keep the expected row");
 
+    const std::string filter_simple_equality_json =
+        R"({"nodes":[)"
+        R"({"id":196,"type":"DataInput","name":"NullableInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(missing_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":197,"type":"FilterRows","name":"FilterEquality","parameters":{)"
+        R"("condition":"x = 1"}})"
+        R"(],"links":[{"start_node":196,"end_node":197}]})";
+
+    cyxwiz::PipelineExecutor filter_simple_equality_executor;
+    Check(filter_simple_equality_executor.ExecutePipeline(
+              filter_simple_equality_json),
+          "FilterRows typed scalar equality should execute through the "
+          "Arrow-native path: " +
+              filter_simple_equality_executor.GetLastError());
+    auto equality_filtered = registry.GetArrowDataset("ds_filter_197");
+    Check(equality_filtered != nullptr,
+          "FilterRows equality output dataset is registered");
+    auto equality_filtered_table = equality_filtered->GetArrowTable();
+    Check(equality_filtered_table != nullptr,
+          "FilterRows equality output table exists");
+    Check(equality_filtered_table->num_rows() == 1,
+          "FilterRows equality should keep one row and drop null comparisons");
+    Check(equality_filtered_table->schema()->Equals(
+              *registry.GetArrowDataset("ds_datainput_196")
+                   ->GetArrowTable()
+                   ->schema()),
+          "FilterRows Arrow-native equality preserves schema and column order");
+    Check(ReadNumericValue(equality_filtered_table, "x", 0) == 1.0,
+          "FilterRows equality keeps the expected numeric row");
+
     const std::string filter_string_json =
         R"({"nodes":[)"
         R"({"id":190,"type":"DataInput","name":"Input","parameters":{)"
@@ -3581,6 +3860,20 @@ int main(int argc, char** argv) {
           "ExportCSV should write through DataRegistry: " +
               export_csv_executor.GetLastError());
     Check(fs::exists(export_csv_path), "ExportCSV should create the output file");
+    {
+        std::ifstream exported_csv(export_csv_path, std::ios::binary);
+        const std::string exported_csv_body(
+            (std::istreambuf_iterator<char>(exported_csv)),
+            std::istreambuf_iterator<char>());
+        const bool has_valid_header =
+            exported_csv_body.find("x,y") != std::string::npos ||
+            exported_csv_body.find("\"x\",\"y\"") != std::string::npos;
+        Check(has_valid_header &&
+                  exported_csv_body.find("1,10") != std::string::npos &&
+                  exported_csv_body.find("3,30") != std::string::npos,
+              "ExportCSV should serialize headers and all table rows, not "
+              "create a header-only artifact");
+    }
 
     const std::string export_csv_path_alias_json =
         R"({"nodes":[)"

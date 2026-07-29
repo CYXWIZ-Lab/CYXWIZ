@@ -281,11 +281,13 @@ public:
     // Disk-backed Parquet dataset support — used automatically for files that
     // are larger than available RAM. See LoadTabularCSV below for the
     // dispatcher that picks between in-memory Arrow and disk-backed Parquet.
-    // The backing file is a Snappy-compressed Parquet written to the system
-    // temp directory (see ParquetBackedDataset::GetCacheFilePath).
+    // The backing file is a Snappy-compressed Parquet written to the active
+    // project's ingestion cache, with a temp-directory fallback outside a
+    // project (see ParquetBackedDataset::GetCacheFilePath).
     std::shared_ptr<class ParquetBackedDataset> GetParquetBackedDataset(const std::string& name) const;
     bool IsParquetBackedDataset(const std::string& name) const;
     std::optional<std::string> FindTabularDatasetBySourcePath(const std::string& path) const;
+    std::optional<std::string> GetTabularSourcePath(const std::string& name) const;
     void RegisterParquetBacked(const std::string& name,
                                std::shared_ptr<class ParquetBackedDataset> dataset);
 
@@ -296,6 +298,14 @@ public:
     // and would otherwise route to a stale Arrow entry from a previous load).
     // No-op for names that don't exist in either map.
     void UnregisterTabularDataset(const std::string& name);
+
+    // Restore a previously captured tabular registration after a replacement
+    // fails its post-load audit. Exactly one backend pointer should be set.
+    void RestoreTabularDataset(
+        const std::string& name,
+        std::shared_ptr<class ArrowDataset> arrow_dataset,
+        std::shared_ptr<class ParquetBackedDataset> parquet_dataset,
+        const std::string& source_path);
 
     // Wipe every tabular dataset (both in-memory Arrow and disk-backed
     // Parquet maps). Used by project lifecycle events: close project,
@@ -437,16 +447,20 @@ public:
                                        bool force_disk_backed = false,
                                        const std::vector<std::string>& missing_value_tokens =
                                            DefaultTabularMissingValueTokens(),
-                                       const std::vector<std::string>& selected_columns = {});
+                                       const std::vector<std::string>& selected_columns = {},
+                                       char decimal_point = '.',
+                                       bool use_threads = true,
+                                       const CsvProgressCallback& progress_callback = {},
+                                       std::string* load_status = nullptr,
+                                       const std::string& cache_directory = {});
 
     // Arrow format-specific loaders (for DataInput node)
     //
-    // LoadCSVToArrow auto-detects the right Arrow CSV block_size from the
-    // file size so the whole table loads as a single Arrow chunk whenever
-    // possible. This means the ArrowDatasetBatcher hits its fast
-    // raw_values() direct-pointer path, and integer columns are then
-    // downcast to their natural width (e.g. MNIST pixels int64 -> uint8,
-    // an 8x memory saving). Users don't need to tune anything.
+    // LoadCSVToArrow auto-detects the Arrow CSV block size. Batch callers may
+    // use a source-sized block for the single-chunk batcher fast path;
+    // interactive callers can disable nested parsing and use bounded streaming
+    // blocks so rendering retains CPU and peak input buffering stays bounded.
+    // Integer columns are downcast to their natural width after ingestion.
     //
     // max_rows: if > 0, stop the CSV streaming reader after the first
     // max_rows data rows. Useful for training on a bounded subset without
@@ -456,7 +470,10 @@ public:
                                                         int64_t max_rows = 0,
                                                         const std::vector<std::string>& missing_value_tokens =
                                                             DefaultTabularMissingValueTokens(),
-                                                        const std::vector<std::string>& selected_columns = {});
+                                                        const std::vector<std::string>& selected_columns = {},
+                                                        char decimal_point = '.',
+                                                        bool use_threads = true,
+                                                        const CsvProgressCallback& progress_callback = {});
     std::shared_ptr<class ArrowDataset> LoadParquetToArrow(const std::string& path, const std::string& name);
     std::shared_ptr<class ArrowDataset> LoadJSONToArrow(const std::string& path, const std::string& name, bool json_lines = false);
     std::shared_ptr<class ArrowDataset> LoadExcelToArrow(const std::string& path, const std::string& name, int sheet_idx = 0);

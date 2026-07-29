@@ -1,10 +1,365 @@
 # Track 70 - Code Audit and Implementation Log for To Fix 70
 
+## Next-session handoff - 2026-07-27
+
+Track70 is open. Resume at Phase 5b; phases 1-4 and Phase 5a are implemented
+and verified. Pending, in order:
+
+1. registered text/image/audio preview adapters behind the existing bounded,
+   cancellable typed preview contract;
+2. external role-aware runtime adapters for image/audio/text/time-series plus
+   explicit chronological time-series partition policy;
+3. typed learning-objective `TrainingPlan`; and
+4. integrated Train-fitted preprocessing state applied unchanged to resolved
+   Dev/Test roles.
+
+Do not restore Asset Browser direct loading, add another preview parser, infer
+roles from disconnected Data Inputs, or silently migrate saved legacy pins.
+The verification baseline is `test_data_preview_service` passing, the Debug
+engine building, and 2,372 assertions across 271 `cyxwiz-tests` cases passing.
+Current Track70 changes are not yet committed and share a dirty worktree with
+unrelated user changes, so stage only reviewed paths.
+
 ## Purpose
 
 Living source map and implementation record for `tofix70.md`. This file
 records current engine truth before changes are made. It is not a second design
 document.
+
+## Deep completion audit - 2026-07-27
+
+### Correction to the previous closure record
+
+Track 70 is reopened. The earlier log entry declaring the Arrow/Parquet slice
+complete treated several original mandatory requirements as non-blocking
+follow-ups without first revising this ticket's scope or acceptance criteria.
+The code scan below distinguishes working production slices from the full
+contract and records the remaining work explicitly.
+
+This audit is based on implementation and focused-test evidence, not APS-only
+behavior. APS remains a generic acceptance fixture.
+
+### Highest-risk finding (resolved in phase 1): role resolution was not topology-owned
+
+The intended authority is the named input connection on Data Split. Current
+runtime authority is still a mutable Data Input parameter:
+
+- `src/gui/data_input_dialog_source_options.cpp` renders a Dataset Role combo;
+- `src/gui/data_input_dialog_apply.cpp` persists `dataset_role` on Data Input;
+- `src/core/graph_compiler.cpp::DatasetRoleFromNode` reads that value;
+- the compiler then loops over every dataset source node and adopts any node
+  marked Dev or Test, regardless of whether it is connected to the selected
+  Data Split/training path.
+
+`tests/test_graph_compiler_deferred_nodes.cpp` currently constructs disconnected
+Dev and Test nodes and asserts that the compiler resolves both. This is not
+merely a missing test: the test enshrines the incorrect ownership rule. A stale
+or unrelated Data Input elsewhere on the canvas can therefore become the
+evaluation source for the selected run.
+
+Resolution: roles now derive only from the selected, reachable Data Split input
+pins. Data Input is role-neutral and exposes one Dataset artifact. Disconnected
+sources have no effect on compiled training configuration. The regression that
+previously required disconnected roles was inverted to enforce this contract.
+
+### Acceptance matrix
+
+| Original acceptance criterion | Status | Evidence and remaining work |
+| --- | --- | --- |
+| 1. One-source 80/10/10 remains functional | Implemented | Arrow/Parquet batcher and compiler tests cover the existing derived split. |
+| 2. Explicit external Train/Dev/Test using existing Data Input formats | Implemented for tabular | Named Data Split topology resolves Train+Test, Train+Dev, and Train+Dev+Test. External-role adapters for non-tabular modalities remain criterion 6 work. |
+| 3. External Dev/Test is preserved and never split | Implemented for tabular | Typed Arrow/Parquet assembly installs supplied roles as full-source batchers before prefetch. Image/audio/text launchers still need the generic adapter. |
+| 4. Missing roles derive only from Train through explicit policy | Implemented for tabular | Compiler policy and focused runtime coverage prove missing Dev is derived from Train while an external Test is preserved. |
+| 5. Data Loader receives resolved partitions, not raw source plus ratios | Implemented for tabular | `ResolvedDatasetPartitions` is compiler-owned; `BuildResolvedTabularTrainingBatchers` consumes its identities and policy after the GUI resolves explicit dataset handles. Non-tabular adapters remain open. |
+| 6. Separate Train/Dev/Test batchers without three model branches | Partial | Implemented for Arrow/Parquet. Image/audio/text paths create a batcher from one source and ratios and do not consume external resolved roles. |
+| 7. Role-specific schema, label, and leakage diagnostics | Implemented for tabular | Arrow/Parquet preflight records schema compatibility and passed/failed/unavailable leakage state with reasons. Data Split and Run Comparison surface the structured facts; non-tabular adapters remain open. |
+| 8. Learned transforms fit Train only and apply to Dev/Test | Partial | Fill Missing and Standard Scaler support saved fitted artifacts across separate Data Studio executions. There is no same-graph typed state or resolved-role preprocessing handoff. |
+| 9. Stable PartitionManifest fingerprint and row counts in run records | Implemented for tabular | Manifest v2 includes file content-version/source and feature-schema identity, split method/seed/stratification, origins, and exact runtime rows. Run Comparison consumes this typed manifest and preserves structured role checks. |
+| 10. Safe legacy loading and truthful new UX | Implemented | Saved graphs carry Data Boundary v1/v2. Unversioned/v1 graphs recreate historical pins before link restoration and remain v1 until the user invokes the Data Split migration action. Standard boundaries migrate transactionally to Dataset v2; ambiguous or lossy layouts are refused with a concrete reason. |
+
+### Mandatory design requirements outside the numbered matrix
+
+#### Dataset and partition contracts
+
+- `DatasetSourceRef`, `ResolvedDatasetPartitions`, `SplitPolicy`, and
+  `PartitionManifest` v2 now carry typed storage/modality, source/content and
+  schema identity, policy, origin, status, and runtime row-count facts for the
+  production tabular path.
+- Data Split topology is compiler authority and the tabular Data Loader consumes
+  the resolved contract. The canvas pin remains a graph contract rather than a
+  separately materialized tensor value.
+- Data Split properties now show the active graph's resolved role sources,
+  origins, counts, preservation/derivation reasons, compatibility, policy,
+  source/schema IDs, and manifest ID. Leakage status is finalized at training
+  preflight and retained in Run Comparison.
+
+#### Preview and Asset Browser
+
+- `DataPreviewService` is bounded to 200 rows, supports Arrow/Parquet paging,
+  accepts cooperative cancellation, returns typed status, and records
+  page-local sampled/null counts without forcing a full-dataset scan.
+- Data Input renders paged tabular sample values, but image and audio preview
+  capability is explicitly `not wired`. Text falls back to a source-delimited
+  preview rather than a shared registered text adapter preview.
+- Asset Browser and Data Input now use the same bounded table primitive. Asset
+  Browser renders the first 20 registered rows returned by the shared service;
+  Data Input retains virtual paging and its bounded page cache.
+- `OpenInExplorer` success/failure is visible in the Asset Browser status bar.
+- The obsolete direct registry-loading action has been removed correctly and
+  `Create Data Input` remains the single authoritative loading entry point.
+
+#### Modality and learning-objective neutrality
+
+- `TrainingManager::StartTrainingImage`, `StartTrainingAudio`, and
+  `StartTrainingText` construct from one registry entry and split ratios. They
+  do not consume externally resolved Dev/Test dataset references.
+- Time-series batching has chronological partition support in its specialized
+  operator/batcher path, but Partition Policy does not expose or validate a
+  typed time-ordered split method and its role manifest.
+- No typed `TrainingPlan` exists for supervised, self-supervised,
+  unsupervised, or reinforcement-learning target/experience semantics.
+
+#### Format and storage truth
+
+- The current tabular Format combo correctly limits executable selections to
+  CSV, TSV, Parquet, Feather, and Arrow/IPC, while the loader returns a typed
+  unsupported message for historical JSON/Excel/HDF5/ARFF parameters.
+- Registry source-path and in-memory/disk-backed state exists, but this backing
+  identity and cache reason is not carried into `ResolvedDatasetRole` or the
+  run partition record.
+
+### Test gaps and misleading coverage
+
+Add or correct focused tests for:
+
+1. disconnected and unrelated Data Inputs never affecting role resolution;
+2. Train-only, Train+Test, Train+Dev, and Train+Dev+Test through actual named
+   Data Split pins, including no internal split for all-external roles;
+3. ~~a manifest fingerprint changing with `split_seed`, stratification, source
+   identity/content version, feature schema, or split method;~~ implemented;
+4. ~~structured overlap-unavailable disclosure rather than log-only evidence;~~
+   implemented for tabular preflight and run records;
+5. ~~graph save/load of legacy six-output Data Split layouts without silently
+   dropping links, followed by an explicit migration choice;~~ implemented at
+   the version/pin-index guard level; a dedicated editor transaction harness
+   remains useful GUI integration coverage;
+6. ~~Asset Browser and Data Input rendering the same page values/support
+   state;~~ implemented for registered tabular Arrow/Parquet previews;
+7. ~~cancellable preview behavior and tabular null-count metadata;~~ the
+   service contract and Data Input task path are implemented; null counts are
+   explicitly page-local;
+8. external roles for image, audio, text, and time-series adapters;
+9. Train-fitted transform state applied unchanged to external Dev/Test; and
+10. typed objective validation for supervised, self-supervised, unsupervised,
+    and reinforcement execution plans.
+
+### Recommended implementation phases from this audit
+
+Keep the correction narrow and complete one vertical boundary before adding
+more UI:
+
+1. **Topology and types:** make Data Input role-neutral; introduce typed
+   `DatasetSourceRef`, `SplitPolicy`, `ResolvedDatasetPartitions`, and
+   `PartitionManifest`; resolve only connected named Data Split inputs.
+2. **Tabular runtime handoff:** make the Arrow/Parquet Data Loader adapter
+   consume the typed resolved result directly; remove the later batcher
+   replacement path and cover all four source combinations.
+3. **Manifest truth and inspector:** carry backing/source/schema identity,
+   correct split seed/method, resolved counts, compatibility, and leakage
+   disclosure into the inspector and run comparison.
+4. **Migration:** version the pin contract, preserve legacy pins/links on load,
+   and offer an explicit safe migration to the Dataset layout.
+5. **Preview parity:** complete the shared tabular renderer and cancellation,
+   null counts, visible explorer errors, then implement registered text/image/
+   audio preview adapters.
+6. **Generic runtime:** extend the same resolved contract to image, audio,
+   text, and time-series; then add typed learning plans and role-aware fitted
+   preprocessing state.
+
+Phases 1-4 are now implemented. The next implementation slice is phase 5,
+starting with one shared bounded tabular renderer plus cancellation/null-count
+metadata and visible Explorer-launch failures before adding modality adapters.
+
+### Phase 1 implementation result - 2026-07-27
+
+The topology/type correction is implemented:
+
+- added `src/core/dataset_partitions.h` with typed `DatasetSourceRef`,
+  `SplitPolicy`, `ResolvedDatasetPartitions`, and `PartitionManifest`
+  primitives plus modality, storage, origin, and split-method enums;
+- Data Input no longer restores, edits, or persists a Dataset Role selection;
+  its dialog explains that the connected Data Split input assigns the role;
+- applying Data Input removes an old `dataset_role` parameter;
+- the compiler prefers the Data Input connected to the selected Data Split's
+  `Training Dataset` pin, resolves optional roles only from the corresponding
+  `Validation Dataset` and `Test Dataset` pins, and ignores all legacy role
+  hints with an informational migration diagnostic;
+- selected-path multi-source validation now recognizes evaluation sources by
+  their actual optional Data Split connections, not by node parameters;
+- the typed policy/manifest records the resolved ratios, split seed,
+  stratification method, and external/derived origins; source/schema
+  fingerprints, resolved counts, and the final fingerprint remain phase 3;
+- the obsolete compiler message describing modern Data Split pins as legacy
+  tensor pins was replaced with truthful partition-contract language.
+
+Focused evidence:
+
+- `test_graph_compiler_deferred_nodes` passes and now proves disconnected
+  Dev/Test hints are ignored, stale hints cannot override topology, Train+Test
+  and Train+Dev derive only the missing role, and external Train+Dev+Test uses
+  ratios `1/0/0` without internal splitting;
+- `test_training_batcher_setup` passes, preserving the current Arrow/Parquet
+  resolved-role, prefetch, binary-target, balancing, and held-out Test behavior;
+- the complete Debug `cyxwiz-engine` target builds successfully.
+
+Next: phase 2 must make the tabular Data Loader consume the typed partition
+set directly and remove the late external-batcher replacement path. Track 70
+remains open.
+
+### Phase 2 implementation result - 2026-07-27
+
+The Arrow/Parquet runtime now consumes the typed partition contract:
+
+- added `ResolvedTabularDatasets` as the narrow adapter result containing
+  explicit Train/Dev/Test Arrow or Parquet handles; the core batcher module
+  does not query the global `DataRegistry`;
+- added `BuildResolvedTabularTrainingBatchers`, which consumes the compiler's
+  `ResolvedDatasetPartitions`, applies its ratios/seed/stratification policy,
+  derives only missing roles from Train, and preserves supplied Dev/Test
+  sources in full;
+- moved final prefetch attachment after all role owners are assembled, then
+  reused the existing ownership-safe `TakeResolvedExternalBatchers` handoff;
+- fixed the Train+Dev case exposed by the complete role matrix: because the
+  existing batchers place the first Train-derived holdout in their Validation
+  slot, the adapter now moves that derived owner to Test before installing the
+  supplied Dev owner. The derived Test slice is no longer overwritten;
+- simplified `TabularLoader::LaunchTraining` to resolve typed source identities
+  to handles once and call the shared builder. The loader no longer contains a
+  second manual role/batcher replacement algorithm;
+- the typed builder supports mixed storage backends in one run.
+
+Focused evidence:
+
+- Debug `test_training_batcher_setup` passes and directly covers Train-only,
+  Train+Test, Train+Dev, and Train+Dev+Test runtime assembly. Its mixed-backend
+  regression uses Arrow Train plus Parquet Test and verifies 3 Train rows, 1
+  derived Dev row, all 4 supplied Test rows, final prefetch attachment, and
+  safe Test batch consumption after ownership handoff;
+- Debug `test_graph_compiler_deferred_nodes` passes, preserving the phase 1
+  topology rules; and
+- the complete Debug `cyxwiz-engine` target builds successfully.
+
+Next: phase 3 must complete manifest truth and the Data Split inspector. The
+typed manifest needs durable source/content and feature-schema fingerprints,
+resolved row counts, compatibility/leakage status, and a stable fingerprint
+using the Data Split seed, method, and stratification. Track 70 remains open.
+
+### Phase 3 implementation result - 2026-07-27
+
+The production tabular path now carries truthful manifest provenance:
+
+- `PartitionManifest` v2 is the single fingerprint contract. It contains role
+  origins, file identity derived from normalized path/size/modified content
+  version, complete and feature-schema fingerprints, split method, Data Split
+  seed, shuffle/stratification, resolution reasons, schema compatibility,
+  leakage-check status/reasons, and resolved row counts;
+- compiler resolution populates registered Arrow/Parquet storage, source,
+  schema, and deterministic count facts. Batcher assembly and
+  `TrainingExecutor` replace provisional counts with exact runtime values;
+- the previous run-comparison-only Track70 v1 hash was removed. Run Comparison
+  now fingerprints the typed v2 manifest and carries schema/leakage statuses
+  and reasons into the table and CSV export;
+- the Data Split dialog has a bounded on-demand active-graph inspector showing
+  Train/Dev/Test sources, external/derived origins, counts, resolution reasons,
+  compatibility, policy, source/schema IDs, and manifest ID;
+- external role preflight records leakage as passed, failed, or unavailable.
+  Large/no-ID datasets now retain the exact unavailability reason instead of
+  leaving the evidence only in logs.
+
+Focused evidence:
+
+- Debug `test_text_gui_training_launch` proves stable identity, exact runtime
+  row-count sensitivity, changes for Data Split seed, source content version,
+  feature schema, split method, and stratification, and no change for Data
+  Loader seed alone. It also verifies structured role-check CSV disclosure;
+- Debug `test_training_batcher_setup` verifies exact 3/1/4 runtime counts are
+  installed in the typed manifest for mixed Arrow Train/Parquet Test; and
+- Debug `test_graph_compiler_deferred_nodes` and the complete Debug
+  `cyxwiz-engine` target build pass.
+
+Phase 4 follows below. Track 70 remains open after migration because preview
+parity, generic modality execution, typed learning plans, and integrated
+role-aware preprocessing state are still outstanding.
+
+### Phase 4 implementation result - 2026-07-27
+
+Saved-graph compatibility now has an explicit, fail-closed contract:
+
+- `SaveGraph` and in-memory graph serialization write
+  `data_boundary_version=2` for the Dataset boundary and retain v1 while any
+  preserved legacy boundary remains;
+- both file and JSON-string load paths treat absent, malformed, and explicit
+  v1 versions as legacy. They reconstruct the old Data Input two outputs, Data
+  Split two inputs/six outputs, and Data Loader two inputs/two outputs before
+  restoring saved pin indices;
+- Data Split properties identify the preserved layout and expose the explicit
+  `Migrate graph to Dataset v2` action. Loading alone never mutates the graph
+  into the new contract;
+- the migration preflights every affected link before mutation, records one
+  undo state, rebuilds the three node pin layouts, preserves the feature path,
+  removes redundant label-chain links, and reroutes legitimate label targets
+  from the modern Data Loader output;
+- migration refuses legacy Validation/Test output branches, boundary bypasses,
+  nonstandard sources, missing pins/nodes, and non-unique loader mappings so a
+  saved graph cannot silently lose semantics; and
+- pattern-template insertion remains on current Dataset pins and keeps its
+  existing stale-index warnings; the saved-graph compatibility rule does not
+  reintroduce legacy pins for new templates.
+
+Verification evidence:
+
+- Debug `test_pattern_template_guard` passes, covering unversioned/v1/v2 and
+  malformed version decisions plus preservation of the historical Data Split
+  Test Labels index;
+- the complete Debug `cyxwiz-engine` target builds successfully; and
+- Debug `cyxwiz-tests` passes 2,372 assertions in 271 test cases.
+
+Next: phase 5 is preview parity. Reuse one bounded tabular page renderer in
+Data Input and Asset Browser, add cancellation/null-count metadata and visible
+Explorer errors, then add registered text/image/audio preview adapters. Track
+70 remains open.
+
+### Phase 5a implementation result - 2026-07-27
+
+The bounded registered-tabular preview path now has one UI and service
+contract:
+
+- added `RenderDataPreviewTable`, a small row-lookup-based ImGui primitive used
+  by both Data Input and Asset Browser. Data Input supplies its virtual page
+  cache; Asset Browser supplies the rows from its bounded service page;
+- Asset Browser renders 20 real sample rows, backend/count information,
+  page-local null totals, typed unsupported/failure state, and a refresh
+  action. It still never parses or registers a raw dataset itself;
+- `DataPreviewPage` now has typed Ready/InvalidRequest/Unsupported/Cancelled/
+  Failed status. Each schema field carries sampled value/null counts for the
+  returned page;
+- `DataPreviewRequest` accepts cooperative cancellation. Data Input attaches
+  the active `LambdaTask` stop signal, cancels obsolete requests during reset,
+  and offers `Cancel preview load` while lazy paging;
+- Asset Browser exposes file-browser launch results in its status bar, closing
+  the previous log-only failure path; and
+- focused coverage checks Ready, InvalidRequest, Unsupported, and Cancelled
+  status plus selected-column page-local null counts.
+
+Verification evidence:
+
+- Debug `test_data_preview_service` passes;
+- the complete Debug `cyxwiz-engine` target builds successfully; and
+- Debug `cyxwiz-tests` passes 2,372 assertions in 271 test cases.
+
+Next: complete phase 5 with registered text, image, and audio preview adapters.
+These should implement the existing preview contract rather than adding raw
+file parsers or another registration path. Track 70 remains open.
 
 ## Audit snapshot - 2026-07-20
 
@@ -488,8 +843,9 @@ changes are outside Track 70 scope and must remain isolated.
   column names. If a registered dataset is genuinely refreshed while a page
   is in flight, the bounded cache adopts the new schema as a new generation
   rather than terminating preview. This is format- and dataset-neutral.
-- 2026-07-27: To Fix 70 is complete for the production Arrow/Parquet tabular
-  scope. The accepted contract covers one-source derived partitions, explicit
+- 2026-07-27 (superseded by the deep completion audit above): The implementation
+  was initially marked complete for the production Arrow/Parquet tabular
+  scope. That closure claim covered one-source derived partitions, explicit
   Train/Dev/Test sources, held-out Test preservation, Train-fitted preprocessing,
   role-specific validation, partition fingerprints/run comparison, modern
   Dataset pins with legacy compatibility, bounded lazy preview, streaming row
@@ -554,3 +910,53 @@ changes are outside Track 70 scope and must remain isolated.
   Parquet, and `test_training_batcher_setup` covered resolved roles, prefetch
   ownership, scalar BCE targets, class-balancing reset, held-out Test selection,
   configured binary loss, and Arrow/Parquet training batches.
+- 2026-07-27: Added the Electricity Load Diagrams locale/responsiveness
+  follow-up. Data Input now persists a decimal separator independently from
+  the delimiter and propagates it through preview identity, graph execution,
+  Arrow loading, Parquet conversion, and cache identity. Interactive CSV loads
+  use bounded single-threaded streaming inside the existing background task so
+  Arrow cannot consume the UI through nested parser work. Focused tests prove
+  comma-decimal doubles on both backends; Debug engine and preview-service
+  builds pass. The real 678 MB GUI repaint/Tasks-panel check remains the final
+  manual acceptance step.
+- 2026-07-28: Added restart-safe, project-scoped tabular ingestion caching and
+  the previously identified bounded schema preflight. CSV parser settings and
+  source size now produce a stable cache identity; source modification time
+  guards freshness. The first successful in-memory parse atomically writes its
+  canonical Arrow table to `<project>/cache/ingestion`, and a later Apply after
+  restart restores that Parquet artifact instead of reparsing the source.
+  Disk-backed loading reuses the same cache contract. Before parsing a large
+  source, bounded samples across the file detect late decimal values and widen
+  initially integer columns up front, avoiding the Electricity dataset's known
+  failed first pass; the existing retry remains for values sampling misses.
+  Checkpoints remain separate model/run state under `<project>/checkpoints`.
+  The focused Track 70 ingestion test proves preflight detection, cache
+  creation, cache restoration, and invalidation after a source change.
+- 2026-07-28: Removed the compiler's blanket raw-label assumption. Compile now
+  infers a first-class target provenance contract from the selected training
+  topology. A TimeSeriesWindow on that path declares graph-generated `y`,
+  `y_1`, ... targets and their width; causal language-model target generation
+  uses the same origin. Dataset columns and dataset structure remain valid
+  target origins. `CW-D-0102` is emitted only when the selected objective
+  requires targets and no target origin resolves. The Electricity 672-to-96
+  forecast therefore does not require a label on its one-column raw source,
+  while the existing supervised missing-label regression still fails closed.
+- 2026-07-29: Closed the full-period wide Filter Rows performance gap exposed
+  by the Electricity v0.7 acceptance graph. The validated condition parser now
+  exposes its typed tokens to a narrow Arrow-native numeric-equality path;
+  compound expressions, inequalities, strings, and unsupported scalar forms
+  retain the existing DuckDB fallback. Null comparisons are dropped with SQL
+  WHERE semantics, while schema, compact integer widths, and column order are
+  preserved. Focused Release routing tests prove the Arrow and fallback paths.
+  On the unchanged 139,489 x 771 acceptance table, `__partition__ = 2` fell
+  from about 43.4 seconds to 0.144 seconds and the full graph fell from about
+  55.4 seconds to 11.7 seconds with identical counts, metrics, and exports.
+  This is generic Filter Rows behavior and contains no Electricity path,
+  column, partition value, or graph-specific special case.
+- 2026-07-29: Completed the v0.7 transactional cancellation acceptance check.
+  Task ID 6 received cancellation while the full source Data Input was active,
+  completed only that in-flight node, stopped before windowing/metrics/exports,
+  reported `Pipeline execution cancelled by user`, and finished in the
+  cancelled task state. The previously accepted daily and weekly CSV artifacts
+  retained their exact SHA-256 hashes, timestamps, and sizes. This confirms a
+  cancelled pipeline cannot publish a false successful downstream result.

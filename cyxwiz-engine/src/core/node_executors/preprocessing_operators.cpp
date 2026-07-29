@@ -155,10 +155,40 @@ arrow::Status ResolveNumericColumnList(
     const std::shared_ptr<arrow::Table>& table,
     const std::vector<std::string>& explicit_names,
     const std::string& label_col,
+    const std::vector<std::string>& excluded_names,
     const std::string& op_name,
     std::vector<std::string>& out) {
-    return ResolveFeatureColumns(table, explicit_names, label_col,
-                                  op_name, out);
+    ARROW_RETURN_NOT_OK(ResolveFeatureColumns(
+        table, explicit_names, label_col, op_name, out));
+    if (!explicit_names.empty() || excluded_names.empty()) {
+        return arrow::Status::OK();
+    }
+
+    out.erase(
+        std::remove_if(
+            out.begin(), out.end(),
+            [&excluded_names](const std::string& name) {
+                return std::find(excluded_names.begin(), excluded_names.end(),
+                                 name) != excluded_names.end();
+            }),
+        out.end());
+    if (out.empty()) {
+        return arrow::Status::Invalid(
+            op_name +
+            ": no numeric feature columns remain after exclusions. "
+            "Remove an excluded column or specify Columns explicitly.");
+    }
+    return arrow::Status::OK();
+}
+
+arrow::Status ResolveNumericColumnList(
+    const std::shared_ptr<arrow::Table>& table,
+    const std::vector<std::string>& explicit_names,
+    const std::string& label_col,
+    const std::string& op_name,
+    std::vector<std::string>& out) {
+    return ResolveNumericColumnList(
+        table, explicit_names, label_col, {}, op_name, out);
 }
 
 // Encode a string column to stable int32 codes using alphabetical
@@ -345,6 +375,10 @@ bool StandardScalerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
     ParseColumnsAndLabel(params, columns_, label_col_);
+    const auto excluded = params.find("exclude_columns");
+    ParseCommaList(
+        excluded == params.end() ? "" : excluded->second,
+        exclude_columns_);
     if (!ReadBoolParam(params, "with_mean", true, GetName(),
                        with_mean_, error)) return false;
     if (!ReadBoolParam(params, "with_std", true, GetName(),
@@ -435,8 +469,16 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             state_path_, state.fit_rows, state.features.size(),
             state.input_schema_fingerprint);
     } else {
+        for (const auto& excluded_name : exclude_columns_) {
+            if (input->schema()->GetFieldIndex(excluded_name) < 0) {
+                return arrow::Status::KeyError(
+                    GetName() + ": excluded column '" + excluded_name +
+                    "' not found");
+            }
+        }
         ARROW_RETURN_NOT_OK(ResolveNumericColumnList(
-            input, columns_, label_col_, GetName(), resolved));
+            input, columns_, label_col_, exclude_columns_, GetName(),
+            resolved));
         state.operator_name = GetName();
         state.fit_rows = input->num_rows();
         state.input_schema_fingerprint =
@@ -446,6 +488,12 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         state.configuration["with_std"] =
             with_std_ ? "true" : "false";
         state.configuration["label_col"] = label_col_;
+        std::ostringstream excluded_columns;
+        for (size_t i = 0; i < exclude_columns_.size(); ++i) {
+            if (i > 0) excluded_columns << ',';
+            excluded_columns << exclude_columns_[i];
+        }
+        state.configuration["exclude_columns"] = excluded_columns.str();
         spdlog::info(
             "[Preprocessing] StandardScaler Fit + Transform starting "
             "(rows={}, features={}, save_state={}, state_path='{}')",

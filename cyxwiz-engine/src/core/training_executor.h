@@ -21,6 +21,10 @@
 
 namespace cyxwiz {
 
+inline bool UsesRegressionMetrics(const TrainingConfiguration& config) {
+    return UsesContinuousTargetMetrics(config);
+}
+
 /**
  * Training metrics updated during training
  */
@@ -38,15 +42,21 @@ struct TrainingMetrics {
     // Training metrics
     float train_loss = 0.0f;
     float train_accuracy = 0.0f;
+    float train_mae = 0.0f;
+    float train_rmse = 0.0f;
 
     // Validation metrics
     float val_loss = 0.0f;
     float val_accuracy = 0.0f;
+    float val_mae = 0.0f;
+    float val_rmse = 0.0f;
     bool has_validation_metrics = false;
 
     // Held-out test metrics, populated after training when a test split exists.
     float test_loss = 0.0f;
     float test_accuracy = 0.0f;
+    float test_mae = 0.0f;
+    float test_rmse = 0.0f;
     bool has_test_metrics = false;
 
     // Checkpoint actually restored/used for final evaluation. Empty means no
@@ -78,8 +88,19 @@ struct TrainingMetrics {
     // History (for plotting)
     std::vector<float> loss_history;
     std::vector<float> accuracy_history;
+    std::vector<float> mae_history;
+    std::vector<float> rmse_history;
     std::vector<float> val_loss_history;
     std::vector<float> val_accuracy_history;
+    std::vector<float> val_mae_history;
+    std::vector<float> val_rmse_history;
+};
+
+struct ObjectiveEvaluationMetrics {
+    float loss = 0.0f;
+    float accuracy = 0.0f;
+    float mae = 0.0f;
+    float rmse = 0.0f;
 };
 
 /**
@@ -306,7 +327,7 @@ private:
      * Run validation through any IBatcher implementation.
      */
     void RunValidationArrow(IBatcher& batcher);
-    std::pair<float, float> EvaluateArrowBatcher(IBatcher& batcher);
+    ObjectiveEvaluationMetrics EvaluateArrowBatcher(IBatcher& batcher);
 
     /**
      * Run a single token-tagging epoch through an ISequenceBatcher.

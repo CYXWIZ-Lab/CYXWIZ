@@ -163,6 +163,7 @@ private:
     bool show_loss_plot_ = true;
     bool show_accuracy_plot_ = true;
     bool show_custom_metrics_ = false;
+    bool log_loss_scale_ = false;
     bool auto_scale_ = true;
     bool follow_current_epoch_ = false;
     bool show_smoothed_curves_ = false;
@@ -216,6 +217,10 @@ private:
     void RenderStatistics();
 
     // Internal helpers
+    // Render() already owns data_mutex_; these helpers must only be called
+    // while that lock is held. Public entry points acquire the lock first.
+    void ClearLocked();
+    void ExportToCSVLocked(const std::string& filepath) const;
     std::pair<double, double> CalculateEpochWindow(const MetricSeries& series) const;
     ValueRange CalculateVisibleRange(const MetricSeries& primary,
                                      const MetricSeries& secondary,

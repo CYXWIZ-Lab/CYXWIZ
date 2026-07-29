@@ -6,6 +6,8 @@
 #endif
 
 #include "node_config_dialog.h"
+#include "../core/async_task_manager.h"
+#include "../core/graph_compiler.h"
 #include "../core/worker_defaults.h"
 
 #include <cmath>
@@ -14,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <spdlog/spdlog.h>
 #include <sstream>
 #include <string>
 
@@ -378,6 +381,10 @@ DataConvertDialog::DataConvertDialog(MLNode* node)
     LoadFromNode();
 }
 
+DataConvertDialog::~DataConvertDialog() {
+    CancelPreview();
+}
+
 void DataConvertDialog::LoadFromNode() {
     if (!node_) return;
     CopyToBuffer(input_path_, sizeof(input_path_),
@@ -393,6 +400,10 @@ void DataConvertDialog::LoadFromNode() {
     auto_detect_delimiter_ = LowerAscii(delimiter) == "auto";
     CopyToBuffer(delimiter_, sizeof(delimiter_),
                  auto_detect_delimiter_ ? "," : delimiter);
+    const std::string decimal_point =
+        ReadStringParamValue(node_->parameters, "decimal_point", ".");
+    decimal_point_ = !decimal_point.empty() && decimal_point.front() == ','
+        ? ',' : '.';
     has_header_ = ReadBoolParamValue(node_->parameters, "header", true);
     allow_newlines_in_values_ =
         ReadBoolParamValue(node_->parameters, "allow_newlines_in_values", true);
@@ -424,6 +435,7 @@ void DataConvertDialog::Apply() {
     node_->parameters["output_format"] = DataFormatNameFromIndex(output_format_);
     node_->parameters["delimiter"] =
         auto_detect_delimiter_ ? "auto" : std::string(delimiter_);
+    node_->parameters["decimal_point"] = std::string(1, decimal_point_);
     node_->parameters["header"] = has_header_ ? "true" : "false";
     node_->parameters["allow_newlines_in_values"] =
         allow_newlines_in_values_ ? "true" : "false";
@@ -454,12 +466,15 @@ void DataConvertDialog::Apply() {
 
 void DataConvertDialog::Reset() {
     if (!node_) return;
+    CancelPreview();
     node_->parameters = original_params_;
     LoadFromNode();
     has_changes_ = false;
 }
 
 void DataConvertDialog::RenderContent() {
+    PollPreviewResult();
+
     ImGui::TextWrapped(
         "Convert source data between supported table file formats and write "
         "an optional sidecar manifest.");
@@ -517,7 +532,7 @@ void DataConvertDialog::RenderSourceTab() {
 
     ImGui::Spacing();
     const char* formats[] = {
-        "Auto", "CSV", "TSV", "JSONL", "Text", "ARFF", "NumPy", "HDF5", "Parquet", "Feather", "Arrow", "IPC"
+        "Auto", "CSV", "TSV", "JSONL", "Plain Text (one column)", "ARFF", "NumPy", "HDF5", "Parquet", "Feather", "Arrow", "IPC"
     };
     ImGui::Text("Input format");
     ImGui::SameLine(130.0f);
@@ -527,14 +542,46 @@ void DataConvertDialog::RenderSourceTab() {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("Auto detects from extension.");
+
+    const std::string selected_format = DataFormatNameFromIndex(input_format_);
+    const std::string extension = LowerAscii(
+        std::filesystem::path(input_path_).extension().string());
+    const bool effective_plain_text = selected_format == "txt" ||
+        (selected_format == "auto" && extension == ".txt");
+    if (effective_plain_text) {
+        ImGui::Spacing();
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.65f, 0.20f, 1.0f),
+            "Plain Text produces one column named 'text'.");
+        ImGui::TextWrapped(
+            "For a semicolon-delimited .txt table, select CSV here and set the delimiter to semicolon. The file extension does not need to change.");
+    }
 }
 
 void DataConvertDialog::RenderOptionsTab() {
+    const std::string selected_format = DataFormatNameFromIndex(input_format_);
+    const std::string extension = LowerAscii(
+        std::filesystem::path(input_path_).extension().string());
+    const bool delimited_input = selected_format == "csv" ||
+        selected_format == "tsv" ||
+        (selected_format == "auto" &&
+         (extension == ".csv" || extension == ".tsv"));
+
     ImGui::Spacing();
     ImGui::Text("Delimited input parsing");
     ImGui::Separator();
     ImGui::Spacing();
 
+    if (!delimited_input) {
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.65f, 0.20f, 1.0f),
+            "Delimiter and header settings are inactive for this input format.");
+        ImGui::TextWrapped(
+            "Select CSV for comma-, semicolon-, or pipe-delimited data, including delimited files whose extension is .txt.");
+        ImGui::Spacing();
+    }
+
+    ImGui::BeginDisabled(!delimited_input);
     if (ImGui::Checkbox("Auto-detect delimiter", &auto_detect_delimiter_)) {
         has_changes_ = true;
     }
@@ -554,9 +601,23 @@ void DataConvertDialog::RenderOptionsTab() {
         ? "Detected when preview or conversion runs."
         : "Use comma for CSV, tab for TSV.");
 
+    ImGui::Text("Decimal separator");
+    ImGui::SameLine(130.0f);
+    ImGui::SetNextItemWidth(120.0f);
+    const char* decimal_separators[] = {"Dot (.)", "Comma (,)"};
+    int decimal_index = decimal_point_ == ',' ? 1 : 0;
+    if (ImGui::Combo("##data_convert_decimal", &decimal_index,
+                     decimal_separators, 2)) {
+        decimal_point_ = decimal_index == 1 ? ',' : '.';
+        has_changes_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Used while parsing numeric input values.");
+
     if (ImGui::Checkbox("First row contains headers", &has_header_)) {
         has_changes_ = true;
     }
+    ImGui::EndDisabled();
     if (ImGui::Checkbox("Allow quoted multiline values",
                         &allow_newlines_in_values_)) {
         has_changes_ = true;
@@ -657,13 +718,30 @@ void DataConvertDialog::RenderOutputTab() {
 
 void DataConvertDialog::RenderPreviewTab() {
     ImGui::Spacing();
+    ImGui::BeginDisabled(preview_loading_);
     if (ImGui::Button("Preview schema")) {
         PreviewInput();
     }
+    ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::TextDisabled("Reads the input and Arrow-inferred types.");
+    if (preview_loading_) {
+        ImGui::TextDisabled("Preview is running in the background (Task %llu)...",
+                            static_cast<unsigned long long>(preview_task_id_));
+    } else {
+        ImGui::TextDisabled("Reads the input and Arrow-inferred types.");
+    }
 
     ImGui::Spacing();
+    if (preview_loading_) {
+        float progress = 0.0f;
+        if (const auto task =
+                cyxwiz::AsyncTaskManager::Instance().GetTask(preview_task_id_)) {
+            progress = task->GetProgress();
+        }
+        ImGui::ProgressBar(progress,
+                           ImVec2(-1.0f, 0.0f),
+                           "Reading source without blocking the engine");
+    }
     if (!preview_.ok) {
         if (!preview_.error.empty()) {
             ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.30f, 1.0f),
@@ -793,6 +871,7 @@ cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
     options.input_format = DataFormatNameFromIndex(input_format_);
     options.output_format = DataFormatNameFromIndex(output_format_);
     options.delimiter = delimiter_[0] == '\0' ? ',' : delimiter_[0];
+    options.decimal_point = decimal_point_;
     options.auto_detect_delimiter = auto_detect_delimiter_;
     options.has_header = has_header_;
     options.allow_newlines_in_values = allow_newlines_in_values_;
@@ -806,7 +885,44 @@ cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
 }
 
 void DataConvertDialog::PreviewInput() {
-    preview_ = cyxwiz::DataConvertService::Preview(BuildOptions());
+    if (preview_loading_) return;
+
+    auto state = std::make_shared<PreviewLoadState>();
+    const auto options = BuildOptions();
+    preview_load_state_ = state;
+    preview_loading_ = true;
+    preview_ = {};
+    SetStatus("Preview queued in the background.", false);
+
+    preview_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
+        "Preview Data Convert source",
+        [state, options](cyxwiz::LambdaTask& task) {
+            task.ReportProgress(0.05f, "Reading source and inferring schema");
+            try {
+                state->result = cyxwiz::DataConvertService::Preview(options);
+            } catch (const std::exception& e) {
+                state->result.error =
+                    std::string("Data Convert preview failed: ") + e.what();
+            } catch (...) {
+                state->result.error =
+                    "Data Convert preview failed with an unknown error.";
+            }
+            task.ReportProgress(1.0f, "Preview ready");
+            state->done.store(true);
+        });
+    spdlog::info("DataConvertDialog: queued async preview task {} for '{}'",
+                 preview_task_id_, options.input_path);
+}
+
+void DataConvertDialog::PollPreviewResult() {
+    auto state = preview_load_state_;
+    if (!state || !state->done.load()) return;
+
+    preview_ = std::move(state->result);
+    preview_load_state_.reset();
+    preview_task_id_ = 0;
+    preview_loading_ = false;
+
     if (preview_.ok) {
         std::ostringstream msg;
         msg << "Preview loaded: " << preview_.rows << " rows, "
@@ -817,8 +933,20 @@ void DataConvertDialog::PreviewInput() {
         }
         SetStatus(msg.str(), false);
     } else {
-        SetStatus(preview_.error, true);
+        SetStatus(preview_.error.empty()
+                      ? "Data Convert preview failed."
+                      : preview_.error,
+                  true);
     }
+}
+
+void DataConvertDialog::CancelPreview() {
+    if (preview_task_id_ != 0) {
+        cyxwiz::AsyncTaskManager::Instance().Cancel(preview_task_id_);
+    }
+    preview_load_state_.reset();
+    preview_task_id_ = 0;
+    preview_loading_ = false;
 }
 
 void DataConvertDialog::RunConversion() {
@@ -1341,6 +1469,7 @@ void DataSplitDialog::Apply() {
     snprintf(buf, sizeof(buf), "%.0f/%.0f/%.0f",
              train_ratio_ * 100.0f, val_ratio_ * 100.0f, test_ratio_ * 100.0f);
     node_->description = buf;
+    resolution_attempted_ = false;
     has_changes_ = false;
 }
 
@@ -1358,12 +1487,60 @@ void DataSplitDialog::Reset() {
     ReadFloatParam(original_params_, "test_ratio", test_ratio_);
     ReadIntParam(original_params_, "seed", seed_);
     ReadBoolParam(original_params_, "stratified", stratified_);
+    resolution_attempted_ = false;
     has_changes_ = false;
+}
+
+void DataSplitDialog::RefreshResolvedManifest() {
+    resolution_attempted_ = true;
+    resolved_partitions_ = cyxwiz::ResolvedDatasetPartitions{};
+    resolution_status_.clear();
+    if (!node_editor_) {
+        resolution_status_ =
+            "Graph context is unavailable. Reopen this dialog from the node Properties panel.";
+        return;
+    }
+
+    cyxwiz::GraphCompiler compiler;
+    auto config = compiler.Compile(
+        node_editor_->GetNodes(), node_editor_->GetLinks(), true);
+    resolved_partitions_ = std::move(config.dataset_roles);
+    if (!resolved_partitions_.train.IsSupplied()) {
+        resolution_status_ =
+            "No Training Dataset is resolved on the active training path.";
+        return;
+    }
+    resolution_status_ = config.is_valid
+        ? "Resolved from the active graph topology."
+        : "Partition facts are shown, but the complete graph still has validation errors.";
 }
 
 void DataSplitDialog::RenderContent() {
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
+
+    const bool legacy_contract = node_ &&
+        node_->parameters.count("data_boundary_pin_contract") > 0 &&
+        node_->parameters.at("data_boundary_pin_contract") == "legacy.v1";
+    if (legacy_contract) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.72f, 0.25f, 1.0f));
+        ImGui::TextWrapped(
+            "Legacy Data Boundary v1 is preserved. Its two tensor inputs and six Train/Val/Test outputs remain connected exactly as saved.");
+        ImGui::PopStyleColor();
+        ImGui::TextWrapped(
+            "Explicit migration converts Data Input -> Data Split -> Data Loader to Dataset v2. Duplicate legacy label links are removed and direct label targets are rerouted from Data Loader.Labels. Migration is refused if Val/Test canvas branches or an ambiguous boundary would lose meaning.");
+        ImGui::BeginDisabled(node_editor_ == nullptr);
+        if (ImGui::Button("Migrate graph to Dataset v2")) {
+            const auto result = node_editor_->MigrateLegacyDataBoundary();
+            migration_status_ = result.message;
+            if (result.success) resolution_attempted_ = false;
+        }
+        ImGui::EndDisabled();
+        if (!migration_status_.empty()) {
+            ImGui::TextWrapped("%s", migration_status_.c_str());
+        }
+        ImGui::Separator();
+    }
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Split Ratios");
@@ -1411,6 +1588,66 @@ void DataSplitDialog::RenderContent() {
     ImGui::Spacing();
     if (ImGui::Checkbox("Stratified split", &stratified_)) has_changes_ = true;
     ImGui::TextDisabled("  Preserve class distribution across splits (classification only).");
+
+    ImGui::Spacing();
+    ImGui::TextColored(accent, "Resolved Partition Manifest");
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (!resolution_attempted_) RefreshResolvedManifest();
+    if (ImGui::Button("Refresh from graph")) RefreshResolvedManifest();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", resolution_status_.c_str());
+
+    if (resolved_partitions_.train.IsSupplied()) {
+        const auto& partitions = resolved_partitions_;
+        const auto& manifest = partitions.manifest;
+        const auto rows_text = [](int64_t rows) {
+            return rows >= 0 ? std::to_string(rows) : std::string("resolved at batching");
+        };
+        const auto short_id = [](const std::string& value) {
+            return value.empty() ? std::string("unavailable")
+                                 : value.substr(0, std::min<size_t>(12, value.size()));
+        };
+        ImGui::TextWrapped("Train: %s | external | %s rows",
+                           partitions.train.dataset_name.c_str(),
+                           rows_text(manifest.train_rows).c_str());
+        ImGui::TextWrapped("Dev: %s | %s | %s rows | schema %s",
+                           (partitions.dev.IsSupplied()
+                                ? partitions.dev.dataset_name
+                                : partitions.train.dataset_name).c_str(),
+                           cyxwiz::PartitionOriginName(manifest.dev_origin),
+                           rows_text(manifest.dev_rows).c_str(),
+                           cyxwiz::PartitionCompatibilityName(
+                               manifest.dev_compatibility));
+        ImGui::TextWrapped("Test: %s | %s | %s rows | schema %s",
+                           (partitions.test.IsSupplied()
+                                ? partitions.test.dataset_name
+                                : partitions.train.dataset_name).c_str(),
+                           cyxwiz::PartitionOriginName(manifest.test_origin),
+                           rows_text(manifest.test_rows).c_str(),
+                           cyxwiz::PartitionCompatibilityName(
+                               manifest.test_compatibility));
+        ImGui::TextDisabled("Dev resolution: %s",
+                            manifest.dev_resolution_reason.c_str());
+        ImGui::TextDisabled("Test resolution: %s",
+                            manifest.test_resolution_reason.c_str());
+        ImGui::TextWrapped(
+            "Policy: %s, seed %d, stratified %s | manifest %s",
+            cyxwiz::PartitionSplitMethodName(manifest.split_method),
+            manifest.seed,
+            manifest.stratified ? "yes" : "no",
+            short_id(manifest.manifest_fingerprint).c_str());
+        ImGui::TextWrapped(
+            "Source IDs: train %s | dev %s | test %s | feature schema %s",
+            short_id(manifest.training_source_fingerprint).c_str(),
+            short_id(manifest.validation_source_fingerprint).c_str(),
+            short_id(manifest.test_source_fingerprint).c_str(),
+            short_id(manifest.feature_schema_fingerprint).c_str());
+        ImGui::TextDisabled(
+            "Leakage: Dev %s, Test %s. External-role overlap checks run again at training preflight.",
+            cyxwiz::PartitionLeakageStatusName(manifest.dev_leakage),
+            cyxwiz::PartitionLeakageStatusName(manifest.test_leakage));
+    }
 
     ImGui::Spacing();
     ImGui::Separator();

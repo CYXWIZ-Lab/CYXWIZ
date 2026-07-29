@@ -2,6 +2,7 @@
 
 #include "node_config_dialog.h"
 #include "loaders/data_loader.h"
+#include "../core/data_registry.h"
 
 #include <chrono>
 #include <cstring>
@@ -18,6 +19,44 @@ namespace fs = std::filesystem;
 namespace gui {
 void DataInputDialog::Apply() {
     if (!node_) return;
+
+    // Apply also acts as confirmation. Reuse a valid registration when no
+    // setting changed instead of parsing the same source again.
+    if (!has_changes_ && !is_loading_async_) {
+        const auto existing = node_->parameters.find("dataset_name");
+        if (existing != node_->parameters.end() && !existing->second.empty()) {
+            auto* existing_loader =
+                cyxwiz::loaders::GetByRegisteredDataset(existing->second);
+            cyxwiz::loaders::RestoreState restored;
+            if (existing_loader &&
+                existing_loader->RestoreFromRegistry(
+                    existing->second, *node_, restored) && restored.found) {
+                loaded_dataset_name_ = existing->second;
+                loaded_rows_ = restored.rows;
+                loaded_cols_ = restored.cols;
+                loaded_memory_bytes_ = restored.bytes;
+                loaded_backend_ = restored.backend;
+                loaded_memory_is_estimate_ = restored.memory_is_estimate;
+                data_load_state_ = DataLoadState::InMemory;
+                node_->parameters["data_loaded"] = "true";
+                node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+                node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+                if (restored.backend == 1 || restored.backend == 2) {
+                    node_->parameters["memory_bytes"] =
+                        std::to_string(loaded_memory_bytes_);
+                }
+                apply_success_ = true;
+                apply_status_message_ = "Already loaded - reused " +
+                    existing->second;
+                apply_status_timer_ = 5.0f;
+                apply_in_progress_ = false;
+                spdlog::info(
+                    "DataInputDialog: unchanged Apply reused registered dataset '{}'",
+                    existing->second);
+                return;
+            }
+        }
+    }
 
     node_->parameters["source_type"] = data_input::SourceTypeParam(source_type_);
     node_->parameters["file_category"] = data_input::FileCategoryParam(file_category_);
@@ -54,23 +93,11 @@ void DataInputDialog::Apply() {
     node_->parameters["file_path"] = file_path_;
     node_->parameters["folder_path"] = folder_path_;
     node_->parameters["configured"] = "true";
-    const bool supports_dataset_roles =
-        source_type_ == SourceType::File &&
-        (file_category_ == FileCategory::Tabular ||
-         file_category_ == FileCategory::TimeSeries);
-    const int effective_dataset_role_idx =
-        supports_dataset_roles ? dataset_role_idx_ : 0;
-    switch (effective_dataset_role_idx) {
-        case 1:
-            node_->parameters["dataset_role"] = "dev";
-            break;
-        case 2:
-            node_->parameters["dataset_role"] = "test";
-            break;
-        default:
-            node_->parameters["dataset_role"] = "train";
-            break;
-    }
+    // Data Input owns physical loading only. Remove the former role hint so
+    // saved graphs cannot override the named Training/Validation/Test inputs
+    // on Data Split. The compiler still reports legacy values until a node is
+    // reapplied, but never uses them as runtime authority.
+    node_->parameters.erase("dataset_role");
     // Persist the Force disk-backed toggle so reopening the dialog (or
     // reopening the project) keeps the user's choice. Without this, the
     // checkbox silently resets to false and the next Apply falls back to
@@ -92,6 +119,7 @@ void DataInputDialog::Apply() {
         node_->parameters["type"] = data_input::FileTypeParam(detected_type_);
         node_->parameters["has_header"] = has_header_ ? "true" : "false";
         node_->parameters["delimiter"] = custom_delimiter_;
+        node_->parameters["decimal_point"] = std::string(1, decimal_point_);
         node_->parameters["missing_value_tokens"] = missing_value_tokens_;
         node_->parameters["skip_rows"] = std::to_string(skip_rows_);
         node_->parameters["max_rows"] = std::to_string(max_rows_);
@@ -444,6 +472,7 @@ void DataInputDialog::Apply() {
         ctx.detected_file_type = types[type_idx];
         ctx.has_header         = has_header_;
         ctx.delimiter          = custom_delimiter_[0];
+        ctx.decimal_point      = decimal_point_;
         ctx.missing_value_tokens = missing_value_tokens_;
         ctx.skip_rows          = skip_rows_;
         ctx.max_rows           = (max_rows_ > 0) ? static_cast<int64_t>(max_rows_) : 0;
@@ -678,6 +707,36 @@ void DataInputDialog::PollAsyncLoadResult() {
 
     if (!node_) return;
 
+    auto restore_previous_node_state = [&]() {
+        if (state->previous_dataset_name.empty()) return false;
+        auto* previous_loader = cyxwiz::loaders::GetByRegisteredDataset(
+            state->previous_dataset_name);
+        if (!previous_loader) return false;
+
+        cyxwiz::loaders::RestoreState restored;
+        if (!previous_loader->RestoreFromRegistry(
+                state->previous_dataset_name, *node_, restored) ||
+            !restored.found) {
+            return false;
+        }
+        loaded_dataset_name_ = state->previous_dataset_name;
+        loaded_rows_ = restored.rows;
+        loaded_cols_ = restored.cols;
+        loaded_memory_bytes_ = restored.bytes;
+        loaded_backend_ = restored.backend;
+        loaded_memory_is_estimate_ = restored.memory_is_estimate;
+        data_load_state_ = DataLoadState::InMemory;
+        node_->parameters["dataset_name"] = loaded_dataset_name_;
+        node_->parameters["data_loaded"] = "true";
+        node_->parameters["loaded_rows"] = std::to_string(loaded_rows_);
+        node_->parameters["loaded_cols"] = std::to_string(loaded_cols_);
+        if (restored.backend == 1 || restored.backend == 2) {
+            node_->parameters["memory_bytes"] =
+                std::to_string(loaded_memory_bytes_);
+        }
+        return true;
+    };
+
     if (state->success) {
         loaded_rows_ = state->rows;
         loaded_cols_ = state->cols;
@@ -730,16 +789,42 @@ void DataInputDialog::PollAsyncLoadResult() {
                 if (loader) {
                     loader->Unregister(state->dataset_name);
                 }
-                node_->parameters["data_loaded"] = "false";
-                data_load_state_ = DataLoadState::NotLoaded;
+                if (state->previous_dataset_name == state->dataset_name &&
+                    (state->previous_arrow_dataset ||
+                     state->previous_parquet_dataset)) {
+                    cyxwiz::DataRegistry::Instance().RestoreTabularDataset(
+                        state->previous_dataset_name,
+                        state->previous_arrow_dataset,
+                        state->previous_parquet_dataset,
+                        state->previous_source_path);
+                }
+                const bool restored_previous = restore_previous_node_state();
+                if (!restored_previous) {
+                    node_->parameters["data_loaded"] = "false";
+                    data_load_state_ = DataLoadState::NotLoaded;
+                }
                 apply_success_ = false;
                 apply_status_message_ =
                     "Apply refused by dataset audit. " + state->audit_message;
+                if (restored_previous) {
+                    apply_status_message_ +=
+                        " Previous loaded dataset remains active.";
+                }
             }
         } else {
             node_->parameters.erase("audit_errors");
             node_->parameters.erase("audit_warnings");
             audit_issue_lines_.clear();
+        }
+
+        // A renamed replacement owns the node only after it has loaded and
+        // passed audit. Until now the previous registration is the rollback.
+        if (apply_success_ && !state->previous_dataset_name.empty() &&
+            state->previous_dataset_name != state->dataset_name) {
+            if (auto* previous_loader = cyxwiz::loaders::GetByRegisteredDataset(
+                    state->previous_dataset_name)) {
+                previous_loader->Unregister(state->previous_dataset_name);
+            }
         }
 
         spdlog::info("DataInputDialog: async load complete - {}", apply_status_message_);
@@ -750,6 +835,13 @@ void DataInputDialog::PollAsyncLoadResult() {
         apply_status_message_ = state->message.empty()
             ? std::string("Failed to load data")
             : state->message;
+
+        // Failed replacements leave the prior registration intact. Restore
+        // the node's runtime state so it remains usable.
+        if (restore_previous_node_state()) {
+            apply_status_message_ +=
+                " Previous loaded dataset remains active.";
+        }
         spdlog::error("DataInputDialog: async load failed - {}", apply_status_message_);
     }
 

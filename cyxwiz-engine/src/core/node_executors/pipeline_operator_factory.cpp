@@ -163,6 +163,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::SeasonalityDetector, []() {
         return std::make_unique<SeasonalityDetectorOperator>();
     });
+    RegisterCreator(gui::NodeType::SeasonalNaive, []() {
+        return std::make_unique<SeasonalNaiveOperator>();
+    });
     RegisterCreator(gui::NodeType::ARIMAForecaster, []() {
         return std::make_unique<ARIMAOperator>();
     });

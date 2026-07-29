@@ -22,7 +22,7 @@ namespace gui {
 static NodeType StringToNodeType(const std::string& type_str) {
     static const std::unordered_map<std::string, NodeType> type_map = {
         // Data pipeline - Smart I/O nodes
-        {"DataInput", NodeType::DataInput},           // Smart universal data input (2 outputs: Features, Labels)
+        {"DataInput", NodeType::DataInput},           // Universal source with one Dataset output
         {"DataOutput", NodeType::DataOutput},         // Smart universal data output
         {"DeployToNodeEditorNode", NodeType::DeployToNodeEditorNode},
         // Legacy data input nodes
@@ -232,6 +232,7 @@ static NodeType StringToNodeType(const std::string& type_str) {
         {"PACFNode", NodeType::PACFNode},
         {"StationarityTest", NodeType::StationarityTest},
         {"SeasonalityDetector", NodeType::SeasonalityDetector},
+        {"SeasonalNaive", NodeType::SeasonalNaive},
         {"ARIMAForecaster", NodeType::ARIMAForecaster},
         {"ExponentialSmoothing", NodeType::ExponentialSmoothing},
 
@@ -543,6 +544,323 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
 
 // ========== Graph Save/Load Implementation ==========
 
+void NodeEditor::RebuildDataBoundaryPins(
+    MLNode& node,
+    bool legacy_contract) {
+    if (node.type != NodeType::DataInput &&
+        node.type != NodeType::DataSplit &&
+        node.type != NodeType::DataLoader) {
+        return;
+    }
+
+    node.inputs.clear();
+    node.outputs.clear();
+    const auto add_pin = [&](std::vector<NodePin>& pins,
+                             PinType type,
+                             const char* name,
+                             bool is_input,
+                             bool required,
+                             const char* description) {
+        NodePin pin;
+        pin.id = next_pin_id_++;
+        pin.type = type;
+        pin.name = name;
+        pin.is_input = is_input;
+        pin.is_required = required;
+        pin.description = description;
+        pins.push_back(std::move(pin));
+    };
+
+    if (legacy_contract) {
+        node.parameters["data_boundary_pin_contract"] = "legacy.v1";
+        node.parameters["data_boundary_migration_required"] = "true";
+        if (node.type == NodeType::DataInput) {
+            add_pin(node.outputs, PinType::Tensor, "Data", false, true,
+                    "Preserved legacy feature output. Migrate the graph data boundary to use Dataset pins.");
+            add_pin(node.outputs, PinType::Labels, "Labels", false, false,
+                    "Preserved legacy label output. Migrate explicitly before saving as the Dataset contract.");
+        } else if (node.type == NodeType::DataSplit) {
+            add_pin(node.inputs, PinType::Tensor, "Data", true, true,
+                    "Preserved legacy feature input.");
+            add_pin(node.inputs, PinType::Labels, "Labels", true, true,
+                    "Preserved legacy label input.");
+            add_pin(node.outputs, PinType::Tensor, "Train Data", false, true,
+                    "Preserved legacy training feature output.");
+            add_pin(node.outputs, PinType::Labels, "Train Labels", false, false,
+                    "Preserved legacy training label output.");
+            add_pin(node.outputs, PinType::Tensor, "Val Data", false, false,
+                    "Preserved legacy validation feature output.");
+            add_pin(node.outputs, PinType::Labels, "Val Labels", false, false,
+                    "Preserved legacy validation label output.");
+            add_pin(node.outputs, PinType::Tensor, "Test Data", false, false,
+                    "Preserved legacy held-out feature output.");
+            add_pin(node.outputs, PinType::Labels, "Test Labels", false, false,
+                    "Preserved legacy held-out label output.");
+        } else {
+            add_pin(node.inputs, PinType::Tensor, "Data", true, true,
+                    "Preserved legacy unbatched feature input.");
+            add_pin(node.inputs, PinType::Labels, "Labels", true, true,
+                    "Preserved legacy unbatched label input.");
+            add_pin(node.outputs, PinType::Tensor, "Data", false, true,
+                    "Batched feature tensor.");
+            add_pin(node.outputs, PinType::Labels, "Labels", false, false,
+                    "Batched labels for the loss target.");
+        }
+        return;
+    }
+
+    node.parameters["data_boundary_pin_contract"] = "dataset.v2";
+    node.parameters.erase("data_boundary_migration_required");
+    if (node.type == NodeType::DataInput) {
+        add_pin(node.outputs, PinType::Dataset, "Dataset", false, true,
+                "Loaded Dataset asset. Connect it to a named Data Split role input.");
+    } else if (node.type == NodeType::DataSplit) {
+        add_pin(node.inputs, PinType::Dataset, "Training Dataset", true, true,
+                "Required Training source. Missing roles are derived only from this Dataset.");
+        add_pin(node.inputs, PinType::Dataset, "Validation Dataset", true, false,
+                "Optional external Validation/Dev Dataset preserved in full.");
+        add_pin(node.inputs, PinType::Dataset, "Test Dataset", true, false,
+                "Optional external held-out Test Dataset preserved in full.");
+        add_pin(node.outputs, PinType::Dataset, "Partitions", false, true,
+                "Resolved Train/Validation/Test partitions and manifest.");
+    } else {
+        add_pin(node.inputs, PinType::Dataset, "Partitions", true, true,
+                "Resolved partition contract from Data Split.");
+        add_pin(node.outputs, PinType::Tensor, "Data", false, true,
+                "Batched feature tensor for the model.");
+        add_pin(node.outputs, PinType::Labels, "Labels", false, false,
+                "Batched labels for supervised loss targets.");
+    }
+}
+
+bool NodeEditor::HasLegacyDataBoundary() const {
+    for (const auto& node : nodes_) {
+        auto it = node.parameters.find("data_boundary_pin_contract");
+        if (it != node.parameters.end() && it->second == "legacy.v1") {
+            return true;
+        }
+    }
+    return false;
+}
+
+DataBoundaryMigrationResult NodeEditor::MigrateLegacyDataBoundary() {
+    DataBoundaryMigrationResult result;
+    if (!HasLegacyDataBoundary()) {
+        result.message = "The graph already uses the Dataset v2 boundary.";
+        return result;
+    }
+
+    const auto pin_index = [](const std::vector<NodePin>& pins, int pin_id) {
+        for (size_t i = 0; i < pins.size(); ++i) {
+            if (pins[i].id == pin_id) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    const auto is_legacy = [](const MLNode* node) {
+        if (!node) return false;
+        auto it = node->parameters.find("data_boundary_pin_contract");
+        return it != node->parameters.end() && it->second == "legacy.v1";
+    };
+
+    std::unordered_map<int, int> split_to_loader;
+    for (const auto& link : links_) {
+        const auto* from = FindNodeById(link.from_node);
+        const auto* to = FindNodeById(link.to_node);
+        if (!from || !to || from->type != NodeType::DataSplit ||
+            to->type != NodeType::DataLoader || !is_legacy(from) ||
+            !is_legacy(to)) {
+            continue;
+        }
+        if (pin_index(from->outputs, link.from_pin) == 0 &&
+            pin_index(to->inputs, link.to_pin) == 0) {
+            if (split_to_loader.count(from->id) > 0 &&
+                split_to_loader[from->id] != to->id) {
+                result.message = "Migration is blocked: legacy Data Split '" +
+                    from->name + "' feeds more than one Data Loader.";
+                return result;
+            }
+            split_to_loader[from->id] = to->id;
+        }
+    }
+
+    std::unordered_map<int, int> input_to_loader;
+    for (const auto& link : links_) {
+        const auto* from = FindNodeById(link.from_node);
+        const auto* to = FindNodeById(link.to_node);
+        if (!from || !to || from->type != NodeType::DataInput ||
+            to->type != NodeType::DataSplit || !is_legacy(from) ||
+            !is_legacy(to)) {
+            continue;
+        }
+        if (pin_index(from->outputs, link.from_pin) == 0 &&
+            pin_index(to->inputs, link.to_pin) == 0 &&
+            split_to_loader.count(to->id) > 0) {
+            input_to_loader[from->id] = split_to_loader[to->id];
+        }
+    }
+
+    enum class LinkAction { Keep, RemoveDuplicate, RerouteToLoaderLabels };
+    struct PlannedLink {
+        NodeLink link;
+        int from_index = -1;
+        int to_index = -1;
+        LinkAction action = LinkAction::Keep;
+        int reroute_loader_id = -1;
+    };
+    std::vector<PlannedLink> plan;
+    plan.reserve(links_.size());
+
+    for (const auto& link : links_) {
+        const auto* from = FindNodeById(link.from_node);
+        const auto* to = FindNodeById(link.to_node);
+        if (!from || !to) {
+            result.message = "Migration is blocked: a graph link references a missing node.";
+            return result;
+        }
+        PlannedLink item;
+        item.link = link;
+        item.from_index = pin_index(from->outputs, link.from_pin);
+        item.to_index = pin_index(to->inputs, link.to_pin);
+        if (item.from_index < 0 || item.to_index < 0) {
+            result.message = "Migration is blocked: link " +
+                std::to_string(link.id) + " references an unknown pin.";
+            return result;
+        }
+
+        if (is_legacy(from) && from->type == NodeType::DataInput &&
+            item.from_index == 0 &&
+            !(is_legacy(to) && to->type == NodeType::DataSplit &&
+              item.to_index == 0)) {
+            result.message = "Migration is blocked: legacy Data Input features from '" +
+                from->name + "' bypass Data Split. Insert/preserve an explicit Split + Loader boundary before migration.";
+            return result;
+        }
+        if (is_legacy(from) && from->type == NodeType::DataSplit &&
+            item.from_index == 0 &&
+            !(is_legacy(to) && to->type == NodeType::DataLoader &&
+              item.to_index == 0)) {
+            result.message = "Migration is blocked: legacy Training Data from Data Split '" +
+                from->name + "' bypasses the Data Loader.";
+            return result;
+        }
+        if (is_legacy(to) && to->type == NodeType::DataSplit &&
+            item.to_index == 0 &&
+            !(is_legacy(from) && from->type == NodeType::DataInput &&
+              item.from_index == 0)) {
+            result.message = "Migration is blocked: legacy Data Split '" +
+                to->name + "' has a non-standard Data source.";
+            return result;
+        }
+        if (is_legacy(to) && to->type == NodeType::DataLoader &&
+            item.to_index == 0 &&
+            !(is_legacy(from) && from->type == NodeType::DataSplit &&
+              item.from_index == 0)) {
+            result.message = "Migration is blocked: legacy Data Loader '" +
+                to->name + "' does not receive Training Data from a legacy Data Split.";
+            return result;
+        }
+
+        if (is_legacy(from) && from->type == NodeType::DataSplit &&
+            item.from_index >= 2) {
+            result.message = "Migration is blocked: legacy Data Split '" +
+                from->name + "' has a connected Val/Test canvas branch. "
+                "Disconnect or preserve that graph until the branch is redesigned around runtime partitions.";
+            return result;
+        }
+
+        if (is_legacy(from) && from->type == NodeType::DataInput &&
+            item.from_index == 1) {
+            if (is_legacy(to) && to->type == NodeType::DataSplit &&
+                item.to_index == 1) {
+                item.action = LinkAction::RemoveDuplicate;
+            } else if (input_to_loader.count(from->id) > 0) {
+                item.action = LinkAction::RerouteToLoaderLabels;
+                item.reroute_loader_id = input_to_loader[from->id];
+            } else {
+                result.message = "Migration is blocked: legacy label output from Data Input '" +
+                    from->name + "' cannot be mapped to a unique Data Loader Labels output.";
+                return result;
+            }
+        }
+
+        if (is_legacy(from) && from->type == NodeType::DataSplit &&
+            item.from_index == 1) {
+            auto loader_it = split_to_loader.find(from->id);
+            if (loader_it == split_to_loader.end()) {
+                result.message = "Migration is blocked: legacy Data Split '" +
+                    from->name + "' has no unique downstream Data Loader.";
+                return result;
+            }
+            if (is_legacy(to) && to->type == NodeType::DataLoader &&
+                to->id == loader_it->second && item.to_index == 1) {
+                item.action = LinkAction::RemoveDuplicate;
+            } else {
+                item.action = LinkAction::RerouteToLoaderLabels;
+                item.reroute_loader_id = loader_it->second;
+            }
+        }
+
+        if (is_legacy(to) && to->type == NodeType::DataSplit &&
+            item.to_index == 1 && item.action != LinkAction::RemoveDuplicate) {
+            result.message = "Migration is blocked: legacy Data Split Labels input has a non-standard source.";
+            return result;
+        }
+        if (is_legacy(to) && to->type == NodeType::DataLoader &&
+            item.to_index == 1 && item.action != LinkAction::RemoveDuplicate) {
+            result.message = "Migration is blocked: legacy Data Loader Labels input has a non-standard source.";
+            return result;
+        }
+        plan.push_back(std::move(item));
+    }
+
+    SaveUndoState();
+    for (auto& node : nodes_) {
+        if (is_legacy(&node)) {
+            RebuildDataBoundaryPins(node, false);
+            ++result.nodes_migrated;
+        }
+    }
+
+    std::vector<NodeLink> migrated_links;
+    migrated_links.reserve(plan.size());
+    for (auto& item : plan) {
+        if (item.action == LinkAction::RemoveDuplicate) {
+            ++result.links_removed;
+            continue;
+        }
+        auto* from = FindNodeById(item.link.from_node);
+        auto* to = FindNodeById(item.link.to_node);
+        if (item.action == LinkAction::RerouteToLoaderLabels) {
+            from = FindNodeById(item.reroute_loader_id);
+            item.link.from_node = item.reroute_loader_id;
+            item.from_index = 1;
+            ++result.links_rerouted;
+        }
+        if (!from || !to || item.from_index < 0 || item.to_index < 0 ||
+            item.from_index >= static_cast<int>(from->outputs.size()) ||
+            item.to_index >= static_cast<int>(to->inputs.size())) {
+            result.message = "Migration failed while applying the validated link plan.";
+            Undo();
+            return result;
+        }
+        item.link.from_pin = from->outputs[item.from_index].id;
+        item.link.to_pin = to->inputs[item.to_index].id;
+        migrated_links.push_back(item.link);
+    }
+    links_ = std::move(migrated_links);
+    RebuildPinLookup();
+    ClearValidationState();
+
+    result.success = true;
+    result.message = "Migrated " + std::to_string(result.nodes_migrated) +
+        " data-boundary nodes; removed " +
+        std::to_string(result.links_removed) +
+        " duplicate legacy label links and rerouted " +
+        std::to_string(result.links_rerouted) + " label targets.";
+    spdlog::info("Track70 data-boundary migration: {}", result.message);
+    return result;
+}
+
 bool NodeEditor::SaveGraph(const std::string& filepath) {
     using json = nlohmann::json;
 
@@ -550,6 +868,9 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
         json j;
         // CyxWiz Studio: Update to v2.1 format with annotations
         j["version"] = "2.1";
+        j["data_boundary_version"] = HasLegacyDataBoundary()
+            ? detail::kLegacyDataBoundaryVersion
+            : detail::kCurrentDataBoundaryVersion;
         j["framework"] = static_cast<int>(selected_framework_);
         j["execution_mode"] = static_cast<int>(execution_mode_);  // Save execution mode
 
@@ -754,6 +1075,13 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
         // Clear existing graph
         ClearGraph();
 
+        const bool preserve_legacy_data_boundary =
+            detail::PreserveLegacyDataBoundaryPins(j);
+        if (preserve_legacy_data_boundary) {
+            spdlog::warn(
+                "Loading an unversioned/legacy data boundary without changing its pins or links. Use the Data Split migration action to adopt Dataset v2 explicitly.");
+        }
+
         // Unified Canvas Phase 7: Check version and load execution_mode
         std::string version = "1.0";
         if (j.contains("version")) {
@@ -862,6 +1190,11 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             MLNode template_node = CreateNode(node.type, node.name);
             node.inputs = template_node.inputs;
             node.outputs = template_node.outputs;
+            if (node.type == NodeType::DataInput ||
+                node.type == NodeType::DataSplit ||
+                node.type == NodeType::DataLoader) {
+                RebuildDataBoundaryPins(node, preserve_legacy_data_boundary);
+            }
 
             // Update max IDs
             max_node_id = std::max(max_node_id, node.id);
@@ -931,6 +1264,9 @@ std::string NodeEditor::GetGraphJson() const {
     try {
         json j;
         j["version"] = "1.0";
+        j["data_boundary_version"] = HasLegacyDataBoundary()
+            ? detail::kLegacyDataBoundaryVersion
+            : detail::kCurrentDataBoundaryVersion;
         j["framework"] = static_cast<int>(selected_framework_);
 
         // Serialize nodes
@@ -1019,6 +1355,13 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
         // Clear existing graph
         ClearGraph();
 
+        const bool preserve_legacy_data_boundary =
+            detail::PreserveLegacyDataBoundaryPins(j);
+        if (preserve_legacy_data_boundary) {
+            spdlog::warn(
+                "Loading JSON with an unversioned/legacy data boundary without changing its pins or links. Explicit migration is required for Dataset v2.");
+        }
+
         // Update next IDs to avoid conflicts
         int max_node_id = 0;
         int max_link_id = 0;
@@ -1054,6 +1397,11 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
             MLNode template_node = CreateNode(node.type, node.name);
             node.inputs = template_node.inputs;
             node.outputs = template_node.outputs;
+            if (node.type == NodeType::DataInput ||
+                node.type == NodeType::DataSplit ||
+                node.type == NodeType::DataLoader) {
+                RebuildDataBoundaryPins(node, preserve_legacy_data_boundary);
+            }
 
             // Update max IDs
             max_node_id = std::max(max_node_id, node.id);
