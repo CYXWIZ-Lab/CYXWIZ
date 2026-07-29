@@ -172,6 +172,7 @@ private:
     // Rendering functions
     void RenderTabBar();
     void RenderMenuBar();
+    void RenderEditorToolbar();
     void RenderEditor();
     void RenderMinimap();
     void RenderStatusBar();
@@ -208,6 +209,10 @@ private:
     std::vector<Section> ParseSections(const std::string& text);
     Section GetCurrentSection();
     std::string DedentCode(const std::string& code);  // Remove common leading whitespace
+    void SyncActiveCellEditor(EditorTab& tab);
+    std::string GetTabContentForPersistence(EditorTab& tab);
+    std::string GetTabExecutableText(EditorTab& tab);
+    bool IsTabContentBlank(EditorTab& tab) const;
 
     // Python language definition for syntax highlighting
     static TextEditor::LanguageDefinition CreatePythonLanguage();

@@ -512,6 +512,82 @@ void ScriptEditorPanel::RenderTabBar() {
     }
 }
 
+void ScriptEditorPanel::RenderEditorToolbar() {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return;
+    }
+
+    auto& tab = tabs_[active_tab_index_];
+    const bool has_active_tab = !tab->is_loading;
+    const bool not_running = !script_running_ && !(scripting_engine_ && scripting_engine_->IsScriptRunning());
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.13f, 0.15f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 5));
+    ImGui::BeginChild("##script_editor_toolbar", ImVec2(0, 38), false, ImGuiWindowFlags_NoScrollbar);
+
+    ImGui::BeginDisabled(!has_active_tab);
+    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
+        SaveFile();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Save current script (Ctrl+S)");
+    }
+    ImGui::SameLine();
+
+    ImGui::BeginDisabled(!not_running);
+    if (ImGui::Button(ICON_FA_PLAY " Run")) {
+        RunScript();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Run script (F5)");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_CODE " Section")) {
+        RunCurrentSection();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Run current %% section (Ctrl+Enter)");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_PENCIL " Selection")) {
+        RunSelection();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Run selected code (F9)");
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(not_running || !scripting_engine_);
+    if (ImGui::Button(ICON_FA_STOP " Stop")) {
+        scripting_engine_->StopScript();
+        spdlog::info("Stop script requested from editor toolbar");
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Stop running script (Shift+F5)");
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    const bool was_cell_mode = tab->cell_mode;
+    if (ImGui::Button(was_cell_mode ? ICON_FA_FILE_LINES " Notebook: On" : ICON_FA_FILE_CODE " Notebook: Off")) {
+        ToggleCellMode();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Toggle notebook/cell mode (Ctrl+Shift+N)");
+    }
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", tab->filepath.empty() ? tab->filename.c_str() : tab->filepath.c_str());
+    ImGui::EndDisabled();
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
 void ScriptEditorPanel::RenderEditor() {
     auto& tab = tabs_[active_tab_index_];
 
@@ -817,13 +893,21 @@ void ScriptEditorPanel::RenderStatusBar() {
             return;
         }
 
-        auto cursor_pos = tab->editor.GetCursorPosition();
-
-        ImGui::Text("Line: %d | Column: %d | %s | %d lines",
-            cursor_pos.mLine + 1,
-            cursor_pos.mColumn + 1,
-            tab->is_modified ? "Modified" : "Saved",
-            tab->editor.GetTotalLines());
+        if (tab->cell_mode) {
+            const int cell_count = static_cast<int>(tab->cell_manager.GetCellCount());
+            const int selected_cell = tab->selected_cell >= 0 ? tab->selected_cell + 1 : 0;
+            ImGui::Text("Notebook | Cell: %d/%d | %s",
+                selected_cell,
+                cell_count,
+                tab->is_modified ? "Modified" : "Saved");
+        } else {
+            auto cursor_pos = tab->editor.GetCursorPosition();
+            ImGui::Text("Line: %d | Column: %d | %s | %d lines",
+                cursor_pos.mLine + 1,
+                cursor_pos.mColumn + 1,
+                tab->is_modified ? "Modified" : "Saved",
+                tab->editor.GetTotalLines());
+        }
 
         // Script running indicator
         if (script_running_) {

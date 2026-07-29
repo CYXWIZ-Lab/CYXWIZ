@@ -43,23 +43,9 @@ void ScriptEditorPanel::DoRunScript() {
 
     spdlog::info("Running script asynchronously: {}", tab->filename);
 
-    // Get script text - prefer file if it exists
-    std::string script_text;
-    if (!tab->filepath.empty() && std::filesystem::exists(tab->filepath)) {
-        // Read file content
-        std::ifstream file(tab->filepath);
-        if (file.is_open()) {
-            std::stringstream buffer;
-            buffer << file.rdbuf();
-            script_text = buffer.str();
-            file.close();
-        }
-    }
-
-    if (script_text.empty()) {
-        // Use text from editor
-        script_text = tab->editor.GetText();
-    }
+    // Use the active UI model as the source of truth. In notebook mode the
+    // visible cells, not the hidden plain-text editor, own the current content.
+    std::string script_text = GetTabExecutableText(*tab);
 
     // Strip out %% section markers before executing (always, regardless of source)
     std::string script;
@@ -92,6 +78,65 @@ void ScriptEditorPanel::DoRunScript() {
     running_indicator_time_ = 0.0f;
 }
 
+void ScriptEditorPanel::SyncActiveCellEditor(EditorTab& tab) {
+    if (!tab.cell_mode) {
+        return;
+    }
+
+    if (tab.editing_cell >= 0 && tab.editing_cell < static_cast<int>(tab.cell_manager.GetCellCount())) {
+        tab.cell_manager.GetCell(tab.editing_cell).SyncSourceFromEditor();
+    }
+}
+
+std::string ScriptEditorPanel::GetTabContentForPersistence(EditorTab& tab) {
+    if (!tab.cell_mode) {
+        return tab.editor.GetText();
+    }
+
+    SyncActiveCellEditor(tab);
+    return tab.cell_manager.SerializeToCyx();
+}
+
+std::string ScriptEditorPanel::GetTabExecutableText(EditorTab& tab) {
+    if (!tab.cell_mode) {
+        return tab.editor.GetText();
+    }
+
+    SyncActiveCellEditor(tab);
+
+    std::string script;
+    for (const auto& cell : tab.cell_manager.GetCells()) {
+        if (cell.type != CellType::Code) {
+            continue;
+        }
+
+        if (cell.source.find_first_not_of(" \t\r\n") == std::string::npos) {
+            continue;
+        }
+
+        script += cell.source;
+        if (!script.empty() && script.back() != '\n') {
+            script += '\n';
+        }
+        script += '\n';
+    }
+
+    return script;
+}
+
+bool ScriptEditorPanel::IsTabContentBlank(EditorTab& tab) const {
+    if (!tab.cell_mode) {
+        const std::string text = tab.editor.GetText();
+        return text.find_first_not_of(" \t\r\n") == std::string::npos;
+    }
+
+    for (const auto& cell : tab.cell_manager.GetCells()) {
+        if (cell.source.find_first_not_of(" \t\r\n") != std::string::npos) {
+            return false;
+        }
+    }
+    return true;
+}
 std::string ScriptEditorPanel::DedentCode(const std::string& code) {
     std::vector<std::string> lines;
     std::istringstream stream(code);

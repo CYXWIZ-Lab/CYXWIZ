@@ -212,6 +212,22 @@ void ScriptEditorPanel::FinalizeAsyncLoad(int tab_index) {
     tab->editor.SetReadOnly(false);
     tab->editor.SetText(tab->pending_content);
 
+    const std::filesystem::path loaded_path(tab->filepath);
+    if (loaded_path.extension() == ".cyx" && CellManager::HasCellMarkers(tab->pending_content)) {
+        tab->cell_mode = true;
+        tab->cell_manager.SetScriptingEngine(scripting_engine_);
+        tab->cell_manager.ParseFromCyx(tab->pending_content);
+        tab->selected_cell = tab->cell_manager.GetCellCount() > 0 ? 0 : -1;
+        tab->editing_cell = -1;
+        tab->last_editing_cell = -1;
+        spdlog::info("Opened .cyx notebook in cell mode: {}", tab->filename);
+    } else {
+        tab->cell_mode = false;
+        tab->selected_cell = -1;
+        tab->editing_cell = -1;
+        tab->last_editing_cell = -1;
+    }
+
     // Clear loading state
     tab->is_loading = false;
     tab->load_progress = 1.0f;
@@ -285,7 +301,7 @@ void ScriptEditorPanel::SaveFile() {
     }
 
     // Save to existing path
-    std::string content = tab->editor.GetText();
+    std::string content = GetTabContentForPersistence(*tab);
     if (SaveFileContent(tab->filepath, content)) {
         tab->is_modified = false;
         spdlog::info("Saved file: {}", tab->filepath);
@@ -300,10 +316,8 @@ void ScriptEditorPanel::SaveFileAs() {
     auto& tab = tabs_[active_tab_index_];
 
     // Check if script is empty before showing save dialog
-    std::string content = tab->editor.GetText();
-    // Trim whitespace to check if truly empty
-    bool is_empty = content.empty() ||
-                    content.find_first_not_of(" \t\n\r") == std::string::npos;
+    std::string content = GetTabContentForPersistence(*tab);
+    bool is_empty = IsTabContentBlank(*tab);
     if (is_empty) {
         show_empty_script_warning_ = true;
         spdlog::warn("Cannot save empty script - no content present");

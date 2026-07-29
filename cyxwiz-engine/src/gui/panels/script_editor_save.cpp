@@ -14,12 +14,7 @@ namespace cyxwiz {
 bool ScriptEditorPanel::HasUnsavedFiles() const {
     for (const auto& tab : tabs_) {
         if (tab->is_modified || tab->is_new) {
-            // Check if tab has any content (not just an empty new file)
-            std::string text = tab->editor.GetText();
-            // Trim whitespace
-            size_t start = text.find_first_not_of(" \t\n\r");
-            if (start != std::string::npos) {
-                // Has content that is unsaved
+            if (!IsTabContentBlank(*tab)) {
                 return true;
             }
         }
@@ -31,10 +26,7 @@ std::vector<std::string> ScriptEditorPanel::GetUnsavedFileNames() const {
     std::vector<std::string> names;
     for (const auto& tab : tabs_) {
         if (tab->is_modified || tab->is_new) {
-            // Check if tab has any content
-            std::string text = tab->editor.GetText();
-            size_t start = text.find_first_not_of(" \t\n\r");
-            if (start != std::string::npos) {
+            if (!IsTabContentBlank(*tab)) {
                 names.push_back(tab->filename);
             }
         }
@@ -48,11 +40,7 @@ void ScriptEditorPanel::SaveAllFiles() {
     for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
         auto& tab = tabs_[i];
         if (tab->is_modified || tab->is_new) {
-            // Check if tab has content
-            std::string text = tab->editor.GetText();
-            size_t start = text.find_first_not_of(" \t\n\r");
-            if (start != std::string::npos) {
-                // Has content, save it
+            if (!IsTabContentBlank(*tab)) {
                 active_tab_index_ = i;
                 SaveFile();
             }

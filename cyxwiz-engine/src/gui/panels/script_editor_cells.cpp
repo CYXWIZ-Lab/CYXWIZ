@@ -63,7 +63,8 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     // Jupyter-style toolbar at top with subtle background
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.16f, 0.18f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
-    ImGui::BeginChild("##cell_toolbar", ImVec2(available_width, 36), false);
+    const float toolbar_height = 68.0f;
+    ImGui::BeginChild("##cell_toolbar", ImVec2(available_width, toolbar_height), false);
     {
         // Style toolbar buttons
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
@@ -114,6 +115,33 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
+        ImGui::BeginDisabled(!can_run || tab->selected_cell < 0);
+        if (ImGui::Button("Run Above")) {
+            tab->cell_manager.RunCellsAbove(tab->selected_cell);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Run cells from top through the selected cell");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Run Below")) {
+            tab->cell_manager.RunCellsBelow(tab->selected_cell);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Run selected cell and all cells below it");
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!scripting_engine_ || !scripting_engine_->IsScriptRunning());
+        if (ImGui::Button(ICON_FA_STOP " Stop")) {
+            tab->cell_manager.InterruptExecution();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Interrupt running notebook execution");
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
         ImGui::SameLine(0, 15);
         ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "|");
         ImGui::SameLine(0, 15);
@@ -127,6 +155,11 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         float right_text_width = ImGui::CalcTextSize("Cells: 999").x + 20;
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - right_text_width);
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Cells: %d", tab->cell_manager.GetCellCount());
+
+        ImGui::Separator();
+        const char* notebook_mode = tab->editing_cell >= 0 ? "Edit mode" : "Command mode";
+        ImGui::TextDisabled("%s | Enter edit | Esc command | Shift+Enter run cell | A/B add | M/Y type | D,D delete",
+            notebook_mode);
 
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(2);
@@ -143,7 +176,7 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     // Jupyter-style cells container with scroll and subtle background
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.11f, 0.13f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 15));
-    ImGui::BeginChild("##cells_container", ImVec2(available_width, available_height - 40), false,
+    ImGui::BeginChild("##cells_container", ImVec2(available_width, available_height - toolbar_height - 4.0f), false,
                       ImGuiWindowFlags_AlwaysVerticalScrollbar);
     {
         // Restore scroll position
@@ -478,13 +511,40 @@ void ScriptEditorPanel::RenderCellToolbar(int index) {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.35f, 0.5f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
 
-    // Cell type badge
+    // Cell type selector
     const char* type_label = (cell.type == CellType::Code) ? "Code" :
                              (cell.type == CellType::Markdown) ? "Markdown" : "Raw";
-    ImVec4 badge_color = (cell.type == CellType::Code) ? ImVec4(0.3f, 0.4f, 0.6f, 1.0f) :
-                         (cell.type == CellType::Markdown) ? ImVec4(0.4f, 0.5f, 0.3f, 1.0f) :
-                         ImVec4(0.5f, 0.4f, 0.3f, 1.0f);
-    ImGui::TextColored(badge_color, "%s", type_label);
+    ImGui::SetNextItemWidth(110.0f);
+    if (ImGui::BeginCombo("##cell_type", type_label)) {
+        struct TypeOption { const char* label; CellType type; };
+        const TypeOption options[] = {
+            {"Code", CellType::Code},
+            {"Markdown", CellType::Markdown},
+            {"Raw", CellType::Raw},
+        };
+        for (const auto& option : options) {
+            const bool selected = cell.type == option.type;
+            if (ImGui::Selectable(option.label, selected)) {
+                if (is_editing) {
+                    cell.SyncSourceFromEditor();
+                }
+                if (tab->cell_manager.ChangeCellType(index, option.type)) {
+                    tab->is_modified = true;
+                    if (is_editing) {
+                        tab->editing_cell = -1;
+                        tab->last_editing_cell = -1;
+                    }
+                }
+            }
+            if (selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Change cell type (M markdown, Y code)");
+    }
     ImGui::SameLine(0, 15);
 
     // Run button (for code cells) with play icon
@@ -504,7 +564,7 @@ void ScriptEditorPanel::RenderCellToolbar(int index) {
     }
 
     // Spacer to push remaining buttons to the right
-    float right_buttons_width = 120.0f;
+    float right_buttons_width = 170.0f;
     float available = ImGui::GetContentRegionAvail().x;
     if (available > right_buttons_width) {
         ImGui::Dummy(ImVec2(available - right_buttons_width, 0));
@@ -529,6 +589,20 @@ void ScriptEditorPanel::RenderCellToolbar(int index) {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Edit (Enter)");
         }
+    }
+    ImGui::SameLine();
+
+    if (ImGui::SmallButton(ICON_FA_COPY)) {
+        int duplicated = tab->cell_manager.DuplicateCell(index);
+        if (duplicated >= 0) {
+            tab->selected_cell = duplicated;
+            tab->editing_cell = -1;
+            tab->last_editing_cell = -1;
+            tab->is_modified = true;
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Duplicate cell");
     }
     ImGui::SameLine();
 
