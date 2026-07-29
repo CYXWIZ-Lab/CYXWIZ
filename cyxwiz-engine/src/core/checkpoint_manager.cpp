@@ -11,6 +11,35 @@ namespace cyxwiz {
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
+namespace {
+
+constexpr const char* kCheckpointFormatV1 = "1.0";
+
+CheckpointInspection ClassifyCheckpointVersion(const std::string& version) {
+    CheckpointInspection inspection;
+    inspection.format_version = version;
+
+    if (version == kCheckpointFormatV1) {
+        inspection.valid = true;
+        inspection.can_load_for_testing = true;
+        inspection.can_warm_start = true;
+        inspection.can_exact_resume = false;
+        inspection.exact_resume_reason =
+            "Checkpoint format 1.0 stores model parameters and a learning "
+            "rate, but not optimizer tensors, scheduler state, RNG/sampler "
+            "state, or the exact training cursor.";
+        return inspection;
+    }
+
+    inspection.error = "Unsupported checkpoint format version '" + version +
+                       "'. This build supports format 1.0 for loading model "
+                       "weights only; exact resume requires checkpoint v2.";
+    inspection.exact_resume_reason = inspection.error;
+    return inspection;
+}
+
+} // namespace
+
 // ============================================================================
 // CheckpointManager Implementation
 // ============================================================================
@@ -142,6 +171,13 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadCheckpoint(
         return std::nullopt;
     }
 
+    const auto inspection = ClassifyCheckpointVersion(metadata->version);
+    if (!inspection.can_load_for_testing) {
+        last_error_ = inspection.error;
+        spdlog::error("CheckpointManager: {}", last_error_);
+        return std::nullopt;
+    }
+
     // Load model parameters
     if (!LoadModelParameters(checkpoint_path, model)) {
         if (last_error_.empty()) {
@@ -161,6 +197,51 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadCheckpoint(
                  metadata->epoch);
 
     return metadata;
+}
+
+CheckpointInspection CheckpointManager::InspectCheckpoint(
+    const std::string& checkpoint_name)
+{
+    last_error_.clear();
+
+    fs::path checkpoint_path;
+    if (checkpoint_name.empty()) {
+        const std::string latest = GetLatestCheckpoint();
+        if (latest.empty()) {
+            CheckpointInspection inspection;
+            inspection.error = "No checkpoints were found in '" +
+                               checkpoint_dir_.string() + "'.";
+            last_error_ = inspection.error;
+            return inspection;
+        }
+        checkpoint_path = latest;
+    } else {
+        checkpoint_path = GetCheckpointPath(checkpoint_name);
+    }
+
+    if (!fs::exists(checkpoint_path)) {
+        CheckpointInspection inspection;
+        inspection.error = "Checkpoint directory was not found: " +
+                           checkpoint_path.string();
+        last_error_ = inspection.error;
+        return inspection;
+    }
+
+    const auto metadata = LoadMetadata(checkpoint_path);
+    if (!metadata) {
+        CheckpointInspection inspection;
+        inspection.error = last_error_.empty()
+            ? "Checkpoint metadata is missing or invalid at '" +
+                  checkpoint_path.string() + "'."
+            : last_error_;
+        return inspection;
+    }
+
+    auto inspection = ClassifyCheckpointVersion(metadata->version);
+    if (!inspection.valid) {
+        last_error_ = inspection.error;
+    }
+    return inspection;
 }
 
 bool CheckpointManager::SaveBestModel(

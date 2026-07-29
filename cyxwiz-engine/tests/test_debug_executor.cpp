@@ -14,6 +14,7 @@
 
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -431,6 +432,79 @@ void TestCheckpointRejectsIncompatibleModelWithoutMutation() {
 
     std::filesystem::remove_all(root);
     spdlog::info("  OK: incompatible checkpoint rejected transactionally");
+}
+
+void TestCheckpointFormatCapabilitiesFailClosed() {
+    spdlog::info("--- TestCheckpointFormatCapabilitiesFailClosed ---");
+    auto source = BuildSequentialFromConfig(MakeLayerNormConfig());
+    auto target = BuildSequentialFromConfig(MakeLayerNormConfig());
+    ExpectTrue(source.ok() && target.ok(),
+               "checkpoint format fixture models should build");
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_checkpoint_format_capabilities_test";
+    std::filesystem::remove_all(root);
+    CheckpointManager manager(root.string());
+
+    TrainingMetrics metrics;
+    metrics.current_epoch = 2;
+    const std::string saved =
+        manager.SaveCheckpoint(*source.model, nullptr, metrics, "format");
+    ExpectTrue(!saved.empty(), "format checkpoint should save");
+
+    const auto v1 = manager.InspectCheckpoint("format");
+    ExpectTrue(v1.valid, "v1 checkpoint metadata should be valid");
+    ExpectTrue(v1.format_version == "1.0",
+               "v1 checkpoint format should be explicit");
+    ExpectTrue(v1.can_load_for_testing,
+               "v1 should support loading for testing");
+    ExpectTrue(v1.can_warm_start, "v1 should support warm start");
+    ExpectTrue(!v1.can_exact_resume,
+               "v1 must not claim exact-resume capability");
+    ExpectTrue(v1.exact_resume_reason.find("optimizer tensors") !=
+                   std::string::npos,
+               "v1 inspection should explain missing exact-resume state");
+
+    const auto before = target.model->GetParameters();
+    const auto metadata_path = root / "format" / "metadata.json";
+    {
+        std::ifstream input(metadata_path);
+        nlohmann::json metadata;
+        input >> metadata;
+        metadata["version"] = "2.0";
+        std::ofstream output(metadata_path, std::ios::trunc);
+        output << metadata.dump(2);
+    }
+
+    const auto unsupported = manager.InspectCheckpoint("format");
+    ExpectTrue(!unsupported.valid,
+               "unimplemented future checkpoint format must be invalid");
+    ExpectTrue(!unsupported.can_load_for_testing &&
+                   !unsupported.can_warm_start &&
+                   !unsupported.can_exact_resume,
+               "unsupported checkpoint format must expose no capabilities");
+
+    const auto loaded =
+        manager.LoadCheckpoint(*target.model, nullptr, "format");
+    ExpectTrue(!loaded.has_value(),
+               "future checkpoint format must fail closed before loading");
+    ExpectTrue(manager.GetLastError().find("Unsupported checkpoint format") !=
+                   std::string::npos,
+               "future format rejection should be corrective");
+
+    const auto after = target.model->GetParameters();
+    ExpectEq(after.size(), before.size(),
+             "future format rejection must preserve parameter count");
+    for (const auto& [name, tensor] : before) {
+        ExpectTrue(after.count(name) == 1,
+                   "future format rejection must preserve parameter names");
+        ExpectTrue(after.at(name).Shape() == tensor.Shape(),
+                   "future format rejection must preserve parameter shapes");
+    }
+
+    std::filesystem::remove_all(root);
+    spdlog::info("  OK: v1 capabilities are truthful and future formats fail closed");
 }
 
 void TestTransformerDecoderCheckpointRoundTrip() {
@@ -1177,6 +1251,7 @@ int main() {
         TestBuildSequentialMultiHeadAttention();
         TestLayerNormCheckpointRoundTrip();
         TestCheckpointRejectsIncompatibleModelWithoutMutation();
+        TestCheckpointFormatCapabilitiesFailClosed();
         TestTransformerDecoderCheckpointRoundTrip();
         TestSyntheticBatchTabular();
         TestSyntheticBatchText();

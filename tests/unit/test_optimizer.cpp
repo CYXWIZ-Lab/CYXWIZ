@@ -59,6 +59,51 @@ TEST_CASE("Adam optimizer updates parameters", "[optimizer]") {
     REQUIRE(updated[1] < -1.998f);
 }
 
+TEST_CASE("Adam optimizer state resumes the exact next step", "[optimizer][checkpoint]") {
+    float param_data[] = {1.0f, -2.0f};
+    float grad_data[] = {0.5f, -1.0f};
+
+    std::map<std::string, cyxwiz::Tensor> original_params;
+    std::map<std::string, cyxwiz::Tensor> grads;
+    original_params.emplace(
+        "w", cyxwiz::Tensor({2}, param_data, cyxwiz::DataType::Float32));
+    grads.emplace(
+        "w", cyxwiz::Tensor({2}, grad_data, cyxwiz::DataType::Float32));
+
+    cyxwiz::AdamOptimizer original(0.001, 0.9, 0.999, 1e-8);
+    original.Step(original_params, grads);
+
+    cyxwiz::OptimizerState state;
+    std::string error;
+    REQUIRE(original.ExportState(state, error));
+    REQUIRE(error.empty());
+    REQUIRE(state.optimizer_type == "Adam");
+    REQUIRE(state.step_count == 1);
+    REQUIRE(state.tensors.count("first_moment/w") == 1);
+    REQUIRE(state.tensors.count("second_moment/w") == 1);
+
+    auto resumed_params = original_params;
+    cyxwiz::AdamOptimizer resumed(0.001, 0.9, 0.999, 1e-8);
+    REQUIRE(resumed.ImportState(state, error));
+    REQUIRE(error.empty());
+    REQUIRE(resumed.GetStepCount() == 1);
+
+    original.Step(original_params, grads);
+    resumed.Step(resumed_params, grads);
+
+    const float* expected = original_params.at("w").Data<float>();
+    const float* actual = resumed_params.at("w").Data<float>();
+    REQUIRE(actual[0] == Catch::Approx(expected[0]).margin(1e-7f));
+    REQUIRE(actual[1] == Catch::Approx(expected[1]).margin(1e-7f));
+    REQUIRE(resumed.GetStepCount() == original.GetStepCount());
+
+    auto incomplete = state;
+    incomplete.tensors.erase("second_moment/w");
+    REQUIRE_FALSE(resumed.ImportState(incomplete, error));
+    REQUIRE(error.find("incomplete moment tensor pairs") != std::string::npos);
+    REQUIRE(resumed.GetStepCount() == 2);
+}
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 static bool HasArrayFireDeviceBackend() {
     try {

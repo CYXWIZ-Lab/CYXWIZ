@@ -51,6 +51,23 @@ struct CheckpointMetadata {
 };
 
 /**
+ * Read-only capability classification for one checkpoint.
+ *
+ * Loading weights for testing, warm-starting, and exact resume are distinct
+ * operations. Callers must not infer exact-resume support from the mere
+ * presence of model parameters or a learning rate.
+ */
+struct CheckpointInspection {
+    bool valid = false;
+    std::string format_version;
+    bool can_load_for_testing = false;
+    bool can_warm_start = false;
+    bool can_exact_resume = false;
+    std::string exact_resume_reason;
+    std::string error;
+};
+
+/**
  * CheckpointManager - Handles model checkpoint save/load operations
  *
  * Checkpoint format:
@@ -99,6 +116,15 @@ public:
     std::optional<CheckpointMetadata> LoadCheckpoint(
         SequentialModel& model,
         Optimizer* optimizer = nullptr,
+        const std::string& checkpoint_name = ""
+    );
+
+    /**
+     * Inspect checkpoint format and supported operations without mutating a
+     * model or optimizer. Version 1 checkpoints are intentionally classified
+     * as test-load/warm-start only.
+     */
+    CheckpointInspection InspectCheckpoint(
         const std::string& checkpoint_name = ""
     );
 

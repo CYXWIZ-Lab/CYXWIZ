@@ -20,6 +20,9 @@ public:
 
     void ZeroGrad() override;
 
+    bool ExportState(OptimizerState& state, std::string& error) const override;
+    bool ImportState(const OptimizerState& state, std::string& error) override;
+
 private:
     double beta1_;
     double beta2_;
@@ -38,6 +41,9 @@ public:
 
     void Step(std::map<std::string, Tensor>& parameters,
               const std::map<std::string, Tensor>& gradients) override;
+
+    bool ExportState(OptimizerState& state, std::string& error) const override;
+    bool ImportState(const OptimizerState& state, std::string& error) override;
 
 private:
     double weight_decay_;

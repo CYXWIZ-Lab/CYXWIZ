@@ -2,8 +2,42 @@
 
 ## Status
 
-Open - first Track70 follow-up. Design and implementation are not part of the
-completed Track70 production-data phase.
+In progress - first Track70 follow-up. The format-capability guard and the
+backend Adam state contract are implemented. Checkpoint v2 files, complete
+runtime state, and the Resume Training GUI are not implemented yet.
+
+## Implemented foundation - 2026-07-29
+
+The first two foundation slices are complete:
+
+- `CheckpointManager::InspectCheckpoint` now reports separate load-for-test,
+  warm-start, and exact-resume capabilities.
+- Format v1 is explicitly test-load/warm-start only and explains the missing
+  optimizer, scheduler, RNG/sampler, and cursor state.
+- Unknown or future metadata versions fail before model parameters are read or
+  mutated; a future `2.0` marker cannot be interpreted accidentally as v1.
+- The backend now owns a typed `OptimizerState` envelope and transactional
+  export/import interface instead of requiring engine code to access private
+  optimizer fields.
+- Adam exports and validates its learning rate, step count, hyperparameters,
+  and paired first/second moment tensors. A failed import leaves the optimizer
+  unchanged.
+- AdamW and other optimizers report state serialization as unsupported until
+  their full private state contract is implemented; no optimizer silently
+  claims exact-resume support.
+
+Release verification passed:
+
+- the Adam state round-trip reproduces the exact next parameter update and
+  rejects an incomplete moment pair transactionally;
+- the checkpoint/debug suite preserves all v1 round-trips and rejects an
+  unsupported version without model mutation;
+- the complete backend unit executable passed 2,366 assertions in 272 cases.
+
+The next slice is the v2 manifest and atomic payload inventory. The engine must
+not expose `Resume Training` until optimizer payload serialization, runtime
+cursor/RNG state, and end-to-end interrupted-versus-uninterrupted equivalence
+also pass.
 
 ## Decision statement
 

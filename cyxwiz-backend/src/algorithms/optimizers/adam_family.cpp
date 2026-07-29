@@ -123,6 +123,122 @@ void AdamOptimizer::ZeroGrad() {
     v_.clear();
 }
 
+bool AdamOptimizer::ExportState(OptimizerState& state, std::string& error) const {
+    error.clear();
+    state = OptimizerState{};
+    state.optimizer_type = "Adam";
+    state.learning_rate = learning_rate_;
+    state.step_count = step_count_;
+    state.hyperparameters = {
+        {"beta1", beta1_},
+        {"beta2", beta2_},
+        {"epsilon", epsilon_},
+    };
+
+    for (const auto& [name, tensor] : m_) {
+        state.tensors.emplace("first_moment/" + name, tensor);
+    }
+    for (const auto& [name, tensor] : v_) {
+        state.tensors.emplace("second_moment/" + name, tensor);
+    }
+    return true;
+}
+
+bool AdamOptimizer::ImportState(
+    const OptimizerState& state,
+    std::string& error)
+{
+    constexpr const char* kFirstPrefix = "first_moment/";
+    constexpr const char* kSecondPrefix = "second_moment/";
+
+    if (state.schema_version != 1) {
+        error = "Adam optimizer state schema version is unsupported.";
+        return false;
+    }
+    if (state.optimizer_type != "Adam") {
+        error = "Optimizer state type '" + state.optimizer_type +
+                "' is incompatible with Adam.";
+        return false;
+    }
+    if (!std::isfinite(state.learning_rate) || state.learning_rate <= 0.0) {
+        error = "Adam optimizer state has an invalid learning rate.";
+        return false;
+    }
+    if (state.step_count < 0) {
+        error = "Adam optimizer state has a negative step count.";
+        return false;
+    }
+    if (state.hyperparameters.size() != 3 ||
+        state.hyperparameters.find("beta1") == state.hyperparameters.end() ||
+        state.hyperparameters.find("beta2") == state.hyperparameters.end() ||
+        state.hyperparameters.find("epsilon") == state.hyperparameters.end()) {
+        error = "Adam optimizer state is missing required hyperparameters.";
+        return false;
+    }
+    if (state.hyperparameters.at("beta1") != beta1_ ||
+        state.hyperparameters.at("beta2") != beta2_ ||
+        state.hyperparameters.at("epsilon") != epsilon_) {
+        error = "Adam optimizer state hyperparameters do not match the active optimizer.";
+        return false;
+    }
+
+    std::map<std::string, Tensor> imported_m;
+    std::map<std::string, Tensor> imported_v;
+    for (const auto& [key, tensor] : state.tensors) {
+        std::string parameter_name;
+        std::map<std::string, Tensor>* destination = nullptr;
+        if (key.rfind(kFirstPrefix, 0) == 0) {
+            parameter_name = key.substr(std::char_traits<char>::length(kFirstPrefix));
+            destination = &imported_m;
+        } else if (key.rfind(kSecondPrefix, 0) == 0) {
+            parameter_name = key.substr(std::char_traits<char>::length(kSecondPrefix));
+            destination = &imported_v;
+        } else {
+            error = "Adam optimizer state contains unknown tensor '" + key + "'.";
+            return false;
+        }
+        if (parameter_name.empty()) {
+            error = "Adam optimizer state contains an empty parameter name.";
+            return false;
+        }
+        if (tensor.GetDataType() != DataType::Float32) {
+            error = "Adam optimizer state tensor '" + key +
+                    "' must use Float32.";
+            return false;
+        }
+        if (!destination->emplace(parameter_name, tensor).second) {
+            error = "Adam optimizer state contains duplicate parameter '" +
+                    parameter_name + "'.";
+            return false;
+        }
+    }
+
+    if (imported_m.size() != imported_v.size()) {
+        error = "Adam optimizer state has incomplete moment tensor pairs.";
+        return false;
+    }
+    for (const auto& [name, first_moment] : imported_m) {
+        const auto second = imported_v.find(name);
+        if (second == imported_v.end()) {
+            error = "Adam optimizer state is missing the second moment for '" +
+                    name + "'.";
+            return false;
+        }
+        if (first_moment.Shape() != second->second.Shape()) {
+            error = "Adam optimizer moment shape mismatch for '" + name + "'.";
+            return false;
+        }
+    }
+
+    // Commit only after every field and tensor pair has been validated.
+    learning_rate_ = state.learning_rate;
+    step_count_ = state.step_count;
+    m_ = std::move(imported_m);
+    v_ = std::move(imported_v);
+    error.clear();
+    return true;
+}
+
 // ============================================================================
 // AdamW Optimizer
 // ============================================================================
@@ -170,6 +286,24 @@ void AdamWOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
     // Then apply Adam update
     AdamOptimizer::Step(parameters, gradients);
+}
+
+bool AdamWOptimizer::ExportState(
+    OptimizerState& state,
+    std::string& error) const
+{
+    state = OptimizerState{};
+    error = "AdamW exact state export is not implemented yet.";
+    return false;
+}
+
+bool AdamWOptimizer::ImportState(
+    const OptimizerState& state,
+    std::string& error)
+{
+    (void)state;
+    error = "AdamW exact state import is not implemented yet.";
+    return false;
 }
 
 // ============================================================================
