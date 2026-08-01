@@ -367,7 +367,7 @@ EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
     EditorSettings settings;
     // Script Editor settings
     settings.theme = j.value("theme", 3);
-    settings.font_scale = j.value("font_scale", 1.6f);
+    settings.font_scale = j.value("font_scale", 1.3f);
     settings.tab_size = j.value("tab_size", 4);
     settings.show_whitespace = j.value("show_whitespace", true);
     settings.syntax_highlighting = j.value("syntax_highlighting", true);

@@ -3,10 +3,10 @@
 #include "script_editor.h"
 #include "output_renderer.h"
 #include "../icons.h"
+#include "../editor_fonts.h"
 #include "../../scripting/scripting_engine.h"
 
 #include <algorithm>
-#include <sstream>
 #include <string>
 
 #include <imgui.h>
@@ -368,7 +368,11 @@ void ScriptEditorPanel::RenderCodeCell(Cell& cell, int index) {
 
     // Code content area
     float code_width = ImGui::GetContentRegionAvail().x;
-    float min_height = 50.0f;
+    ImFont* code_font = gui::GetEditorMonoFont(font_scale_);
+    float code_line_height = code_font
+        ? code_font->FontSize + ImGui::GetStyle().ItemSpacing.y
+        : ImGui::GetTextLineHeightWithSpacing();
+    float min_height = std::max(50.0f, code_line_height * 2.5f);
 
     if (is_editing) {
         // Edit mode - show TextEditor
@@ -380,8 +384,7 @@ void ScriptEditorPanel::RenderCodeCell(Cell& cell, int index) {
 
         // Calculate height based on content
         int line_count = cell.editor.GetTotalLines();
-        float line_height = ImGui::GetTextLineHeightWithSpacing();
-        float content_height = std::max(min_height, (line_count + 1) * line_height);
+        float content_height = std::max(min_height, (line_count + 1) * code_line_height);
         content_height = std::min(content_height, 400.0f);  // Cap height
 
         ImGui::PushID("code_editor");
@@ -391,7 +394,15 @@ void ScriptEditorPanel::RenderCodeCell(Cell& cell, int index) {
             cell.editor.SetHandleKeyboardInputs(false);
         }
 
+        bool pushed_code_font = false;
+        if (code_font) {
+            ImGui::PushFont(code_font);
+            pushed_code_font = true;
+        }
         cell.editor.Render("##code", ImVec2(code_width, content_height));
+        if (pushed_code_font) {
+            ImGui::PopFont();
+        }
 
         // Re-enable keyboard input and clear the flag
         if (completion_just_accepted_) {
@@ -415,22 +426,28 @@ void ScriptEditorPanel::RenderCodeCell(Cell& cell, int index) {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
         ImGui::BeginChild("##code_view", ImVec2(code_width, 0), ImGuiChildFlags_AutoResizeY);
 
-        // Code display with line numbers
-        std::istringstream stream(cell.source);
-        std::string line;
-        int line_num = 1;
-        while (std::getline(stream, line)) {
-            // Line number in subtle color
-            ImGui::TextColored(ImVec4(0.35f, 0.35f, 0.38f, 1.0f), "%3d ", line_num++);
-            ImGui::SameLine(0, 0);
-            // Code in bright color
-            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "%s", line.c_str());
+        // Render read-only code with the same Python colorizer used in edit mode.
+        if (cell.editor.GetText() != cell.source) {
+            cell.SyncEditorFromSource();
+        }
+        bool was_read_only = cell.editor.IsReadOnly();
+        cell.editor.SetReadOnly(true);
+
+        bool pushed_code_font = false;
+        if (code_font) {
+            ImGui::PushFont(code_font);
+            pushed_code_font = true;
         }
 
-        // Handle empty cell
-        if (cell.source.empty()) {
-            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "# Empty cell - double-click to edit");
+        int line_count = std::max(1, cell.editor.GetTotalLines());
+        float view_height = std::max(min_height, (line_count + 1) * code_line_height);
+        view_height = std::min(view_height, 400.0f);
+        cell.editor.Render("##code_view_editor", ImVec2(code_width, view_height));
+
+        if (pushed_code_font) {
+            ImGui::PopFont();
         }
+        cell.editor.SetReadOnly(was_read_only);
 
         ImGui::EndChild();
         ImGui::PopStyleVar(2);

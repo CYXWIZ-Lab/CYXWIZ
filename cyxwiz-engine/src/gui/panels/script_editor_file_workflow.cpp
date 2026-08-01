@@ -25,9 +25,14 @@ void ScriptEditorPanel::NewFile() {
         case EditorTheme::Dark: tab->editor.SetPalette(TextEditor::GetDarkPalette()); break;
         case EditorTheme::Light: tab->editor.SetPalette(TextEditor::GetLightPalette()); break;
         case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
+        case EditorTheme::Monokai: tab->editor.SetPalette(GetMonokaiPalette()); break;
+        case EditorTheme::Dracula: tab->editor.SetPalette(GetDraculaPalette()); break;
+        case EditorTheme::OneDark: tab->editor.SetPalette(GetOneDarkPalette()); break;
+        case EditorTheme::GitHub: tab->editor.SetPalette(GetGitHubPalette()); break;
     }
     tab->editor.SetShowWhitespaces(show_whitespace_);
-    tab->editor.SetTabSize(4);
+    tab->editor.SetColorizerEnable(syntax_highlighting_);
+    tab->editor.SetTabSize(tab_size_);
     tab->editor.SetImGuiChildIgnored(false);
     tab->editor.SetReadOnly(false);
 
@@ -207,6 +212,7 @@ void ScriptEditorPanel::FinalizeAsyncLoad(int tab_index) {
     }
 
     tab->editor.SetShowWhitespaces(show_whitespace_);
+    tab->editor.SetColorizerEnable(syntax_highlighting_);
     tab->editor.SetTabSize(tab_size_);
     tab->editor.SetImGuiChildIgnored(false);
     tab->editor.SetReadOnly(false);
@@ -217,6 +223,9 @@ void ScriptEditorPanel::FinalizeAsyncLoad(int tab_index) {
         tab->cell_mode = true;
         tab->cell_manager.SetScriptingEngine(scripting_engine_);
         tab->cell_manager.ParseFromCyx(tab->pending_content);
+        tab->cell_manager.ApplyTabSize(tab_size_);
+        tab->cell_manager.ApplyEditorPalette(tab->editor.GetPalette());
+        tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
         tab->selected_cell = tab->cell_manager.GetCellCount() > 0 ? 0 : -1;
         tab->editing_cell = -1;
         tab->last_editing_cell = -1;
@@ -275,7 +284,8 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
             case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
         }
         tab->editor.SetShowWhitespaces(show_whitespace_);
-        tab->editor.SetTabSize(4);
+        tab->editor.SetColorizerEnable(syntax_highlighting_);
+        tab->editor.SetTabSize(tab_size_);
         tab->editor.SetImGuiChildIgnored(false);
         tab->editor.SetReadOnly(false);
         tab->editor.SetText(code);

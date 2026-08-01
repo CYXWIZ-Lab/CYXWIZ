@@ -1,10 +1,12 @@
 // Script Editor auto-completion popup and insertion handling.
 
 #include "script_editor.h"
+#include "../editor_fonts.h"
 #include "../../scripting/script_manager.h"
 
 #include <algorithm>
 #include <string>
+#include <limits>
 
 #include <imgui.h>
 
@@ -100,9 +102,14 @@ void ScriptEditorPanel::RenderCompletionPopup() {
     // Calculate popup position based on cursor position in editor
     auto cursor_pos = tab->editor.GetCursorPosition();
 
-    // Estimate character dimensions using monospace font
-    float char_width = ImGui::CalcTextSize("M").x * font_scale_;
-    float line_height = ImGui::GetTextLineHeightWithSpacing() * font_scale_;
+    // Estimate character dimensions using the same atlas font as the editor.
+    ImFont* editor_font = gui::GetEditorMonoFont(font_scale_);
+    float char_width = editor_font
+        ? editor_font->CalcTextSizeA(editor_font->FontSize, std::numeric_limits<float>::max(), 0.0f, "M").x
+        : ImGui::CalcTextSize("M").x;
+    float line_height = editor_font
+        ? editor_font->FontSize + ImGui::GetStyle().ItemSpacing.y
+        : ImGui::GetTextLineHeightWithSpacing();
 
     // Account for editor offset (gutter, margins, etc.)
     float editor_left_offset = 45.0f;  // Approximate gutter + padding

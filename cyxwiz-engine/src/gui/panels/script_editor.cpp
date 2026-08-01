@@ -2,6 +2,7 @@
 #include "command_window.h"
 #include "output_renderer.h"
 #include "../icons.h"
+#include "../editor_fonts.h"
 #include "../../scripting/scripting_engine.h"
 #include "../../core/keyboard_shortcuts.h"
 #include <imgui.h>
@@ -324,19 +325,19 @@ void ScriptEditorPanel::RenderMenuBar() {
 
             // Font Size submenu
             if (ImGui::BeginMenu("Font Size")) {
-                if (ImGui::MenuItem("Small", nullptr, font_scale_ == 1.0f)) {
+                if (ImGui::MenuItem("Small (14 px)", nullptr, font_scale_ == 1.0f)) {
                     font_scale_ = 1.0f;
                     if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
-                if (ImGui::MenuItem("Medium", nullptr, font_scale_ == 1.3f)) {
+                if (ImGui::MenuItem("Medium (16 px)", nullptr, font_scale_ == 1.3f)) {
                     font_scale_ = 1.3f;
                     if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
-                if (ImGui::MenuItem("Large", nullptr, font_scale_ == 1.6f)) {
+                if (ImGui::MenuItem("Large (20 px)", nullptr, font_scale_ == 1.6f)) {
                     font_scale_ = 1.6f;
                     if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
-                if (ImGui::MenuItem("Extra Large", nullptr, font_scale_ == 2.0f)) {
+                if (ImGui::MenuItem("Extra Large (24 px)", nullptr, font_scale_ == 2.0f)) {
                     font_scale_ = 2.0f;
                     if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
@@ -443,6 +444,7 @@ void ScriptEditorPanel::ApplyThemeToAllTabs() {
 
     for (auto& tab : tabs_) {
         tab->editor.SetPalette(palette);
+        tab->cell_manager.ApplyEditorPalette(palette);
     }
 
     spdlog::info("Applied editor theme: {}", theme_name);
@@ -451,6 +453,7 @@ void ScriptEditorPanel::ApplyThemeToAllTabs() {
 void ScriptEditorPanel::ApplyTabSizeToAllTabs() {
     for (auto& tab : tabs_) {
         tab->editor.SetTabSize(tab_size_);
+        tab->cell_manager.ApplyTabSize(tab_size_);
     }
     spdlog::info("Applied tab size: {} spaces", tab_size_);
 }
@@ -458,6 +461,7 @@ void ScriptEditorPanel::ApplyTabSizeToAllTabs() {
 void ScriptEditorPanel::ApplySyntaxHighlightingToAllTabs() {
     for (auto& tab : tabs_) {
         tab->editor.SetColorizerEnable(syntax_highlighting_);
+        tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
     }
     spdlog::info("Syntax highlighting: {}", syntax_highlighting_ ? "enabled" : "disabled");
 }
@@ -628,11 +632,11 @@ void ScriptEditorPanel::RenderEditor() {
         RenderDebugToolbar();
     }
 
-    // Apply font scale for editor
-    if (font_scale_ != 1.0f) {
-        ImGui::SetWindowFontScale(font_scale_);
+    bool pushed_editor_font = false;
+    if (ImFont* mono_font = gui::GetEditorMonoFont(font_scale_)) {
+        ImGui::PushFont(mono_font);
+        pushed_editor_font = true;
     }
-
     // Calculate editor size (leave room for status bar and minimap)
     float available_height = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
     float available_width = ImGui::GetContentRegionAvail().x;
@@ -683,11 +687,9 @@ void ScriptEditorPanel::RenderEditor() {
 
     ImGui::PopStyleColor(4);
 
-    // Reset font scale
-    if (font_scale_ != 1.0f) {
-        ImGui::SetWindowFontScale(1.0f);
+    if (pushed_editor_font) {
+        ImGui::PopFont();
     }
-
     // Track modifications and auto-completion
     if (tab->editor.IsTextChanged()) {
         tab->is_modified = true;
@@ -817,7 +819,7 @@ void ScriptEditorPanel::RenderMinimap() {
 
     // Draw viewport indicator (visible region)
     auto cursor_pos = tab->editor.GetCursorPosition();
-    int visible_lines = static_cast<int>(available_height / (16.0f * font_scale_));  // Approximate visible lines
+    int visible_lines = static_cast<int>(available_height / (gui::GetEditorMonoFontPixelSize(font_scale_) + ImGui::GetStyle().ItemSpacing.y));
     int first_visible_line = std::max(0, cursor_pos.mLine - visible_lines / 2);
 
     float viewport_top = first_visible_line * line_height;

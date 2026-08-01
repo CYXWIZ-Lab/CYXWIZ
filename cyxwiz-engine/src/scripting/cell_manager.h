@@ -225,6 +225,11 @@ public:
      */
     void ApplyShowWhitespace(bool show);
 
+    /**
+     * Apply syntax highlighting to all code cell editors
+     */
+    void ApplySyntaxHighlighting(bool enabled);
+
 private:
     // Execution helpers
     void ExecuteCellInternal(int index);

@@ -559,7 +559,7 @@ private:
 
     // Editor preferences
     int editor_theme_ = 3;  // Default to Monokai (index 3)
-    int editor_font_size_ = 16;  // Maps to font_scale: 8=1.0, 12=1.3, 16=1.6, 20=2.0
+    int editor_font_size_ = 16;  // Maps to editor atlas sizes: 14, 16, 20, 24 px
     int editor_tab_size_ = 4;
     bool editor_word_wrap_ = false;
     bool editor_show_line_numbers_ = true;

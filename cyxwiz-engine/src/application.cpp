@@ -2,6 +2,7 @@
 #include "gui/main_window.h"
 #include "gui/console.h"
 #include "gui/console_sink.h"
+#include "gui/editor_fonts.h"
 #include "gui/theme.h"
 #include "gui/dialogs/python_setup_wizard.h"
 #include "gui/dialogs/start_page.h"
@@ -1157,17 +1158,27 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         }
     }
 
-    // Load monospace font (for code/console)
-    if (std::filesystem::exists(mono_regular)) {
-        font_mono_ = io.Fonts->AddFontFromFileTTF(mono_regular.c_str(), mono_font_size, &font_config);
-        if (font_mono_) {
-            spdlog::info("Loaded JetBrainsMono-Regular ({}px)", mono_font_size);
+    // Load monospace editor fonts as real atlas sizes. Runtime scaling blurs text.
+    auto merge_code_icons = [&](float font_size) {
+        if (std::filesystem::exists(fa_solid)) {
+            icon_config.GlyphMinAdvanceX = font_size;
+            io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), font_size - 1.0f, &icon_config, icon_ranges);
+            icon_config.GlyphMinAdvanceX = base_font_size;
+        }
+    };
 
-            // Merge FontAwesome icons
-            if (std::filesystem::exists(fa_solid)) {
-                icon_config.GlyphMinAdvanceX = mono_font_size;
-                io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), mono_font_size - 1.0f, &icon_config, icon_ranges);
-                icon_config.GlyphMinAdvanceX = base_font_size;  // Reset
+    if (std::filesystem::exists(mono_regular)) {
+        for (size_t i = 0; i < cyxwiz::gui::kEditorFontScales.size(); ++i) {
+            const float scale = cyxwiz::gui::kEditorFontScales[i];
+            const float pixel_size = cyxwiz::gui::kEditorMonoFontPixels[i];
+            ImFont* mono_font = io.Fonts->AddFontFromFileTTF(mono_regular.c_str(), pixel_size, &font_config);
+            if (mono_font) {
+                cyxwiz::gui::RegisterEditorMonoFont(scale, mono_font);
+                if (i == 0) {
+                    font_mono_ = mono_font;
+                }
+                spdlog::info("Loaded JetBrainsMono-Regular ({}px) for editor scale {}", pixel_size, scale);
+                merge_code_icons(pixel_size);
             }
         }
     }

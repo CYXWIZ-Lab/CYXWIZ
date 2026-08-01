@@ -86,16 +86,16 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     ImGui::Text("Font Size:");
                     ImGui::SetNextItemWidth(200);
-                    const char* font_size_items[] = { "Small (1.0x)", "Medium (1.3x)", "Large (1.6x)", "Extra Large (2.0x)" };
-                    int font_size_index = 2;  // Default to Large
-                    if (editor_font_size_ <= 10) font_size_index = 0;
-                    else if (editor_font_size_ <= 14) font_size_index = 1;
-                    else if (editor_font_size_ <= 18) font_size_index = 2;
+                    const char* font_size_items[] = { "Small (14 px)", "Medium (16 px)", "Large (20 px)", "Extra Large (24 px)" };
+                    int font_size_index = 1;  // Default to Medium
+                    if (editor_font_size_ <= 14) font_size_index = 0;
+                    else if (editor_font_size_ <= 16) font_size_index = 1;
+                    else if (editor_font_size_ <= 20) font_size_index = 2;
                     else font_size_index = 3;
 
                     if (ImGui::Combo("##font_size", &font_size_index, font_size_items, IM_ARRAYSIZE(font_size_items))) {
                         float scales[] = { 1.0f, 1.3f, 1.6f, 2.0f };
-                        int sizes[] = { 10, 13, 16, 20 };
+                        int sizes[] = { 14, 16, 20, 24 };
                         editor_font_size_ = sizes[font_size_index];
                         if (editor_font_scale_callback_) {
                             editor_font_scale_callback_(scales[font_size_index]);

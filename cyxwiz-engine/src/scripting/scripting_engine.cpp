@@ -398,7 +398,6 @@ ExecutionResult ScriptingEngine::ExecuteCommandWithPythonTimeout(const std::stri
 import sys
 import threading
 import io
-import ctypes
 
 _cmd_result = {'output': '', 'error': '', 'success': False, 'timeout': False}
 _cmd_cancel = [False]
@@ -1195,26 +1194,14 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script)
             spdlog::debug("Captured plot: {}x{}, {} bytes, label: {}", width, height, plot.png_data.size(), label);
         };
 
-        // Get the address of our atomic flag
-        void* flag_addr = (void*)&shared_cancel_flag_;
-        uintptr_t flag_addr_int = reinterpret_cast<uintptr_t>(flag_addr);
-
-        // Create setup code that uses ctypes to read the flag directly from memory
-        // This doesn't need the GIL for reading!
-        // Also includes matplotlib capture setup
+        // Register cancellation through a C++ callback instead of ctypes.
+        // Some project virtual environments lack _ctypes, and importing ctypes there
+        // caused script runs to fail before user code executed.
         std::string setup_code = R"(
 import sys
-import ctypes
-
-# Memory address of the C++ atomic flag (passed from C++)
-_cyxwiz_cancel_flag_addr = )" + std::to_string(flag_addr_int) + R"(
-
-# Create a ctypes pointer to read the flag
-_cyxwiz_cancel_ptr = ctypes.cast(_cyxwiz_cancel_flag_addr, ctypes.POINTER(ctypes.c_int))
 
 def _cyxwiz_is_cancelled():
-    """Check if script should be cancelled by reading C++ memory directly"""
-    return _cyxwiz_cancel_ptr[0] != 0
+    return False
 
 class _CyxWizOutput:
     def __init__(self, callback):
@@ -1405,6 +1392,10 @@ except Exception as e:
     print(f"[CyxWiz] Error loading MATLAB functions: {e}")
 )";
         py::exec(setup_code);
+        py::globals()["_cyxwiz_is_cancelled"] = py::cpp_function([this]() {
+            return shared_cancel_flag_.load() != 0;
+        });
+
 
         // Setup matplotlib capture with our callback
         py::object setup_matplotlib = py::eval("_cyxwiz_setup_matplotlib_capture");
@@ -1463,12 +1454,14 @@ except Exception as e:
         // Clear any pending Python errors
         PyErr_Clear();
 
+    } catch (const py::error_already_set& e) {
+        result.success = false;
+        result.error_message = e.what();
+        spdlog::error("Execution error: {}", e.what());
     } catch (const std::exception& e) {
         result.success = false;
         result.error_message = e.what();
         spdlog::error("Execution error: {}", e.what());
-        // Clear any pending Python errors
-        PyErr_Clear();
     }
 
     // Clear the thread ID when done

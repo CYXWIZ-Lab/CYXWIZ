@@ -247,7 +247,7 @@ private:
     // View settings
     enum class EditorTheme { Dark, Light, RetroBlu, Monokai, Dracula, OneDark, GitHub };
     EditorTheme current_theme_ = EditorTheme::Monokai;  // Default to Monokai
-    float font_scale_ = 1.6f;  // 1.0 = Small, 1.3 = Medium, 1.6 = Large (default), 2.0 = Extra Large
+    float font_scale_ = 1.3f;  // Medium: 16 px native atlas font for crisp rendering
     bool show_whitespace_ = true;
     bool syntax_highlighting_ = true;
     bool word_wrap_ = false;

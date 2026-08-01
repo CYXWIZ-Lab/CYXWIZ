@@ -84,7 +84,13 @@ void CommandWindowPanel::Render() {
     // Check for async command completion
     CheckAsyncCompletion();
 
-    ImGui::Begin(GetName(), &visible_);
+    if (focus_input_) {
+        ImGui::SetNextWindowFocus();
+    }
+    if (!ImGui::Begin(GetName(), &visible_)) {
+        ImGui::End();
+        return;
+    }
 
     // Output area (scrollable)
     RenderOutputArea();
@@ -122,7 +128,10 @@ void CommandWindowPanel::RenderOutputArea() {
                               + 3.0f * line_height + ImGui::GetStyle().FramePadding.y * 2  // multiline input (min 3 lines)
                               + line_height  // hint line
                               + (assistant_command_executing_ ? line_height + ImGui::GetStyle().ItemSpacing.y : 0.0f);
-    ImGui::BeginChild("OutputRegion", ImVec2(0, -footer_height), false, ImGuiWindowFlags_HorizontalScrollbar);
+    const float available_height = ImGui::GetContentRegionAvail().y;
+    const float min_output_height = std::max(48.0f, line_height * 3.0f);
+    const float output_height = std::max(min_output_height, available_height - footer_height);
+    ImGui::BeginChild("OutputRegion", ImVec2(0.0f, output_height), false, ImGuiWindowFlags_HorizontalScrollbar);
 
     if (ImGui::Button("Copy output")) {
         const std::string transcript = BuildOutputTranscript();
@@ -141,42 +150,56 @@ void CommandWindowPanel::RenderOutputArea() {
     }
     ImGui::Separator();
 
-    // Render each output entry
+    // Render each output entry. ImGui selectable labels must be single-line in
+    // Debug builds, so multi-line command output is split into selectable rows
+    // that still map back to the original output entry for copy/select actions.
     for (int i = 0; i < static_cast<int>(output_.size()); ++i) {
         const auto& entry = output_[i];
         ImGui::PushID(i);
         const bool selected = (selected_output_index_ == i);
-        switch (entry.type) {
-            case OutputEntry::Type::Command:
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 1.0f, 0.5f, 1.0f)); // Green
-                if (ImGui::Selectable(entry.text.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick)) {
-                    selected_output_index_ = i;
-                }
-                ImGui::PopStyleColor();
-                break;
 
-            case OutputEntry::Type::Result:
-                if (ImGui::Selectable(entry.text.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick)) {
-                    selected_output_index_ = i;
-                }
-                break;
-
-            case OutputEntry::Type::Error:
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f)); // Red
-                if (ImGui::Selectable(entry.text.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick)) {
-                    selected_output_index_ = i;
-                }
-                ImGui::PopStyleColor();
-                break;
+        const bool command_color = entry.type == OutputEntry::Type::Command;
+        const bool error_color = entry.type == OutputEntry::Type::Error;
+        if (command_color) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 1.0f, 0.5f, 1.0f)); // Green
+        } else if (error_color) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f)); // Red
         }
-        if (ImGui::BeginPopupContextItem()) {
-            if (ImGui::MenuItem("Copy line")) {
-                ImGui::SetClipboardText(entry.text.c_str());
+
+        std::istringstream line_stream(entry.text);
+        std::string line;
+        int line_index = 0;
+        bool rendered_line = false;
+        while (std::getline(line_stream, line)) {
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
             }
-            if (ImGui::MenuItem("Select line")) {
+
+            ImGui::PushID(line_index++);
+            const char* label = line.empty() ? " " : line.c_str();
+            if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowDoubleClick)) {
                 selected_output_index_ = i;
             }
-            ImGui::EndPopup();
+            if (ImGui::BeginPopupContextItem()) {
+                if (ImGui::MenuItem("Copy entry")) {
+                    ImGui::SetClipboardText(entry.text.c_str());
+                }
+                if (ImGui::MenuItem("Select entry")) {
+                    selected_output_index_ = i;
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+            rendered_line = true;
+        }
+        if (!rendered_line) {
+            if (ImGui::Selectable(" ", selected, ImGuiSelectableFlags_AllowDoubleClick)) {
+                selected_output_index_ = i;
+            }
+        }
+
+        if (command_color || error_color) {
+            ImGui::PopStyleColor();
         }
         ImGui::PopID();
     }
@@ -197,107 +220,22 @@ void CommandWindowPanel::RenderInputArea() {
     ImGui::PopStyleColor();
     ImGui::SameLine();
 
-    // Multi-line input field
-    // CtrlEnterForNewLine: Enter submits, Ctrl+Enter inserts newline
-    // EnterReturnsTrue: Return true when Enter is pressed
-    // We also handle Shift+Enter to insert newline via callback
-    ImGuiInputTextFlags flags = ImGuiInputTextFlags_CallbackHistory
-                              | ImGuiInputTextFlags_CallbackCompletion
-                              | ImGuiInputTextFlags_CallbackAlways
-                              | ImGuiInputTextFlags_EnterReturnsTrue
-                              | ImGuiInputTextFlags_CtrlEnterForNewLine;
+    // Stable single-line REPL input. The previous multiline input used history,
+    // completion, callback-always, EnterReturnsTrue, and CtrlEnterForNewLine
+    // together; Debug ImGui/CRT can abort on that combination. Keep the command
+    // window reliable first, then layer richer editing back in deliberately.
+    ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue;
 
-    // Track if we should insert newline (Shift+Enter)
-    static bool insert_newline = false;
-
-    // Handle history navigation, auto-completion, and Shift+Enter for newline
-    auto callback = [](ImGuiInputTextCallbackData* data) -> int {
-        CommandWindowPanel* panel = (CommandWindowPanel*)data->UserData;
-
-        if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
-            // Handle Shift+Enter to insert newline
-            ImGuiIO& io = ImGui::GetIO();
-            bool enter_pressed = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
-            if (enter_pressed && io.KeyShift) {
-                data->InsertChars(data->CursorPos, "\n");
-                insert_newline = true;  // Signal that we handled it
-            }
-        } else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
-            if (data->EventKey == ImGuiKey_UpArrow) {
-                if (panel->show_completion_popup_) {
-                    // Navigate up in completion list
-                    if (panel->completion_selected_ > 0) {
-                        panel->completion_selected_--;
-                    }
-                    return 0;
-                }
-                panel->NavigateHistory(-1);
-                data->DeleteChars(0, data->BufTextLen);
-                data->InsertChars(0, panel->input_buffer_);
-                data->SelectAll();
-            } else if (data->EventKey == ImGuiKey_DownArrow) {
-                if (panel->show_completion_popup_) {
-                    // Navigate down in completion list
-                    if (panel->completion_selected_ < static_cast<int>(panel->completion_suggestions_.size()) - 1) {
-                        panel->completion_selected_++;
-                    }
-                    return 0;
-                }
-                panel->NavigateHistory(1);
-                data->DeleteChars(0, data->BufTextLen);
-                data->InsertChars(0, panel->input_buffer_);
-                data->SelectAll();
-            }
-        } else if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
-            // Tab key pressed - show completions or apply selected
-            if (panel->show_completion_popup_ && !panel->completion_suggestions_.empty()) {
-                // Apply selected completion
-                panel->ApplyCompletion(panel->completion_suggestions_[panel->completion_selected_]);
-                panel->show_completion_popup_ = false;
-                data->DeleteChars(0, data->BufTextLen);
-                data->InsertChars(0, panel->input_buffer_);
-            } else {
-                // Get completions for current input
-                std::string partial(data->Buf, data->BufTextLen);
-                panel->completion_suggestions_.clear();
-                panel->GetCompletions(partial, panel->completion_suggestions_);
-
-                if (!panel->completion_suggestions_.empty()) {
-                    panel->completion_prefix_ = partial;
-                    panel->completion_selected_ = 0;
-                    panel->show_completion_popup_ = true;
-                }
-            }
-        }
-        return 0;
-    };
-
-    // Only set focus when explicitly requested (e.g., after command execution)
-    // Don't steal focus every frame - this breaks other GUI interactions
     if (focus_input_) {
         ImGui::SetKeyboardFocusHere();
         focus_input_ = false;
     }
 
-    // Calculate input height (3 lines minimum, grows with content)
-    float line_height = ImGui::GetTextLineHeight();
-    int num_lines = 1;
-    for (const char* p = input_buffer_; *p; p++) {
-        if (*p == '\n') num_lines++;
-    }
-    float input_height = std::max(3.0f, static_cast<float>(num_lines + 1)) * line_height + ImGui::GetStyle().FramePadding.y * 2;
-    input_height = std::min(input_height, 8.0f * line_height); // Max 8 lines
+    bool enter_pressed = ImGui::InputText("##input", input_buffer_, sizeof(input_buffer_), flags);
 
-    // Multi-line input text
-    // EnterReturnsTrue makes it return true when Enter is pressed
-    bool enter_pressed = ImGui::InputTextMultiline("##input", input_buffer_, sizeof(input_buffer_),
-                                                    ImVec2(-1.0f, input_height), flags, callback, this);
-
-    // Execute on Enter (but not if Shift+Enter was used to insert newline)
-    if (enter_pressed && !insert_newline) {
+    if (enter_pressed) {
         std::string command(input_buffer_);
 
-        // Remove trailing newline/whitespace
         while (!command.empty() && (command.back() == '\n' || command.back() == '\r' || command.back() == ' ')) {
             command.pop_back();
         }
@@ -305,24 +243,14 @@ void CommandWindowPanel::RenderInputArea() {
         if (!command.empty()) {
             ExecuteCommand(command);
             std::memset(input_buffer_, 0, sizeof(input_buffer_));
-            focus_input_ = true; // Refocus after execution
+            focus_input_ = true;
         }
-        show_completion_popup_ = false; // Hide completion on Enter
-    }
-
-    // Reset the newline flag
-    insert_newline = false;
-
-    // Show hint below input
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-    ImGui::TextUnformatted("Enter: execute | Shift/Ctrl+Enter: new line | Tab: autocomplete");
-    ImGui::PopStyleColor();
-
-    // Hide completion popup if user types (changes input)
-    std::string current_input(input_buffer_);
-    if (show_completion_popup_ && current_input != completion_prefix_) {
         show_completion_popup_ = false;
     }
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+    ImGui::TextUnformatted("Enter: execute");
+    ImGui::PopStyleColor();
 }
 
 void CommandWindowPanel::ExecuteCommand(const std::string& command) {

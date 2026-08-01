@@ -620,5 +620,14 @@ void CellManager::ApplyShowWhitespace(bool show) {
         }
     }
 }
+void CellManager::ApplySyntaxHighlighting(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    for (auto& cell : cells_) {
+        if (cell.type == CellType::Code) {
+            cell.editor.SetColorizerEnable(enabled);
+        }
+    }
+}
 
 } // namespace cyxwiz
