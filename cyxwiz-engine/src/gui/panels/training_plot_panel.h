@@ -7,8 +7,32 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <utility>
 
 namespace cyxwiz {
+
+struct TrainingStatusSnapshot {
+    bool has_data = false;
+    bool is_training = false;
+    bool is_preparing = false;
+    bool preparation_failed = false;
+    std::string status_message;
+    std::string terminal_status;
+    int current_epoch = 0;
+    int total_epochs = 0;
+    int current_batch = 0;
+    int total_batches = 0;
+    double train_loss = -1.0;
+    double val_loss = -1.0;
+    double train_accuracy = -1.0;
+    double val_accuracy = -1.0;
+    float preparation_progress = 0.0f;
+    float samples_per_second = 0.0f;
+    float total_training_time = 0.0f;
+    int checkpoint_epoch = 0;
+    size_t metric_points = 0;
+    std::vector<std::pair<std::string, double>> latest_custom_metrics;
+};
 
 /**
  * TrainingPlotPanel - Real-time visualization of training metrics
@@ -104,6 +128,7 @@ public:
     double GetCurrentTrainAccuracy() const;
     double GetCurrentValAccuracy() const;
     size_t GetDataPointCount() const;
+    TrainingStatusSnapshot GetStatusSnapshot() const;
 
 private:
     struct MetricSeries {

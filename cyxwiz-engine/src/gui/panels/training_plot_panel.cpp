@@ -412,6 +412,9 @@ void TrainingPlotPanel::ClearLocked() {
     is_training_ = false;
     current_epoch_ = 0;
     total_epochs_ = 0;
+    current_batch_ = 0;
+    total_batches_ = 0;
+    current_batch_loss_ = 0.0f;
     last_epoch_time_ = 0.0f;
     avg_epoch_time_ = 0.0f;
     samples_per_second_ = 0.0f;
@@ -2192,6 +2195,50 @@ bool TrainingPlotPanel::HasData() const {
 bool TrainingPlotPanel::IsTraining() const {
     std::lock_guard<std::mutex> lock(data_mutex_);
     return is_training_;
+}
+
+TrainingStatusSnapshot TrainingPlotPanel::GetStatusSnapshot() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+
+    TrainingStatusSnapshot snapshot;
+    snapshot.has_data = !train_loss_.values.empty();
+    snapshot.is_training = is_training_;
+    snapshot.is_preparing = is_preparing_;
+    snapshot.preparation_failed = preparation_failed_;
+    snapshot.status_message = preparation_failed_
+        ? preparation_error_message_
+        : preparation_status_message_;
+    snapshot.terminal_status = terminal_status_;
+    snapshot.current_epoch = current_epoch_;
+    snapshot.total_epochs = total_epochs_;
+    snapshot.current_batch = current_batch_;
+    snapshot.total_batches = total_batches_;
+    snapshot.train_loss = train_loss_.values.empty()
+        ? -1.0
+        : train_loss_.values.back();
+    snapshot.val_loss = val_loss_.values.empty()
+        ? -1.0
+        : val_loss_.values.back();
+    snapshot.train_accuracy = train_accuracy_.values.empty()
+        ? -1.0
+        : train_accuracy_.values.back();
+    snapshot.val_accuracy = val_accuracy_.values.empty()
+        ? -1.0
+        : val_accuracy_.values.back();
+    snapshot.preparation_progress = preparation_progress_;
+    snapshot.samples_per_second = samples_per_second_;
+    snapshot.total_training_time = total_training_time_;
+    snapshot.checkpoint_epoch = checkpoint_epoch_;
+    snapshot.metric_points = train_loss_.values.size();
+    snapshot.latest_custom_metrics.reserve(custom_metrics_.size());
+    for (const auto& metric : custom_metrics_) {
+        if (!metric.values.empty()) {
+            snapshot.latest_custom_metrics.emplace_back(
+                metric.name,
+                metric.values.back());
+        }
+    }
+    return snapshot;
 }
 
 double TrainingPlotPanel::CalculateMean(const std::vector<double>& values, size_t last_n) const {

@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <exception>
+#include <stdexcept>
 #include <string>
 
 #include <cyxwiz/cyxwiz.h>
@@ -438,7 +439,8 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Text("Available Compute Devices");
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::TextDisabled("Select which device to use for training. CUDA devices are fastest for NVIDIA GPUs.");
+                    ImGui::TextDisabled("Select the active ArrayFire runtime device. Changes take effect immediately.");
+                    ImGui::TextDisabled("Individual operators may still report an explicit CPU fallback.");
                     ImGui::Spacing();
 
                     // Initialize device list if needed
@@ -456,18 +458,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 cached_devices_.push_back(cached);
                             }
 
-                            // Default to first CUDA device if available, otherwise keep CPU (index 0)
-                            selected_device_index_ = 0;
-                            for (size_t i = 0; i < cached_devices_.size(); ++i) {
-                                if (cached_devices_[i].type == 1) {  // 1 = CUDA
-                                    selected_device_index_ = static_cast<int>(i);
-                                    // Set CUDA as the active device
-                                    cyxwiz::Device cuda_device(cyxwiz::DeviceType::CUDA, cached_devices_[i].device_id);
-                                    cuda_device.SetActive();
-                                    spdlog::info("Default device set to CUDA: {}", cached_devices_[i].name);
-                                    break;
-                                }
-                            }
+                            // Device enumeration is read-only. Opening Preferences must
+                            // never change the runtime backend.
+                            selected_device_index_ = -1;
                         } catch (...) {
                             spdlog::warn("Failed to enumerate devices");
                         }
@@ -478,6 +471,20 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     if (cached_devices_.empty()) {
                         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No compute devices found!");
                     } else {
+                        auto* active_device = cyxwiz::Device::GetCurrentDevice();
+                        selected_device_index_ = -1;
+                        if (active_device) {
+                            for (size_t i = 0; i < cached_devices_.size(); ++i) {
+                                const auto& candidate = cached_devices_[i];
+                                if (active_device->GetType() ==
+                                        static_cast<cyxwiz::DeviceType>(candidate.type) &&
+                                    active_device->GetDeviceId() == candidate.device_id) {
+                                    selected_device_index_ = static_cast<int>(i);
+                                    break;
+                                }
+                            }
+                        }
+
                         for (size_t i = 0; i < cached_devices_.size(); ++i) {
                             const auto& dev = cached_devices_[i];
 
@@ -513,12 +520,29 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             // Radio button for selection
                             bool is_selected = (selected_device_index_ == static_cast<int>(i));
                             if (ImGui::RadioButton("##device_select", is_selected)) {
-                                selected_device_index_ = static_cast<int>(i);
-                                // Apply device selection
                                 try {
-                                    cyxwiz::Device device(static_cast<cyxwiz::DeviceType>(dev.type), dev.device_id);
-                                    device.SetActive();
-                                    spdlog::info("Selected device: {} [{}]", dev.name, type_name);
+                                    const auto requested_type =
+                                        static_cast<cyxwiz::DeviceType>(dev.type);
+                                    if (compute_device_changed_callback_) {
+                                        compute_device_changed_callback_(requested_type,
+                                                                         dev.device_id);
+                                    } else {
+                                        cyxwiz::Device device(requested_type,
+                                                              dev.device_id);
+                                        device.SetActive();
+                                    }
+
+                                    active_device = cyxwiz::Device::GetCurrentDevice();
+                                    if (!active_device ||
+                                        active_device->GetType() != requested_type ||
+                                        active_device->GetDeviceId() != dev.device_id) {
+                                        throw std::runtime_error(
+                                            "runtime did not activate the requested device");
+                                    }
+                                    selected_device_index_ = static_cast<int>(i);
+                                    spdlog::info("Selected active runtime device: {} [{}]",
+                                                 dev.name,
+                                                 type_name);
                                 } catch (const std::exception& e) {
                                     spdlog::error("Failed to set device: {}", e.what());
                                 }
@@ -540,10 +564,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             }
 
                             // Show "Active" badge if this is the current device
-                            auto* current_device = cyxwiz::Device::GetCurrentDevice();
-                            if (current_device &&
-                                current_device->GetType() == static_cast<cyxwiz::DeviceType>(dev.type) &&
-                                current_device->GetDeviceId() == dev.device_id) {
+                            if (active_device &&
+                                active_device->GetType() == static_cast<cyxwiz::DeviceType>(dev.type) &&
+                                active_device->GetDeviceId() == dev.device_id) {
                                 ImGui::SameLine();
                                 ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s Active", ICON_FA_CIRCLE_CHECK);
                             }
@@ -567,7 +590,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     // Current device info
                     if (selected_device_index_ >= 0 && selected_device_index_ < static_cast<int>(cached_devices_.size())) {
                         const auto& dev = cached_devices_[selected_device_index_];
-                        ImGui::Text("Selected Device Details:");
+                        ImGui::Text("Active Device Details:");
                         ImGui::Indent();
                         ImGui::BulletText("Name: %s", dev.name.c_str());
                         if (dev.memory_total > 0) {

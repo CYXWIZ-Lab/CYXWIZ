@@ -3553,6 +3553,27 @@ set_target_properties(test_properties_truth PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Active Device Runtime Truth =====
+add_executable(test_device_runtime_truth
+    tests/test_device_runtime_truth.cpp
+)
+
+target_link_libraries(test_device_runtime_truth PRIVATE
+    cyxwiz-backend
+    spdlog::spdlog
+)
+
+if(WIN32)
+    target_compile_definitions(test_device_runtime_truth PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_device_runtime_truth PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Pipeline Materializer Cache Integration =====
 add_executable(test_pipeline_materializer_cache
     tests/test_pipeline_materializer_cache.cpp

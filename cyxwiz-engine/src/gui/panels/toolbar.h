@@ -542,7 +542,7 @@ private:
     char shortcut_edit_buffer_[64] = "";
 
     // Device preferences
-    int selected_device_index_ = 0;  // Index into cached_devices_
+    int selected_device_index_ = -1;  // Active index into cached_devices_
     bool devices_initialized_ = false;
     struct CachedDevice {
         int type;  // 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal, 4=Vulkan

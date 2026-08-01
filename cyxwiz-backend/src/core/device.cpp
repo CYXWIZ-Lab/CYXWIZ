@@ -17,17 +17,11 @@
 
 namespace cyxwiz {
 
-static Device* g_current_device = nullptr;
-
 Device::Device(DeviceType type, int device_id)
     : type_(type), device_id_(device_id) {
 }
 
-Device::~Device() {
-    if (g_current_device == this) {
-        g_current_device = nullptr;
-    }
-}
+Device::~Device() = default;
 
 DeviceInfo Device::GetInfo() const {
     DeviceInfo info;
@@ -193,11 +187,13 @@ void Device::SetActive() {
         }
     }
 #endif
-    g_current_device = this;
 }
 
 bool Device::IsActive() const {
-    return g_current_device == this;
+    const auto* active = GetCurrentDevice();
+    return active != nullptr &&
+           active->GetType() == type_ &&
+           active->GetDeviceId() == device_id_;
 }
 
 std::vector<DeviceInfo> Device::GetAvailableDevices() {
@@ -278,7 +274,34 @@ std::vector<DeviceInfo> Device::GetAvailableDevices() {
 }
 
 Device* Device::GetCurrentDevice() {
-    return g_current_device;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    // Query ArrayFire directly. The previous implementation retained a pointer
+    // to the Device object passed to SetActive(); GUI callers use temporary
+    // Device values, so that pointer became null/dangling as soon as the caller
+    // returned even though ArrayFire remained on the selected backend.
+    thread_local Device active_device(DeviceType::CPU, 0);
+    try {
+        switch (af::getActiveBackend()) {
+            case AF_BACKEND_CUDA:
+                active_device.type_ = DeviceType::CUDA;
+                break;
+            case AF_BACKEND_OPENCL:
+                active_device.type_ = DeviceType::OPENCL;
+                break;
+            case AF_BACKEND_CPU:
+            default:
+                active_device.type_ = DeviceType::CPU;
+                break;
+        }
+        active_device.device_id_ = af::getDevice();
+        return &active_device;
+    } catch (const af::exception&) {
+        return nullptr;
+    }
+#else
+    static Device cpu_device(DeviceType::CPU, 0);
+    return &cpu_device;
+#endif
 }
 
 } // namespace cyxwiz

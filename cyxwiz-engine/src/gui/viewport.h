@@ -13,14 +13,14 @@ namespace gui {
 
 // Simple struct to cache device info without pulling in device.h
 struct CachedDeviceInfo {
-    int type;
-    int device_id;
+    int type = -1;
+    int device_id = -1;
     std::string name;
-    size_t memory_total;
-    size_t memory_available;
-    int compute_units;
-    bool supports_fp64;
-    bool supports_fp16;
+    size_t memory_total = 0;
+    size_t memory_available = 0;
+    int compute_units = 0;
+    bool supports_fp64 = false;
+    bool supports_fp16 = false;
 };
 
 class Viewport {
