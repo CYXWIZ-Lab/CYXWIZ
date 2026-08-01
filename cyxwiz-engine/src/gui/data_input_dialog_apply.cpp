@@ -116,7 +116,9 @@ void DataInputDialog::Apply() {
 
     // Source-specific parameters
     if (source_type_ == SourceType::File) {
-        node_->parameters["type"] = data_input::FileTypeParam(detected_type_);
+        node_->parameters["file_type"] =
+            data_input::FileTypeParam(detected_type_);
+        node_->parameters.erase("type");
         node_->parameters["has_header"] = has_header_ ? "true" : "false";
         node_->parameters["delimiter"] = custom_delimiter_;
         node_->parameters["decimal_point"] = std::string(1, decimal_point_);

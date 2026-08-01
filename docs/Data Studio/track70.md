@@ -1,4 +1,4 @@
-# Track 70 - Code Audit and Implementation Log for To Fix 70
+# Track 70 - Code Audit and Implementation Log for Done 70
 
 ## Closure handoff - 2026-07-29
 
@@ -18,7 +18,7 @@ migrate saved legacy pins.
 
 ## Purpose
 
-Living source map and implementation record for `tofix70.md`. This file
+Living source map and implementation record for `done70.md`. This file
 records current engine truth before changes are made. It is not a second design
 document.
 
@@ -209,9 +209,9 @@ Focused evidence:
   resolved-role, prefetch, binary-target, balancing, and held-out Test behavior;
 - the complete Debug `cyxwiz-engine` target builds successfully.
 
-Next: phase 2 must make the tabular Data Loader consume the typed partition
-set directly and remove the late external-batcher replacement path. Track 70
-remains open.
+Historical next step at that point: make the tabular Data Loader consume the
+typed partition set directly and remove the late external-batcher replacement
+path. The following Phase 2 entry records that completion.
 
 ### Phase 2 implementation result - 2026-07-27
 
@@ -322,10 +322,10 @@ Verification evidence:
 - the complete Debug `cyxwiz-engine` target builds successfully; and
 - Debug `cyxwiz-tests` passes 2,372 assertions in 271 test cases.
 
-Next: phase 5 is preview parity. Reuse one bounded tabular page renderer in
-Data Input and Asset Browser, add cancellation/null-count metadata and visible
-Explorer errors, then add registered text/image/audio preview adapters. Track
-70 remains open.
+Historical next step at that point: deliver preview parity through one bounded
+tabular page renderer in Data Input and Asset Browser, with cancellation,
+null-count metadata, and visible Explorer errors. Phase 5a and the final
+follow-up map record the resulting tabular completion and To Fix 80 ownership.
 
 ### Phase 5a implementation result - 2026-07-27
 
@@ -490,7 +490,8 @@ changes are outside Track 70 scope and must remain isolated.
   registry/batcher path, while `StartTestingFromGraph` incorrectly required a
   legacy `DatasetHandle`. Run Test now dispatches Arrow sources through
   `TestManager` and an Arrow test batcher built by the same modern batcher
-  setup. Release build passed. Manual MNIST GUI verification remains pending.
+  setup. Release build passed. Manual MNIST GUI verification was pending at
+  that point; the next entry records its successful completion.
 
 - 2026-07-21: Manual MNIST verification passed after the Arrow Run Test fix. The Run Test command completed through the modern path with 97.64% accuracy and no legacy-registry error.
 
@@ -499,10 +500,10 @@ changes are outside Track 70 scope and must remain isolated.
 - 2026-07-21: Added the compiler-owned `ResolvedDatasetRoles` boundary. The
   currently selected Data Input resolves explicitly as Train; Dev/Test stay
   absent rather than being fabricated. Added a narrow compiler assertion for
-  that contract. The focused graph-compiler executable reaches this assertion
-  but the overall executable currently fails later on an unrelated existing
-  TransformerDecoder expectation. The six focused Release data-loader tests
-  pass (6/6).
+  that contract. At that point the focused graph-compiler executable reached
+  this assertion but failed later on an unrelated TransformerDecoder
+  expectation. Later entries record the current executable passing. The six
+  focused Release data-loader tests passed (6/6).
 
 - 2026-07-21: Release `test_training_batcher_setup` passed. It confirms the
   current Arrow/Parquet `TrainingBatcherSet` partitions Train/Dev/Test and
@@ -541,7 +542,11 @@ changes are outside Track 70 scope and must remain isolated.
   work at that point; later entries record their implementation or formal
   follow-up ownership.
 
-- 2026-07-21: Existing Release 	est_training_batcher_setup.exe passed (Arrow/Parquet partition and balancing coverage). Full engine regeneration is currently blocked by access-denied writes under uild/ and cpkg during CMake configure. The guarded tabular Arrow explicit-role dispatch is present but awaits a successful rebuild.
+- 2026-07-21: Existing Release `test_training_batcher_setup.exe` passed
+  (Arrow/Parquet partition and balancing coverage). At that point full engine
+  regeneration was blocked by access-denied writes under `build/` and `vcpkg`
+  during CMake configure. The following entries record the successful elevated
+  rebuild and verification.
 
 - 2026-07-21: Explicit tabular Arrow Dev/Test batchers now receive train-fitted normalization and output encoding/regression mode; class balancing remains Train-only. Elevated Release engine rebuild passed.
 
@@ -971,3 +976,20 @@ changes are outside Track 70 scope and must remain isolated.
   partitioning. The training dependency order remains 75 -> 76 -> 77 -> 78 ->
   79; To Fix 80 is independent. These are follow-up capabilities, not hidden
   exceptions to the verified Arrow/Parquet tabular phase.
+- 2026-08-01: Completed the final closure re-audit before renaming the ticket.
+  The multi-step time-series fixture now declares its continuous target
+  contract and releases mapped Parquet batchers before deleting fixtures.
+  `TrainingBatcherSet` replacement preserves prefetch-wrapper/source lifetime.
+  Disk-backed Parquet manifests now record the ratio-slicing policy that
+  actually executes when requested stratification falls back. Task-progress
+  telemetry no longer initializes or blocks on ArrayFire before the CyxWiz
+  backend is initialized. Release verification passed for
+  `test_training_batcher_setup`, `test_graph_compiler_deferred_nodes`,
+  `test_training_executor_arrow_parquet`,
+  `test_graph_training_sequence_preflight`, `test_data_preview_service`,
+  `test_pattern_template_guard`, and the Track70 ingestion-limit route in
+  `test_pipeline_executor_operator_routing`. The full Release `cyxwiz-engine`
+  target also built successfully. The acceptance section was reconciled to
+  the verified Arrow/Parquet scope, historical pending statements were marked
+  as superseded, and To Fix 75-80 remain the sole owners of the documented
+  extensions. No Track70 closure blocker remains.

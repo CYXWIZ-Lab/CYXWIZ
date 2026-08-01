@@ -715,7 +715,7 @@ introduced.
 ## Dependencies and related tickets
 
 - `tofix42` - local source-aware assistant and RAG foundation;
-- `tofix70` - production Data Studio and generic dataset workflow;
+- `done70` - completed production Data Studio and generic dataset workflow;
 - `tofix71` - preprocessing fit/transform state and train/test correctness;
 - `tofix73` - backend algorithm capability truth and cross-computation parity.
 

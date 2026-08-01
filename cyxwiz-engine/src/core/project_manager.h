@@ -95,6 +95,7 @@ public:
     std::string GetModelsPath() const;
     std::string GetDatasetsPath() const;
     std::string GetIngestionCachePath() const;
+    std::string GetArtifactsPath() const;
     std::string GetCheckpointsPath() const;
     std::string GetExportsPath() const;
     std::string GetPluginsPath() const;

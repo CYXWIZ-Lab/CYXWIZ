@@ -16,6 +16,22 @@
 
 namespace gui {
 
+void NodeEditor::ConfigureNode(int node_id) {
+    MLNode* node = FindNodeById(node_id);
+    if (!node) {
+        return;
+    }
+
+    selected_node_id_ = node_id;
+    selected_node_ids_.clear();
+    selected_node_ids_.push_back(node_id);
+    pending_focus_node_id_ = node_id;
+
+    if (properties_panel_) {
+        properties_panel_->ConfigureNode(node);
+    }
+}
+
 void NodeEditor::ShowSingleNodeContextMenu() {
     MLNode* node = FindNodeById(right_clicked_node_id_);
     if (!node) {
@@ -62,12 +78,7 @@ void NodeEditor::ShowSingleNodeContextMenu() {
 
     // Configure (open properties)
     if (ImGui::MenuItem(ICON_FA_GEAR " Configure...")) {
-        selected_node_id_ = right_clicked_node_id_;
-        selected_node_ids_.clear();
-        selected_node_ids_.push_back(right_clicked_node_id_);
-        if (properties_panel_) {
-            properties_panel_->SetSelectedNode(node);
-        }
+        ConfigureNode(right_clicked_node_id_);
         ImGui::CloseCurrentPopup();
     }
 

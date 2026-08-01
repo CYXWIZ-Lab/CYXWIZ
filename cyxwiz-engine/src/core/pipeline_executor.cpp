@@ -4,6 +4,7 @@
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include "data_convert_service.h"
+#include "data_input_parameters.h"
 #include "ner_sequence_builder.h"
 #include "node_executors/pipeline_operator_factory.h"
 #include "preprocessing_state.h"
@@ -21,6 +22,7 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <filesystem>
 #include <queue>
 #include <regex>
 #include <sstream>
@@ -2148,23 +2150,16 @@ std::string NormalizeJoinTypeSql(const std::string& value) {
 }
 
 std::string NormalizeDataInputFileType(const std::string& value) {
-    const std::string file_type = ToLowerAscii(TrimString(value));
-    return file_type.empty() ? "auto" : file_type;
+    return NormalizeDataInputFormat(value);
 }
 
 std::string NormalizeDataInputFileType(
     const std::map<std::string, std::string>& parameters) {
-    auto type_it = parameters.find("type");
-    if (type_it != parameters.end() && !type_it->second.empty()) {
-        return NormalizeDataInputFileType(type_it->second);
-    }
-
-    auto file_type_it = parameters.find("file_type");
-    if (file_type_it != parameters.end() && !file_type_it->second.empty()) {
-        return NormalizeDataInputFileType(file_type_it->second);
-    }
-
-    return "auto";
+    std::string format;
+    std::string error;
+    return ResolveDataInputFormatAliases(parameters, format, error)
+        ? format
+        : "auto";
 }
 
 std::string NormalizeDatasetOutputFormat(
@@ -2186,15 +2181,103 @@ std::string NormalizeDataOutputPath(
     const std::map<std::string, std::string>& parameters) {
     auto file_path_it = parameters.find("file_path");
     if (file_path_it != parameters.end() && !file_path_it->second.empty()) {
-        return file_path_it->second;
+        return TrimString(file_path_it->second);
     }
 
     auto path_it = parameters.find("path");
     if (path_it != parameters.end() && !path_it->second.empty()) {
-        return path_it->second;
+        return TrimString(path_it->second);
     }
 
     return {};
+}
+
+bool HasTrailingDirectorySeparator(const std::string& value) {
+    return !value.empty() &&
+           (value.back() == '/' || value.back() == '\\');
+}
+
+std::string SanitizeExportFileStem(std::string stem) {
+    stem = TrimString(stem);
+    if (stem.empty()) {
+        stem = "dataset_export";
+    }
+    for (char& c : stem) {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (!std::isalnum(uc) && c != '-' && c != '_') {
+            c = '_';
+        }
+    }
+    while (!stem.empty() && stem.front() == '_') {
+        stem.erase(stem.begin());
+    }
+    while (!stem.empty() && stem.back() == '_') {
+        stem.pop_back();
+    }
+    return stem.empty() ? "dataset_export" : stem;
+}
+
+std::filesystem::path DefaultExportDirectory(
+    const std::string& configured_root) {
+    if (!configured_root.empty()) {
+        return std::filesystem::path(configured_root);
+    }
+
+    std::error_code ec;
+    auto temp = std::filesystem::temp_directory_path(ec);
+    return ec
+        ? std::filesystem::path(".") / "cyxwiz" / "exports"
+        : temp / "cyxwiz" / "exports";
+}
+
+std::string ResolveDatasetExportPath(
+    const std::map<std::string, std::string>& parameters,
+    const std::string& fallback_stem,
+    const std::string& extension,
+    const std::string& default_root) {
+
+    const std::string raw_path = NormalizeDataOutputPath(parameters);
+    const std::string clean_extension =
+        extension.empty() || extension.front() == '.'
+            ? extension
+            : "." + extension;
+    const std::string default_filename =
+        SanitizeExportFileStem(fallback_stem) + clean_extension;
+
+    std::filesystem::path resolved;
+    if (raw_path.empty()) {
+        resolved = DefaultExportDirectory(default_root) / default_filename;
+    } else {
+        std::filesystem::path candidate(raw_path);
+        std::error_code is_dir_error;
+        const bool is_existing_directory =
+            std::filesystem::is_directory(candidate, is_dir_error);
+        if (is_existing_directory || HasTrailingDirectorySeparator(raw_path) ||
+            !candidate.has_filename()) {
+            resolved = candidate / default_filename;
+        } else {
+            resolved = candidate;
+            if (!clean_extension.empty() && resolved.extension().empty()) {
+                resolved += clean_extension;
+            }
+        }
+    }
+
+    if (resolved.is_relative()) {
+        resolved = DefaultExportDirectory(default_root) / resolved;
+    }
+
+    const auto parent = resolved.parent_path();
+    if (!parent.empty()) {
+        std::error_code create_error;
+        std::filesystem::create_directories(parent, create_error);
+        if (create_error) {
+            spdlog::warn("Failed to create export directory '{}': {}",
+                         parent.string(), create_error.message());
+        }
+    }
+
+    return resolved.string();
 }
 
 std::string ParameterOrDefault(
@@ -2266,17 +2349,8 @@ const char* MissingRequiredParameter(
     }
 
     if (node_type == "ExportCSV" || node_type == "ExportJSON" ||
-        node_type == "ExportParquet") {
-        return (HasNonEmptyParameter(parameters, "file_path") ||
-                HasNonEmptyParameter(parameters, "path"))
-            ? nullptr
-            : "file_path";
-    }
-
-    if (node_type == "DataOutput") {
-        return NormalizeDataOutputPath(parameters).empty()
-            ? "file_path"
-            : nullptr;
+        node_type == "ExportParquet" || node_type == "DataOutput") {
+        return nullptr;
     }
 
     if (node_type == "DataConvert") {
@@ -2528,23 +2602,11 @@ bool HasSupportedParameterValues(
                 ? ToLowerAscii(TrimString(source_it->second))
                 : "file";
 
-        auto type_it = parameters.find("type");
-        auto file_type_it = parameters.find("file_type");
-        if (type_it != parameters.end() && !type_it->second.empty() &&
-            file_type_it != parameters.end() &&
-            !file_type_it->second.empty()) {
-            const std::string type =
-                NormalizeDataInputFileType(type_it->second);
-            const std::string file_type =
-                NormalizeDataInputFileType(file_type_it->second);
-            if (type != file_type) {
-                error = "DataInput type and file_type disagree";
-                return false;
-            }
+        std::string file_type;
+        if (!ResolveDataInputFormatAliases(
+                parameters, file_type, error)) {
+            return false;
         }
-
-        const std::string file_type =
-            NormalizeDataInputFileType(parameters);
         if (source_type == "file" &&
             (file_type == "csv" || file_type == "tsv")) {
             const auto delimiter_it = parameters.find("delimiter");
@@ -3070,6 +3132,15 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
         return false;
     }
 
+    if (!ResolveAutomaticPreprocessingStatePaths(nodes)) {
+        ReportError(last_error_.empty()
+                        ? "Failed to resolve preprocessing artifact paths"
+                        : last_error_);
+        executing_ = false;
+        NotifyCompletion(false);
+        return false;
+    }
+
     UpdateProgress(0.1f, "Pipeline parsed successfully");
 
     // Validate pipeline
@@ -3194,6 +3265,73 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
             e.what());
         return false;
     }
+}
+
+bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
+    std::vector<Node>& nodes) {
+    const auto now = std::chrono::system_clock::now();
+    const auto timestamp = std::chrono::system_clock::to_time_t(now);
+    const auto milliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()) % 1000;
+    std::tm local_time{};
+#ifdef _WIN32
+    localtime_s(&local_time, &timestamp);
+#else
+    localtime_r(&timestamp, &local_time);
+#endif
+    std::ostringstream run_id;
+    run_id << "pipeline-"
+           << std::put_time(&local_time, "%Y%m%d-%H%M%S")
+           << '-' << std::setfill('0') << std::setw(3)
+           << milliseconds.count();
+
+    const std::filesystem::path artifact_root = artifact_root_.empty()
+        ? std::filesystem::current_path() / "artifacts"
+        : std::filesystem::path(artifact_root_);
+
+    for (auto& node : nodes) {
+        if (node.type != "FillMissing" &&
+            node.type != "StandardScaler") {
+            continue;
+        }
+        const std::string operation_mode = ToLowerAscii(TrimString(
+            ParameterOrDefault(node.parameters, "operation_mode",
+                               "fit_transform")));
+        const bool save_state = OptionalBooleanParameterOrDefault(
+            node.parameters, "save_state", false);
+        const std::string configured_path = TrimString(
+            ParameterOrDefault(node.parameters, "state_path", ""));
+        if (operation_mode != "fit_transform" || !save_state ||
+            !configured_path.empty()) {
+            continue;
+        }
+
+        std::string slug = node.name.empty() ? node.type : node.name;
+        std::transform(slug.begin(), slug.end(), slug.begin(),
+                       [](unsigned char c) {
+                           return std::isalnum(c)
+                               ? static_cast<char>(std::tolower(c))
+                               : '_';
+                       });
+        while (!slug.empty() && slug.back() == '_') {
+            slug.pop_back();
+        }
+        if (slug.empty()) {
+            slug = "preprocessing";
+        }
+
+        const auto path = artifact_root / "preprocessing" /
+            run_id.str() /
+            (std::to_string(node.id) + "_" + slug +
+             ".cyxstate.json");
+        node.parameters["state_path"] = path.string();
+        spdlog::info(
+            "[Preprocessing] Node '{}' will save fitted state to the "
+            "engine-managed artifact '{}'.",
+            node.name, path.string());
+    }
+    return true;
 }
 
 PipelineRuntimeSupport
@@ -3896,13 +4034,18 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
         return false;
     }
 
-    const std::string output_path = NormalizeDataOutputPath(node.parameters);
-    if (output_path.empty()) {
-        ReportError(GetImprovedErrorMessage("DataOutput", "missing_parameter", "file_path"));
+    std::string format = NormalizeDatasetOutputFormat(node.parameters);
+    std::string extension;
+    if (format == "csv") {
+        extension = ".csv";
+    } else if (format == "parquet") {
+        extension = ".parquet";
+    } else {
+        ReportError("DataOutput: Unsupported export format: " + format);
         return false;
     }
-
-    std::string format = NormalizeDatasetOutputFormat(node.parameters);
+    const std::string output_path = ResolveDatasetExportPath(
+        node.parameters, input_dataset_name, extension, export_root_);
 
     spdlog::info("[Pipeline] DataOutput exporting to {} (format: {})", output_path, format);
 
@@ -3919,9 +4062,6 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
             success = registry.ExportArrowToCSV(input_dataset_name, output_path);
         } else if (format == "parquet") {
             success = registry.ExportArrowToParquet(input_dataset_name, output_path);
-        } else {
-            ReportError("DataOutput: Unsupported export format: " + format);
-            return false;
         }
 
         if (!success) {
@@ -4317,10 +4457,22 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
     std::string output_name = (name_it != node.parameters.end() && !name_it->second.empty())
                               ? name_it->second
                               : "ds_output_" + std::to_string(node.id);
-    auto path_it = node.parameters.find("path");
-    const std::string output_path =
-        (path_it != node.parameters.end()) ? path_it->second : "";
+    const std::string raw_output_path = NormalizeDataOutputPath(node.parameters);
     const std::string format = NormalizeDatasetOutputFormat(node.parameters);
+    std::string output_path;
+    if (!raw_output_path.empty()) {
+        std::string extension;
+        if (format == "csv") {
+            extension = ".csv";
+        } else if (format == "parquet") {
+            extension = ".parquet";
+        } else {
+            ReportError("SaveDataset: Unsupported export format: " + format);
+            return false;
+        }
+        output_path = ResolveDatasetExportPath(
+            node.parameters, output_name, extension, export_root_);
+    }
 
     spdlog::info("[Data Studio] Saving dataset '{}' as '{}'", input_dataset_name, output_name);
 
@@ -4346,9 +4498,6 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
                 success = registry.ExportArrowToCSV(input_dataset_name, output_path);
             } else if (format == "parquet") {
                 success = registry.ExportArrowToParquet(input_dataset_name, output_path);
-            } else {
-                ReportError("SaveDataset: Unsupported export format: " + format);
-                return false;
             }
 
             if (!success) {
@@ -6499,28 +6648,22 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
         return false;
     }
 
-    auto path_it = node.parameters.find("file_path");
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
-        path_it = node.parameters.find("path");
-    }
-    if (path_it == node.parameters.end() || path_it->second.empty()) {
-        ReportError("ExportCSV: Missing output file path");
-        return false;
-    }
+    const std::string output_path = ResolveDatasetExportPath(
+        node.parameters, input_dataset_name, ".csv", export_root_);
 
-    spdlog::info("[Data Studio] Exporting to CSV: {}", path_it->second);
+    spdlog::info("[Data Studio] Exporting to CSV: {}", output_path);
     auto& registry = DataRegistry::Instance();
     if (!registry.GetArrowDataset(input_dataset_name)) {
         ReportError("ExportCSV: Input dataset not found in registry");
         return false;
     }
-    if (!registry.ExportArrowToCSV(input_dataset_name, path_it->second)) {
+    if (!registry.ExportArrowToCSV(input_dataset_name, output_path)) {
         ReportError("ExportCSV: Export failed");
         return false;
     }
 
     ctx.node_results[node.id] = input_dataset_name;
-    ctx.output_dataset = path_it->second;
+    ctx.output_dataset = output_path;
     return true;
 }
 
@@ -6531,11 +6674,8 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
         return false;
     }
 
-    const std::string output_path = NormalizeDataOutputPath(node.parameters);
-    if (output_path.empty()) {
-        ReportError("ExportJSON: Missing output file path");
-        return false;
-    }
+    const std::string output_path = ResolveDatasetExportPath(
+        node.parameters, input_dataset_name, ".json", export_root_);
 
     spdlog::info("[Data Studio] Exporting to JSON: {}", output_path);
     auto& registry = DataRegistry::Instance();
@@ -6597,11 +6737,8 @@ bool PipelineExecutor::ExecuteExportParquet(const Node& node, ExecutionContext& 
         return false;
     }
 
-    const std::string output_path = NormalizeDataOutputPath(node.parameters);
-    if (output_path.empty()) {
-        ReportError("ExportParquet: Missing output file path");
-        return false;
-    }
+    const std::string output_path = ResolveDatasetExportPath(
+        node.parameters, input_dataset_name, ".parquet", export_root_);
 
     spdlog::info("[Data Studio] Exporting to Parquet: {}", output_path);
     auto& registry = DataRegistry::Instance();

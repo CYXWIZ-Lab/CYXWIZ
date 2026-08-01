@@ -1,8 +1,8 @@
-# To Fix 70 - Role-Aware Datasets and Truthful Data Input / Split / Loader Architecture
+# Done 70 - Role-Aware Datasets and Truthful Data Input / Split / Loader Architecture
 
 ## Status
 
-Closed - the verified Arrow/Parquet production-data phase is complete. The
+Done - the verified Arrow/Parquet production-data phase is complete. The
 broader architecture extensions identified by the 2026-07-27 deep audit were
 formally removed from this ticket on 2026-07-29 and assigned to independent
 follow-up tickets with their own acceptance criteria.
@@ -483,7 +483,7 @@ raw dataset source -> Create Data Input -> Data Input Preview -> DatasetAsset
 ```
 
 There must be one implementation for tabular table preview, one for text,
-one for images, and so on�not separate Table Viewer, Quick Preview, and Data
+one for images, and so on—not separate Table Viewer, Quick Preview, and Data
 Input preview parsers that silently disagree on extensions or schema. Existing
 Table Viewer functionality may survive only as a panel shell around the shared
 DataPreviewService; it must not own another CSV/Excel/HDF5 loader stack.
@@ -780,23 +780,24 @@ different manifests as not directly comparable.
 - Cross-validation, k-fold search, or automatic hyperparameter optimization.
 - Distributed dataset coordination or a persistent experiment database.
 
-## Acceptance criteria
+## Final scoped acceptance disposition
 
-1. One-source datasets retain the existing 80/10/10 workflow.
-2. A user can load external Train, Dev, and Test sources using existing Data
-   Input formats and assign their roles explicitly.
-3. External Dev/Test data is preserved and never internally split.
-4. Missing Dev/Test partitions can be derived only from Training data through
-   an explicit policy.
-5. Data Loader receives resolved partitions rather than raw data plus ratios.
-6. Runtime creates separate Train/Dev/Test batchers without requiring three
-   visible model graph branches.
-7. Schema, label, and leakage checks produce role-specific diagnostics.
-8. Training transforms fit Train only and are applied consistently to Dev/Test.
-9. Run records include a stable PartitionManifest fingerprint and resolved row
-   counts.
-10. Legacy graphs load safely and new graph UX does not claim unsupported
-    routing semantics.
+The original acceptance criteria are closed for registered Arrow/Parquet
+tabular datasets. Follow-up ownership is stated explicitly where the original
+wording extended beyond that verified production scope.
+
+| # | Final disposition |
+|---|---|
+| 1 | Complete: one-source tabular datasets retain deterministic derived Train/Dev/Test behavior, including the default 80/10/10 workflow. |
+| 2 | Complete for registered Arrow/Parquet Data Input sources and explicit Train/Dev/Test topology. Non-tabular roles belong to To Fix 78. |
+| 3 | Complete: externally supplied tabular Dev/Test datasets are preserved in full. |
+| 4 | Complete: absent Dev/Test roles derive only from Train through the resolved split policy. |
+| 5 | Complete at the typed `ResolvedDatasetPartitions` and resolved-tabular batcher boundary; modality-neutral extension belongs to To Fix 78. |
+| 6 | Complete for Arrow/Parquet: separate Train/Dev/Test batchers require no duplicate model branches. Non-tabular role batchers belong to To Fix 78. |
+| 7 | Complete for registered tabular schema, label, compatibility, and bounded overlap diagnostics. Modality-specific checks belong to To Fix 78. |
+| 8 | Complete for the supported tabular normalization/output-state path and the production file-based fitted preprocessing workflow. Typed preprocessing-state graph ports belong to To Fix 77. |
+| 9 | Complete: run comparison records contain stable partition-manifest fingerprints and resolved row counts. Restart-persisted run history belongs to To Fix 76. |
+| 10 | Complete: legacy graphs migrate safely and the current Dataset-oriented UI/compiler diagnostics do not advertise unsupported routing. |
 
 ## Test plan
 

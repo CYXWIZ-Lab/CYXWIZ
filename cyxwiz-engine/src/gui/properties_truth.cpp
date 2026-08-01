@@ -1779,7 +1779,7 @@ PropertyTruth BuildReadOnlyRuntimeTruth(std::string label,
 }
 
 void AddDataOutputTruth(NodeTruthReport& report, const MLNode& node) {
-    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+    auto output_file = ResolveAliasedStringPropertyWithDefault(
         node,
         "Output file",
         "file_path",
@@ -1789,7 +1789,17 @@ void AddDataOutputTruth(NodeTruthReport& report, const MLNode& node) {
         true,
         true,
         true,
-        "PipelineExecutor requires file_path; legacy path is accepted."));
+        "PipelineExecutor uses a working-directory default when no path is supplied; legacy path is accepted.");
+    if (output_file.effective_value.empty() &&
+        HasStatus(output_file.statuses, TruthStatus::Missing)) {
+        output_file.statuses.clear();
+        AddStatus(output_file, TruthStatus::Defaulted);
+        if (output_file.requires_dialog) {
+            AddStatus(output_file, TruthStatus::RequiresDialog);
+        }
+        output_file.message = "No output path set; runtime will create a working-directory export file.";
+    }
+    report.properties.push_back(std::move(output_file));
 
     auto format = ResolveAliasedStringPropertyWithDefault(
         node,
@@ -1829,7 +1839,7 @@ const char* ExportNodeFormat(NodeType type) {
 
 void AddFixedExportTruth(NodeTruthReport& report, const MLNode& node) {
     const std::string format = ExportNodeFormat(node.type);
-    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+    auto output_file = ResolveAliasedStringPropertyWithDefault(
         node,
         "Output file",
         "file_path",
@@ -1839,7 +1849,14 @@ void AddFixedExportTruth(NodeTruthReport& report, const MLNode& node) {
         true,
         false,
         true,
-        "PipelineExecutor accepts legacy path as an alias."));
+        "PipelineExecutor uses a working-directory default when no path is supplied; legacy path is accepted.");
+    if (output_file.effective_value.empty() &&
+        HasStatus(output_file.statuses, TruthStatus::Missing)) {
+        output_file.statuses.clear();
+        AddStatus(output_file, TruthStatus::Defaulted);
+        output_file.message = "No output path set; runtime will create a working-directory export file.";
+    }
+    report.properties.push_back(std::move(output_file));
 
     report.properties.push_back(BuildReadOnlyRuntimeTruth(
         "Export format",

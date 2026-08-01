@@ -258,9 +258,20 @@ void FinalizeResolvedPartitionContract(TrainingConfiguration& config) {
 
     const bool all_roles_external =
         partitions.dev.IsSupplied() && partitions.test.IsSupplied();
+    const bool parquet_stratified_fallback =
+        policy.stratified &&
+        partitions.train.storage_kind ==
+            DatasetStorageKind::DiskBackedParquet;
     if (all_roles_external) {
         policy.method = PartitionSplitMethod::None;
         policy.shuffle = false;
+    } else if (parquet_stratified_fallback) {
+        // ParquetArrowBatcher currently derives roles through deterministic
+        // row-group slicing. Keep the requested config intact for its runtime
+        // diagnostic, but record the policy that will actually execute.
+        policy.method = PartitionSplitMethod::Random;
+        policy.shuffle = false;
+        policy.stratified = false;
     } else if (config.is_time_series) {
         policy.method = PartitionSplitMethod::TimeOrdered;
         policy.shuffle = false;

@@ -221,6 +221,7 @@ cyxwiz::TrainingConfiguration MakeMultiStepTimeSeriesConfig() {
     auto config = MakeTimeSeriesConfig();
     config.output_size = 3;
     config.time_series_target_width = 3;
+    config.target.value_kind = cyxwiz::TargetValueKind::Continuous;
     return config;
 }
 
@@ -1137,6 +1138,8 @@ int main() {
     ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     multi_ts_parquet_batchers = cyxwiz::TrainingBatcherSet{};
+    multi_step_arrow_batchers = cyxwiz::TrainingBatcherSet{};
+    multi_step_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     loop_arrow_batchers = cyxwiz::TrainingBatcherSet{};
     loop_parquet_batchers = cyxwiz::TrainingBatcherSet{};
     resolved_external_role = cyxwiz::ResolvedExternalBatchers{};

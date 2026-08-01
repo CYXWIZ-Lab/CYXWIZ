@@ -60,14 +60,16 @@ DataInputDialog::DataInputDialog(MLNode* node)
             DetectFileType();
             DetectFileCategory();
         }
-        if (node_->parameters.count("type") && !node_->parameters["type"].empty()) {
-            detected_type_ = data_input::FileTypeFromParam(
-                node_->parameters["type"],
-                detected_type_);
-        } else if (node_->parameters.count("file_type") &&
-                   !node_->parameters["file_type"].empty()) {
+        if (node_->parameters.count("file_type") &&
+            !node_->parameters["file_type"].empty() &&
+            node_->parameters["file_type"] != "auto") {
             detected_type_ = data_input::FileTypeFromParam(
                 node_->parameters["file_type"],
+                detected_type_);
+        } else if (node_->parameters.count("type") &&
+                   !node_->parameters["type"].empty()) {
+            detected_type_ = data_input::FileTypeFromParam(
+                node_->parameters["type"],
                 detected_type_);
         }
 

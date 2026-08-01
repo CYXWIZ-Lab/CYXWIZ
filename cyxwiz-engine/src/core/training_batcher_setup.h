@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace arrow {
 class Table;
@@ -19,6 +20,19 @@ class ParquetBackedDataset;
 struct ResolvedExternalBatchers;
 
 struct TrainingBatcherSet {
+    TrainingBatcherSet() = default;
+    TrainingBatcherSet(TrainingBatcherSet&&) noexcept = default;
+    TrainingBatcherSet(const TrainingBatcherSet&) = delete;
+    TrainingBatcherSet& operator=(const TrainingBatcherSet&) = delete;
+
+    TrainingBatcherSet& operator=(TrainingBatcherSet&& other) noexcept {
+        if (this != &other) {
+            TrainingBatcherSet incoming(std::move(other));
+            Swap(incoming);
+        }
+        return *this;
+    }
+
     std::unique_ptr<ArrowDatasetBatcher> arrow_train;
     std::unique_ptr<ArrowDatasetBatcher> arrow_val;
     std::unique_ptr<ArrowDatasetBatcher> arrow_test;
@@ -34,6 +48,25 @@ struct TrainingBatcherSet {
     size_t num_train_samples = 0;
     size_t num_val_samples = 0;
     size_t num_test_samples = 0;
+
+    void Swap(TrainingBatcherSet& other) noexcept {
+        using std::swap;
+        swap(arrow_train, other.arrow_train);
+        swap(arrow_val, other.arrow_val);
+        swap(arrow_test, other.arrow_test);
+        swap(parquet_train, other.parquet_train);
+        swap(parquet_val, other.parquet_val);
+        swap(parquet_test, other.parquet_test);
+        swap(prefetch_train, other.prefetch_train);
+        swap(prefetch_val, other.prefetch_val);
+        swap(prefetch_test, other.prefetch_test);
+        swap(train, other.train);
+        swap(val, other.val);
+        swap(test, other.test);
+        swap(num_train_samples, other.num_train_samples);
+        swap(num_val_samples, other.num_val_samples);
+        swap(num_test_samples, other.num_test_samples);
+    }
 };
 
 struct TrainingInputSizeResolution {

@@ -3525,6 +3525,7 @@ set_target_properties(test_label_column_resolver PROPERTIES
 # ===== Test: Properties Truth Resolver =====
 add_executable(test_properties_truth
     tests/test_properties_truth.cpp
+    src/gui/properties_parameter_rules.cpp
     src/gui/properties_truth.cpp
 )
 

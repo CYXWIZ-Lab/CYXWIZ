@@ -31,6 +31,10 @@ public:
 
     // Set the currently selected node to display properties for
     void SetSelectedNode(MLNode* node);
+    // Select the node and open its dedicated dialog when one is registered.
+    // Returns true when a dialog was opened; false means Properties is the
+    // configuration surface for this node type.
+    bool ConfigureNode(MLNode* node);
     void ClearSelection();
     void ClearNodeReferences();
 

@@ -4,10 +4,15 @@
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/loaders/data_loader.h"
 
+#include <core/arrow_dataset.h>
+#include <core/parquet_backed_dataset.h>
+
 #include <arrow/api.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -1621,10 +1626,15 @@ int main() {
     arrow::FloatBuilder sensor_a_builder;
     arrow::Int64Builder sensor_b_builder;
     arrow::StringBuilder class_builder;
+    for (int row = 0; row < 64; ++row) {
+        (void)sensor_a_builder.Append(static_cast<float>(row));
+        (void)sensor_b_builder.Append(row);
+        (void)class_builder.Append("negative");
+    }
     Check(sensor_a_builder.Finish(&sensor_a).ok() &&
               sensor_b_builder.Finish(&sensor_b).ok() &&
               class_builder.Finish(&class_label).ok(),
-          "empty schema-contract arrays should build");
+          "schema-contract arrays should build");
     auto schema_contract_table = arrow::Table::Make(
         arrow::schema({
             arrow::field("sensor_a", arrow::float32()),
@@ -1634,6 +1644,28 @@ int main() {
         {sensor_a, class_label, sensor_b});
     cyxwiz::DataRegistry::Instance().RegisterArrowTable(
         schema_contract_table, "compiler_schema_contract");
+
+    const std::string schema_contract_name = "compiler_schema_contract";
+    const std::string parquet_contract_name =
+        schema_contract_name + "_parquet";
+    auto schema_contract_dataset =
+        cyxwiz::DataRegistry::Instance().GetArrowDataset(
+            schema_contract_name);
+    Check(schema_contract_dataset != nullptr, schema_contract_name);
+    std::string parquet_file_name = parquet_contract_name;
+    parquet_file_name += std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    parquet_file_name += ".parquet";
+    const auto parquet_manifest_path =
+        std::filesystem::temp_directory_path() / parquet_file_name;
+    Check(schema_contract_dataset->ExportParquet(
+              parquet_manifest_path.string()),
+          parquet_contract_name);
+    auto parquet_manifest_dataset = cyxwiz::ParquetBackedDataset::Open(
+        parquet_manifest_path.string(), parquet_contract_name);
+    Check(parquet_manifest_dataset != nullptr, parquet_contract_name);
+    cyxwiz::DataRegistry::Instance().RegisterParquetBacked(
+        parquet_contract_name, parquet_manifest_dataset);
 
     auto schema_data = data;
     schema_data.parameters["dataset_name"] = "compiler_schema_contract";
@@ -2083,6 +2115,28 @@ int main() {
           "compiler should preserve CrossEntropy label_smoothing");
     Check(!HasIssueText(config, "Loss weighting parameters are present"),
           "compiler should not warn that supported loss weights are ignored");
+
+    auto parquet_stratified_data = data;
+    parquet_stratified_data.parameters["dataset_name"] =
+        parquet_contract_name;
+    nodes = {parquet_stratified_data, stratified_split, balanced_loader,
+             dense, weighted_loss, optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "supported Parquet imbalance graph should compile");
+    Check(config.stratified,
+          "requested Parquet stratification should remain visible");
+    Check(!config.dataset_roles.policy.stratified &&
+              config.dataset_roles.policy.method ==
+                  cyxwiz::PartitionSplitMethod::Random &&
+              !config.dataset_roles.manifest.stratified &&
+              config.dataset_roles.manifest.split_method ==
+                  cyxwiz::PartitionSplitMethod::Random,
+          "Parquet manifest must record executed ratio slicing");
+    cyxwiz::DataRegistry::Instance().UnregisterTabularDataset(
+        parquet_contract_name);
+    std::error_code parquet_remove_error;
+    std::filesystem::remove(parquet_manifest_path, parquet_remove_error);
 
     auto invalid_weighted_loss = weighted_loss;
     invalid_weighted_loss.parameters["class_weights"] = "[1.0, 2.0, 3.0]";

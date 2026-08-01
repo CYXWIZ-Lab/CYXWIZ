@@ -819,6 +819,11 @@ std::string ProjectManager::GetIngestionCachePath() const {
     return (fs::path(project_root_) / "cache" / "ingestion").string();
 }
 
+std::string ProjectManager::GetArtifactsPath() const {
+    if (!HasActiveProject()) return "";
+    return (fs::path(project_root_) / "artifacts").string();
+}
+
 std::string ProjectManager::GetCheckpointsPath() const {
     if (!HasActiveProject()) return "";
     return (fs::path(project_root_) / "checkpoints").string();
@@ -864,6 +869,7 @@ bool ProjectManager::CreateDirectoryStructure(const std::string& project_dir) {
         fs::create_directories(fs::path(project_dir) / "models");
         fs::create_directories(fs::path(project_dir) / "datasets");
         fs::create_directories(fs::path(project_dir) / "cache" / "ingestion");
+        fs::create_directories(fs::path(project_dir) / "artifacts");
         fs::create_directories(fs::path(project_dir) / "checkpoints");
         fs::create_directories(fs::path(project_dir) / "exports");
         fs::create_directories(fs::path(project_dir) / "plugins");

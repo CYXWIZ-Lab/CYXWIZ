@@ -1173,7 +1173,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         "Universal data loader - supports CSV, TSV, Parquet, Feather, Arrow, and IPC", "", "",
         {}, {{"Dataset", PinType::Dataset, true, "Loaded dataset asset"}},
         {{"file_path", "file", "", "Data file", {}, "*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc"},
-         {"type", "enum", "auto", "Input format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
+         {"file_type", "enum", "auto", "Input format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
          {"configured", "bool", "false", "Dialog configured", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -1464,8 +1464,8 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
          {"columns", "string", "", "Comma-separated feature columns; empty selects all except Label column", {}, "", "Feature columns", "Columns"},
          {"label_col", "string", "", "Label/target column excluded from fitting", {}, "", "Label column", "Columns"},
          {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse a saved training state", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
-         {"save_state", "bool", "false", "Persist fitted values for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
-         {"state_path", "string", "", "Path to a versioned .cyxstate.json artifact", {}, "", "State artifact path", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist fitted values to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
          {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -1807,8 +1807,8 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"with_mean", "bool", "true", "Center data", {}, ""},
          {"with_std", "bool", "true", "Scale to unit variance", {}, ""},
          {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse saved training statistics", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
-         {"save_state", "bool", "false", "Persist mean and scale for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
-         {"state_path", "string", "", "Path to a versioned .cyxstate.json artifact", {}, "", "State artifact path", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist mean and scale to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
          {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
         NodeImplementationStatus::Implemented, 0});
 

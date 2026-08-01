@@ -206,6 +206,26 @@ void Properties::SetSelectedNode(MLNode* node) {
     selected_node_ = node;
 }
 
+bool Properties::ConfigureNode(MLNode* node) {
+    if (!node) {
+        return false;
+    }
+    selected_node_ = node;
+    show_window_ = true;
+
+    auto& factory = NodeConfigDialogFactory::Instance();
+    if (!factory.HasDialog(node->type)) {
+        return false;
+    }
+    active_dialog_ = factory.CreateDialog(node);
+    if (!active_dialog_) {
+        return false;
+    }
+    active_dialog_->SetNodeEditor(node_editor_);
+    active_dialog_->Open();
+    return true;
+}
+
 void Properties::ClearSelection() {
     selected_node_ = nullptr;
 }
@@ -394,16 +414,7 @@ void Properties::RenderOpenDialogButton(MLNode& node) {
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.35f, 0.55f, 1.0f));
 
     if (ImGui::Button("Open Dialog...", ImVec2(button_width, 0))) {
-        // Create and open the dialog for this node
-        active_dialog_ = NodeConfigDialogFactory::Instance().CreateDialog(&node);
-        if (active_dialog_) {
-            // Pass the graph context so visualization / inspection
-            // dialogs can walk upstream pins for auto-populating
-            // dataset hints. Most dialogs ignore this.
-            active_dialog_->SetNodeEditor(node_editor_);
-            active_dialog_->Open();
-            spdlog::info("Opened configuration dialog for node '{}'", node.name);
-        }
+        ConfigureNode(&node);
     }
 
     ImGui::PopStyleColor(3);

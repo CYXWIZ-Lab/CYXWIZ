@@ -1105,6 +1105,7 @@ private:
     void RenderMinimap();
     void HandleInteractions();
     void ShowContextMenu();
+    void ConfigureNode(int node_id);
     void ShowSingleNodeContextMenu();  // Node-specific context menu
     void ShowNodeDescriptionEditPopup();  // KNIME-style node description editor
 

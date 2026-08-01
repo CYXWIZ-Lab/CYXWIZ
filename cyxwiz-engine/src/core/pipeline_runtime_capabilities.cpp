@@ -699,12 +699,8 @@ const std::vector<PipelineRequiredParameterRuntimeCapability>&
 GetPipelineRequiredParameterRuntimeCapabilities() {
     static const std::vector<PipelineRequiredParameterRuntimeCapability> capabilities = {
         {"FileInput", {"path"}},
-        {"DataOutput", {"file_path"}},
         {"DataConvert", {"output_path"}},
         {"ParquetInput", {"file_path"}},
-        {"ExportCSV", {"file_path"}},
-        {"ExportJSON", {"file_path"}},
-        {"ExportParquet", {"file_path"}},
         {"RuleEngine", {"rules"}},
         {"JSONPathExtractor", {"path"}},
         {"RegexTester", {"pattern"}},

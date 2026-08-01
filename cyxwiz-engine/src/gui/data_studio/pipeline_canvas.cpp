@@ -2,6 +2,8 @@
 #include "../../core/pipeline_executor.h"  // Unified Canvas Phase 2: Moved to core/
 #include "../../core/pipeline_execution_task.h"
 #include "../../core/async_task_manager.h"
+#include "../../core/data_input_parameters.h"
+#include "../../core/project_manager.h"
 #include "gui/icons.h"
 #include "core/file_dialogs.h"
 #include <spdlog/spdlog.h>
@@ -18,7 +20,9 @@ namespace {
 void MigrateLegacyTimeSeriesCanvasParams(
     const std::string& type,
     std::map<std::string, std::string>& parameters) {
-    if (type == "TSWindow") {
+    if (type == "DataInput") {
+        MigrateDataInputFormatAliases(parameters);
+    } else if (type == "TSWindow") {
         if (parameters.count("value_col") == 0) {
             auto target = parameters.find("target_column");
             if (target != parameters.end()) {
@@ -316,7 +320,7 @@ void PipelineCanvas::AddNode(const std::string& type, ImVec2 position) {
     } else if (type == "DataInput") {
         node.parameters["source_type"] = "file";
         node.parameters["file_path"] = "";
-        node.parameters["type"] = "auto";
+        node.parameters["file_type"] = "auto";
     } else if (type == "DataOutput") {
         node.parameters["file_path"] = "";
         node.parameters["file_type"] = "csv";
@@ -457,6 +461,10 @@ bool PipelineCanvas::ExecutePipeline() {
 
     // Serialize pipeline to JSON
     std::string pipeline_json = SerializePipeline();
+
+    const auto& project = ProjectManager::Instance();
+    executor_->SetArtifactRoot(project.GetArtifactsPath());
+    executor_->SetExportRoot(project.GetExportsPath());
 
     spdlog::info("[Data Studio] Queuing pipeline execution with {} nodes", nodes_.size());
     auto submission = SubmitPipelineExecutionTask(

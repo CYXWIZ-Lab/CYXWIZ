@@ -1,4 +1,5 @@
 #include "../src/gui/properties_truth.h"
+#include "../src/gui/properties_parameter_rules.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -83,6 +84,45 @@ void AddOutput(gui::MLNode& node, int pin_id, std::string name) {
 } // namespace
 
 int main() {
+    {
+        auto missing = MakeNode(
+            100, gui::NodeType::FillMissingValues, "Missing Value");
+        missing.parameters["operation_mode"] = "fit_transform";
+        missing.parameters["save_state"] = "true";
+
+        cyxwiz::ParameterDefinition state_path;
+        state_path.name = "state_path";
+        cyxwiz::ParameterDefinition save_state;
+        save_state.name = "save_state";
+        cyxwiz::ParameterDefinition state_overwrite;
+        state_overwrite.name = "state_overwrite";
+
+        Check(gui::properties_rules::ShouldHideGenericParameter(
+                  missing, state_path),
+              "Fit + Transform should hide the engine-managed state path");
+        Check(!gui::properties_rules::ShouldHideGenericParameter(
+                  missing, save_state),
+              "Fit + Transform should expose Save fitted state");
+        Check(gui::properties_rules::ShouldHideGenericParameter(
+                  missing, state_overwrite),
+              "automatic fitted-state paths should hide overwrite control");
+
+        missing.parameters["operation_mode"] = "transform_only";
+        Check(!gui::properties_rules::ShouldHideGenericParameter(
+                  missing, state_path),
+              "Transform Only should expose the training state picker");
+        Check(gui::properties_rules::ShouldHideGenericParameter(
+                  missing, save_state),
+              "Transform Only should hide the inapplicable save toggle");
+
+        auto scaler = MakeNode(
+            101, gui::NodeType::StandardScaler, "Standard Scaler");
+        scaler.parameters["operation_mode"] = "transform_only";
+        Check(!gui::properties_rules::ShouldHideGenericParameter(
+                  scaler, state_path),
+              "Standard Scaler should share the Transform Only state picker contract");
+    }
+
     {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
         Check(covered.size() == 68,
@@ -225,10 +265,10 @@ int main() {
         const auto report = gui::properties_truth::ResolveNodeTruth(output);
         const auto* file_path = FindProperty(report, "file_path");
         Check(file_path != nullptr,
-              "DataOutput should surface required file_path truth");
-        Check(HasStatus(*file_path,
-                        gui::properties_truth::TruthStatus::Missing),
-              "DataOutput missing file_path should be visible");
+              "DataOutput should surface optional file_path truth");
+        Check(!HasStatus(*file_path,
+                         gui::properties_truth::TruthStatus::Missing),
+              "DataOutput missing file_path should use a default export path");
 
         const auto* file_type = FindProperty(report, "file_type");
         Check(file_type != nullptr,
@@ -260,9 +300,9 @@ int main() {
         const auto* file_path = FindProperty(report, "file_path");
         Check(file_path != nullptr,
               "ExportJSON should surface output file truth");
-        Check(HasStatus(*file_path,
-                        gui::properties_truth::TruthStatus::Missing),
-              "ExportJSON missing file_path should be visible");
+        Check(!HasStatus(*file_path,
+                         gui::properties_truth::TruthStatus::Missing),
+              "ExportJSON missing file_path should use a default export path");
         const auto* format = FindProperty(report, "export_format");
         Check(format != nullptr && format->effective_value == "json",
               "ExportJSON should surface fixed json runtime format");

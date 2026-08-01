@@ -15,7 +15,8 @@ struct NumericRange {
 bool TryParseDoubleStrict(const std::string& text, double& value);
 bool TryParseIntStrict(const std::string& text, int& value);
 NumericRange ParseNumericRange(const std::string& validation);
-bool ShouldHideGenericParameter(NodeType type, const cyxwiz::ParameterDefinition& param);
+bool ShouldHideGenericParameter(const MLNode& node,
+                                const cyxwiz::ParameterDefinition& param);
 bool ValidateParameter(
     const std::string& value,
     const cyxwiz::ParameterDefinition& param,

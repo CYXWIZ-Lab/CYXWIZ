@@ -1,6 +1,7 @@
 #include "cyxwiz/cyxwiz.h"
 #include "cyxwiz/engine.h"
 #include <spdlog/spdlog.h>
+#include <atomic>
 #include <mutex>
 #include <string>
 
@@ -10,7 +11,7 @@
 
 namespace cyxwiz {
 
-static bool g_initialized = false;
+static std::atomic<bool> g_initialized{false};
 
 namespace {
 
@@ -167,6 +168,10 @@ bool Initialize() {
 
     g_initialized = true;
     return true;
+}
+
+bool IsInitialized() {
+    return g_initialized.load(std::memory_order_acquire);
 }
 
 void Shutdown() {

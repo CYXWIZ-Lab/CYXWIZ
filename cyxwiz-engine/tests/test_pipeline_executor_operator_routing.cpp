@@ -210,9 +210,6 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "DecisionTreeClassifier",
         "Differencing",
         "ExponentialSmoothing",
-        "ExportCSV",
-        "ExportJSON",
-        "ExportParquet",
         "FFTNode",
         "FileInput",
         "FillMissing",
@@ -554,9 +551,108 @@ void CheckTrack70RowAndColumnLimits() {
     }
 }
 
+void CheckFocusedExportOutputPaths() {
+    namespace fs = std::filesystem;
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const fs::path csv_path =
+        fs::temp_directory_path() / "cyxwiz_focused_export_paths.csv";
+    const fs::path parquet_dir =
+        fs::temp_directory_path() / "cyxwiz_focused_export_parquet_dir";
+    const fs::path default_root =
+        fs::temp_directory_path() / "cyxwiz_focused_export_defaults";
+    const fs::path data_output_default = default_root / "ds_datainput_90001.csv";
+    const fs::path csv_default = default_root / "ds_datainput_90003.csv";
+    const fs::path json_default = default_root / "ds_datainput_90005.json";
+    const fs::path parquet_dir_file = parquet_dir / "ds_datainput_90007.parquet";
+
+    fs::remove(csv_path);
+    fs::remove_all(default_root);
+    fs::remove_all(parquet_dir);
+
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "x,y\n1,10\n2,20\n";
+    }
+
+    const std::string data_output_json =
+        R"({"nodes":[)"
+        R"({"id":90001,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":90002,"type":"DataOutput","name":"Output","parameters":{)"
+        R"("format":"csv"}})"
+        R"(],"links":[{"start_node":90001,"end_node":90002}]})";
+    cyxwiz::PipelineExecutor data_output_executor;
+    data_output_executor.SetExportRoot(default_root.string());
+    Check(data_output_executor.ExecutePipeline(data_output_json),
+          "DataOutput should default a missing file_path: " +
+              data_output_executor.GetLastError());
+    Check(fs::exists(data_output_default),
+          "DataOutput should create a working-directory default CSV");
+
+    const std::string export_csv_json =
+        R"({"nodes":[)"
+        R"({"id":90003,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":90004,"type":"ExportCSV","name":"Export","parameters":{}})"
+        R"(],"links":[{"start_node":90003,"end_node":90004}]})";
+    cyxwiz::PipelineExecutor export_csv_executor;
+    export_csv_executor.SetExportRoot(default_root.string());
+    Check(export_csv_executor.ExecutePipeline(export_csv_json),
+          "ExportCSV should default a missing file_path: " +
+              export_csv_executor.GetLastError());
+    Check(fs::exists(csv_default),
+          "ExportCSV should create a working-directory default CSV");
+
+    const std::string export_json_json =
+        R"({"nodes":[)"
+        R"({"id":90005,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":90006,"type":"ExportJSON","name":"Export","parameters":{}})"
+        R"(],"links":[{"start_node":90005,"end_node":90006}]})";
+    cyxwiz::PipelineExecutor export_json_executor;
+    export_json_executor.SetExportRoot(default_root.string());
+    Check(export_json_executor.ExecutePipeline(export_json_json),
+          "ExportJSON should default a missing file_path: " +
+              export_json_executor.GetLastError());
+    Check(fs::exists(json_default),
+          "ExportJSON should create a working-directory default JSON");
+
+    fs::create_directories(parquet_dir);
+    const std::string export_parquet_json =
+        R"({"nodes":[)"
+        R"({"id":90007,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":90008,"type":"ExportParquet","name":"Export","parameters":{)"
+        R"("path":")" + JsonEscapePath(parquet_dir.string()) + R"("}})"
+        R"(],"links":[{"start_node":90007,"end_node":90008}]})";
+    cyxwiz::PipelineExecutor export_parquet_executor;
+    Check(export_parquet_executor.ExecutePipeline(export_parquet_json),
+          "ExportParquet should append a filename for directory paths: " +
+              export_parquet_executor.GetLastError());
+    Check(fs::exists(parquet_dir_file),
+          "ExportParquet should create a Parquet file inside the selected directory");
+
+    registry.UnloadDataset("ds_datainput_90001");
+    registry.UnloadDataset("ds_datainput_90003");
+    registry.UnloadDataset("ds_datainput_90005");
+    registry.UnloadDataset("ds_datainput_90007");
+    fs::remove(csv_path);
+    fs::remove_all(default_root);
+    fs::remove_all(parquet_dir);
+}
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 &&
+        std::string(argv[1]) == "--export-output-paths") {
+        CheckFocusedExportOutputPaths();
+        return 0;
+    }
     if (argc == 2 &&
         std::string(argv[1]) == "--track70-ingestion-limits") {
         CheckAsyncTaskProgressContract();
@@ -574,6 +670,7 @@ int main(int argc, char** argv) {
     registry.UnloadDataset("ds_datainput_1");
     registry.UnloadDataset("ds_datainput_222");
     registry.UnloadDataset("ds_datainput_429");
+    registry.UnloadDataset("ds_datainput_432");
     registry.UnloadDataset("ds_datainput_9901");
     registry.UnloadDataset("ds_operator_StandardScaler_2");
     registry.UnloadDataset("ds_operator_ACFNode_202");
@@ -623,6 +720,14 @@ int main(int argc, char** argv) {
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.json";
     const fs::path export_parquet_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export.parquet";
+    const fs::path export_parquet_dir =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_operator_export_dir";
+    const fs::path default_export_root =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_default_exports";
+    const fs::path export_csv_default_path =
+        default_export_root / "ds_datainput_573.csv";
+    const fs::path data_output_default_csv_path =
+        default_export_root / "ds_datainput_31.csv";
     const fs::path data_output_mixed_case_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_data_output_mixed_case.csv";
     const fs::path data_output_path_alias_csv_path =
@@ -661,6 +766,9 @@ int main(int argc, char** argv) {
         fs::temp_directory_path() / "cyxwiz_fill_missing_state.cyxstate.json";
     const fs::path scaler_state_path =
         fs::temp_directory_path() / "cyxwiz_standard_scaler_state.cyxstate.json";
+    const fs::path automatic_state_root =
+        fs::temp_directory_path() /
+        "cyxwiz_automatic_preprocessing_artifacts";
     const fs::path duplicates_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_duplicates.csv";
     const fs::path json_payload_csv_path =
@@ -676,6 +784,8 @@ int main(int argc, char** argv) {
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
+    fs::remove_all(default_export_root);
+    fs::remove_all(export_parquet_dir);
     fs::remove(data_output_mixed_case_csv_path);
     fs::remove(data_output_path_alias_csv_path);
     fs::remove(data_output_file_type_parquet_path);
@@ -697,6 +807,7 @@ int main(int argc, char** argv) {
     fs::remove(scaler_test_csv_path);
     fs::remove(fill_state_path);
     fs::remove(scaler_state_path);
+    fs::remove_all(automatic_state_root);
     fs::remove(duplicates_csv_path);
     fs::remove(json_payload_csv_path);
     fs::remove(roc_csv_path);
@@ -1102,7 +1213,8 @@ int main(int argc, char** argv) {
     const std::string missing_tree_predictor_model_json =
         R"({"nodes":[)"
         R"({"id":224,"type":"DataInput","name":"PredictInput","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":225,"type":"TreeModelPredictor","name":"MissingModel","parameters":{}})"
         R"(],"links":[{"start_node":224,"end_node":225}]})";
 
@@ -1137,7 +1249,8 @@ int main(int argc, char** argv) {
     const std::string bad_acf_max_lag_json =
         R"({"nodes":[)"
         R"({"id":381,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":382,"type":"ACFNode","name":"BadACFLag","parameters":{)"
         R"("signal_col":"signal","max_lag":"0"}})"
         R"(],"links":[{"start_node":381,"end_node":382}]})";
@@ -1154,7 +1267,8 @@ int main(int argc, char** argv) {
     const std::string bad_pacf_lags_json =
         R"({"nodes":[)"
         R"({"id":383,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":384,"type":"PACFNode","name":"BadPACFLags","parameters":{)"
         R"("signal_col":"signal","lags":"0"}})"
         R"(],"links":[{"start_node":383,"end_node":384}]})";
@@ -1171,7 +1285,8 @@ int main(int argc, char** argv) {
     const std::string bad_time_series_split_ratio_json =
         R"({"nodes":[)"
         R"({"id":334,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":335,"type":"TimeSeriesSplit","name":"BadSplit","parameters":{)"
         R"("train_ratio":"wide"}})"
         R"(],"links":[{"start_node":334,"end_node":335}]})";
@@ -1189,7 +1304,8 @@ int main(int argc, char** argv) {
     const std::string bad_time_series_split_sum_json =
         R"({"nodes":[)"
         R"({"id":501,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":502,"type":"TimeSeriesSplit","name":"BadSplitSum","parameters":{)"
         R"("train_ratio":"0.8","val_ratio":"0.3","test_ratio":"0.1"}})"
         R"(],"links":[{"start_node":501,"end_node":502}]})";
@@ -1207,7 +1323,8 @@ int main(int argc, char** argv) {
     const std::string bad_time_series_split_train_zero_json =
         R"({"nodes":[)"
         R"({"id":503,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":504,"type":"TimeSeriesSplit","name":"BadSplitTrainZero","parameters":{)"
         R"("train_ratio":"0","val_ratio":"0.5","test_ratio":"0.5"}})"
         R"(],"links":[{"start_node":503,"end_node":504}]})";
@@ -1733,6 +1850,25 @@ int main(int argc, char** argv) {
     Check(alias_input->GetNumRows() == 3,
           "DataInput file_type alias should preserve CSV row count");
 
+    const std::string migration_default_alias_json =
+        R"({"nodes":[)"
+        R"({"id":432,"type":"DataInput","name":"MigratedInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","file_type":"auto","has_header":"true"}})"
+        R"(],"links":[]})";
+
+    cyxwiz::PipelineExecutor migration_default_alias_executor;
+    Check(migration_default_alias_executor.ExecutePipeline(
+              migration_default_alias_json),
+          "DataInput concrete legacy format should win over canonical auto: " +
+              migration_default_alias_executor.GetLastError());
+    auto migrated_alias_input =
+        registry.GetArrowDataset("ds_datainput_432");
+    Check(migrated_alias_input != nullptr &&
+              migrated_alias_input->GetNumRows() == 3,
+          "DataInput auto/concrete migration state should load the dataset");
+
     const std::string bad_data_input_file_type_alias_json =
         R"({"nodes":[)"
         R"({"id":430,"type":"DataInput","name":"BadFileTypeAlias","parameters":{)"
@@ -1847,7 +1983,8 @@ int main(int argc, char** argv) {
     const std::string bad_window_json =
         R"({"nodes":[)"
         R"({"id":13,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":14,"type":"TSWindow","name":"BadWindow","parameters":{)"
         R"("value_col":"x","input_width":"0","shift":"1"}})"
         R"(],"links":[{"start_node":13,"end_node":14}]})";
@@ -1863,7 +2000,8 @@ int main(int argc, char** argv) {
     const std::string unsupported_stride_json =
         R"({"nodes":[)"
         R"({"id":211,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":212,"type":"TSWindow","name":"UnsupportedStride","parameters":{)"
         R"("value_col":"x","input_width":"2","shift":"1","stride":"2"}})"
         R"(],"links":[{"start_node":211,"end_node":212}]})";
@@ -1899,7 +2037,8 @@ int main(int argc, char** argv) {
     const std::string bad_text_tokenizer_type_json =
         R"({"nodes":[)"
         R"({"id":360,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":361,"type":"TextTokenizer","name":"BadTokenizerType","parameters":{)"
         R"("text_col":"phrase","tokenizer_type":"3"}})"
         R"(],"links":[{"start_node":360,"end_node":361}]})";
@@ -2089,7 +2228,8 @@ int main(int argc, char** argv) {
     const std::string bad_robust_scaler_quantile_json =
         R"({"nodes":[)"
         R"({"id":336,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":337,"type":"RobustScaler","name":"BadRobustQuantile","parameters":{)"
         R"("quantile_min":"wide"}})"
         R"(],"links":[{"start_node":336,"end_node":337}]})";
@@ -2107,7 +2247,8 @@ int main(int argc, char** argv) {
     const std::string bad_robust_scaler_quantile_order_json =
         R"({"nodes":[)"
         R"({"id":505,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":506,"type":"RobustScaler","name":"BadRobustQuantileOrder","parameters":{)"
         R"("quantile_min":"80","quantile_max":"20"}})"
         R"(],"links":[{"start_node":505,"end_node":506}]})";
@@ -2125,7 +2266,8 @@ int main(int argc, char** argv) {
     const std::string bad_target_encoder_smoothing_json =
         R"({"nodes":[)"
         R"({"id":373,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":374,"type":"TargetEncoder","name":"BadTargetSmoothing","parameters":{)"
         R"("columns":"category","target_col":"y","smoothing":"-1"}})"
         R"(],"links":[{"start_node":373,"end_node":374}]})";
@@ -2162,7 +2304,8 @@ int main(int argc, char** argv) {
     const std::string bad_outlier_threshold_json =
         R"({"nodes":[)"
         R"({"id":375,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":376,"type":"OutlierDetector","name":"BadOutlierThreshold","parameters":{)"
         R"("columns":"x","threshold":"0"}})"
         R"(],"links":[{"start_node":375,"end_node":376}]})";
@@ -2241,7 +2384,8 @@ int main(int argc, char** argv) {
     const std::string bad_lags_json =
         R"({"nodes":[)"
         R"({"id":15,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":16,"type":"TSLag","name":"BadLag","parameters":{)"
         R"("columns":"x","lag_periods":"1,nope,3"}})"
         R"(],"links":[{"start_node":15,"end_node":16}]})";
@@ -2258,7 +2402,8 @@ int main(int argc, char** argv) {
     const std::string missing_text_clean_column_json =
         R"({"nodes":[)"
         R"({"id":166,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":167,"type":"TextClean","name":"MissingTextColumn","parameters":{)"
         R"("lowercase":"true"}})"
         R"(],"links":[{"start_node":166,"end_node":167}]})";
@@ -2275,7 +2420,8 @@ int main(int argc, char** argv) {
     const std::string missing_text_tokenize_column_json =
         R"({"nodes":[)"
         R"({"id":168,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":169,"type":"TextTokenize","name":"MissingTokenColumn","parameters":{)"
         R"("method":"word"}})"
         R"(],"links":[{"start_node":168,"end_node":169}]})";
@@ -2292,7 +2438,8 @@ int main(int argc, char** argv) {
     const std::string missing_text_vectorize_column_json =
         R"({"nodes":[)"
         R"({"id":170,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":171,"type":"TextVectorize","name":"MissingVectorColumn","parameters":{)"
         R"("method":"count"}})"
         R"(],"links":[{"start_node":170,"end_node":171}]})";
@@ -2309,7 +2456,8 @@ int main(int argc, char** argv) {
     const std::string missing_text_tokenizer_text_col_json =
         R"({"nodes":[)"
         R"({"id":312,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":313,"type":"TextTokenizer","name":"MissingTokenizerText","parameters":{)"
         R"("max_length":"8"}})"
         R"(],"links":[{"start_node":312,"end_node":313}]})";
@@ -2326,7 +2474,8 @@ int main(int argc, char** argv) {
     const std::string missing_linear_regression_target_json =
         R"({"nodes":[)"
         R"({"id":314,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":315,"type":"LinearRegressionNode","name":"MissingTarget","parameters":{)"
         R"("feature_cols":"x"}})"
         R"(],"links":[{"start_node":314,"end_node":315}]})";
@@ -2343,7 +2492,8 @@ int main(int argc, char** argv) {
     const std::string missing_decision_tree_target_json =
         R"({"nodes":[)"
         R"({"id":214,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":215,"type":"DecisionTreeClassifier","name":"MissingTarget","parameters":{)"
         R"("feature_cols":"x,z"}})"
         R"(],"links":[{"start_node":214,"end_node":215}]})";
@@ -2360,7 +2510,8 @@ int main(int argc, char** argv) {
     const std::string missing_random_forest_target_json =
         R"({"nodes":[)"
         R"({"id":216,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":217,"type":"RandomForestClassifier","name":"MissingTarget","parameters":{)"
         R"("feature_cols":"x,z"}})"
         R"(],"links":[{"start_node":216,"end_node":217}]})";
@@ -2377,7 +2528,8 @@ int main(int argc, char** argv) {
     const std::string missing_gradient_boosting_target_json =
         R"({"nodes":[)"
         R"({"id":220,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":221,"type":"GradientBoostingClassifier","name":"MissingTarget","parameters":{)"
         R"("feature_cols":"x,z"}})"
         R"(],"links":[{"start_node":220,"end_node":221}]})";
@@ -2394,7 +2546,8 @@ int main(int argc, char** argv) {
     const std::string missing_convolution_kernel_json =
         R"({"nodes":[)"
         R"({"id":316,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":317,"type":"Convolution1D","name":"MissingKernel","parameters":{)"
         R"("signal_col":"x"}})"
         R"(],"links":[{"start_node":316,"end_node":317}]})";
@@ -2411,7 +2564,8 @@ int main(int argc, char** argv) {
     const std::string bad_convolution_kernel_json =
         R"({"nodes":[)"
         R"({"id":507,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":508,"type":"Convolution1D","name":"BadKernel","parameters":{)"
         R"("signal_col":"x","kernel":"0.25,oops,0.25"}})"
         R"(],"links":[{"start_node":507,"end_node":508}]})";
@@ -2429,7 +2583,8 @@ int main(int argc, char** argv) {
     const std::string missing_label_encoder_column_json =
         R"({"nodes":[)"
         R"({"id":318,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":319,"type":"LabelEncoder","name":"MissingLabelColumn","parameters":{}})"
         R"(],"links":[{"start_node":318,"end_node":319}]})";
 
@@ -2445,7 +2600,8 @@ int main(int argc, char** argv) {
     const std::string bad_count_vectorizer_norm_json =
         R"({"nodes":[)"
         R"({"id":320,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":321,"type":"CountVectorizer","name":"BadNorm","parameters":{)"
         R"("text_col":"phrase","norm":"cosine"}})"
         R"(],"links":[{"start_node":320,"end_node":321}]})";
@@ -2637,7 +2793,8 @@ int main(int argc, char** argv) {
     const std::string bad_kmeans_init_json =
         R"({"nodes":[)"
         R"({"id":322,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":323,"type":"KMeansCluster","name":"BadInit","parameters":{)"
         R"("init":"forgy"}})"
         R"(],"links":[{"start_node":322,"end_node":323}]})";
@@ -2698,7 +2855,8 @@ int main(int argc, char** argv) {
     const std::string bad_dbscan_eps_json =
         R"({"nodes":[)"
         R"({"id":377,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":378,"type":"DBSCANCluster","name":"BadDBSCANEps","parameters":{)"
         R"("feature_cols":"x,y","eps":"0","min_samples":"1"}})"
         R"(],"links":[{"start_node":377,"end_node":378}]})";
@@ -2748,7 +2906,8 @@ int main(int argc, char** argv) {
     const std::string bad_hierarchical_ward_metric_json =
         R"({"nodes":[)"
         R"({"id":362,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":363,"type":"HierarchicalCluster","name":"BadHierarchicalWardMetric","parameters":{)"
         R"("feature_cols":"x,y","n_clusters":"2","linkage":" WARD ","metric":"COSINE"}})"
         R"(],"links":[{"start_node":362,"end_node":363}]})";
@@ -2800,7 +2959,8 @@ int main(int argc, char** argv) {
     const std::string bad_exp_smoothing_method_json =
         R"({"nodes":[)"
         R"({"id":324,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":325,"type":"ExponentialSmoothing","name":"BadSmoothingMethod","parameters":{)"
         R"("signal_col":"signal","method":"ets"}})"
         R"(],"links":[{"start_node":324,"end_node":325}]})";
@@ -2818,7 +2978,8 @@ int main(int argc, char** argv) {
     const std::string bad_filter_sample_rate_json =
         R"({"nodes":[)"
         R"({"id":379,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":380,"type":"FilterDesigner","name":"BadFilterSampleRate","parameters":{)"
         R"("signal_col":"signal","cutoff":"0.1","sample_rate":"0","order":"2"}})"
         R"(],"links":[{"start_node":379,"end_node":380}]})";
@@ -2836,7 +2997,8 @@ int main(int argc, char** argv) {
     const std::string bad_filter_cutoff_high_json =
         R"({"nodes":[)"
         R"({"id":509,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":510,"type":"FilterDesigner","name":"BadFilterCutoffHigh","parameters":{)"
         R"("signal_col":"signal","filter_type":"bandpass","cutoff":"0.4","cutoff_high":"0.2","sample_rate":"1","order":"2"}})"
         R"(],"links":[{"start_node":509,"end_node":510}]})";
@@ -2854,7 +3016,8 @@ int main(int argc, char** argv) {
     const std::string missing_filter_cutoff_high_json =
         R"({"nodes":[)"
         R"({"id":511,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":512,"type":"FilterDesigner","name":"MissingFilterCutoffHigh","parameters":{)"
         R"("signal_col":"signal","filter_type":"bandstop","cutoff":"0.4","sample_rate":"1","order":"2"}})"
         R"(],"links":[{"start_node":511,"end_node":512}]})";
@@ -2872,7 +3035,8 @@ int main(int argc, char** argv) {
     const std::string bad_fft_sample_rate_json =
         R"({"nodes":[)"
         R"({"id":385,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":386,"type":"FFTNode","name":"BadFFTSampleRate","parameters":{)"
         R"("signal_col":"signal","sample_rate":"0"}})"
         R"(],"links":[{"start_node":385,"end_node":386}]})";
@@ -2961,7 +3125,8 @@ int main(int argc, char** argv) {
     const std::string bad_stationarity_max_lags_json =
         R"({"nodes":[)"
         R"({"id":387,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":388,"type":"StationarityTest","name":"BadStationarityMaxLags","parameters":{)"
         R"("signal_col":"signal","max_lags":"-2"}})"
         R"(],"links":[{"start_node":387,"end_node":388}]})";
@@ -2979,7 +3144,8 @@ int main(int argc, char** argv) {
     const std::string bad_seasonality_min_period_json =
         R"({"nodes":[)"
         R"({"id":389,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":390,"type":"SeasonalityDetector","name":"BadSeasonalityMinPeriod","parameters":{)"
         R"("signal_col":"signal","min_period":"1"}})"
         R"(],"links":[{"start_node":389,"end_node":390}]})";
@@ -3090,7 +3256,8 @@ int main(int argc, char** argv) {
     const std::string missing_decomposition_period_json =
         R"({"nodes":[)"
         R"({"id":326,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":327,"type":"TimeSeriesDecomposition","name":"MissingPeriod","parameters":{)"
         R"("signal_col":"signal"}})"
         R"(],"links":[{"start_node":326,"end_node":327}]})";
@@ -3107,7 +3274,8 @@ int main(int argc, char** argv) {
     const std::string bad_ts_window_input_width_json =
         R"({"nodes":[)"
         R"({"id":328,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":329,"type":"TimeSeriesWindow","name":"BadInputWidth","parameters":{)"
         R"("value_col":"value","input_width":"0"}})"
         R"(],"links":[{"start_node":328,"end_node":329}]})";
@@ -3188,7 +3356,8 @@ int main(int argc, char** argv) {
     const std::string bad_ts_features_lags_json =
         R"({"nodes":[)"
         R"({"id":330,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":331,"type":"TimeSeriesFeatures","name":"BadLags","parameters":{)"
         R"("value_col":"value","lag_values":"1,0"}})"
         R"(],"links":[{"start_node":330,"end_node":331}]})";
@@ -3206,7 +3375,8 @@ int main(int argc, char** argv) {
     const std::string bad_pca_components_json =
         R"({"nodes":[)"
         R"({"id":332,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":333,"type":"PCANode","name":"BadComponents","parameters":{)"
         R"("n_components":"0"}})"
         R"(],"links":[{"start_node":332,"end_node":333}]})";
@@ -3223,7 +3393,8 @@ int main(int argc, char** argv) {
     const std::string bad_kmeans_max_iter_json =
         R"({"nodes":[)"
         R"({"id":334,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":335,"type":"KMeansCluster","name":"BadMaxIter","parameters":{)"
         R"("max_iter":"0"}})"
         R"(],"links":[{"start_node":334,"end_node":335}]})";
@@ -3240,7 +3411,8 @@ int main(int argc, char** argv) {
     const std::string bad_decomposition_period_json =
         R"({"nodes":[)"
         R"({"id":336,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":337,"type":"TimeSeriesDecomposition","name":"BadPeriod","parameters":{)"
         R"("signal_col":"signal","period":"1"}})"
         R"(],"links":[{"start_node":336,"end_node":337}]})";
@@ -3258,7 +3430,8 @@ int main(int argc, char** argv) {
     const std::string missing_ts_window_target_json =
         R"({"nodes":[)"
         R"({"id":172,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":173,"type":"TSWindow","name":"MissingTarget","parameters":{)"
         R"("window_size":"2","stride":"1"}})"
         R"(],"links":[{"start_node":172,"end_node":173}]})";
@@ -3275,7 +3448,8 @@ int main(int argc, char** argv) {
     const std::string missing_ts_features_columns_json =
         R"({"nodes":[)"
         R"({"id":174,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":175,"type":"TSFeatures","name":"MissingColumns","parameters":{)"
         R"("rolling_window":"2"}})"
         R"(],"links":[{"start_node":174,"end_node":175}]})";
@@ -3292,7 +3466,8 @@ int main(int argc, char** argv) {
     const std::string missing_ts_lag_columns_json =
         R"({"nodes":[)"
         R"({"id":176,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":177,"type":"TSLag","name":"MissingColumns","parameters":{)"
         R"("lag_periods":"1"}})"
         R"(],"links":[{"start_node":176,"end_node":177}]})";
@@ -3309,7 +3484,8 @@ int main(int argc, char** argv) {
     const std::string missing_ts_diff_columns_json =
         R"({"nodes":[)"
         R"({"id":178,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":179,"type":"TSDiff","name":"MissingColumns","parameters":{)"
         R"("order":"1"}})"
         R"(],"links":[{"start_node":178,"end_node":179}]})";
@@ -3326,7 +3502,8 @@ int main(int argc, char** argv) {
     const std::string bad_crop_json =
         R"({"nodes":[)"
         R"({"id":17,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":18,"type":"TableCropper","name":"BadCrop","parameters":{)"
         R"("start_row":"-2","end_row":"10"}})"
         R"(],"links":[{"start_node":17,"end_node":18}]})";
@@ -3343,7 +3520,8 @@ int main(int argc, char** argv) {
     const std::string missing_filter_condition_json =
         R"({"nodes":[)"
         R"({"id":19,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":20,"type":"FilterRows","name":"MissingCondition","parameters":{}})"
         R"(],"links":[{"start_node":19,"end_node":20}]})";
 
@@ -3554,7 +3732,8 @@ int main(int argc, char** argv) {
     const std::string missing_poly_columns_json =
         R"({"nodes":[)"
         R"({"id":24,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":25,"type":"PolynomialFeatures","name":"MissingPolyColumns","parameters":{)"
         R"("degree":"2"}})"
         R"(],"links":[{"start_node":24,"end_node":25}]})";
@@ -3570,7 +3749,8 @@ int main(int argc, char** argv) {
     const std::string unknown_node_json =
         R"({"nodes":[)"
         R"({"id":26,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":27,"type":"DefinitelyMissingNode","name":"Unknown","parameters":{}})"
         R"(],"links":[{"start_node":26,"end_node":27}]})";
 
@@ -3601,7 +3781,8 @@ int main(int argc, char** argv) {
     const std::string bad_output_format_json =
         R"({"nodes":[)"
         R"({"id":29,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":30,"type":"DataOutput","name":"BadOutput","parameters":{)"
         R"("file_path":"ignored.xml","format":"xml"}})"
         R"(],"links":[{"start_node":29,"end_node":30}]})";
@@ -3617,7 +3798,8 @@ int main(int argc, char** argv) {
     const std::string json_output_format_json =
         R"({"nodes":[)"
         R"({"id":364,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":365,"type":"DataOutput","name":"JsonOutput","parameters":{)"
         R"("file_path":"ignored.json","format":"json"}})"
         R"(],"links":[{"start_node":364,"end_node":365}]})";
@@ -3633,7 +3815,8 @@ int main(int argc, char** argv) {
     const std::string json_output_file_type_json =
         R"({"nodes":[)"
         R"({"id":368,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":369,"type":"DataOutput","name":"JsonOutput","parameters":{)"
         R"("file_path":"ignored.json","file_type":"json"}})"
         R"(],"links":[{"start_node":368,"end_node":369}]})";
@@ -3651,7 +3834,8 @@ int main(int argc, char** argv) {
     const std::string data_output_conflicting_format_json =
         R"({"nodes":[)"
         R"({"id":370,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":371,"type":"DataOutput","name":"Output","parameters":{)"
         R"("file_path":"ignored.csv","format":"csv","file_type":"parquet"}})"
         R"(],"links":[{"start_node":370,"end_node":371}]})";
@@ -3668,18 +3852,19 @@ int main(int argc, char** argv) {
     const std::string missing_output_path_json =
         R"({"nodes":[)"
         R"({"id":31,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":32,"type":"DataOutput","name":"MissingOutputPath","parameters":{)"
         R"("format":"csv"}})"
         R"(],"links":[{"start_node":31,"end_node":32}]})";
 
     cyxwiz::PipelineExecutor missing_output_path_executor;
-    Check(!missing_output_path_executor.ExecutePipeline(missing_output_path_json),
-          "DataOutput missing file_path should fail validation");
-    Check(missing_output_path_executor.GetLastError().find(
-              "missing required parameter 'file_path'") != std::string::npos,
-          "DataOutput missing file_path validation should be specific: " +
+    missing_output_path_executor.SetExportRoot(default_export_root.string());
+    Check(missing_output_path_executor.ExecutePipeline(missing_output_path_json),
+          "DataOutput should create a default working-directory file when no path is supplied: " +
               missing_output_path_executor.GetLastError());
+    Check(fs::exists(data_output_default_csv_path),
+          "DataOutput missing file_path should create a default CSV file");
 
     const std::string data_output_mixed_case_json =
         R"({"nodes":[)"
@@ -3915,6 +4100,41 @@ int main(int argc, char** argv) {
     Check(exported_parquet->GetNumRows() == 3,
           "ExportParquet output should preserve row count");
 
+    const std::string export_csv_default_json =
+        R"({"nodes":[)"
+        R"({"id":573,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":575,"type":"ExportCSV","name":"ExportDefault","parameters":{}})"
+        R"(],"links":[{"start_node":573,"end_node":575}]})";
+
+    cyxwiz::PipelineExecutor export_csv_default_executor;
+    export_csv_default_executor.SetExportRoot(default_export_root.string());
+    Check(export_csv_default_executor.ExecutePipeline(export_csv_default_json),
+          "ExportCSV should create a default working-directory file when no path is supplied: " +
+              export_csv_default_executor.GetLastError());
+    Check(fs::exists(export_csv_default_path),
+          "ExportCSV should create a default working-directory CSV file");
+
+    fs::create_directories(export_parquet_dir);
+    const fs::path export_parquet_dir_file =
+        export_parquet_dir / "ds_datainput_574.parquet";
+    const std::string export_parquet_dir_json =
+        R"({"nodes":[)"
+        R"({"id":574,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":576,"type":"ExportParquet","name":"ExportDir","parameters":{)"
+        R"("path":")" + JsonEscapePath(export_parquet_dir.string()) + R"("}})"
+        R"(],"links":[{"start_node":574,"end_node":576}]})";
+
+    cyxwiz::PipelineExecutor export_parquet_dir_executor;
+    Check(export_parquet_dir_executor.ExecutePipeline(export_parquet_dir_json),
+          "ExportParquet should append a default filename when path is a directory: " +
+              export_parquet_dir_executor.GetLastError());
+    Check(fs::exists(export_parquet_dir_file),
+          "ExportParquet directory path should create a Parquet file inside that directory");
+
     const std::string save_dataset_json =
         R"({"nodes":[)"
         R"({"id":135,"type":"DataInput","name":"Input","parameters":{)"
@@ -3931,6 +4151,8 @@ int main(int argc, char** argv) {
               save_dataset_executor.GetLastError());
     Check(registry.GetArrowDataset("saved_alias") != nullptr,
           "SaveDataset should preserve legacy in-memory alias behavior");
+    Check(fs::exists(save_dataset_csv_path),
+          "SaveDataset file_path alias should create the CSV output file");
 
     const std::string save_dataset_file_type_parquet_json =
         R"({"nodes":[)"
@@ -3947,6 +4169,8 @@ int main(int argc, char** argv) {
               save_dataset_file_type_parquet_json),
           "SaveDataset file_type alias should export Parquet: " +
               save_dataset_file_type_parquet_executor.GetLastError());
+    Check(fs::exists(save_dataset_file_type_parquet_path),
+          "SaveDataset file_type alias should create the Parquet output file");
 
     const std::string save_dataset_downstream_json =
         R"({"nodes":[)"
@@ -3977,7 +4201,8 @@ int main(int argc, char** argv) {
     const std::string bad_save_dataset_format_json =
         R"({"nodes":[)"
         R"({"id":137,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":138,"type":"SaveDataset","name":"BadSave","parameters":{)"
         R"("file_path":"ignored.arrow","format":"arrow"}})"
         R"(],"links":[{"start_node":137,"end_node":138}]})";
@@ -3995,7 +4220,8 @@ int main(int argc, char** argv) {
     const std::string json_save_dataset_format_json =
         R"({"nodes":[)"
         R"({"id":366,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":367,"type":"SaveDataset","name":"JsonSave","parameters":{)"
         R"("file_path":"ignored.json","format":"json"}})"
         R"(],"links":[{"start_node":366,"end_node":367}]})";
@@ -4013,7 +4239,8 @@ int main(int argc, char** argv) {
     const std::string json_save_dataset_file_type_json =
         R"({"nodes":[)"
         R"({"id":602,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":603,"type":"SaveDataset","name":"JsonFileTypeSave","parameters":{)"
         R"("file_path":"ignored.json","file_type":"json"}})"
         R"(],"links":[{"start_node":602,"end_node":603}]})";
@@ -4099,7 +4326,8 @@ int main(int argc, char** argv) {
     const std::string dangling_link_json =
         R"({"nodes":[)"
         R"({"id":39,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":40,"type":"StandardScaler","name":"Scale","parameters":{)"
         R"("columns":"x"}})"
         R"(],"links":[{"start_node":999,"end_node":40}]})";
@@ -4216,7 +4444,8 @@ int main(int argc, char** argv) {
     const std::string missing_rename_mapping_json =
         R"({"nodes":[)"
         R"({"id":45,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":46,"type":"RenameColumns","name":"Rename","parameters":{}})"
         R"(],"links":[{"start_node":45,"end_node":46}]})";
 
@@ -4272,7 +4501,8 @@ int main(int argc, char** argv) {
     const std::string bad_row_index_json =
         R"({"nodes":[)"
         R"({"id":51,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":52,"type":"RowToColumnNames","name":"Promote","parameters":{)"
         R"("row_index":"-1"}})"
         R"(],"links":[{"start_node":51,"end_node":52}]})";
@@ -4326,7 +4556,8 @@ int main(int argc, char** argv) {
     const std::string missing_math_formula_json =
         R"({"nodes":[)"
         R"({"id":57,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":58,"type":"MathFormula","name":"Formula","parameters":{)"
         R"("output_column":"sum_xy"}})"
         R"(],"links":[{"start_node":57,"end_node":58}]})";
@@ -5333,6 +5564,49 @@ int main(int argc, char** argv) {
     Check(fs::exists(scaler_state_path),
           "StandardScaler fitted state artifact should be persisted");
 
+    const std::string automatic_preprocessing_state_json =
+        R"({"nodes":[)"
+        R"({"id":9120,"type":"DataInput","name":"Automatic State Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(preprocessing_train_csv_path.string()) +
+        R"(","file_type":"csv","has_header":"true","dataset_role":"train"}},)"
+        R"({"id":9121,"type":"FillMissing","name":"Automatic Missing State","parameters":{)"
+        R"("strategy":"mean","columns":"x,y","label_col":"label",)"
+        R"("operation_mode":"fit_transform","save_state":"true"}},)"
+        R"({"id":9122,"type":"StandardScaler","name":"Automatic Scaler State","parameters":{)"
+        R"("columns":"x,y","label_col":"label","with_mean":"true",)"
+        R"("with_std":"true","operation_mode":"fit_transform",)"
+        R"("save_state":"true"}})"
+        R"(],"links":[{"start_node":9120,"end_node":9121},)"
+        R"({"start_node":9121,"end_node":9122}]})";
+
+    cyxwiz::PipelineExecutor automatic_preprocessing_state_executor;
+    automatic_preprocessing_state_executor.SetArtifactRoot(
+        automatic_state_root.string());
+    Check(automatic_preprocessing_state_executor.ExecutePipeline(
+              automatic_preprocessing_state_json),
+          "fitted preprocessors should receive engine-managed state paths: " +
+              automatic_preprocessing_state_executor.GetLastError());
+    size_t automatic_state_files = 0;
+    if (fs::exists(automatic_state_root / "preprocessing")) {
+        for (const auto& entry : fs::recursive_directory_iterator(
+                 automatic_state_root / "preprocessing")) {
+            const std::string filename =
+                entry.path().filename().string();
+            constexpr const char* suffix = ".cyxstate.json";
+            constexpr size_t suffix_size = 14;
+            if (entry.is_regular_file() &&
+                filename.size() >= suffix_size &&
+                filename.compare(filename.size() - suffix_size,
+                                 suffix_size, suffix) == 0) {
+                ++automatic_state_files;
+            }
+        }
+    }
+    Check(automatic_state_files == 2,
+          "one run should persist one automatic artifact for Missing Value "
+          "and one for Standard Scaler");
+
     const std::string transform_scaler_state_json =
         R"({"nodes":[)"
         R"({"id":9107,"type":"DataInput","name":"Scaler Test Input","parameters":{)"
@@ -5461,7 +5735,8 @@ int main(int argc, char** argv) {
     const std::string uppercase_replace_missing_param_json =
         R"({"nodes":[)"
         R"({"id":331,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":332,"type":"StringManipulation","name":"BadReplace","parameters":{)"
         R"("column":"phrase","operation":"REPLACE"}})"
         R"(],"links":[{"start_node":331,"end_node":332}]})";
@@ -5559,7 +5834,8 @@ int main(int argc, char** argv) {
     const std::string text_clean_bad_boolean_json =
         R"({"nodes":[)"
         R"({"id":329,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":330,"type":"TextClean","name":"BadCleanFlag","parameters":{)"
         R"("text_column":"phrase","lowercase":"maybe"}})"
         R"(],"links":[{"start_node":329,"end_node":330}]})";
@@ -5845,7 +6121,8 @@ int main(int argc, char** argv) {
     const std::string missing_binning_column_json =
         R"({"nodes":[)"
         R"({"id":73,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":74,"type":"Binning","name":"MissingBinColumn","parameters":{)"
         R"("method":"equal_width","n_bins":"2"}})"
         R"(],"links":[{"start_node":73,"end_node":74}]})";
@@ -5861,7 +6138,8 @@ int main(int argc, char** argv) {
     const std::string bad_binning_method_json =
         R"({"nodes":[)"
         R"({"id":75,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":76,"type":"Binning","name":"BadBinMethod","parameters":{)"
         R"("columns":"x","method":"quantile","n_bins":"2"}})"
         R"(],"links":[{"start_node":75,"end_node":76}]})";
@@ -5940,7 +6218,8 @@ int main(int argc, char** argv) {
     const std::string bad_polynomial_degree_json =
         R"({"nodes":[)"
         R"({"id":79,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":80,"type":"PolynomialFeatures","name":"BadPolyDegree","parameters":{)"
         R"("columns":"x","degree":"1"}})"
         R"(],"links":[{"start_node":79,"end_node":80}]})";
@@ -5957,7 +6236,8 @@ int main(int argc, char** argv) {
     const std::string multi_column_polynomial_json =
         R"({"nodes":[)"
         R"({"id":81,"type":"DataInput","name":"Input","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.csv","type":"csv"}},)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
         R"({"id":82,"type":"PolynomialFeatures","name":"MultiPoly","parameters":{)"
         R"("columns":"x,y","degree":"2"}})"
         R"(],"links":[{"start_node":81,"end_node":82}]})";
@@ -6482,6 +6762,9 @@ int main(int argc, char** argv) {
     registry.UnloadDataset("ds_operator_StandardScaler_9106");
     registry.UnloadDataset("ds_datainput_9107");
     registry.UnloadDataset("ds_operator_StandardScaler_9108");
+    registry.UnloadDataset("ds_datainput_9120");
+    registry.UnloadDataset("ds_fillmissing_9121");
+    registry.UnloadDataset("ds_operator_StandardScaler_9122");
     registry.UnloadDataset("ds_datainput_65");
     registry.UnloadDataset("ds_string_66");
     registry.UnloadDataset("ds_datainput_67");
@@ -6542,6 +6825,8 @@ int main(int argc, char** argv) {
     fs::remove(ts_analysis_csv_path);
     fs::remove(export_csv_path);
     fs::remove(export_csv_alias_path);
+    fs::remove_all(default_export_root);
+    fs::remove_all(export_parquet_dir);
     fs::remove(data_output_path_alias_csv_path);
     fs::remove(save_dataset_csv_path);
     fs::remove(save_dataset_file_type_parquet_path);
@@ -6555,6 +6840,7 @@ int main(int argc, char** argv) {
     fs::remove(scaler_test_csv_path);
     fs::remove(fill_state_path);
     fs::remove(scaler_state_path);
+    fs::remove_all(automatic_state_root);
     fs::remove(sequence_vocab_csv_path);
 
     cyxwiz::AsyncTaskManager::Instance().Shutdown();

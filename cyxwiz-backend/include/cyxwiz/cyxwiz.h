@@ -80,6 +80,9 @@ namespace cyxwiz {
 // Initialize the backend
 CYXWIZ_API bool Initialize();
 
+// Return true after successful initialization and before shutdown.
+CYXWIZ_API bool IsInitialized();
+
 // Shutdown the backend
 CYXWIZ_API void Shutdown();
 

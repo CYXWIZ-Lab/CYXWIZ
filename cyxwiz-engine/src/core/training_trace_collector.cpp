@@ -1,5 +1,6 @@
 #include "training_trace_collector.h"
 
+#include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/memory_manager.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -30,18 +31,21 @@ void PopulateMemorySnapshot(TrainingTraceEvent& event) {
     event.cpu_peak_bytes = static_cast<uint64_t>(MemoryManager::GetPeakBytes());
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        size_t alloc_bytes = 0;
-        size_t alloc_buffers = 0;
-        size_t lock_bytes = 0;
-        size_t lock_buffers = 0;
-        af::deviceMemInfo(&alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
-        event.af_allocated_bytes = static_cast<uint64_t>(alloc_bytes);
-        event.af_alloc_buffers = static_cast<uint64_t>(alloc_buffers);
-        event.af_locked_bytes = static_cast<uint64_t>(lock_bytes);
-        event.af_lock_buffers = static_cast<uint64_t>(lock_buffers);
-    } catch (...) {
-        // Memory tracing must never affect training.
+    if (cyxwiz::IsInitialized()) {
+        try {
+            size_t alloc_bytes = 0;
+            size_t alloc_buffers = 0;
+            size_t lock_bytes = 0;
+            size_t lock_buffers = 0;
+            af::deviceMemInfo(
+                &alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
+            event.af_allocated_bytes = static_cast<uint64_t>(alloc_bytes);
+            event.af_alloc_buffers = static_cast<uint64_t>(alloc_buffers);
+            event.af_locked_bytes = static_cast<uint64_t>(lock_bytes);
+            event.af_lock_buffers = static_cast<uint64_t>(lock_buffers);
+        } catch (...) {
+            // Memory tracing must never affect training.
+        }
     }
 #endif
 }

@@ -891,22 +891,24 @@ int main() {
                   file_path->validation.find("*.hdf5") == std::string::npos,
               "DataInput file filter should not advertise unsupported runtime formats");
 
-        const auto* type = FindParameter(data_input, "type");
-        Check(type != nullptr,
-              "DataInput metadata should expose runtime file type selector");
-        Check(type->default_value == "auto",
-              "DataInput type should default to runtime auto detection");
-        Check(ContainsString(type->enum_values, "csv") &&
-                  ContainsString(type->enum_values, "tsv") &&
-                  ContainsString(type->enum_values, "parquet") &&
-                  ContainsString(type->enum_values, "feather") &&
-                  ContainsString(type->enum_values, "arrow") &&
-                  ContainsString(type->enum_values, "ipc"),
-              "DataInput type enum should list runtime-supported formats");
-        Check(!ContainsString(type->enum_values, "json") &&
-                  !ContainsString(type->enum_values, "excel") &&
-                  !ContainsString(type->enum_values, "hdf5"),
-              "DataInput type enum should not advertise unsupported runtime formats");
+        const auto* file_type = FindParameter(data_input, "file_type");
+        Check(file_type != nullptr,
+              "DataInput metadata should expose canonical file_type selector");
+        Check(FindParameter(data_input, "type") == nullptr,
+              "DataInput metadata should not recreate the legacy type alias");
+        Check(file_type->default_value == "auto",
+              "DataInput file_type should default to runtime auto detection");
+        Check(ContainsString(file_type->enum_values, "csv") &&
+                  ContainsString(file_type->enum_values, "tsv") &&
+                  ContainsString(file_type->enum_values, "parquet") &&
+                  ContainsString(file_type->enum_values, "feather") &&
+                  ContainsString(file_type->enum_values, "arrow") &&
+                  ContainsString(file_type->enum_values, "ipc"),
+              "DataInput file_type enum should list runtime-supported formats");
+        Check(!ContainsString(file_type->enum_values, "json") &&
+                  !ContainsString(file_type->enum_values, "excel") &&
+                  !ContainsString(file_type->enum_values, "hdf5"),
+              "DataInput file_type enum should not advertise unsupported runtime formats");
 
         const auto source_type_axes =
             cyxwiz::ResolvePipelineAllowedParameterValues("DataInput");

@@ -57,7 +57,15 @@ std::string GetParameterLabel(const cyxwiz::ParameterDefinition& param) {
     return param.display_name.empty() ? HumanizeParameterName(param.name) : param.display_name;
 }
 
-bool ShouldUseIntSlider(const properties_rules::NumericRange& range) {
+bool ShouldUseIntSlider(
+    const cyxwiz::ParameterDefinition& param,
+    const properties_rules::NumericRange& range) {
+    // Epoch counts require exact entry; a 1-10000 slider is difficult to
+    // control and duplicates the Data Loader dialog's manual input behavior.
+    if (param.name == "epochs") {
+        return false;
+    }
+
     if (!range.has_range) {
         return false;
     }
@@ -156,7 +164,7 @@ void RenderParameter(
         properties_rules::TryParseIntStrict(value, int_val);
         ImGui::SetNextItemWidth(120.0f);
         properties_rules::NumericRange range = properties_rules::ParseNumericRange(param.validation);
-        if (ShouldUseIntSlider(range)) {
+        if (ShouldUseIntSlider(param, range)) {
             int min_v = static_cast<int>(range.min_value);
             int max_v = static_cast<int>(range.max_value);
             int_val = std::clamp(int_val, min_v, max_v);
@@ -366,7 +374,7 @@ void RenderParametersContent(
     };
 
     for (const auto& param : metadata->parameters) {
-        if (properties_rules::ShouldHideGenericParameter(node.type, param)) {
+        if (properties_rules::ShouldHideGenericParameter(node, param)) {
             validation_errors.erase(param.name);
             continue;
         }

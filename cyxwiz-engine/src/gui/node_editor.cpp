@@ -456,6 +456,13 @@ void NodeEditor::Render() {
             RenderHoveredNodeTooltip(hovered_node_id);
         }
 
+        // Use the same configuration path as the node context menu. Complex
+        // nodes open their registered dialog; simple nodes focus Properties.
+        if (is_node_hovered && !is_pin_hovered &&
+            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            ConfigureNode(hovered_node_id);
+        }
+
         // === Handle right-click context menu AFTER EndNodeEditor ===
         // IsNodeHovered() only works after EndNodeEditor() is called
         // Skip if right-click was on a frame (frame menu already shown)
@@ -2072,20 +2079,6 @@ void NodeEditor::RenderNodes() {
                 icon_pos.y + (ICON_BOX_SIZE - icon_text_size.y) * 0.5f
             );
             draw_list->AddText(font, scaled_icon_size, icon_text_pos, IM_COL32(255, 255, 255, 255), icon);
-
-            // Draw description BELOW the icon (e.g., "Reading adult.csv")
-            std::string display_desc = node.description;
-            if (display_desc.empty()) {
-                // Show default text for unconfigured nodes
-                display_desc = "Double-click to configure";
-            }
-            float desc_y = icon_max.y + 4.0f;
-            ImVec2 desc_size = ImGui::CalcTextSize(display_desc.c_str());
-            float desc_x = icon_pos.x + (ICON_BOX_SIZE - desc_size.x) * 0.5f;
-            // Clamp to icon left edge if description is wider
-            desc_x = std::max(desc_x, icon_pos.x - 10.0f);
-            ImU32 desc_color = node.description.empty() ? IM_COL32(120, 120, 120, 200) : IM_COL32(150, 180, 220, 255);
-            draw_list->AddText(ImVec2(desc_x, desc_y), desc_color, display_desc.c_str());
 
             // Drag handle: icon box only (keeps pin drag separate from node move)
             ImVec2 cursor_backup = ImGui::GetCursorScreenPos();
@@ -4917,8 +4910,14 @@ bool NodeEditor::ExecuteDataPipeline() {
     // mutable editor state and remains safe if the editor closes mid-run.
     std::string pipeline_str = pipeline_json.dump(2);
     spdlog::debug("Pipeline JSON:\n{}", pipeline_str);
+    auto executor = std::make_shared<cyxwiz::PipelineExecutor>();
+    executor->SetArtifactRoot(
+        cyxwiz::ProjectManager::Instance().GetArtifactsPath());
+    executor->SetExportRoot(
+        cyxwiz::ProjectManager::Instance().GetExportsPath());
     auto submission = cyxwiz::SubmitPipelineExecutionTask(
-        "Execute Data Pipeline", std::move(pipeline_str));
+        "Execute Data Pipeline", std::move(pipeline_str),
+        std::move(executor));
     pipeline_task_id_ = submission.task_id;
     pipeline_execution_tracker_ = std::move(submission.tracker);
     pipeline_execution_active_ = pipeline_task_id_ != 0;

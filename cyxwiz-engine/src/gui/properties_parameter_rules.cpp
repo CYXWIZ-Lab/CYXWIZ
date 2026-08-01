@@ -93,7 +93,10 @@ bool IsInternalParameterName(const std::string& name) {
 
 } // namespace
 
-bool ShouldHideGenericParameter(NodeType type, const cyxwiz::ParameterDefinition& param) {
+bool ShouldHideGenericParameter(
+    const MLNode& node,
+    const cyxwiz::ParameterDefinition& param) {
+    const NodeType type = node.type;
     if (IsInternalParameterName(param.name)) {
         return true;
     }
@@ -111,6 +114,25 @@ bool ShouldHideGenericParameter(NodeType type, const cyxwiz::ParameterDefinition
          type == NodeType::RNN) &&
         param.name == "input_size") {
         return true;
+    }
+
+    if (type == NodeType::FillMissingValues ||
+        type == NodeType::StandardScaler) {
+        const auto mode_it = node.parameters.find("operation_mode");
+        const bool transform_only =
+            mode_it != node.parameters.end() &&
+            mode_it->second == "transform_only";
+        if (param.name == "state_path") {
+            return !transform_only;
+        }
+        if (param.name == "save_state") {
+            return transform_only;
+        }
+        if (param.name == "state_overwrite") {
+            const auto path_it = node.parameters.find("state_path");
+            return transform_only || path_it == node.parameters.end() ||
+                   path_it->second.empty();
+        }
     }
 
     return false;

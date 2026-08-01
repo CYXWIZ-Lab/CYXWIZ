@@ -5,6 +5,7 @@
 // - Code export functionality (PyTorch, TensorFlow, Keras, PyCyxWiz)
 
 #include "node_editor.h"
+#include "../core/data_input_parameters.h"
 #include "node_import_guardrails.h"
 #include "../core/file_dialogs.h"
 #include "../core/project_manager.h"
@@ -342,6 +343,9 @@ static void MigrateLegacyNodeParameters(NodeType type,
                                         std::map<std::string, std::string>& params,
                                         bool prefer_legacy = false) {
     switch (type) {
+        case NodeType::DataInput:
+            cyxwiz::MigrateDataInputFormatAliases(params);
+            break;
         case NodeType::TimeSeriesWindow:
             CopyLegacyColumnIfMissing(params, "value_col", "target_column", prefer_legacy);
             CopyLegacyColumnIfMissing(params, "value_col", "column", prefer_legacy);

@@ -316,7 +316,10 @@ void DataOutputDialog::RenderSettingsTab() {
     }
     ImGui::SameLine();
     if (ImGui::Button("Browse", ImVec2(70, 0))) {
-        // TODO: Save file dialog
+        const int dialog_format = output_type_ == 1 ? 8 : 1;
+        if (BrowseDataOutput(file_path_, sizeof(file_path_), dialog_format)) {
+            has_changes_ = true;
+        }
     }
 
     ImGui::Spacing();

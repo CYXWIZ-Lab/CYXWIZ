@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace gui {
 enum class NodeType;
@@ -63,6 +64,22 @@ public:
      * @return true if execution succeeded
      */
     bool ExecutePipeline(const std::string& pipeline_json);
+
+    /**
+     * Set the project-owned root used for automatically generated pipeline
+     * artifacts. Empty falls back to ./artifacts for headless callers.
+     */
+    void SetArtifactRoot(std::string artifact_root) {
+        artifact_root_ = std::move(artifact_root);
+    }
+
+    /**
+     * Set the project-owned root used when an export node has no explicit
+     * output path. Empty uses a process-independent temporary export root.
+     */
+    void SetExportRoot(std::string export_root) {
+        export_root_ = std::move(export_root);
+    }
 
     /**
      * Stop the currently running pipeline
@@ -155,6 +172,8 @@ private:
     bool stop_requested_;
     std::atomic<bool> cancel_requested_;  // Phase 8: Atomic cancellation flag
     std::string current_status_;          // Phase 8: Current execution status message
+    std::string artifact_root_;           // Project artifacts directory
+    std::string export_root_;             // Project exports directory
 
     // Deployment state (Phase 5 Week 7)
     std::atomic<bool> deployment_ready_;
@@ -171,6 +190,7 @@ private:
 
     // Pipeline execution steps
     bool ParsePipeline(const std::string& pipeline_json, std::vector<Node>& nodes);
+    bool ResolveAutomaticPreprocessingStatePaths(std::vector<Node>& nodes);
     bool ValidatePipeline(const std::vector<Node>& nodes);
     std::vector<int> TopologicalSort(const std::vector<Node>& nodes);
     bool ExecuteNode(const Node& node, ExecutionContext& ctx);
