@@ -645,9 +645,53 @@ void CheckFocusedExportOutputPaths() {
     fs::remove_all(default_root);
     fs::remove_all(parquet_dir);
 }
+
+void CheckFocusedExportParquetPathOnly() {
+    namespace fs = std::filesystem;
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const fs::path csv_path =
+        fs::temp_directory_path() / "cyxwiz_focused_export_parquet_only.csv";
+    const fs::path parquet_dir =
+        fs::temp_directory_path() / "cyxwiz_focused_export_parquet_only_dir";
+    const fs::path parquet_dir_file = parquet_dir / "ds_datainput_90101.parquet";
+
+    fs::remove(csv_path);
+    fs::remove_all(parquet_dir);
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "x,y\n1,10\n2,20\n";
+    }
+    fs::create_directories(parquet_dir);
+
+    const std::string export_parquet_json =
+        R"({"nodes":[)"
+        R"({"id":90101,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":90102,"type":"ExportParquet","name":"Export","parameters":{)"
+        R"("path":")" + JsonEscapePath(parquet_dir.string()) + R"("}})"
+        R"(],"links":[{"start_node":90101,"end_node":90102}]})";
+    cyxwiz::PipelineExecutor export_parquet_executor;
+    Check(export_parquet_executor.ExecutePipeline(export_parquet_json),
+          "ExportParquet should append a filename for directory paths: " +
+              export_parquet_executor.GetLastError());
+    Check(fs::exists(parquet_dir_file),
+          "ExportParquet should create a Parquet file inside the selected directory");
+
+    registry.UnloadDataset("ds_datainput_90101");
+    fs::remove(csv_path);
+    fs::remove_all(parquet_dir);
+}
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 &&
+        std::string(argv[1]) == "--export-parquet-path-only") {
+        CheckFocusedExportParquetPathOnly();
+        cyxwiz::AsyncTaskManager::Instance().Shutdown();
+        return 0;
+    }
     if (argc == 2 &&
         std::string(argv[1]) == "--export-output-paths") {
         CheckFocusedExportOutputPaths();
