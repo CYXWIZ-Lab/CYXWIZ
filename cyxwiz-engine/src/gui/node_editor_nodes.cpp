@@ -4500,6 +4500,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["label_col"] = "";
             node.parameters["with_mean"] = "true";
             node.parameters["with_std"] = "true";
+            node.parameters["transform_role"] = "features";
             node.parameters["operation_mode"] = "fit_transform";
             node.parameters["state_path"] = "";
             node.parameters["save_state"] = "false";

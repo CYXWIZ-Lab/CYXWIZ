@@ -1,6 +1,7 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/ner_sequence_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
+#include "../src/core/preprocessing_state.h"
 #include "../src/core/sequence_batcher.h"
 #include "../src/core/sequence_tag_metrics.h"
 #include "../src/core/sequence_training_step.h"
@@ -802,6 +803,66 @@ void TestRegressionMetricAccumulator(
               "empty regression metrics should have zero RMSE");
 }
 
+void TestRegressionTargetTransform(
+    const std::filesystem::path& work_dir) {
+    cyxwiz::FittedPreprocessingState state;
+    state.operator_name = "StandardScaler";
+    state.fit_rows = 4;
+    state.input_schema_fingerprint = "fixture";
+    state.configuration["with_mean"] = "true";
+    state.configuration["with_std"] = "true";
+
+    cyxwiz::PreprocessingFeatureState first;
+    first.name = "target";
+    first.data_type = "float";
+    first.numeric_values["mean"] = 100.0;
+    first.numeric_values["scale"] = 10.0;
+    state.features.push_back(first);
+
+    cyxwiz::PreprocessingFeatureState second;
+    second.name = "target_1";
+    second.data_type = "float";
+    second.numeric_values["mean"] = 200.0;
+    second.numeric_values["scale"] = 2.0;
+    state.features.push_back(second);
+
+    const auto path = work_dir / "target_scaler.cyxstate.json";
+    std::string error;
+    Check(cyxwiz::SaveFittedPreprocessingState(
+              path.string(), state, false, error),
+          "target scaler fixture should save: " + error);
+
+    cyxwiz::RegressionTargetTransform transform;
+    transform.enabled = true;
+    transform.operator_name = "StandardScaler";
+    transform.state_path = path.string();
+    transform.target_columns = {"target", "target_1"};
+    Check(cyxwiz::ResolveRegressionTargetTransform(transform, error),
+          "target scaler fixture should resolve: " + error);
+    Check(transform.IsResolvedForWidth(2),
+          "resolved target scaler should match output width");
+    CheckNear(transform.InverseValue(1.5, 0), 115.0, 1e-9,
+              "first horizon should inverse-transform with its state");
+    CheckNear(transform.InverseValue(-2.0, 1), 196.0, 1e-9,
+              "second horizon should inverse-transform with its state");
+
+    cyxwiz::RegressionMetricAccumulator metrics(&transform);
+    const float predictions[] = {1.0f, 1.0f, 2.0f, 2.0f};
+    const float targets[] = {0.0f, 0.0f, 1.0f, 1.0f};
+    metrics.Add(predictions, targets, 4, 2);
+    CheckNear(metrics.Mae(), 6.0, 1e-6,
+              "target-scaled MAE should be reported in original units");
+    CheckNear(metrics.Rmse(), std::sqrt(52.0), 1e-6,
+              "target-scaled RMSE should be reported in original units");
+
+    auto wrong_order = transform;
+    wrong_order.target_columns = {"target_1", "target"};
+    Check(!cyxwiz::ResolveRegressionTargetTransform(wrong_order, error),
+          "target scaler should reject reordered target columns");
+    Check(error.find("expected") != std::string::npos,
+          "target scaler order error should explain the mismatch");
+}
+
 } // namespace
 
 int main() {
@@ -860,6 +921,7 @@ int main() {
     TestObjectiveAwareRegressionMetrics(work_dir / "regression_checkpoints");
     TestRegressionMetricAccumulator(
         work_dir / "regression_test_checkpoints");
+    TestRegressionTargetTransform(work_dir);
 
     {
         auto scheduled_validation_config = config;

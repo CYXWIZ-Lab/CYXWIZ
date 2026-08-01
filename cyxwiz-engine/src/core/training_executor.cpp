@@ -120,38 +120,6 @@ bool ShouldRunValidationEpoch(const TrainingConfiguration& config,
            epoch % validation_freq == 0;
 }
 
-struct RegressionAccumulator {
-    double absolute_error_sum = 0.0;
-    double squared_error_sum = 0.0;
-    size_t element_count = 0;
-
-    void Add(const float* predictions,
-             const float* targets,
-             size_t count) {
-        if (!predictions || !targets) return;
-        for (size_t i = 0; i < count; ++i) {
-            const double error =
-                static_cast<double>(predictions[i]) - targets[i];
-            absolute_error_sum += std::abs(error);
-            squared_error_sum += error * error;
-        }
-        element_count += count;
-    }
-
-    float Mae() const {
-        return element_count > 0
-            ? static_cast<float>(absolute_error_sum / element_count)
-            : 0.0f;
-    }
-
-    float Rmse() const {
-        return element_count > 0
-            ? static_cast<float>(
-                  std::sqrt(squared_error_sum / element_count))
-            : 0.0f;
-    }
-};
-
 } // namespace
 
 // ============================================================================
@@ -245,6 +213,30 @@ TrainingExecutor::~TrainingExecutor() {
 }
 
 bool TrainingExecutor::Initialize(int /*batch_size*/) {
+    std::string target_transform_error;
+    if (!ResolveRegressionTargetTransform(
+            config_.regression_target_transform,
+            target_transform_error) ||
+        !config_.regression_target_transform.IsResolvedForWidth(
+            config_.output_size)) {
+        if (target_transform_error.empty()) {
+            target_transform_error =
+                "resolved target transform width does not match model output";
+        }
+        spdlog::error(
+            "TrainingExecutor: regression target transform is invalid: {}",
+            target_transform_error);
+        return false;
+    }
+    if (config_.regression_target_transform.enabled) {
+        spdlog::info(
+            "TrainingExecutor: resolved StandardScaler regression target "
+            "state '{}' for {} outputs; loss is transformed-space and "
+            "MAE/RMSE are original-unit metrics",
+            config_.regression_target_transform.state_path,
+            config_.regression_target_transform.scales.size());
+    }
+
     if (config_.sequence_batch.enabled &&
         mode_ != DatasetMode::SequenceExternal) {
         spdlog::error("TrainingExecutor: {}",
@@ -1050,7 +1042,8 @@ void TrainingExecutor::RunTrainingEpoch(
 {
     float epoch_loss = 0.0f;
     const bool regression_metrics = UsesRegressionMetrics(config_);
-    RegressionAccumulator regression;
+    RegressionMetricAccumulator regression(
+        &config_.regression_target_transform);
     int correct = 0;
     int total = 0;
     int batch_num = 0;
@@ -1153,7 +1146,8 @@ void TrainingExecutor::RunTrainingEpoch(
         const float* target_data = batch.labels.Data<float>();
         if (regression_metrics) {
             regression.Add(pred_data, target_data,
-                           batch.size * config_.output_size);
+                           batch.size * config_.output_size,
+                           config_.output_size);
         } else {
             const auto accuracy_count = CountClassificationDecisions(
                 pred_data, target_data, batch.size, config_.output_size,
@@ -1261,7 +1255,8 @@ void TrainingExecutor::RunTrainingEpoch(
 void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
     float val_loss = 0.0f;
     const bool regression_metrics = UsesRegressionMetrics(config_);
-    RegressionAccumulator regression;
+    RegressionMetricAccumulator regression(
+        &config_.regression_target_transform);
     int correct = 0;
     int total = 0;
     int batch_num = 0;
@@ -1288,7 +1283,8 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
         const float* target_data = batch.labels.Data<float>();
         if (regression_metrics) {
             regression.Add(pred_data, target_data,
-                           batch.size * config_.output_size);
+                           batch.size * config_.output_size,
+                           config_.output_size);
         } else {
             const auto accuracy_count = CountClassificationDecisions(
                 pred_data, target_data, batch.size, config_.output_size,
@@ -1843,7 +1839,8 @@ void TrainingExecutor::RunTrainingEpochArrow(
 
     float epoch_loss = 0.0f;
     const bool regression_metrics = UsesRegressionMetrics(config_);
-    RegressionAccumulator regression;
+    RegressionMetricAccumulator regression(
+        &config_.regression_target_transform);
     int correct = 0;
     int total = 0;
     int batch_num = 0;
@@ -1967,7 +1964,8 @@ void TrainingExecutor::RunTrainingEpochArrow(
 
         if (regression_metrics) {
             regression.Add(
-                pred_data, target_data, batch.size * config_.output_size);
+                pred_data, target_data, batch.size * config_.output_size,
+                config_.output_size);
         } else {
             const auto accuracy_count = CountClassificationDecisions(
                 pred_data, target_data, batch.size, config_.output_size,
@@ -2082,7 +2080,8 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
     IBatcher& batcher) {
     float val_loss = 0.0f;
     const bool regression_metrics = UsesRegressionMetrics(config_);
-    RegressionAccumulator regression;
+    RegressionMetricAccumulator regression(
+        &config_.regression_target_transform);
     int correct = 0;
     int total = 0;
     int batch_num = 0;
@@ -2117,7 +2116,8 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
 
         if (regression_metrics) {
             regression.Add(
-                pred_data, target_data, batch.size * config_.output_size);
+                pred_data, target_data, batch.size * config_.output_size,
+                config_.output_size);
         } else {
             const auto accuracy_count = CountClassificationDecisions(
                 pred_data, target_data, batch.size, config_.output_size,

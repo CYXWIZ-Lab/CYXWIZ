@@ -4,6 +4,7 @@
 #include "compiled_graph_plan.h"
 #include "dataset_partitions.h"
 #include "metric_learning_graph_contract.h"
+#include <core/regression_target_transform.h>
 #include "../gui/node_editor.h"
 #include "../preprocessing/preprocessing_config.h"
 #include <cyxwiz/tensor.h>
@@ -445,6 +446,7 @@ struct TrainingConfiguration {
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
     TargetContract target;              // Objective target provenance
+    RegressionTargetTransform regression_target_transform;
 
     // DataSplit configuration (from DataSplit node, or defaults if absent)
     float train_ratio = 0.8f;

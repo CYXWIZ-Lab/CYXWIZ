@@ -539,6 +539,32 @@ bool TestExecutor::BuildModelFromConfig() {
 }
 
 bool TestExecutor::Initialize(int /*batch_size*/) {
+    std::string target_transform_error;
+    if (!ResolveRegressionTargetTransform(
+            config_.regression_target_transform,
+            target_transform_error) ||
+        !config_.regression_target_transform.IsResolvedForWidth(
+            config_.output_size)) {
+        if (target_transform_error.empty()) {
+            target_transform_error =
+                "resolved target transform width does not match model output";
+        }
+        spdlog::error(
+            "TestExecutor: regression target transform is invalid: {}",
+            target_transform_error);
+        return false;
+    }
+    regression_metrics_.SetTargetTransform(
+        &config_.regression_target_transform);
+    if (config_.regression_target_transform.enabled) {
+        spdlog::info(
+            "TestExecutor: resolved StandardScaler regression target state "
+            "'{}' for {} outputs; loss is transformed-space and MAE/RMSE "
+            "are original-unit metrics",
+            config_.regression_target_transform.state_path,
+            config_.regression_target_transform.scales.size());
+    }
+
     // Build model from configuration if not already set
     if (!BuildModelFromConfig()) {
         spdlog::error("TestExecutor: Failed to build model from config");
@@ -857,7 +883,8 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
     const size_t output_width = config_.output_size;
     if (UsesContinuousTargetMetrics(config_)) {
         const size_t value_count = batch.size * output_width;
-        regression_metrics_.Add(pred_data, target_data, value_count);
+        regression_metrics_.Add(
+            pred_data, target_data, value_count, output_width);
         UpdateMetrics([this, &batch, value_count](TestingMetrics& m) {
             m.total_samples += static_cast<int>(batch.size);
             m.total_target_values += value_count;

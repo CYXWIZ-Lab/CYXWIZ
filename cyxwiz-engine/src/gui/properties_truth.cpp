@@ -567,6 +567,23 @@ void AddPreprocessingScalerTruth(NodeTruthReport& report,
         "Empty columns means the materializer auto-detects numeric columns."));
 
     if (node.type == NodeType::StandardScaler) {
+        auto role = ResolveStringProperty(
+            node,
+            "Transform role",
+            "transform_role",
+            "features",
+            TruthOwner::Compiler,
+            true,
+            true,
+            "Regression target makes Train/Test MAE and RMSE use the fitted state to report original target units.");
+        if (role.effective_value != "features" &&
+            role.effective_value != "regression_target") {
+            role.statuses.clear();
+            AddStatus(role, TruthStatus::Missing);
+            role.message =
+                "transform_role must be features or regression_target.";
+        }
+        report.properties.push_back(std::move(role));
         report.properties.push_back(ResolveBoolProperty(
             node,
             "Center data",

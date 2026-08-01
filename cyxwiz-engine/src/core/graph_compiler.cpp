@@ -2247,6 +2247,130 @@ bool ContainsWhenFiltered(
     return node_ids.empty() || node_ids.count(node_id) > 0;
 }
 
+std::vector<std::string> ParseOrderedColumnList(const std::string& value) {
+    std::vector<std::string> columns;
+    std::stringstream stream(value);
+    std::string token;
+    while (std::getline(stream, token, ',')) {
+        token = TrimAscii(token);
+        if (!token.empty()) columns.push_back(std::move(token));
+    }
+    return columns;
+}
+
+std::vector<std::string> ExpectedTargetColumns(
+    const TargetContract& target) {
+    std::vector<std::string> columns;
+    if (target.primary_column.empty() || target.width == 0) return columns;
+    columns.reserve(target.width);
+    columns.push_back(target.primary_column);
+    for (size_t i = 1; i < target.width; ++i) {
+        columns.push_back(target.primary_column + "_" + std::to_string(i));
+    }
+    return columns;
+}
+
+void ExtractRegressionTargetTransform(
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& training_path_ids,
+    TrainingConfiguration& config) {
+    const gui::MLNode* selected = nullptr;
+    for (const auto& node : nodes) {
+        if (node.type != gui::NodeType::StandardScaler ||
+            !ContainsWhenFiltered(training_path_ids, node.id)) {
+            continue;
+        }
+        const auto role = node.parameters.find("transform_role");
+        const std::string role_value = role == node.parameters.end()
+            ? "features"
+            : ToLowerAscii(TrimAscii(role->second));
+        if (role_value != "regression_target") continue;
+        if (selected) {
+            AddIssue(config, IssueLevel::Error,
+                     "Only one Standard Scaler may declare the regression "
+                     "target transform on the selected training path.",
+                     node.id, node.name,
+                     errors::Compiler::GenericIssue);
+            return;
+        }
+        selected = &node;
+    }
+
+    if (!selected) return;
+    auto& contract = config.regression_target_transform;
+    contract.enabled = true;
+    contract.node_id = selected->id;
+    contract.node_name = selected->name;
+    contract.operator_name = "StandardScaler";
+
+    if (config.target.value_kind != TargetValueKind::Continuous ||
+        !config.target.IsResolved()) {
+        AddIssue(config, IssueLevel::Error,
+                 "Regression target scaling requires a resolved continuous "
+                 "target contract.",
+                 selected->id, selected->name,
+                 errors::Data::RequiredLabelColumnMissing);
+        return;
+    }
+
+    const auto expected = ExpectedTargetColumns(config.target);
+    const auto columns_it = selected->parameters.find("columns");
+    const auto configured = ParseOrderedColumnList(
+        columns_it == selected->parameters.end() ? "" : columns_it->second);
+    if (configured != expected) {
+        AddIssue(config, IssueLevel::Error,
+                 "Regression target scaler Columns must exactly match the "
+                 "ordered target contract: " + JoinNames(expected) + ".",
+                 selected->id, selected->name,
+                 errors::Compiler::LabelOutputShapeMismatch);
+        return;
+    }
+
+    const auto mode = selected->parameters.find("operation_mode");
+    if (mode == selected->parameters.end() ||
+        ToLowerAscii(TrimAscii(mode->second)) != "transform_only") {
+        AddIssue(config, IssueLevel::Error,
+                 "Regression target scaling must use Transform Only with "
+                 "statistics fitted on Train data.",
+                 selected->id, selected->name,
+                 errors::Data::ColumnTypeMismatch);
+        return;
+    }
+    const auto path = selected->parameters.find("state_path");
+    contract.state_path = path == selected->parameters.end()
+        ? ""
+        : TrimAscii(path->second);
+    if (contract.state_path.empty()) {
+        AddIssue(config, IssueLevel::Error,
+                 "Regression target scaling requires the fitted Train state "
+                 "artifact path.",
+                 selected->id, selected->name,
+                 errors::Data::ColumnTypeMismatch);
+        return;
+    }
+
+    const auto label = selected->parameters.find("label_col");
+    const auto excluded = selected->parameters.find("exclude_columns");
+    if ((label != selected->parameters.end() &&
+         !TrimAscii(label->second).empty()) ||
+        (excluded != selected->parameters.end() &&
+         !TrimAscii(excluded->second).empty())) {
+        AddIssue(config, IssueLevel::Error,
+                 "Regression target scaler must not exclude target columns; "
+                 "leave Label column and Additional exclusions empty.",
+                 selected->id, selected->name,
+                 errors::Compiler::LabelOutputShapeMismatch);
+        return;
+    }
+
+    contract.target_columns = expected;
+    AddIssue(config, IssueLevel::Info,
+             "Regression target scaling is declared from Train-fitted state; "
+             "loss remains in transformed space while MAE/RMSE are restored "
+             "to original target units.",
+             selected->id, selected->name);
+}
+
 bool HasConnectedInputAfterFirst(const gui::MLNode& node,
                                  const std::vector<gui::NodeLink>& links) {
     if (node.inputs.size() <= 1) {
@@ -4206,6 +4330,8 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
+    ExtractRegressionTargetTransform(nodes, training_path_ids, config);
+
     // Extract optimizer configuration
     if (optimizer_node) {
         config.optimizer_type = optimizer_node->type;
@@ -5197,6 +5323,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::Normalize,          PreprocessingDomain::Tabular,     ExtractImageNormalize},
     {gui::NodeType::TensorReshape,      PreprocessingDomain::Tabular,     ExtractReshape},
     {gui::NodeType::OneHotEncode,       PreprocessingDomain::Tabular,     ExtractOneHot},
+    {gui::NodeType::StandardScaler,     PreprocessingDomain::General,     nullptr},
     // General (domain-agnostic data pipeline nodes — no extraction needed)
     {gui::NodeType::DataSplit,          PreprocessingDomain::General,     nullptr},
     {gui::NodeType::DataLoader,         PreprocessingDomain::General,     nullptr},

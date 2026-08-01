@@ -1806,6 +1806,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
            {"exclude_columns", "string", "", "Additional columns to exclude from numeric auto-detect (comma-separated)", {}, ""},
          {"with_mean", "bool", "true", "Center data", {}, ""},
          {"with_std", "bool", "true", "Scale to unit variance", {}, ""},
+         {"transform_role", "enum", "features", "Declare whether this scaler transforms features or continuous regression targets", {"features", "regression_target"}, "", "Transform role", "Training semantics"},
          {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse saved training statistics", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
          {"save_state", "bool", "false", "Persist mean and scale to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
          {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},

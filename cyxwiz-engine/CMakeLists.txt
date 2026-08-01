@@ -123,6 +123,7 @@ set(ENGINE_SOURCES
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/preprocessing_state.cpp  # Versioned fitted preprocessing artifacts
+    src/core/regression_target_transform.cpp  # Original-unit regression metrics
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/pipeline_runtime_capabilities.cpp  # Data Studio runtime support truth
     src/core/data_studio_execution_plan.cpp  # Track 22 typed Data Studio plan
@@ -3076,6 +3077,8 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/data_registry_utils.cpp
     src/core/sequence_arrow_batcher.cpp
     src/core/training_executor.cpp
+    src/core/regression_target_transform.cpp
+    src/core/preprocessing_state.cpp
     src/core/training_batcher_setup.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
@@ -3262,6 +3265,8 @@ set_target_properties(test_error_codes PROPERTIES
 add_executable(test_training_executor_arrow_parquet
     tests/test_training_executor_arrow_parquet.cpp
     src/core/training_executor.cpp
+    src/core/regression_target_transform.cpp
+    src/core/preprocessing_state.cpp
     src/core/training_batcher_setup.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp

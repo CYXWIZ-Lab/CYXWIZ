@@ -785,6 +785,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"FillMissing", "save_state", "false", {"true", "false"}},
         {"FillMissing", "state_overwrite", "false", {"true", "false"}},
         {"StandardScaler", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"StandardScaler", "transform_role", "features", {"features", "regression_target"}},
         {"StandardScaler", "save_state", "false", {"true", "false"}},
         {"StandardScaler", "state_overwrite", "false", {"true", "false"}},
         {"SortRows", "order", "asc", {"asc", "desc"}},

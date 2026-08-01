@@ -1764,6 +1764,55 @@ int main() {
                         cyxwiz::errors::Data::RequiredLabelColumnMissing),
           "generated forecast targets should suppress raw-label errors");
 
+    auto target_scaler = Node(
+        36,
+        gui::NodeType::StandardScaler,
+        "Forecast Target Scaler",
+        {Pin(3601, gui::PinType::Dataset, "Data", true)},
+        {Pin(3602, gui::PinType::Dataset, "Scaled", false)});
+    target_scaler.parameters["columns"] = "y,y_1";
+    target_scaler.parameters["label_col"] = "";
+    target_scaler.parameters["exclude_columns"] = "";
+    target_scaler.parameters["with_mean"] = "true";
+    target_scaler.parameters["with_std"] = "true";
+    target_scaler.parameters["transform_role"] = "regression_target";
+    target_scaler.parameters["operation_mode"] = "transform_only";
+    target_scaler.parameters["state_path"] = "fitted-target-state.json";
+
+    nodes = {forecast_data, forecast_window, target_scaler, forecast_loader,
+             forecast_dense, forecast_loss, forecast_optimizer};
+    links = {
+        Link(300, 30, 3001, 31, 3101),
+        Link(301, 31, 3102, 36, 3601),
+        Link(306, 36, 3602, 32, 3201),
+        Link(302, 32, 3202, 33, 3301),
+        Link(303, 33, 3302, 34, 3401),
+        Link(304, 32, 3203, 34, 3402),
+        Link(305, 34, 3403, 35, 3501),
+    };
+    config = compiler.Compile(nodes, links, true);
+    Check(!HasIssueText(config, "Regression target scaler Columns"),
+          "ordered Train-fitted target columns should satisfy compilation");
+    Check(config.regression_target_transform.enabled &&
+              config.regression_target_transform.target_columns ==
+                  std::vector<std::string>({"y", "y_1"}) &&
+              config.regression_target_transform.state_path ==
+                  "fitted-target-state.json",
+          "compiler should preserve the target inverse-transform contract");
+    Check(HasIssueText(config, cyxwiz::IssueLevel::Info,
+                       "original target units"),
+          "compiler should disclose original-unit regression metrics");
+
+    target_scaler.parameters["columns"] = "y_1,y";
+    nodes = {forecast_data, forecast_window, target_scaler, forecast_loader,
+             forecast_dense, forecast_loss, forecast_optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid,
+          "reordered target scaler columns should fail compilation");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Compiler::LabelOutputShapeMismatch),
+          "target scaler order mismatch should expose the shape error code");
+
     schema_data.parameters["label_column"] = "missing_label";
     nodes = {schema_data, binary_dense, binary_loss, optimizer};
     links = {
