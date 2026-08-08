@@ -1,7 +1,7 @@
 {
   "name": "cyxwiz-ci",
   "version": "0.1.0",
-  "description": "CyxWiz - Minimal CI build (no heavy ML dependencies)",
+  "description": "CyxWiz - CI dependencies for the supported Engine and Server Node build",
   "dependencies": [
     {
       "name": "imgui",
@@ -22,11 +22,22 @@
     "fmt",
     "sqlite3",
     "openssl",
+    "pybind11",
     "catch2",
     "cpp-httplib",
     "yaml-cpp",
     "jwt-cpp",
-    "nativefiledialog-extended"
+    "nativefiledialog-extended",
+    "highfive",
+    {
+      "name": "opencv4",
+      "default-features": true
+    },
+    "duckdb",
+    {
+      "name": "arrow",
+      "features": ["parquet", "csv", "json"]
+    }
   ],
   "builtin-baseline": "594ad8871e1e8e45f8e626c015fd611163430207"
 }

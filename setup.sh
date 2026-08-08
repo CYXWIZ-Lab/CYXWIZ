@@ -8,8 +8,7 @@
 # Requirements checked:
 #   - GCC/Clang compiler
 #   - CMake 3.20+
-#   - Python 3.8+ (optional)
-#   - Rust/Cargo 1.70+
+#   - Python 3.12-3.13 (optional)
 #   - vcpkg (will be cloned and bootstrapped if missing)
 # ============================================================================
 
@@ -40,7 +39,7 @@ echo ""
 # ============================================================================
 # Check for CMake 3.20+
 # ============================================================================
-echo "[1/5] Checking for CMake 3.20+..."
+echo "[1/4] Checking for CMake 3.20+..."
 if command -v cmake &> /dev/null; then
     CMAKE_VERSION=$(cmake --version | head -1 | sed 's/cmake version //')
     echo "[OK] CMake found: version $CMAKE_VERSION"
@@ -68,7 +67,7 @@ echo ""
 # ============================================================================
 # Check for C++ compiler
 # ============================================================================
-echo "[2/5] Checking for C++ compiler..."
+echo "[2/4] Checking for C++ compiler..."
 if command -v g++ &> /dev/null; then
     GCC_VERSION=$(g++ --version | head -1)
     echo "[OK] GCC found: $GCC_VERSION"
@@ -88,19 +87,19 @@ fi
 echo ""
 
 # ============================================================================
-# Check for Python 3.8+ (optional)
+# Check for Python 3.12-3.13 (optional)
 # ============================================================================
-echo "[3/5] Checking for Python 3.8+ (optional)..."
+echo "[3/4] Checking for Python 3.12-3.13 (optional)..."
 if command -v python3 &> /dev/null; then
     PYTHON_VERSION=$(python3 --version | sed 's/Python //')
     echo "[OK] Python found: version $PYTHON_VERSION"
 
-    # Check version (basic check for 3.8+)
+    # Match the versions accepted by the root CMake configuration.
     MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
     MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
 
-    if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 8 ]); then
-        echo "[WARNING] Python version too old. Need 3.8+, found $PYTHON_VERSION"
+    if [ "$MAJOR" -ne 3 ] || [ "$MINOR" -lt 12 ] || [ "$MINOR" -gt 13 ]; then
+        echo "[WARNING] Python 3.12 or 3.13 is required for scripting; found $PYTHON_VERSION"
         WARNING_COUNT=$((WARNING_COUNT + 1))
     fi
 else
@@ -110,42 +109,16 @@ else
     if [[ "$OS" == "linux" ]]; then
         echo "Install with: sudo apt-get install python3 python3-dev"
     else
-        echo "Install with: brew install python@3.11"
+        echo "Install Python 3.12 or 3.13"
     fi
     WARNING_COUNT=$((WARNING_COUNT + 1))
 fi
 echo ""
 
 # ============================================================================
-# Check for Rust/Cargo 1.70+
-# ============================================================================
-echo "[4/5] Checking for Rust/Cargo 1.70+..."
-if command -v cargo &> /dev/null; then
-    CARGO_VERSION=$(cargo --version | sed 's/cargo //')
-    echo "[OK] Cargo found: version $CARGO_VERSION"
-
-    # Check version (basic check for 1.70+)
-    MAJOR=$(echo $CARGO_VERSION | cut -d. -f1)
-    MINOR=$(echo $CARGO_VERSION | cut -d. -f2)
-
-    if [ "$MAJOR" -lt 1 ] || ([ "$MAJOR" -eq 1 ] && [ "$MINOR" -lt 70 ]); then
-        echo "[ERROR] Cargo version too old. Need 1.70+, found $CARGO_VERSION"
-        ERROR_COUNT=$((ERROR_COUNT + 1))
-    fi
-else
-    echo "[ERROR] Rust/Cargo not found!"
-    echo ""
-    echo "Install with:"
-    echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-    echo "  source \$HOME/.cargo/env"
-    ERROR_COUNT=$((ERROR_COUNT + 1))
-fi
-echo ""
-
-# ============================================================================
 # Setup vcpkg
 # ============================================================================
-echo "[5/5] Setting up vcpkg..."
+echo "[4/4] Setting up vcpkg..."
 
 if [ -d "vcpkg/.git" ]; then
     echo "[OK] vcpkg repository already exists"
@@ -227,7 +200,6 @@ echo ""
 echo "  2. Build specific components:"
 echo "     ./build.sh --engine           (Build only Engine)"
 echo "     ./build.sh --server-node      (Build only Server Node)"
-echo "     ./build.sh --central-server   (Build only Central Server)"
 echo ""
 echo "  3. Build in Debug mode:"
 echo "     ./build.sh --debug"

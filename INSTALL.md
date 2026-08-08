@@ -1,175 +1,93 @@
-# CyxWiz Installation Guide
+# Installing CyxWiz from source
 
-## Binary Releases
+CyxWiz is pre-release software. The supported installation path in this repository is a source build; published binary availability is not guaranteed.
 
-Pre-built binaries are available for:
-- **Windows x64** (Windows 10/11)
-- **Linux x64** (Ubuntu 20.04+, Debian 11+, Fedora 36+)
-- **macOS ARM64** (Apple Silicon M1/M2/M3)
+## Requirements
 
-Download the latest release from: https://github.com/CYXWIZ-Lab/CYXWIZ/releases
+- Git
+- CMake 3.20 or newer
+- a C++20 compiler
+- platform OpenGL/GLFW development support
+- enough disk space for the vcpkg dependency build
 
----
+The setup scripts clone and bootstrap vcpkg in the repository root. Python scripting is optional and the current CMake contract accepts Python 3.12 or 3.13.
 
-## Required Dependencies
+ArrayFire is optional at configure time. Install it separately when accelerated backend execution is required. A build without ArrayFire is valid but does not prove or provide ArrayFire CPU/CUDA/OpenCL placement.
 
-### ArrayFire (Required - All Platforms)
+ONNX Runtime, llama.cpp/GGUF, LibTorch, the assistant plugin, and MuJoCo are optional integrations. Disable integrations you do not have.
 
-ArrayFire is the GPU acceleration library used by CyxWiz.
+## Windows
 
-#### Windows
-1. Download ArrayFire 3.9.0 from https://arrayfire.com/download
-2. Run the installer (default: `C:\Program Files\ArrayFire\v3`)
-3. Add to PATH: `C:\Program Files\ArrayFire\v3\lib`
-
-#### Linux
-```bash
-wget https://arrayfire.s3.amazonaws.com/3.9.0/ArrayFire-v3.9.0-Linux-x86_64.sh
-chmod +x ArrayFire-v3.9.0-Linux-x86_64.sh
-sudo ./ArrayFire-v3.9.0-Linux-x86_64.sh --prefix=/opt/arrayfire --skip-license
-
-# Add to ~/.bashrc
-export LD_LIBRARY_PATH=/opt/arrayfire/lib:$LD_LIBRARY_PATH
-```
-
-#### macOS
-```bash
-brew install arrayfire
-```
-
----
-
-## Optional Dependencies
-
-### CUDA Toolkit (NVIDIA GPU Support)
-
-For NVIDIA GPU acceleration, install CUDA Toolkit 12.x:
-- Download: https://developer.nvidia.com/cuda-downloads
-- Windows: Run installer, select "CUDA" components
-- Linux: Follow distribution-specific instructions
-
-### OpenCL (AMD/Intel GPU Support)
-
-- **AMD**: Install AMD ROCm or AMDGPU-PRO drivers
-- **Intel**: Install Intel oneAPI or OpenCL runtime
-
-### Python (Scripting Support)
-
-Python 3.8+ is required for the scripting engine:
-- Windows: https://www.python.org/downloads/
-- Linux: `sudo apt install python3-dev python3-pip`
-- macOS: `brew install python@3.11`
-
----
-
-## Running CyxWiz
-
-### Windows
+Use the Visual Studio developer environment expected by `CMakePresets.json`, then:
 
 ```powershell
-# Extract the release
-Expand-Archive cyxwiz-v0.4.0-windows-x64.zip -DestinationPath .
-
-# Run the Engine (Desktop Client)
-.\cyxwiz-v0.4.0-windows-x64\cyxwiz-engine.exe
-
-# Run the Server Node (Compute Worker)
-.\cyxwiz-v0.4.0-windows-x64\cyxwiz-server-node.exe
+git clone https://github.com/CYXWIZ-Lab/CYXWIZ.git
+cd CYXWIZ
+.\setup.bat
+.\build.bat --debug
 ```
 
-### Linux
+The Debug executables are produced under `build/windows-debug/bin/Debug` by the wrapper script. Direct preset builds use `build/bin/Debug`.
+
+## Linux and macOS
+
+Install a compiler and platform graphics headers first, then:
 
 ```bash
-# Extract the release
-tar -xzf cyxwiz-v0.4.0-linux-x64.tar.gz
-cd cyxwiz-v0.4.0-linux-x64
-
-# Run the Engine
-./run-engine.sh
-# Or directly (ensure LD_LIBRARY_PATH is set):
-./cyxwiz-engine
-
-# Run the Server Node
-./cyxwiz-server-node
+git clone https://github.com/CYXWIZ-Lab/CYXWIZ.git
+cd CYXWIZ
+chmod +x setup.sh build.sh
+./setup.sh
+./build.sh --debug
 ```
 
-### macOS
+Wrapper builds use `build/linux-debug` or `build/macos-debug`.
 
-```bash
-# Extract the release
-unzip cyxwiz-v0.4.0-macos-arm64.zip
-cd cyxwiz-v0.4.0-macos-arm64
+## Direct CMake build
 
-# First run may be blocked by Gatekeeper
-# Go to System Preferences > Security & Privacy > Allow
-
-# Run the Engine
-./cyxwiz-engine
-
-# Run the Server Node
-./cyxwiz-server-node
+```powershell
+cmake --preset windows-debug -DCYXWIZ_BUILD_TESTS=ON
+cmake --build --preset windows-debug
+ctest --test-dir build -C Debug --output-on-failure
 ```
 
----
+Use the equivalent platform preset outside Windows.
+
+For a minimal capability build:
+
+```powershell
+cmake --preset windows-debug -DCYXWIZ_ENABLE_ONNX=OFF -DCYXWIZ_ENABLE_GGUF=OFF -DCYXWIZ_ENABLE_PYTORCH=OFF -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF
+cmake --build --preset windows-debug
+```
+
+## ArrayFire discovery
+
+If CMake cannot find an installed ArrayFire package, pass its package directory explicitly:
+
+```powershell
+cmake --preset windows-debug -DArrayFire_DIR="C:\path\to\ArrayFire\lib\cmake\ArrayFire"
+```
+
+At runtime, the ArrayFire libraries and selected backend libraries must be discoverable through the platform library search path. Verify the resolved backend and physical device in CyxWiz runtime evidence; a GPU preference alone is not sufficient.
+
+## Executables
+
+The native build can produce:
+
+- `cyxwiz-engine` — desktop application;
+- `cyxwiz-server-gui` — Server Node graphical application;
+- `cyxwiz-server-daemon` — Server Node daemon.
+
+Windows multi-configuration generators append `Debug` or `Release` below `build/bin`.
 
 ## Troubleshooting
 
-### "DLL not found" / "Library not found"
+When configuration fails:
 
-Ensure ArrayFire is installed and its library path is in your system PATH:
-- Windows: Add `C:\Program Files\ArrayFire\v3\lib` to PATH
-- Linux: Export `LD_LIBRARY_PATH=/opt/arrayfire/lib:$LD_LIBRARY_PATH`
-- macOS: ArrayFire from Homebrew should work automatically
+1. read the first CMake error rather than the final summary;
+2. confirm the vcpkg toolchain path exists;
+3. disable unavailable optional integrations;
+4. confirm the compiler matches the configured generator;
+5. set `ArrayFire_DIR` only when ArrayFire is installed.
 
-### "CUDA driver not found"
-
-- Install NVIDIA GPU drivers from https://www.nvidia.com/drivers
-- CyxWiz will fall back to CPU if no GPU is available
-
-### "OpenGL error"
-
-Ensure your GPU drivers are up to date:
-- Windows: Update via Windows Update or NVIDIA/AMD website
-- Linux: `sudo apt install mesa-utils` and update drivers
-- macOS: Update macOS to latest version
-
-### macOS "App is damaged"
-
-This happens when Gatekeeper blocks unsigned apps:
-```bash
-xattr -cr cyxwiz-engine
-xattr -cr cyxwiz-server-node
-```
-
----
-
-## Building from Source
-
-If you prefer to build from source, see [docs/mainbuild.md](docs/mainbuild.md).
-
-Requirements:
-- CMake 3.20+
-- C++20 compiler (MSVC 2022, GCC 11+, Clang 14+)
-- vcpkg (for dependencies)
-- ArrayFire 3.9.0
-
-```bash
-# Clone with submodules
-git clone --recursive https://github.com/CYXWIZ-Lab/CYXWIZ.git
-cd CYXWIZ
-
-# Install vcpkg dependencies
-./vcpkg/bootstrap-vcpkg.sh
-./vcpkg/vcpkg install
-
-# Configure and build
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
-```
-
----
-
-## Support
-
-- Issues: https://github.com/CYXWIZ-Lab/CYXWIZ/issues
-- Documentation: https://github.com/CYXWIZ-Lab/CYXWIZ/tree/master/docs
+For reproducible problems, follow [SUPPORT.md](SUPPORT.md).

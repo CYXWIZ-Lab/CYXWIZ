@@ -42,9 +42,11 @@ cmake_install.cmake
 imgui.ini
 
 # Dependencies
+**/node_modules/
 vcpkg/
 vcpkg_installed/
 third_party/*/
+external/imnodes/
 
 # External pre-built libraries (download via scripts/setup-*.ps1 or .sh)
 external/onnxruntime-gpu/bin/
@@ -64,6 +66,8 @@ venv/
 # Logs
 *.log
 logs/
+*.dmp
+*.stackdump
 
 # OS
 .DS_Store
@@ -83,6 +87,11 @@ wallet.json
 /models/
 /checkpoints/
 /.cyxwiz/
+/.mnist_cache/
+/data/huggingface_cache/
+**/artifacts/
+**/checkpoints/
+**/*.cyxmodel/
 examples/data/codefeedback_demo_smoke/codefeedback_lang_multiclass.csv
 *.h5
 *.pt
@@ -92,44 +101,72 @@ examples/data/codefeedback_demo_smoke/codefeedback_lang_multiclass.csv
 test_results/
 coverage/
 
-# Private/Company IP
+# Private or separately maintained CyxWiz material
 cyx_cloud/
-
-# Blockchain (contains keypairs, wallets, private keys)
 cyxwiz-blockchain/
+cyxwiz-central-server/
+AI SYSTEM/
+Inside_docs/
+business/
+
+# Blockchain keys and local state
 *-keypair.json
 *.keypair
 id.json
 .solana/
 
-# Test scripts and temporary files
-test_*.py
+# Local runtime and temporary files
 nul
-startup_scripts.txt
+/startup_scripts.txt
 install-solana*.bat
 install-solana*.ps1
-*.png
-!cyxtoken.png
+/imgui.ini
+/imgui_server_node.ini
+/tutorial_progress.json
+/llama_stdout*.txt
+/llama_stderr*.txt
+/engine_log.txt
+/MUJOCO_LOG.TXT
+*.lnk
 
-# Session notes and planning docs (temporary)
-SESSION_*.md
-PHASE*.md
-*_SUMMARY.md
-*_PLAN.md
-*_PROGRESS.md
-*_COMPLETE.md
-*_GUIDE.md
-TODO_FEATURES.md
-P2P_*.md
-ENGINE_*.md
-GUI_*.md
-WALLET_*.md
+# Personal working notes and agent state
+/TODO1.txt
+/resume.txt
+/toremove/
+/internal/
+/skills-main/
+/build_macos.md
+/LISTJOBS_IMPLEMENTATION_SUCCESS.md
+/matplotlib_plot.svg
+/enable_cuda.bat
+/verify_cuda.bat
+/examples/build_logs/
+/examples/logs/
+/examples/screenshots/
+/examples/startup_scripts/
+/scripts/token-metadata/
+/plugins/simulation/mujoco/mujoco-*.zip
+/engine_todo.md
+/SESSION_*.md
+/PHASE*.md
+/*_SUMMARY.md
+/*_PLAN.md
+/*_PROGRESS.md
+/*_COMPLETE.md
+/*_GUIDE.md
+/TODO_FEATURES.md
+/P2P_*.md
+/ENGINE_*.md
+/GUI_*.md
+/WALLET_*.md
 
-# External dependencies (vendored - now included in repo)
-# cyxwiz-engine/external/imnodes/  # Included for CI builds
+# Loose root screenshots are local review artifacts. Public images belong in
+# a named resources or documentation assets directory.
+/*.png
 
-# Central Server (Rust project - separate repo)
-cyxwiz-central-server/
+# Engine's vendored ImNodes copy remains public for reproducible builds.
+# The obsolete root external/imnodes submodule is ignored above.
+
 *.gguf
 
 # Redistribution packages (large binaries)

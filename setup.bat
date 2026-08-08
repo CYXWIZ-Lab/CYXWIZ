@@ -10,8 +10,7 @@ REM
 REM Requirements checked:
 REM   - Visual Studio 2026 (with C++ tools)
 REM   - CMake 3.20+
-REM   - Python 3.8+ (optional)
-REM   - Rust/Cargo 1.70+
+REM   - Python 3.12-3.13 (optional)
 REM   - vcpkg (will be cloned and bootstrapped if missing)
 REM ============================================================================
 
@@ -27,7 +26,7 @@ set WARNING_COUNT=0
 REM ============================================================================
 REM Check for Visual Studio 2026
 REM ============================================================================
-echo [1/5] Checking for Visual Studio 2026...
+echo [1/4] Checking for Visual Studio 2026...
 where cl.exe >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Visual Studio 2026 not found in PATH
@@ -46,7 +45,7 @@ echo.
 REM ============================================================================
 REM Check for CMake 3.20+
 REM ============================================================================
-echo [2/5] Checking for CMake 3.20+...
+echo [2/4] Checking for CMake 3.20+...
 where cmake >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] CMake not found in PATH
@@ -76,9 +75,9 @@ if %ERRORLEVEL% neq 0 (
 echo.
 
 REM ============================================================================
-REM Check for Python 3.8+ (optional)
+REM Check for Python 3.12-3.13 (optional)
 REM ============================================================================
-echo [3/5] Checking for Python 3.8+ ^(optional^)...
+echo [3/4] Checking for Python 3.12-3.13 ^(optional^)...
 where python >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo [WARNING] Python not found in PATH
@@ -90,47 +89,18 @@ if %ERRORLEVEL% neq 0 (
     for /f "tokens=2" %%i in ('python --version 2^>^&1') do set PYTHON_VERSION=%%i
     echo [OK] Python found: version !PYTHON_VERSION!
 
-    REM Basic version check for 3.8+
+    REM Match the versions accepted by the root CMake configuration.
     for /f "tokens=1,2 delims=." %%a in ("!PYTHON_VERSION!") do (
         if %%a LSS 3 (
-            echo [WARNING] Python version too old. Need 3.8+, found !PYTHON_VERSION!
+            echo [WARNING] Python 3.12 or 3.13 is required for scripting; found !PYTHON_VERSION!
             set /a WARNING_COUNT+=1
         ) else if %%a EQU 3 (
-            if %%b LSS 8 (
-                echo [WARNING] Python version too old. Need 3.8+, found !PYTHON_VERSION!
+            if %%b LSS 12 (
+                echo [WARNING] Python 3.12 or 3.13 is required for scripting; found !PYTHON_VERSION!
                 set /a WARNING_COUNT+=1
-            )
-        )
-    )
-)
-echo.
-
-REM ============================================================================
-REM Check for Rust/Cargo 1.70+
-REM ============================================================================
-echo [4/5] Checking for Rust/Cargo 1.70+...
-where cargo >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Rust/Cargo not found in PATH
-    echo.
-    echo Please install Rust from:
-    echo https://rustup.rs/
-    echo.
-    echo After installation, restart your terminal and run this script again
-    set /a ERROR_COUNT+=1
-) else (
-    for /f "tokens=2" %%i in ('cargo --version 2^>^&1') do set CARGO_VERSION=%%i
-    echo [OK] Cargo found: version !CARGO_VERSION!
-
-    REM Basic version check for 1.70+
-    for /f "tokens=1,2 delims=." %%a in ("!CARGO_VERSION!") do (
-        if %%a LSS 1 (
-            echo [ERROR] Cargo version too old. Need 1.70+, found !CARGO_VERSION!
-            set /a ERROR_COUNT+=1
-        ) else if %%a EQU 1 (
-            if %%b LSS 70 (
-                echo [ERROR] Cargo version too old. Need 1.70+, found !CARGO_VERSION!
-                set /a ERROR_COUNT+=1
+            ) else if %%b GTR 13 (
+                echo [WARNING] Python 3.12 or 3.13 is required for scripting; found !PYTHON_VERSION!
+                set /a WARNING_COUNT+=1
             )
         )
     )
@@ -140,7 +110,7 @@ echo.
 REM ============================================================================
 REM Setup vcpkg
 REM ============================================================================
-echo [5/5] Setting up vcpkg...
+echo [4/4] Setting up vcpkg...
 
 if exist "vcpkg\.git" (
     echo [OK] vcpkg repository already exists
@@ -216,7 +186,6 @@ echo.
 echo   2. Build specific components:
 echo      build.bat --engine           ^(Build only Engine^)
 echo      build.bat --server-node      ^(Build only Server Node^)
-echo      build.bat --central-server   ^(Build only Central Server^)
 echo.
 echo   3. Build in Debug mode:
 echo      build.bat --debug

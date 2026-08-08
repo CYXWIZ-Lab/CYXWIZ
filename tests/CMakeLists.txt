@@ -59,8 +59,10 @@ endif()
 
 # Register tests with CTest
 include(CTest)
-include(Catch)
-catch_discover_tests(cyxwiz-tests)
+# Register the core suite as one process. Per-case Catch2 discovery made CTest
+# restart ArrayFire and hardware detection hundreds of times, turning an
+# 18-second suite into an impractical validation command.
+add_test(NAME CyxWizCoreTests COMMAND cyxwiz-tests)
 
 # ONNX Export Tests (conditional on ONNX export support)
 if(CYXWIZ_HAS_ONNX_EXPORT)

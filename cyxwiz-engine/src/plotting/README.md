@@ -573,7 +573,7 @@ void PlotTestPanel::Render() {
 
 The matplotlib backend requires:
 
-1. **Python 3.8+** installed and in PATH
+1. **Python 3.12 or 3.13** installed and in PATH
 2. **matplotlib** package: `pip install matplotlib scipy`
 3. **pybind11** (managed by vcpkg)
 

@@ -43,7 +43,7 @@ PyCyxWiz is built as a pybind11 module named `pycyxwiz`.
 
 Typical build flags:
 - `CYXWIZ_BUILD_PYTHON=ON`
-- Make sure Python 3.8+ and pybind11 are available.
+- Use Python 3.12 or 3.13 with pybind11, matching the root CMake contract.
 
 After building, the module is placed under:
 - `build/<preset>/python/pycyxwiz.*`

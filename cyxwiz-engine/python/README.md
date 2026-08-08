@@ -178,7 +178,7 @@ dataset.load_from_json("my_data.json")
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.12 or 3.13
 - NumPy (recommended)
 - pybind11 (build time, via vcpkg)
 - ImPlot (linked automatically)

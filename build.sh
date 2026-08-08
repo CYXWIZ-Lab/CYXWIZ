@@ -12,7 +12,6 @@
 #   --clean              Clean build directory before building
 #   --engine             Build only Engine component
 #   --server-node        Build only Server Node component
-#   --central-server     Build only Central Server component
 #   -j N                 Use N parallel jobs (default: auto-detect)
 # ============================================================================
 
@@ -25,15 +24,12 @@ CLEAN_BUILD=0
 PARALLEL_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 BUILD_ENGINE=ON
 BUILD_SERVER_NODE=ON
-BUILD_CENTRAL_SERVER=ON
 
 # Detect OS
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     OS="linux"
-    BUILD_DIR="build/linux-release"
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
-    BUILD_DIR="build/macos-release"
 else
     echo "[ERROR] Unsupported OS: $OSTYPE"
     exit 1
@@ -56,7 +52,6 @@ while [[ $# -gt 0 ]]; do
             echo "  --clean              Clean build directory before building"
             echo "  --engine             Build only Engine component"
             echo "  --server-node        Build only Server Node component"
-            echo "  --central-server     Build only Central Server component"
             echo "  -j N                 Use N parallel jobs (default: auto-detect)"
             echo ""
             echo "Examples:"
@@ -81,21 +76,12 @@ while [[ $# -gt 0 ]]; do
             BUILD_TARGET="engine"
             BUILD_ENGINE=ON
             BUILD_SERVER_NODE=OFF
-            BUILD_CENTRAL_SERVER=OFF
             shift
             ;;
         --server-node)
             BUILD_TARGET="server-node"
             BUILD_ENGINE=OFF
             BUILD_SERVER_NODE=ON
-            BUILD_CENTRAL_SERVER=OFF
-            shift
-            ;;
-        --central-server)
-            BUILD_TARGET="central-server"
-            BUILD_ENGINE=OFF
-            BUILD_SERVER_NODE=OFF
-            BUILD_CENTRAL_SERVER=ON
             shift
             ;;
         -j)
@@ -109,6 +95,9 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+BUILD_TYPE_DIR=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
+BUILD_DIR="build/${OS}-${BUILD_TYPE_DIR}"
 
 # Record start time
 START_TIME=$(date +%s)
@@ -149,7 +138,7 @@ fi
 # ============================================================================
 # Step 1: Configure CMake
 # ============================================================================
-echo "[1/4] Configuring CMake..."
+echo "[1/3] Configuring CMake..."
 CMAKE_START=$(date +%s)
 echo ""
 
@@ -167,7 +156,6 @@ cmake -B "$BUILD_DIR" -S . \
     -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DCYXWIZ_BUILD_ENGINE=$BUILD_ENGINE \
     -DCYXWIZ_BUILD_SERVER_NODE=$BUILD_SERVER_NODE \
-    -DCYXWIZ_BUILD_CENTRAL_SERVER=$BUILD_CENTRAL_SERVER \
     -DCYXWIZ_BUILD_TESTS=ON
 
 if [ $? -ne 0 ]; then
@@ -191,71 +179,33 @@ echo ""
 # ============================================================================
 # Step 2: Build C++ components
 # ============================================================================
-if [[ "$BUILD_TARGET" == "central-server" ]]; then
-    echo "[2/4] Skipping C++ build (central-server only)..."
-    echo ""
+echo "[2/3] Building C++ components..."
+CPP_START=$(date +%s)
+echo ""
+
+if [[ "$BUILD_TARGET" == "all" ]]; then
+    cmake --build "$BUILD_DIR" -j $PARALLEL_JOBS
+elif [[ "$BUILD_TARGET" == "server-node" ]]; then
+    cmake --build "$BUILD_DIR" --target cyxwiz-server-daemon cyxwiz-server-gui -j $PARALLEL_JOBS
 else
-    echo "[2/4] Building C++ components..."
-    CPP_START=$(date +%s)
-    echo ""
-
-    if [[ "$BUILD_TARGET" == "all" ]]; then
-        cmake --build "$BUILD_DIR" -j $PARALLEL_JOBS
-    else
-        cmake --build "$BUILD_DIR" --target "cyxwiz-$BUILD_TARGET" -j $PARALLEL_JOBS
-    fi
-
-    if [ $? -ne 0 ]; then
-        echo ""
-        echo "[ERROR] C++ build failed!"
-        echo ""
-        exit 1
-    fi
-
-    CPP_END=$(date +%s)
-    CPP_DURATION=$((CPP_END - CPP_START))
-    echo ""
-    echo "[OK] C++ build completed (${CPP_DURATION}s)"
-    echo ""
+    cmake --build "$BUILD_DIR" --target cyxwiz-engine -j $PARALLEL_JOBS
 fi
 
-# ============================================================================
-# Step 3: Build Central Server (Rust)
-# ============================================================================
-if [[ "$BUILD_TARGET" == "engine" || "$BUILD_TARGET" == "server-node" ]]; then
-    echo "[3/4] Skipping Rust build ($BUILD_TARGET only)..."
+if [ $? -ne 0 ]; then
     echo ""
-else
-    echo "[3/4] Building Central Server (Rust)..."
-    RUST_START=$(date +%s)
+    echo "[ERROR] C++ build failed!"
     echo ""
-
-    cd cyxwiz-central-server
-
-    if [[ "$BUILD_TYPE" == "Debug" ]]; then
-        cargo build
-    else
-        cargo build --release
-    fi
-
-    if [ $? -ne 0 ]; then
-        cd ..
-        echo ""
-        echo "[ERROR] Rust build failed!"
-        echo ""
-        exit 1
-    fi
-
-    cd ..
-    RUST_END=$(date +%s)
-    RUST_DURATION=$((RUST_END - RUST_START))
-    echo ""
-    echo "[OK] Rust build completed (${RUST_DURATION}s)"
-    echo ""
+    exit 1
 fi
 
+CPP_END=$(date +%s)
+CPP_DURATION=$((CPP_END - CPP_START))
+echo ""
+echo "[OK] C++ build completed (${CPP_DURATION}s)"
+echo ""
+
 # ============================================================================
-# Step 4: Build Summary
+# Step 3: Build Summary
 # ============================================================================
 END_TIME=$(date +%s)
 TOTAL_DURATION=$((END_TIME - START_TIME))
@@ -270,7 +220,7 @@ else
 fi
 
 echo "============================================================================"
-echo "[4/4] Build Summary"
+echo "[3/3] Build Summary"
 echo "============================================================================"
 echo ""
 echo "Total Time: $TOTAL_DURATION_STR"
@@ -280,40 +230,33 @@ if [[ "$BUILD_TARGET" == "all" ]]; then
     echo "Executables:"
     [ -f "$BUILD_DIR/bin/cyxwiz-engine" ] && \
         echo "  Engine:         $BUILD_DIR/bin/cyxwiz-engine"
-    [ -f "$BUILD_DIR/bin/cyxwiz-server-node" ] && \
-        echo "  Server Node:    $BUILD_DIR/bin/cyxwiz-server-node"
-    [ -f "cyxwiz-central-server/target/release/cyxwiz-central-server" ] && \
-        echo "  Central Server: cyxwiz-central-server/target/release/cyxwiz-central-server" || \
-    [ -f "cyxwiz-central-server/target/debug/cyxwiz-central-server" ] && \
-        echo "  Central Server: cyxwiz-central-server/target/debug/cyxwiz-central-server"
+    [ -f "$BUILD_DIR/bin/cyxwiz-server-daemon" ] && \
+        echo "  Server daemon:  $BUILD_DIR/bin/cyxwiz-server-daemon"
+    [ -f "$BUILD_DIR/bin/cyxwiz-server-gui" ] && \
+        echo "  Server GUI:     $BUILD_DIR/bin/cyxwiz-server-gui"
 elif [[ "$BUILD_TARGET" == "engine" ]]; then
     echo "Executable:"
     [ -f "$BUILD_DIR/bin/cyxwiz-engine" ] && \
         echo "  Engine:         $BUILD_DIR/bin/cyxwiz-engine"
 elif [[ "$BUILD_TARGET" == "server-node" ]]; then
-    echo "Executable:"
-    [ -f "$BUILD_DIR/bin/cyxwiz-server-node" ] && \
-        echo "  Server Node:    $BUILD_DIR/bin/cyxwiz-server-node"
-elif [[ "$BUILD_TARGET" == "central-server" ]]; then
-    echo "Executable:"
-    [ -f "cyxwiz-central-server/target/release/cyxwiz-central-server" ] && \
-        echo "  Central Server: cyxwiz-central-server/target/release/cyxwiz-central-server" || \
-    [ -f "cyxwiz-central-server/target/debug/cyxwiz-central-server" ] && \
-        echo "  Central Server: cyxwiz-central-server/target/debug/cyxwiz-central-server"
+    echo "Executables:"
+    [ -f "$BUILD_DIR/bin/cyxwiz-server-daemon" ] && \
+        echo "  Server daemon:  $BUILD_DIR/bin/cyxwiz-server-daemon"
+    [ -f "$BUILD_DIR/bin/cyxwiz-server-gui" ] && \
+        echo "  Server GUI:     $BUILD_DIR/bin/cyxwiz-server-gui"
 fi
 
 echo ""
 echo "Next Steps:"
 if [[ "$BUILD_TARGET" == "all" ]]; then
     echo "  - Run the Engine:         ./$BUILD_DIR/bin/cyxwiz-engine"
-    echo "  - Run the Server Node:    ./$BUILD_DIR/bin/cyxwiz-server-node"
-    echo "  - Run the Central Server: cd cyxwiz-central-server && cargo run --release"
+    echo "  - Run the Server GUI:     ./$BUILD_DIR/bin/cyxwiz-server-gui"
+    echo "  - Run the daemon:         ./$BUILD_DIR/bin/cyxwiz-server-daemon"
 elif [[ "$BUILD_TARGET" == "engine" ]]; then
     echo "  - Run the Engine:         ./$BUILD_DIR/bin/cyxwiz-engine"
 elif [[ "$BUILD_TARGET" == "server-node" ]]; then
-    echo "  - Run the Server Node:    ./$BUILD_DIR/bin/cyxwiz-server-node"
-elif [[ "$BUILD_TARGET" == "central-server" ]]; then
-    echo "  - Run the Central Server: cd cyxwiz-central-server && cargo run --release"
+    echo "  - Run the Server GUI:     ./$BUILD_DIR/bin/cyxwiz-server-gui"
+    echo "  - Run the daemon:         ./$BUILD_DIR/bin/cyxwiz-server-daemon"
 fi
 
 echo ""

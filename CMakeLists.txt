@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(CyxWiz
     VERSION 0.1.0
-    DESCRIPTION "CyxWiz - Decentralized ML Compute Platform"
+    DESCRIPTION "CyxWiz visual machine-learning and data workflow platform"
     LANGUAGES CXX C
 )
 
@@ -20,7 +20,6 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Build options
 option(CYXWIZ_BUILD_ENGINE "Build CyxWiz Engine (Desktop Client)" ON)
 option(CYXWIZ_BUILD_SERVER_NODE "Build CyxWiz Server Node" ON)
-option(CYXWIZ_BUILD_CENTRAL_SERVER "Build CyxWiz Central Server" ON)
 option(CYXWIZ_BUILD_TESTS "Build tests" ON)
 option(CYXWIZ_BUILD_DOCS "Build documentation" OFF)
 option(CYXWIZ_ENABLE_CUDA "Enable CUDA support for ArrayFire" ON)
@@ -31,6 +30,7 @@ option(CYXWIZ_ENABLE_PYTORCH "Enable PyTorch/LibTorch support" ON)
 option(CYXWIZ_ANDROID_BUILD "Build for Android" OFF)
 option(CYXWIZ_ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
 option(CYXWIZ_BUILD_ASSISTANT_PLUGIN "Build the experimental CyxWiz assistant plugin" OFF)
+option(CYXWIZ_BUILD_MUJOCO_PLUGIN "Build the optional MuJoCo simulation plugin" OFF)
 
 # Platform detection
 if(WIN32)
@@ -350,14 +350,14 @@ add_subdirectory(cyxwiz-backend)
 # CUDA test programs
 if(CYXWIZ_ENABLE_CUDA)
     # Full backend test
-    add_executable(test_cuda_backend test_cuda_backend.cpp)
+    add_executable(test_cuda_backend tests/smoke/test_cuda_backend.cpp)
     target_link_libraries(test_cuda_backend PRIVATE cyxwiz-backend)
     target_include_directories(test_cuda_backend PRIVATE cyxwiz-backend/include)
 
     # Simple direct CUDA test
     find_package(CUDAToolkit QUIET)
     if(CUDAToolkit_FOUND)
-        add_executable(test_cuda_simple test_cuda_simple.cpp)
+        add_executable(test_cuda_simple tests/smoke/test_cuda_simple.cpp)
         target_link_libraries(test_cuda_simple PRIVATE CUDA::cudart)
     else()
         message(STATUS "CUDA Toolkit not found - skipping test_cuda_simple")
@@ -367,7 +367,7 @@ endif()
 # MNIST ONNX test program
 # Cross-platform: Windows, Linux, macOS
 if(CYXWIZ_HAS_ONNX)
-    add_executable(test_mnist_onnx test_mnist_onnx.cpp)
+    add_executable(test_mnist_onnx tests/smoke/test_mnist_onnx.cpp)
     target_link_libraries(test_mnist_onnx PRIVATE onnxruntime::onnxruntime)
     target_compile_definitions(test_mnist_onnx PRIVATE CYXWIZ_HAS_ONNX)
 
@@ -421,16 +421,12 @@ endif()
 if(CYXWIZ_BUILD_ENGINE AND NOT CYXWIZ_ANDROID_BUILD)
     add_subdirectory(plugins/examples/mlflow_logger)
     add_subdirectory(plugins/examples/image_nodes)
-    add_subdirectory(plugins/simulation/mujoco)
+    if(CYXWIZ_BUILD_MUJOCO_PLUGIN)
+        add_subdirectory(plugins/simulation/mujoco)
+    endif()
     if(CYXWIZ_BUILD_ASSISTANT_PLUGIN)
         add_subdirectory(plugins/assistant/cyxwiz_assistant)
     endif()
-endif()
-
-# Central server is built with Rust (see cyxwiz-central-server/Cargo.toml)
-if(CYXWIZ_BUILD_CENTRAL_SERVER AND NOT CYXWIZ_ANDROID_BUILD)
-    message(STATUS "Central Server will be built using Cargo (Rust)")
-    message(STATUS "Run: cd cyxwiz-central-server && cargo build --release")
 endif()
 
 # Testing
@@ -458,7 +454,8 @@ message(STATUS "")
 message(STATUS "Components:")
 message(STATUS "  Engine (Desktop Client): ${CYXWIZ_BUILD_ENGINE}")
 message(STATUS "  Server Node: ${CYXWIZ_BUILD_SERVER_NODE}")
-message(STATUS "  Central Server: ${CYXWIZ_BUILD_CENTRAL_SERVER}")
+message(STATUS "  MuJoCo Plugin: ${CYXWIZ_BUILD_MUJOCO_PLUGIN}")
+message(STATUS "  Assistant Plugin: ${CYXWIZ_BUILD_ASSISTANT_PLUGIN}")
 message(STATUS "  Tests: ${CYXWIZ_BUILD_TESTS}")
 message(STATUS "")
 message(STATUS "Compute Backends:")

@@ -24,7 +24,8 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      # Use minimal CI manifest (no opencv, onnx, llama-cpp)
+      # Use the supported CI manifest (ONNX, GGUF, PyTorch, and optional
+      # simulation/assistant plugins remain disabled below).
       - name: Use CI vcpkg manifest
         shell: pwsh
         run: Copy-Item vcpkg-ci.json vcpkg.json -Force
@@ -57,6 +58,8 @@ jobs:
             -DCYXWIZ_ENABLE_ONNX=OFF `
             -DCYXWIZ_ENABLE_GGUF=OFF `
             -DCYXWIZ_ENABLE_PYTORCH=OFF `
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF `
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF `
             -DCYXWIZ_ENABLE_CUDA=OFF `
             -DCYXWIZ_ENABLE_OPENCL=OFF
 
@@ -103,7 +106,7 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      # Use minimal CI manifest
+      # Use the supported CI manifest.
       - name: Use CI vcpkg manifest
         run: cp vcpkg-ci.json vcpkg.json
 
@@ -134,6 +137,8 @@ jobs:
             -DCYXWIZ_ENABLE_ONNX=OFF \
             -DCYXWIZ_ENABLE_GGUF=OFF \
             -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
             -DCYXWIZ_ENABLE_CUDA=OFF \
             -DCYXWIZ_ENABLE_OPENCL=OFF \
             ${AF_DIR:+-DArrayFire_DIR="$AF_DIR"}
@@ -167,7 +172,7 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      # Use minimal CI manifest
+      # Use the supported CI manifest.
       - name: Use CI vcpkg manifest
         run: cp vcpkg-ci.json vcpkg.json
 
@@ -191,6 +196,8 @@ jobs:
             -DCYXWIZ_ENABLE_ONNX=OFF \
             -DCYXWIZ_ENABLE_GGUF=OFF \
             -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
             -DCYXWIZ_ENABLE_CUDA=OFF \
             -DCYXWIZ_ENABLE_OPENCL=OFF
 

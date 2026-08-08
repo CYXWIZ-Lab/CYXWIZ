@@ -16,7 +16,7 @@
 #      case where MSBuild "succeeded" but didn't regenerate artifacts).
 #   4. Surfaces warnings without drowning in noise.
 #
-# For a fresh-setup build with vcpkg/ninja, use scripts/build.sh. This
+# For a fresh-setup build with vcpkg/ninja, use the root build.sh. This
 # wrapper is for the iterative edit-compile-test loop.
 #
 # Usage:

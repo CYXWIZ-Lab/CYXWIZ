@@ -15,7 +15,7 @@ Startup scripts are Python (.cyx) files that execute automatically on applicatio
 
 ### Enable Startup Scripts
 
-1. Create or edit `startup_scripts.txt` in the project root
+1. Build the Engine, then edit `startup_scripts.txt` next to the Engine executable
 2. Add script paths (one per line):
    ```
    scripts/startup/welcome.cyx
@@ -100,7 +100,7 @@ scripts/startup/my_startup.cyx
 ## Troubleshooting
 
 **Scripts not running?**
-- Check `startup_scripts.txt` exists in project root
+- Check `startup_scripts.txt` exists next to the Engine executable
 - Verify script paths are correct (absolute or relative)
 - Check CommandWindow for error messages
 

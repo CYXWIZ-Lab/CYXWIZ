@@ -1,7 +1,7 @@
 {
   "name": "cyxwiz",
   "version": "0.1.0",
-  "description": "CyxWiz - Decentralized ML Compute Platform",
+  "description": "CyxWiz visual machine-learning and data workflow platform",
   "dependencies": [
     {
       "name": "imgui",
@@ -44,7 +44,6 @@
     "duckdb",
     "libsndfile",
     "fftw3",
-    "arrow",
     {
       "name": "arrow",
       "features": ["parquet", "csv", "json"]
