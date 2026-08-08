@@ -12,6 +12,7 @@ REM   --debug              Build in Debug mode (default: Release)
 REM   --clean              Clean build directory before building
 REM   --engine             Build only Engine component
 REM   --server-node        Build only Server Node component
+REM   --build-dir PATH     Use a compatible existing or custom build tree
 REM   -j N                 Use N parallel jobs (default: 8)
 REM ============================================================================
 
@@ -24,6 +25,7 @@ set CLEAN_BUILD=0
 set PARALLEL_JOBS=8
 set BUILD_ENGINE=ON
 set BUILD_SERVER_NODE=ON
+set "BUILD_DIR_OVERRIDE="
 
 :parse_args
 if "%~1"=="" goto end_parse
@@ -53,6 +55,16 @@ if /i "%~1"=="--server-node" (
     shift
     goto parse_args
 )
+if /i "%~1"=="--build-dir" (
+    if "%~2"=="" (
+        echo [ERROR] --build-dir requires a path
+        exit /b 1
+    )
+    set "BUILD_DIR_OVERRIDE=%~2"
+    shift
+    shift
+    goto parse_args
+)
 if /i "%~1"=="-j" (
     set PARALLEL_JOBS=%~2
     shift
@@ -77,12 +89,14 @@ echo   --debug              Build in Debug mode (default: Release)
 echo   --clean              Clean build directory before building
 echo   --engine             Build only Engine component
 echo   --server-node        Build only Server Node component
+echo   --build-dir PATH     Use a compatible existing or custom build tree
 echo   -j N                 Use N parallel jobs (default: 8)
 echo.
 echo Examples:
 echo   build.bat                    Build all components in Release mode
 echo   build.bat --debug            Build all in Debug mode
 echo   build.bat --server-node      Build only Server Node
+echo   build.bat --debug --engine --build-dir build
 echo   build.bat --clean            Clean build and rebuild all
 echo   build.bat -j 16              Build with 16 parallel jobs
 echo.
@@ -90,6 +104,14 @@ echo ===========================================================================
 exit /b 0
 
 :end_parse
+
+if defined BUILD_DIR_OVERRIDE (
+    set "BUILD_DIR=%BUILD_DIR_OVERRIDE%"
+) else if /i "%BUILD_TYPE%"=="Debug" (
+    set "BUILD_DIR=build\windows-debug"
+) else (
+    set "BUILD_DIR=build\windows-release"
+)
 
 REM Record start time
 set START_TIME=%TIME%
@@ -103,6 +125,7 @@ echo.
 echo Configuration:
 echo   Build Type:      %BUILD_TYPE%
 echo   Components:      %BUILD_TARGET%
+echo   Build Directory: %BUILD_DIR%
 echo   Parallel Jobs:   %PARALLEL_JOBS%
 echo   Clean Build:     %CLEAN_BUILD%
 echo.
@@ -118,14 +141,14 @@ if not exist "vcpkg\vcpkg.exe" (
     exit /b 1
 )
 
-if /i "%BUILD_TYPE%"=="Debug" (
-    set BUILD_DIR=build\windows-debug
-) else (
-    set BUILD_DIR=build\windows-release
-)
-
 REM Clean build if requested
 if %CLEAN_BUILD%==1 (
+    for %%I in ("%BUILD_DIR%") do set "BUILD_DIR_FULL=%%~fI"
+    for %%I in (".") do set "PROJECT_DIR_FULL=%%~fI"
+    if /i "!BUILD_DIR_FULL!"=="!PROJECT_DIR_FULL!" (
+        echo [ERROR] Refusing to clean the repository root
+        exit /b 1
+    )
     echo [CLEAN] Cleaning build directory...
     if exist "%BUILD_DIR%" (
         rmdir /s /q "%BUILD_DIR%"
@@ -141,10 +164,19 @@ echo [1/3] Configuring CMake...
 set CMAKE_START=%TIME%
 echo.
 
-cmake -B %BUILD_DIR% -S . ^
-    -G "Visual Studio 18 2026" -A x64 ^
+set "CMAKE_GENERATOR_ARGS="
+set "CMAKE_TOOLCHAIN_ARGS="
+if exist "%BUILD_DIR%\CMakeCache.txt" (
+    echo [INFO] Reusing generator and platform from %BUILD_DIR%\CMakeCache.txt
+) else (
+    set "CMAKE_GENERATOR_ARGS=-G "Visual Studio 18 2026" -A x64"
+    set "CMAKE_TOOLCHAIN_ARGS=-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake"
+)
+
+cmake -B "%BUILD_DIR%" -S . ^
+    %CMAKE_GENERATOR_ARGS% ^
+    %CMAKE_TOOLCHAIN_ARGS% ^
     -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ^
-    -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake ^
     -DVCPKG_OVERLAY_PORTS=vcpkg-ports ^
     -DCYXWIZ_BUILD_ENGINE=%BUILD_ENGINE% ^
     -DCYXWIZ_BUILD_SERVER_NODE=%BUILD_SERVER_NODE% ^
@@ -176,11 +208,11 @@ set CPP_START=%TIME%
 echo.
 
 if /i "%BUILD_TARGET%"=="all" (
-    cmake --build %BUILD_DIR% --config %BUILD_TYPE% -j %PARALLEL_JOBS%
+    cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% -j %PARALLEL_JOBS%
 ) else if /i "%BUILD_TARGET%"=="server-node" (
-    cmake --build %BUILD_DIR% --config %BUILD_TYPE% --target cyxwiz-server-daemon cyxwiz-server-gui -j %PARALLEL_JOBS%
+    cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% --target cyxwiz-server-daemon cyxwiz-server-gui -j %PARALLEL_JOBS%
 ) else (
-    cmake --build %BUILD_DIR% --config %BUILD_TYPE% --target cyxwiz-engine -j %PARALLEL_JOBS%
+    cmake --build "%BUILD_DIR%" --config %BUILD_TYPE% --target cyxwiz-engine -j %PARALLEL_JOBS%
 )
 
 if %ERRORLEVEL% NEQ 0 (

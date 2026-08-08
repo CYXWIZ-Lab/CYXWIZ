@@ -154,18 +154,8 @@ else
 fi
 
 echo ""
-echo "[INFO] Installing vcpkg dependencies..."
-echo "This may take several minutes on first run..."
-if [ -f "vcpkg/vcpkg" ]; then
-    vcpkg/vcpkg install
-    if [ $? -ne 0 ]; then
-        echo "[WARNING] Some vcpkg packages failed to install"
-        echo "You may need to install them manually later"
-        WARNING_COUNT=$((WARNING_COUNT + 1))
-    else
-        echo "[OK] vcpkg dependencies installed"
-    fi
-fi
+echo "[OK] vcpkg is ready"
+echo "Dependencies are restored by CMake into the selected build tree."
 echo ""
 
 # ============================================================================
@@ -189,7 +179,7 @@ elif [ $WARNING_COUNT -gt 0 ]; then
     echo "You can proceed with the build, but some features may be unavailable."
     echo ""
 else
-    echo "[SUCCESS] All dependencies are installed!"
+    echo "[SUCCESS] Build toolchain setup is ready!"
     echo ""
 fi
 

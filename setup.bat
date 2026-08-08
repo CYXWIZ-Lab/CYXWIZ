@@ -141,16 +141,8 @@ if exist "vcpkg\vcpkg.exe" (
 )
 
 echo.
-echo [INFO] Installing vcpkg dependencies...
-echo This may take several minutes on first run...
-vcpkg\vcpkg install
-if %ERRORLEVEL% neq 0 (
-    echo [WARNING] Some vcpkg packages failed to install
-    echo You may need to install them manually later
-    set /a WARNING_COUNT+=1
-) else (
-    echo [OK] vcpkg dependencies installed
-)
+echo [OK] vcpkg is ready
+echo Dependencies are restored by CMake into the selected build tree.
 echo.
 
 REM ============================================================================
@@ -175,7 +167,7 @@ if %ERROR_COUNT% GTR 0 (
     echo You can proceed with the build, but some features may be unavailable.
     echo.
 ) else (
-    echo [SUCCESS] All dependencies are installed!
+    echo [SUCCESS] Build toolchain setup is ready!
     echo.
 )
 

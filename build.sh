@@ -12,6 +12,7 @@
 #   --clean              Clean build directory before building
 #   --engine             Build only Engine component
 #   --server-node        Build only Server Node component
+#   --build-dir PATH     Use a compatible existing or custom build tree
 #   -j N                 Use N parallel jobs (default: auto-detect)
 # ============================================================================
 
@@ -24,6 +25,7 @@ CLEAN_BUILD=0
 PARALLEL_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 BUILD_ENGINE=ON
 BUILD_SERVER_NODE=ON
+BUILD_DIR_OVERRIDE=""
 
 # Detect OS
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -52,12 +54,14 @@ while [[ $# -gt 0 ]]; do
             echo "  --clean              Clean build directory before building"
             echo "  --engine             Build only Engine component"
             echo "  --server-node        Build only Server Node component"
+            echo "  --build-dir PATH     Use a compatible existing or custom build tree"
             echo "  -j N                 Use N parallel jobs (default: auto-detect)"
             echo ""
             echo "Examples:"
             echo "  ./build.sh                    Build all components in Release mode"
             echo "  ./build.sh --debug            Build all in Debug mode"
             echo "  ./build.sh --server-node      Build only Server Node"
+            echo "  ./build.sh --debug --engine --build-dir build"
             echo "  ./build.sh --clean            Clean build and rebuild all"
             echo "  ./build.sh -j 16              Build with 16 parallel jobs"
             echo ""
@@ -84,6 +88,14 @@ while [[ $# -gt 0 ]]; do
             BUILD_SERVER_NODE=ON
             shift
             ;;
+        --build-dir)
+            if [[ -z "${2:-}" ]]; then
+                echo "[ERROR] --build-dir requires a path"
+                exit 1
+            fi
+            BUILD_DIR_OVERRIDE="$2"
+            shift 2
+            ;;
         -j)
             PARALLEL_JOBS="$2"
             shift 2
@@ -97,7 +109,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 BUILD_TYPE_DIR=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
-BUILD_DIR="build/${OS}-${BUILD_TYPE_DIR}"
+if [[ -n "$BUILD_DIR_OVERRIDE" ]]; then
+    BUILD_DIR="$BUILD_DIR_OVERRIDE"
+else
+    BUILD_DIR="build/${OS}-${BUILD_TYPE_DIR}"
+fi
 
 # Record start time
 START_TIME=$(date +%s)
@@ -112,6 +128,7 @@ echo "Configuration:"
 echo "  OS:              $OS"
 echo "  Build Type:      $BUILD_TYPE"
 echo "  Components:      $BUILD_TARGET"
+echo "  Build Directory: $BUILD_DIR"
 echo "  Parallel Jobs:   $PARALLEL_JOBS"
 echo "  Clean Build:     $CLEAN_BUILD"
 echo ""
@@ -129,6 +146,10 @@ fi
 
 # Clean build if requested
 if [ $CLEAN_BUILD -eq 1 ]; then
+    if [[ -z "$BUILD_DIR" || "$BUILD_DIR" == "." || "$BUILD_DIR" == "/" ]]; then
+        echo "[ERROR] Refusing to clean unsafe build directory: '$BUILD_DIR'"
+        exit 1
+    fi
     echo "[CLEAN] Cleaning build directory..."
     rm -rf "$BUILD_DIR"
     echo "[OK] Build directory cleaned"

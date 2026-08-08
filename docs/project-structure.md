@@ -33,7 +33,7 @@ The Engine may translate a graph into backend operations, but computation truth 
 - `tests/` contains public automated tests and focused benchmarks.
 - `examples/` contains runnable or inspectable examples, not production state.
 - `docs/` holds active, verified public documentation.
-- `cmake/`, `vcpkg-ports/`, and `vcpkg-triplets/` hold build integration.
+- `CMakePresets.json`, `cmake/`, `vcpkg.json`, and `vcpkg-ports/` hold build integration.
 - `config/` contains safe templates only.
 - `scripts/` contains maintained automation; generated dependency trees are excluded.
 
