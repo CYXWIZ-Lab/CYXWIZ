@@ -82,6 +82,14 @@ public:
     }
 
     /**
+     * Set the project-owned persistent CSV ingestion cache directory.
+     * Empty uses DataRegistry's process-independent temporary fallback.
+     */
+    void SetIngestionCacheRoot(std::string ingestion_cache_root) {
+        ingestion_cache_root_ = std::move(ingestion_cache_root);
+    }
+
+    /**
      * Stop the currently running pipeline
      */
     void StopExecution();
@@ -174,6 +182,7 @@ private:
     std::string current_status_;          // Phase 8: Current execution status message
     std::string artifact_root_;           // Project artifacts directory
     std::string export_root_;             // Project exports directory
+    std::string ingestion_cache_root_;    // Project cache/ingestion directory
 
     // Deployment state (Phase 5 Week 7)
     std::atomic<bool> deployment_ready_;

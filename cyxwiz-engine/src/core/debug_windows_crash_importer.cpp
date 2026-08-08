@@ -197,6 +197,7 @@ DebugTraceRecord DebugWindowsCrashImporter::BuildTrace(
             "Windows crash report was imported but not confidently matched.",
             kCrashErrorCode);
     }
+    trace.payload["success"] = report.available && correlation.matched;
 
     return trace;
 }

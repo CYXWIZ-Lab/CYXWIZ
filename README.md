@@ -1,8 +1,8 @@
-# CyxWiz - Decentralized ML Compute Platform
+﻿# CyxWiz - Decentralized ML Compute Platform
 
 CyxWiz is a revolutionary platform that combines the visual design capabilities of Unreal Engine with the computational power of MATLAB, creating a decentralized network for machine learning model training and deployment.
 
-## 🎯 Overview
+## ðŸŽ¯ Overview
 
 The platform consists of three main components:
 
@@ -10,7 +10,7 @@ The platform consists of three main components:
 2. **CyxWiz Server Node** - Also known as miners. Distributed compute nodes that train models
 3. **[CyxWiz Central Server](cyxwiz-central-server/README.md)** - Orchestrator managing the decentralized network
 
-## ✨ Features
+## âœ¨ Features
 
 - **Visual Node Editor**: Drag-and-drop interface for building ML models
 - **Python Scripting**: Full Python support for advanced workflows
@@ -20,7 +20,7 @@ The platform consists of three main components:
 - **Cross-platform**: Windows, macOS, Linux support
 - **Android Backend**: Run compute backend on Android devices
 
-## 💖 Support Our Work
+## ðŸ’– Support Our Work
 
 <p align="center">
   <a href="https://github.com/sponsors/cyxwiz-lab">
@@ -32,41 +32,41 @@ The platform consists of three main components:
 
 CyxWiz is an open-source project that aims to democratize access to machine learning compute resources. Your sponsorship helps us:
 
-- 🚀 **Accelerate Development** - More features, faster releases
-- 🔧 **Improve Infrastructure** - Better servers, CI/CD, testing
-- 📚 **Create Documentation** - Tutorials, guides, examples
-- 🌍 **Grow the Community** - Events, support, outreach
+- ðŸš€ **Accelerate Development** - More features, faster releases
+- ðŸ”§ **Improve Infrastructure** - Better servers, CI/CD, testing
+- ðŸ“š **Create Documentation** - Tutorials, guides, examples
+- ðŸŒ **Grow the Community** - Events, support, outreach
 
-**[Become a Sponsor →](https://github.com/sponsors/cyxwiz-lab)**
+**[Become a Sponsor â†’](https://github.com/sponsors/cyxwiz-lab)**
 
-Every contribution, no matter the size, makes a difference. Thank you for supporting open-source ML innovation! 🙏
+Every contribution, no matter the size, makes a difference. Thank you for supporting open-source ML innovation! ðŸ™
 
 ---
 
-## 🏗️ Architecture
+## ðŸ—ï¸ Architecture
 
 ```
-┌─────────────────┐         ┌──────────────────┐         ┌────────────────┐
-│  CyxWiz Engine  │◄───────►│ CyxWiz Central   │◄───────►│ Server Node 1  │
-│  (Desktop GUI)  │  gRPC   │    Server        │  gRPC   │  (Compute)     │
-└─────────────────┘         │  (Orchestrator)  │         └────────────────┘
-                            └──────────────────┘                  │
-                                     │                            │
-                                     │         ┌──────────────────┘
-                                     ▼         ▼
-                            ┌──────────────────────┐
-                            │  Solana Blockchain   │
-                            │  (CYXWIZ Token)      │
-                            └──────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”         â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”         â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚  CyxWiz Engine  â”‚â—„â”€â”€â”€â”€â”€â”€â”€â–ºâ”‚ CyxWiz Central   â”‚â—„â”€â”€â”€â”€â”€â”€â”€â–ºâ”‚ Server Node 1  â”‚
+â”‚  (Desktop GUI)  â”‚  gRPC   â”‚    Server        â”‚  gRPC   â”‚  (Compute)     â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜         â”‚  (Orchestrator)  â”‚         â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                            â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜                  â”‚
+                                     â”‚                            â”‚
+                                     â”‚         â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                                     â–¼         â–¼
+                            â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+                            â”‚  Solana Blockchain   â”‚
+                            â”‚  (CYXWIZ Token)      â”‚
+                            â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
-## 🚀 Quick Start
+## ðŸš€ Quick Start
 
 > **For detailed build instructions**, including pre-built binary options, Ninja for faster builds, and troubleshooting, see **[docs/mainbuild.md](docs/mainbuild.md)**.
 
-### 🖥️ Shell Requirements
+### ðŸ–¥ï¸ Shell Requirements
 
-**⚠️ Windows Users - READ THIS FIRST:**
+**âš ï¸ Windows Users - READ THIS FIRST:**
 
 All build commands **MUST** be run from **Developer Command Prompt for VS 18 2026**
 
@@ -90,7 +90,7 @@ Regular terminal works fine - no special requirements.
 We provide automated setup and build scripts for easy first-time setup.
 These scripts are available in both the project root and the `scripts/` folder:
 
-**⚠️ IMPORTANT - Windows Users:**
+**âš ï¸ IMPORTANT - Windows Users:**
 The automated scripts **require `cl.exe` in PATH**, which means you **MUST** run them from:
 - **Developer Command Prompt for VS 18 2026** (recommended)
 - OR initialize VS tools first in regular cmd/PowerShell
@@ -279,16 +279,16 @@ Subsequent builds are much faster (1-2 minutes) as dependencies are cached.
 
 **Expected Build Output:**
 ```
-[1/4] Configuring CMake... ✓ (3-4 min)
+[1/4] Configuring CMake... âœ“ (3-4 min)
       - Installing vcpkg dependencies (34 packages)
       - Generating protobuf files
       - Configuring project
-[2/4] Building C++ components... ✓ (2-3 min)
+[2/4] Building C++ components... âœ“ (2-3 min)
       - cyxwiz-protocol library
       - cyxwiz-backend library
       - cyxwiz-engine executable
       - cyxwiz-server-node executable
-[3/4] Building Central Server (Rust)... ✓ (30-60 sec)
+[3/4] Building Central Server (Rust)... âœ“ (30-60 sec)
       - Compiling dependencies
       - Building cyxwiz-central-server
 [4/4] Build Summary
@@ -528,7 +528,7 @@ cargo run --release -- --tui
   - Useful for local development and testing
 
 **Success Indicators**:
-- Network Mode: Look for `✓ Successfully registered with Central Server` and `Heartbeat sent successfully`
+- Network Mode: Look for `âœ“ Successfully registered with Central Server` and `Heartbeat sent successfully`
 - Standalone Mode: Look for `Connection refused` warnings and `Running in standalone mode`
 
 #### Engine (Desktop Client)
@@ -540,7 +540,7 @@ cargo run --release -- --tui
 ./build/linux-release/bin/cyxwiz-engine  # or macos-release
 ```
 
-### ✅ Verify Installation
+### âœ… Verify Installation
 
 After building, verify everything works correctly:
 
@@ -596,7 +596,7 @@ In the Engine GUI:
 7. Try dragging the plot window to different dock positions
 8. Generate more plots with different combinations to test both backends
 
-**If you can generate plots with real data**, your installation is successful! ✅
+**If you can generate plots with real data**, your installation is successful! âœ…
 
 #### 4. Test Server Node Registration (Optional)
 
@@ -609,7 +609,7 @@ cargo run --release
 .\build\bin\Release\cyxwiz-server-node.exe  # Windows
 # ./build/linux-release/bin/cyxwiz-server-node  # Linux
 
-# Look for "✓ Successfully registered with Central Server" in Server Node output
+# Look for "âœ“ Successfully registered with Central Server" in Server Node output
 # Check Central Server TUI for registered node in the "Active Nodes" panel
 ```
 
@@ -734,28 +734,28 @@ kill -9 <PID>
 # Windows: See Windows troubleshooting section above
 ```
 
-## 📦 Project Structure
+## ðŸ“¦ Project Structure
 
 ```
 CyxWiz/
-├── cyxwiz-backend/         # Shared compute library (ArrayFire-based)
-├── cyxwiz-engine/          # Desktop client (ImGui + OpenGL)
-│   ├── src/
-│   │   ├── plotting/       # Plotting system (ImPlot + matplotlib)
-│   │   └── gui/            # GUI panels and windows
-│   └── python/             # Python bindings for plotting
-├── cyxwiz-server-node/     # Compute worker node
-├── cyxwiz-central-server/  # Orchestrator (Rust) - See README
-├── cyxwiz-protocol/        # gRPC protocol definitions
-├── scripts/                # Build and setup scripts (setup.bat/sh, build.bat/sh)
-├── docs/                   # Documentation
-├── tests/                  # Unit and integration tests
-├── vcpkg/                  # Dependency management (auto-installed)
-├── setup.bat / setup.sh    # Setup scripts (also in scripts/)
-└── build.bat / build.sh    # Build scripts (also in scripts/)
+â”œâ”€â”€ cyxwiz-backend/         # Shared compute library (ArrayFire-based)
+â”œâ”€â”€ cyxwiz-engine/          # Desktop client (ImGui + OpenGL)
+â”‚   â”œâ”€â”€ src/
+â”‚   â”‚   â”œâ”€â”€ plotting/       # Plotting system (ImPlot + matplotlib)
+â”‚   â”‚   â””â”€â”€ gui/            # GUI panels and windows
+â”‚   â””â”€â”€ python/             # Python bindings for plotting
+â”œâ”€â”€ cyxwiz-server-node/     # Compute worker node
+â”œâ”€â”€ cyxwiz-central-server/  # Orchestrator (Rust) - See README
+â”œâ”€â”€ cyxwiz-protocol/        # gRPC protocol definitions
+â”œâ”€â”€ scripts/                # Build and setup scripts (setup.bat/sh, build.bat/sh)
+â”œâ”€â”€ docs/                   # Documentation
+â”œâ”€â”€ tests/                  # Unit and integration tests
+â”œâ”€â”€ vcpkg/                  # Dependency management (auto-installed)
+â”œâ”€â”€ setup.bat / setup.sh    # Setup scripts (also in scripts/)
+â””â”€â”€ build.bat / build.sh    # Build scripts (also in scripts/)
 ```
 
-## 🔧 Development
+## ðŸ”§ Development
 
 ### Development Workflow
 
@@ -1181,14 +1181,14 @@ cd vcpkg
 ./vcpkg export --zip
 ```
 
-## 📚 Documentation
+## ðŸ“š Documentation
 
 - [Architecture Overview](docs/architecture.md)
 - [API Reference](docs/api.md)
 - [Blockchain Integration](docs/blockchain.md)
 - [Contributing Guide](docs/CONTRIBUTING.md)
 
-## 🌐 Blockchain
+## ðŸŒ Blockchain
 
 CyxWiz uses Solana for its decentralized token economy:
 
@@ -1198,23 +1198,23 @@ CyxWiz uses Solana for its decentralized token economy:
 
 See [Blockchain Architecture](docs/blockchain.md) for details.
 
-## 🤝 Contributing
+## ðŸ¤ Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
 
-## 📄 License
+## ðŸ“„ License
 
 This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
 
-## 🔗 Links
+## ðŸ”— Links
 
 - Website: https://cyxwiz.io
 - Documentation: https://docs.cyxwiz.io
 - Discord: https://discord.gg/cyxwiz
 - Twitter: https://twitter.com/cyxwiz
-- **💖 Sponsor**: https://github.com/sponsors/cyxwiz-lab
+- **ðŸ’– Sponsor**: https://github.com/sponsors/cyxwiz-lab
 
-## 🙏 Acknowledgments
+## ðŸ™ Acknowledgments
 
 - ArrayFire for GPU acceleration
 - Dear ImGui for the GUI framework
@@ -1223,12 +1223,12 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 
 ---
 
-## 🔬 Development Progress
+## ðŸ”¬ Development Progress
 
 ### Phase 7 Session 1: Real-Time Training Visualization (COMPLETED)
 
 **Date**: 2025-11-17
-**Status**: ✅ All features implemented and tested successfully
+**Status**: âœ… All features implemented and tested successfully
 
 #### Overview
 Implemented complete real-time training visualization system with ImPlot integration, Python bindings, and live metrics display across multiple panels.
@@ -1301,16 +1301,16 @@ Implemented complete real-time training visualization system with ImPlot integra
 **Test Environment**: Windows 11, Visual Studio 2026, NVIDIA RTX 4060 (8GB VRAM)
 
 **Tests Performed**:
-1. ✅ Engine GUI launches successfully with new panels
-2. ✅ Training Dashboard shows placeholder when empty
-3. ✅ Viewport displays system information correctly
-4. ✅ Python script execution via Script Editor
-5. ✅ Real-time loss plotting during XOR training
-6. ✅ Real-time accuracy plotting during XOR training
-7. ✅ Live metrics update in Viewport (epoch counter, loss, accuracy)
-8. ✅ Thread-safe data access (no crashes during training)
-9. ✅ CSV export functionality
-10. ✅ Plot docking and window management
+1. âœ… Engine GUI launches successfully with new panels
+2. âœ… Training Dashboard shows placeholder when empty
+3. âœ… Viewport displays system information correctly
+4. âœ… Python script execution via Script Editor
+5. âœ… Real-time loss plotting during XOR training
+6. âœ… Real-time accuracy plotting during XOR training
+7. âœ… Live metrics update in Viewport (epoch counter, loss, accuracy)
+8. âœ… Thread-safe data access (no crashes during training)
+9. âœ… CSV export functionality
+10. âœ… Plot docking and window management
 
 **Training Scripts Tested**:
 - `scripts/train_xor.py` - 500-epoch XOR training with real-time visualization
@@ -1368,7 +1368,7 @@ if dashboard:
 
 ---
 
-## 📋 Quick Reference
+## ðŸ“‹ Quick Reference
 
 ### Automated Build Scripts (Easiest)
 
@@ -1467,3 +1467,7 @@ cd cyxwiz-central-server && RUST_LOG=debug cargo run 2>&1 | less -R
 | cyxwiz-central-server | ~4,000 LOC | Tokio, SQLx, Redis |
 | cyxwiz-protocol | ~1,000 LOC | protobuf |
 | **Total** | **~15,500 LOC** | 34 vcpkg packages |
+
+## Legal documents
+
+CYXWIZ-owned software is governed by [LICENSE](LICENSE). Customer and privacy documents are in [legal](legal/README.md). These documents are drafts until their placeholders are completed and they are approved for publication.

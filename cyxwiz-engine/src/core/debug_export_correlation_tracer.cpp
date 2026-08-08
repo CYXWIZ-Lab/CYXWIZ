@@ -49,6 +49,7 @@ DebugTraceRecord DebugExportCorrelationTracer::BuildTrace(
                 ? "Generated-code/export compile correlation failed."
                 : input.compile_status);
     }
+    trace.payload["success"] = trace.status == "ok";
 
     return trace;
 }

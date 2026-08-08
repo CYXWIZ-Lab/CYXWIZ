@@ -588,6 +588,7 @@ enum class NodeType {
     // ===== Appended Time-Series Baseline Nodes =====
     // Appended to preserve existing serialized numeric NodeType ids.
     SeasonalNaive,      // Repeat the latest seasonal cycle over future horizons
+    TimeSeriesSegment,  // Validate timestamps and assign gap-safe segment IDs
 
     // Special sentinel value
     Unknown

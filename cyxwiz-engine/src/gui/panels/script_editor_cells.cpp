@@ -17,7 +17,7 @@ namespace cyxwiz {
 // ==================== Cell-Based Editor (Jupyter-like) ====================
 
 void ScriptEditorPanel::ToggleCellMode() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+    if (!IsActiveTabEditable()) {
         return;
     }
 

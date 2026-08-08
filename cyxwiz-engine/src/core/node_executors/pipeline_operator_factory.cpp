@@ -17,6 +17,7 @@
 #include "tree_model_predictor_operator.h"
 #include "time_series_analysis_operators.h"
 #include "time_series_features_operator.h"
+#include "time_series_segment_operator.h"
 #include "time_series_split_operator.h"
 #include "time_series_window_operator.h"
 
@@ -38,6 +39,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     // Phase 4 Time-Series operators.
     RegisterCreator(gui::NodeType::TimeSeriesWindow, []() {
         return std::make_unique<TimeSeriesWindowOperator>();
+    });
+    RegisterCreator(gui::NodeType::TimeSeriesSegment, []() {
+        return std::make_unique<TimeSeriesSegmentOperator>();
     });
     RegisterCreator(gui::NodeType::TimeSeriesSplit, []() {
         return std::make_unique<TimeSeriesSplitOperator>();

@@ -178,10 +178,10 @@ void ScriptEditorPanel::RenderMenuBar() {
             if (ImGui::MenuItem("Open", "Ctrl+O")) {
                 OpenFile();
             }
-            if (ImGui::MenuItem("Save", "Ctrl+S", false, active_tab_index_ >= 0)) {
+            if (ImGui::MenuItem("Save", "Ctrl+S", false, IsActiveTabEditable())) {
                 SaveFile();
             }
-            if (ImGui::MenuItem("Save As", "Ctrl+Shift+S", false, active_tab_index_ >= 0)) {
+            if (ImGui::MenuItem("Save As", "Ctrl+Shift+S", false, IsActiveTabEditable())) {
                 SaveFileAs();
             }
             ImGui::Separator();
@@ -192,7 +192,7 @@ void ScriptEditorPanel::RenderMenuBar() {
         }
 
         if (ImGui::BeginMenu("Edit")) {
-            bool has_active_tab = active_tab_index_ >= 0;
+            bool has_active_tab = IsActiveTabEditable();
             if (ImGui::MenuItem("Undo", "Ctrl+Z", false, has_active_tab && tabs_[active_tab_index_]->editor.CanUndo())) {
                 tabs_[active_tab_index_]->editor.Undo();
             }
@@ -223,7 +223,7 @@ void ScriptEditorPanel::RenderMenuBar() {
             }
 
             bool not_running = !script_running_;
-            if (ImGui::MenuItem("Run Script", "F5", false, active_tab_index_ >= 0 && not_running)) {
+            if (ImGui::MenuItem("Run Script", "F5", false, IsActiveTabEditable() && not_running)) {
                 RunScript();
             }
             if (ImGui::MenuItem("Stop Script", "Shift+F5", false, script_running_)) {
@@ -233,14 +233,14 @@ void ScriptEditorPanel::RenderMenuBar() {
                 }
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Run Selection", "F9", false, active_tab_index_ >= 0 && not_running)) {
+            if (ImGui::MenuItem("Run Selection", "F9", false, IsActiveTabEditable() && not_running)) {
                 RunSelection();
             }
-            if (ImGui::MenuItem("Run Section", "Ctrl+Enter", false, active_tab_index_ >= 0 && not_running)) {
+            if (ImGui::MenuItem("Run Section", "Ctrl+Enter", false, IsActiveTabEditable() && not_running)) {
                 RunCurrentSection();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Debug", "F10", false, active_tab_index_ >= 0 && not_running)) {
+            if (ImGui::MenuItem("Debug", "F10", false, IsActiveTabEditable() && not_running)) {
                 Debug();
             }
             ImGui::EndMenu();
@@ -388,7 +388,7 @@ void ScriptEditorPanel::RenderMenuBar() {
             ImGui::Separator();
 
             // Cell Mode toggle (Jupyter-like notebook mode)
-            bool has_active_tab = active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size());
+            bool has_active_tab = IsActiveTabEditable();
             bool is_cell_mode = has_active_tab && tabs_[active_tab_index_]->cell_mode;
             if (ImGui::MenuItem(ICON_FA_FILE_LINES "  Notebook Mode", "Ctrl+Shift+N", is_cell_mode, has_active_tab)) {
                 ToggleCellMode();
@@ -498,8 +498,8 @@ void ScriptEditorPanel::RenderTabBar() {
                 ImGui::EndTabItem();
             }
 
-            // Handle tab close (don't allow closing while loading)
-            if (!open && !tab->is_loading) {
+            // Closing a loading tab cancels its background work.
+            if (!open) {
                 close_tab_index_ = i;
             }
         }
@@ -522,7 +522,7 @@ void ScriptEditorPanel::RenderEditorToolbar() {
     }
 
     auto& tab = tabs_[active_tab_index_];
-    const bool has_active_tab = !tab->is_loading;
+    const bool has_active_tab = IsActiveTabEditable();
     const bool not_running = !script_running_ && !(scripting_engine_ && scripting_engine_->IsScriptRunning());
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.13f, 0.15f, 1.0f));
@@ -597,6 +597,15 @@ void ScriptEditorPanel::RenderEditor() {
 
     // Show loading indicator if tab is loading
     if (tab->is_loading) {
+        if (tab->load_task_id != 0) {
+            if (const auto task = AsyncTaskManager::Instance().GetTask(tab->load_task_id)) {
+                const auto info = task->GetInfo();
+                tab->load_progress = info.progress;
+                if (!info.status_message.empty()) {
+                    tab->load_status = info.status_message;
+                }
+            }
+        }
         ImGui::Spacing();
         ImGui::Spacing();
 
@@ -618,6 +627,11 @@ void ScriptEditorPanel::RenderEditor() {
         ImGui::SetCursorPosX(window_width * 0.2f);
         ImGui::ProgressBar(tab->load_progress, ImVec2(window_width * 0.6f, 0.0f));
 
+        return;
+    }
+
+    if (tab->is_large_file) {
+        RenderLargeFileViewer(*tab);
         return;
     }
 
@@ -895,7 +909,18 @@ void ScriptEditorPanel::RenderStatusBar() {
             return;
         }
 
-        if (tab->cell_mode) {
+        if (tab->is_large_file) {
+            const auto first = tab->large_page.lines.empty()
+                ? 0ULL
+                : static_cast<unsigned long long>(tab->large_page.first_line + 1);
+            const auto last = static_cast<unsigned long long>(
+                tab->large_page.first_line + tab->large_page.lines.size());
+            ImGui::Text(
+                "Large file | Read only | Cached lines: %llu-%llu of %llu",
+                first,
+                last,
+                static_cast<unsigned long long>(tab->large_index.line_count));
+        } else if (tab->cell_mode) {
             const int cell_count = static_cast<int>(tab->cell_manager.GetCellCount());
             const int selected_cell = tab->selected_cell >= 0 ? tab->selected_cell + 1 : 0;
             ImGui::Text("Notebook | Cell: %d/%d | %s",
@@ -948,7 +973,7 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     }
 
     // Handle debug shortcuts (F5, F9, F10, F11) - only when focused
-    if (is_focused_) {
+    if (is_focused_ && IsActiveTabEditable()) {
         HandleDebugKeyboardShortcuts();
     }
 
@@ -1001,10 +1026,10 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_O)) {
         OpenFile();
     }
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_S) && active_tab_index_ >= 0) {
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_S) && IsActiveTabEditable()) {
         SaveFile();
     }
-    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_S) && active_tab_index_ >= 0) {
+    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_S) && IsActiveTabEditable()) {
         SaveFileAs();
     }
     if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_W) && active_tab_index_ >= 0) {
@@ -1012,7 +1037,7 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     }
 
     // Toggle cell mode (Jupyter-like notebook mode)
-    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_N) && active_tab_index_ >= 0) {
+    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_N) && IsActiveTabEditable()) {
         ToggleCellMode();
     }
 
@@ -1020,7 +1045,7 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     // The TextEditor component already handles Ctrl+Z, Ctrl+Y, Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A
 
     // Execution shortcuts
-    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F5) && !script_running_) {
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F5) && !script_running_ && IsActiveTabEditable()) {
         RunScript();
     }
     // Stop script with Shift+F5
@@ -1030,18 +1055,18 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
             spdlog::info("Stop script requested via Shift+F5");
         }
     }
-    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F9) && !script_running_) {
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F9) && !script_running_ && IsActiveTabEditable()) {
         RunSelection();
     }
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Enter) && !script_running_) {
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Enter) && !script_running_ && IsActiveTabEditable()) {
         RunCurrentSection();
     }
-    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F10) && !script_running_) {
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F10) && !script_running_ && IsActiveTabEditable()) {
         Debug();
     }
 
     // Ctrl+Space triggers completion manually (force = true bypasses trigger char check)
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Space, false) && IsActiveTabEditable()) {
         UpdateAutoCompletion(true);
     }
 }

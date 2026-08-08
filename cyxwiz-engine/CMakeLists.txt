@@ -134,6 +134,7 @@ set(ENGINE_SOURCES
     src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
+    src/core/large_text_file.cpp
     src/core/dataset_audit.cpp
     src/core/graph_compiler.cpp
     src/core/compiled_graph_plan.cpp
@@ -168,6 +169,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/kmeans_executor.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/time_series_window_operator.cpp  # Phase 4 Band 1
+    src/core/node_executors/time_series_segment_operator.cpp # Gap-safe segments
     src/core/node_executors/time_series_split_operator.cpp   # Phase 4 Band 2
     src/core/node_executors/log_transform_operator.cpp       # Phase 4 Band 1
     src/core/node_executors/differencing_operator.cpp        # Phase 4 Band 1
@@ -321,6 +323,7 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_execution.cpp
     src/gui/panels/script_editor_files.cpp
     src/gui/panels/script_editor_file_workflow.cpp
+    src/gui/panels/script_editor_large_file.cpp
     src/gui/panels/table_viewer.cpp
     src/gui/panels/table_viewer_clipboard.cpp
     src/gui/panels/table_viewer_dialogs.cpp
@@ -532,6 +535,7 @@ set(ENGINE_HEADERS
     src/core/node_metadata_registry.h  # Node Browser: metadata registry
     src/core/texture_manager.h
     src/core/async_task_manager.h
+    src/core/large_text_file.h
     src/core/graph_compiler.h
     src/core/bert_encoder_contract.h
     src/core/dataset_batcher.h
@@ -561,6 +565,7 @@ set(ENGINE_HEADERS
     src/core/node_executors/pipeline_operator_factory.h
     src/core/node_executors/identity_operator.h
     src/core/node_executors/time_series_window_operator.h
+    src/core/node_executors/time_series_segment_operator.h
     src/core/node_executors/time_series_split_operator.h
     src/core/node_executors/log_transform_operator.h
     src/core/node_executors/differencing_operator.h
@@ -1628,6 +1633,7 @@ add_executable(test_operator_configure_resets
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
+    src/core/node_executors/time_series_segment_operator.cpp
 )
 
 target_include_directories(test_operator_configure_resets PRIVATE
@@ -1896,6 +1902,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
+    src/core/node_executors/time_series_segment_operator.cpp
 )
 
 target_include_directories(test_pipeline_operator_metadata PRIVATE
@@ -1975,6 +1982,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
+    src/core/node_executors/time_series_segment_operator.cpp
     src/data/data_table.cpp
     src/plotting/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
@@ -2056,6 +2064,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
+    src/core/node_executors/time_series_segment_operator.cpp
     src/data/data_table.cpp
     src/plotting/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
@@ -2137,6 +2146,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
+    src/core/node_executors/time_series_segment_operator.cpp
     src/data/data_table.cpp
     src/plotting/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
@@ -2662,6 +2672,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
+    src/core/node_executors/time_series_segment_operator.cpp
     src/core/arrow_dataset.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
@@ -3635,6 +3646,27 @@ if(WIN32)
 endif()
 
 set_target_properties(test_materialization_cache PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Large Text File Paging =====
+add_executable(test_large_text_file
+    tests/test_large_text_file.cpp
+    src/core/large_text_file.cpp
+)
+
+target_include_directories(test_large_text_file PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+if(WIN32)
+    target_compile_definitions(test_large_text_file PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_large_text_file PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 # ===== ASan Memory Test (standalone, no vcpkg deps) =====

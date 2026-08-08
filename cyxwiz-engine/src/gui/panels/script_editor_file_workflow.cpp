@@ -2,9 +2,11 @@
 
 #include "script_editor.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 #include <spdlog/spdlog.h>
@@ -13,6 +15,7 @@ namespace cyxwiz {
 
 void ScriptEditorPanel::NewFile() {
     auto tab = std::make_unique<EditorTab>();
+    tab->document_id = next_document_id_++;
     tab->filename = "Untitled" + std::to_string(tabs_.size() + 1) + ".cyx";
     tab->filepath = "";
     tab->is_new = true;
@@ -63,6 +66,15 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         }
     }
 
+    std::error_code size_error;
+    const auto file_size = std::filesystem::file_size(path, size_error);
+    if (size_error) {
+        spdlog::error("Could not inspect file '{}': {}", path, size_error.message());
+        return;
+    }
+    const bool use_large_file_view =
+        static_cast<std::uint64_t>(file_size) > kEditableFileLimitBytes;
+
     // Check if we can replace an existing empty untitled tab
     int empty_tab_index = -1;
     for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
@@ -82,23 +94,27 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     if (empty_tab_index >= 0) {
         tab_index = empty_tab_index;
         auto& tab = tabs_[tab_index];
+        tab->document_id = next_document_id_++;
         tab->filename = std::filesystem::path(path).filename().string();
         tab->filepath = path;
         tab->is_new = false;
         tab->is_modified = false;
         tab->is_loading = true;
         tab->load_progress = 0.0f;
-        tab->load_status = "Loading...";
+        tab->load_status = use_large_file_view ? "Indexing large file..." : "Loading...";
+        tab->is_large_file = use_large_file_view;
     } else {
         // Create new tab with loading state
         auto tab = std::make_unique<EditorTab>();
+        tab->document_id = next_document_id_++;
         tab->filename = std::filesystem::path(path).filename().string();
         tab->filepath = path;
         tab->is_new = false;
         tab->is_modified = false;
         tab->is_loading = true;
         tab->load_progress = 0.0f;
-        tab->load_status = "Loading...";
+        tab->load_status = use_large_file_view ? "Indexing large file..." : "Loading...";
+        tab->is_large_file = use_large_file_view;
         tabs_.push_back(std::move(tab));
         tab_index = static_cast<int>(tabs_.size()) - 1;
     }
@@ -107,23 +123,23 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     request_focus_ = true;
     request_window_focus_ = true;
 
-    // Load file asynchronously
-    OpenFileAsync(path);
+    const auto document_id = tabs_[tab_index]->document_id;
+    if (use_large_file_view) {
+        spdlog::info(
+            "Opening '{}' in bounded large-file view ({} bytes)", path, file_size);
+        OpenLargeFileAsync(document_id, path);
+    } else {
+        OpenFileAsync(document_id, path);
+    }
 }
 
-void ScriptEditorPanel::OpenFileAsync(const std::string& filepath) {
+void ScriptEditorPanel::OpenFileAsync(
+    std::uint64_t document_id,
+    const std::string& filepath) {
     std::string path = filepath;
     std::string filename = std::filesystem::path(path).filename().string();
 
-    // Find the tab that's loading this file
-    int tab_index = -1;
-    for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
-        if (tabs_[i]->filepath == path && tabs_[i]->is_loading) {
-            tab_index = i;
-            break;
-        }
-    }
-
+    const int tab_index = FindTabIndex(document_id);
     if (tab_index < 0) {
         spdlog::error("OpenFileAsync: Could not find loading tab for {}", path);
         return;
@@ -131,67 +147,79 @@ void ScriptEditorPanel::OpenFileAsync(const std::string& filepath) {
 
     spdlog::info("Starting async load of script: {}", filename);
 
-    AsyncTaskManager::Instance().RunAsync(
-        "Loading: " + filename,
-        [this, tab_index, path](LambdaTask& task) {
-            task.ReportProgress(0.1f, "Opening file...");
+    struct LoadResult {
+        std::string content;
+    };
+    auto result = std::make_shared<LoadResult>();
+    std::weak_ptr<std::atomic<bool>> owner_alive = async_owner_alive_;
 
-            // Read file content in background thread
+    const std::uint64_t task_id = AsyncTaskManager::Instance().RunAsync(
+        "Loading: " + filename,
+        [path, result](LambdaTask& task) {
             std::ifstream file(path, std::ios::binary | std::ios::ate);
             if (!file.is_open()) {
-                task.MarkFailed("Could not open file");
-                return;
+                throw std::runtime_error("Could not open file");
             }
-
-            task.ReportProgress(0.3f, "Reading content...");
 
             std::streamsize size = file.tellg();
+            if (size < 0) {
+                throw std::runtime_error("Could not read file size");
+            }
             file.seekg(0, std::ios::beg);
 
-            std::string content;
-            content.resize(static_cast<size_t>(size));
-
-            if (!file.read(&content[0], size)) {
-                task.MarkFailed("Failed to read file content");
+            result->content.resize(static_cast<std::size_t>(size));
+            constexpr std::streamsize chunk_size = 256 * 1024;
+            std::streamsize offset = 0;
+            while (offset < size) {
+                if (task.ShouldStop()) {
+                    return;
+                }
+                const auto count = std::min(chunk_size, size - offset);
+                file.read(result->content.data() + offset, count);
+                if (file.gcount() != count) {
+                    throw std::runtime_error("Failed to read file content");
+                }
+                offset += count;
+                const float progress = size == 0
+                    ? 1.0f
+                    : static_cast<float>(
+                        static_cast<double>(offset) / static_cast<double>(size));
+                task.ReportProgress(progress, "Reading content...");
+            }
+        },
+        nullptr,
+        [this, owner_alive, document_id, path, result](
+            bool success,
+            const std::string& error) mutable {
+            const auto alive = owner_alive.lock();
+            if (!alive || !alive->load()) {
                 return;
             }
 
-            task.ReportProgress(0.8f, "Finalizing...");
-
-            // Store content for main thread to finalize
-            if (tab_index < static_cast<int>(tabs_.size())) {
-                tabs_[tab_index]->pending_content = std::move(content);
+            const int current_index = FindTabIndex(document_id);
+            if (current_index < 0) {
+                return;
             }
 
-            task.ReportProgress(1.0f, "Complete");
-            task.MarkCompleted();
-        },
-        [this, tab_index](float progress, const std::string& status) {
-            // Progress callback - update tab
-            if (tab_index < static_cast<int>(tabs_.size())) {
-                tabs_[tab_index]->load_progress = progress;
-                tabs_[tab_index]->load_status = status;
-            }
-        },
-        [this, tab_index, path](bool success, const std::string& error) {
-            // Completion callback
-            if (tab_index < static_cast<int>(tabs_.size())) {
-                auto& tab = tabs_[tab_index];
-                if (success) {
-                    // Finalize on main thread
-                    FinalizeAsyncLoad(tab_index);
-                    spdlog::info("Async script load completed: {}", path);
-                } else {
-                    tab->is_loading = false;
-                    tab->load_status = "Failed: " + error;
-                    spdlog::error("Async script load failed: {} - {}", path, error);
-                }
+            if (success) {
+                FinalizeAsyncLoad(document_id, std::move(result->content));
+                spdlog::info("Async script load completed: {}", path);
+            } else {
+                auto& tab = tabs_[current_index];
+                tab->is_loading = false;
+                tab->load_status = error.empty() ? "Cancelled" : "Failed: " + error;
+                spdlog::warn("Async script load stopped: {} - {}", path, tab->load_status);
             }
         }
     );
+
+    tabs_[tab_index]->load_task_id = task_id;
 }
 
-void ScriptEditorPanel::FinalizeAsyncLoad(int tab_index) {
+void ScriptEditorPanel::FinalizeAsyncLoad(
+    std::uint64_t document_id,
+    std::string content) {
+    const int tab_index = FindTabIndex(document_id);
     if (tab_index < 0 || tab_index >= static_cast<int>(tabs_.size())) return;
 
     auto& tab = tabs_[tab_index];
@@ -216,13 +244,13 @@ void ScriptEditorPanel::FinalizeAsyncLoad(int tab_index) {
     tab->editor.SetTabSize(tab_size_);
     tab->editor.SetImGuiChildIgnored(false);
     tab->editor.SetReadOnly(false);
-    tab->editor.SetText(tab->pending_content);
+    tab->editor.SetText(content);
 
     const std::filesystem::path loaded_path(tab->filepath);
-    if (loaded_path.extension() == ".cyx" && CellManager::HasCellMarkers(tab->pending_content)) {
+    if (loaded_path.extension() == ".cyx" && CellManager::HasCellMarkers(content)) {
         tab->cell_mode = true;
         tab->cell_manager.SetScriptingEngine(scripting_engine_);
-        tab->cell_manager.ParseFromCyx(tab->pending_content);
+        tab->cell_manager.ParseFromCyx(content);
         tab->cell_manager.ApplyTabSize(tab_size_);
         tab->cell_manager.ApplyEditorPalette(tab->editor.GetPalette());
         tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
@@ -241,9 +269,26 @@ void ScriptEditorPanel::FinalizeAsyncLoad(int tab_index) {
     tab->is_loading = false;
     tab->load_progress = 1.0f;
     tab->load_status.clear();
-    tab->pending_content.clear();
+    tab->load_task_id = 0;
 
     request_focus_ = true;
+}
+
+int ScriptEditorPanel::FindTabIndex(std::uint64_t document_id) const {
+    for (int index = 0; index < static_cast<int>(tabs_.size()); ++index) {
+        if (tabs_[index] && tabs_[index]->document_id == document_id) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+bool ScriptEditorPanel::IsActiveTabEditable() const {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
+        return false;
+    }
+    const auto& tab = tabs_[active_tab_index_];
+    return tab && !tab->is_loading && !tab->is_large_file;
 }
 
 void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::string& framework_name) {
@@ -270,6 +315,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
     } else {
         // Create new tab with generated code
         auto tab = std::make_unique<EditorTab>();
+        tab->document_id = next_document_id_++;
         tab->filename = target_filename;
         tab->filepath = "";  // Not saved yet
         tab->is_new = true;
@@ -300,7 +346,10 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
 }
 
 void ScriptEditorPanel::SaveFile() {
-    if (active_tab_index_ < 0) return;
+    if (!IsActiveTabEditable()) {
+        spdlog::warn("Save ignored: active Script Editor tab is not editable");
+        return;
+    }
 
     auto& tab = tabs_[active_tab_index_];
 
@@ -321,7 +370,10 @@ void ScriptEditorPanel::SaveFile() {
 }
 
 void ScriptEditorPanel::SaveFileAs() {
-    if (active_tab_index_ < 0) return;
+    if (!IsActiveTabEditable()) {
+        spdlog::warn("Save As ignored: active Script Editor tab is not editable");
+        return;
+    }
 
     auto& tab = tabs_[active_tab_index_];
 
@@ -376,6 +428,7 @@ void ScriptEditorPanel::DoCloseFile(int tab_index) {
     if (tab_index < 0 || tab_index >= static_cast<int>(tabs_.size())) return;
 
     spdlog::info("Closing file: {}", tabs_[tab_index]->filename);
+    CancelTabTasks(*tabs_[tab_index]);
     tabs_.erase(tabs_.begin() + tab_index);
 
     // Adjust active tab index

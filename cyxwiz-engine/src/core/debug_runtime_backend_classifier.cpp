@@ -96,6 +96,7 @@ void DebugRuntimeBackendClassifier::AttachToTrace(
             "Backend placement requires attention: " +
                 classification.reason_code);
     }
+    trace.payload["success"] = trace.status == "ok";
 }
 
 } // namespace cyxwiz

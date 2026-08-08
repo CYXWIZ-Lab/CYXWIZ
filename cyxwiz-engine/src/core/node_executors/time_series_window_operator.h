@@ -80,6 +80,7 @@ private:
     std::string value_col_;
     std::vector<std::string> feature_cols_;  // Optional multivariate extras
     std::string time_col_;                   // Optional numeric time column
+    std::string segment_col_;                // Optional int64 segment identity
     int input_width_ = 12;
     int label_width_ = 1;
     int shift_ = 1;

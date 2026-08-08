@@ -3730,6 +3730,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         "GraphCompiler",
         compile_success ? "passed" : "failed");
     compile_trace.issues = session.issues;
+    compile_trace.payload["success"] = compile_success;
     compile_trace.payload["node_count"] = nodes.size();
     compile_trace.payload["link_count"] = links.size();
     cyxwiz::DebugNodeTraceContract::AttachIssueSummary(compile_trace, session.issues);
@@ -3778,6 +3779,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         session.preflight.ready ? "ready" : "blocked");
     preflight_trace.issues = session.preflight.issues;
     preflight_trace.payload["ready"] = session.preflight.ready;
+    preflight_trace.payload["success"] = session.preflight.ready;
     cyxwiz::DebugNodeTraceContract::AttachIssueSummary(preflight_trace, session.preflight.issues);
     cyxwiz::DebugNodeTraceContract::AttachDiagnosticContext(
         preflight_trace,

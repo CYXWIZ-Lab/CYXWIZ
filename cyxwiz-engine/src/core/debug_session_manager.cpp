@@ -90,6 +90,7 @@ DebugTraceRecord DebugSessionManager::BuildGraphSnapshotTrace(const DebugSession
         "DebugSessionManager",
         "cyxwiz-engine/src/core/debug_session_manager.cpp",
         "cyxwiz::DebugSessionManager::BuildGraphSnapshotTrace");
+    trace.payload["success"] = true;
     trace.payload["mode"] = session.mode_name;
     trace.payload["graph_hash"] = session.graph_hash;
     trace.payload["node_count"] = session.node_count;

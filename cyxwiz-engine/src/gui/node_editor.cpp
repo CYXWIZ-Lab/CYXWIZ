@@ -4915,6 +4915,8 @@ bool NodeEditor::ExecuteDataPipeline() {
         cyxwiz::ProjectManager::Instance().GetArtifactsPath());
     executor->SetExportRoot(
         cyxwiz::ProjectManager::Instance().GetExportsPath());
+    executor->SetIngestionCacheRoot(
+        cyxwiz::ProjectManager::Instance().GetIngestionCachePath());
     auto submission = cyxwiz::SubmitPipelineExecutionTask(
         "Execute Data Pipeline", std::move(pipeline_str),
         std::move(executor));

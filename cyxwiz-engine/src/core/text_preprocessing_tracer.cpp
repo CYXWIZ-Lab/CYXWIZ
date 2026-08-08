@@ -125,6 +125,7 @@ DebugTraceRecord MakeRecord(const std::string& run_id,
         "TextPreprocessing",
         "ok");
     AttachTextPreprocessingContext(record, phase, record.node_type);
+    record.payload["success"] = true;
     return record;
 }
 
@@ -145,6 +146,7 @@ DebugTraceRecord MakeErrorRecord(const std::string& run_id,
         "TextPreprocessing",
         "failed");
     AttachTextPreprocessingContext(record, diagnostic_phase, node_name);
+    record.payload["success"] = false;
     return record;
 }
 
@@ -294,6 +296,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         vocab_record.payload["token_ids_preview"] = PreviewVector(tokenized.token_ids, kIdPreviewLimit);
         if (unknown_ratio > 0.2f) {
             vocab_record.status = "warning";
+            vocab_record.payload["success"] = false;
             vocab_record.issues.push_back({
                 IssueLevel::Warning,
                 vocab_record.node_id,
@@ -318,6 +321,7 @@ std::vector<DebugTraceRecord> TextPreprocessingTracer::TraceSample(
         padding_record.payload["padded"] = tokenized.padded;
         if (tokenized.truncated) {
             padding_record.status = "warning";
+            padding_record.payload["success"] = false;
             padding_record.issues.push_back({
                 IssueLevel::Warning,
                 padding_record.node_id,

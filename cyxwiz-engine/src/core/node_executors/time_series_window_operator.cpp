@@ -79,6 +79,7 @@ bool TimeSeriesWindowOperator::Configure(
     value_col_.clear();
     feature_cols_.clear();
     time_col_.clear();
+    segment_col_.clear();
     input_width_ = 12;
     label_width_ = 1;
     shift_ = 1;
@@ -97,6 +98,11 @@ bool TimeSeriesWindowOperator::Configure(
     // Optional time column for forecast-plotting alignment. Empty = off.
     auto tc_it = params.find("time_col");
     time_col_ = (tc_it != params.end()) ? tc_it->second : "";
+
+    // Optional continuous-segment identity. When supplied, candidate
+    // windows that span two segment IDs are omitted.
+    auto sc_it = params.find("segment_col");
+    segment_col_ = (sc_it != params.end()) ? sc_it->second : "";
 
     auto read_int = [&](const char* key, int default_value, int& out) -> bool {
         auto p = params.find(key);
@@ -168,6 +174,9 @@ TimeSeriesWindowOperator::InferOutputSchema(
         // inspection code reads it by exact name.
         fields.push_back(arrow::field("__window_start_time", arrow::float64()));
     }
+    if (!segment_col_.empty()) {
+        fields.push_back(arrow::field("__segment_id", arrow::int64()));
+    }
     return arrow::schema(fields);
 }
 
@@ -231,7 +240,8 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const size_t planned_x_cols = planned_feature_groups * input_width_;
     const size_t planned_output_columns =
         planned_x_cols + static_cast<size_t>(label_width_) +
-        2 + (time_col_.empty() ? 0 : 1);
+        2 + (time_col_.empty() ? 0 : 1) +
+        (segment_col_.empty() ? 0 : 1);
     const uint64_t planned_bytes_per_value = time_col_.empty()
         ? static_cast<uint64_t>(sizeof(float))
         : static_cast<uint64_t>(sizeof(double));
@@ -355,8 +365,49 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         feature_values.push_back(std::move(fvals));
     }
 
+    std::vector<int64_t> segment_values;
+    if (!segment_col_.empty()) {
+        auto segment_column = input->GetColumnByName(segment_col_);
+        if (!segment_column) {
+            return arrow::Status::KeyError(
+                "TimeSeriesWindow: segment_col '" + segment_col_ +
+                "' not found");
+        }
+        if (segment_column->type()->id() != arrow::Type::INT64) {
+            return arrow::Status::TypeError(
+                "TimeSeriesWindow: segment_col '" + segment_col_ +
+                "' must be int64, got '" +
+                segment_column->type()->ToString() + "'");
+        }
+        segment_values.reserve(static_cast<size_t>(segment_column->length()));
+        int64_t previous_segment = -1;
+        for (const auto& chunk : segment_column->chunks()) {
+            const auto values_chunk =
+                std::static_pointer_cast<arrow::Int64Array>(chunk);
+            for (int64_t index = 0; index < values_chunk->length(); ++index) {
+                if (values_chunk->IsNull(index)) {
+                    return arrow::Status::Invalid(
+                        "TimeSeriesWindow: segment_col contains null values");
+                }
+                const int64_t segment = values_chunk->Value(index);
+                if (segment < 0 || segment < previous_segment) {
+                    return arrow::Status::Invalid(
+                        "TimeSeriesWindow: segment_col must be non-negative "
+                        "and nondecreasing");
+                }
+                segment_values.push_back(segment);
+                previous_segment = segment;
+            }
+        }
+        if (segment_values.size() != values.size()) {
+            return arrow::Status::Invalid(
+                "TimeSeriesWindow: segment_col row count differs from "
+                "value_col");
+        }
+    }
+
     const int64_t n = static_cast<int64_t>(values.size());
-    const int64_t num_windows = planned_windows;
+    const int64_t candidate_windows = planned_windows;
 
     // Total columns in output: windowed value/features plus ordered targets.
     const size_t num_features = 1 + feature_cols_.size();
@@ -364,47 +415,63 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const uint64_t estimated_window_matrix_bytes =
         preflight_estimate.estimated_peak_bytes;
     report_progress("Planning windows",
-                    "Planning " + std::to_string(num_windows) +
+                    "Planning " + std::to_string(candidate_windows) +
                     " windows x " + std::to_string(total_x_cols) +
                     " feature columns",
                     0.40,
                     0,
-                    static_cast<uint64_t>(num_windows),
+                    static_cast<uint64_t>(candidate_windows),
                     estimated_window_matrix_bytes);
 
     report_progress("Allocating Arrow columns",
                     "Allocating time-series window output columns",
                     0.45,
                     0,
-                    static_cast<uint64_t>(num_windows),
+                    static_cast<uint64_t>(candidate_windows),
                     estimated_window_matrix_bytes);
     arrow::MemoryPool* pool = arrow::default_memory_pool();
     std::vector<std::unique_ptr<arrow::FloatBuilder>> builders;
     builders.reserve(total_x_cols);
     for (size_t i = 0; i < total_x_cols; ++i) {
         builders.push_back(std::make_unique<arrow::FloatBuilder>(pool));
-        ARROW_RETURN_NOT_OK(builders.back()->Reserve(num_windows));
+        ARROW_RETURN_NOT_OK(builders.back()->Reserve(candidate_windows));
     }
     std::vector<std::unique_ptr<arrow::FloatBuilder>> label_builders;
     label_builders.reserve(static_cast<size_t>(label_width_));
     for (int i = 0; i < label_width_; ++i) {
         label_builders.push_back(std::make_unique<arrow::FloatBuilder>(pool));
-        ARROW_RETURN_NOT_OK(label_builders.back()->Reserve(num_windows));
+        ARROW_RETURN_NOT_OK(label_builders.back()->Reserve(candidate_windows));
     }
 
     arrow::DoubleBuilder time_builder(pool);
+    arrow::Int64Builder segment_builder(pool);
     arrow::Int64Builder target_start_builder(pool);
     arrow::Int64Builder target_end_builder(pool);
-    ARROW_RETURN_NOT_OK(target_start_builder.Reserve(num_windows));
-    ARROW_RETURN_NOT_OK(target_end_builder.Reserve(num_windows));
+    ARROW_RETURN_NOT_OK(target_start_builder.Reserve(candidate_windows));
+    ARROW_RETURN_NOT_OK(target_end_builder.Reserve(candidate_windows));
     if (!time_col_.empty()) {
-        ARROW_RETURN_NOT_OK(time_builder.Reserve(num_windows));
+        ARROW_RETURN_NOT_OK(time_builder.Reserve(candidate_windows));
+    }
+    if (!segment_col_.empty()) {
+        ARROW_RETURN_NOT_OK(segment_builder.Reserve(candidate_windows));
     }
 
     // Layout: value_col gets indices [0, input_width_), then feature_cols[0]
     // gets [input_width_, 2*input_width_), etc. Matches the schema's
     // per-feature column block ordering.
-    for (int64_t w = 0; w < num_windows; ++w) {
+    int64_t emitted_windows = 0;
+    int64_t skipped_cross_segment = 0;
+    for (int64_t w = 0; w < candidate_windows; ++w) {
+        const int64_t first_target_idx =
+            w + input_width_ + (shift_ - 1);
+        const int64_t last_target_idx =
+            first_target_idx + label_width_ - 1;
+        if (!segment_col_.empty() &&
+            segment_values[w] != segment_values[last_target_idx]) {
+            ++skipped_cross_segment;
+            continue;
+        }
+
         // value_col block
         for (int i = 0; i < input_width_; ++i) {
             ARROW_RETURN_NOT_OK(builders[i]->Append(values[w + i]));
@@ -419,8 +486,6 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         }
         // Ordered targets begin at input_width + shift - 1 and continue for
         // label_width consecutive future steps.
-        const int64_t first_target_idx =
-            w + input_width_ + (shift_ - 1);
         for (int label = 0; label < label_width_; ++label) {
             ARROW_RETURN_NOT_OK(label_builders[label]->Append(
                 values[first_target_idx + label]));
@@ -434,28 +499,38 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             ARROW_RETURN_NOT_OK(
                 time_builder.Append(static_cast<double>(time_values[w])));
         }
-        if ((w + 1) == num_windows || ((w + 1) % 1024) == 0) {
+        if (!segment_col_.empty()) {
+            ARROW_RETURN_NOT_OK(segment_builder.Append(segment_values[w]));
+        }
+        ++emitted_windows;
+        if ((w + 1) == candidate_windows || ((w + 1) % 1024) == 0) {
             const double write_progress =
                 0.50 + (0.40 * static_cast<double>(w + 1) /
-                        static_cast<double>(num_windows));
+                        static_cast<double>(candidate_windows));
             report_progress("Building windows",
                             "Writing time-series windows to Arrow columns",
                             write_progress,
                             static_cast<uint64_t>(w + 1),
-                            static_cast<uint64_t>(num_windows),
+                            static_cast<uint64_t>(candidate_windows),
                             estimated_window_matrix_bytes);
         }
+    }
+    if (emitted_windows == 0) {
+        return arrow::Status::Invalid(
+            "TimeSeriesWindow: every candidate window crosses a segment "
+            "boundary; reduce window widths or inspect timestamp gaps");
     }
 
     report_progress("Finishing Arrow table",
                     "Finalizing time-series window table",
                     0.95,
-                    static_cast<uint64_t>(num_windows),
-                    static_cast<uint64_t>(num_windows),
+                    static_cast<uint64_t>(emitted_windows),
+                    static_cast<uint64_t>(candidate_windows),
                     estimated_window_matrix_bytes);
     std::vector<std::shared_ptr<arrow::Array>> arrays;
     arrays.reserve(total_x_cols + static_cast<size_t>(label_width_) +
-                   2 + (time_col_.empty() ? 0 : 1));
+                   2 + (time_col_.empty() ? 0 : 1) +
+                   (segment_col_.empty() ? 0 : 1));
     for (size_t i = 0; i < total_x_cols; ++i) {
         std::shared_ptr<arrow::Array> arr;
         ARROW_RETURN_NOT_OK(builders[i]->Finish(&arr));
@@ -481,21 +556,32 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         ARROW_RETURN_NOT_OK(time_builder.Finish(&arr));
         arrays.push_back(std::move(arr));
     }
+    if (!segment_col_.empty()) {
+        std::shared_ptr<arrow::Array> arr;
+        ARROW_RETURN_NOT_OK(segment_builder.Finish(&arr));
+        arrays.push_back(std::move(arr));
+    }
 
     ARROW_ASSIGN_OR_RAISE(auto out_schema, InferOutputSchema(input->schema()));
-    auto out_table = arrow::Table::Make(out_schema, arrays, num_windows);
+    auto out_table =
+        arrow::Table::Make(out_schema, arrays, emitted_windows);
 
-    spdlog::info("TimeSeriesWindow: {} input values, {} feature_cols -> {} windows "
-                 "(input_width={}, label_width={}, shift={}, total_x_cols={}{})",
-                 n, feature_cols_.size(), num_windows,
-                 input_width_, label_width_, shift_, total_x_cols,
-                 time_col_.empty() ? std::string()
-                                   : ", time_col='" + time_col_ + "'");
+    spdlog::info(
+        "TimeSeriesWindow: {} input values, {} feature_cols -> {} windows "
+        "from {} candidates (skipped_cross_segment={}, input_width={}, "
+        "label_width={}, shift={}, total_x_cols={}{}{})",
+        n, feature_cols_.size(), emitted_windows, candidate_windows,
+        skipped_cross_segment, input_width_, label_width_, shift_,
+        total_x_cols,
+        time_col_.empty() ? std::string()
+                          : ", time_col='" + time_col_ + "'",
+        segment_col_.empty() ? std::string()
+                             : ", segment_col='" + segment_col_ + "'");
     report_progress("Complete",
                     "TimeSeriesWindow materialization complete",
                     1.0,
-                    static_cast<uint64_t>(num_windows),
-                    static_cast<uint64_t>(num_windows),
+                    static_cast<uint64_t>(emitted_windows),
+                    static_cast<uint64_t>(candidate_windows),
                     estimated_window_matrix_bytes);
     return out_table;
 }

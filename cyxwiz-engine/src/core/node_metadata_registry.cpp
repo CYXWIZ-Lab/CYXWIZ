@@ -2915,6 +2915,23 @@ void NodeMetadataRegistry::InitializeTextNodes() {
 // Time Series Nodes
 // =============================================================================
 void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
+    RegisterNode({NodeType::TimeSeriesSegment, NodeCategory::TimeSeries,
+        "Time Integrity & Segments", ICON_FA_CLOCK,
+        {"timestamp", "integrity", "gap", "segment"}, 0, false,
+        "Validate ordered timestamps and assign continuous segment IDs", "", "",
+        {{"Data", PinType::Dataset, true, "Input time-ordered table"}},
+        {{"Segmented", PinType::Dataset, true,
+          "Input table plus segment and time-delta metadata"}},
+        {{"timestamp_col", "string", "", "Timestamp column", {}, ""},
+         {"gap_threshold_seconds", "float", "30",
+          "Start a new segment at deltas greater than or equal to this value",
+          {}, ""},
+         {"segment_col", "string", "__segment_id",
+          "Output continuous-segment column", {}, ""},
+         {"delta_col", "string", "__time_delta_seconds",
+          "Output seconds-since-previous-row column", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::TimeSeriesWindow, NodeCategory::TimeSeries, "Sliding Window", ICON_FA_CHART_LINE,
         {"window", "sliding", "sequence"}, 0, false, "Create sliding windows", "", "",
         {{"Data", PinType::Dataset, true, "Input time-ordered table"}},
@@ -2922,6 +2939,7 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
         {{"value_col", "string", "", "Numeric source/target column", {}, ""},
          {"feature_cols", "string", "", "Extra numeric feature columns to window", {}, ""},
          {"time_col", "string", "", "Optional numeric time column", {}, ""},
+         {"segment_col", "string", "", "Optional int64 segment column; windows cannot cross segment boundaries", {}, ""},
          {"input_width", "int", "12", "Lookback steps per sample", {}, ""},
          {"label_width", "int", "1", "Ordered forecast target steps", {}, ""},
          {"shift", "int", "1", "Forecast offset", {}, ""}},

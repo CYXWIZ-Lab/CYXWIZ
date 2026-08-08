@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "../../core/async_task_manager.h"
+#include "../../core/large_text_file.h"
 #include "../../scripting/cell_manager.h"
 #include "../../scripting/debugger.h"
 #include "../../scripting/script_manager.h"
@@ -12,6 +13,7 @@
 #include <filesystem>
 #include <functional>
 #include <atomic>
+#include <cstdint>
 
 namespace scripting {
     class ScriptingEngine;
@@ -29,7 +31,7 @@ class CommandWindowPanel;  // Forward declaration
 class ScriptEditorPanel : public Panel {
 public:
     ScriptEditorPanel();
-    ~ScriptEditorPanel() override = default;
+    ~ScriptEditorPanel() override;
 
     void Render() override;
 
@@ -139,6 +141,7 @@ public:
 private:
     // Tab/File representation
     struct EditorTab {
+        std::uint64_t document_id = 0; // Stable across tab reordering and closure
         std::string filename;        // Display name (e.g., "script.cyx")
         std::string filepath;        // Full path (empty if unsaved)
         TextEditor editor;           // ImGuiColorTextEdit instance
@@ -149,7 +152,20 @@ private:
         bool is_loading = false;         // True while loading file content
         float load_progress = 0.0f;      // Loading progress (0-1)
         std::string load_status;         // Status text during loading
-        std::string pending_content;     // Content loaded async, waiting to be set
+        std::uint64_t load_task_id = 0;
+
+        // Large files use a bounded, read-only, virtualized text view.
+        bool is_large_file = false;
+        bool large_page_loading = false;
+        std::uint64_t large_page_task_id = 0;
+        std::uint64_t large_page_generation = 0;
+        std::uint64_t requested_page_start = 0;
+        std::uint64_t go_to_line = 1; // One-based value shown to users
+        std::uint64_t scroll_to_line = 0;
+        bool request_large_scroll = false;
+        std::string large_error;
+        LargeTextFileIndex large_index;
+        LargeTextFilePage large_page;
 
         // Cell-based mode (Jupyter-like)
         bool cell_mode = false;          // True for cell-based editing
@@ -166,8 +182,14 @@ private:
     };
 
     // Async loading helper
-    void OpenFileAsync(const std::string& filepath);
-    void FinalizeAsyncLoad(int tab_index);
+    void OpenFileAsync(std::uint64_t document_id, const std::string& filepath);
+    void FinalizeAsyncLoad(std::uint64_t document_id, std::string content);
+    void OpenLargeFileAsync(std::uint64_t document_id, const std::string& filepath);
+    void RequestLargeFilePage(std::uint64_t document_id, std::uint64_t first_line);
+    void RenderLargeFileViewer(EditorTab& tab);
+    void CancelTabTasks(EditorTab& tab);
+    int FindTabIndex(std::uint64_t document_id) const;
+    bool IsActiveTabEditable() const;
 
     // Rendering functions
     void RenderTabBar();
@@ -220,6 +242,9 @@ private:
     // Data
     std::vector<std::unique_ptr<EditorTab>> tabs_;
     int active_tab_index_;
+    std::uint64_t next_document_id_ = 1;
+    std::shared_ptr<std::atomic<bool>> async_owner_alive_ =
+        std::make_shared<std::atomic<bool>>(true);
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
     std::unique_ptr<scripting::DebuggerManager> debugger_;
     CommandWindowPanel* command_window_;  // For output display
@@ -303,6 +328,11 @@ private:
 
     // Focus tracking
     bool is_focused_ = false;
+
+    static constexpr std::uint64_t kEditableFileLimitBytes = 4ULL * 1024ULL * 1024ULL;
+    static constexpr std::uint64_t kLargeTextCheckpointStride = 1024;
+    static constexpr std::size_t kLargeTextPageLines = 512;
+    static constexpr std::size_t kLargeTextMaxLineBytes = 16 * 1024;
 
     // Auto-completion helpers
     void UpdateAutoCompletion(bool force = false);

@@ -389,7 +389,7 @@ void ScriptEditorPanel::HandleDebugKeyboardShortcuts() {
 }
 
 void ScriptEditorPanel::Debug() {
-    if (tabs_.empty() || active_tab_index_ < 0) {
+    if (!IsActiveTabEditable()) {
         spdlog::warn("No script to debug");
         return;
     }

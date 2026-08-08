@@ -273,6 +273,7 @@ DebugTraceRecord BuildGraphWarningTrace(
         "warning");
     trace.payload["trace_producer"] = "DebugOperatorTraceProducer";
     trace.payload["operator_backed"] = false;
+    trace.payload["success"] = false;
     trace.payload["message"] = message;
     trace.payload["error_code"] = error_code;
     DebugNodeTraceContract::AttachDiagnosticContext(
@@ -731,6 +732,7 @@ DebugTraceRecord DebugOperatorTraceProducer::BuildWarningTrace(
         "warning");
     trace.payload["trace_producer"] = "DebugOperatorTraceProducer";
     trace.payload["operator_backed"] = false;
+    trace.payload["success"] = false;
     trace.payload["message"] = message;
     trace.payload["error_code"] = error_code;
     DebugNodeTraceContract::AttachDiagnosticContext(

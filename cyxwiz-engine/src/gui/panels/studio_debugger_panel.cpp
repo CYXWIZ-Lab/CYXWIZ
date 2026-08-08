@@ -187,6 +187,10 @@ bool IsAttentionTrace(const DebugTraceRecord& trace) {
         }
         return trace.payload.at(key).get<double>();
     };
+    const bool payload_failed =
+        trace.payload.contains("success") &&
+        trace.payload.at("success").is_boolean() &&
+        !trace.payload.at("success").get<bool>();
 
     return trace.status == "failed" ||
         trace.status == "warning" ||
@@ -197,6 +201,7 @@ bool IsAttentionTrace(const DebugTraceRecord& trace) {
         trace.role == DebugTraceRole::Warning ||
         trace.role == DebugTraceRole::Error ||
         !trace.issues.empty() ||
+        payload_failed ||
         payload_count("warning_count") > 0.0 ||
         payload_count("error_count") > 0.0;
 }
@@ -248,6 +253,86 @@ bool JsonBool(const nlohmann::json& payload, const char* key, bool fallback = fa
         return fallback;
     }
     return payload.at(key).get<bool>();
+}
+
+std::string TraceOutcomeLabel(const DebugTraceRecord& trace) {
+    if (JsonHas(trace.payload, "success") && trace.payload.at("success").is_boolean()) {
+        return trace.payload.at("success").get<bool>() ? "Success" : "Needs attention";
+    }
+    if (IsAttentionTrace(trace)) {
+        return "Needs attention";
+    }
+    if (trace.status == "ok" || trace.status == "passed" ||
+        trace.status == "ready" || trace.status == "captured") {
+        return "Captured";
+    }
+    return "Unknown";
+}
+
+ImVec4 TraceOutcomeColor(const DebugTraceRecord& trace) {
+    const std::string outcome = TraceOutcomeLabel(trace);
+    if (outcome == "Success" || outcome == "Captured") {
+        return ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+    }
+    if (outcome == "Needs attention") {
+        return ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+    }
+    return ImVec4(0.65f, 0.7f, 0.78f, 1.0f);
+}
+
+std::string TraceSourceLabel(const DebugTraceRecord& trace) {
+    const auto& payload = trace.payload;
+    const std::string producer = JsonString(payload, "trace_producer");
+    const std::string diagnostic_phase = JsonString(payload, "diagnostic_phase");
+
+    if (producer == "DebugOperatorTraceProducer" ||
+        JsonBool(payload, "operator_backed", false)) {
+        return "operator-backed preprocessing trace";
+    }
+    if (trace.phase == "GraphSnapshot") {
+        return "graph snapshot trace";
+    }
+    if (trace.phase == "Compile") {
+        return "compile gate trace";
+    }
+    if (trace.phase == "Preflight") {
+        return "preflight gate trace";
+    }
+    if (trace.phase.find("SmokeRun") != std::string::npos ||
+        diagnostic_phase.find("SmokeRun") != std::string::npos) {
+        return "Smoke Run real-data trace";
+    }
+    if (trace.phase.find("LocalDebug") != std::string::npos ||
+        diagnostic_phase.find("LocalDebug") != std::string::npos) {
+        return "synthetic Local Debug trace";
+    }
+    if (trace.phase.find("Text") != std::string::npos ||
+        diagnostic_phase.find("text") != std::string::npos) {
+        return "legacy text sample trace";
+    }
+    if (trace.phase.find("Backend") != std::string::npos ||
+        diagnostic_phase.find("backend") != std::string::npos) {
+        return "backend placement trace";
+    }
+    if (trace.phase.find("Memory") != std::string::npos ||
+        diagnostic_phase.find("memory") != std::string::npos) {
+        return "estimated memory trace";
+    }
+    if (trace.phase.find("Export") != std::string::npos ||
+        diagnostic_phase.find("export") != std::string::npos) {
+        return "export correlation trace";
+    }
+    if (trace.phase.find("Crash") != std::string::npos ||
+        diagnostic_phase.find("crash") != std::string::npos) {
+        return "crash import trace";
+    }
+    if (trace.role == DebugTraceRole::StudioEvent) {
+        return "Studio event trace";
+    }
+    if (producer.empty()) {
+        return "debug trace";
+    }
+    return producer;
 }
 
 std::string JsonArrayPreview(const nlohmann::json& payload, const char* key, size_t limit = 32) {
@@ -661,6 +746,10 @@ bool StudioDebuggerPanel::TraceMatchesWorkflowFilter(
     haystack += trace.node_type;
     haystack += ' ';
     haystack += trace.status;
+    haystack += ' ';
+    haystack += TraceOutcomeLabel(trace);
+    haystack += ' ';
+    haystack += TraceSourceLabel(trace);
     haystack += ' ';
     haystack += trace.dtype;
     if (!trace.payload.empty()) {
@@ -1955,7 +2044,12 @@ void StudioDebuggerPanel::RenderTraceTimeline() {
             ImGui::PopStyleColor();
 
             ImGui::SameLine();
-            ImGui::TextDisabled("%s %.2f ms", trace.status.c_str(), trace.duration_ms);
+            ImGui::TextColored(TraceOutcomeColor(trace), "%s", TraceOutcomeLabel(trace).c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s | %s | %.2f ms",
+                                TraceSourceLabel(trace).c_str(),
+                                trace.status.c_str(),
+                                trace.duration_ms);
         }
         if (visible_count == 0) {
             ImGui::TextDisabled("No traces match the active lens and filters.");
@@ -2271,7 +2365,17 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
         ImGui::Text("Type: %s", trace.node_type.c_str());
         ImGui::Text("Phase: %s", trace.phase.c_str());
         ImGui::Text("Role: %s", DebugTraceRoleName(trace.role));
+        ImGui::Text("Trace kind: %s", TraceSourceLabel(trace).c_str());
+        ImGui::TextColored(TraceOutcomeColor(trace), "Outcome: %s", TraceOutcomeLabel(trace).c_str());
         ImGui::Text("Status: %s", trace.status.c_str());
+        if (JsonHas(trace.payload, "diagnostic_phase")) {
+            ImGui::Text("Diagnostic phase: %s",
+                        JsonString(trace.payload, "diagnostic_phase").c_str());
+        }
+        if (JsonHas(trace.payload, "trace_producer")) {
+            ImGui::Text("Producer: %s",
+                        JsonString(trace.payload, "trace_producer").c_str());
+        }
         ImGui::Text("Input: %s", FormatShape(trace.input_shape).c_str());
         ImGui::Text("Output: %s", FormatShape(trace.output_shape).c_str());
         if (!trace.dtype.empty()) {

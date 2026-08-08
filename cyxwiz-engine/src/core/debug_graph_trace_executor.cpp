@@ -39,6 +39,7 @@ std::vector<DebugTraceRecord> DebugGraphTraceExecutor::TraceSteps(
         for (const auto& error : step.errors) {
             DebugNodeTraceContract::AddError(trace, error);
         }
+        trace.payload["success"] = trace.status == "ok";
         traces.push_back(std::move(trace));
     }
 

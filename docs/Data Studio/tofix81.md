@@ -2,8 +2,158 @@
 
 ## Status
 
-Open - backend architecture, correctness, observability, and performance
-ticket. No implementation is claimed by this document.
+Active - selected as the next release-critical implementation ticket on
+2026-08-08. Backend architecture, correctness, observability, and performance
+remain unimplemented unless explicitly marked complete below.
+
+## Two-month public-use direction
+
+CyxWiz will follow a core-first, case-study-gated release plan. New case-study
+expansion pauses while this ticket establishes trustworthy single-device
+computation. APS, ElectricityLoadDiagrams, and MetroPT-3 become fixed golden
+acceptance cases that verify the engine after each core slice; they are not an
+open-ended source of new features during the release window.
+
+The release sequence is:
+
+```text
+correct single-device execution
+  -> runtime stability and truthful feedback
+  -> reproducible checkpoints and runs
+  -> golden-case validation
+  -> distributed-training implementation
+  -> broader algorithms and product features
+```
+
+The backlog must not be implemented in ticket-number order. Work is triaged
+into:
+
+1. P0 release blockers: this ticket's execution truth, capability fail-closed
+   behavior from `tofix73`, and crash/responsiveness defects in the supported
+   workflow.
+2. P1 minimum release quality: checkpoint-based test/load, a minimal
+   reproducible run manifest, accurate task progress, and cancellation.
+3. Deferred or experimental work: broader algorithms, dashboard expansion,
+   AI assistance, export consolidation, full non-tabular parity, and other
+   features that do not block the declared release workflow.
+
+Unsupported paths must be hidden, visibly experimental, or rejected during
+preflight. Breadth must not be presented as support before the complete
+execution path is verified.
+
+## Eight-week release execution plan
+
+### Week 1 - Scope freeze and invariant inventory
+
+- Freeze the public workflow and supported algorithm/device matrix.
+- Complete Phase 0's inventory of host materialization, synchronization,
+  backend discovery, fallback, and ArrayFire conversion sites.
+- Establish the deterministic weighted-binary synthetic fixture and explicit
+  no-undeclared-fallback invariant.
+- Finish only the currently bounded MetroPT validation step, then pause new
+  case-study versions.
+
+### Week 2 - Authoritative execution context
+
+- Implement the immutable `ExecutionDeviceContext` for each run.
+- Remove stale process-global first-call backend decisions from the supported
+  vertical.
+- Prove CPU -> CUDA -> OpenCL -> CPU selection between runs without restarting
+  the engine, where those backends are installed.
+
+### Week 3 - Placement and strict preflight
+
+- Build one executable placement plan covering forward, loss, metrics,
+  backward, gradient transforms, and optimizer state.
+- Make compiler, runtime, Tasks, Dashboard, Debugger, and monitor consume the
+  same requested/effective device truth.
+- Reject unsupported stages and parameter combinations before training; never
+  continue through a silent CPU fallback.
+
+### Week 4 - Device-resident dense vertical
+
+- Complete Dense/Linear, ReLU, Sigmoid, Dropout, weighted BCEWithLogits,
+  binary metrics, backward, gradient accumulation, and Adam/AdamW on the
+  selected ArrayFire device.
+- Prove that the steady-state training step contains no undeclared
+  device-to-host-to-device cycle.
+
+### Week 5 - Capability and observability truth
+
+- Verify deterministic numerical parity on ArrayFire CPU, CUDA, and OpenCL
+  where installed.
+- Add observed transfer, byte, synchronization, stage timing, and residency
+  records.
+- Replace inferred or VRAM-derived compute claims with accurately named
+  requested device, effective device, memory, compute, and copy information.
+- Fail closed for every algorithm outside the verified release matrix.
+
+### Week 6 - Release stability and persistence minimum
+
+- Make train, validation, test, checkpoint load, and checkpoint-based testing
+  crash-free for the supported path.
+- Verify task progress, cancellation, terminal errors, and background-thread
+  responsiveness.
+- Persist the minimum run manifest needed to reproduce device selection,
+  graph identity, data identity, placement plan, and checkpoint provenance.
+- Defer full exact-resume and broad history features if the minimum contract is
+  reliable and their owning tickets remain open.
+
+### Week 7 - Golden-case regression
+
+- Run APS as the supervised weighted-binary acceptance case.
+- Run ElectricityLoadDiagrams as the time-series forecasting acceptance case.
+- Run MetroPT-3 as the large-ingestion, gap, segmentation, and event-annotation
+  acceptance case.
+- Record correctness, transfer, synchronization, stability, and performance
+  baselines; fix only release blockers.
+
+### Week 8 - Release candidate
+
+- Freeze features and run installer, onboarding, dependency, security, and
+  support-bundle checks.
+- Publish only the workflows, algorithms, and devices proven by the release
+  matrix.
+- Reserve the remaining time for correctness and crash fixes rather than new
+  capabilities.
+- Position the public build as a beta or technical preview unless every stated
+  production acceptance gate has passed.
+
+## Release allocation and change gate
+
+During this ticket, approximately 70-80% of implementation effort belongs to
+the P0 core: device authority, complete residency, strict capabilities, and
+stability. The remaining 20-30% belongs to rerunning the three golden cases,
+packaging, and documentation.
+
+A case-study discovery enters the active implementation only when it blocks a
+declared release workflow or disproves an execution invariant. Otherwise it is
+recorded in its owning follow-up ticket. New nodes, algorithms, abstractions,
+or dependencies require evidence that the smaller verified release vertical
+cannot meet the essential capability without them.
+
+## Distributed-training gate
+
+Distributed training remains a required CyxWiz direction, but implementation
+must not begin by distributing a locally ambiguous training step. The
+single-device residency and numerical gates in Phases 1-3 must pass first.
+
+The distributed contract may be designed during this ticket without changing
+the release critical path. It must define:
+
+- run and worker identity;
+- worker backend/device capability negotiation;
+- parameter, optimizer-state, and gradient ownership;
+- aggregation topology and algorithm;
+- failure, timeout, retry, and cancellation behavior;
+- checkpoint consistency and recovery boundaries; and
+- deterministic single-worker versus multi-worker correctness tests.
+
+Existing server and worker nodes are foundations, not proof of distributed
+training correctness. For the two-month public release, distributed training
+must remain disabled or explicitly experimental unless the single-device
+gates pass early and a narrowly scoped distributed path has its own complete
+acceptance evidence.
 
 ## Decision statement
 

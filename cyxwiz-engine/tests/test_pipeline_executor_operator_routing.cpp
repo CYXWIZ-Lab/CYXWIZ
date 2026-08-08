@@ -266,6 +266,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "TimeSeriesDecomposition",
         "TimeSeriesFeatures",
         "TimeSeriesLag",
+        "TimeSeriesSegment",
         "TimeSeriesSplit",
         "TimeSeriesWindow",
         "TokenVocabulary",
@@ -551,6 +552,95 @@ void CheckTrack70RowAndColumnLimits() {
     }
 }
 
+void CheckPipelineDataInputUsesProjectIngestionCache() {
+    namespace fs = std::filesystem;
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const fs::path csv_path =
+        fs::temp_directory_path() /
+        "cyxwiz_pipeline_executor_ingestion_cache.csv";
+    const fs::path cache_root =
+        fs::temp_directory_path() /
+        "cyxwiz_pipeline_executor_project_cache";
+    std::error_code error;
+    fs::remove(csv_path, error);
+    fs::remove_all(cache_root, error);
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "timestamp,value\n"
+            << "2020-01-01 00:00:00,1\n"
+            << "2020-01-01 00:00:10,2\n";
+    }
+
+    const std::string pipeline_json =
+        R"({"nodes":[)"
+        R"({"id":91001,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true","delimiter":",",)"
+        R"("decimal_point":".","skip_rows":"0","max_rows":"0",)"
+        R"("missing_value_tokens":"","selected_columns":"[]",)"
+        R"("force_disk_backed":"false"}})"
+        R"(],"links":[]})";
+
+    registry.UnregisterTabularDataset("ds_datainput_91001");
+    cyxwiz::PipelineExecutor first;
+    first.SetIngestionCacheRoot(cache_root.string());
+    Check(first.ExecutePipeline(pipeline_json),
+          "Pipeline DataInput first cached load should execute: " +
+              first.GetLastError());
+    auto first_dataset =
+        registry.GetArrowDataset("ds_datainput_91001");
+    Check(first_dataset && first_dataset->GetNumRows() == 2,
+          "Pipeline DataInput should register the in-memory Arrow dataset");
+
+    std::vector<fs::path> cache_files;
+    if (fs::exists(cache_root)) {
+        for (const auto& entry : fs::directory_iterator(cache_root)) {
+            if (entry.is_regular_file() &&
+                entry.path().extension() == ".parquet") {
+                cache_files.push_back(entry.path());
+            }
+        }
+    }
+    Check(cache_files.size() == 1,
+          "Pipeline DataInput should write one persistent Parquet artifact "
+          "under the configured project ingestion-cache root");
+
+    registry.UnregisterTabularDataset("ds_datainput_91001");
+    cyxwiz::PipelineExecutor second;
+    second.SetIngestionCacheRoot(cache_root.string());
+    Check(second.ExecutePipeline(pipeline_json),
+          "Pipeline DataInput cached reload should execute: " +
+              second.GetLastError());
+    auto restored_dataset =
+        registry.GetArrowDataset("ds_datainput_91001");
+    Check(restored_dataset && restored_dataset->GetNumRows() == 2,
+          "Pipeline DataInput should restore the cached Arrow dataset");
+
+    registry.UnregisterTabularDataset("ds_datainput_91001");
+    const std::string disk_backed_json =
+        R"({"nodes":[)"
+        R"({"id":91002,"type":"DataInput","name":"DiskInput","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true","delimiter":",",)"
+        R"("force_disk_backed":"true"}})"
+        R"(],"links":[]})";
+    cyxwiz::PipelineExecutor disk_backed;
+    disk_backed.SetIngestionCacheRoot(cache_root.string());
+    Check(!disk_backed.ExecutePipeline(disk_backed_json) &&
+              disk_backed.GetLastError().find(
+                  "currently require an in-memory Arrow table") !=
+                  std::string::npos,
+          "Pipeline DataInput should fail explicitly when the selected "
+          "disk-backed backend cannot feed transformation operators");
+
+    registry.UnregisterTabularDataset("ds_datainput_91002");
+    fs::remove(csv_path, error);
+    fs::remove_all(cache_root, error);
+}
+
 void CheckFocusedExportOutputPaths() {
     namespace fs = std::filesystem;
 
@@ -703,11 +793,17 @@ int main(int argc, char** argv) {
         CheckTrack70RowAndColumnLimits();
         return 0;
     }
+    if (argc == 2 &&
+        std::string(argv[1]) == "--pipeline-ingestion-cache") {
+        CheckPipelineDataInputUsesProjectIngestionCache();
+        return 0;
+    }
 
     namespace fs = std::filesystem;
     CheckAsyncTaskProgressContract();
     CheckValidationBadSchemaRoutingCoverage();
     CheckTrack70RowAndColumnLimits();
+    CheckPipelineDataInputUsesProjectIngestionCache();
 
     auto& registry = cyxwiz::DataRegistry::Instance();
 
@@ -3333,6 +3429,26 @@ int main(int argc, char** argv) {
               std::string::npos,
           "TimeSeriesWindow input_width validation should be specific: " +
               bad_ts_window_input_width_executor.GetLastError());
+
+    const std::string bad_ts_segment_threshold_json =
+        R"({"nodes":[)"
+        R"({"id":423,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":424,"type":"TimeSeriesSegment","name":"BadGap","parameters":{)"
+        R"("timestamp_col":"value","gap_threshold_seconds":"0"}})"
+        R"(],"links":[{"start_node":423,"end_node":424}]})";
+    cyxwiz::PipelineExecutor bad_ts_segment_threshold_executor;
+    Check(!bad_ts_segment_threshold_executor.ExecutePipeline(
+              bad_ts_segment_threshold_json),
+          "TimeSeriesSegment zero threshold should fail validation");
+    Check(bad_ts_segment_threshold_executor.GetLastError().find(
+              "TimeSeriesSegment gap_threshold_seconds must be a number "
+              "greater than") !=
+              std::string::npos,
+          "TimeSeriesSegment threshold validation should be specific: " +
+              bad_ts_segment_threshold_executor.GetLastError());
 
     const std::string bad_ts_window_feature_type_json =
         R"({"nodes":[)"

@@ -11,7 +11,7 @@ features do not have to live directly inside the core engine.
 
 ## Background
 
-`tofix11` implemented the native text path for:
+`tofix11` found in Done work folder,  implemented the native text path for:
 
 - `TextTokenizer`
 - `TextVocabulary`

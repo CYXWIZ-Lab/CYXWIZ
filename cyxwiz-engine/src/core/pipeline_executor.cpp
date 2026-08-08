@@ -3969,11 +3969,39 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     decimal_point = decimal_it->second[0];
                 }
 
-                arrow_dataset = registry.LoadCSVToArrow(
+                const bool force_disk_backed =
+                    OptionalBooleanParameterIsTrue(
+                        node.parameters, "force_disk_backed");
+                std::string load_status;
+                const auto backend = registry.LoadTabularCSV(
                     file_path, dataset_name, has_header, delimiter[0],
-                    skip_rows, max_rows, missing_tokens, selected_columns,
-                    decimal_point,
-                    false);
+                    skip_rows, max_rows, force_disk_backed,
+                    missing_tokens, selected_columns, decimal_point,
+                    false,
+                    [this](float, const std::string&) {
+                        return !cancel_requested_.load();
+                    },
+                    &load_status, ingestion_cache_root_);
+                if (backend ==
+                    DataRegistry::TabularLoadBackend::InMemory) {
+                    arrow_dataset =
+                        registry.GetArrowDataset(dataset_name);
+                    spdlog::info(
+                        "[Pipeline] DataInput CSV backend: {}",
+                        load_status.empty() ? "Loaded in memory"
+                                            : load_status);
+                } else if (
+                    backend ==
+                    DataRegistry::TabularLoadBackend::DiskBacked) {
+                    ReportError(
+                        "DataInput: source opened as disk-backed Parquet, "
+                        "but Data Studio transformation operators currently "
+                        "require an in-memory Arrow table. Reduce the row or "
+                        "column selection, or use the disk-backed source for "
+                        "training until streaming pipeline operators are "
+                        "implemented.");
+                    return false;
+                }
             } else if (file_type == "parquet") {
                 arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
             } else if (file_type == "auto" || file_type == "feather" ||

@@ -136,6 +136,7 @@ DebugTraceRecord MakeSmokeRecord(const std::string& run_id,
         "SmokeRunExecutor",
         "cyxwiz-engine/src/core/smoke_run_executor.cpp",
         "cyxwiz::SmokeRunExecutor::RunTextSmoke");
+    record.payload["success"] = status == "ok";
     return record;
 }
 

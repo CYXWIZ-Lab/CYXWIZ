@@ -1347,3 +1347,129 @@ Current stopping point:
 - Commit pushed: `53dbf30d Add local debug gradient success payload` on `origin/Nodes_Implementation`.
 - Current uncommitted files for this continuation: none; remaining dirty files belong to other in-progress ticket work and were left untouched.
 - Next safe continuation point: continue from the current `tofix32` / `track32` trail and pick the next smallest debugger diagnostic gap after Local Debug gradient success payload, or switch back to the next tracked tofix item requested by the user.
+
+## Resume 2026-08-08 - Operator Trace Success Payload Parity
+
+Sixty-third follow-up on the first slice:
+
+- Source inspection confirmed the existing owner path for this work is
+  `DebugOperatorTraceProducer` -> `DebugOperatorTraceAdapter` ->
+  `DebugGraphTraceExecutor`, so no new trace producer or duplicate helper was
+  added.
+- Converted graph trace steps now carry a normalized `success` payload based on
+  the final trace status after warning/error issue attachment.
+- Operator-backed preprocessing warning traces now explicitly report
+  `success=false`, keeping skipped, unsupported, and failed tokenizer paths
+  machine-readable without parsing warning text.
+- Contract coverage now asserts successful converted steps, warning-only OK
+  steps, failed converted steps, successful tokenizer traces, unsupported
+  operator warnings, and failed tokenizer warnings expose the expected success
+  payload.
+
+Additional validation:
+
+- Passed: `git diff --check` for the operator trace success payload files.
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-08-08 - Compile Preflight Success Payload Parity
+
+Sixty-fourth follow-up on the first slice:
+
+- Source inspection confirmed compile and preflight Studio Debugger traces are
+  built in the existing `MainWindow::BuildStudioDebuggerSessionFromSnapshot`
+  aggregate-trace path, so no new producer was added.
+- Compile traces now expose `success` alongside their existing pass/fail status,
+  issue summary, diagnostic ownership, node count, link count, and summary text.
+- Preflight traces now expose `success` as the same normalized machine-readable
+  outcome as `ready`, while preserving the existing `ready` payload for callers
+  that already consume it.
+- Contract coverage now asserts blocked preflight diagnostics mark
+  `success=false` while retaining the existing issue-code and diagnostic-context
+  checks.
+
+Additional validation:
+
+- Passed: `git diff --check` for the debugger success payload files.
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Initial full engine build timed out and left stale `cmake`/`MSBuild`/`link`
+  processes holding object files; those stale build processes were stopped.
+- Passed after retry: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-08-08 - Auxiliary Trace Success Payload Parity
+
+Sixty-fifth follow-up on the first slice:
+
+- Source inspection confirmed export correlation, memory ownership, backend
+  placement, and Windows crash import already have canonical trace producers and
+  diagnostic ownership, so no new producer or duplicate helper was added.
+- Export correlation traces now expose normalized `success` based on final trace
+  status after missing-artifact warnings and compile-correlation errors are
+  attached.
+- Memory ownership traces now expose `success` based on final trace status while
+  preserving separate OOM-risk warning payloads.
+- Backend placement enrichment now stamps `success` from the decorated trace
+  status after backend-attention warnings are attached.
+- Windows crash import traces now expose `success=true` only when a report is
+  available and confidently correlated to the run; missing or unmatched crash
+  reports stay machine-readable without parsing warning text.
+- Contract coverage now asserts the success payload for healthy and warning-only
+  backend traces, memory warning traces, successful and failed export
+  correlations, and matched/missing crash import traces.
+
+Additional validation:
+
+- Passed: `git diff --check` for the auxiliary trace success payload files.
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-08-08 - Snapshot Text Smoke Success Payload Parity
+
+Sixty-sixth follow-up on the first slice:
+
+- Source inspection confirmed graph snapshot, text preprocessing, and smoke-run
+  trace records already have local canonical producers, so no new producer or
+  duplicate helper was added.
+- Graph snapshot traces now expose `success=true` when the frozen Studio graph
+  snapshot is captured.
+- Text preprocessing success records now expose `success=true`; missing dataset,
+  empty dataset, out-of-range sample, materialization failure, high-unknown-token,
+  and truncation warning paths now keep the outcome machine-readable without
+  parsing status or issue text.
+- Smoke-run batch, loss, and backward records now stamp `success` from their
+  local status at construction time.
+- Contract coverage now asserts graph snapshot success, successful tokenizer /
+  vocabulary / padding traces, truncated padding failure, and missing text
+  dataset failure payloads.
+
+Additional validation:
+
+- Passed: `git diff --check` for the snapshot/text/smoke success payload files.
+- Passed: `cmake --build build --target test_debugger_contracts --config Debug -- /m:1`
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`
+
+## Resume 2026-08-08 - Debug Studio Trace Outcome Labels
+
+Sixty-seventh follow-up on the first slice:
+
+- Re-read `tofix32.md` UI Surface and Risk sections. The document does sketch
+  the desired command-center shape, but it explicitly says not to polish the UI
+  before the trace producers are real.
+- Kept this as a narrow UI-surface slice instead of a redesign: the existing
+  timeline and inspector now expose normalized trace outcome and provenance
+  labels from existing trace data.
+- The attention filter now treats `payload.success=false` as an attention trace,
+  so warning/failure producers do not rely only on status strings or issue text.
+- Timeline rows now show outcome, precise trace source, status, and duration.
+- Inspector details now show trace kind, outcome, diagnostic phase, and producer
+  when those payload fields exist.
+
+Additional validation:
+
+- Passed: `git diff --check` for `studio_debugger_panel.cpp`.
+- Passed: `cmake --build build --target cyxwiz-engine --config Debug -- /m:1`.
+- Passed: `build\\bin\\Debug\\test_debugger_contracts.exe`.

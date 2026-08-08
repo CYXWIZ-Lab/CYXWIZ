@@ -166,6 +166,8 @@ void TestDebugSessionSnapshotContract() {
     Check(trace.role == cyxwiz::DebugTraceRole::CompileArtifact,
           "snapshot trace should be a compile artifact");
     Check(trace.status == "captured", "snapshot trace status should be captured");
+    Check(trace.payload["success"].get<bool>(),
+          "graph snapshot trace should mark success");
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(trace),
           "snapshot trace should use canonical node trace schema");
     Check(trace.payload["diagnostic_phase"].get<std::string>() ==
@@ -352,6 +354,8 @@ void TestGraphTraceExecutionSlice() {
           "graph trace should preserve first node role");
     Check(traces[0].payload["rows"].get<int>() == 3,
           "graph trace should preserve custom payload");
+    Check(traces[0].payload["success"].get<bool>(),
+          "ok graph trace should mark success");
     Check(traces[0].payload["diagnostic_phase"].get<std::string>() ==
               "graph_trace_step",
           "graph trace should expose executor diagnostic phase");
@@ -383,6 +387,8 @@ void TestGraphTraceExecutionSlice() {
           "warning graph trace should expose issue code summary");
     Check(traces[1].status == "ok",
           "warning-only graph trace should remain ok");
+    Check(traces[1].payload["success"].get<bool>(),
+          "warning-only ok graph trace should preserve success");
     Check(traces[1].duration_ms == 0.25f,
           "graph trace should preserve duration");
 
@@ -394,6 +400,8 @@ void TestGraphTraceExecutionSlice() {
           "graph trace should preserve output output shape");
     Check(traces[2].status == "failed",
           "error graph trace should fail the trace");
+    Check(!traces[2].payload["success"].get<bool>(),
+          "failed graph trace should mark unsuccessful");
     Check(traces[2].payload["issue_count"].get<size_t>() == 1,
           "error graph trace should expose issue count");
     Check(traces[2].payload["error_count"].get<size_t>() == 1,
@@ -466,6 +474,8 @@ void TestRuntimeBackendClassificationContract() {
           "backend trace payload should expose fallback path");
     Check(!trace.payload["backend_needs_attention"].get<bool>(),
           "backend trace payload should expose attention flag");
+    Check(trace.payload["success"].get<bool>(),
+          "healthy backend trace should mark success");
     Check(trace.payload["warning_count"].get<size_t>() == 0,
           "healthy backend placement should not add warnings");
 
@@ -568,6 +578,8 @@ void TestRuntimeBackendClassificationContract() {
           "MHA CPU-backed placement should expose primary warning code");
     Check(mha_trace.status == "ok",
           "MHA CPU-backed attention warning should not fail execution trace");
+    Check(mha_trace.payload["success"].get<bool>(),
+          "MHA CPU-backed attention warning should preserve trace success");
 
     cyxwiz::BackendPlacementEntry unknown;
     unknown.node_id = 7;
@@ -604,6 +616,8 @@ void TestRuntimeBackendClassificationContract() {
           "unknown backend placement should add a warning");
     Check(unknown_trace.status == "ok",
           "backend attention warning should not fail execution trace");
+    Check(unknown_trace.payload["success"].get<bool>(),
+          "unknown backend attention warning should preserve trace success");
 }
 
 void TestMemoryOwnershipTraceContract() {
@@ -650,6 +664,8 @@ void TestMemoryOwnershipTraceContract() {
     Check(trace.payload["memory_schema"].get<std::string>() ==
               cyxwiz::DebugMemoryOwnershipTracer::kSchema,
           "memory trace should expose memory schema");
+    Check(trace.payload["success"].get<bool>(),
+          "memory warning trace should preserve successful observation status");
     Check(!trace.payload["ownership_proven"].get<bool>(),
           "memory trace should not claim allocator-proven ownership");
     Check(trace.payload["estimated_tensor_bytes"].get<uint64_t>() == 32,
@@ -734,6 +750,8 @@ void TestExportCorrelationTraceContract() {
           "export correlation trace should include graph hash");
     Check(trace.payload["compile_success"].get<bool>(),
           "export correlation trace should include compile success");
+    Check(trace.payload["success"].get<bool>(),
+          "successful export correlation trace should mark success");
     Check(trace.payload["source_node_ids"].is_array() &&
               trace.payload["source_node_ids"].size() == 3,
           "export correlation trace should include source node ids");
@@ -771,6 +789,8 @@ void TestExportCorrelationTraceContract() {
 
     Check(failed_trace.status == "failed",
           "failed export correlation should fail the trace");
+    Check(!failed_trace.payload["success"].get<bool>(),
+          "failed export correlation trace should mark unsuccessful");
     Check(failed_trace.payload["warning_count"].get<size_t>() == 1,
           "missing export artifact path should produce a warning");
     Check(failed_trace.payload["error_count"].get<size_t>() == 1,
@@ -848,6 +868,8 @@ void TestWindowsCrashImportContract() {
           "Windows crash import trace should include stable error code");
     Check(trace.payload["matched"].get<bool>(),
           "Windows crash import trace should include match status");
+    Check(trace.payload["success"].get<bool>(),
+          "matched Windows crash import trace should mark success");
     Check(trace.payload["fault_module"].get<std::string>() ==
               "arrayfire.dll",
           "Windows crash import trace should include fault module");
@@ -874,6 +896,8 @@ void TestWindowsCrashImportContract() {
         empty_report);
     Check(missing_trace.status == "missing",
           "missing Windows crash report should be explicit");
+    Check(!missing_trace.payload["success"].get<bool>(),
+          "missing Windows crash report should mark unsuccessful");
     Check(missing_trace.payload["warning_count"].get<size_t>() == 1,
           "missing Windows crash report should add warning");
     Check(missing_trace.payload["issue_count"].get<size_t>() == 1,
@@ -1356,6 +1380,8 @@ void TestOperatorTraceProducerContract() {
           "operator producer trace should name its producer");
     Check(trace.payload["operator_backed"].get<bool>(),
           "operator producer should mark real operator-backed traces");
+    Check(trace.payload["success"].get<bool>(),
+          "operator producer should mark successful operator-backed traces");
     Check(trace.payload["diagnostic_phase"].get<std::string>() ==
               "operator_transform",
           "operator producer trace should expose operator-transform diagnostic phase");
@@ -1863,6 +1889,8 @@ void TestOperatorTraceProducerContract() {
           "unsupported operator trace should expose source symbol");
     Check(!unsupported_traces[1].payload["operator_backed"].get<bool>(),
           "unsupported operator trace should not claim operator-backed execution");
+    Check(!unsupported_traces[1].payload["success"].get<bool>(),
+          "unsupported operator trace should mark unsuccessful");
     Check(unsupported_traces[1].payload["diagnostic_phase"].get<std::string>() ==
               "unsupported_operator",
           "unsupported operator warning should identify unsupported-operator phase");
@@ -1971,6 +1999,8 @@ void TestOperatorTraceProducerContract() {
           "failed plain tokenizer warning should expose no folded config provenance");
     Check(!failed_tokenizer_traces[0].payload["operator_backed"].get<bool>(),
           "failed tokenizer warning should not claim operator-backed execution");
+    Check(!failed_tokenizer_traces[0].payload["success"].get<bool>(),
+          "failed tokenizer warning should mark unsuccessful");
     Check(failed_tokenizer_traces[0].payload["issue_count"].get<size_t>() == 1,
           "failed tokenizer warning should expose issue count");
     Check(failed_tokenizer_traces[0].payload["primary_warning_code"].get<std::string>() ==
@@ -2719,7 +2749,10 @@ void TestPreflightIssueCodeContract() {
           "empty preflight should expose unknown output-shape code");
     cyxwiz::DebugTraceRecord trace;
     trace.issues = preflight_result.issues;
+    trace.payload["success"] = preflight_result.ready;
     cyxwiz::DebugNodeTraceContract::AttachIssueSummary(trace, trace.issues);
+    Check(!trace.payload["success"].get<bool>(),
+          "blocked preflight diagnostic should mark unsuccessful");
     Check(trace.payload["issue_count"].get<size_t>() == trace.issues.size(),
           "issue summary should preserve total issue count");
     Check(trace.payload["error_count"].get<size_t>() == trace.issues.size(),
@@ -2933,6 +2966,8 @@ void TestTextPreprocessingTraceContract() {
     Check(tokenizer.role == cyxwiz::DebugTraceRole::PreprocessingOutput,
           "tokenizer trace should be preprocessing output");
     Check(tokenizer.status == "ok", "tokenizer trace should succeed");
+    Check(tokenizer.payload["success"].get<bool>(),
+          "tokenizer trace should mark success");
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(tokenizer),
           "tokenizer trace should use canonical node trace schema");
     Check(tokenizer.payload["output_rank"].get<size_t>() == 1,
@@ -2966,6 +3001,8 @@ void TestTextPreprocessingTraceContract() {
     Check(vocab.phase == "TextVocabulary", "vocab trace phase should be stable");
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(vocab),
           "vocab trace should use canonical node trace schema");
+    Check(vocab.payload["success"].get<bool>(),
+          "vocab trace should mark success");
     Check(vocab.payload["output_rank"].get<size_t>() == 1,
           "vocab trace should expose output rank");
     Check(vocab.payload["output_numel"].get<size_t>() == vocab.output_shape[0],
@@ -2986,6 +3023,8 @@ void TestTextPreprocessingTraceContract() {
     Check(padding.phase == "TextPadding", "padding trace phase should be stable");
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(padding),
           "padding trace should use canonical node trace schema");
+    Check(padding.payload["success"].get<bool>(),
+          "padding trace should mark success");
     Check(padding.output_shape == std::vector<size_t>{6},
           "padding output shape should reflect configured max length");
     Check(padding.payload["output_rank"].get<size_t>() == 1,
@@ -3012,6 +3051,8 @@ void TestTextPreprocessingTraceContract() {
     const cyxwiz::DebugTraceRecord& truncated_padding = truncated_traces[2];
     Check(truncated_padding.status == "warning",
           "truncated padding trace should warn");
+    Check(!truncated_padding.payload["success"].get<bool>(),
+          "truncated padding trace should mark unsuccessful");
     Check(truncated_padding.payload["issue_count"].get<size_t>() == 1,
           "truncated padding trace should expose issue count");
     Check(truncated_padding.payload["warning_count"].get<size_t>() == 1,
@@ -3032,6 +3073,8 @@ void TestTextPreprocessingTraceContract() {
           "text preprocessing tracer should report missing dataset trace");
     Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(missing_traces[0]),
           "missing text dataset trace should use canonical node trace schema");
+    Check(!missing_traces[0].payload["success"].get<bool>(),
+          "missing text dataset trace should mark unsuccessful");
     Check(missing_traces[0].payload["error_code"].get<std::string>() ==
               cyxwiz::errors::Runtime::InputDatasetMissing,
           "missing text dataset trace should expose runtime input code");

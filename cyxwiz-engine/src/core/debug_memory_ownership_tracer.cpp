@@ -111,6 +111,7 @@ DebugTraceRecord DebugMemoryOwnershipTracer::BuildTrace(
             trace,
             "Device locked memory is close to the configured debug budget.");
     }
+    trace.payload["success"] = trace.status == "ok";
 
     return trace;
 }

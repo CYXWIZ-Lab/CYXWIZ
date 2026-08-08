@@ -2,6 +2,7 @@
 #include "../src/core/node_executors/count_vectorizer_operator.h"
 #include "../src/core/node_executors/pca_operator.h"
 #include "../src/core/node_executors/time_series_features_operator.h"
+#include "../src/core/node_executors/time_series_segment_operator.h"
 #include "../src/core/node_executors/time_series_split_operator.h"
 #include "../src/core/node_executors/time_series_window_operator.h"
 
@@ -40,6 +41,19 @@ std::shared_ptr<arrow::Array> FinishFloatArray(
     const std::vector<float>& values) {
     arrow::FloatBuilder builder;
     for (float value : values) {
+        auto status = builder.Append(value);
+        Check(status.ok(), status.ToString());
+    }
+    std::shared_ptr<arrow::Array> array;
+    auto status = builder.Finish(&array);
+    Check(status.ok(), status.ToString());
+    return array;
+}
+
+std::shared_ptr<arrow::Array> FinishInt64Array(
+    const std::vector<int64_t>& values) {
+    arrow::Int64Builder builder;
+    for (int64_t value : values) {
         auto status = builder.Append(value);
         Check(status.ok(), status.ToString());
     }
@@ -98,6 +112,18 @@ std::shared_ptr<arrow::Table> MakeLongTimeSeriesTable() {
         arrow::field("value", arrow::float32()),
     });
     return arrow::Table::Make(schema, {FinishFloatArray(values)}, 15);
+}
+
+std::shared_ptr<arrow::Table> MakeSegmentedTimeSeriesTable() {
+    auto schema = arrow::schema({
+        arrow::field("value", arrow::float32()),
+        arrow::field("__segment_id", arrow::int64()),
+    });
+    return arrow::Table::Make(
+        schema,
+        {FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f}),
+         FinishInt64Array({0, 0, 0, 1, 1, 1})},
+        6);
 }
 
 void TestCountVectorizerResetsOptionalLabelAndMaxFeatures() {
@@ -435,6 +461,94 @@ void TestTimeSeriesWindowEmitsOrderedMultiStepTargets() {
           "second multi-step window should preserve its exact source target bounds");
 }
 
+void TestTimeSeriesSegmentDetectsGapsAndRejectsDuplicates() {
+    auto schema = arrow::schema({
+        arrow::field("timestamp", arrow::utf8()),
+        arrow::field("value", arrow::float32()),
+    });
+    const auto input = arrow::Table::Make(
+        schema,
+        {FinishStringArray({
+             "2020-01-01 00:00:00",
+             "2020-01-01 00:00:10",
+             "2020-01-01 00:00:20",
+             "2020-01-01 00:00:50",
+             "2020-01-01 00:01:00",
+         }),
+         FinishFloatArray({1.0f, 2.0f, 3.0f, 4.0f, 5.0f})},
+        5);
+
+    cyxwiz::TimeSeriesSegmentOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"timestamp_col", "timestamp"},
+        {"gap_threshold_seconds", "30"},
+    }, error), error);
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+    auto result = op.Apply(input);
+    Check(result.ok(), result.status().ToString());
+    Check(!progress_events.empty() &&
+              progress_events.front().stage ==
+                  "TimeSeriesSegment memory preflight",
+          "TimeSeriesSegment should report memory preflight first");
+    auto segments = std::static_pointer_cast<arrow::Int64Array>(
+        result.ValueOrDie()->GetColumnByName("__segment_id")->chunk(0));
+    const std::vector<int64_t> expected = {0, 0, 0, 1, 1};
+    for (int64_t row = 0; row < segments->length(); ++row) {
+        Check(segments->Value(row) == expected[static_cast<size_t>(row)],
+              "30-second gap should begin a new continuous segment");
+    }
+    auto deltas = std::static_pointer_cast<arrow::DoubleArray>(
+        result.ValueOrDie()
+            ->GetColumnByName("__time_delta_seconds")
+            ->chunk(0));
+    Check(deltas->IsNull(0), "first time delta should be null");
+    Check(deltas->Value(3) == 30.0,
+          "gap metadata should preserve exact elapsed seconds");
+
+    const auto duplicate = arrow::Table::Make(
+        schema,
+        {FinishStringArray({
+             "2020-01-01 00:00:00",
+             "2020-01-01 00:00:00",
+         }),
+         FinishFloatArray({1.0f, 2.0f})},
+        2);
+    auto duplicate_result = op.Apply(duplicate);
+    Check(!duplicate_result.ok(),
+          "TimeSeriesSegment must fail closed on duplicate timestamps");
+}
+
+void TestTimeSeriesWindowSkipsCrossSegmentWindows() {
+    cyxwiz::TimeSeriesWindowOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"value_col", "value"},
+        {"segment_col", "__segment_id"},
+        {"input_width", "2"},
+        {"label_width", "1"},
+        {"shift", "1"},
+    }, error), error);
+
+    auto result = op.Apply(MakeSegmentedTimeSeriesTable());
+    Check(result.ok(), result.status().ToString());
+    auto table = result.ValueOrDie();
+    Check(table->num_rows() == 2,
+          "gap-safe windowing should omit the two boundary-crossing samples");
+    auto targets = std::static_pointer_cast<arrow::FloatArray>(
+        table->GetColumnByName("y")->chunk(0));
+    Check(targets->Value(0) == 3.0f && targets->Value(1) == 6.0f,
+          "gap-safe windows should retain only targets within one segment");
+    auto segments = std::static_pointer_cast<arrow::Int64Array>(
+        table->GetColumnByName("__segment_id")->chunk(0));
+    Check(segments->Value(0) == 0 && segments->Value(1) == 1,
+          "window output should preserve source segment identity");
+}
+
 void TestTimeSeriesSplitPurgesCrossBoundaryTargets() {
     cyxwiz::TimeSeriesWindowOperator window;
     std::string error;
@@ -482,6 +596,8 @@ int main() {
     TestTimeSeriesFeaturesClearsStaleFeatureLists();
     TestTimeSeriesWindowClearsOptionalFeatureAndTimeColumns();
     TestTimeSeriesWindowEmitsOrderedMultiStepTargets();
+    TestTimeSeriesSegmentDetectsGapsAndRejectsDuplicates();
+    TestTimeSeriesWindowSkipsCrossSegmentWindows();
     TestTimeSeriesSplitPurgesCrossBoundaryTargets();
     std::cout << "Operator Configure reset regressions passed\n";
     return 0;

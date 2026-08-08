@@ -284,6 +284,7 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
             return NodeCategory::Upsampling;
 
         // Time Series
+        case NodeType::TimeSeriesSegment:
         case NodeType::TimeSeriesWindow:
         case NodeType::TimeSeriesFeatures:
         case NodeType::TimeSeriesSplit:
@@ -2545,6 +2546,32 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
         // ========== Time-Series Nodes ==========
 
+        case NodeType::TimeSeriesSegment: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "Data";
+            in.is_input = true;
+            in.description =
+                "Time-ordered table containing a timestamp column.";
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Dataset;
+            out.name = "Segmented";
+            out.is_input = false;
+            out.description =
+                "Original table plus continuous segment and time-delta "
+                "metadata. Duplicate, backward, null, or unparseable "
+                "timestamps fail closed.";
+            node.outputs.push_back(out);
+            node.parameters["timestamp_col"] = "";
+            node.parameters["gap_threshold_seconds"] = "30";
+            node.parameters["segment_col"] = "__segment_id";
+            node.parameters["delta_col"] = "__time_delta_seconds";
+            break;
+        }
+
         case NodeType::TimeSeriesWindow: {
             NodePin in;
             in.id = next_pin_id_++;
@@ -2584,6 +2611,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // metadata column for forecast-plotting alignment. __-prefix
             // hides it from feature auto-detect. Empty = off.
             node.parameters["time_col"] = "";
+            node.parameters["segment_col"] = "";
             node.parameters["input_width"] = "12";
             node.parameters["label_width"] = "1";
             node.parameters["shift"] = "1";
@@ -5768,6 +5796,8 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(159, 168, 218, 255);
 
         // ===== Time-Series - Amber =====
+        case NodeType::TimeSeriesSegment:
+            return IM_COL32(255, 145, 0, 255);
         case NodeType::TimeSeriesWindow:
             return IM_COL32(255, 160, 0, 255);
         case NodeType::TimeSeriesFeatures:

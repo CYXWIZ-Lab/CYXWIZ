@@ -231,6 +231,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_TI_ARROWS_MAXIMIZE;
 
             // Time-Series
+            case NodeType::TimeSeriesSegment:
             case NodeType::TimeSeriesWindow:
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
@@ -580,6 +581,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::Multiply:
                 return ICON_RI_CLOSE;
             case NodeType::Average:
+            case NodeType::TimeSeriesSegment:
             case NodeType::TimeSeriesWindow:
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
@@ -944,6 +946,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::Multiply:
                 return ICON_LU_X;
             case NodeType::Average:
+            case NodeType::TimeSeriesSegment:
             case NodeType::TimeSeriesWindow:
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
@@ -1264,6 +1267,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::Multiply:
                 return ICON_IO_MINUS;
             case NodeType::Average:
+            case NodeType::TimeSeriesSegment:
             case NodeType::TimeSeriesWindow:
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
@@ -1584,6 +1588,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::Multiply:
                 return ICON_PH_X;
             case NodeType::Average:
+            case NodeType::TimeSeriesSegment:
             case NodeType::TimeSeriesWindow:
             case NodeType::TimeSeriesFeatures:
             case NodeType::TimeSeriesSplit:
@@ -1987,6 +1992,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_EXPAND;
 
         // Time-Series
+        case NodeType::TimeSeriesSegment:
         case NodeType::TimeSeriesWindow:
         case NodeType::TimeSeriesFeatures:
         case NodeType::TimeSeriesSplit:

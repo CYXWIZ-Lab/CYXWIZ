@@ -15,7 +15,7 @@
 namespace cyxwiz {
 
 void ScriptEditorPanel::RunScript() {
-    if (active_tab_index_ < 0 || !scripting_engine_) return;
+    if (!IsActiveTabEditable() || !scripting_engine_) return;
 
     // Don't start if already running
     if (script_running_) {
@@ -37,7 +37,7 @@ void ScriptEditorPanel::RunScript() {
 }
 
 void ScriptEditorPanel::DoRunScript() {
-    if (active_tab_index_ < 0 || !scripting_engine_) return;
+    if (!IsActiveTabEditable() || !scripting_engine_) return;
 
     auto& tab = tabs_[active_tab_index_];
 
@@ -186,7 +186,7 @@ std::string ScriptEditorPanel::DedentCode(const std::string& code) {
 }
 
 void ScriptEditorPanel::RunSelection() {
-    if (active_tab_index_ < 0 || !scripting_engine_) return;
+    if (!IsActiveTabEditable() || !scripting_engine_) return;
     if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
@@ -218,7 +218,7 @@ void ScriptEditorPanel::RunSelection() {
 }
 
 void ScriptEditorPanel::RunCurrentSection() {
-    if (active_tab_index_ < 0 || !scripting_engine_) return;
+    if (!IsActiveTabEditable() || !scripting_engine_) return;
     if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
