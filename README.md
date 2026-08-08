@@ -23,23 +23,23 @@ The platform consists of three main components:
 ## ðŸ’– Support Our Work
 
 <p align="center">
-  <a href="https://github.com/sponsors/cyxwiz-lab">
+  <a href="https://github.com/sponsors/CYXWIZ-Lab">
     <img src="https://img.shields.io/badge/Sponsor-CyxWiz-EA4AAA?style=for-the-badge&logo=github-sponsors&logoColor=white" alt="Sponsor CyxWiz"/>
   </a>
 </p>
 
 **Help us build the future of decentralized ML computing!**
 
-CyxWiz is an open-source project that aims to democratize access to machine learning compute resources. Your sponsorship helps us:
+CyxWiz is a source-available engineering project for machine-learning and systems-engineering workflows. Your sponsorship helps us:
 
 - ðŸš€ **Accelerate Development** - More features, faster releases
 - ðŸ”§ **Improve Infrastructure** - Better servers, CI/CD, testing
 - ðŸ“š **Create Documentation** - Tutorials, guides, examples
 - ðŸŒ **Grow the Community** - Events, support, outreach
 
-**[Become a Sponsor â†’](https://github.com/sponsors/cyxwiz-lab)**
+**[Become a Sponsor â†’](https://github.com/sponsors/CYXWIZ-Lab)**
 
-Every contribution, no matter the size, makes a difference. Thank you for supporting open-source ML innovation! ðŸ™
+Every contribution, no matter the size, makes a difference. Thank you for supporting CYXWIZ engineering! ðŸ™
 
 ---
 
@@ -1183,10 +1183,11 @@ cd vcpkg
 
 ## ðŸ“š Documentation
 
-- [Architecture Overview](docs/architecture.md)
-- [API Reference](docs/api.md)
+- [Public Documentation](https://web-psi-drab.vercel.app/docs)
+- [Build Guide](docs/mainbuild.md)
 - [Blockchain Integration](docs/blockchain.md)
-- [Contributing Guide](docs/CONTRIBUTING.md)
+- [Distributed Training Guide](docs/distributed_training_guide.md)
+- [Plugin Developer Guide](docs/plugin_developer_guide.md)
 
 ## ðŸŒ Blockchain
 
@@ -1200,19 +1201,18 @@ See [Blockchain Architecture](docs/blockchain.md) for details.
 
 ## ðŸ¤ Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
+We welcome technical feedback and issue reports. Do not submit confidential, client-owned, or third-party materials. Please open an issue before proposing code changes; formal contribution terms will be published separately.
 
 ## ðŸ“„ License
 
-This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
+CYXWIZ-owned software is source-available under the [CYXWIZ Commercial Source and Evaluation License, Version 1.0](LICENSE). Internal, non-production evaluation is permitted; production, commercial, hosted-service, redistribution, and competitive use require separate written authorisation. Third-party and open-source components remain subject to their own licence terms.
 
 ## ðŸ”— Links
 
-- Website: https://cyxwiz.io
-- Documentation: https://docs.cyxwiz.io
-- Discord: https://discord.gg/cyxwiz
-- Twitter: https://twitter.com/cyxwiz
-- **ðŸ’– Sponsor**: https://github.com/sponsors/cyxwiz-lab
+- Website: https://web-psi-drab.vercel.app/
+- Documentation: https://web-psi-drab.vercel.app/docs
+- Organisation profile: https://github.com/CYXWIZ-Lab
+- **ðŸ’– Sponsor**: https://github.com/sponsors/CYXWIZ-Lab
 
 ## ðŸ™ Acknowledgments
 
@@ -1470,4 +1470,4 @@ cd cyxwiz-central-server && RUST_LOG=debug cargo run 2>&1 | less -R
 
 ## Legal documents
 
-CYXWIZ-owned software is governed by [LICENSE](LICENSE). Customer and privacy documents are in [legal](legal/README.md). These documents are drafts until their placeholders are completed and they are approved for publication.
+CYXWIZ-owned software is governed by [LICENSE](LICENSE). The matching controlled copy is in [legal/LICENSE.md](legal/LICENSE.md). Other customer, privacy, and commercial documents in [legal](legal/README.md) remain drafts until completed and approved.
