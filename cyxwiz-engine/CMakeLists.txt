@@ -159,6 +159,7 @@ set(ENGINE_SOURCES
     src/core/debug_run_store.cpp
     src/core/graph_topology_utils.cpp
     src/core/training_batcher_setup.cpp
+    src/core/classification_decision.cpp
     src/core/sequence_arrow_batcher.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
@@ -3062,6 +3063,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/sequence_arrow_batcher.cpp
+    src/core/classification_decision.cpp
     src/core/training_executor.cpp
     src/core/regression_target_transform.cpp
     src/core/preprocessing_state.cpp
@@ -3115,6 +3117,7 @@ set_target_properties(test_saved_ner_sequence_smoke PROPERTIES
 add_executable(test_training_batcher_setup
     tests/test_training_batcher_setup.cpp
     src/core/training_batcher_setup.cpp
+    src/core/classification_decision.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
@@ -3254,6 +3257,7 @@ add_executable(test_training_executor_arrow_parquet
     src/core/regression_target_transform.cpp
     src/core/preprocessing_state.cpp
     src/core/training_batcher_setup.cpp
+    src/core/classification_decision.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp

@@ -86,18 +86,21 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
 // ============================================================================
 
 Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targets) {
-    if (pos_weight_ != 1.0f) {
-        return CpuBCEWithLogitsForward(predictions, targets, reduction_, pos_weight_);
-    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array logits = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
-        // Numerically stable BCE with logits:
-        // max(logits, 0) - logits * target + log(1 + exp(-|logits|))
-        af::array loss = af::max(logits, 0.0f) - logits * target +
-                         af::log(1.0f + af::exp(-af::abs(logits)));
+        // Stable weighted BCEWithLogits, matching the CPU reference and
+        // supporting binary as well as fractional targets.
+        af::array log_weight =
+            1.0f + (pos_weight_ - 1.0f) * target;
+        af::array softplus_negative =
+            af::max(-logits, 0.0f) +
+            af::log(1.0f + af::exp(-af::abs(logits)));
+        af::array loss =
+            (1.0f - target) * logits +
+            log_weight * softplus_negative;
         loss.eval();
 
         loss = ApplyReduction(loss, reduction_);
@@ -112,18 +115,17 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
 }
 
 Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targets) {
-    if (pos_weight_ != 1.0f) {
-        return CpuBCEWithLogitsBackward(predictions, targets, reduction_, pos_weight_);
-    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array logits = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
-        // Gradient: sigmoid(logits) - target
+        af::array log_weight =
+            1.0f + (pos_weight_ - 1.0f) * target;
         af::array sigmoid_logits = af::sigmoid(logits);
-        sigmoid_logits.eval();
-        af::array grad = sigmoid_logits - target;
+        af::array grad =
+            (1.0f - target) +
+            log_weight * (sigmoid_logits - 1.0f);
         grad.eval();
 
         if (reduction_ == Reduction::Mean) {

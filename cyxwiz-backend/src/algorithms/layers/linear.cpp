@@ -110,42 +110,6 @@ void RecordLinearRuntimeFallback(
 
 } // namespace
 
-// Flag to track if GPU is available and should be used
-static bool s_use_gpu = false;
-static bool s_gpu_checked = false;
-
-static bool CheckGPUAvailable() {
-    if (s_gpu_checked) return s_use_gpu;
-    s_gpu_checked = true;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::Backend backend = af::getActiveBackend();
-        s_use_gpu = (backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL);
-        if (s_use_gpu) {
-#ifdef __APPLE__
-            // On macOS, af::deviceInfo() crashes in background threads with OpenCL backend
-            // This is a thread-safety issue specific to OpenCL context on macOS
-            spdlog::info("LinearLayer: GPU acceleration enabled");
-#else
-            // On other platforms (Windows/Linux), query device name normally
-            char name[256];
-            af::deviceInfo(name, nullptr, nullptr, nullptr);
-            spdlog::info("LinearLayer: GPU acceleration enabled using {}", name);
-#endif
-        }
-    } catch (const af::exception& e) {
-        spdlog::warn("LinearLayer: GPU check failed: {}, using CPU", e.what());
-        s_use_gpu = false;
-    } catch (...) {
-        spdlog::warn("LinearLayer: GPU check failed with unknown error, using CPU");
-        s_use_gpu = false;
-    }
-#endif
-
-    return s_use_gpu;
-}
-
 LinearLayer::LinearLayer(size_t in_features, size_t out_features, bool use_bias)
     : in_features_(in_features)
     , out_features_(out_features)
@@ -158,9 +122,6 @@ LinearLayer::LinearLayer(size_t in_features, size_t out_features, bool use_bias)
         bias_grad_ = Tensor({out_features}, DataType::Float32);
     }
 
-    // Check GPU availability
-    CheckGPUAvailable();
-
     // Initialize weights
     InitializeWeights();
 }
@@ -170,7 +131,7 @@ void LinearLayer::InitializeWeights() {
     double limit = std::sqrt(6.0 / (in_features_ + out_features_));
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (s_use_gpu) {
+    if (IsCurrentArrayFireBackendGpu()) {
         try {
             af::array w_gpu = af::randu(static_cast<dim_t>(out_features_),
                                          static_cast<dim_t>(in_features_), f32);
@@ -234,7 +195,7 @@ Tensor LinearLayer::Forward(const Tensor& input) {
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (s_use_gpu) {
+    if (IsCurrentArrayFireBackendGpu()) {
         try {
             af::array input_gpu;
             if (is_batched) {
@@ -349,7 +310,7 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
     size_t batch_size = is_batched ? grad_shape[0] : 1;
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (s_use_gpu) {
+    if (IsCurrentArrayFireBackendGpu()) {
         try {
             af::array grad_gpu;
             af::array input_gpu;

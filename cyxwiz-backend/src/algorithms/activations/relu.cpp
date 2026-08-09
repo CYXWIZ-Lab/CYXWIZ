@@ -51,34 +51,13 @@ void LogReluFallbackOnce(
 
 } // namespace
 
-// GPU availability flag (shared across the library)
-extern bool CheckGPUAvailable();
-
-static bool s_use_gpu = false;
-static bool s_gpu_checked = false;
-
-static bool UseGPU() {
-    if (!s_gpu_checked) {
-        s_gpu_checked = true;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-        try {
-            af::Backend backend = af::getActiveBackend();
-            s_use_gpu = (backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL);
-        } catch (...) {
-            s_use_gpu = false;
-        }
-#endif
-    }
-    return s_use_gpu;
-}
-
 Tensor ReLU::Forward(const Tensor& input) {
     if (input.GetDataType() != DataType::Float32) {
         throw std::runtime_error("ReLU only supports Float32 tensors");
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (UseGPU()) {
+    if (IsCurrentArrayFireBackendGpu()) {
         try {
             af::array input_gpu = input.GetArray();
 
@@ -112,7 +91,7 @@ Tensor ReLU::Backward(const Tensor& grad_output, const Tensor& input) {
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (UseGPU()) {
+    if (IsCurrentArrayFireBackendGpu()) {
         try {
             af::array grad_gpu = grad_output.GetArray();
             af::array input_gpu = input.GetArray();

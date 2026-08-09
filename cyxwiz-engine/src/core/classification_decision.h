@@ -8,6 +8,8 @@
 
 namespace cyxwiz {
 
+class Tensor;
+
 enum class ClassificationDecisionMode {
     MulticlassScores,
     BinaryProbability,
@@ -82,6 +84,13 @@ inline ClassificationDecisionCount CountClassificationDecisions(
     }
     return result;
 }
+
+ClassificationDecisionCount CountClassificationDecisionScalars(
+    const Tensor& predictions,
+    const Tensor& targets,
+    size_t batch_size,
+    size_t output_width,
+    ClassificationDecisionMode mode);
 
 inline float ClassificationAccuracy(
     const float* predictions,

@@ -1142,15 +1142,15 @@ void TrainingExecutor::RunTrainingEpoch(
         epoch_loss += batch_loss;
 
         // Compute objective-appropriate metrics.
-        const float* pred_data = predictions.Data<float>();
-        const float* target_data = batch.labels.Data<float>();
         if (regression_metrics) {
+            const float* pred_data = predictions.Data<float>();
+            const float* target_data = batch.labels.Data<float>();
             regression.Add(pred_data, target_data,
                            batch.size * config_.output_size,
                            config_.output_size);
         } else {
-            const auto accuracy_count = CountClassificationDecisions(
-                pred_data, target_data, batch.size, config_.output_size,
+            const auto accuracy_count = CountClassificationDecisionScalars(
+                predictions, batch.labels, batch.size, config_.output_size,
                 ClassificationDecisionModeForLoss(config_.loss_type));
             correct += static_cast<int>(accuracy_count.correct);
             total += static_cast<int>(accuracy_count.total);
@@ -1279,15 +1279,15 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
         val_loss += batch_loss;
 
         // Compute objective-appropriate metrics.
-        const float* pred_data = predictions.Data<float>();
-        const float* target_data = batch.labels.Data<float>();
         if (regression_metrics) {
+            const float* pred_data = predictions.Data<float>();
+            const float* target_data = batch.labels.Data<float>();
             regression.Add(pred_data, target_data,
                            batch.size * config_.output_size,
                            config_.output_size);
         } else {
-            const auto accuracy_count = CountClassificationDecisions(
-                pred_data, target_data, batch.size, config_.output_size,
+            const auto accuracy_count = CountClassificationDecisionScalars(
+                predictions, batch.labels, batch.size, config_.output_size,
                 ClassificationDecisionModeForLoss(config_.loss_type));
             correct += static_cast<int>(accuracy_count.correct);
             total += static_cast<int>(accuracy_count.total);
@@ -1340,12 +1340,13 @@ float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor&
     size_t batch_size = shape[0];
     size_t num_classes = shape[1];
 
-    const float* pred_data = predictions.Data<float>();
-    const float* target_data = targets.Data<float>();
-
-    return ClassificationAccuracy(
-        pred_data, target_data, batch_size, num_classes,
+    const auto accuracy_count = CountClassificationDecisionScalars(
+        predictions, targets, batch_size, num_classes,
         ClassificationDecisionModeForLoss(config_.loss_type));
+    return accuracy_count.total > 0
+        ? static_cast<float>(accuracy_count.correct) /
+              static_cast<float>(accuracy_count.total)
+        : 0.0f;
 }
 
 void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets) {
@@ -1362,14 +1363,11 @@ void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets
     // Compute loss gradient
     Tensor grad = loss_->Backward(predictions, targets);
 
-    // AfToTensor can flatten trailing-1 dimensions (e.g. [16,1] -> [16])
-    // when converting from column-major ArrayFire arrays back to row-major
-    // CyxWiz tensors. The model's backward pass expects the gradient to
-    // match the forward output shape exactly. Re-wrap the raw buffer with
-    // the correct shape if dimensions dropped.
+    // ArrayFire can flatten trailing-1 dimensions (e.g. [16,1] -> [16]).
+    // Restore the semantic model shape without materializing on the host.
     if (grad.Shape() != predictions.Shape() &&
         grad.NumElements() == predictions.NumElements()) {
-        grad = Tensor(predictions.Shape(), grad.Data<float>());
+        grad = grad.Reshape(predictions.Shape());
     }
 
     // Backward through model
@@ -1412,11 +1410,7 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
                 name + "'");
         }
 
-        float* dst = accumulated.Data<float>();
-        const float* src = grad.Data<float>();
-        for (size_t i = 0; i < accumulated.NumElements(); ++i) {
-            dst[i] += src[i];
-        }
+        accumulated = accumulated + grad;
     }
 
     ++gradient_accumulated_batches_;
@@ -1428,12 +1422,7 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     std::map<std::string, Tensor> averaged_grads;
     const float scale = 1.0f / static_cast<float>(gradient_accumulated_batches_);
     for (const auto& [name, accumulated] : gradient_accumulator_) {
-        Tensor averaged = accumulated.Clone();
-        float* values = averaged.Data<float>();
-        for (size_t i = 0; i < averaged.NumElements(); ++i) {
-            values[i] *= scale;
-        }
-        averaged_grads[name] = std::move(averaged);
+        averaged_grads[name] = accumulated * scale;
     }
 
     CrashRunRecorder::Instance().MarkStage(
@@ -1959,16 +1948,15 @@ void TrainingExecutor::RunTrainingEpochArrow(
         epoch_loss += batch_loss;
 
         // Compute accuracy
-        const float* pred_data = predictions.Data<float>();
-        const float* target_data = batch.labels.Data<float>();
-
         if (regression_metrics) {
+            const float* pred_data = predictions.Data<float>();
+            const float* target_data = batch.labels.Data<float>();
             regression.Add(
                 pred_data, target_data, batch.size * config_.output_size,
                 config_.output_size);
         } else {
-            const auto accuracy_count = CountClassificationDecisions(
-                pred_data, target_data, batch.size, config_.output_size,
+            const auto accuracy_count = CountClassificationDecisionScalars(
+                predictions, batch.labels, batch.size, config_.output_size,
                 ClassificationDecisionModeForLoss(config_.loss_type));
             correct += static_cast<int>(accuracy_count.correct);
             total += static_cast<int>(accuracy_count.total);
@@ -2111,16 +2099,15 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
         val_loss += batch_loss;
 
         // Compute accuracy
-        const float* pred_data = predictions.Data<float>();
-        const float* target_data = batch.labels.Data<float>();
-
         if (regression_metrics) {
+            const float* pred_data = predictions.Data<float>();
+            const float* target_data = batch.labels.Data<float>();
             regression.Add(
                 pred_data, target_data, batch.size * config_.output_size,
                 config_.output_size);
         } else {
-            const auto accuracy_count = CountClassificationDecisions(
-                pred_data, target_data, batch.size, config_.output_size,
+            const auto accuracy_count = CountClassificationDecisionScalars(
+                predictions, batch.labels, batch.size, config_.output_size,
                 ClassificationDecisionModeForLoss(config_.loss_type));
             correct += static_cast<int>(accuracy_count.correct);
             total += static_cast<int>(accuracy_count.total);

@@ -956,6 +956,36 @@ int main() {
     Check(multiclass_accuracy.correct == 2 && multiclass_accuracy.total == 2,
           "multiclass accuracy must retain argmax behavior");
 
+    cyxwiz::Tensor binary_logit_tensor(
+        {4, 1}, binary_logits, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor binary_target_tensor(
+        {4, 1}, binary_targets, cyxwiz::DataType::Float32);
+    const auto binary_tensor_accuracy =
+        cyxwiz::CountClassificationDecisionScalars(
+            binary_logit_tensor,
+            binary_target_tensor,
+            4,
+            1,
+            cyxwiz::ClassificationDecisionMode::BinaryLogit);
+    Check(binary_tensor_accuracy.correct == 2 &&
+              binary_tensor_accuracy.total == 4,
+          "binary tensor accuracy must read back only the scalar decision count");
+
+    cyxwiz::Tensor multiclass_score_tensor(
+        {2, 3}, multiclass_scores, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor multiclass_target_tensor(
+        {2, 3}, multiclass_targets, cyxwiz::DataType::Float32);
+    const auto multiclass_tensor_accuracy =
+        cyxwiz::CountClassificationDecisionScalars(
+            multiclass_score_tensor,
+            multiclass_target_tensor,
+            2,
+            3,
+            cyxwiz::ClassificationDecisionMode::MulticlassScores);
+    Check(multiclass_tensor_accuracy.correct == 2 &&
+              multiclass_tensor_accuracy.total == 2,
+          "multiclass tensor accuracy must count argmax matches on tensor data");
+
     auto ts_arrow_dataset = MakeTimeSeriesDataset();
     auto ts_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(
         MakeTimeSeriesConfig(),

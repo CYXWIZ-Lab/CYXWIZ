@@ -2,6 +2,8 @@
 
 #include "algorithms/arrayfire_backend_utils.h"
 
+#include <cyxwiz/device.h>
+
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -58,6 +60,44 @@ private:
 };
 
 } // namespace
+
+TEST_CASE("ArrayFire GPU decision follows active backend across device switches",
+          "[arrayfire][device_switch]") {
+    const cyxwiz::Device* current = cyxwiz::Device::GetCurrentDevice();
+    REQUIRE(current != nullptr);
+    const cyxwiz::DeviceType original_type = current->GetType();
+    const int original_id = current->GetDeviceId();
+
+    struct RestoreDevice {
+        cyxwiz::DeviceType type;
+        int id;
+        ~RestoreDevice() {
+            cyxwiz::Device(type, id).SetActive();
+        }
+    } restore{original_type, original_id};
+
+    cyxwiz::Device cpu(cyxwiz::DeviceType::CPU, 0);
+    cpu.SetActive();
+    REQUIRE(cpu.IsActive());
+    REQUIRE_FALSE(cyxwiz::IsCurrentArrayFireBackendGpu());
+
+    const auto devices = cyxwiz::Device::GetAvailableDevices();
+    for (const auto& info : devices) {
+        if (info.type != cyxwiz::DeviceType::CUDA &&
+            info.type != cyxwiz::DeviceType::OPENCL) {
+            continue;
+        }
+
+        cyxwiz::Device accelerator(info.type, info.device_id);
+        accelerator.SetActive();
+        REQUIRE(accelerator.IsActive());
+        REQUIRE(cyxwiz::IsCurrentArrayFireBackendGpu());
+
+        cpu.SetActive();
+        REQUIRE(cpu.IsActive());
+        REQUIRE_FALSE(cyxwiz::IsCurrentArrayFireBackendGpu());
+    }
+}
 
 TEST_CASE("ArrayFire fallback reasons classify backend failures", "[arrayfire][fallback]") {
     const char* overflow =

@@ -170,6 +170,19 @@ std::string CurrentArrayFireBackendName() {
 #endif
 }
 
+bool IsCurrentArrayFireBackendGpu() {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::Backend backend = af::getActiveBackend();
+        return backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL;
+    } catch (...) {
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+
 std::string BuildArrayFireBackendFallbackContext(
     const std::string& shape_or_node_context,
     const std::string& backend_name) {

@@ -27,6 +27,7 @@ CYXWIZ_API std::string BuildTensorShapeContext(
     const char* tensor_name,
     const std::vector<size_t>& shape);
 CYXWIZ_API std::string CurrentArrayFireBackendName();
+CYXWIZ_API bool IsCurrentArrayFireBackendGpu();
 CYXWIZ_API std::string BuildArrayFireBackendFallbackContext(
     const std::string& shape_or_node_context,
     const std::string& backend_name = CurrentArrayFireBackendName());

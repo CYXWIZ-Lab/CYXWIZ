@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cyxwiz/device.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
 #include <cstdint>
@@ -113,6 +114,53 @@ TEST_CASE("Binary losses compute backward values", "[loss]") {
     REQUIRE(logits_grad.Data<float>()[0] == Catch::Approx(0.5f - 1.0f));
     REQUIRE(logits_grad.Data<float>()[1] ==
             Catch::Approx(1.0f / (1.0f + std::exp(-2.0f))));
+}
+
+TEST_CASE("Weighted BCEWithLogits matches the reference on every available backend",
+          "[loss][arrayfire][device_switch][weighted_bce]") {
+    const cyxwiz::Device* current = cyxwiz::Device::GetCurrentDevice();
+    REQUIRE(current != nullptr);
+    const cyxwiz::DeviceType original_type = current->GetType();
+    const int original_id = current->GetDeviceId();
+
+    struct RestoreDevice {
+        cyxwiz::DeviceType type;
+        int id;
+        ~RestoreDevice() {
+            cyxwiz::Device(type, id).SetActive();
+        }
+    } restore{original_type, original_id};
+
+    const float logit_values[] = {0.0f, 0.0f};
+    const float target_values[] = {1.0f, 0.0f};
+    const float expected_loss = 2.5f * std::log(2.0f);
+
+    for (const auto& info : cyxwiz::Device::GetAvailableDevices()) {
+        DYNAMIC_SECTION("backend type " << static_cast<int>(info.type)
+                        << " device " << info.device_id) {
+            cyxwiz::Device device(info.type, info.device_id);
+            device.SetActive();
+            REQUIRE(device.GetType() == info.type);
+            REQUIRE(device.IsActive());
+
+            cyxwiz::Tensor logits(
+                {2}, logit_values, cyxwiz::DataType::Float32);
+            cyxwiz::Tensor targets(
+                {2}, target_values, cyxwiz::DataType::Float32);
+            cyxwiz::BCEWithLogitsLoss loss(cyxwiz::Reduction::Mean, 4.0f);
+
+            const cyxwiz::Tensor value = loss.Forward(logits, targets);
+            const cyxwiz::Tensor grad = loss.Backward(logits, targets);
+
+            REQUIRE(value.Data<float>()[0] ==
+                    Catch::Approx(expected_loss).margin(1e-5f));
+            REQUIRE(grad.Shape() == std::vector<size_t>{2});
+            REQUIRE(grad.Data<float>()[0] ==
+                    Catch::Approx(-1.0f).margin(1e-6f));
+            REQUIRE(grad.Data<float>()[1] ==
+                    Catch::Approx(0.25f).margin(1e-6f));
+        }
+    }
 }
 
 TEST_CASE("Class-index losses compute forward reductions", "[loss]") {
