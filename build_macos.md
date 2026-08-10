@@ -44,7 +44,7 @@ This document provides a comprehensive guide for building the CyxWiz Engine on m
 
 3. **Python 3.8+**
    ```bash
-   brew install python@3.14
+   brew install python@3.12
    ```
 
 4. **Rust & Cargo 1.92+** (for Central Server component)
