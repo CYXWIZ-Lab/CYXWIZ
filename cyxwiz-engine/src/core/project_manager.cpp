@@ -1,6 +1,7 @@
 #include "project_manager.h"
 #include "async_task_manager.h"
 #include "core/engine_config.h"
+#include "core/python_detector.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -45,65 +46,6 @@ int RunVenvCommand(const std::string& command) {
     return std::system(wrapped_cmd.c_str());
 #else
     return std::system(command.c_str());
-#endif
-}
-
-bool IsVenvBinDir(const fs::path& path) {
-    auto name = path.filename().string();
-#ifdef _WIN32
-    std::transform(name.begin(), name.end(), name.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return name == "scripts";
-#else
-    return name == "bin";
-#endif
-}
-
-fs::path ResolveVenvRoot(const fs::path& interpreter_path) {
-    auto parent = interpreter_path.parent_path();
-    if (!IsVenvBinDir(parent)) {
-        return {};
-    }
-    auto root = parent.parent_path();
-    if (root.empty()) {
-        return {};
-    }
-    if (fs::exists(root / "pyvenv.cfg")) {
-        return root;
-    }
-    return {};
-}
-
-fs::path ResolvePythonHomeFromInterpreter(const fs::path& interpreter_path) {
-    auto venv_root = ResolveVenvRoot(interpreter_path);
-    if (!venv_root.empty()) {
-        return venv_root;
-    }
-    return interpreter_path.parent_path();
-}
-
-bool HasVenvModule(const fs::path& python_home) {
-#ifdef _WIN32
-    fs::path venv_dir = python_home / "Lib" / "venv";
-    return fs::exists(venv_dir);
-#else
-    fs::path lib_dir = python_home / "lib";
-    if (!fs::exists(lib_dir)) {
-        return false;
-    }
-    for (const auto& entry : fs::directory_iterator(lib_dir)) {
-        if (!entry.is_directory()) {
-            continue;
-        }
-        auto name = entry.path().filename().string();
-        if (name.rfind("python", 0) != 0) {
-            continue;
-        }
-        if (fs::exists(entry.path() / "venv")) {
-            return true;
-        }
-    }
-    return false;
 #endif
 }
 
@@ -270,11 +212,16 @@ bool CreateProjectVenv(const fs::path& project_dir, std::string* error_out) {
         return false;
     }
 
-    // Verify system Python has venv module
-    fs::path python_home = ResolvePythonHomeFromInterpreter(fs::path(system_python));
-    if (!python_home.empty() && !HasVenvModule(python_home)) {
+    const auto python = cyxwiz::core::PythonDetector::ValidatePythonInstallation(system_python);
+    if (!python) {
         if (error_out) {
-            *error_out = "System Python is missing the venv module at " + python_home.string();
+            *error_out = "System Python could not be validated: " + system_python;
+        }
+        return false;
+    }
+    if (!cyxwiz::core::PythonDetector::MeetsRequirements(*python)) {
+        if (error_out) {
+            *error_out = cyxwiz::core::PythonDetector::GetRequirementError(*python);
         }
         return false;
     }
