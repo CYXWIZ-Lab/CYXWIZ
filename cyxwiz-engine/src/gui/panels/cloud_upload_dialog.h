@@ -88,10 +88,6 @@ private:
     // Background upload thread (prevents use-after-free)
     std::thread upload_thread_;
 
-    // UI state
-    bool show_file_browser_ = false;
-    char file_path_buffer_[512] = "";
-
     // Error display
     std::string last_error_;
     float error_time_ = 0.0f;

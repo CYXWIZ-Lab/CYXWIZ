@@ -1,5 +1,6 @@
 #include "annotation_editor_panel.h"
 #include "../../core/data_registry.h"
+#include "../../core/file_dialogs.h"
 #include <spdlog/spdlog.h>
 #include <glad/glad.h>
 #include <algorithm>
@@ -425,7 +426,11 @@ void AnnotationEditorPanel::RenderExportPanel() {
     ImGui::InputText("##ExportPath", export_path_, sizeof(export_path_));
     ImGui::SameLine();
     if (ImGui::Button(ICON_FA_FOLDER_OPEN)) {
-        // TODO: File dialog
+        if (auto selected = FileDialogs::SelectOutputFolder(
+                export_path_[0] == '\0' ? nullptr : export_path_)) {
+            strncpy(export_path_, selected->c_str(), sizeof(export_path_) - 1);
+            export_path_[sizeof(export_path_) - 1] = '\0';
+        }
     }
 
     if (ImGui::Button("COCO JSON", ImVec2(-1, 0))) {

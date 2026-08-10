@@ -1,9 +1,11 @@
 #include "pipeline_runtime_capabilities.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <sstream>
 
 namespace cyxwiz {
@@ -90,10 +92,11 @@ bool IsRuntimeFloatInBounds(const std::string& value,
     }
 
     double parsed = 0.0;
-    const char* begin = trimmed.data();
-    const char* end = trimmed.data() + trimmed.size();
-    auto [ptr, ec] = std::from_chars(begin, end, parsed);
-    if (ec != std::errc() || ptr != end || !std::isfinite(parsed)) {
+    errno = 0;
+    char* end = nullptr;
+    parsed = std::strtod(trimmed.c_str(), &end);
+    if (errno == ERANGE || end != trimmed.c_str() + trimmed.size() ||
+        !std::isfinite(parsed)) {
         return false;
     }
 

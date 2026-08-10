@@ -1,11 +1,7 @@
 // DataInputDialog source selector and file option rendering.
 
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
-
 #include "node_config_dialog.h"
+#include "../core/file_dialogs.h"
 
 #include <algorithm>
 #include <cstring>
@@ -501,23 +497,14 @@ void DataInputDialog::RenderImageOptions() {
         }
         ImGui::SameLine();
         if (ImGui::Button("Browse##csvbrowse", ImVec2(80, 0))) {
-#ifdef _WIN32
-            OPENFILENAMEA ofn = {};
-            char file[512] = {};
-            strncpy(file, labels_csv_, sizeof(file) - 1);
-            ofn.lStructSize = sizeof(ofn);
-            ofn.lpstrFilter = "CSV Files\0*.csv\0All Files\0*.*\0";
-            ofn.lpstrFile = file;
-            ofn.nMaxFile = sizeof(file);
-            ofn.lpstrTitle = "Select Labels CSV";
-            ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-            if (GetOpenFileNameA(&ofn)) {
-                strncpy(labels_csv_, file, sizeof(labels_csv_) - 1);
+            if (auto selected = cyxwiz::FileDialogs::OpenFile(
+                    "Select Labels CSV",
+                    {{"CSV Files", "csv"}, {"All Files", "*"}},
+                    labels_csv_[0] == '\0' ? nullptr : labels_csv_)) {
+                strncpy(labels_csv_, selected->c_str(), sizeof(labels_csv_) - 1);
+                labels_csv_[sizeof(labels_csv_) - 1] = '\0';
                 has_changes_ = true;
             }
-#else
-            spdlog::warn("Labels CSV file browser not implemented for this platform");
-#endif
         }
     }
 

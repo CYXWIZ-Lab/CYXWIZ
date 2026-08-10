@@ -1,21 +1,8 @@
 // Properties panel editors for plugin custom node types.
 
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#ifdef CreateDialog
-#undef CreateDialog
-#endif
-#ifdef CreateDialogA
-#undef CreateDialogA
-#endif
-#ifdef CreateDialogW
-#undef CreateDialogW
-#endif
-#endif
-
 #include "properties_node_editors.h"
 #include "node_editor.h"
+#include "../core/file_dialogs.h"
 #include "../plugin/registries/plugin_node_registry.h"
 
 #include <imgui.h>
@@ -61,22 +48,15 @@ void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext 
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Browse")) {
-#ifdef _WIN32
-                    OPENFILENAMEA ofn = {};
-                    char file[512] = {};
-                    ofn.lStructSize = sizeof(ofn);
-                    ofn.lpstrFilter = "MJCF Files (*.xml)\0*.xml\0All Files\0*.*\0";
-                    ofn.lpstrFile = file;
-                    ofn.nMaxFile = sizeof(file);
-                    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-                    if (GetOpenFileNameA(&ofn)) {
-                        mjcf_path = file;
+                    if (auto selected = cyxwiz::FileDialogs::OpenFile(
+                            "Select MJCF Model", {{"MJCF Files", "xml"}, {"All Files", "*"}},
+                            mjcf_path.empty() ? nullptr : mjcf_path.c_str())) {
+                        mjcf_path = *selected;
                         if (node.has_dynamic_pins && context.node_editor) {
                             context.node_editor->ResolveDynamicPins(node.id);
                         }
                         context.invalidate_shapes();
                     }
-#endif
                 }
 
                 // Show loaded model status from Environment Library

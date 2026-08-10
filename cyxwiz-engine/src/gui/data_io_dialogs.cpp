@@ -1,12 +1,8 @@
 // Data output, loader, and split node dialog implementations.
 
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
-
 #include "node_config_dialog.h"
 #include "../core/async_task_manager.h"
+#include "../core/file_dialogs.h"
 #include "../core/graph_compiler.h"
 #include "../core/worker_defaults.h"
 
@@ -162,70 +158,41 @@ std::string DelimiterLabel(char delimiter) {
 }
 
 bool BrowseDataInput(char* destination, std::size_t destination_size) {
-#ifdef _WIN32
-    OPENFILENAMEA ofn = {};
-    char file[512] = {};
-    CopyToBuffer(file, sizeof(file), destination);
-    ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter =
-        "Supported Data Files\0*.csv;*.tsv;*.json;*.jsonl;*.ndjson;*.txt;*.text;*.arff;*.npy;*.h5;*.hdf5;*.hdf;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc\0"
-        "CSV/TSV Files\0*.csv;*.tsv\0"
-        "JSON Lines Files\0*.json;*.jsonl;*.ndjson\0"
-        "Text Files\0*.txt;*.text\0"
-        "ARFF Files\0*.arff\0"
-        "NumPy Files\0*.npy\0"
-        "HDF5 Files\0*.h5;*.hdf5;*.hdf\0"
-        "Parquet Files\0*.parquet;*.pq\0"
-        "Arrow IPC/Feather Files\0*.feather;*.fea;*.arrow;*.ipc\0"
-        "All Files\0*.*\0";
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = sizeof(file);
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameA(&ofn)) {
-        CopyToBuffer(destination, destination_size, file);
+    const auto filters = cyxwiz::FileDialogs::FilterList{
+        {"Supported Data Files", "csv,tsv,json,jsonl,ndjson,txt,text,arff,npy,h5,hdf5,hdf,parquet,pq,feather,fea,arrow,ipc"},
+        {"CSV/TSV Files", "csv,tsv"}, {"JSON Lines Files", "json,jsonl,ndjson"},
+        {"Text Files", "txt,text"}, {"ARFF Files", "arff"}, {"NumPy Files", "npy"},
+        {"HDF5 Files", "h5,hdf5,hdf"}, {"Parquet Files", "parquet,pq"},
+        {"Arrow IPC/Feather Files", "feather,fea,arrow,ipc"}, {"All Files", "*"}};
+    if (auto selected = cyxwiz::FileDialogs::OpenFile(
+            "Select Data File", filters, destination[0] == '\0' ? nullptr : destination)) {
+        CopyToBuffer(destination, destination_size, *selected);
         return true;
     }
-#else
-    (void)destination;
-    (void)destination_size;
-#endif
     return false;
 }
 
 bool BrowseDataOutput(char* destination,
                       std::size_t destination_size,
                       int output_format_index) {
-#ifdef _WIN32
-    OPENFILENAMEA ofn = {};
-    char file[512] = {};
-    CopyToBuffer(file, sizeof(file), destination);
-    ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter =
-        "Supported Data Files\0*.csv;*.tsv;*.json;*.jsonl;*.ndjson;*.txt;*.text;*.arff;*.npy;*.h5;*.hdf5;*.hdf;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc\0"
-        "CSV Files\0*.csv\0"
-        "TSV Files\0*.tsv\0"
-        "JSON Lines Files\0*.json;*.jsonl;*.ndjson\0"
-        "Text Files\0*.txt;*.text\0"
-        "ARFF Files\0*.arff\0"
-        "NumPy Files\0*.npy\0"
-        "HDF5 Files\0*.h5;*.hdf5;*.hdf\0"
-        "Parquet Files\0*.parquet;*.pq\0"
-        "Arrow IPC/Feather Files\0*.feather;*.fea;*.arrow;*.ipc\0"
-        "All Files\0*.*\0";
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = sizeof(file);
-    const char* extension = DataFormatExtensionFromIndex(output_format_index);
-    ofn.lpstrDefExt = extension[0] == '.' ? extension + 1 : extension;
-    ofn.Flags = OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST;
-    if (GetSaveFileNameA(&ofn)) {
-        CopyToBuffer(destination, destination_size, file);
+    const auto filters = cyxwiz::FileDialogs::FilterList{
+        {"Supported Data Files", "csv,tsv,json,jsonl,ndjson,txt,text,arff,npy,h5,hdf5,hdf,parquet,pq,feather,fea,arrow,ipc"},
+        {"CSV Files", "csv"}, {"TSV Files", "tsv"}, {"JSON Lines Files", "json,jsonl,ndjson"},
+        {"Text Files", "txt,text"}, {"ARFF Files", "arff"}, {"NumPy Files", "npy"},
+        {"HDF5 Files", "h5,hdf5,hdf"}, {"Parquet Files", "parquet,pq"},
+        {"Arrow IPC/Feather Files", "feather,fea,arrow,ipc"}, {"All Files", "*"}};
+    const std::filesystem::path existing_path(destination);
+    const std::string default_path = existing_path.has_parent_path()
+        ? existing_path.parent_path().string()
+        : std::string{};
+    const std::string default_name = existing_path.filename().empty()
+        ? "output" + std::string(DataFormatExtensionFromIndex(output_format_index))
+        : existing_path.filename().string();
+    if (auto selected = cyxwiz::FileDialogs::SaveFile(
+            "Save Data File", filters, default_path.empty() ? nullptr : default_path.c_str(), default_name.c_str())) {
+        CopyToBuffer(destination, destination_size, *selected);
         return true;
     }
-#else
-    (void)destination;
-    (void)destination_size;
-    (void)output_format_index;
-#endif
     return false;
 }
 

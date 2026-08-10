@@ -6,6 +6,9 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <csignal>
+#include <csetjmp>
 #endif
 
 namespace cyxwiz::plugin::security {
@@ -91,9 +94,6 @@ SafeExecuteResult SafeExecute(
 }
 
 #else  // Unix
-
-#include <csignal>
-#include <csetjmp>
 
 static thread_local sigjmp_buf safe_execute_jmp_buf;
 static thread_local volatile sig_atomic_t safe_execute_signal = 0;

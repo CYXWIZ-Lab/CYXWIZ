@@ -10,11 +10,6 @@
 #include <sstream>
 #include <algorithm>
 
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
-
 namespace gui {
 
 PythonSettingsPanel::PythonSettingsPanel() {
@@ -269,42 +264,29 @@ void PythonSettingsPanel::RunAutoDetection() {
 }
 
 void PythonSettingsPanel::BrowsePythonExecutable() {
-#ifdef _WIN32
-    // Use Windows native file dialog
-    char filename[MAX_PATH] = "";
-
-    OPENFILENAMEA ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = "Python Executable (python.exe)\\0python.exe\\0All Files (*.*)\\0*.*\\0";
-    ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = "Select Python Executable";
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn)) {
-        strncpy(system_python_path_, filename, sizeof(system_python_path_) - 1);
+    if (auto selected = cyxwiz::FileDialogs::OpenFile(
+            "Select Python Executable",
+            {{"Python Executables", "python,python3,python.exe"}, {"All Files", "*"}},
+            system_python_path_[0] == '\0' ? nullptr : system_python_path_)) {
+        strncpy(system_python_path_, selected->c_str(), sizeof(system_python_path_) - 1);
+        system_python_path_[sizeof(system_python_path_) - 1] = '\0';
         is_modified_ = true;
 
         // Validate the selected Python
         auto detector = cyxwiz::core::PythonDetector();
-        auto installation = detector.ValidatePythonInstallation(filename);
+        auto installation = detector.ValidatePythonInstallation(*selected);
         if (installation) {
             python_valid_ = true;
             python_version_ = installation->version;
             python_error_.clear();
-            spdlog::info("Selected Python: {} ({})", filename, python_version_);
+            spdlog::info("Selected Python: {} ({})", *selected, python_version_);
         } else {
             python_valid_ = false;
             python_version_.clear();
             python_error_ = "Invalid Python installation";
-            spdlog::error("Selected file is not a valid Python 3.12+ installation: {}", filename);
+            spdlog::error("Selected file is not a valid Python 3.12+ installation: {}", *selected);
         }
     }
-#else
-    // TODO: Implement for Linux/macOS (use zenity/kdialog or ImGui file browser)
-    spdlog::warn("File dialog not yet implemented for this platform");
-#endif
 }
 
 } // namespace gui

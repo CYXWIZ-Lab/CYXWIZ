@@ -1,18 +1,3 @@
-// Include Windows headers first, then undef conflicting macros.
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#ifdef CreateDialog
-#undef CreateDialog
-#endif
-#ifdef CreateDialogA
-#undef CreateDialogA
-#endif
-#ifdef CreateDialogW
-#undef CreateDialogW
-#endif
-#endif
-
 #include "properties_metadata_editor.h"
 #include "properties_parameter_rules.h"
 #include "node_editor.h"
@@ -248,20 +233,11 @@ void RenderParameter(
         }
         ImGui::SameLine();
         if (ImGui::Button("Browse")) {
-#ifdef _WIN32
-            OPENFILENAMEA ofn = {};
-            char file[512] = {};
-            strncpy(file, value.c_str(), sizeof(file) - 1);
-            ofn.lStructSize = sizeof(ofn);
-            ofn.lpstrFilter = "All Files\0*.*\0";
-            ofn.lpstrFile = file;
-            ofn.nMaxFile = sizeof(file);
-            ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-            if (GetOpenFileNameA(&ofn)) {
-                value = file;
+            if (auto selected_file = cyxwiz::FileDialogs::OpenFile(
+                    "Select File", {{"All Files", "*"}}, value.empty() ? nullptr : value.c_str())) {
+                value = *selected_file;
                 changed = true;
             }
-#endif
         }
     }
     else if (IsFolderParameterType(param)) {

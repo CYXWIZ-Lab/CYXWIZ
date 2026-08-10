@@ -1,14 +1,10 @@
 #include "cloud_upload_dialog.h"
+#include "../../core/file_dialogs.h"
 #include "../icons.h"
 #include <imgui.h>
 #include <algorithm>
 #include <filesystem>
 #include <cstring>
-
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
 
 namespace gui {
 
@@ -417,44 +413,12 @@ void CloudUploadDialog::UploadFile(PendingFile& file) {
 }
 
 void CloudUploadDialog::ShowFileBrowser() {
-#ifdef _WIN32
-    OPENFILENAMEA ofn = {};
-    char szFile[4096] = "";
-
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.lpstrFilter = "All Files\0*.*\0Image Files\0*.png;*.jpg;*.jpeg\0Data Files\0*.csv;*.json;*.h5\0";
-    ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
-
-    if (GetOpenFileNameA(&ofn)) {
-        // Parse multi-select result
-        std::vector<std::string> files;
-        char* p = szFile;
-        std::string directory = p;
-        p += directory.length() + 1;
-
-        if (*p == '\0') {
-            // Single file selected
-            files.push_back(directory);
-        } else {
-            // Multiple files selected
-            while (*p != '\0') {
-                std::string filename = p;
-                files.push_back(directory + "\\" + filename);
-                p += filename.length() + 1;
-            }
-        }
-
+    auto files = cyxwiz::FileDialogs::OpenMultiple(
+        "Select Files to Upload",
+        {{"All Files", "*"}, {"Image Files", "png,jpg,jpeg"}, {"Data Files", "csv,json,h5,hdf5"}});
+    if (!files.empty()) {
         AddFiles(files);
     }
-#else
-    // Linux/macOS: Use portable file dialog library or system call
-    // For now, just show an input field
-    show_file_browser_ = true;
-#endif
 }
 
 } // namespace gui

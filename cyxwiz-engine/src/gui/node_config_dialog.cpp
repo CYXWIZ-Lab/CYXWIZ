@@ -1,23 +1,7 @@
-// Include Windows headers BEFORE undefining macros
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
-
-// Undefine Windows macros that conflict with our method names
-#ifdef CreateDialog
-#undef CreateDialog
-#endif
-#ifdef CreateDialogA
-#undef CreateDialogA
-#endif
-#ifdef CreateDialogW
-#undef CreateDialogW
-#endif
-
 #include "node_config_dialog.h"
 #include "node_editor.h"
 #include "visualization/bar_chart_dialog.h"
+#include "../core/file_dialogs.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -32,6 +16,59 @@
 #include <unordered_map>
 
 namespace gui {
+
+namespace {
+
+cyxwiz::FileDialogs::FilterList ConvertWindowsFilter(const char* filter) {
+    cyxwiz::FileDialogs::FilterList filters;
+    if (!filter) {
+        return {{"All Files", "*"}};
+    }
+
+    const char* cursor = filter;
+    while (*cursor) {
+        std::string label(cursor);
+        cursor += label.size() + 1;
+        if (!*cursor) {
+            break;
+        }
+
+        std::string extensions;
+        std::string pattern(cursor);
+        cursor += pattern.size() + 1;
+        size_t start = 0;
+        while (start <= pattern.size()) {
+            const size_t end = pattern.find(';', start);
+            std::string extension = pattern.substr(start, end - start);
+            if (extension == "*" || extension == "*.*") {
+                extensions = "*";
+                break;
+            }
+            if (extension.rfind("*.", 0) == 0) {
+                extension.erase(0, 2);
+            } else if (extension.rfind('.', 0) == 0) {
+                extension.erase(0, 1);
+            }
+            if (!extension.empty()) {
+                if (!extensions.empty()) {
+                    extensions += ',';
+                }
+                extensions += extension;
+            }
+            if (end == std::string::npos) {
+                break;
+            }
+            start = end + 1;
+        }
+        if (!extensions.empty()) {
+            filters.emplace_back(std::move(label), std::move(extensions));
+        }
+    }
+
+    return filters.empty() ? cyxwiz::FileDialogs::FilterList{{"All Files", "*"}} : filters;
+}
+
+} // namespace
 
 // Alias to avoid any potential macro conflicts
 using NT = NodeType;
@@ -158,20 +195,12 @@ bool NodeConfigDialog::FileSelector(const char* label, std::string& path, const 
     }
     ImGui::SameLine();
     if (ImGui::Button("Browse...", ImVec2(80.0f, 0))) {
-#ifdef _WIN32
-        OPENFILENAMEA ofn = {};
-        char file[512] = {};
-        strncpy(file, path.c_str(), sizeof(file) - 1);
-        ofn.lStructSize = sizeof(ofn);
-        ofn.lpstrFilter = filter;
-        ofn.lpstrFile = file;
-        ofn.nMaxFile = sizeof(file);
-        ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-        if (GetOpenFileNameA(&ofn)) {
-            path = file;
+        const char* default_path = path.empty() ? nullptr : path.c_str();
+        if (auto selected = cyxwiz::FileDialogs::OpenFile(
+                "Select File", ConvertWindowsFilter(filter), default_path)) {
+            path = *selected;
             changed = true;
         }
-#endif
     }
 
     return changed;

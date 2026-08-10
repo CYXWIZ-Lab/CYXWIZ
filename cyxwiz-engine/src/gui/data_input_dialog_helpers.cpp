@@ -1,11 +1,5 @@
 // DataInputDialog source, preview-loading, and browse helpers.
 
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#include <shlobj.h>
-#endif
-
 #ifdef CreateDialog
 #undef CreateDialog
 #endif
@@ -15,6 +9,7 @@
 #include "../core/async_task_manager.h"
 #include "../core/data_preview_service.h"
 #include "../core/data_registry.h"
+#include "../core/file_dialogs.h"
 
 #include <cstring>
 #include <string>
@@ -310,97 +305,53 @@ void DataInputDialog::UpdateRAMEstimate() {
 }
 
 void DataInputDialog::BrowseFile() {
-#ifdef _WIN32
-    const char* filter = nullptr;
+    cyxwiz::FileDialogs::FilterList filters;
 
     switch (file_category_) {
         case FileCategory::Tabular:
-            filter = "Supported Tabular Data\0*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc\0"
-                     "CSV\0*.csv\0TSV\0*.tsv\0Parquet\0*.parquet\0"
-                     "Feather\0*.feather;*.fea\0Arrow / IPC\0*.arrow;*.ipc\0All Files\0*.*\0";
+            filters = {{"Supported Tabular Data", "csv,tsv,parquet,feather,fea,arrow,ipc"},
+                       {"CSV", "csv"}, {"TSV", "tsv"}, {"Parquet", "parquet"},
+                       {"Feather", "feather,fea"}, {"Arrow / IPC", "arrow,ipc"}, {"All Files", "*"}};
             break;
         case FileCategory::Image:
-            filter = "Image Files\0*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tiff;*.webp\0All Files\0*.*\0";
+            filters = {{"Image Files", "jpg,jpeg,png,bmp,gif,tiff,webp"}, {"All Files", "*"}};
             break;
         case FileCategory::Audio:
-            filter = "Audio Files\0*.wav;*.mp3;*.flac;*.ogg;*.m4a;*.aac\0All Files\0*.*\0";
+            filters = {{"Audio Files", "wav,mp3,flac,ogg,m4a,aac"}, {"All Files", "*"}};
             break;
         case FileCategory::Video:
-            filter = "Video Files\0*.mp4;*.avi;*.mov;*.mkv;*.webm;*.wmv\0All Files\0*.*\0";
+            filters = {{"Video Files", "mp4,avi,mov,mkv,webm,wmv"}, {"All Files", "*"}};
             break;
         case FileCategory::Text:
-            filter = "Text Data\0*.csv;*.tsv;*.json;*.jsonl;*.txt\0"
-                     "CSV\0*.csv\0TSV\0*.tsv\0"
-                     "JSON\0*.json;*.jsonl\0Plain Text\0*.txt\0"
-                     "All Files\0*.*\0";
+            filters = {{"Text Data", "csv,tsv,json,jsonl,txt"}, {"CSV", "csv"},
+                       {"TSV", "tsv"}, {"JSON", "json,jsonl"}, {"Plain Text", "txt"}, {"All Files", "*"}};
             break;
         case FileCategory::TimeSeries:
-            filter = "Time Series Data\0*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc\0"
-                     "CSV\0*.csv\0TSV\0*.tsv\0Parquet\0*.parquet\0"
-                     "Feather\0*.feather;*.fea\0Arrow / IPC\0*.arrow;*.ipc\0"
-                     "All Files\0*.*\0";
+            filters = {{"Time Series Data", "csv,tsv,parquet,feather,fea,arrow,ipc"},
+                       {"CSV", "csv"}, {"TSV", "tsv"}, {"Parquet", "parquet"},
+                       {"Feather", "feather,fea"}, {"Arrow / IPC", "arrow,ipc"}, {"All Files", "*"}};
             break;
     }
 
-    OPENFILENAMEA ofn = {};
-    char file[512] = {};
-    strncpy(file, file_path_, sizeof(file) - 1);
-
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = filter;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = sizeof(file);
-    ofn.lpstrTitle = "Select Data File";
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST;
-
-    if (GetOpenFileNameA(&ofn)) {
-        strncpy(file_path_, file, sizeof(file_path_) - 1);
+    if (auto selected = cyxwiz::FileDialogs::OpenFile(
+            "Select Data File", filters, file_path_[0] == '\0' ? nullptr : file_path_)) {
+        strncpy(file_path_, selected->c_str(), sizeof(file_path_) - 1);
+        file_path_[sizeof(file_path_) - 1] = '\0';
         DetectFileType();
         DetectFileCategory();
         RefreshColumnList();
         has_changes_ = true;
     }
-#else
-    spdlog::warn("File browser not implemented for this platform");
-#endif
 }
 
 void DataInputDialog::BrowseFolder() {
-#ifdef _WIN32
-    IFileDialog* pfd = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr,
-                                  CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd));
-    if (SUCCEEDED(hr)) {
-        DWORD options = 0;
-        pfd->GetOptions(&options);
-        pfd->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-        pfd->SetTitle(L"Select Image Folder");
-
-        hr = pfd->Show(nullptr);
-        if (SUCCEEDED(hr)) {
-            IShellItem* psi = nullptr;
-            hr = pfd->GetResult(&psi);
-            if (SUCCEEDED(hr)) {
-                PWSTR wide_path = nullptr;
-                hr = psi->GetDisplayName(SIGDN_FILESYSPATH, &wide_path);
-                if (SUCCEEDED(hr) && wide_path) {
-                    char narrow[512] = {};
-                    WideCharToMultiByte(CP_ACP, 0, wide_path, -1,
-                                        narrow, sizeof(narrow) - 1, nullptr, nullptr);
-                    strncpy(folder_path_, narrow, sizeof(folder_path_) - 1);
-                    has_changes_ = true;
-                    preview_loaded_ = false;
-                    CoTaskMemFree(wide_path);
-                }
-                psi->Release();
-            }
-        }
-        pfd->Release();
+    if (auto selected = cyxwiz::FileDialogs::SelectFolder(
+            "Select Image Folder", folder_path_[0] == '\0' ? nullptr : folder_path_)) {
+        strncpy(folder_path_, selected->c_str(), sizeof(folder_path_) - 1);
+        folder_path_[sizeof(folder_path_) - 1] = '\0';
+        has_changes_ = true;
+        preview_loaded_ = false;
     }
-#else
-    spdlog::warn("Folder browser not implemented for this platform");
-#endif
 }
 
 std::string DataInputDialog::CurrentSourcePath() const {

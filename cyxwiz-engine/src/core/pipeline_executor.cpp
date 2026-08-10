@@ -18,9 +18,11 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <filesystem>
 #include <queue>
@@ -780,15 +782,8 @@ bool IsTextLabelArrowType(const std::shared_ptr<arrow::DataType>& type) {
 }
 
 bool IsValidNumericLiteral(const std::string& value) {
-    const std::string trimmed = TrimString(value);
-    if (trimmed.empty()) {
-        return false;
-    }
     double parsed = 0.0;
-    const char* begin = trimmed.data();
-    const char* end = trimmed.data() + trimmed.size();
-    const auto result = std::from_chars(begin, end, parsed);
-    return result.ec == std::errc{} && result.ptr == end;
+    return TryParseFiniteDouble(value, parsed);
 }
 
 std::string FormatPreprocessingNumericLiteral(double value) {
@@ -2058,10 +2053,11 @@ bool TryParseFiniteDouble(const std::string& value, double& out) {
         return false;
     }
 
-    const char* begin = trimmed.data();
-    const char* end = trimmed.data() + trimmed.size();
-    auto [ptr, ec] = std::from_chars(begin, end, out);
-    return ec == std::errc() && ptr == end && std::isfinite(out);
+    errno = 0;
+    char* end = nullptr;
+    out = std::strtod(trimmed.c_str(), &end);
+    return end == trimmed.c_str() + trimmed.size() && errno != ERANGE &&
+           std::isfinite(out);
 }
 
 double FloatParameterOrDefault(

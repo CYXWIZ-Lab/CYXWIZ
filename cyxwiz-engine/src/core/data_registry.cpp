@@ -590,7 +590,8 @@ bool DataRegistry::ExportHDF5(DatasetHandle handle, const std::string& filepath,
         // Create property list for compression and chunking
         HighFive::DataSetCreateProps props;
         if (config.chunked) {
-            props.add(HighFive::Chunking(chunk_dims));
+            std::vector<hsize_t> hdf5_chunk_dims(chunk_dims.begin(), chunk_dims.end());
+            props.add(HighFive::Chunking(hdf5_chunk_dims));
         }
         if (config.compress && config.chunked) {
             props.add(HighFive::Deflate(config.compression_level));

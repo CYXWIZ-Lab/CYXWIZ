@@ -16,6 +16,7 @@
 #include "../gui/node_import_guardrails.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -201,11 +202,13 @@ std::string FingerprintFileIdentity(const std::string& source_path) {
     if (ec) return {};
     const auto modified = fs::last_write_time(path, ec);
     if (ec) return {};
+    const auto modified_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        modified.time_since_epoch()).count();
     std::ostringstream identity;
     identity << "file_identity.v1\n"
              << fs::absolute(path, ec).lexically_normal().generic_string() << '\n'
              << size << '\n'
-             << modified.time_since_epoch().count() << '\n';
+             << modified_ns << '\n';
     return ec ? std::string{} : StablePartitionFingerprint(identity.str());
 }
 

@@ -34,9 +34,22 @@ find_package(Arrow CONFIG REQUIRED)
 find_package(Parquet CONFIG REQUIRED)
 message(STATUS "Apache Arrow ${Arrow_VERSION} found - Columnar data support enabled")
 
+# The macOS vcpkg triplet builds Arrow and Parquet statically.  Keep the
+# existing link declarations portable by providing their shared-target names
+# as aliases when only static targets are available.
+if(NOT TARGET Arrow::arrow_shared AND TARGET Arrow::arrow_static)
+    add_library(Arrow::arrow_shared ALIAS Arrow::arrow_static)
+endif()
+if(NOT TARGET Parquet::parquet_shared AND TARGET Parquet::parquet_static)
+    add_library(Parquet::parquet_shared ALIAS Parquet::parquet_static)
+endif()
+
 # DuckDB for zero-copy SQL queries on Arrow tables
 find_package(duckdb CONFIG REQUIRED)
 message(STATUS "DuckDB found - SQL query engine enabled")
+if(NOT TARGET duckdb AND TARGET duckdb_static)
+    add_library(duckdb ALIAS duckdb_static)
+endif()
 
 # Optional: HDF5 support for data files
 find_package(HighFive CONFIG)
@@ -952,18 +965,21 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
 )
 
 # Copy pycyxwiz Python module to engine directory (built by cyxwiz-backend)
-add_custom_command(TARGET cyxwiz-engine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    $<TARGET_FILE:pycyxwiz>
-    $<TARGET_FILE_DIR:cyxwiz-engine>/pycyxwiz.pyd
-    COMMENT "Copying pycyxwiz Python module..."
-)
+if(TARGET pycyxwiz)
+    add_custom_command(TARGET cyxwiz-engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:pycyxwiz>
+        $<TARGET_FILE_DIR:cyxwiz-engine>/pycyxwiz.pyd
+        COMMENT "Copying pycyxwiz Python module..."
+    )
+endif()
 
 # Note: Bundled Python has been removed. CyxWiz Engine now uses system Python 3.12+.
 # Each project creates its own virtual environment in <project>/python/
 
 # ===== Python Bindings Module =====
 
+if(CYXWIZ_ENABLE_PYTHON)
 # Create Python module for plotting bindings
 pybind11_add_module(cyxwiz_plotting
     python/plot_bindings.cpp
@@ -1040,6 +1056,7 @@ install(DIRECTORY python/examples/
     DESTINATION share/cyxwiz/python/examples
     FILES_MATCHING PATTERN "*.py"
 )
+endif()
 
 # Install
 install(TARGETS cyxwiz-engine
@@ -3674,9 +3691,6 @@ if(CYXWIZ_ENABLE_ASAN)
 
     message(STATUS "ASan memory test enabled - run test_asan_memory to verify")
 endif()
-
-
-
 
 
 
