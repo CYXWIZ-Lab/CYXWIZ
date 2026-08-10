@@ -243,8 +243,8 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(co
 }
 
 bool PythonDetector::MeetsRequirements(const PythonInstallation& python) {
-    // Require Python 3.12 or newer
-    if (python.major < 3 || (python.major == 3 && python.minor < 12)) {
+    // Python bindings and supported packages are validated for 3.12 and 3.13.
+    if (python.major != 3 || python.minor < 12 || python.minor > 13) {
         return false;
     }
 
@@ -258,7 +258,11 @@ bool PythonDetector::MeetsRequirements(const PythonInstallation& python) {
 
 std::string PythonDetector::GetRequirementError(const PythonInstallation& python) {
     if (python.major < 3 || (python.major == 3 && python.minor < 12)) {
-        return "Python version too old (need 3.12+, found " + python.version + ")";
+        return "Python version too old (supported versions: 3.12-3.13; found " + python.version + ")";
+    }
+
+    if (python.major > 3 || (python.major == 3 && python.minor > 13)) {
+        return "Python version unsupported (supported versions: 3.12-3.13; found " + python.version + ")";
     }
 
     if (!python.has_venv_module) {
@@ -313,20 +317,12 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::FindBestPython
     }
 
     if (valid.empty()) {
-        spdlog::warn("No valid Python 3.12+ installations found");
+        spdlog::warn("No supported Python 3.12-3.13 installations found");
         return std::nullopt;
     }
 
-    // Sort by version (prefer newer, but prefer 3.12/3.13 over 3.14+)
+    // All valid interpreters are supported; prefer the newest patch version.
     std::sort(valid.begin(), valid.end(), [](const PythonInstallation& a, const PythonInstallation& b) {
-        // Prefer stable versions (3.12, 3.13)
-        bool a_stable = (a.minor == 12 || a.minor == 13);
-        bool b_stable = (b.minor == 12 || b.minor == 13);
-
-        if (a_stable && !b_stable) return true;
-        if (!a_stable && b_stable) return false;
-
-        // If both stable or both unstable, prefer newer
         if (a.major != b.major) return a.major > b.major;
         if (a.minor != b.minor) return a.minor > b.minor;
         return a.micro > b.micro;

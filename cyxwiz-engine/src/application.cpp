@@ -239,13 +239,9 @@ void CyxWizApp::ScanForPython() {
             python_scan_.major = python_info->major;
             python_scan_.minor = python_info->minor;
             python_scan_.path = python_info->executable_path;
-
-            // Check version warnings
-            if (python_scan_.major == 3 && python_scan_.minor >= 14) {
-                python_scan_.warning = "Python 3.14+ detected. We recommend Python 3.12 for stable packages (built with 3.12 bindings).";
-                spdlog::warn("{}", python_scan_.warning);
-            } else if (python_scan_.major < 3 || (python_scan_.major == 3 && python_scan_.minor < 12)) {
-                python_scan_.warning = "Python version < 3.12 detected. Please install Python 3.12 or higher.";
+            python_scan_.compatible = cyxwiz::core::PythonDetector::MeetsRequirements(*python_info);
+            if (!python_scan_.compatible) {
+                python_scan_.warning = cyxwiz::core::PythonDetector::GetRequirementError(*python_info);
                 spdlog::warn("{}", python_scan_.warning);
             }
 
@@ -263,21 +259,13 @@ void CyxWizApp::ScanForPython() {
         python_scan_.major = best_python->major;
         python_scan_.minor = best_python->minor;
         python_scan_.path = best_python->executable_path;
-
-        // Check version warnings
-        if (python_scan_.major == 3 && python_scan_.minor >= 14) {
-            python_scan_.warning = "Python 3.14+ detected. We recommend Python 3.12 for stable packages (built with 3.12 bindings).";
-            spdlog::warn("{}", python_scan_.warning);
-        } else if (python_scan_.major < 3 || (python_scan_.major == 3 && python_scan_.minor < 12)) {
-            python_scan_.warning = "Python version < 3.12 detected. Please install Python 3.12 or higher.";
-            spdlog::warn("{}", python_scan_.warning);
-        }
+        python_scan_.compatible = true;
 
         spdlog::info("Python {} detected at: {}", python_scan_.version, python_scan_.path);
     } else {
         python_scan_.scanned = true;
         python_scan_.found = false;
-        python_scan_.warning = "No Python installation found. Please install Python 3.12 or higher.";
+        python_scan_.warning = "No supported Python installation found. Please install Python 3.12 or 3.13.";
         spdlog::warn("{}", python_scan_.warning);
     }
 }
@@ -410,22 +398,27 @@ bool CyxWizApp::Initialize() {
     // Load professional fonts
     LoadFonts(io);
 
-    // Scan for Python on startup (no initialization yet)
+#ifdef CYXWIZ_HAS_PYTHON
+    // Scan for Python on startup (no initialization yet).
     ScanForPython();
-
-    // Check if Python is configured - show wizard if not
-    auto& config = cyxwiz::core::EngineConfig::Instance();
-    python_configured_ = config.HasSystemPython();
+    python_configured_ = python_scan_.found && python_scan_.compatible;
 
     if (!python_configured_) {
-        spdlog::info("No system Python configured - showing setup wizard");
+        spdlog::info("No compatible system Python configured - showing setup wizard");
         python_wizard_ = std::make_unique<cyxwiz::PythonSetupWizard>();
-        // Main window will be created after wizard completes
+        // Main window will be created after wizard completes.
         return true;
     }
-
-    // Python is configured - show start page
-    spdlog::info("Python configured - showing start page");
+#else
+    // Do not block the core Engine on an interpreter when scripting was not built.
+    python_configured_ = true;
+    spdlog::info("Python scripting support is disabled in this build; skipping interpreter setup");
+#endif
+#ifdef CYXWIZ_HAS_PYTHON
+    spdlog::info("Compatible Python configured - showing start page");
+#else
+    spdlog::info("Showing start page without Python scripting support");
+#endif
     start_page_ = std::make_unique<cyxwiz::StartPage>();
 
     // If project was specified on command line, we'll still show the start page

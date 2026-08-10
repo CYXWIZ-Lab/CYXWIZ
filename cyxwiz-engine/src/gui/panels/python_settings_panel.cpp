@@ -40,14 +40,16 @@ void PythonSettingsPanel::LoadSettings() {
     if (!python_path.empty()) {
         auto detector = cyxwiz::core::PythonDetector();
         auto installation = detector.ValidatePythonInstallation(python_path);
-        if (installation) {
+        if (installation && cyxwiz::core::PythonDetector::MeetsRequirements(*installation)) {
             python_valid_ = true;
             python_version_ = installation->version;
             python_error_.clear();
         } else {
             python_valid_ = false;
             python_version_.clear();
-            python_error_ = "Invalid or inaccessible Python installation";
+            python_error_ = installation
+                ? cyxwiz::core::PythonDetector::GetRequirementError(*installation)
+                : "Invalid or inaccessible Python installation";
         }
     } else {
         python_valid_ = false;
@@ -60,6 +62,25 @@ void PythonSettingsPanel::LoadSettings() {
 
 void PythonSettingsPanel::ApplySettings() {
     auto& config = cyxwiz::core::EngineConfig::Instance();
+
+    auto installation = cyxwiz::core::PythonDetector::ValidatePythonInstallation(system_python_path_);
+    if (!installation) {
+        python_valid_ = false;
+        python_version_.clear();
+        python_error_ = "Invalid or inaccessible Python installation";
+        spdlog::error("Cannot save Python settings: {}", python_error_);
+        return;
+    }
+    if (!cyxwiz::core::PythonDetector::MeetsRequirements(*installation)) {
+        python_valid_ = false;
+        python_version_.clear();
+        python_error_ = cyxwiz::core::PythonDetector::GetRequirementError(*installation);
+        spdlog::error("Cannot save Python settings: {}", python_error_);
+        return;
+    }
+    python_valid_ = true;
+    python_version_ = installation->version;
+    python_error_.clear();
 
     // Save system Python path
     config.SetSystemPythonPath(std::string(system_python_path_));
@@ -124,7 +145,7 @@ void PythonSettingsPanel::Render() {
         RunAutoDetection();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Scan system for Python 3.12+ installations");
+        ImGui::SetTooltip("Scan system for supported Python 3.12-3.13 installations");
     }
 
     ImGui::Spacing();
@@ -247,6 +268,9 @@ void PythonSettingsPanel::RunAutoDetection() {
     auto installations = detector.FindAllPythonInstallations();
 
     for (const auto& installation : installations) {
+        if (!cyxwiz::core::PythonDetector::MeetsRequirements(installation)) {
+            continue;
+        }
         DetectedPython python;
         python.path = installation.executable_path;
         python.version = installation.version;
@@ -256,7 +280,7 @@ void PythonSettingsPanel::RunAutoDetection() {
     }
 
     if (detected_pythons_.empty()) {
-        spdlog::warn("No Python 3.12+ installations found");
+        spdlog::warn("No supported Python 3.12-3.13 installations found");
     } else {
         spdlog::info("Found {} Python installation(s)", detected_pythons_.size());
         show_detection_results_ = true;
@@ -275,7 +299,7 @@ void PythonSettingsPanel::BrowsePythonExecutable() {
         // Validate the selected Python
         auto detector = cyxwiz::core::PythonDetector();
         auto installation = detector.ValidatePythonInstallation(*selected);
-        if (installation) {
+        if (installation && cyxwiz::core::PythonDetector::MeetsRequirements(*installation)) {
             python_valid_ = true;
             python_version_ = installation->version;
             python_error_.clear();
@@ -283,8 +307,10 @@ void PythonSettingsPanel::BrowsePythonExecutable() {
         } else {
             python_valid_ = false;
             python_version_.clear();
-            python_error_ = "Invalid Python installation";
-            spdlog::error("Selected file is not a valid Python 3.12+ installation: {}", *selected);
+            python_error_ = installation
+                ? cyxwiz::core::PythonDetector::GetRequirementError(*installation)
+                : "Invalid Python installation";
+            spdlog::error("Selected file is not a supported Python installation: {} ({})", *selected, python_error_);
         }
     }
 }

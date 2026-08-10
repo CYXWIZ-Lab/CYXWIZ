@@ -10,12 +10,12 @@ namespace cyxwiz {
 /**
  * @brief First-launch wizard for Python detection and configuration.
  *
- * Guides the user through detecting Python 3.12+ on their system.
+ * Guides the user through detecting supported Python versions on their system.
  * Must be shown on first launch if no system Python is configured.
  *
  * Flow:
  * 1. Detecting Python... (scan system)
- * 2a. Python 3.12+ found → Show details → Save to config
+ * 2a. Python 3.12-3.13 found → Show details → Save to config
  * 2b. No Python found → Show download instructions → Exit
  * 2c. Multiple found → Let user choose → Save to config
  */
@@ -43,9 +43,9 @@ public:
 private:
     enum class State {
         Detecting,       // Scanning for Python installations
-        NoPythonFound,   // No Python 3.12+ found
-        SingleFound,     // One Python 3.12+ found
-        MultipleFound,   // Multiple Python 3.12+ found
+        NoPythonFound,   // No supported Python found
+        SingleFound,     // One supported Python found
+        MultipleFound,   // Multiple supported Pythons found
     };
 
     void RenderDetecting();

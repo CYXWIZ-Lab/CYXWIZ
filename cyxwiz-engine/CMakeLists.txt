@@ -974,12 +974,12 @@ if(TARGET pycyxwiz)
     )
 endif()
 
-# Note: Bundled Python has been removed. CyxWiz Engine now uses system Python 3.12+.
+# Note: Bundled Python has been removed. CyxWiz Engine scripting uses system Python 3.12 or 3.13.
 # Each project creates its own virtual environment in <project>/python/
 
 # ===== Python Bindings Module =====
 
-if(CYXWIZ_ENABLE_PYTHON)
+if(CYXWIZ_HAS_PYTHON)
 # Create Python module for plotting bindings
 pybind11_add_module(cyxwiz_plotting
     python/plot_bindings.cpp
@@ -1065,6 +1065,25 @@ install(TARGETS cyxwiz-engine
 
 install(DIRECTORY resources/
     DESTINATION share/cyxwiz/resources
+)
+
+# ===== Test: Python Compatibility Policy =====
+add_executable(test_python_requirements
+    tests/test_python_requirements.cpp
+    src/core/python_detector.cpp
+)
+
+target_include_directories(test_python_requirements PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_python_requirements PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+)
+
+set_target_properties(test_python_requirements PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
 # ===== Test: Sandbox Timeout =====
@@ -3691,9 +3710,6 @@ if(CYXWIZ_ENABLE_ASAN)
 
     message(STATUS "ASan memory test enabled - run test_asan_memory to verify")
 endif()
-
-
-
 
 
 

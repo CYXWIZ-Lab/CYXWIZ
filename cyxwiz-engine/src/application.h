@@ -59,6 +59,7 @@ private:
     struct {
         bool scanned = false;
         bool found = false;
+        bool compatible = false;
         std::string version;
         int major = 0;
         int minor = 0;

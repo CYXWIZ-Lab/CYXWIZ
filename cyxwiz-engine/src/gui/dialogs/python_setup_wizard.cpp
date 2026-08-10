@@ -1,4 +1,5 @@
 #include "python_setup_wizard.h"
+#include <algorithm>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include "../../core/engine_config.h"
@@ -16,6 +17,12 @@ void PythonSetupWizard::StartDetection() {
 
     // Run detection (synchronous for now - could be async later)
     found_pythons_ = cyxwiz::core::PythonDetector::FindAllPythonInstallations();
+    found_pythons_.erase(
+        std::remove_if(found_pythons_.begin(), found_pythons_.end(),
+            [](const auto& python) {
+                return !cyxwiz::core::PythonDetector::MeetsRequirements(python);
+            }),
+        found_pythons_.end());
 
     detection_progress_ = 1.0f;
     detection_status_ = "Detection complete";
@@ -26,7 +33,7 @@ void PythonSetupWizard::StartDetection() {
 void PythonSetupWizard::OnDetectionComplete() {
     if (found_pythons_.empty()) {
         state_ = State::NoPythonFound;
-        spdlog::warn("No Python 3.12+ installations found");
+        spdlog::warn("No supported Python 3.12-3.13 installations found");
     } else if (found_pythons_.size() == 1) {
         state_ = State::SingleFound;
         selected_index_ = 0;
@@ -87,7 +94,7 @@ void PythonSetupWizard::RenderDetecting() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::TextWrapped("Detecting Python 3.12 or newer on your system...");
+    ImGui::TextWrapped("Detecting Python 3.12 or 3.13 on your system...");
     ImGui::Spacing();
 
     ImGui::Text("Status: %s", detection_status_.c_str());
@@ -97,19 +104,19 @@ void PythonSetupWizard::RenderDetecting() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::TextWrapped("CyxWiz Engine requires Python 3.12+ with the venv module installed.");
+    ImGui::TextWrapped("CyxWiz Engine scripting requires Python 3.12 or 3.13 with the venv module installed.");
 }
 
 void PythonSetupWizard::RenderNoPythonFound() {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.0f, 1.0f));
-    ImGui::TextWrapped("No Python 3.12+ Installation Found");
+    ImGui::TextWrapped("No Supported Python Installation Found");
     ImGui::PopStyleColor();
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::TextWrapped("CyxWiz Engine requires Python 3.12 or newer to run.");
+    ImGui::TextWrapped("CyxWiz Engine scripting requires Python 3.12 or 3.13.");
     ImGui::Spacing();
 
     ImGui::TextWrapped("Please install Python 3.12 or 3.13 from:");
