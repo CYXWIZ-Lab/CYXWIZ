@@ -1,5 +1,7 @@
 #include "memory_panel.h"
 #include "../icons.h"
+#include "../../core/training_manager.h"
+#include "../../core/training_trace_collector.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <implot.h>
@@ -547,13 +549,29 @@ void MemoryPanel::FinalizeSnapshot(int epoch, int step) {
 void MemoryPanel::UpdateGPUStatus() {
     try {
         auto devices = Device::GetAvailableDevices();
+        const auto trace = TrainingTraceCollector::Instance().Snapshot();
+        const bool has_active_run_device =
+            TrainingManager::Instance().IsTrainingActive() &&
+            trace.available &&
+            !trace.effective_backend.empty();
 
-        // Find first GPU device (CUDA or OpenCL)
-        for (const auto& dev : devices) {
-            if (dev.type == DeviceType::CUDA || dev.type == DeviceType::OPENCL) {
+        auto use_device = [this](const DeviceInfo& dev) {
                 gpu_info_.device_id = dev.device_id;
                 gpu_info_.name = dev.name;
-                gpu_info_.backend = (dev.type == DeviceType::CUDA) ? "CUDA" : "OpenCL";
+                switch (dev.type) {
+                    case DeviceType::CUDA:
+                        gpu_info_.backend = "CUDA";
+                        break;
+                    case DeviceType::OPENCL:
+                        gpu_info_.backend = "OpenCL";
+                        break;
+                    case DeviceType::ONEAPI:
+                        gpu_info_.backend = "oneAPI";
+                        break;
+                    default:
+                        gpu_info_.backend = "CPU";
+                        break;
+                }
                 gpu_info_.total_memory = dev.memory_total;
                 gpu_info_.free_memory = dev.memory_available;
 
@@ -566,6 +584,33 @@ void MemoryPanel::UpdateGPUStatus() {
                 }
 
                 gpu_info_.temperature = 0.0f;  // Not available from Device API
+        };
+
+        if (has_active_run_device) {
+            for (const auto& dev : devices) {
+                if (dev.device_id == trace.effective_device_id &&
+                    dev.name == trace.effective_device_name &&
+                    ((dev.type == DeviceType::CPU &&
+                      trace.effective_backend == "arrayfire_cpu") ||
+                     (dev.type == DeviceType::CUDA &&
+                      trace.effective_backend == "arrayfire_cuda") ||
+                     (dev.type == DeviceType::OPENCL &&
+                      trace.effective_backend == "arrayfire_opencl") ||
+                     (dev.type == DeviceType::ONEAPI &&
+                      trace.effective_backend == "arrayfire_oneapi"))) {
+                    use_device(dev);
+                    return;
+                }
+            }
+        }
+
+        // Find first GPU device (CUDA, OpenCL, or oneAPI) when no run-bound
+        // execution device is available.
+        for (const auto& dev : devices) {
+            if (dev.type == DeviceType::CUDA ||
+                dev.type == DeviceType::OPENCL ||
+                dev.type == DeviceType::ONEAPI) {
+                use_device(dev);
                 return;
             }
         }

@@ -3,6 +3,7 @@
 #include "crash_run_recorder.h"
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -11,6 +12,9 @@
 namespace cyxwiz {
 
 struct PinMemoryTransferStatus;
+struct ArrayFireNativeCpuFallbackEvent;
+struct ArrayFireHostSyncEvent;
+struct ExecutionDeviceContext;
 
 struct TrainingTraceEvent {
     std::string timestamp;
@@ -52,6 +56,28 @@ struct TrainingTraceEvent {
     std::string transfer_reason;
     std::string transfer_backend;
     int transfer_batch_size = 0;
+    std::string compute_backend;
+    std::string stage_backend;
+    int stage_device_id = 0;
+    std::string stage_device_name;
+    std::string requested_backend;
+    int requested_device_id = 0;
+    std::string effective_backend;
+    int effective_device_id = 0;
+    std::string effective_device_name;
+    std::string execution_platform;
+    std::string execution_context_id;
+    uint64_t capability_generation = 0;
+    std::string fallback_target;
+    std::string fallback_operation;
+    std::string fallback_reason;
+    std::string fallback_policy;
+    bool native_cpu_fallback = false;
+    uint64_t arrayfire_host_sync_bytes = 0;
+    std::string arrayfire_host_sync_reason;
+    std::string placement_fingerprint;
+    uint64_t placement_entry_count = 0;
+    std::string placement_summary;
 };
 
 struct TrainingTraceSummary {
@@ -68,6 +94,29 @@ struct TrainingTraceSummary {
     std::vector<TrainingTraceEvent> recent_events;
     std::vector<TrainingTraceEvent> materialization_events;
     std::vector<std::string> warnings;
+    uint64_t native_cpu_fallback_count = 0;
+    uint64_t transfer_event_count = 0;
+    uint64_t transfer_known_bytes = 0;
+    std::string transfer_summary;
+    uint64_t synchronization_event_count = 0;
+    uint64_t synchronization_known_bytes = 0;
+    std::string synchronization_summary;
+    uint64_t arrayfire_host_sync_count = 0;
+    uint64_t arrayfire_host_sync_bytes = 0;
+    std::string placement_fingerprint;
+    uint64_t placement_entry_count = 0;
+    std::string placement_summary;
+    std::string execution_platform;
+    std::string requested_backend;
+    int requested_device_id = 0;
+    std::string effective_backend;
+    int effective_device_id = 0;
+    std::string effective_device_name;
+    std::string execution_context_id;
+    std::string fallback_policy;
+    uint64_t declared_output_boundary_count = 0;
+    std::string residency_verdict;
+    std::string residency_reason;
 };
 
 struct TrainingTraceSettings {
@@ -99,6 +148,15 @@ public:
         const PinMemoryTransferStatus& status,
         const std::string& message,
         const std::string& severity);
+    void RecordNativeCpuFallback(
+        const ArrayFireNativeCpuFallbackEvent& fallback);
+    void RecordArrayFireHostSync(const ArrayFireHostSyncEvent& sync);
+    void RecordExecutionDeviceContext(
+        const ExecutionDeviceContext& context);
+    void RecordPlacementPlan(const std::string& fingerprint,
+                             uint64_t entry_count,
+                             const std::string& placement_summary,
+                             const std::string& message);
     void RecordTaskProgress(uint64_t task_id,
                             const std::string& task_name,
                             const std::string& task_stage,
@@ -147,6 +205,20 @@ private:
     std::deque<TrainingTraceEvent> events_;
     std::deque<TrainingTraceEvent> materialization_events_;
     std::vector<std::string> warnings_;
+    TrainingTraceEvent execution_context_event_;
+    bool has_execution_context_event_ = false;
+    TrainingTraceEvent placement_plan_event_;
+    bool has_placement_plan_event_ = false;
+    uint64_t native_cpu_fallback_count_ = 0;
+    uint64_t transfer_event_count_ = 0;
+    uint64_t transfer_known_bytes_ = 0;
+    std::map<std::string, uint64_t> transfer_reason_counts_;
+    uint64_t synchronization_event_count_ = 0;
+    uint64_t synchronization_known_bytes_ = 0;
+    std::map<std::string, uint64_t> synchronization_reason_counts_;
+    uint64_t arrayfire_host_sync_count_ = 0;
+    uint64_t arrayfire_host_sync_bytes_ = 0;
+    uint64_t declared_output_boundary_count_ = 0;
     TrainingTraceSettings settings_;
     size_t events_since_write_ = 0;
 };

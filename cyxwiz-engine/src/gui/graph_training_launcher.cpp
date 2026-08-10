@@ -13,13 +13,16 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <sstream>
 #include <unordered_set>
 #include <chrono>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 namespace gui {
@@ -29,6 +32,90 @@ namespace {
 void SetBlockedStatus(GraphTrainingLaunchResult& result,
                       std::string title,
                       std::string detail);
+
+void PostPlotPanelUpdate(
+    std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
+    std::function<void(cyxwiz::TrainingPlotPanel&)> update) {
+    if (!update) {
+        return;
+    }
+    cyxwiz::AsyncTaskManager::Instance().PostToMainThread(
+        [plot_panel, update = std::move(update)]() mutable {
+            if (auto panel = plot_panel.lock()) {
+                update(*panel);
+            }
+        });
+}
+
+bool DispatchTrainingOnMainThread(
+    cyxwiz::LambdaTask& task,
+    GraphTrainingDispatch dispatch,
+    cyxwiz::TrainingConfiguration config,
+    const std::string& dataset_name,
+    const std::string& label_column,
+    int epochs,
+    int batch_size,
+    std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
+    std::function<void(bool)> callback,
+    std::string& error_message) {
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto error = std::make_shared<std::string>();
+    auto cancelled = std::make_shared<std::atomic_bool>(false);
+    auto config_ptr =
+        std::make_shared<cyxwiz::TrainingConfiguration>(std::move(config));
+    auto future = promise->get_future();
+
+    cyxwiz::AsyncTaskManager::Instance().PostToMainThread(
+        [dispatch = std::move(dispatch),
+         config_ptr,
+         dataset_name,
+         label_column,
+         epochs,
+         batch_size,
+         plot_panel,
+         callback = std::move(callback),
+         promise,
+         error,
+         cancelled]() mutable {
+            try {
+                if (cancelled->load()) {
+                    promise->set_value(false);
+                    return;
+                }
+                const bool started = dispatch(
+                    std::move(*config_ptr),
+                    dataset_name,
+                    label_column,
+                    epochs,
+                    batch_size,
+                    plot_panel,
+                    std::move(callback));
+                promise->set_value(started);
+            } catch (const std::exception& e) {
+                *error = e.what();
+                promise->set_value(false);
+            } catch (...) {
+                *error = "Unknown training dispatch failure.";
+                promise->set_value(false);
+            }
+        });
+
+    while (future.wait_for(std::chrono::milliseconds(25)) !=
+           std::future_status::ready) {
+        if (task.ShouldStop()) {
+            cancelled->store(true);
+            error_message = "Training launch cancelled before dispatch.";
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    const bool started = future.get();
+    if (!started && !error->empty()) {
+        error_message = *error;
+    }
+    return started;
+}
 
 cyxwiz::MaterializationCacheConfig DefaultMaterializationCacheConfig() {
     cyxwiz::MaterializationCacheConfig config;
@@ -73,25 +160,35 @@ void ReportMaterializationCacheStatus(
         kCacheProgress,
         message,
         status);
-    if (auto panel = plot_panel.lock()) {
-        panel->SetPreparationState(true, message, kCacheProgress);
-        panel->RecordMaterializationProgress(
-            "MaterializationCache",
-            message,
-            kCacheProgress,
-            0,
-            0,
-            0,
-            -1,
-            "",
-            "",
-            status,
-            materialize_result.cache_key,
-            materialize_result.cache_artifact_path,
-            materialize_result.cache_manifest_path,
-            materialize_result.cache_row_count,
-            materialize_result.cache_column_count);
-    }
+    PostPlotPanelUpdate(
+        plot_panel,
+        [message,
+         kCacheProgress,
+         status,
+         cache_key = materialize_result.cache_key,
+         cache_artifact_path = materialize_result.cache_artifact_path,
+         cache_manifest_path = materialize_result.cache_manifest_path,
+         cache_row_count = materialize_result.cache_row_count,
+         cache_column_count = materialize_result.cache_column_count](
+            cyxwiz::TrainingPlotPanel& panel) {
+            panel.SetPreparationState(true, message, kCacheProgress);
+            panel.RecordMaterializationProgress(
+                "MaterializationCache",
+                message,
+                kCacheProgress,
+                0,
+                0,
+                0,
+                -1,
+                "",
+                "",
+                status,
+                cache_key,
+                cache_artifact_path,
+                cache_manifest_path,
+                cache_row_count,
+                cache_column_count);
+        });
 }
 
 std::string FindDatasetName(const std::vector<MLNode>& nodes) {
@@ -1065,10 +1162,12 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                 "Preparing graph materialization and training loaders...",
                 "running");
             task.ReportProgress(0.05f, "Preparing graph training launch...");
-            if (auto panel = plot_panel.lock()) {
-                panel->SetPreparationState(
-                    true, "Preparing graph training launch...", 0.05f);
-            }
+            PostPlotPanelUpdate(
+                plot_panel,
+                [](cyxwiz::TrainingPlotPanel& panel) {
+                    panel.SetPreparationState(
+                        true, "Preparing graph training launch...", 0.05f);
+                });
             if (task.ShouldStop()) {
                 return;
             }
@@ -1077,10 +1176,12 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             std::string effective_label_column = label_column;
 
             task.ReportProgress(0.15f, "Materializing graph preprocessing...");
-            if (auto panel = plot_panel.lock()) {
-                panel->SetPreparationState(
-                    true, "Materializing graph preprocessing...", 0.15f);
-            }
+            PostPlotPanelUpdate(
+                plot_panel,
+                [](cyxwiz::TrainingPlotPanel& panel) {
+                    panel.SetPreparationState(
+                        true, "Materializing graph preprocessing...", 0.15f);
+                });
             cyxwiz::MaterializeResult materialize_result;
             {
                 CYXWIZ_PROFILE_ZONE("CyxWiz Pipeline Materialization");
@@ -1106,20 +1207,33 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                             event.processed_items,
                             event.total_items,
                             event.memory_risk_level);
-                        if (auto panel = plot_panel.lock()) {
-                            panel->SetPreparationState(true, message, task_progress);
-                            panel->RecordMaterializationProgress(
-                                event.stage,
+                        PostPlotPanelUpdate(
+                            plot_panel,
+                            [message,
+                             task_progress,
+                             stage = event.stage,
+                             estimated_memory_bytes = event.estimated_memory_bytes,
+                             processed_items = event.processed_items,
+                             total_items = event.total_items,
+                             node_id = event.node_id,
+                             node_name = event.node_name,
+                             memory_risk_level = event.memory_risk_level,
+                             status = event.status](
+                                cyxwiz::TrainingPlotPanel& panel) {
+                                panel.SetPreparationState(
+                                    true, message, task_progress);
+                                panel.RecordMaterializationProgress(
+                                stage,
                                 message,
                                 task_progress,
-                                event.estimated_memory_bytes,
-                                event.processed_items,
-                                event.total_items,
-                                event.node_id,
-                                event.node_name,
-                                event.memory_risk_level,
-                                event.status);
-                        }
+                                estimated_memory_bytes,
+                                processed_items,
+                                total_items,
+                                node_id,
+                                node_name,
+                                memory_risk_level,
+                                status);
+                            });
                     });
             }
             ReportMaterializationCacheStatus(task, plot_panel, materialize_result);
@@ -1129,14 +1243,18 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                     effective_dataset_name + "': " +
                     materialize_result.error_message);
             }
-            if (auto panel = plot_panel.lock()) {
-                panel->SetMaterializationComplete(
-                    materialize_result.effective_dataset_name.empty()
-                        ? effective_dataset_name
-                        : materialize_result.effective_dataset_name,
-                    materialize_result.operators_applied,
-                    MaterializationCacheStatusLabel(materialize_result.cache_status));
-            }
+            PostPlotPanelUpdate(
+                plot_panel,
+                [output_dataset = materialize_result.effective_dataset_name.empty()
+                     ? effective_dataset_name
+                     : materialize_result.effective_dataset_name,
+                 operators_applied = materialize_result.operators_applied,
+                 status = MaterializationCacheStatusLabel(
+                     materialize_result.cache_status)](
+                    cyxwiz::TrainingPlotPanel& panel) {
+                    panel.SetMaterializationComplete(
+                        output_dataset, operators_applied, status);
+                });
 
             if (materialize_result.skipped_unsupported_source) {
                 spdlog::info("StartTrainingFromGraph: materializer skipped '{}' "
@@ -1151,10 +1269,12 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
 
             if (materialize_result.operators_applied > 0) {
                 task.ReportProgress(0.65f, "Resolving materialized dataset...");
-                if (auto panel = plot_panel.lock()) {
-                    panel->SetPreparationState(
-                        true, "Resolving materialized dataset...", 0.65f);
-                }
+                PostPlotPanelUpdate(
+                    plot_panel,
+                    [](cyxwiz::TrainingPlotPanel& panel) {
+                        panel.SetPreparationState(
+                            true, "Resolving materialized dataset...", 0.65f);
+                    });
                 spdlog::info("StartTrainingFromGraph: materialized '{}' -> '{}' "
                              "({} Cat-1 ops)",
                              effective_dataset_name,
@@ -1184,10 +1304,12 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
 
             if (config.sequence_batch.enabled) {
                 task.ReportProgress(0.75f, "Validating sequence launch columns...");
-                if (auto panel = plot_panel.lock()) {
-                    panel->SetPreparationState(
-                        true, "Validating sequence launch columns...", 0.75f);
-                }
+                PostPlotPanelUpdate(
+                    plot_panel,
+                    [](cyxwiz::TrainingPlotPanel& panel) {
+                        panel.SetPreparationState(
+                            true, "Validating sequence launch columns...", 0.75f);
+                    });
                 std::string sequence_column_error;
                 if (!ValidateSequenceLaunchColumns(
                     registry, effective_dataset_name, config,
@@ -1200,16 +1322,29 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             config.dataset_roles.train.dataset_name = effective_dataset_name;
 
             task.ReportProgress(0.9f, "Starting training...");
-            if (auto panel = plot_panel.lock()) {
-                panel->SetPreparationState(true, "Starting training...", 0.9f);
-            }
+            PostPlotPanelUpdate(
+                plot_panel,
+                [](cyxwiz::TrainingPlotPanel& panel) {
+                    panel.SetPreparationState(true, "Starting training...", 0.9f);
+                });
             bool started = false;
             {
                 CYXWIZ_PROFILE_ZONE("CyxWiz Dispatch Training");
-                started = dispatch(
-                    std::move(config), effective_dataset_name,
-                    effective_label_column, epochs, batch_size, plot_panel,
-                    std::move(callback));
+                std::string dispatch_error;
+                started = DispatchTrainingOnMainThread(
+                    task,
+                    std::move(dispatch),
+                    std::move(config),
+                    effective_dataset_name,
+                    effective_label_column,
+                    epochs,
+                    batch_size,
+                    plot_panel,
+                    std::move(callback),
+                    dispatch_error);
+                if (!started && !dispatch_error.empty()) {
+                    throw std::runtime_error(dispatch_error);
+                }
             }
 
             if (!started) {
@@ -1220,15 +1355,19 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
 
             task.ReportProgress(1.0f, "Training started");
             task.MarkCompleted("Training started", "started");
-            if (auto panel = plot_panel.lock()) {
-                if (materialize_result.operators_applied > 0) {
-                    panel->SetMaterializationComplete(
-                        effective_dataset_name,
-                        materialize_result.operators_applied,
-                        MaterializationCacheStatusLabel(materialize_result.cache_status));
-                }
-                panel->SetPreparationState(false);
-            }
+            PostPlotPanelUpdate(
+                plot_panel,
+                [effective_dataset_name,
+                 operators_applied = materialize_result.operators_applied,
+                 status = MaterializationCacheStatusLabel(
+                     materialize_result.cache_status)](
+                    cyxwiz::TrainingPlotPanel& panel) {
+                    if (operators_applied > 0) {
+                        panel.SetMaterializationComplete(
+                            effective_dataset_name, operators_applied, status);
+                    }
+                    panel.SetPreparationState(false);
+                });
         });
     launch_task->SetCompletionCallback(
         [plot_panel, preparation_node_editor_callback](

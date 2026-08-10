@@ -544,6 +544,11 @@ struct TrainingConfiguration {
     // placement contract that the UI/runtime can surface before training starts.
     std::vector<BackendPlacementEntry> backend_placements;
 
+    // ArrayFire-first production runs keep native CPU fallback available for
+    // known gaps and diagnostics. Strict residency tests can opt in to forbid
+    // native CPU fallback and fail terminally on any routed fallback attempt.
+    bool forbid_native_cpu_fallback = false;
+
     // Convenience: count issues by level. Used by UI gating logic.
     size_t CountIssues(IssueLevel level) const {
         size_t n = 0;

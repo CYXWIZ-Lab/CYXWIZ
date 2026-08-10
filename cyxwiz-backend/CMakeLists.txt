@@ -10,7 +10,16 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 find_package(ArrayFire QUIET)
 
 if(NOT ArrayFire_FOUND)
-    message(WARNING "ArrayFire not found. Backend will build without GPU acceleration.")
+    if(CYXWIZ_BUILD_ENGINE)
+        message(FATAL_ERROR
+            "ArrayFire is required when CYXWIZ_BUILD_ENGINE=ON. "
+            "Install ArrayFire and set ArrayFire_DIR to its CMake package "
+            "directory, or configure a backend-only build with "
+            "-DCYXWIZ_BUILD_ENGINE=OFF.")
+    endif()
+    message(WARNING
+        "ArrayFire not found. Building backend without ArrayFire because "
+        "CYXWIZ_BUILD_ENGINE=OFF; this is not the public Engine runtime path.")
     message(STATUS "Download ArrayFire from: https://arrayfire.com/download")
     set(CYXWIZ_HAS_ARRAYFIRE FALSE)
 else()
@@ -328,7 +337,7 @@ if(CYXWIZ_HAS_ARRAYFIRE)
                     target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_NCCL)
                     set(CYXWIZ_HAS_NCCL TRUE)
                 else()
-                    message(WARNING "NCCL not found - distributed GPU training will use CPU fallback")
+                    message(WARNING "NCCL not found - distributed GPU training will use the native CPU distributed backend")
                     message(STATUS "  NCCL can be installed from: https://developer.nvidia.com/nccl")
                     set(CYXWIZ_HAS_NCCL FALSE)
                 endif()

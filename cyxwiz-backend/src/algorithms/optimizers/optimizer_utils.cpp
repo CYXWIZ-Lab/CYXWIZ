@@ -12,8 +12,8 @@
 namespace cyxwiz {
 namespace optimizer_detail {
 
-bool OptimizerGpuAvailable() {
-    return IsCurrentArrayFireBackendGpu();
+bool OptimizerArrayFireAvailable() {
+    return IsCurrentArrayFireBackendAvailable();
 }
 
 void LogOptimizerFallbackOnce(
@@ -27,6 +27,11 @@ void LogOptimizerFallbackOnce(
         parameter_name.empty() ? "parameter" : parameter_name;
     const std::string context = BuildArrayFireBackendFallbackContext(
         BuildTensorShapeContext(tensor_name.c_str(), parameter.Shape()));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
         spdlog::warn("{}",
             BuildArrayFireBackendFallbackMessage(

@@ -19,7 +19,7 @@ RMSpropOptimizer::RMSpropOptimizer(double learning_rate, double alpha, double ep
     : alpha_(alpha), epsilon_(epsilon), momentum_(momentum) {
     learning_rate_ = learning_rate;
     step_count_ = 0;
-    optimizer_detail::OptimizerGpuAvailable();
+    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void RMSpropOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -48,7 +48,7 @@ void RMSpropOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (optimizer_detail::OptimizerGpuAvailable() && param.GetDataType() == DataType::Float32) {
+        if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
             try {
                 af::array param_gpu = param.GetArray();
                 af::array grad_gpu = grad.GetArray();
@@ -118,7 +118,7 @@ AdaGradOptimizer::AdaGradOptimizer(double learning_rate, double epsilon)
     : epsilon_(epsilon) {
     learning_rate_ = learning_rate;
     step_count_ = 0;
-    optimizer_detail::OptimizerGpuAvailable();
+    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void AdaGradOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -142,7 +142,7 @@ void AdaGradOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (optimizer_detail::OptimizerGpuAvailable() && param.GetDataType() == DataType::Float32) {
+        if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
             try {
                 af::array param_gpu = param.GetArray();
                 af::array grad_gpu = grad.GetArray();
@@ -193,7 +193,7 @@ AdadeltaOptimizer::AdadeltaOptimizer(double rho, double epsilon)
     // Adadelta doesn't use a global learning rate
     learning_rate_ = 1.0;  // Effective LR is computed from accumulated deltas
     step_count_ = 0;
-    optimizer_detail::OptimizerGpuAvailable();
+    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void AdadeltaOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -218,7 +218,7 @@ void AdadeltaOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (optimizer_detail::OptimizerGpuAvailable() && param.GetDataType() == DataType::Float32) {
+        if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
             try {
                 af::array param_gpu = param.GetArray();
                 af::array grad_gpu = grad.GetArray();

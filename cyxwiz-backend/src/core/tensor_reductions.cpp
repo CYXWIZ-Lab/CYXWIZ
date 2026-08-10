@@ -1,9 +1,11 @@
 #include "cyxwiz/tensor.h"
+#include "tensor_backend_observation_utils.h"
 #include "tensor_utils.h"
 
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -354,6 +356,40 @@ Tensor FinishArrayFire2DReduction(const af::array& reduced, bool keepdim) {
     return Tensor(af::flat(reduced));
 }
 
+void RecordReductionArrayFireFallback(
+    const char* operation_name,
+    const Tensor& input,
+    const std::vector<size_t>& output_shape,
+    const std::string& attributes,
+    const char* error_message) {
+    const std::string shape_signature =
+        tensor_backend_observation::BuildTensorOpSignature(
+            {input.Shape()},
+            output_shape,
+            input.GetDataType(),
+            attributes);
+    tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(input.GetDataType()),
+        shape_signature,
+        error_message);
+    const BackendFallbackReason reason =
+        ClassifyArrayFireBackendFallbackReason(error_message);
+    const std::string context =
+        BuildArrayFireBackendFallbackContext(shape_signature);
+    if (ShouldLogArrayFireBackendFallbackOnce(
+            operation_name, reason, context)) {
+        spdlog::warn(
+            "{}",
+            BuildArrayFireBackendFallbackMessage(
+                operation_name,
+                reason,
+                reason != BackendFallbackReason::CudaJitParamOverflow,
+                error_message,
+                context));
+    }
+}
+
 template <typename ReduceFn>
 Tensor ReduceDimArrayFire2D(const Tensor& input,
                             int dim,
@@ -375,7 +411,12 @@ Tensor Tensor::Sum() const {
         try {
             return Tensor(af::sum(af::flat(GetArray())));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Sum: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Sum",
+                *this,
+                {1},
+                "op=sum;axis=all",
+                e.what());
         }
     }
 #endif
@@ -400,7 +441,12 @@ Tensor Tensor::Sum(int dim, bool keepdim) const {
                 return af::sum(arr, axis);
             });
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Sum(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Sum(dim)",
+                *this,
+                ReducedShape(shape_, axis, keepdim),
+                "op=sum;axis=" + std::to_string(axis),
+                e.what());
         }
     }
 #endif
@@ -425,7 +471,12 @@ Tensor Tensor::Mean() const {
         try {
             return Tensor(af::mean(af::flat(GetArray())));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Mean: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Mean",
+                *this,
+                {1},
+                "op=mean;axis=all",
+                e.what());
         }
     }
 #endif
@@ -476,7 +527,12 @@ Tensor Tensor::Mean(int dim, bool keepdim) const {
                 return af::mean(arr, axis);
             });
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Mean(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Mean(dim)",
+                *this,
+                ReducedShape(shape_, axis, keepdim),
+                "op=mean;axis=" + std::to_string(axis),
+                e.what());
         }
     }
 #endif
@@ -490,7 +546,12 @@ Tensor Tensor::Max() const {
         try {
             return Tensor((af::max)(af::flat(GetArray())));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Max: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Max",
+                *this,
+                {1},
+                "op=max;axis=all",
+                e.what());
         }
     }
 #endif
@@ -515,7 +576,12 @@ Tensor Tensor::Max(int dim, bool keepdim) const {
                 return (af::max)(arr, axis);
             });
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Max(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Max(dim)",
+                *this,
+                ReducedShape(shape_, axis, keepdim),
+                "op=max;axis=" + std::to_string(axis),
+                e.what());
         }
     }
 #endif
@@ -534,7 +600,12 @@ Tensor Tensor::Min() const {
         try {
             return Tensor((af::min)(af::flat(GetArray())));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Min: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Min",
+                *this,
+                {1},
+                "op=min;axis=all",
+                e.what());
         }
     }
 #endif
@@ -559,7 +630,12 @@ Tensor Tensor::Min(int dim, bool keepdim) const {
                 return (af::min)(arr, axis);
             });
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Min(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Min(dim)",
+                *this,
+                ReducedShape(shape_, axis, keepdim),
+                "op=min;axis=" + std::to_string(axis),
+                e.what());
         }
     }
 #endif
@@ -578,7 +654,12 @@ Tensor Tensor::Prod() const {
         try {
             return Tensor(af::product(af::flat(GetArray())));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Prod: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Prod",
+                *this,
+                {1},
+                "op=prod;axis=all",
+                e.what());
         }
     }
 #endif
@@ -603,7 +684,12 @@ Tensor Tensor::Prod(int dim, bool keepdim) const {
                 return af::product(arr, axis);
             });
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Prod(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Prod(dim)",
+                *this,
+                ReducedShape(shape_, axis, keepdim),
+                "op=prod;axis=" + std::to_string(axis),
+                e.what());
         }
     }
 #endif
@@ -628,7 +714,12 @@ Tensor Tensor::Var() const {
         try {
             return Tensor(ArrayFireVariance(af::flat(GetArray())));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Var: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Var",
+                *this,
+                {1},
+                "op=var;axis=all",
+                e.what());
         }
     }
 #endif
@@ -662,7 +753,12 @@ Tensor Tensor::Var(int dim, bool keepdim) const {
                 return ArrayFireVariance(arr, axis);
             });
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Var(dim): ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Var(dim)",
+                *this,
+                ReducedShape(shape_, axis, keepdim),
+                "op=var;axis=" + std::to_string(axis),
+                e.what());
         }
     }
 #endif
@@ -679,7 +775,12 @@ Tensor Tensor::Std() const {
         try {
             return Tensor(af::sqrt(ArrayFireVariance(af::flat(GetArray()))));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Std: ArrayFire reduction failed, falling back to CPU: {}", e.what());
+            RecordReductionArrayFireFallback(
+                "Tensor::Std",
+                *this,
+                {1},
+                "op=std;axis=all",
+                e.what());
         }
     }
 #endif

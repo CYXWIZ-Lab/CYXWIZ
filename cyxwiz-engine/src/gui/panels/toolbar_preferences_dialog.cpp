@@ -2,6 +2,9 @@
 
 #include "toolbar.h"
 #include "../icons.h"
+#include "../../core/execution_device_preferences.h"
+#include "../../core/training_manager.h"
+#include "../../core/training_trace_collector.h"
 
 #include <cstring>
 #include <exception>
@@ -396,10 +399,47 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     preferences_tab_ = 6;
                     ImGui::Spacing();
 
-                    // Show currently active backend
-                    ImGui::Text("Currently Active Backend:");
+                    const bool training_active =
+                        cyxwiz::TrainingManager::Instance().IsTrainingActive();
+                    const auto active_run_trace =
+                        cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+                    const bool has_run_bound_device =
+                        active_run_trace.available &&
+                        !active_run_trace.effective_backend.empty();
+
+                    // Show training backend truth. ArrayFire backend state can
+                    // be thread-local, so the GUI thread's current device is
+                    // not authoritative after a training-thread selection.
+                    ImGui::Text(
+                        has_run_bound_device
+                            ? (training_active
+                                   ? "Current Training Backend:"
+                                   : "Last Training Backend:")
+                            : "Currently Active Backend:");
                     ImGui::SameLine();
-                    try {
+                    if (has_run_bound_device) {
+                        ImVec4 backend_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                        if (active_run_trace.effective_backend == "arrayfire_cpu") {
+                            backend_color = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
+                        } else if (active_run_trace.effective_backend == "arrayfire_cuda") {
+                            backend_color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+                        } else if (active_run_trace.effective_backend == "arrayfire_opencl") {
+                            backend_color = ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
+                        } else if (active_run_trace.effective_backend == "arrayfire_oneapi") {
+                            backend_color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
+                        }
+                        ImGui::TextColored(
+                            backend_color,
+                            "%s %s device %d%s%s",
+                            ICON_FA_CIRCLE_CHECK,
+                            active_run_trace.effective_backend.c_str(),
+                            active_run_trace.effective_device_id,
+                            active_run_trace.effective_device_name.empty()
+                                ? ""
+                                : " - ",
+                            active_run_trace.effective_device_name.c_str());
+                    } else {
+                        try {
                         auto* current_device = cyxwiz::Device::GetCurrentDevice();
                         if (current_device) {
                             const char* backend_name = "Unknown";
@@ -417,8 +457,16 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                     backend_name = "OpenCL";
                                     backend_color = ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
                                     break;
+                                case cyxwiz::DeviceType::ONEAPI:
+                                    backend_name = "oneAPI";
+                                    backend_color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
+                                    break;
                                 case cyxwiz::DeviceType::METAL:
-                                    backend_name = "Metal (Apple)";
+                                    backend_name = "Metal (unsupported)";
+                                    backend_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                                    break;
+                                case cyxwiz::DeviceType::VULKAN:
+                                    backend_name = "Vulkan (unsupported)";
                                     backend_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
                                     break;
                                 default:
@@ -428,8 +476,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         } else {
                             ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s Not Set (using default)", ICON_FA_CIRCLE_EXCLAMATION);
                         }
-                    } catch (...) {
-                        ImGui::TextDisabled("Unable to query");
+                        } catch (...) {
+                            ImGui::TextDisabled("Unable to query");
+                        }
                     }
 
                     ImGui::Spacing();
@@ -439,8 +488,16 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Text("Available Compute Devices");
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::TextDisabled("Select the active ArrayFire runtime device. Changes take effect immediately.");
-                    ImGui::TextDisabled("Individual operators may still report an explicit CPU fallback.");
+                    ImGui::TextDisabled("Select the active ArrayFire runtime device.");
+                    if (training_active) {
+                        ImGui::TextColored(
+                            ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                            "%s Training is active; device changes are disabled until the run finishes.",
+                            ICON_FA_TRIANGLE_EXCLAMATION);
+                    } else {
+                        ImGui::TextDisabled("Changes are queued for the next training run.");
+                    }
+                    ImGui::TextDisabled("Operator fallbacks are reported as native CPU fallback events.");
                     ImGui::Spacing();
 
                     // Initialize device list if needed
@@ -472,8 +529,54 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No compute devices found!");
                     } else {
                         auto* active_device = cyxwiz::Device::GetCurrentDevice();
+                        const auto pending_selection =
+                            cyxwiz::GetPendingExecutionDeviceSelection();
+                        auto matches_active_run =
+                            [&](const CachedDevice& candidate) {
+                                if (!has_run_bound_device ||
+                                    active_run_trace.effective_device_id !=
+                                        candidate.device_id ||
+                                    active_run_trace.effective_device_name !=
+                                        candidate.name) {
+                                    return false;
+                                }
+                                switch (static_cast<cyxwiz::DeviceType>(
+                                    candidate.type)) {
+                                    case cyxwiz::DeviceType::CPU:
+                                        return active_run_trace.effective_backend ==
+                                            "arrayfire_cpu";
+                                    case cyxwiz::DeviceType::CUDA:
+                                        return active_run_trace.effective_backend ==
+                                            "arrayfire_cuda";
+                                    case cyxwiz::DeviceType::OPENCL:
+                                        return active_run_trace.effective_backend ==
+                                            "arrayfire_opencl";
+                                    case cyxwiz::DeviceType::ONEAPI:
+                                        return active_run_trace.effective_backend ==
+                                            "arrayfire_oneapi";
+                                    default:
+                                        return false;
+                                }
+                            };
                         selected_device_index_ = -1;
-                        if (active_device) {
+                        if (pending_selection.has_value()) {
+                            for (size_t i = 0; i < cached_devices_.size(); ++i) {
+                                const auto& candidate = cached_devices_[i];
+                                if (pending_selection->type ==
+                                        static_cast<cyxwiz::DeviceType>(candidate.type) &&
+                                    pending_selection->device_id == candidate.device_id) {
+                                    selected_device_index_ = static_cast<int>(i);
+                                    break;
+                                }
+                            }
+                        } else if (has_run_bound_device) {
+                            for (size_t i = 0; i < cached_devices_.size(); ++i) {
+                                if (matches_active_run(cached_devices_[i])) {
+                                    selected_device_index_ = static_cast<int>(i);
+                                    break;
+                                }
+                            }
+                        } else if (active_device) {
                             for (size_t i = 0; i < cached_devices_.size(); ++i) {
                                 const auto& candidate = cached_devices_[i];
                                 if (active_device->GetType() ==
@@ -492,26 +595,38 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             const char* type_name = "Unknown";
                             ImVec4 type_color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
 
-                            switch (dev.type) {
-                                case 0: // CPU
+                            switch (static_cast<cyxwiz::DeviceType>(dev.type)) {
+                                case cyxwiz::DeviceType::CPU:
                                     type_icon = ICON_FA_MICROCHIP;
                                     type_name = "CPU";
                                     type_color = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
                                     break;
-                                case 1: // CUDA
+                                case cyxwiz::DeviceType::CUDA:
                                     type_icon = ICON_FA_BOLT;
                                     type_name = "CUDA";
                                     type_color = ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
                                     break;
-                                case 2: // OpenCL
+                                case cyxwiz::DeviceType::OPENCL:
                                     type_icon = ICON_FA_DESKTOP;
                                     type_name = "OpenCL";
                                     type_color = ImVec4(1.0f, 0.8f, 0.4f, 1.0f);
                                     break;
-                                case 3: // Metal
+                                case cyxwiz::DeviceType::ONEAPI:
                                     type_icon = ICON_FA_MICROCHIP;
-                                    type_name = "Metal";
+                                    type_name = "oneAPI";
+                                    type_color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
+                                    break;
+                                case cyxwiz::DeviceType::METAL:
+                                    type_icon = ICON_FA_MICROCHIP;
+                                    type_name = "Metal (unsupported)";
                                     type_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                                    break;
+                                case cyxwiz::DeviceType::VULKAN:
+                                    type_icon = ICON_FA_MICROCHIP;
+                                    type_name = "Vulkan (unsupported)";
+                                    type_color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                                    break;
+                                default:
                                     break;
                             }
 
@@ -519,7 +634,15 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                             // Radio button for selection
                             bool is_selected = (selected_device_index_ == static_cast<int>(i));
-                            if (ImGui::RadioButton("##device_select", is_selected)) {
+                            if (training_active) {
+                                ImGui::BeginDisabled();
+                            }
+                            const bool select_clicked =
+                                ImGui::RadioButton("##device_select", is_selected);
+                            if (training_active) {
+                                ImGui::EndDisabled();
+                            }
+                            if (select_clicked && !training_active) {
                                 try {
                                     const auto requested_type =
                                         static_cast<cyxwiz::DeviceType>(dev.type);
@@ -527,24 +650,17 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                         compute_device_changed_callback_(requested_type,
                                                                          dev.device_id);
                                     } else {
-                                        cyxwiz::Device device(requested_type,
-                                                              dev.device_id);
-                                        device.SetActive();
+                                        cyxwiz::SetPendingExecutionDeviceSelection(
+                                            requested_type,
+                                            dev.device_id);
                                     }
 
-                                    active_device = cyxwiz::Device::GetCurrentDevice();
-                                    if (!active_device ||
-                                        active_device->GetType() != requested_type ||
-                                        active_device->GetDeviceId() != dev.device_id) {
-                                        throw std::runtime_error(
-                                            "runtime did not activate the requested device");
-                                    }
                                     selected_device_index_ = static_cast<int>(i);
-                                    spdlog::info("Selected active runtime device: {} [{}]",
+                                    spdlog::info("Queued runtime device for next training run: {} [{}]",
                                                  dev.name,
                                                  type_name);
                                 } catch (const std::exception& e) {
-                                    spdlog::error("Failed to set device: {}", e.what());
+                                    spdlog::error("Failed to queue device: {}", e.what());
                                 }
                             }
                             ImGui::SameLine();
@@ -563,12 +679,32 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 ImGui::TextDisabled("(%.1f GB)", mem_gb);
                             }
 
-                            // Show "Active" badge if this is the current device
-                            if (active_device &&
-                                active_device->GetType() == static_cast<cyxwiz::DeviceType>(dev.type) &&
-                                active_device->GetDeviceId() == dev.device_id) {
+                            const bool is_active_device =
+                                has_run_bound_device
+                                    ? matches_active_run(dev)
+                                    : (active_device &&
+                                       active_device->GetType() ==
+                                           static_cast<cyxwiz::DeviceType>(dev.type) &&
+                                       active_device->GetDeviceId() == dev.device_id);
+                            const bool is_pending_device =
+                                pending_selection.has_value() &&
+                                pending_selection->type ==
+                                    static_cast<cyxwiz::DeviceType>(dev.type) &&
+                                pending_selection->device_id == dev.device_id;
+
+                            if (is_active_device) {
                                 ImGui::SameLine();
-                                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s Active", ICON_FA_CIRCLE_CHECK);
+                                ImGui::TextColored(
+                                    ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
+                                    "%s %s",
+                                    ICON_FA_CIRCLE_CHECK,
+                                    has_run_bound_device
+                                        ? (training_active ? "Active run" : "Last run")
+                                        : "Active");
+                            }
+                            if (is_pending_device) {
+                                ImGui::SameLine();
+                                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s Next run", ICON_FA_CLOCK);
                             }
 
                             ImGui::PopID();
@@ -590,7 +726,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     // Current device info
                     if (selected_device_index_ >= 0 && selected_device_index_ < static_cast<int>(cached_devices_.size())) {
                         const auto& dev = cached_devices_[selected_device_index_];
-                        ImGui::Text("Active Device Details:");
+                        ImGui::Text("Selected Device Details:");
                         ImGui::Indent();
                         ImGui::BulletText("Name: %s", dev.name.c_str());
                         if (dev.memory_total > 0) {

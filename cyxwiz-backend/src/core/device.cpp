@@ -29,7 +29,9 @@ DeviceInfo Device::GetInfo() const {
     info.device_id = device_id_;
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (type_ == DeviceType::CUDA || type_ == DeviceType::OPENCL) {
+    if (type_ == DeviceType::CUDA ||
+        type_ == DeviceType::OPENCL ||
+        type_ == DeviceType::ONEAPI) {
         char name[256];
         char platform[256];
         char toolkit[256];
@@ -146,7 +148,7 @@ void Device::SetActive() {
                 af::setDevice(device_id_);
                 spdlog::info("Switched to CUDA backend, device {}", device_id_);
 #else
-                spdlog::warn("CUDA backend requested but CYXWIZ_ENABLE_CUDA is not enabled; using CPU");
+                spdlog::warn("CUDA backend requested but CYXWIZ_ENABLE_CUDA is not enabled; using ArrayFire CPU backend");
                 af::setBackend(AF_BACKEND_CPU);
                 type_ = DeviceType::CPU;
                 device_id_ = 0;
@@ -158,32 +160,37 @@ void Device::SetActive() {
                 af::setDevice(device_id_);
                 spdlog::info("Switched to OpenCL backend, device {}", device_id_);
 #else
-                spdlog::warn("OpenCL backend requested but CYXWIZ_ENABLE_OPENCL is not enabled; using CPU");
+                spdlog::warn("OpenCL backend requested but CYXWIZ_ENABLE_OPENCL is not enabled; using ArrayFire CPU backend");
                 af::setBackend(AF_BACKEND_CPU);
                 type_ = DeviceType::CPU;
                 device_id_ = 0;
 #endif
+                break;
+            case DeviceType::ONEAPI:
+                af::setBackend(AF_BACKEND_ONEAPI);
+                af::setDevice(device_id_);
+                spdlog::info("Switched to oneAPI backend, device {}", device_id_);
                 break;
             case DeviceType::CPU:
                 af::setBackend(AF_BACKEND_CPU);
                 spdlog::info("Switched to CPU backend");
                 break;
             default:
-                spdlog::warn("Unknown device type, defaulting to CPU");
+                spdlog::warn("Unknown device type, defaulting to ArrayFire CPU backend");
                 af::setBackend(AF_BACKEND_CPU);
                 type_ = DeviceType::CPU;
                 device_id_ = 0;
                 break;
         }
     } catch (const af::exception& e) {
-        spdlog::warn("Failed to switch to requested backend (type {}, device {}): {}. Falling back to CPU.",
+        spdlog::warn("Failed to switch to requested backend (type {}, device {}): {}. Falling back to ArrayFire CPU backend.",
                      static_cast<int>(type_), device_id_, e.what());
         try {
             af::setBackend(AF_BACKEND_CPU);
             type_ = DeviceType::CPU;
             device_id_ = 0;
         } catch (const af::exception& cpu_error) {
-            spdlog::error("CPU fallback backend activation failed: {}", cpu_error.what());
+            spdlog::error("ArrayFire CPU backend activation failed: {}", cpu_error.what());
         }
     }
 #endif
@@ -230,6 +237,37 @@ std::vector<DeviceInfo> Device::GetAvailableDevices() {
     }
 #endif
 
+    // Try oneAPI backend
+    try {
+        af::setBackend(AF_BACKEND_ONEAPI);
+        int oneapi_count = af::getDeviceCount();
+        spdlog::debug("oneAPI backend: {} device(s) found", oneapi_count);
+
+        for (int i = 0; i < oneapi_count; i++) {
+            af::setDevice(i);
+            Device oneapi_device(DeviceType::ONEAPI, i);
+            DeviceInfo info = oneapi_device.GetInfo();
+
+            bool is_duplicate = false;
+            for (const auto& existing : devices) {
+                if (existing.name == info.name &&
+                    (existing.type == DeviceType::CUDA ||
+                     existing.type == DeviceType::OPENCL)) {
+                    spdlog::debug(
+                        "Skipping duplicate oneAPI device: {} (already listed as another backend)",
+                        info.name);
+                    is_duplicate = true;
+                    break;
+                }
+            }
+            if (!is_duplicate) {
+                devices.push_back(info);
+            }
+        }
+    } catch (const af::exception& e) {
+        spdlog::debug("oneAPI backend not available: {}", e.what());
+    }
+
     // Try OpenCL backend
 #ifdef CYXWIZ_ENABLE_OPENCL
     try {
@@ -242,11 +280,15 @@ std::vector<DeviceInfo> Device::GetAvailableDevices() {
             Device opencl_device(DeviceType::OPENCL, i);
             DeviceInfo info = opencl_device.GetInfo();
 
-            // Skip duplicate devices (e.g., NVIDIA GPU already listed via CUDA)
+            // Skip duplicate devices already listed through a preferred backend.
             bool is_duplicate = false;
             for (const auto& existing : devices) {
-                if (existing.name == info.name && existing.type == DeviceType::CUDA) {
-                    spdlog::debug("Skipping duplicate OpenCL device: {} (already listed as CUDA)", info.name);
+                if (existing.name == info.name &&
+                    (existing.type == DeviceType::CUDA ||
+                     existing.type == DeviceType::ONEAPI)) {
+                    spdlog::debug(
+                        "Skipping duplicate OpenCL device: {} (already listed as another backend)",
+                        info.name);
                     is_duplicate = true;
                     break;
                 }
@@ -287,6 +329,9 @@ Device* Device::GetCurrentDevice() {
                 break;
             case AF_BACKEND_OPENCL:
                 active_device.type_ = DeviceType::OPENCL;
+                break;
+            case AF_BACKEND_ONEAPI:
+                active_device.type_ = DeviceType::ONEAPI;
                 break;
             case AF_BACKEND_CPU:
             default:

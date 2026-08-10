@@ -1791,6 +1791,24 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
                 selected_event->batch,
                 selected_event->total_batches,
                 selected_event->duration_ms);
+    if (!selected_event->stage_backend.empty()) {
+        ImGui::Text("Stage backend: %s device=%d %s",
+                    selected_event->stage_backend.c_str(),
+                    selected_event->stage_device_id,
+                    selected_event->stage_device_name.empty()
+                        ? ""
+                        : selected_event->stage_device_name.c_str());
+    }
+    if (!selected_event->placement_fingerprint.empty()) {
+        ImGui::Text("Placement: %s entries=%llu",
+                    selected_event->placement_fingerprint.c_str(),
+                    static_cast<unsigned long long>(
+                        selected_event->placement_entry_count));
+        if (!selected_event->placement_summary.empty()) {
+            ImGui::TextWrapped("%s",
+                               selected_event->placement_summary.c_str());
+        }
+    }
     ImGui::Text("Loss %.4f  Accuracy %.2f%%",
                 selected_event->loss,
                 selected_event->accuracy * 100.0f);

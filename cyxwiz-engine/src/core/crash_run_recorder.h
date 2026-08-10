@@ -64,6 +64,7 @@ public:
                           int epochs,
                           int batch_size,
                           size_t sample_count);
+    void UpdateSampleCount(size_t sample_count);
 
     void MarkStage(TrainingTraceStage stage,
                    int epoch,

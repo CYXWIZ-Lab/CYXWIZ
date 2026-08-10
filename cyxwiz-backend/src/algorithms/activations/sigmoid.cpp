@@ -31,12 +31,17 @@ void LogSigmoidFallbackOnce(
         context);
     RecordBackendPlacementObservationForActiveDevice(
         "Sigmoid",
-        "cuda",
+        CurrentArrayFireBackendName(),
         "float32",
         BuildActivationPlacementShapeSignature(tensor.Shape(), "float32"),
         BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
         message);
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     if (ShouldLogArrayFireBackendFallbackOnce(
             operation_name, reason, context)) {
         spdlog::warn("{}", message);
@@ -52,7 +57,7 @@ Tensor Sigmoid::Forward(const Tensor& input) {
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsCurrentArrayFireBackendGpu()) {
+    if (IsCurrentArrayFireBackendAvailable()) {
         try {
             af::array input_gpu = input.GetArray();
 
@@ -87,7 +92,7 @@ Tensor Sigmoid::Backward(const Tensor& grad_output, const Tensor& input) {
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsCurrentArrayFireBackendGpu()) {
+    if (IsCurrentArrayFireBackendAvailable()) {
         try {
             af::array grad_gpu = grad_output.GetArray();
             af::array input_gpu = input.GetArray();

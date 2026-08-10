@@ -5,6 +5,7 @@
 #include <cyxwiz/device.h>
 
 #include <cstdlib>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,15 @@ namespace {
 
 constexpr const char* kForceFallbackEnv =
     "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
+
+int g_fallback_observer_count = 0;
+cyxwiz::ArrayFireNativeCpuFallbackEvent g_last_fallback_event;
+
+void CaptureFallbackEvent(
+    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
+    ++g_fallback_observer_count;
+    g_last_fallback_event = event;
+}
 
 void SetEnvVar(const char* name, const char* value) {
 #ifdef _WIN32
@@ -79,6 +89,7 @@ TEST_CASE("ArrayFire GPU decision follows active backend across device switches"
     cyxwiz::Device cpu(cyxwiz::DeviceType::CPU, 0);
     cpu.SetActive();
     REQUIRE(cpu.IsActive());
+    REQUIRE(cyxwiz::IsCurrentArrayFireBackendAvailable());
     REQUIRE_FALSE(cyxwiz::IsCurrentArrayFireBackendGpu());
 
     const auto devices = cyxwiz::Device::GetAvailableDevices();
@@ -91,6 +102,7 @@ TEST_CASE("ArrayFire GPU decision follows active backend across device switches"
         cyxwiz::Device accelerator(info.type, info.device_id);
         accelerator.SetActive();
         REQUIRE(accelerator.IsActive());
+        REQUIRE(cyxwiz::IsCurrentArrayFireBackendAvailable());
         REQUIRE(cyxwiz::IsCurrentArrayFireBackendGpu());
 
         cpu.SetActive();
@@ -157,8 +169,110 @@ TEST_CASE("ArrayFire fallback messages can suppress compiler dumps",
 
     REQUIRE(message.find("reason=cuda_jit_param_overflow") != std::string::npos);
     REQUIRE(message.find("Training continues") != std::string::npos);
+    REQUIRE(message.find("native CPU") != std::string::npos);
     REQUIRE(message.find("batch=8") != std::string::npos);
     REQUIRE(message.find("very long NVRTC compiler output") == std::string::npos);
+}
+
+TEST_CASE("ArrayFire fallback policy defaults to allowing native CPU fallback",
+          "[arrayfire][fallback][policy]") {
+    const cyxwiz::ArrayFireFallbackPolicy original =
+        cyxwiz::GetArrayFireFallbackPolicy();
+
+    cyxwiz::SetArrayFireFallbackPolicy(
+        cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+    REQUIRE_FALSE(cyxwiz::IsArrayFireNativeCpuFallbackForbidden());
+    REQUIRE_NOTHROW(cyxwiz::ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "UnitTestArrayFireFallback::Forward",
+        cyxwiz::BackendFallbackReason::BackendInternalError,
+        "synthetic failure",
+        "backend=cpu; input=[2x3]"));
+
+    cyxwiz::SetArrayFireFallbackPolicy(original);
+}
+
+TEST_CASE("ArrayFire native CPU fallback observer sees allowed and strict attempts",
+          "[arrayfire][fallback][policy]") {
+    const cyxwiz::ArrayFireFallbackPolicy original_policy =
+        cyxwiz::GetArrayFireFallbackPolicy();
+    const auto original_observer =
+        cyxwiz::GetArrayFireNativeCpuFallbackObserver();
+
+    g_fallback_observer_count = 0;
+    g_last_fallback_event = {};
+    cyxwiz::SetArrayFireFallbackPolicy(
+        cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+
+    {
+        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver observer(
+            &CaptureFallbackEvent);
+        REQUIRE_NOTHROW(cyxwiz::ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "UnitTestArrayFireFallback::Forward",
+            cyxwiz::BackendFallbackReason::BackendInternalError,
+            "synthetic failure",
+            "backend=cpu; input=[2x3]"));
+        REQUIRE(g_fallback_observer_count == 1);
+        REQUIRE(g_last_fallback_event.operation_name ==
+                "UnitTestArrayFireFallback::Forward");
+        REQUIRE(g_last_fallback_event.reason_code ==
+                "backend_internal_error");
+        REQUIRE_FALSE(g_last_fallback_event.fallback_forbidden);
+
+        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
+            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        REQUIRE_THROWS_AS(cyxwiz::ThrowIfArrayFireNativeCpuFallbackForbidden(
+                              "UnitTestArrayFireFallback::Backward",
+                              cyxwiz::BackendFallbackReason::UnsupportedShape,
+                              "synthetic shape failure",
+                              "backend=cuda; input=[4x5]"),
+                          std::runtime_error);
+        REQUIRE(g_fallback_observer_count == 2);
+        REQUIRE(g_last_fallback_event.operation_name ==
+                "UnitTestArrayFireFallback::Backward");
+        REQUIRE(g_last_fallback_event.reason_code == "unsupported_shape");
+        REQUIRE(g_last_fallback_event.fallback_forbidden);
+    }
+
+    REQUIRE(cyxwiz::GetArrayFireNativeCpuFallbackObserver() ==
+            original_observer);
+
+    cyxwiz::SetArrayFireFallbackPolicy(original_policy);
+}
+
+TEST_CASE("Scoped ArrayFire fallback policy forbids and restores fallback",
+          "[arrayfire][fallback][policy]") {
+    const cyxwiz::ArrayFireFallbackPolicy original =
+        cyxwiz::GetArrayFireFallbackPolicy();
+
+    cyxwiz::SetArrayFireFallbackPolicy(
+        cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+    {
+        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
+            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        REQUIRE(cyxwiz::IsArrayFireNativeCpuFallbackForbidden());
+
+        bool threw = false;
+        try {
+            cyxwiz::ThrowIfArrayFireNativeCpuFallbackForbidden(
+                "UnitTestArrayFireFallback::Backward",
+                cyxwiz::BackendFallbackReason::UnsupportedShape,
+                "synthetic shape failure",
+                "backend=cuda; input=[4x5]");
+        } catch (const std::runtime_error& e) {
+            threw = true;
+            const std::string message = e.what();
+            REQUIRE(message.find("native CPU fallback is forbidden") !=
+                    std::string::npos);
+            REQUIRE(message.find("reason=unsupported_shape") !=
+                    std::string::npos);
+            REQUIRE(message.find("backend=cuda; input=[4x5]") !=
+                    std::string::npos);
+        }
+        REQUIRE(threw);
+    }
+    REQUIRE_FALSE(cyxwiz::IsArrayFireNativeCpuFallbackForbidden());
+
+    cyxwiz::SetArrayFireFallbackPolicy(original);
 }
 
 TEST_CASE("ArrayFire forced fallback test hook parses requested operations",

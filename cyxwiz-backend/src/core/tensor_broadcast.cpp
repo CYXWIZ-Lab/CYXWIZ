@@ -1,9 +1,11 @@
 #include "cyxwiz/tensor.h"
+#include "tensor_backend_observation_utils.h"
 #include "tensor_utils.h"
 
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -48,6 +50,23 @@ bool IsArrayFire2DExpandSupported(const Tensor& input,
         }
     }
     return true;
+}
+
+void RecordBroadcastArrayFireFallback(
+    const char* operation_name,
+    const Tensor& input,
+    const std::vector<size_t>& output_shape,
+    const std::string& attributes,
+    const char* error_message) {
+    tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(input.GetDataType()),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {input.Shape()},
+            output_shape,
+            input.GetDataType(),
+            attributes),
+        error_message);
 }
 #endif
 
@@ -117,7 +136,12 @@ Tensor Tensor::Expand(const std::vector<size_t>& target_shape) const {
             return Tensor::FromArrayRowMajor2D(
                 af::tile(GetArrayRowMajor2D(), tile_rows, tile_cols));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Expand: ArrayFire expand failed, falling back to CPU: {}", e.what());
+            RecordBroadcastArrayFireFallback(
+                "Tensor::Expand",
+                *this,
+                target_shape,
+                "op=expand;rank=" + std::to_string(target_shape.size()),
+                e.what());
         }
     }
 #endif

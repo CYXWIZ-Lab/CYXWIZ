@@ -133,16 +133,18 @@ Tensor LogicalTensors(const Tensor& left, const Tensor& right, LogicalOp op) {
         try {
             return ApplyTensorLogicalArrayFire(left_expanded, right_expanded, op);
         } catch (const af::exception& e) {
-            tensor_backend_observation::RecordArrayFireFallback(
-                "Tensor::Logical",
-                tensor_backend_observation::DataTypeName(left_expanded.GetDataType()),
-                tensor_backend_observation::BuildTensorOpSignature(
-                    {left_expanded.Shape(), right_expanded.Shape()},
-                    out_shape,
-                    left_expanded.GetDataType(),
-                    std::string("op=") + LogicalOpName(op)),
-                e.what());
-            spdlog::warn("Tensor logical operation: ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn(
+                "{}",
+                tensor_backend_observation::RecordArrayFireFallback(
+                    "Tensor::Logical",
+                    tensor_backend_observation::DataTypeName(
+                        left_expanded.GetDataType()),
+                    tensor_backend_observation::BuildTensorOpSignature(
+                        {left_expanded.Shape(), right_expanded.Shape()},
+                        out_shape,
+                        left_expanded.GetDataType(),
+                        std::string("op=") + LogicalOpName(op)),
+                    e.what()));
         }
     }
 #endif
@@ -165,16 +167,17 @@ Tensor Tensor::operator!() const {
         try {
             return ApplyLogicalNotArrayFire(*this);
         } catch (const af::exception& e) {
-            tensor_backend_observation::RecordArrayFireFallback(
-                "Tensor::LogicalNot",
-                tensor_backend_observation::DataTypeName(dtype_),
-                tensor_backend_observation::BuildTensorOpSignature(
-                    {shape_},
-                    shape_,
-                    dtype_,
-                    "op=not"),
-                e.what());
-            spdlog::warn("Tensor logical not: ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn(
+                "{}",
+                tensor_backend_observation::RecordArrayFireFallback(
+                    "Tensor::LogicalNot",
+                    tensor_backend_observation::DataTypeName(dtype_),
+                    tensor_backend_observation::BuildTensorOpSignature(
+                        {shape_},
+                        shape_,
+                        dtype_,
+                        "op=not"),
+                    e.what()));
         }
     }
 #endif

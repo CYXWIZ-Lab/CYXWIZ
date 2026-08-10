@@ -83,7 +83,7 @@ DistributedConfig DistributedConfig::FromEnvironment() {
 #ifdef CYXWIZ_HAS_NCCL
         config.backend = BackendType::NCCL;
 #else
-        spdlog::warn("NCCL backend requested but not available, falling back to CPU");
+        spdlog::warn("NCCL backend requested but not available, using native CPU distributed backend");
         config.backend = BackendType::CPU;
 #endif
     } else {

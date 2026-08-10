@@ -42,7 +42,7 @@ void LogLinearInitializationFallbackOnce(
     }
     RecordBackendPlacementObservationForActiveDevice(
         "Linear",
-        "cuda",
+        CurrentArrayFireBackendName(),
         "float32",
         BuildLinearPlacementShapeSignature(
             {},
@@ -53,6 +53,11 @@ void LogLinearInitializationFallbackOnce(
         BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
         message);
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "LinearLayer::InitializeWeights",
+        reason,
+        error_message,
+        context);
     if (!ShouldLogArrayFireBackendFallbackOnce(
             "LinearLayer::InitializeWeights", reason, context)) {
         return;
@@ -81,6 +86,17 @@ std::vector<size_t> BuildLinearOutputShape(size_t batch_size,
         : std::vector<size_t>{out_features};
 }
 
+std::string BuildLinearRuntimeFallbackContext(size_t in_features,
+                                              size_t out_features,
+                                              size_t batch_size,
+                                              bool use_bias) {
+    return BuildArrayFireBackendFallbackContext(
+        "in=" + std::to_string(in_features) +
+        "; out=" + std::to_string(out_features) +
+        "; batch=" + std::to_string(batch_size) +
+        "; bias=" + std::string(use_bias ? "true" : "false"));
+}
+
 void RecordLinearRuntimeFallback(
     const char* operation_name,
     BackendFallbackReason reason,
@@ -93,7 +109,7 @@ void RecordLinearRuntimeFallback(
     bool use_bias) {
     RecordBackendPlacementObservationForActiveDevice(
         "Linear",
-        "cuda",
+        CurrentArrayFireBackendName(),
         "float32",
         BuildLinearPlacementShapeSignature(
             lhs_shape,
@@ -105,6 +121,11 @@ void RecordLinearRuntimeFallback(
         BackendPlacementObservationSource::RuntimeFallback,
         BuildLinearRuntimeFallbackDetail(
             operation_name, reason, error_message, context));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
 }
 #endif
 
@@ -131,7 +152,7 @@ void LinearLayer::InitializeWeights() {
     double limit = std::sqrt(6.0 / (in_features_ + out_features_));
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsCurrentArrayFireBackendGpu()) {
+    if (IsCurrentArrayFireBackendAvailable()) {
         try {
             af::array w_gpu = af::randu(static_cast<dim_t>(out_features_),
                                          static_cast<dim_t>(in_features_), f32);
@@ -145,7 +166,7 @@ void LinearLayer::InitializeWeights() {
                 bias_ = Tensor::Zeros({out_features_}, DataType::Float32);
             }
 
-            spdlog::info("LinearLayer({}, {}) initialized with Xavier (GPU)", in_features_, out_features_);
+            spdlog::info("LinearLayer({}, {}) initialized with Xavier (ArrayFire)", in_features_, out_features_);
             return;
         } catch (const af::exception& e) {
             LogLinearInitializationFallbackOnce(
@@ -195,61 +216,82 @@ Tensor LinearLayer::Forward(const Tensor& input) {
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsCurrentArrayFireBackendGpu()) {
-        try {
-            af::array input_gpu;
-            if (is_batched) {
-                input_gpu = input.GetArrayRowMajor2D().as(af::dtype::f32);
-            } else {
-                input_gpu = af::moddims(input.GetArray(), 1, static_cast<dim_t>(in_features)).as(af::dtype::f32);
-            }
-
-            af::array weight_gpu = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
-            af::array output_gpu = af::matmul(input_gpu, weight_gpu, AF_MAT_NONE, AF_MAT_TRANS);
-            output_gpu.eval();
-
-            // Add bias if present
-            if (use_bias_) {
-                af::array bias_gpu = af::moddims(bias_.GetArray(), 1, static_cast<dim_t>(out_features_)).as(af::dtype::f32);
-                output_gpu = output_gpu + af::tile(bias_gpu, static_cast<unsigned int>(batch_size), 1);
-                output_gpu.eval();
-            }
-
-            if (is_batched) {
-                return Tensor::FromArrayRowMajor2D(output_gpu);
-            }
-
-            return Tensor(af::flat(output_gpu));
-        } catch (const af::exception& e) {
-            const BackendFallbackReason reason =
-                ClassifyArrayFireBackendFallbackReason(e.what());
-            const std::string context = BuildArrayFireBackendFallbackContext(
-                "in=" + std::to_string(in_features_) +
-                "; out=" + std::to_string(out_features_) +
-                "; batch=" + std::to_string(batch_size) +
-                "; bias=" + std::string(use_bias_ ? "true" : "false"));
+    if (IsCurrentArrayFireBackendAvailable()) {
+        const std::string context = BuildLinearRuntimeFallbackContext(
+            in_features_, out_features_, batch_size, use_bias_);
+        if (ShouldForceArrayFireBackendFallbackForTesting(
+                "LinearLayer::Forward")) {
             RecordLinearRuntimeFallback(
                 "LinearLayer::Forward",
-                reason,
-                e.what(),
+                BackendFallbackReason::GpuBackendException,
+                "forced ArrayFire backend fallback test hook",
                 context,
                 input_shape,
                 BuildLinearOutputShape(batch_size, out_features_, is_batched),
                 in_features_,
                 out_features_,
                 use_bias_);
-            const bool log_fallback =
-                ShouldLogArrayFireBackendFallbackOnce(
-                    "LinearLayer::Forward", reason, context);
-            if (log_fallback) {
-                spdlog::warn("{}",
-                             errors::FormatWarning(
-                                 errors::Gpu::KernelExecutionFailed,
-                                 BuildLinearRuntimeFallbackDetail(
-                                     "LinearLayer::Forward",
-                                     reason,
-                                     e.what(),
-                                     context)));
+        } else {
+            try {
+                af::array input_gpu;
+                if (is_batched) {
+                    input_gpu = input.GetArrayRowMajor2D().as(af::dtype::f32);
+                } else {
+                    input_gpu = af::moddims(
+                        input.GetArray(),
+                        1,
+                        static_cast<dim_t>(in_features)).as(af::dtype::f32);
+                }
+
+                af::array weight_gpu =
+                    weight_.GetArrayRowMajor2D().as(af::dtype::f32);
+                af::array output_gpu =
+                    af::matmul(input_gpu, weight_gpu, AF_MAT_NONE, AF_MAT_TRANS);
+                output_gpu.eval();
+
+                if (use_bias_) {
+                    af::array bias_gpu = af::moddims(
+                        bias_.GetArray(),
+                        1,
+                        static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+                    output_gpu = output_gpu + af::tile(
+                        bias_gpu,
+                        static_cast<unsigned int>(batch_size),
+                        1);
+                    output_gpu.eval();
+                }
+
+                if (is_batched) {
+                    return Tensor::FromArrayRowMajor2D(output_gpu);
+                }
+
+                return Tensor(af::flat(output_gpu));
+            } catch (const af::exception& e) {
+                const BackendFallbackReason reason =
+                    ClassifyArrayFireBackendFallbackReason(e.what());
+                RecordLinearRuntimeFallback(
+                    "LinearLayer::Forward",
+                    reason,
+                    e.what(),
+                    context,
+                    input_shape,
+                    BuildLinearOutputShape(batch_size, out_features_, is_batched),
+                    in_features_,
+                    out_features_,
+                    use_bias_);
+                const bool log_fallback =
+                    ShouldLogArrayFireBackendFallbackOnce(
+                        "LinearLayer::Forward", reason, context);
+                if (log_fallback) {
+                    spdlog::warn("{}",
+                                 errors::FormatWarning(
+                                     errors::Gpu::KernelExecutionFailed,
+                                     BuildLinearRuntimeFallbackDetail(
+                                         "LinearLayer::Forward",
+                                         reason,
+                                         e.what(),
+                                         context)));
+                }
             }
         }
     }
@@ -310,69 +352,93 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
     size_t batch_size = is_batched ? grad_shape[0] : 1;
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsCurrentArrayFireBackendGpu()) {
-        try {
-            af::array grad_gpu;
-            af::array input_gpu;
-
-            if (is_batched) {
-                grad_gpu = grad_output.GetArrayRowMajor2D().as(af::dtype::f32);
-                input_gpu = input_cache_.GetArrayRowMajor2D().as(af::dtype::f32);
-            } else {
-                grad_gpu = af::moddims(grad_output.GetArray(), 1, static_cast<dim_t>(out_features_)).as(af::dtype::f32);
-                input_gpu = af::moddims(input_cache_.GetArray(), 1, static_cast<dim_t>(in_features_)).as(af::dtype::f32);
-            }
-
-            af::array weight_gpu = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
-
-            af::array weight_grad_gpu = af::matmul(grad_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
-            weight_grad_gpu.eval();
-            weight_grad_gpu = weight_grad_gpu / static_cast<float>(batch_size);
-            weight_grad_gpu.eval();
-            weight_grad_ = Tensor::FromArrayRowMajor2D(weight_grad_gpu);
-
-            if (use_bias_) {
-                af::array bias_grad_gpu = af::flat(af::sum(grad_gpu, 0) / static_cast<float>(batch_size));
-                bias_grad_gpu.eval();
-                bias_grad_ = Tensor(bias_grad_gpu);
-            }
-
-            af::array grad_input_gpu = af::matmul(grad_gpu, weight_gpu);
-            grad_input_gpu.eval();
-
-            if (is_batched) {
-                return Tensor::FromArrayRowMajor2D(grad_input_gpu);
-            }
-
-            return Tensor(af::flat(grad_input_gpu));
-        } catch (const af::exception& e) {
-            const BackendFallbackReason reason =
-                ClassifyArrayFireBackendFallbackReason(e.what());
-            const std::string context = BuildArrayFireBackendFallbackContext(
-                "in=" + std::to_string(in_features_) +
-                "; out=" + std::to_string(out_features_) +
-                "; batch=" + std::to_string(batch_size) +
-                "; bias=" + std::string(use_bias_ ? "true" : "false"));
+    if (IsCurrentArrayFireBackendAvailable()) {
+        const std::string context = BuildLinearRuntimeFallbackContext(
+            in_features_, out_features_, batch_size, use_bias_);
+        if (ShouldForceArrayFireBackendFallbackForTesting(
+                "LinearLayer::Backward")) {
             RecordLinearRuntimeFallback(
                 "LinearLayer::Backward",
-                reason,
-                e.what(),
+                BackendFallbackReason::GpuBackendException,
+                "forced ArrayFire backend fallback test hook",
                 context,
                 grad_shape,
                 input_cache_.Shape(),
                 in_features_,
                 out_features_,
                 false);
-            const bool log_fallback =
-                ShouldLogArrayFireBackendFallbackOnce(
-                    "LinearLayer::Backward", reason, context);
-            if (log_fallback) {
-                spdlog::warn("{}",
-                             BuildLinearRuntimeFallbackDetail(
-                                 "LinearLayer::Backward",
-                                 reason,
-                                 e.what(),
-                                 context));
+        } else {
+            try {
+                af::array grad_gpu;
+                af::array input_gpu;
+
+                if (is_batched) {
+                    grad_gpu =
+                        grad_output.GetArrayRowMajor2D().as(af::dtype::f32);
+                    input_gpu =
+                        input_cache_.GetArrayRowMajor2D().as(af::dtype::f32);
+                } else {
+                    grad_gpu = af::moddims(
+                        grad_output.GetArray(),
+                        1,
+                        static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+                    input_gpu = af::moddims(
+                        input_cache_.GetArray(),
+                        1,
+                        static_cast<dim_t>(in_features_)).as(af::dtype::f32);
+                }
+
+                af::array weight_gpu =
+                    weight_.GetArrayRowMajor2D().as(af::dtype::f32);
+
+                af::array weight_grad_gpu =
+                    af::matmul(grad_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
+                weight_grad_gpu.eval();
+                weight_grad_gpu =
+                    weight_grad_gpu / static_cast<float>(batch_size);
+                weight_grad_gpu.eval();
+                weight_grad_ = Tensor::FromArrayRowMajor2D(weight_grad_gpu);
+
+                if (use_bias_) {
+                    af::array bias_grad_gpu = af::flat(
+                        af::sum(grad_gpu, 0) /
+                        static_cast<float>(batch_size));
+                    bias_grad_gpu.eval();
+                    bias_grad_ = Tensor(bias_grad_gpu);
+                }
+
+                af::array grad_input_gpu = af::matmul(grad_gpu, weight_gpu);
+                grad_input_gpu.eval();
+
+                if (is_batched) {
+                    return Tensor::FromArrayRowMajor2D(grad_input_gpu);
+                }
+
+                return Tensor(af::flat(grad_input_gpu));
+            } catch (const af::exception& e) {
+                const BackendFallbackReason reason =
+                    ClassifyArrayFireBackendFallbackReason(e.what());
+                RecordLinearRuntimeFallback(
+                    "LinearLayer::Backward",
+                    reason,
+                    e.what(),
+                    context,
+                    grad_shape,
+                    input_cache_.Shape(),
+                    in_features_,
+                    out_features_,
+                    false);
+                const bool log_fallback =
+                    ShouldLogArrayFireBackendFallbackOnce(
+                        "LinearLayer::Backward", reason, context);
+                if (log_fallback) {
+                    spdlog::warn("{}",
+                                 BuildLinearRuntimeFallbackDetail(
+                                     "LinearLayer::Backward",
+                                     reason,
+                                     e.what(),
+                                     context));
+                }
             }
         }
     }

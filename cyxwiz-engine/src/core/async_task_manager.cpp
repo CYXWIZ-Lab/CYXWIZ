@@ -358,6 +358,14 @@ void AsyncTaskManager::ProcessCompletedCallbacks() {
     }
 }
 
+void AsyncTaskManager::PostToMainThread(std::function<void()> callback) {
+    if (!callback) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    pending_callbacks_.push(std::move(callback));
+}
+
 void AsyncTaskManager::WorkerThread() {
     while (!shutdown_.load()) {
         std::shared_ptr<AsyncTask> task;

@@ -1,6 +1,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "algorithms/arrayfire_backend_utils.h"
+
 #include <cyxwiz/layers/attention.h>
 #include <cyxwiz/layers/dense.h>
 #include <cyxwiz/layers/recurrent.h>
@@ -11,6 +13,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -153,6 +156,32 @@ TEST_CASE("Forced ArrayFire Dense fallback returns CPU-equivalent tensors",
     const float* grad_bias_data = params.at("grad_bias").Data<float>();
     REQUIRE(grad_bias_data[0] == Catch::Approx(0.0f));
     REQUIRE(grad_bias_data[1] == Catch::Approx(2.5f));
+}
+
+TEST_CASE("Strict ArrayFire policy rejects forced Dense native CPU fallback",
+          "[arrayfire][fallback][dense][policy]") {
+    ScopedEnvVar env(kForceFallbackEnv, "DenseLayer::Forward");
+    const cyxwiz::ScopedArrayFireFallbackPolicy strict(
+        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+
+    cyxwiz::DenseLayer dense(3, 2, true);
+    float input_values[] = {
+        1.0f, 2.0f, 3.0f,
+        -1.0f, 0.0f, 2.0f,
+    };
+    cyxwiz::Tensor input({2, 3}, input_values, cyxwiz::DataType::Float32);
+
+    bool threw = false;
+    try {
+        (void)dense.Forward(input);
+    } catch (const std::runtime_error& e) {
+        threw = true;
+        const std::string message = e.what();
+        REQUIRE(message.find("DenseLayer::Forward") != std::string::npos);
+        REQUIRE(message.find("native CPU fallback is forbidden") !=
+                std::string::npos);
+    }
+    REQUIRE(threw);
 }
 #endif
 

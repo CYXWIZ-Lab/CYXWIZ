@@ -1,5 +1,7 @@
 #include "classification_decision.h"
 
+#include "algorithms/arrayfire_backend_utils.h"
+
 #include <cyxwiz/tensor.h>
 
 #include <algorithm>
@@ -115,9 +117,25 @@ ClassificationDecisionCount CountClassificationDecisionScalars(
             return CountClassificationDecisionsArrayFire(
                 predictions, targets, batch_size, output_width, mode);
         } catch (const af::exception& e) {
-            spdlog::warn(
-                "Classification metric ArrayFire count failed, using CPU fallback: {}",
-                e.what());
+            const BackendFallbackReason reason =
+                ClassifyArrayFireBackendFallbackReason(e.what());
+            const std::string context = BuildArrayFireBackendFallbackContext(
+                BuildTensorShapeContext("predictions", predictions.Shape()) +
+                "; " +
+                BuildTensorShapeContext("targets", targets.Shape()));
+            ThrowIfArrayFireNativeCpuFallbackForbidden(
+                "ClassificationDecisionCount",
+                reason,
+                e.what(),
+                context);
+            spdlog::warn("{}",
+                         BuildArrayFireBackendFallbackMessage(
+                             "ClassificationDecisionCount",
+                             reason,
+                             reason !=
+                                 BackendFallbackReason::CudaJitParamOverflow,
+                             e.what(),
+                             context));
         }
     }
 #endif

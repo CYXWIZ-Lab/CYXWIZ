@@ -12,7 +12,7 @@ Machine-learning projects often separate data preparation, model design, trainin
 
 The desktop **Engine** is the main user application. A user can inspect project assets, preview and profile datasets, compose a workflow from nodes, configure training, run supported workflows, monitor tasks and metrics, execute Python-based scripts, and package a trained model. The graph is not only a drawing: the Engine validates its contracts and translates supported nodes into data materialization, batching, model, loss, optimizer, training, testing, and inference operations.
 
-The **Backend** owns computation. It provides tensors, layers, activations, losses, optimizers, data primitives, evaluation utilities, device selection, and optional ArrayFire execution. The Engine must call this shared backend rather than maintain a second implementation of mathematical operations in GUI code.
+The **Backend** owns computation. It provides tensors, layers, activations, losses, optimizers, data primitives, evaluation utilities, device selection, and ArrayFire execution for the public Engine runtime. The Engine must call this shared backend rather than maintain a second implementation of mathematical operations in GUI code.
 
 The **Server Node** is the worker-side application. It exposes daemon and graphical modes for local hardware reporting, job lifecycle, deployment, files, metrics, and supported worker execution through the shared protocol and backend. The external orchestration service is CyxCloud, maintained in a separate repository. End-to-end distributed training is still being hardened and is not presented as production-ready here.
 
@@ -49,7 +49,7 @@ Graph validation and compilation
        |
        v
 cyxwiz-backend
-  C++ primitives + optional ArrayFire CPU/CUDA/OpenCL execution
+  C++ primitives + ArrayFire CPU/CUDA/oneAPI/OpenCL execution for Engine runs
 
 CyxWiz Engine -------- cyxwiz-protocol -------- Server Node
                                                    |
@@ -108,7 +108,8 @@ See [Project structure](docs/project-structure.md) for ownership and dependency 
 - CMake 3.20 or newer
 - a C++20 compiler
 - Git and vcpkg
-- ArrayFire for accelerated backend execution
+- ArrayFire for Engine execution. Engine builds fail at CMake configure time
+  when ArrayFire is missing.
 - platform graphics development libraries required by GLFW/OpenGL
 
 The CMake presets expect the `vcpkg` directory at the repository root. Optional Python scripting looks for Python 3.12 or 3.13 and pybind11. CUDA, OpenCL, ONNX Runtime, GGUF/llama.cpp, LibTorch, and MuJoCo are capability-dependent integrations; their presence must not be inferred solely from a GUI preference.
@@ -123,7 +124,7 @@ cd CYXWIZ
 .\setup.bat
 ```
 
-On Linux or macOS, run `./setup.sh` instead. The backend can compile without ArrayFire, but accelerated CPU/CUDA/OpenCL execution requires a separate ArrayFire installation.
+On Linux or macOS, run `./setup.sh` instead. The public Engine build requires a separate ArrayFire installation. Backend-only native builds without ArrayFire are a reduced development/test configuration, not the GUI runtime path.
 
 The setup script validates the local toolchain and clones/bootstraps vcpkg when necessary; it does not install the dependency manifest into a second global tree. The first CMake configure for a selected build directory validates the manifest and restores packages into that build tree. A populated vcpkg binary cache avoids rebuilding dependency source, although restoring or extracting large cached packages can still take several minutes.
 

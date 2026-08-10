@@ -20,6 +20,7 @@
 #include "../core/error_codes.h"
 #include "../core/debug_trace_record.h"
 #include "../core/debug_operator_trace_producer.h"
+#include "../core/execution_device_preferences.h"
 #include "../core/keyboard_shortcuts.h"
 #include "../core/sequence_arrow_batcher.h"
 #include "panels/toolbar.h"
@@ -1315,20 +1316,20 @@ MainWindow::MainWindow()
 
     // Set up Compute Device selection callback (Preferences -> Device tab)
     toolbar_->SetComputeDeviceChangedCallback([](cyxwiz::DeviceType type, int device_id) {
-        // Create device and set it as active
-        cyxwiz::Device device(type, device_id);
-        device.SetActive();
+        cyxwiz::SetPendingExecutionDeviceSelection(type, device_id);
 
-        // Log the change
         const char* type_str = "Unknown";
         switch (type) {
             case cyxwiz::DeviceType::CPU: type_str = "CPU"; break;
             case cyxwiz::DeviceType::CUDA: type_str = "CUDA"; break;
             case cyxwiz::DeviceType::OPENCL: type_str = "OpenCL"; break;
+            case cyxwiz::DeviceType::ONEAPI: type_str = "oneAPI"; break;
             case cyxwiz::DeviceType::METAL: type_str = "Metal"; break;
             case cyxwiz::DeviceType::VULKAN: type_str = "Vulkan"; break;
         }
-        spdlog::info("Compute device changed to {} device {}", type_str, device_id);
+        spdlog::info("Queued compute device for next training run: {} device {}",
+                     type_str,
+                     device_id);
     });
 
     // Set up Verbose Python Logging pointer (View menu - Developer Tools)

@@ -153,6 +153,10 @@ public:
     // Process completed task callbacks (call from main thread)
     void ProcessCompletedCallbacks();
 
+    // Queue work that must run on the main/UI thread. The main loop drains
+    // this through ProcessCompletedCallbacks().
+    void PostToMainThread(std::function<void()> callback);
+
     // Convenience method to run a simple function async
     template<typename Func>
     uint64_t RunAsync(const std::string& name, Func&& func,

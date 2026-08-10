@@ -50,17 +50,16 @@ bool IsAllowedRawFallbackHit(const RawFallbackHit& hit) {
         hit.line.find("Training continues") != std::string::npos) {
         return true;
     }
-    if (hit.path == "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp" &&
-        (hit.line.find("falling back to CPU") != std::string::npos ||
-         hit.line.find("using CPU directly") != std::string::npos)) {
-        return true;
-    }
     if (hit.path == "cyxwiz-backend/src/algorithms/distributed/process_group.cpp" &&
         hit.line.find("NCCL backend requested") != std::string::npos) {
         return true;
     }
     if (hit.path == "cyxwiz-backend/src/algorithms/layers/linear.cpp" &&
         hit.line.find("LinearLayer: GPU check failed") != std::string::npos) {
+        return true;
+    }
+    if (hit.path == "cyxwiz-backend/src/algorithms/layers/layer_recurrent_utils.cpp" &&
+        hit.line.find("native CPU recurrent path") != std::string::npos) {
         return true;
     }
     return false;
@@ -116,6 +115,7 @@ bool UsesSharedFallbackPolicy(
     return WindowContains(lines, catch_index, "FallbackOnce") ||
            WindowContains(lines, catch_index, "BackendFailureOnce") ||
            WindowContains(lines, catch_index, "BackendWarningOnce") ||
+           WindowContains(lines, catch_index, "ArrayFireFallback") ||
            WindowContains(lines, catch_index,
                           "ClassifyArrayFireBackendFallbackReason") ||
            WindowContains(lines, catch_index,
@@ -147,17 +147,54 @@ bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
     return false;
 }
 
+std::vector<fs::path> ArrayFireFallbackHandlerScanFiles(
+    const fs::path& repo_root) {
+    std::vector<fs::path> files;
+    const fs::path algorithms_root =
+        repo_root / "cyxwiz-backend" / "src" / "algorithms";
+    for (const auto& entry : fs::recursive_directory_iterator(algorithms_root)) {
+        if (entry.is_regular_file() && IsSourceFile(entry.path())) {
+            files.push_back(entry.path());
+        }
+    }
+
+    const fs::path core_root =
+        repo_root / "cyxwiz-backend" / "src" / "core";
+    const std::vector<std::string> core_tensor_files = {
+        "tensor.cpp",
+        "tensor_broadcast.cpp",
+        "tensor_comparison.cpp",
+        "tensor_concat.cpp",
+        "tensor_elementwise.cpp",
+        "tensor_indexing.cpp",
+        "tensor_linalg.cpp",
+        "tensor_logical.cpp",
+        "tensor_reductions.cpp",
+        "tensor_shape.cpp",
+    };
+    for (const std::string& name : core_tensor_files) {
+        const fs::path path = core_root / name;
+        if (fs::exists(path)) {
+            files.push_back(path);
+        }
+    }
+
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
 } // namespace
 
 TEST_CASE("ArrayFire fallback raw warning strings stay behind the shared policy",
           "[arrayfire][fallback][source_scan]") {
     const fs::path repo_root = FindRepoRoot();
-    const fs::path algorithms_root =
-        repo_root / "cyxwiz-backend" / "src" / "algorithms";
-    REQUIRE(fs::exists(algorithms_root));
+    const auto scan_files = ArrayFireFallbackHandlerScanFiles(repo_root);
+    REQUIRE_FALSE(scan_files.empty());
 
     const std::vector<std::string> raw_needles = {
         "falling back to CPU",
+        "falling back to native CPU",
+        "using native CPU fallback",
         "using CPU",
         "GPU initialization failed",
         "ArrayFire init failed",
@@ -165,16 +202,12 @@ TEST_CASE("ArrayFire fallback raw warning strings stay behind the shared policy"
     };
 
     std::vector<RawFallbackHit> unexpected_hits;
-    for (const auto& entry : fs::recursive_directory_iterator(algorithms_root)) {
-        if (!entry.is_regular_file() || !IsSourceFile(entry.path())) {
-            continue;
-        }
-
-        std::ifstream in(entry.path());
+    for (const auto& path : scan_files) {
+        std::ifstream in(path);
         REQUIRE(in.is_open());
 
         const std::string relative_path =
-            fs::relative(entry.path(), repo_root).generic_string();
+            fs::relative(path, repo_root).generic_string();
         std::string line;
         size_t line_number = 0;
         while (std::getline(in, line)) {
@@ -205,19 +238,14 @@ TEST_CASE("ArrayFire fallback raw warning strings stay behind the shared policy"
 TEST_CASE("ArrayFire exception handlers route operation fallbacks through shared policy",
           "[arrayfire][fallback][source_scan]") {
     const fs::path repo_root = FindRepoRoot();
-    const fs::path algorithms_root =
-        repo_root / "cyxwiz-backend" / "src" / "algorithms";
-    REQUIRE(fs::exists(algorithms_root));
+    const auto scan_files = ArrayFireFallbackHandlerScanFiles(repo_root);
+    REQUIRE_FALSE(scan_files.empty());
 
     std::vector<ArrayFireCatchHit> unexpected_handlers;
-    for (const auto& entry : fs::recursive_directory_iterator(algorithms_root)) {
-        if (!entry.is_regular_file() || !IsSourceFile(entry.path())) {
-            continue;
-        }
-
-        const std::vector<std::string> lines = ReadLines(entry.path());
+    for (const auto& path : scan_files) {
+        const std::vector<std::string> lines = ReadLines(path);
         const std::string relative_path =
-            fs::relative(entry.path(), repo_root).generic_string();
+            fs::relative(path, repo_root).generic_string();
         for (size_t i = 0; i < lines.size(); ++i) {
             if (lines[i].find("catch (const af::exception") ==
                 std::string::npos) {
@@ -244,4 +272,48 @@ TEST_CASE("ArrayFire exception handlers route operation fallbacks through shared
     INFO("Unexpected ArrayFire exception handlers:" +
          FormatCatchHits(unexpected_handlers));
     REQUIRE(unexpected_handlers.empty());
+}
+
+TEST_CASE("ArrayFire backend availability decisions are not cached process-wide",
+          "[arrayfire][fallback][source_scan]") {
+    const fs::path repo_root = FindRepoRoot();
+    const auto scan_files = ArrayFireFallbackHandlerScanFiles(repo_root);
+    REQUIRE_FALSE(scan_files.empty());
+
+    const std::vector<std::string> stale_cache_needles = {
+        "s_gpu_checked",
+        "s_use_gpu",
+        "GPU availability check (cached)",
+    };
+
+    std::vector<RawFallbackHit> stale_hits;
+    for (const auto& path : scan_files) {
+        std::ifstream in(path);
+        REQUIRE(in.is_open());
+
+        const std::string relative_path =
+            fs::relative(path, repo_root).generic_string();
+        std::string line;
+        size_t line_number = 0;
+        while (std::getline(in, line)) {
+            ++line_number;
+            for (const auto& needle : stale_cache_needles) {
+                if (line.find(needle) != std::string::npos) {
+                    stale_hits.push_back(
+                        RawFallbackHit{relative_path, line_number, needle, line});
+                }
+            }
+        }
+    }
+
+    std::sort(stale_hits.begin(), stale_hits.end(),
+              [](const RawFallbackHit& lhs, const RawFallbackHit& rhs) {
+                  if (lhs.path != rhs.path) {
+                      return lhs.path < rhs.path;
+                  }
+                  return lhs.line_number < rhs.line_number;
+              });
+    INFO("Stale process-wide backend availability cache hits:" +
+         FormatHits(stale_hits));
+    REQUIRE(stale_hits.empty());
 }

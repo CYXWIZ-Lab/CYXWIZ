@@ -1,4 +1,5 @@
 #include "task_progress_panel.h"
+#include "core/training_trace_collector.h"
 #include "gui/icons.h"
 #include <imgui.h>
 #include <cmath>
@@ -24,6 +25,8 @@ void TaskProgressPanel::Render() {
 
     if (ImGui::Begin("Background Tasks", &visible_, ImGuiWindowFlags_None)) {
         auto& manager = AsyncTaskManager::Instance();
+
+        RenderTrainingTraceSummary();
 
         // Toolbar
         if (ImGui::Button(ICON_FA_STOP " Cancel All")) {
@@ -75,6 +78,39 @@ void TaskProgressPanel::Render() {
         }
     }
     ImGui::End();
+}
+
+void TaskProgressPanel::RenderTrainingTraceSummary() {
+    const auto trace = TrainingTraceCollector::LoadLastTrace();
+    if (!trace || !trace->available || trace->effective_backend.empty()) {
+        return;
+    }
+
+    ImGui::Text("Last Training Run");
+    ImGui::Separator();
+    ImGui::Text("Status: %s", trace->status.c_str());
+    ImGui::Text("Device: %s", trace->effective_backend.c_str());
+    if (!trace->effective_device_name.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", trace->effective_device_name.c_str());
+    }
+    ImGui::Text("Residency: %s", trace->residency_verdict.empty()
+        ? "not recorded" : trace->residency_verdict.c_str());
+    ImGui::Text("Transfers: %llu events, %llu known bytes",
+                static_cast<unsigned long long>(trace->transfer_event_count),
+                static_cast<unsigned long long>(trace->transfer_known_bytes));
+    ImGui::Text("Syncs: %llu events, %llu known bytes",
+                static_cast<unsigned long long>(trace->synchronization_event_count),
+                static_cast<unsigned long long>(trace->synchronization_known_bytes));
+    if (trace->native_cpu_fallback_count > 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
+                           "Native CPU fallback: %llu",
+                           static_cast<unsigned long long>(
+                               trace->native_cpu_fallback_count));
+    } else {
+        ImGui::Text("Native CPU fallback: 0");
+    }
+    ImGui::Separator();
 }
 
 void TaskProgressPanel::RenderTaskItem(const TaskInfo& info) {

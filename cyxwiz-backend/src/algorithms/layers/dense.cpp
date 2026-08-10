@@ -32,7 +32,7 @@ void LogDenseArrayFireFallback(
         BuildArrayFireBackendFallbackContext(shape_context);
     RecordBackendPlacementObservationForActiveDevice(
         "Dense",
-        "cuda",
+        CurrentArrayFireBackendName(),
         "float32",
         BuildDensePlacementShapeSignature(input_shape, out_features),
         BackendFallbackReasonName(reason),
@@ -43,6 +43,11 @@ void LogDenseArrayFireFallback(
             reason != BackendFallbackReason::CudaJitParamOverflow,
             error_message,
             context));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     const bool log_fallback =
         ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context);
     if (log_fallback) {

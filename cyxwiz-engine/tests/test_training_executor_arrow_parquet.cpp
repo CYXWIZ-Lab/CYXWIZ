@@ -8,6 +8,10 @@
 #include "../src/core/sequence_vocabulary.h"
 #include "../src/core/test_executor.h"
 #include "../src/core/training_executor.h"
+#include "../src/core/training_trace_collector.h"
+#include "../src/core/execution_device_context.h"
+#include "../src/core/execution_device_preferences.h"
+#include "algorithms/arrayfire_backend_utils.h"
 
 #include <arrow/api.h>
 #include <arrow/io/api.h>
@@ -18,6 +22,8 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -40,6 +46,57 @@ void CheckNear(double actual,
         std::exit(1);
     }
 }
+
+#ifndef NDEBUG
+constexpr const char* kForceFallbackEnv =
+    "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
+
+void SetEnvVar(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+void ClearEnvVar(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
+
+class ScopedEnvVar {
+public:
+    ScopedEnvVar(const char* name, const char* value)
+        : name_(name) {
+        const char* previous = std::getenv(name);
+        if (previous != nullptr) {
+            had_previous_ = true;
+            previous_ = previous;
+        }
+        if (value == nullptr) {
+            ClearEnvVar(name_);
+        } else {
+            SetEnvVar(name_, value);
+        }
+    }
+
+    ~ScopedEnvVar() {
+        if (had_previous_) {
+            SetEnvVar(name_, previous_.c_str());
+        } else {
+            ClearEnvVar(name_);
+        }
+    }
+
+private:
+    const char* name_;
+    bool had_previous_ = false;
+    std::string previous_;
+};
+#endif
 
 std::shared_ptr<arrow::Array> FinishFloatArray(const std::vector<float>& values) {
     arrow::FloatBuilder builder;
@@ -685,12 +742,21 @@ void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  int expected_optimizer_steps = -1) {
     int saw_epochs = 0;
     bool completed = false;
+    bool saw_active_execution_context = false;
     cyxwiz::TrainingMetrics final_metrics;
 
+    Check(!cyxwiz::HasActiveExecutionDeviceContext(),
+          label + " should start without an active execution context");
     executor.Train(
         expected_epochs,
         2,
-        nullptr,
+        [&](int, int, int, float, float) {
+            Check(cyxwiz::HasActiveExecutionDeviceContext(),
+                  label + " should hold an active execution context during batches");
+            Check(cyxwiz::CurrentExecutionDeviceContext() != nullptr,
+                  label + " should expose the current execution context during batches");
+            saw_active_execution_context = true;
+        },
         [&](int epoch,
             float train_loss,
             float,
@@ -711,6 +777,10 @@ void RunExecutor(cyxwiz::TrainingExecutor& executor,
         });
 
     Check(saw_epochs == expected_epochs, label + " should run each epoch callback");
+    Check(saw_active_execution_context,
+          label + " should run a batch under an active execution context");
+    Check(!cyxwiz::HasActiveExecutionDeviceContext(),
+          label + " should clear the active execution context after training");
     Check(completed, label + " should run completion callback");
     Check(final_metrics.is_complete, label + " should mark training complete");
     Check(!final_metrics.is_training, label + " should clear training state");
@@ -730,6 +800,505 @@ void RunExecutor(cyxwiz::TrainingExecutor& executor,
           label + " final train loss should be finite");
     Check(std::isfinite(final_metrics.val_loss),
           label + " final validation loss should be finite");
+}
+
+#ifndef NDEBUG
+void TestAllowedTrainingRecordsForcedLinearFallback(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const cyxwiz::TrainingConfiguration& config) {
+    if (!cyxwiz::IsCurrentArrayFireBackendAvailable()) {
+        return;
+    }
+
+    ScopedEnvVar env(kForceFallbackEnv, "LinearLayer::Forward");
+    auto allowed_config = config;
+    allowed_config.forbid_native_cpu_fallback = false;
+    cyxwiz::TrainingExecutor executor(allowed_config, dataset, "label");
+
+    bool completed = false;
+    executor.Train(
+        1,
+        2,
+        nullptr,
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            completed = metrics.is_complete;
+        });
+
+    Check(completed,
+          "allowed fallback training should finish with native CPU fallback");
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(trace.available, "allowed fallback training should leave a trace");
+    Check(trace.native_cpu_fallback_count > 0,
+          "allowed fallback training should record native CPU fallback count");
+    Check(trace.residency_verdict == "native_cpu_fallback_observed",
+          "allowed fallback training should record fallback residency verdict");
+
+    bool saw_linear_forward = false;
+    int execution_context_bind_count = 0;
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "ExecutionDeviceContext.Bind") {
+            ++execution_context_bind_count;
+            Check(event.status == "ok",
+                  "execution context bind should be valid");
+            Check(event.execution_platform == "arrayfire",
+                  "execution context should record ArrayFire platform");
+            Check(!event.requested_backend.empty(),
+                  "execution context should record requested backend");
+            Check(!event.effective_backend.empty(),
+                  "execution context should record effective backend");
+            Check(event.requested_backend == event.effective_backend,
+                  "current run context should bind requested/effective backend");
+            Check(!event.execution_context_id.empty(),
+                  "execution context should record stable identity");
+            Check(event.capability_generation > 0,
+                  "execution context should record capability generation");
+            Check(event.fallback_policy == "allow_native_cpu_fallback",
+                  "execution context should record fallback policy");
+        }
+        if (!event.native_cpu_fallback) {
+            continue;
+        }
+        if (event.fallback_operation == "LinearLayer::Forward") {
+            saw_linear_forward = true;
+            Check(event.status == "warning",
+                  "allowed fallback event should be a warning");
+            Check(event.fallback_target == "native_cpu",
+                  "fallback target should distinguish native CPU");
+            Check(event.fallback_policy == "allow_native_cpu_fallback",
+                  "allowed fallback event should record allow policy");
+            Check(!event.compute_backend.empty(),
+                  "fallback event should record selected ArrayFire backend");
+        }
+    }
+    Check(execution_context_bind_count == 1,
+          "training trace should record one execution device context bind");
+    Check(saw_linear_forward,
+          "allowed fallback trace should name Linear forward");
+}
+
+void TestStrictTrainingRejectsForcedLinearFallback(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const cyxwiz::TrainingConfiguration& config) {
+    if (!cyxwiz::IsCurrentArrayFireBackendAvailable()) {
+        return;
+    }
+
+    ScopedEnvVar env(kForceFallbackEnv, "LinearLayer::Forward");
+    auto strict_config = config;
+    strict_config.forbid_native_cpu_fallback = true;
+    cyxwiz::TrainingExecutor executor(strict_config, dataset, "label");
+
+    bool threw = false;
+    try {
+        executor.Train(1, 2);
+    } catch (const std::runtime_error& e) {
+        threw = true;
+        const std::string message = e.what();
+        Check(message.find("LinearLayer::Forward") != std::string::npos,
+              "strict training fallback error should name Linear forward");
+        Check(message.find("native CPU fallback is forbidden") !=
+                  std::string::npos,
+              "strict training fallback error should forbid native CPU fallback");
+    }
+
+    Check(threw, "strict training should reject forced Linear fallback");
+    Check(!executor.IsTraining(),
+          "strict training fallback failure should clear training state");
+}
+
+void TestStrictTrainingSkipsFirstBatchDebugHostDump(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const cyxwiz::TrainingConfiguration& config) {
+    if (!cyxwiz::IsCurrentArrayFireBackendAvailable()) {
+        return;
+    }
+
+    auto strict_config = config;
+    strict_config.forbid_native_cpu_fallback = true;
+    cyxwiz::TrainingExecutor executor(strict_config, dataset, "label");
+
+    bool completed = false;
+    executor.Train(
+        1,
+        2,
+        nullptr,
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            completed = metrics.is_complete;
+        });
+
+    Check(completed,
+          "strict training should complete when supported operations stay ArrayFire-backed");
+
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    bool saw_skip_event = false;
+    bool saw_loss_boundary = false;
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "TrainingExecutor.DebugSampleDump") {
+            saw_skip_event = true;
+            Check(event.status == "ok",
+                  "debug sample dump skip should be recorded as an ok runtime event");
+            Check(event.message.find("strict ArrayFire residency") !=
+                      std::string::npos,
+                  "debug sample dump skip should explain strict residency");
+        }
+        if (event.stage == "TrainingExecutor.OutputBoundary" &&
+            event.message.find("loss_scalar_readback") != std::string::npos) {
+            saw_loss_boundary = true;
+            Check(event.status == "ok",
+                  "loss scalar output boundary should be an ok runtime event");
+            Check(event.message.find("not native CPU compute fallback") !=
+                      std::string::npos,
+                  "loss scalar output boundary should distinguish reporting from fallback");
+        }
+    }
+    Check(saw_skip_event,
+          "strict training should record skipped first-batch debug host dump");
+    Check(saw_loss_boundary,
+          "strict training should declare scalar loss readback boundary");
+}
+#endif
+
+void TestPendingExecutionDeviceSelectionAppliesAndClears(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const cyxwiz::TrainingConfiguration& config) {
+    auto* current_device = cyxwiz::Device::GetCurrentDevice();
+    if (current_device == nullptr) {
+        return;
+    }
+
+    cyxwiz::SetPendingExecutionDeviceSelection(
+        current_device->GetType(),
+        current_device->GetDeviceId());
+    Check(cyxwiz::GetPendingExecutionDeviceSelection().has_value(),
+          "pending execution device selection should be queued before training");
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    bool saw_batch = false;
+    executor.Train(
+        1,
+        2,
+        [&](int, int, int, float, float) {
+            Check(cyxwiz::HasActiveExecutionDeviceContext(),
+                  "pending device training should bind active context");
+            saw_batch = true;
+        },
+        nullptr,
+        nullptr);
+
+    Check(saw_batch,
+          "pending execution device selection should still allow training");
+    Check(!cyxwiz::GetPendingExecutionDeviceSelection().has_value(),
+          "pending execution device selection should clear after apply");
+}
+
+void TestPendingExecutionDeviceSelectionRejectsNonArrayFireBackends() {
+    bool rejected_metal = false;
+    try {
+        cyxwiz::SetPendingExecutionDeviceSelection(
+            cyxwiz::DeviceType::METAL,
+            0);
+    } catch (const std::invalid_argument&) {
+        rejected_metal = true;
+    }
+    Check(rejected_metal,
+          "pending execution device selection should reject Metal as non-ArrayFire");
+
+    bool rejected_vulkan = false;
+    try {
+        cyxwiz::SetPendingExecutionDeviceSelection(
+            cyxwiz::DeviceType::VULKAN,
+            0);
+    } catch (const std::invalid_argument&) {
+        rejected_vulkan = true;
+    }
+    Check(rejected_vulkan,
+          "pending execution device selection should reject Vulkan as non-ArrayFire");
+}
+
+std::optional<cyxwiz::DeviceInfo> FirstDeviceOfType(
+    const std::vector<cyxwiz::DeviceInfo>& devices,
+    cyxwiz::DeviceType type) {
+    for (const auto& device : devices) {
+        if (device.type == type) {
+            return device;
+        }
+    }
+    return std::nullopt;
+}
+
+#ifndef NDEBUG
+void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const cyxwiz::TrainingConfiguration& config) {
+    const auto devices = cyxwiz::Device::GetAvailableDevices();
+    const auto cpu = FirstDeviceOfType(devices, cyxwiz::DeviceType::CPU);
+    Check(cpu.has_value(),
+          "strict ArrayFire CPU regression requires ArrayFire CPU discovery");
+
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(
+        cyxwiz::DeviceType::CPU,
+        cpu->device_id);
+
+    auto strict_config = config;
+    strict_config.forbid_native_cpu_fallback = true;
+    cyxwiz::TrainingExecutor executor(strict_config, dataset, "label");
+
+    bool completed = false;
+    executor.Train(
+        1,
+        2,
+        nullptr,
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            completed = metrics.is_complete;
+        });
+
+    Check(completed,
+          "strict ArrayFire CPU dense training should complete");
+    Check(!cyxwiz::GetPendingExecutionDeviceSelection().has_value(),
+          "strict ArrayFire CPU run should consume pending selection");
+
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(trace.native_cpu_fallback_count == 0,
+          "strict ArrayFire CPU dense training should record zero native CPU fallback events");
+    Check(trace.residency_verdict ==
+              "strict_arrayfire_declared_boundaries",
+          "strict ArrayFire CPU run should record strict residency verdict");
+    Check(trace.execution_platform == "arrayfire",
+          "strict ArrayFire CPU summary should record ArrayFire platform");
+    Check(trace.requested_backend == "arrayfire_cpu",
+          "strict ArrayFire CPU summary should record requested CPU backend");
+    Check(trace.effective_backend == "arrayfire_cpu",
+          "strict ArrayFire CPU summary should record effective CPU backend");
+    Check(trace.fallback_policy == "forbid_native_cpu_fallback",
+          "strict ArrayFire CPU summary should record strict fallback policy");
+    Check(trace.declared_output_boundary_count > 0,
+          "strict ArrayFire CPU summary should count declared output boundaries");
+    Check(trace.arrayfire_host_sync_count > 0,
+          "strict ArrayFire CPU summary should count ArrayFire host synchronizations");
+    Check(trace.arrayfire_host_sync_bytes > 0,
+          "strict ArrayFire CPU summary should count ArrayFire host synchronization bytes");
+    Check(trace.transfer_event_count >= trace.arrayfire_host_sync_count,
+          "strict ArrayFire CPU summary should count transfer events");
+    Check(trace.transfer_known_bytes >= trace.arrayfire_host_sync_bytes,
+          "strict ArrayFire CPU summary should count known transfer bytes");
+    Check(trace.transfer_summary.find("arrayfire_to_host") !=
+              std::string::npos,
+          "strict ArrayFire CPU summary should explain transfer modes and reasons");
+    Check(trace.synchronization_event_count == trace.arrayfire_host_sync_count,
+          "strict ArrayFire CPU summary should count synchronization events");
+    Check(trace.synchronization_known_bytes == trace.arrayfire_host_sync_bytes,
+          "strict ArrayFire CPU summary should count synchronization bytes");
+    Check(trace.synchronization_summary.find("tensor_host_materialization") !=
+              std::string::npos,
+          "strict ArrayFire CPU summary should explain synchronization reasons");
+    Check(!trace.placement_fingerprint.empty(),
+          "strict ArrayFire CPU summary should record placement fingerprint");
+    Check(trace.placement_entry_count >
+              static_cast<uint64_t>(strict_config.backend_placements.size()),
+          "strict ArrayFire CPU summary should add dense runtime placement entries");
+    Check(!trace.placement_summary.empty(),
+          "strict ArrayFire CPU summary should record placement summary");
+    Check(trace.placement_summary.find("=gpu(") == std::string::npos,
+          "strict ArrayFire CPU placement must not retain stale GPU entries");
+    Check(trace.placement_summary.find("=arrayfire_cpu(") !=
+              std::string::npos,
+          "strict ArrayFire CPU placement should resolve compiler entries to the bound backend");
+    Check(trace.placement_summary.find("dataset_ingress") !=
+              std::string::npos,
+          "placement summary should include dataset ingress");
+    Check(trace.placement_summary.find("ModelForward.Dense") !=
+              std::string::npos,
+          "placement summary should include dense forward");
+    Check(trace.placement_summary.find("Loss.") != std::string::npos,
+          "placement summary should include loss stage");
+    Check(trace.placement_summary.find("metrics") != std::string::npos,
+          "placement summary should include metrics stage");
+    Check(trace.placement_summary.find("optimizer") != std::string::npos,
+          "placement summary should include optimizer stage");
+    Check(trace.placement_summary.find("loss_scalar_readback") !=
+              std::string::npos,
+          "placement summary should include declared scalar output boundary");
+
+    bool saw_cpu_bind = false;
+    bool saw_placement_plan = false;
+    bool saw_cpu_stage = false;
+    bool saw_host_sync = false;
+    for (const auto& event : trace.recent_events) {
+        if (!event.stage_backend.empty()) {
+            Check(event.stage_backend == "arrayfire_cpu",
+                  "active run events should record ArrayFire CPU stage backend");
+            Check(event.stage_device_id == cpu->device_id,
+                  "active run events should record ArrayFire CPU stage device id");
+            if (event.stage != "ExecutionDeviceContext.Bind") {
+                saw_cpu_stage = true;
+            }
+        }
+        if (event.stage == "TrainingExecutor.PlacementPlan") {
+            saw_placement_plan = true;
+            Check(event.placement_fingerprint == trace.placement_fingerprint,
+                  "placement plan event should match summary fingerprint");
+            Check(event.placement_entry_count ==
+                      trace.placement_entry_count,
+                  "placement plan event should match summary entry count");
+            Check(event.placement_summary == trace.placement_summary,
+                  "placement plan event should match summary placement text");
+        }
+        if (event.stage == "ArrayFire.HostSync") {
+            saw_host_sync = true;
+            Check(event.transfer_mode == "arrayfire_to_host",
+                  "host sync event should identify ArrayFire-to-host transfer mode");
+            Check(event.arrayfire_host_sync_bytes > 0,
+                  "host sync event should record byte count");
+        }
+        if (event.stage != "ExecutionDeviceContext.Bind") {
+            continue;
+        }
+        saw_cpu_bind = true;
+        Check(event.execution_platform == "arrayfire",
+              "strict CPU run should bind the ArrayFire platform");
+        Check(event.requested_backend == "arrayfire_cpu",
+              "strict CPU run should record requested ArrayFire CPU backend");
+        Check(event.effective_backend == "arrayfire_cpu",
+              "strict CPU run should activate ArrayFire CPU backend");
+        Check(event.requested_device_id == cpu->device_id,
+              "strict CPU run should record requested CPU device id");
+        Check(event.effective_device_id == cpu->device_id,
+              "strict CPU run should record effective CPU device id");
+        Check(event.fallback_policy == "forbid_native_cpu_fallback",
+              "strict CPU run should record forbidden native CPU fallback policy");
+    }
+    Check(saw_cpu_bind,
+          "strict ArrayFire CPU run should record execution context bind");
+    Check(saw_placement_plan,
+          "strict ArrayFire CPU run should record placement plan fingerprint");
+    Check(saw_cpu_stage,
+          "strict ArrayFire CPU run should record stage backend/device fields");
+    Check(saw_host_sync,
+          "strict ArrayFire CPU run should record at least one host sync event");
+
+    const auto persisted_trace =
+        cyxwiz::TrainingTraceCollector::LoadLastTrace();
+    Check(persisted_trace.has_value(),
+          "strict ArrayFire CPU run should persist the training trace");
+    if (persisted_trace.has_value()) {
+        Check(persisted_trace->transfer_event_count ==
+                  trace.transfer_event_count,
+              "persisted trace should preserve transfer event count");
+        Check(persisted_trace->transfer_known_bytes ==
+                  trace.transfer_known_bytes,
+              "persisted trace should preserve known transfer bytes");
+        Check(persisted_trace->transfer_summary == trace.transfer_summary,
+              "persisted trace should preserve transfer summary");
+        Check(persisted_trace->synchronization_event_count ==
+                  trace.synchronization_event_count,
+              "persisted trace should preserve synchronization event count");
+        Check(persisted_trace->synchronization_known_bytes ==
+                  trace.synchronization_known_bytes,
+              "persisted trace should preserve synchronization bytes");
+        Check(persisted_trace->synchronization_summary ==
+                  trace.synchronization_summary,
+              "persisted trace should preserve synchronization summary");
+    }
+
+    auto* active_device = cyxwiz::Device::GetCurrentDevice();
+    Check(active_device != nullptr,
+          "strict ArrayFire CPU run should leave runtime device queryable");
+    Check(active_device->GetType() == cyxwiz::DeviceType::CPU,
+          "strict ArrayFire CPU run should leave ArrayFire CPU active");
+    Check(active_device->GetDeviceId() == cpu->device_id,
+          "strict ArrayFire CPU run should leave selected CPU device active");
+}
+#endif
+
+void TestTrainingDeviceSelectionSwitchesBetweenRuns(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const cyxwiz::TrainingConfiguration& config) {
+    const auto devices = cyxwiz::Device::GetAvailableDevices();
+    const auto cpu = FirstDeviceOfType(devices, cyxwiz::DeviceType::CPU);
+    Check(cpu.has_value(),
+          "device switching regression requires ArrayFire CPU discovery");
+
+    std::vector<cyxwiz::DeviceInfo> run_order;
+    run_order.push_back(*cpu);
+
+    const auto cuda = FirstDeviceOfType(devices, cyxwiz::DeviceType::CUDA);
+    if (cuda.has_value()) {
+        run_order.push_back(*cuda);
+        run_order.push_back(*cpu);
+    }
+
+    const auto oneapi = FirstDeviceOfType(devices, cyxwiz::DeviceType::ONEAPI);
+    if (oneapi.has_value()) {
+        run_order.push_back(*oneapi);
+        run_order.push_back(*cpu);
+    }
+
+    const auto opencl = FirstDeviceOfType(devices, cyxwiz::DeviceType::OPENCL);
+    if (opencl.has_value()) {
+        run_order.push_back(*opencl);
+        run_order.push_back(*cpu);
+    }
+
+    if (run_order.size() <= 1) {
+        return;
+    }
+
+    for (const auto& selection : run_order) {
+        cyxwiz::ClearPendingExecutionDeviceSelection();
+        cyxwiz::SetPendingExecutionDeviceSelection(
+            selection.type,
+            selection.device_id);
+
+        cyxwiz::TrainingExecutor executor(config, dataset, "label");
+        bool saw_batch = false;
+        executor.Train(
+            1,
+            2,
+            [&](int, int, int, float, float) {
+                Check(cyxwiz::HasActiveExecutionDeviceContext(),
+                      "device switch run should bind active context");
+                saw_batch = true;
+            },
+            nullptr,
+            nullptr);
+        Check(saw_batch,
+              "device switch run should execute at least one training batch");
+
+        const std::string expected_backend =
+            cyxwiz::ExecutionDeviceSelectionBackendName(selection.type);
+        const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+        bool saw_bind = false;
+        for (const auto& event : trace.recent_events) {
+            if (event.stage != "ExecutionDeviceContext.Bind") {
+                continue;
+            }
+            saw_bind = true;
+            Check(event.requested_backend == expected_backend,
+                  "device switch bind should record requested backend");
+            Check(event.requested_device_id == selection.device_id,
+                  "device switch bind should record requested device id");
+            Check(event.effective_backend == expected_backend,
+                  "device switch bind should activate requested backend");
+            Check(event.effective_device_id == selection.device_id,
+                  "device switch bind should activate requested device id");
+        }
+        Check(saw_bind,
+              "device switch run should record execution context bind");
+
+        auto* active_device = cyxwiz::Device::GetCurrentDevice();
+        Check(active_device != nullptr,
+              "device switch run should leave ArrayFire runtime queryable");
+        Check(active_device->GetType() == selection.type,
+              "device switch run should leave selected backend active");
+        Check(active_device->GetDeviceId() == selection.device_id,
+              "device switch run should leave selected device active");
+        Check(!cyxwiz::GetPendingExecutionDeviceSelection().has_value(),
+              "device switch run should clear pending selection");
+    }
 }
 
 void TestObjectiveAwareRegressionMetrics(
@@ -778,6 +1347,40 @@ void TestObjectiveAwareRegressionMetrics(
               "regression train accuracy should remain unset");
     CheckNear(final_metrics.val_accuracy, 0.0, 0.0,
               "regression validation accuracy should remain unset");
+
+#ifndef NDEBUG
+    if (cyxwiz::IsCurrentArrayFireBackendAvailable()) {
+        auto strict_config = MakeRegressionConfig(
+            checkpoint_dir / "strict_residency");
+        strict_config.forbid_native_cpu_fallback = true;
+
+        cyxwiz::TrainingExecutor strict_executor(
+            strict_config, dataset, "target");
+        bool strict_completed = false;
+        cyxwiz::TrainingMetrics strict_metrics;
+        strict_executor.Train(
+            1,
+            2,
+            nullptr,
+            nullptr,
+            [&](const cyxwiz::TrainingMetrics& metrics) {
+                strict_metrics = metrics;
+                strict_completed = true;
+            });
+
+        Check(strict_completed,
+              "strict regression executor should complete with ArrayFire metrics");
+        Check(std::isfinite(strict_metrics.train_mae),
+              "strict regression train MAE should be finite");
+        Check(std::isfinite(strict_metrics.val_rmse),
+              "strict regression validation RMSE should be finite");
+
+        const auto trace =
+            cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+        Check(trace.native_cpu_fallback_count == 0,
+              "strict regression metrics should not use native CPU fallback");
+    }
+#endif
 }
 
 void TestRegressionMetricAccumulator(
@@ -886,6 +1489,16 @@ int main() {
         MakeTrainingTable(), "training_executor_arrow");
     const auto config = MakeConfig(work_dir / "checkpoints");
     TestArrowDataLoaderSeedDeterminism(dataset);
+
+#ifndef NDEBUG
+    TestAllowedTrainingRecordsForcedLinearFallback(dataset, config);
+    TestStrictTrainingRejectsForcedLinearFallback(dataset, config);
+    TestStrictTrainingSkipsFirstBatchDebugHostDump(dataset, config);
+    TestStrictArrayFireCpuDenseTrainingDoesNotFallback(dataset, config);
+#endif
+    TestPendingExecutionDeviceSelectionAppliesAndClears(dataset, config);
+    TestPendingExecutionDeviceSelectionRejectsNonArrayFireBackends();
+    TestTrainingDeviceSelectionSwitchesBetweenRuns(dataset, config);
 
     {
         auto sequence_config = config;

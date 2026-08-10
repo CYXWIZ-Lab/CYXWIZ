@@ -319,7 +319,7 @@ inline BackendPlacementEntry BuildArrayFireTensorPlacement(
         placement.observation_probe_scope = cached_observation.probe_scope;
         placement.explanation =
             std::string(placement.node_type) +
-            " is expected to run on CPU because a previous runtime fallback "
+            " is expected to run on native CPU because a previous runtime fallback "
             "observation for this exact backend/device/dtype/shape reported "
             "a backend failure (reason=" + cached_observation.reason_code +
             ", source=" + cached_observation.source + "). Device: " +
@@ -327,15 +327,15 @@ inline BackendPlacementEntry BuildArrayFireTensorPlacement(
             cached_observation.shape_signature + ".";
         placement.suggested_action =
             "Training can continue. Inspect the fallback reason and reduce "
-            "batch size/features or use CPU for this tensor-layer shape until the "
-            "backend path is fixed.";
+            "batch size/features or use the ArrayFire CPU backend for this "
+            "tensor-layer shape until the backend path is fixed.";
     } else {
         placement.explanation =
             std::string(placement.node_type) +
             " is compiled as a standard tensor/model layer. The runtime can "
             "execute supported dtype/shape paths on the active ArrayFire backend "
-            "and uses the normal CPU fallback when ArrayFire is unavailable, the "
-            "dtype or shape is unsupported, or a backend operation fails.";
+            "and may use a recorded native CPU fallback when the dtype or shape "
+            "is unsupported, or a backend operation fails.";
         placement.suggested_action = "No action needed.";
     }
     return placement;
@@ -379,7 +379,8 @@ inline BackendPlacementEntry BuildUnclassifiedPlacement(
         std::string(placement.node_type) +
         " is compiled, but the compiler does not yet have a precise backend "
         "capability rule for this node type. Runtime will execute through the "
-        "existing model path and may use the active backend or CPU fallback.";
+        "existing model path and may use the active backend or a recorded "
+        "native CPU fallback.";
     placement.suggested_action =
         "No action needed unless training is slow; this node type should be "
         "classified in the backend capability registry.";

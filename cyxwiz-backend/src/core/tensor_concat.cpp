@@ -87,6 +87,37 @@ bool IsArrayFire2DStackSupported(const std::vector<Tensor>& tensors,
     return true;
 }
 
+std::vector<std::vector<size_t>> BuildInputShapes(
+    const std::vector<Tensor>& tensors) {
+    std::vector<std::vector<size_t>> input_shapes;
+    input_shapes.reserve(tensors.size());
+    for (const Tensor& tensor : tensors) {
+        input_shapes.push_back(tensor.Shape());
+    }
+    return input_shapes;
+}
+
+std::vector<size_t> BuildStackOutputShape1D(size_t tensor_count,
+                                            size_t length,
+                                            int axis) {
+    return axis == 0
+        ? std::vector<size_t>{tensor_count, length}
+        : std::vector<size_t>{length, tensor_count};
+}
+
+std::vector<size_t> BuildStackOutputShape2D(size_t tensor_count,
+                                            size_t rows,
+                                            size_t cols,
+                                            int axis) {
+    if (axis == 0) {
+        return {tensor_count, rows, cols};
+    }
+    if (axis == 1) {
+        return {rows, tensor_count, cols};
+    }
+    return {rows, cols, tensor_count};
+}
+
 af::array ExpandRowMajor2DTo3D(const af::array& input,
                                size_t dim0,
                                size_t dim1,
@@ -153,16 +184,17 @@ Tensor Tensor::Cat(const std::vector<Tensor>& tensors, int dim) {
             for (const Tensor& tensor : tensors) {
                 input_shapes.push_back(tensor.Shape());
             }
-            tensor_backend_observation::RecordArrayFireFallback(
-                "Tensor::Cat",
-                tensor_backend_observation::DataTypeName(dtype),
-                tensor_backend_observation::BuildTensorOpSignature(
-                    input_shapes,
-                    out_shape,
-                    dtype,
-                    "dim=" + std::to_string(axis)),
-                e.what());
-            spdlog::warn("Tensor::Cat: ArrayFire concat failed, falling back to CPU: {}", e.what());
+            spdlog::warn(
+                "{}",
+                tensor_backend_observation::RecordArrayFireFallback(
+                    "Tensor::Cat",
+                    tensor_backend_observation::DataTypeName(dtype),
+                    tensor_backend_observation::BuildTensorOpSignature(
+                        input_shapes,
+                        out_shape,
+                        dtype,
+                        "dim=" + std::to_string(axis)),
+                    e.what()));
         }
     }
 #endif
@@ -224,7 +256,20 @@ Tensor Tensor::Stack(const std::vector<Tensor>& tensors, int dim) {
             }
             return Tensor::FromArrayRowMajor2D(joined);
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Stack: ArrayFire 1D stack failed, falling back to CPU: {}", e.what());
+            spdlog::warn(
+                "{}",
+                tensor_backend_observation::RecordArrayFireFallback(
+                    "Tensor::Stack",
+                    tensor_backend_observation::DataTypeName(dtype),
+                    tensor_backend_observation::BuildTensorOpSignature(
+                        BuildInputShapes(tensors),
+                        BuildStackOutputShape1D(
+                            tensors.size(),
+                            tensors.front().Shape()[0],
+                            axis),
+                        dtype,
+                        "dim=" + std::to_string(axis) + ";rank=1"),
+                    e.what()));
         }
     }
 
@@ -253,7 +298,21 @@ Tensor Tensor::Stack(const std::vector<Tensor>& tensors, int dim) {
             }
             return Tensor::FromArrayRowMajor3D(joined);
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Stack: ArrayFire 2D stack failed, falling back to CPU: {}", e.what());
+            spdlog::warn(
+                "{}",
+                tensor_backend_observation::RecordArrayFireFallback(
+                    "Tensor::Stack",
+                    tensor_backend_observation::DataTypeName(dtype),
+                    tensor_backend_observation::BuildTensorOpSignature(
+                        BuildInputShapes(tensors),
+                        BuildStackOutputShape2D(
+                            tensors.size(),
+                            tensors.front().Shape()[0],
+                            tensors.front().Shape()[1],
+                            axis),
+                        dtype,
+                        "dim=" + std::to_string(axis) + ";rank=2"),
+                    e.what()));
         }
     }
 #endif

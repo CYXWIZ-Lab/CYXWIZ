@@ -6,6 +6,7 @@
 #include <mutex>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -16,6 +17,12 @@ namespace {
 
 std::mutex g_backend_fallback_log_mutex;
 std::set<std::string> g_backend_fallback_log_keys;
+thread_local ArrayFireFallbackPolicy g_arrayfire_fallback_policy =
+    ArrayFireFallbackPolicy::AllowNativeCpuFallback;
+thread_local ArrayFireNativeCpuFallbackObserver
+    g_arrayfire_native_cpu_fallback_observer = nullptr;
+thread_local ArrayFireHostSyncObserver
+    g_arrayfire_host_sync_observer = nullptr;
 
 std::string ToLowerAscii(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
@@ -35,6 +42,69 @@ bool ContainsAny(const std::string& text,
 }
 
 } // namespace
+
+ArrayFireFallbackPolicy GetArrayFireFallbackPolicy() {
+    return g_arrayfire_fallback_policy;
+}
+
+void SetArrayFireFallbackPolicy(ArrayFireFallbackPolicy policy) {
+    g_arrayfire_fallback_policy = policy;
+}
+
+ScopedArrayFireFallbackPolicy::ScopedArrayFireFallbackPolicy(
+    ArrayFireFallbackPolicy policy)
+    : previous_(GetArrayFireFallbackPolicy()) {
+    SetArrayFireFallbackPolicy(policy);
+}
+
+ScopedArrayFireFallbackPolicy::~ScopedArrayFireFallbackPolicy() {
+    SetArrayFireFallbackPolicy(previous_);
+}
+
+ScopedArrayFireNativeCpuFallbackObserver::
+    ScopedArrayFireNativeCpuFallbackObserver(
+        ArrayFireNativeCpuFallbackObserver observer)
+    : previous_(GetArrayFireNativeCpuFallbackObserver()) {
+    SetArrayFireNativeCpuFallbackObserver(observer);
+}
+
+ScopedArrayFireNativeCpuFallbackObserver::
+    ~ScopedArrayFireNativeCpuFallbackObserver() {
+    SetArrayFireNativeCpuFallbackObserver(previous_);
+}
+
+ScopedArrayFireHostSyncObserver::ScopedArrayFireHostSyncObserver(
+    ArrayFireHostSyncObserver observer)
+    : previous_(GetArrayFireHostSyncObserver()) {
+    SetArrayFireHostSyncObserver(observer);
+}
+
+ScopedArrayFireHostSyncObserver::~ScopedArrayFireHostSyncObserver() {
+    SetArrayFireHostSyncObserver(previous_);
+}
+
+bool IsArrayFireNativeCpuFallbackForbidden() {
+    return GetArrayFireFallbackPolicy() ==
+           ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+}
+
+ArrayFireNativeCpuFallbackObserver
+GetArrayFireNativeCpuFallbackObserver() {
+    return g_arrayfire_native_cpu_fallback_observer;
+}
+
+void SetArrayFireNativeCpuFallbackObserver(
+    ArrayFireNativeCpuFallbackObserver observer) {
+    g_arrayfire_native_cpu_fallback_observer = observer;
+}
+
+ArrayFireHostSyncObserver GetArrayFireHostSyncObserver() {
+    return g_arrayfire_host_sync_observer;
+}
+
+void SetArrayFireHostSyncObserver(ArrayFireHostSyncObserver observer) {
+    g_arrayfire_host_sync_observer = observer;
+}
 
 const char* BackendFallbackReasonName(BackendFallbackReason reason) {
     switch (reason) {
@@ -157,6 +227,8 @@ std::string CurrentArrayFireBackendName() {
             return "cuda";
         case AF_BACKEND_OPENCL:
             return "opencl";
+        case AF_BACKEND_ONEAPI:
+            return "oneapi";
         case AF_BACKEND_CPU:
             return "cpu";
         default:
@@ -175,6 +247,22 @@ bool IsCurrentArrayFireBackendGpu() {
     try {
         const af::Backend backend = af::getActiveBackend();
         return backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL;
+    } catch (...) {
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+
+bool IsCurrentArrayFireBackendAvailable() {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::Backend backend = af::getActiveBackend();
+        return backend == AF_BACKEND_CUDA ||
+               backend == AF_BACKEND_OPENCL ||
+               backend == AF_BACKEND_ONEAPI ||
+               backend == AF_BACKEND_CPU;
     } catch (...) {
         return false;
     }
@@ -204,7 +292,7 @@ std::string BuildArrayFireBackendFallbackMessage(
     std::string message = std::string("ArrayFire ") +
         (operation_name ? operation_name : "operation") +
         " failed (reason=" + BackendFallbackReasonName(reason) +
-        "); falling back to CPU. Training continues, but this path may be slower.";
+        "); falling back to native CPU. Training continues, but this path may be slower.";
     if (!context.empty()) {
         message += " Context: ";
         message += context;
@@ -216,6 +304,42 @@ std::string BuildArrayFireBackendFallbackMessage(
         message += error_message;
     }
     return message;
+}
+
+void ThrowIfArrayFireNativeCpuFallbackForbidden(
+    const char* operation_name,
+    BackendFallbackReason reason,
+    const char* error_message,
+    const std::string& context) {
+    if (const auto observer = GetArrayFireNativeCpuFallbackObserver()) {
+        ArrayFireNativeCpuFallbackEvent event;
+        event.operation_name = operation_name ? operation_name : "operation";
+        event.reason_code = BackendFallbackReasonName(reason);
+        event.selected_backend = CurrentArrayFireBackendName();
+        event.context = context;
+        event.error_message = error_message ? error_message : "";
+        event.fallback_forbidden = IsArrayFireNativeCpuFallbackForbidden();
+        observer(event);
+    }
+
+    if (!IsArrayFireNativeCpuFallbackForbidden()) {
+        return;
+    }
+
+    std::string message = std::string("ArrayFire ") +
+        (operation_name ? operation_name : "operation") +
+        " failed (reason=" + BackendFallbackReasonName(reason) +
+        "); native CPU fallback is forbidden by the current execution policy.";
+    if (!context.empty()) {
+        message += " Context: ";
+        message += context;
+        message += ".";
+    }
+    if (error_message != nullptr && error_message[0] != '\0') {
+        message += " Error: ";
+        message += error_message;
+    }
+    throw std::runtime_error(message);
 }
 
 bool ShouldLogArrayFireBackendFallbackOnce(

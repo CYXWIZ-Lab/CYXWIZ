@@ -42,13 +42,18 @@ static void LogEmbeddingFallbackOnce(
         context);
     RecordBackendPlacementObservationForActiveDevice(
         "Embedding",
-        "cuda",
+        CurrentArrayFireBackendName(),
         "int32",
         BuildEmbeddingPlacementShapeSignature(
             num_embeddings, embedding_dim, tensor.Shape(), "int32"),
         BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
         message);
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
         spdlog::warn("{}", message);
     }

@@ -21,7 +21,7 @@ inline const char* DataTypeName(DataType dtype) {
     return "unknown";
 }
 
-inline void RecordArrayFireFallback(
+inline std::string RecordArrayFireFallback(
     const char* operation_name,
     const std::string& dtype,
     const std::string& shape_signature,
@@ -38,12 +38,18 @@ inline void RecordArrayFireFallback(
         context);
     RecordBackendPlacementObservationForActiveDevice(
         operation_name,
-        "cuda",
+        CurrentArrayFireBackendName(),
         dtype,
         shape_signature,
         BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
         message);
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
+    return message;
 }
 
 inline std::string BuildTensorOpSignature(

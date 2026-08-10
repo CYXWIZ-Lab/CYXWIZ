@@ -1,6 +1,7 @@
 #include "cyxwiz/tensor.h"
 #include "cyxwiz/device.h"
 #include "cyxwiz/memory_manager.h"
+#include "tensor_backend_observation_utils.h"
 #include "tensor_utils.h"
 #include <stdexcept>
 #include <cstring>
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <new>
 #include <random>
+#include <string>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -127,6 +129,59 @@ void FillRandomCpu(Tensor& tensor, std::mt19937& engine) {
         }
     }
 }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+void RecordTensorCoreArrayFireFallback(
+    const char* operation_name,
+    const Tensor& input,
+    const std::vector<size_t>& output_shape,
+    const std::string& attributes,
+    const char* error_message) {
+    tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(input.GetDataType()),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {input.Shape()},
+            output_shape,
+            input.GetDataType(),
+            attributes),
+        error_message);
+}
+
+void RecordTensorCoreCreationArrayFireFallback(
+    const char* operation_name,
+    const std::vector<size_t>& shape,
+    DataType dtype,
+    const std::string& attributes,
+    const char* error_message) {
+    tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(dtype),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {},
+            shape,
+            dtype,
+            attributes),
+        error_message);
+}
+
+void RecordTensorCoreBinaryArrayFireFallback(
+    const char* operation_name,
+    const Tensor& left,
+    const Tensor& right,
+    const std::string& attributes,
+    const char* error_message) {
+    tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(left.GetDataType()),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {left.Shape(), right.Shape()},
+            left.Shape(),
+            left.GetDataType(),
+            attributes),
+        error_message);
+}
+#endif
 
 } // namespace
 
@@ -494,6 +549,33 @@ void Tensor::EnsureHostCurrent() const {
         }
     }
     host_current_ = true;
+    if (const auto observer = GetArrayFireHostSyncObserver()) {
+        const auto layout_name = [this]() {
+            switch (device_layout_) {
+                case TensorDeviceLayout::ArrayFireNative:
+                    return "arrayfire_native";
+                case TensorDeviceLayout::RowMajor2D:
+                    return "row_major_2d";
+                case TensorDeviceLayout::RowMajor3D:
+                    return "row_major_3d";
+                case TensorDeviceLayout::None:
+                    return "none";
+            }
+            return "unknown";
+        };
+        ArrayFireHostSyncEvent event;
+        event.operation_name = "Tensor::EnsureHostCurrent";
+        event.selected_backend = CurrentArrayFireBackendName();
+        event.reason_code = "tensor_host_materialization";
+        event.context =
+            BuildTensorShapeContext("tensor", shape_) +
+            "; dtype=" +
+            tensor_backend_observation::DataTypeName(dtype_) +
+            "; layout=" +
+            layout_name();
+        event.bytes = static_cast<uint64_t>(bytes);
+        observer(event);
+    }
 }
 
 void Tensor::MarkHostModified() const {
@@ -558,7 +640,12 @@ Tensor Tensor::Zeros(const std::vector<size_t>& shape, DataType dtype) {
 
         return Tensor(zeros_arr);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire zeros creation failed, using CPU: {}", e.what());
+        RecordTensorCoreCreationArrayFireFallback(
+            "Tensor::Zeros",
+            shape,
+            dtype,
+            "op=zeros",
+            e.what());
     }
 #endif
 
@@ -581,7 +668,12 @@ Tensor Tensor::Ones(const std::vector<size_t>& shape, DataType dtype) {
 
         return Tensor(ones_arr);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire ones creation failed, using CPU: {}", e.what());
+        RecordTensorCoreCreationArrayFireFallback(
+            "Tensor::Ones",
+            shape,
+            dtype,
+            "op=ones",
+            e.what());
     }
 #endif
 
@@ -646,7 +738,12 @@ Tensor Tensor::Random(const std::vector<size_t>& shape, DataType dtype) {
 
         return Tensor(random_arr);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire random generation failed, using CPU: {}", e.what());
+        RecordTensorCoreCreationArrayFireFallback(
+            "Tensor::Random",
+            shape,
+            dtype,
+            "op=random",
+            e.what());
     }
 #endif
 
@@ -773,7 +870,12 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
             result.device_layout_ = TensorDeviceLayout::RowMajor2D;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Reshape: row-major 2D ArrayFire reshape failed, falling back to CPU: {}", e.what());
+            RecordTensorCoreArrayFireFallback(
+                "Tensor::Reshape",
+                *this,
+                new_shape,
+                "op=reshape;layout=row_major_2d",
+                e.what());
         }
     }
 
@@ -800,7 +902,12 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
             result.device_layout_ = TensorDeviceLayout::RowMajor3D;
             return result;
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Reshape: row-major 3D ArrayFire reshape failed, falling back to CPU: {}", e.what());
+            RecordTensorCoreArrayFireFallback(
+                "Tensor::Reshape",
+                *this,
+                new_shape,
+                "op=reshape;layout=row_major_3d",
+                e.what());
         }
     }
 #endif
@@ -818,7 +925,12 @@ Tensor Tensor::Transpose() const {
         try {
             return Tensor::FromArrayRowMajor2D(af::transpose(GetArrayRowMajor2D()));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Transpose: ArrayFire transpose failed, falling back to CPU: {}", e.what());
+            RecordTensorCoreArrayFireFallback(
+                "Tensor::Transpose",
+                *this,
+                {shape_[1], shape_[0]},
+                "op=transpose;rank=2",
+                e.what());
         }
     }
 #endif
@@ -901,7 +1013,12 @@ Tensor Tensor::operator+(const Tensor& other) const {
         try {
             return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() + other.GetArrayRowMajor2D());
         } catch (const af::exception& e) {
-            spdlog::warn("ArrayFire row-major addition failed, falling back to native/CPU: {}", e.what());
+            RecordTensorCoreBinaryArrayFireFallback(
+                "Tensor::operator+",
+                *this,
+                other,
+                "op=add;layout=row_major_2d",
+                e.what());
         }
     }
 
@@ -914,8 +1031,12 @@ Tensor Tensor::operator+(const Tensor& other) const {
 
         return Tensor(result_arr);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire operation failed, falling back to CPU: {}", e.what());
-        // Fall through to CPU implementation
+        RecordTensorCoreBinaryArrayFireFallback(
+            "Tensor::operator+",
+            *this,
+            other,
+            "op=add;layout=arrayfire_native",
+            e.what());
     }
 #endif
 
@@ -992,7 +1113,12 @@ Tensor Tensor::operator-(const Tensor& other) const {
 
         return Tensor(result_arr);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire subtraction failed, using CPU: {}", e.what());
+        RecordTensorCoreBinaryArrayFireFallback(
+            "Tensor::operator-",
+            *this,
+            other,
+            "op=subtract;layout=arrayfire_native",
+            e.what());
     }
 #endif
 
@@ -1065,7 +1191,12 @@ Tensor Tensor::operator*(const Tensor& other) const {
         try {
             return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() * other.GetArrayRowMajor2D());
         } catch (const af::exception& e) {
-            spdlog::warn("ArrayFire row-major multiplication failed, falling back to native/CPU: {}", e.what());
+            RecordTensorCoreBinaryArrayFireFallback(
+                "Tensor::operator*",
+                *this,
+                other,
+                "op=multiply;layout=row_major_2d",
+                e.what());
         }
     }
 
@@ -1077,7 +1208,12 @@ Tensor Tensor::operator*(const Tensor& other) const {
 
         return Tensor(result_arr);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire multiplication failed, using CPU: {}", e.what());
+        RecordTensorCoreBinaryArrayFireFallback(
+            "Tensor::operator*",
+            *this,
+            other,
+            "op=multiply;layout=arrayfire_native",
+            e.what());
     }
 #endif
 
@@ -1153,7 +1289,12 @@ Tensor Tensor::operator/(const Tensor& other) const {
 
         return Tensor(result_arr);
     } catch (const af::exception& e) {
-        spdlog::warn("ArrayFire division failed, using CPU: {}", e.what());
+        RecordTensorCoreBinaryArrayFireFallback(
+            "Tensor::operator/",
+            *this,
+            other,
+            "op=divide;layout=arrayfire_native",
+            e.what());
     }
 #endif
 

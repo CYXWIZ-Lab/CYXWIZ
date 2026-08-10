@@ -30,27 +30,12 @@
 
 namespace cyxwiz {
 
-// GPU availability check (cached)
-static bool s_use_gpu = false;
-static bool s_gpu_checked = false;
-
 static bool CheckGPUAvailable() {
-    if (s_gpu_checked) return s_use_gpu;
-    s_gpu_checked = true;
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
-        af::Backend backend = af::getActiveBackend();
-        s_use_gpu = (backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL);
-        if (s_use_gpu) {
-            spdlog::info("[ModelEvaluation] GPU acceleration enabled");
-        }
-    } catch (const af::exception& e) {
-        spdlog::warn("[ModelEvaluation] GPU check failed: {}", e.what());
-        s_use_gpu = false;
-    }
+    return IsCurrentArrayFireBackendGpu();
+#else
+    return false;
 #endif
-    return s_use_gpu;
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE

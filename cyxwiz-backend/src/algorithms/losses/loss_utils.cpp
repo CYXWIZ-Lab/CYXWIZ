@@ -332,7 +332,7 @@ void LogArrayFireLossFallbackOnce(
         context);
     RecordBackendPlacementObservationForActiveDevice(
         operation_name ? operation_name : "Loss",
-        "cuda",
+        CurrentArrayFireBackendName(),
         "float32",
         BuildLossPlacementShapeSignature(
             tensor.Shape(),
@@ -342,6 +342,11 @@ void LogArrayFireLossFallbackOnce(
         BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
         message);
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     const bool log_fallback =
         ShouldLogArrayFireBackendFallbackOnce(
             operation_name, reason, context);
@@ -371,7 +376,7 @@ void LogArrayFireLossFallbackOnce(
         context);
     RecordBackendPlacementObservationForActiveDevice(
         operation_name ? operation_name : "Loss",
-        "cuda",
+        CurrentArrayFireBackendName(),
         "float32",
         BuildLossPlacementShapeSignature(
             predictions.Shape(),
@@ -381,6 +386,11 @@ void LogArrayFireLossFallbackOnce(
         BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
         message);
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     const bool log_fallback =
         ShouldLogArrayFireBackendFallbackOnce(
             operation_name, reason, context);

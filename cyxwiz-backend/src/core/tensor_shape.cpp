@@ -1,9 +1,11 @@
 #include "cyxwiz/tensor.h"
+#include "tensor_backend_observation_utils.h"
 #include "tensor_utils.h"
 
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -11,6 +13,28 @@
 #endif
 
 namespace cyxwiz {
+
+namespace {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+void RecordShapeArrayFireFallback(const char* operation_name,
+                                  const Tensor& input,
+                                  const std::vector<size_t>& output_shape,
+                                  const std::string& attributes,
+                                  const char* error_message) {
+    tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(input.GetDataType()),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {input.Shape()},
+            output_shape,
+            input.GetDataType(),
+            attributes),
+        error_message);
+}
+#endif
+
+} // namespace
 
 Tensor Tensor::View(const std::vector<size_t>& new_shape) const {
     return Reshape(new_shape);
@@ -117,7 +141,13 @@ Tensor Tensor::Transpose(int dim0, int dim1) const {
         try {
             return Tensor::FromArrayRowMajor2D(af::transpose(GetArrayRowMajor2D()));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Transpose(dim0, dim1): ArrayFire transpose failed, falling back to CPU: {}", e.what());
+            RecordShapeArrayFireFallback(
+                "Tensor::Transpose(dim0, dim1)",
+                *this,
+                new_shape,
+                "op=transpose;dim0=" + std::to_string(first) +
+                    ";dim1=" + std::to_string(second),
+                e.what());
         }
     }
 #endif
@@ -187,7 +217,12 @@ Tensor Tensor::Permute(const std::vector<int>& dims) const {
         try {
             return Tensor::FromArrayRowMajor2D(af::transpose(GetArrayRowMajor2D()));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Permute: ArrayFire 2D transpose failed, falling back to CPU: {}", e.what());
+            RecordShapeArrayFireFallback(
+                "Tensor::Permute",
+                *this,
+                new_shape,
+                "op=permute;dims=1,0",
+                e.what());
         }
     }
 #endif

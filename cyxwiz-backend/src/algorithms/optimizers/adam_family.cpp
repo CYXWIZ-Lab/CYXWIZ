@@ -19,7 +19,7 @@ AdamOptimizer::AdamOptimizer(double learning_rate, double beta1, double beta2, d
     : beta1_(beta1), beta2_(beta2), epsilon_(epsilon) {
     learning_rate_ = learning_rate;
     step_count_ = 0;
-    optimizer_detail::OptimizerGpuAvailable();
+    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -47,7 +47,7 @@ void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (optimizer_detail::OptimizerGpuAvailable() && param.GetDataType() == DataType::Float32) {
+        if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
             try {
                 af::array param_gpu = param.GetArray();
                 af::array grad_gpu = grad.GetArray();
@@ -259,7 +259,7 @@ void AdamWOptimizer::Step(std::map<std::string, Tensor>& parameters,
             size_t num_elements = param.NumElements();
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-            if (optimizer_detail::OptimizerGpuAvailable() && param.GetDataType() == DataType::Float32) {
+            if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
                 try {
                     af::array param_gpu = param.GetArray();
                     param_gpu = param_gpu * (1.0f - wd);
@@ -314,7 +314,7 @@ NAdamOptimizer::NAdamOptimizer(double learning_rate, double beta1, double beta2,
     : beta1_(beta1), beta2_(beta2), epsilon_(epsilon) {
     learning_rate_ = learning_rate;
     step_count_ = 0;
-    optimizer_detail::OptimizerGpuAvailable();
+    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -347,7 +347,7 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (optimizer_detail::OptimizerGpuAvailable() && param.GetDataType() == DataType::Float32) {
+        if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
             try {
                 af::array param_gpu = param.GetArray();
                 af::array grad_gpu = grad.GetArray();

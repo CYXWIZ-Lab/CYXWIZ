@@ -30,6 +30,7 @@ const char* BackendToString(af::Backend backend) {
         case AF_BACKEND_CPU: return "CPU";
         case AF_BACKEND_CUDA: return "CUDA";
         case AF_BACKEND_OPENCL: return "OpenCL";
+        case AF_BACKEND_ONEAPI: return "oneAPI";
         default: return "Unknown";
     }
 }
@@ -101,14 +102,34 @@ bool TryActivateCUDABackend() {
 }
 #endif
 
+bool TryActivateOneAPIBackend() {
+    try {
+        af::setBackend(AF_BACKEND_ONEAPI);
+        int oneapi_count = af::getDeviceCount();
+        if (oneapi_count <= 0) {
+            spdlog::warn("oneAPI backend detected but no oneAPI devices are available");
+            return false;
+        }
+
+        af::setDevice(0);
+        char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
+        af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
+        spdlog::info("oneAPI backend active - Device: {}", d_name);
+        return true;
+    } catch (const af::exception& e) {
+        spdlog::warn("Failed to activate oneAPI backend: {}", e.what());
+        return false;
+    }
+}
+
 bool TryActivateCpuBackend() {
     try {
         af::setBackend(AF_BACKEND_CPU);
         af::setDevice(0);
-        spdlog::info("CPU backend active");
+        spdlog::info("ArrayFire CPU backend active");
         return true;
     } catch (const af::exception& e) {
-        spdlog::error("Failed to activate CPU backend: {}", e.what());
+        spdlog::error("Failed to activate ArrayFire CPU backend: {}", e.what());
         return false;
     }
 }
@@ -136,6 +157,10 @@ bool Initialize() {
     backend_activated = TryActivateCUDABackend();
 #endif
 
+    if (!backend_activated) {
+        backend_activated = TryActivateOneAPIBackend();
+    }
+
 #ifdef CYXWIZ_ENABLE_OPENCL
     if (!backend_activated) {
         backend_activated = TryActivateOpenCLBackend();
@@ -147,7 +172,7 @@ bool Initialize() {
     }
 
     if (!backend_activated) {
-        spdlog::error("ArrayFire initialization failed: no usable backend (OpenCL/CUDA/CPU)");
+        spdlog::error("ArrayFire initialization failed: no usable backend (CUDA/oneAPI/OpenCL/CPU)");
         return false;
     }
 
@@ -158,7 +183,7 @@ bool Initialize() {
         spdlog::warn("ArrayFire initialized but active backend query failed: {}", e.what());
     }
 #else
-    spdlog::warn("ArrayFire not available - using CPU-only mode");
+    spdlog::warn("ArrayFire not available - backend compiled in native CPU-only mode");
 #endif
 
 #ifdef CYXWIZ_DEBUG

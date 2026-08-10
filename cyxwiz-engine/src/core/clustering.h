@@ -111,7 +111,7 @@ struct ElbowAnalysis {
 /**
  * Clustering - Static class with GPU-accelerated clustering algorithms using ArrayFire
  *
- * All algorithms use ArrayFire for GPU computation (CUDA/OpenCL/CPU backends).
+ * All algorithms use ArrayFire for GPU computation (CUDA/oneAPI/OpenCL/CPU backends).
  * Public interface uses std::vector for easy integration with GUI panels.
  */
 class Clustering {

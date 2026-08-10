@@ -9,10 +9,11 @@ CyxWiz is pre-release software. The supported installation path in this reposito
 - a C++20 compiler
 - platform OpenGL/GLFW development support
 - enough disk space for the vcpkg dependency build
+- ArrayFire for the desktop Engine runtime
 
 The setup scripts clone and bootstrap vcpkg in the repository root. Python scripting is optional and the current CMake contract accepts Python 3.12 or 3.13.
 
-ArrayFire is optional at configure time. Install it separately when accelerated backend execution is required. A build without ArrayFire is valid but does not prove or provide ArrayFire CPU/CUDA/OpenCL placement.
+ArrayFire is required when `CYXWIZ_BUILD_ENGINE=ON`. Install it separately and expose its CMake package to the build. A backend-only build with `CYXWIZ_BUILD_ENGINE=OFF` may compile without ArrayFire as a reduced native development/test configuration, but that is not the public Engine runtime path and does not provide ArrayFire CPU/CUDA/oneAPI/OpenCL placement.
 
 ONNX Runtime, llama.cpp/GGUF, LibTorch, the assistant plugin, and MuJoCo are optional integrations. Disable integrations you do not have.
 
@@ -60,6 +61,13 @@ cmake --preset windows-debug -DCYXWIZ_ENABLE_ONNX=OFF -DCYXWIZ_ENABLE_GGUF=OFF -
 cmake --build --preset windows-debug
 ```
 
+For backend-only native development without the Engine GUI:
+
+```powershell
+cmake --preset windows-debug -DCYXWIZ_BUILD_ENGINE=OFF -DCYXWIZ_BUILD_SERVER_NODE=OFF -DCYXWIZ_BUILD_TESTS=ON
+cmake --build --preset windows-debug
+```
+
 ## ArrayFire discovery
 
 If CMake cannot find an installed ArrayFire package, pass its package directory explicitly:
@@ -68,7 +76,7 @@ If CMake cannot find an installed ArrayFire package, pass its package directory 
 cmake --preset windows-debug -DArrayFire_DIR="C:\path\to\ArrayFire\lib\cmake\ArrayFire"
 ```
 
-At runtime, the ArrayFire libraries and selected backend libraries must be discoverable through the platform library search path. Verify the resolved backend and physical device in CyxWiz runtime evidence; a GPU preference alone is not sufficient.
+At runtime, the ArrayFire libraries and selected backend libraries must be discoverable through the platform library search path. On Windows this includes `af.dll` and the selected backend runtime libraries. CPU compute in the Engine means ArrayFire CPU (`AF_BACKEND_CPU`); native C++ CPU fallback is a recorded compatibility/debug path, not the normal selected-device runtime. Verify the resolved backend and physical device in CyxWiz runtime evidence; a GPU preference alone is not sufficient.
 
 ## Executables
 

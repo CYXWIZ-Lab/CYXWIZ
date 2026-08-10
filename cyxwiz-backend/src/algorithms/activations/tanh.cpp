@@ -31,12 +31,17 @@ void LogTanhFallbackOnce(
         context);
     RecordBackendPlacementObservationForActiveDevice(
         "Tanh",
-        "cuda",
+        CurrentArrayFireBackendName(),
         "float32",
         BuildActivationPlacementShapeSignature(tensor.Shape(), "float32"),
         BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
         message);
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     if (ShouldLogArrayFireBackendFallbackOnce(
             operation_name, reason, context)) {
         spdlog::warn("{}", message);
@@ -46,31 +51,13 @@ void LogTanhFallbackOnce(
 
 } // namespace
 
-static bool s_use_gpu = false;
-static bool s_gpu_checked = false;
-
-static bool UseGPU() {
-    if (!s_gpu_checked) {
-        s_gpu_checked = true;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-        try {
-            af::Backend backend = af::getActiveBackend();
-            s_use_gpu = (backend == AF_BACKEND_CUDA || backend == AF_BACKEND_OPENCL);
-        } catch (...) {
-            s_use_gpu = false;
-        }
-#endif
-    }
-    return s_use_gpu;
-}
-
 Tensor Tanh::Forward(const Tensor& input) {
     if (input.GetDataType() != DataType::Float32) {
         throw std::runtime_error("Tanh only supports Float32 tensors");
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (UseGPU()) {
+    if (IsCurrentArrayFireBackendAvailable()) {
         try {
             af::array input_gpu = input.GetArray();
 
@@ -104,7 +91,7 @@ Tensor Tanh::Backward(const Tensor& grad_output, const Tensor& input) {
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (UseGPU()) {
+    if (IsCurrentArrayFireBackendAvailable()) {
         try {
             af::array grad_gpu = grad_output.GetArray();
             af::array input_gpu = input.GetArray();

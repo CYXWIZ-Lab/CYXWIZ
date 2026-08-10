@@ -1,5 +1,7 @@
 #include "cyxwiz/tensor.h"
 
+#include "tensor_backend_observation_utils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -140,6 +142,40 @@ af::array ArrayFireSign(const af::array& values) {
     const af::array negative_one = af::constant(-1, dims, dtype);
     return af::select(values > 0, one, af::select(values < 0, negative_one, zero));
 }
+
+std::string RecordElementwiseArrayFireFallback(
+    const char* operation_name,
+    const Tensor& input,
+    const std::string& attributes,
+    const char* error_message) {
+    return tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(input.GetDataType()),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {input.Shape()},
+            input.Shape(),
+            input.GetDataType(),
+            attributes),
+        error_message);
+}
+
+std::string RecordElementwiseArrayFireFallback(
+    const char* operation_name,
+    const Tensor& left,
+    const Tensor& right,
+    const std::vector<size_t>& output_shape,
+    const std::string& attributes,
+    const char* error_message) {
+    return tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(left.GetDataType()),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {left.Shape(), right.Shape()},
+            output_shape,
+            left.GetDataType(),
+            attributes),
+        error_message);
+}
 #endif
 
 } // namespace
@@ -151,13 +187,16 @@ Tensor Tensor::operator+(float scalar) const {
             try {
                 return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() + scalar);
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::operator+(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::operator+(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(GetArray() + scalar);
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::operator+(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::operator+(scalar)", *this,
+                             "rhs=scalar", e.what()));
         }
     }
 #endif
@@ -173,13 +212,16 @@ Tensor Tensor::operator-(float scalar) const {
             try {
                 return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() - scalar);
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::operator-(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::operator-(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(GetArray() - scalar);
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::operator-(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::operator-(scalar)", *this,
+                             "rhs=scalar", e.what()));
         }
     }
 #endif
@@ -195,13 +237,16 @@ Tensor Tensor::operator*(float scalar) const {
             try {
                 return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() * scalar);
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::operator*(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::operator*(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(GetArray() * scalar);
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::operator*(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::operator*(scalar)", *this,
+                             "rhs=scalar", e.what()));
         }
     }
 #endif
@@ -220,13 +265,16 @@ Tensor Tensor::operator/(float scalar) const {
             try {
                 return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() / scalar);
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::operator/(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::operator/(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(GetArray() / scalar);
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::operator/(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::operator/(scalar)", *this,
+                             "rhs=scalar", e.what()));
         }
     }
 #endif
@@ -242,13 +290,16 @@ Tensor Tensor::Pow(float exponent) const {
             try {
                 return Tensor::FromArrayRowMajor2D(af::pow(GetArrayRowMajor2D(), exponent));
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::Pow(scalar): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::Pow(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(af::pow(GetArray(), exponent));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Pow(scalar): ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::Pow(scalar)", *this,
+                             "exponent=scalar", e.what()));
         }
     }
 #endif
@@ -273,13 +324,16 @@ Tensor Tensor::Pow(const Tensor& exponent) const {
                 return Tensor::FromArrayRowMajor2D(
                     af::pow(GetArrayRowMajor2D(), exponent.GetArrayRowMajor2D()));
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::Pow(tensor): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::Pow(tensor): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(af::pow(GetArray(), exponent.GetArray()));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Pow(tensor): ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::Pow(tensor)", *this, exponent, shape_,
+                             "exponent=tensor", e.what()));
         }
     }
 #endif
@@ -301,13 +355,15 @@ Tensor Tensor::Sqrt() const {
             try {
                 return Tensor::FromArrayRowMajor2D(af::sqrt(GetArrayRowMajor2D()));
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::Sqrt: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::Sqrt: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(af::sqrt(GetArray()));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Sqrt: ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::Sqrt", *this, "op=sqrt", e.what()));
         }
     }
 #endif
@@ -321,13 +377,15 @@ Tensor Tensor::Exp() const {
             try {
                 return Tensor::FromArrayRowMajor2D(af::exp(GetArrayRowMajor2D()));
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::Exp: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::Exp: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(af::exp(GetArray()));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Exp: ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::Exp", *this, "op=exp", e.what()));
         }
     }
 #endif
@@ -341,13 +399,15 @@ Tensor Tensor::Log() const {
             try {
                 return Tensor::FromArrayRowMajor2D(af::log(GetArrayRowMajor2D()));
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::Log: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::Log: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(af::log(GetArray()));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Log: ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::Log", *this, "op=log", e.what()));
         }
     }
 #endif
@@ -361,13 +421,15 @@ Tensor Tensor::Abs() const {
             try {
                 return Tensor::FromArrayRowMajor2D(af::abs(GetArrayRowMajor2D()));
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::Abs: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::Abs: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(af::abs(GetArray()));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Abs: ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::Abs", *this, "op=abs", e.what()));
         }
     }
 #endif
@@ -383,13 +445,15 @@ Tensor Tensor::Sign() const {
             try {
                 return Tensor::FromArrayRowMajor2D(ArrayFireSign(GetArrayRowMajor2D()));
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::Sign: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::Sign: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(ArrayFireSign(GetArray()));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Sign: ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::Sign", *this, "op=sign", e.what()));
         }
     }
 #endif
@@ -416,14 +480,16 @@ Tensor Tensor::Clip(float min_val, float max_val) const {
                 const af::array values = GetArrayRowMajor2D();
                 return Tensor::FromArrayRowMajor2D((af::min)((af::max)(values, min_val), max_val));
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::Clip: row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::Clip: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             const af::array values = GetArray();
             return Tensor((af::min)((af::max)(values, min_val), max_val));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Clip: ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::Clip", *this, "op=clip", e.what()));
         }
     }
 #endif
@@ -442,13 +508,16 @@ Tensor Tensor::operator-() const {
             try {
                 return Tensor::FromArrayRowMajor2D(-GetArrayRowMajor2D());
             } catch (const af::exception& e) {
-                spdlog::warn("Tensor::operator-(): row-major ArrayFire path failed, falling back to native/CPU: {}", e.what());
+                spdlog::debug("Tensor::operator-(): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
             }
         }
         try {
             return Tensor(-GetArray());
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::operator-(): ArrayFire path failed, falling back to CPU: {}", e.what());
+            spdlog::warn("{}",
+                         RecordElementwiseArrayFireFallback(
+                             "Tensor::operator-()", *this, "op=negate",
+                             e.what()));
         }
     }
 #endif

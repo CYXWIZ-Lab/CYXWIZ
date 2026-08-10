@@ -164,8 +164,26 @@ const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
     return nullptr;
 }
 
+const TrainingTraceEvent* FindLatestNativeCpuFallbackEvent(
+    const TrainingTraceSummary& trace) {
+    for (auto it = trace.recent_events.rbegin();
+         it != trace.recent_events.rend();
+         ++it) {
+        if (it->native_cpu_fallback) {
+            return &(*it);
+        }
+    }
+    return nullptr;
+}
+
 bool IsPinMemoryTransferWarning(const std::string& warning) {
     return warning.rfind("DataLoader.PinMemoryTransfer", 0) == 0;
+}
+
+bool HasResidencyVerdict(const TrainingTraceSummary& trace) {
+    return !trace.residency_verdict.empty() &&
+           trace.residency_verdict != "unavailable" &&
+           trace.residency_verdict != "in_progress";
 }
 #endif
 
@@ -1520,11 +1538,60 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
     }
 
     const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace);
-    if (!transfer && trace.warnings.empty()) {
+    const TrainingTraceEvent* fallback =
+        FindLatestNativeCpuFallbackEvent(trace);
+    if (!transfer && !fallback && trace.warnings.empty() &&
+        !HasResidencyVerdict(trace)) {
         return;
     }
 
     ImGui::Spacing();
+    if (HasResidencyVerdict(trace)) {
+        const bool strict_resident =
+            trace.residency_verdict == "strict_arrayfire_declared_boundaries";
+        const bool fallback_observed =
+            trace.residency_verdict == "native_cpu_fallback_observed";
+        const ImVec4 color = strict_resident
+            ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+            : (fallback_observed
+                   ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+                   : ImVec4(1.0f, 0.82f, 0.35f, 1.0f));
+        ImGui::TextColored(color, "Residency verdict:");
+        ImGui::SameLine(170);
+        ImGui::TextWrapped(
+            "%s requested=%s effective=%s boundaries=%llu transfers=%llu/%s "
+            "sync=%llu/%s transfer_reasons=%s sync_reasons=%s placement=%s "
+            "entries=%llu plan=%s",
+            trace.residency_verdict.c_str(),
+            trace.requested_backend.empty()
+                ? "unknown"
+                : trace.requested_backend.c_str(),
+            trace.effective_backend.empty()
+                ? "unknown"
+                : trace.effective_backend.c_str(),
+            static_cast<unsigned long long>(
+                trace.declared_output_boundary_count),
+            static_cast<unsigned long long>(
+                trace.transfer_event_count),
+            FormatTraceBytes(trace.transfer_known_bytes).c_str(),
+            static_cast<unsigned long long>(
+                trace.synchronization_event_count),
+            FormatTraceBytes(trace.synchronization_known_bytes).c_str(),
+            trace.transfer_summary.empty()
+                ? "none"
+                : trace.transfer_summary.c_str(),
+            trace.synchronization_summary.empty()
+                ? "none"
+                : trace.synchronization_summary.c_str(),
+            trace.placement_fingerprint.empty()
+                ? "unknown"
+                : trace.placement_fingerprint.c_str(),
+            static_cast<unsigned long long>(trace.placement_entry_count),
+            trace.placement_summary.empty()
+                ? "unknown"
+                : trace.placement_summary.c_str());
+    }
+
     if (transfer) {
         const ImVec4 color = transfer->status == "warning"
             ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
@@ -1543,6 +1610,30 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                 ? "unknown"
                 : transfer->transfer_backend.c_str(),
             transfer->transfer_batch_size);
+    }
+
+    if (fallback) {
+        const ImVec4 color = fallback->status == "error"
+            ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+            : ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+        ImGui::TextColored(color, "Native CPU fallback:");
+        ImGui::SameLine(170);
+        ImGui::TextWrapped(
+            "count=%llu backend=%s op=%s reason=%s policy=%s",
+            static_cast<unsigned long long>(
+                trace.native_cpu_fallback_count),
+            fallback->compute_backend.empty()
+                ? "unknown"
+                : fallback->compute_backend.c_str(),
+            fallback->fallback_operation.empty()
+                ? "unknown"
+                : fallback->fallback_operation.c_str(),
+            fallback->fallback_reason.empty()
+                ? "unknown"
+                : fallback->fallback_reason.c_str(),
+            fallback->fallback_policy.empty()
+                ? "unknown"
+                : fallback->fallback_policy.c_str());
     }
 
     bool rendered_warning_header = false;

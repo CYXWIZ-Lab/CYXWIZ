@@ -214,6 +214,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("CPU", cyxwiz::DeviceType::CPU)
         .value("CUDA", cyxwiz::DeviceType::CUDA)
         .value("OPENCL", cyxwiz::DeviceType::OPENCL)
+        .value("ONEAPI", cyxwiz::DeviceType::ONEAPI)
         .value("METAL", cyxwiz::DeviceType::METAL)
         .value("VULKAN", cyxwiz::DeviceType::VULKAN)
         .export_values();
@@ -1204,6 +1205,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
         }
         return false;
     }, "Check if OpenCL is available");
+
+    m.def("oneapi_available", []() {
+        auto devices = cyxwiz::Device::GetAvailableDevices();
+        for (const auto& d : devices) {
+            if (d.type == cyxwiz::DeviceType::ONEAPI) return true;
+        }
+        return false;
+    }, "Check if oneAPI is available");
 
     m.def("metal_available", []() {
         auto devices = cyxwiz::Device::GetAvailableDevices();

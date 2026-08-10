@@ -210,6 +210,15 @@ void CrashRunRecorder::StartTrainingRun(const TrainingConfiguration& config,
     WriteLocked();
 }
 
+void CrashRunRecorder::UpdateSampleCount(size_t sample_count) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_) {
+        return;
+    }
+    sample_count_ = sample_count;
+    WriteLocked();
+}
+
 void CrashRunRecorder::MarkStage(TrainingTraceStage stage,
                                  int epoch,
                                  int batch,
@@ -457,6 +466,7 @@ std::string CrashRunRecorder::BackendName() {
             case AF_BACKEND_CPU: return "CPU";
             case AF_BACKEND_CUDA: return "CUDA";
             case AF_BACKEND_OPENCL: return "OpenCL";
+            case AF_BACKEND_ONEAPI: return "oneAPI";
             default: return "Unknown";
         }
     } catch (...) {

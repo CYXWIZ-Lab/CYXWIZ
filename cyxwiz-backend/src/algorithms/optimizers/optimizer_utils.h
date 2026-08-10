@@ -8,7 +8,7 @@ class Tensor;
 
 namespace optimizer_detail {
 
-bool OptimizerGpuAvailable();
+bool OptimizerArrayFireAvailable();
 void LogOptimizerFallbackOnce(
     const char* operation_name,
     const std::string& parameter_name,

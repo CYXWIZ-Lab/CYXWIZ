@@ -1,8 +1,10 @@
 #include "cyxwiz/tensor.h"
+#include "tensor_backend_observation_utils.h"
 #include "tensor_utils.h"
 
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -105,6 +107,22 @@ std::vector<unsigned> NormalizeIndexSelectIndices(const std::vector<int>& indice
     }
     return normalized;
 }
+
+void RecordIndexingArrayFireFallback(const char* operation_name,
+                                     const Tensor& input,
+                                     const std::vector<size_t>& output_shape,
+                                     const std::string& attributes,
+                                     const char* error_message) {
+    tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(input.GetDataType()),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {input.Shape()},
+            output_shape,
+            input.GetDataType(),
+            attributes),
+        error_message);
+}
 #endif
 
 } // namespace
@@ -182,7 +200,15 @@ Tensor Tensor::Slice(int dim, int start, int end, int step) const {
             }
             return Tensor::FromArrayRowMajor2D(source(af::span, selected));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::Slice: ArrayFire slice failed, falling back to CPU: {}", e.what());
+            RecordIndexingArrayFireFallback(
+                "Tensor::Slice",
+                *this,
+                out_shape,
+                "op=slice;axis=" + std::to_string(axis) +
+                    ";start=" + std::to_string(begin) +
+                    ";end=" + std::to_string(finish) +
+                    ";step=" + std::to_string(step),
+                e.what());
         }
     }
 #endif
@@ -235,7 +261,13 @@ Tensor Tensor::IndexSelect(int dim, const std::vector<int>& indices) const {
                 index_array,
                 static_cast<unsigned>(axis)));
         } catch (const af::exception& e) {
-            spdlog::warn("Tensor::IndexSelect: ArrayFire index select failed, falling back to CPU: {}", e.what());
+            RecordIndexingArrayFireFallback(
+                "Tensor::IndexSelect",
+                *this,
+                out_shape,
+                "op=index_select;axis=" + std::to_string(axis) +
+                    ";indices=" + std::to_string(indices.size()),
+                e.what());
         }
     }
 #endif

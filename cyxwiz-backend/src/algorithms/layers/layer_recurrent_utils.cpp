@@ -39,7 +39,8 @@ std::string BuildRecurrentFormalParameterOverflowFallbackMessage(
            " hit CUDA generated-kernel formal-parameter overflow "
            "(reason=" +
            BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow) +
-           "); falling back to CPU. This is separate from VRAM capacity.";
+           "); falling back to native CPU recurrent path. This is separate "
+           "from VRAM capacity.";
 }
 
 void DisableArrayFireCudaRecurrentAfterFailure(
@@ -84,8 +85,9 @@ void DisableArrayFireCudaRecurrentAfterFailure(
             "formal-parameter overflow (reason=" +
             BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow) +
             "). Disabling this recurrent CUDA path "
-            "for the rest of the process and using CPU directly for later "
-            "batches. This is separate from VRAM capacity.";
+            "for the rest of the process and using the native CPU recurrent "
+            "path directly for later batches. This is separate from VRAM "
+            "capacity.";
         BackendDebugHooks::EmitDebugEvent(layer_name, reason);
         spdlog::warn("{}", reason);
     }
@@ -117,7 +119,8 @@ bool ShouldUseArrayFireRecurrentForward(
             spdlog::warn(
                 "CUDA recurrent placement: ArrayFire {} forward is disabled "
                 "after a previous CUDA generated-kernel formal-parameter "
-                "overflow; runtime is using CPU directly for this process.",
+                "overflow; runtime is using the native CPU recurrent path "
+                "directly for this process.",
                 RecurrentKindName(kind));
         }
         return false;
@@ -146,7 +149,7 @@ bool ShouldUseArrayFireRecurrentForward(
         const std::string reason =
             "CUDA recurrent preflight: skipping ArrayFire " +
             decision.layer_name + " forward. " + decision.reason +
-            " Runtime is using the CPU recurrent path directly to avoid "
+            " Runtime is using the native CPU recurrent path directly to avoid "
             "repeated failed GPU compiles. To keep this layer on GPU, reduce "
             "hidden_size/sequence length/bidirectionality, or replace this "
             "path with a fused native recurrent CUDA kernel.";

@@ -133,18 +133,19 @@ Tensor ApplyScalarComparison(const Tensor& input, float scalar, CompareOp op) {
             }
             return Tensor(mask.as(u8));
         } catch (const af::exception& e) {
-            tensor_backend_observation::RecordArrayFireFallback(
-                "Tensor::CompareScalar",
-                tensor_backend_observation::DataTypeName(input.GetDataType()),
-                tensor_backend_observation::BuildTensorOpSignature(
-                    {input.Shape()},
-                    input.Shape(),
-                    input.GetDataType(),
-                    std::string("op=") + CompareOpName(op) + ";rhs=scalar"),
-                e.what());
             spdlog::warn(
-                "ArrayFire tensor scalar comparison failed, using CPU fallback: {}",
-                e.what());
+                "{}",
+                tensor_backend_observation::RecordArrayFireFallback(
+                    "Tensor::CompareScalar",
+                    tensor_backend_observation::DataTypeName(
+                        input.GetDataType()),
+                    tensor_backend_observation::BuildTensorOpSignature(
+                        {input.Shape()},
+                        input.Shape(),
+                        input.GetDataType(),
+                        std::string("op=") + CompareOpName(op) +
+                            ";rhs=scalar"),
+                    e.what()));
         }
     }
 #endif
@@ -200,18 +201,18 @@ Tensor CompareTensors(const Tensor& left, const Tensor& right, CompareOp op) {
             }
             return Tensor(mask.as(u8));
         } catch (const af::exception& e) {
-            tensor_backend_observation::RecordArrayFireFallback(
-                "Tensor::Compare",
-                tensor_backend_observation::DataTypeName(left_expanded.GetDataType()),
-                tensor_backend_observation::BuildTensorOpSignature(
-                    {left_expanded.Shape(), right_expanded.Shape()},
-                    out_shape,
-                    left_expanded.GetDataType(),
-                    std::string("op=") + CompareOpName(op)),
-                e.what());
             spdlog::warn(
-                "ArrayFire tensor comparison failed, using CPU fallback: {}",
-                e.what());
+                "{}",
+                tensor_backend_observation::RecordArrayFireFallback(
+                    "Tensor::Compare",
+                    tensor_backend_observation::DataTypeName(
+                        left_expanded.GetDataType()),
+                    tensor_backend_observation::BuildTensorOpSignature(
+                        {left_expanded.Shape(), right_expanded.Shape()},
+                        out_shape,
+                        left_expanded.GetDataType(),
+                        std::string("op=") + CompareOpName(op)),
+                    e.what()));
         }
     }
 #endif

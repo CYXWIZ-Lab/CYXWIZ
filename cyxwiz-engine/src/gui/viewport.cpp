@@ -1,9 +1,12 @@
 #include "viewport.h"
 #include "panels/training_plot_panel.h"
+#include "../core/training_trace_collector.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <exception>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include <cyxwiz/cyxwiz.h>
@@ -17,10 +20,28 @@ const char* DeviceTypeName(int type) {
         case 0: return "CPU";
         case 1: return "CUDA";
         case 2: return "OpenCL";
-        case 3: return "Metal";
-        case 4: return "Vulkan";
+        case 3: return "Metal (unsupported)";
+        case 4: return "Vulkan (unsupported)";
+        case 5: return "oneAPI";
         default: return "Unknown";
     }
+}
+
+std::optional<int> DeviceTypeFromExecutionBackend(
+    const std::string& backend) {
+    if (backend == "arrayfire_cpu") {
+        return 0;
+    }
+    if (backend == "arrayfire_cuda") {
+        return 1;
+    }
+    if (backend == "arrayfire_opencl") {
+        return 2;
+    }
+    if (backend == "arrayfire_oneapi") {
+        return 5;
+    }
+    return std::nullopt;
 }
 
 ImVec4 DeviceTypeColor(int type) {
@@ -28,6 +49,7 @@ ImVec4 DeviceTypeColor(int type) {
         case 0: return ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
         case 1: return ImVec4(0.35f, 0.95f, 0.45f, 1.0f);
         case 2: return ImVec4(1.0f, 0.75f, 0.35f, 1.0f);
+        case 5: return ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
         default: return ImVec4(0.75f, 0.75f, 0.75f, 1.0f);
     }
 }
@@ -42,6 +64,14 @@ const CachedDeviceInfo* FindDevice(
         }
     }
     return nullptr;
+}
+
+bool HasRunBoundDevice(const cyxwiz::TrainingTraceSummary& trace) {
+    return trace.available && !trace.effective_backend.empty();
+}
+
+bool IsTrainingTraceActive(const cyxwiz::TrainingTraceSummary& trace) {
+    return trace.status == "running";
 }
 
 void SummaryRow(const char* label, const char* value) {
@@ -104,16 +134,47 @@ void Viewport::Render() {
                 devices_initialized_ = true;
             }
 
-            auto* active_device = cyxwiz::Device::GetCurrentDevice();
-            if (active_device) {
-                const int active_type =
-                    static_cast<int>(active_device->GetType());
-                const int active_id = active_device->GetDeviceId();
+            const auto trace =
+                cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+            const bool has_run_bound_device = HasRunBoundDevice(trace);
+            const auto trace_type = has_run_bound_device
+                ? DeviceTypeFromExecutionBackend(trace.effective_backend)
+                : std::optional<int>{};
+            auto* process_device = cyxwiz::Device::GetCurrentDevice();
+            if (has_run_bound_device || process_device) {
+                const int active_type = trace_type.has_value()
+                    ? *trace_type
+                    : (process_device
+                           ? static_cast<int>(process_device->GetType())
+                           : -1);
+                const int active_id = has_run_bound_device
+                    ? trace.effective_device_id
+                    : (process_device ? process_device->GetDeviceId() : -1);
                 const auto* active_info =
                     FindDevice(cached_devices_, active_type, active_id);
+                const std::string active_name = has_run_bound_device
+                    ? (!trace.effective_device_name.empty()
+                           ? trace.effective_device_name
+                           : (active_info ? active_info->name
+                                          : "Runtime device not in discovery list"))
+                    : (active_info ? active_info->name
+                                   : "Runtime device not in discovery list");
+                const char* source_label = has_run_bound_device
+                    ? (IsTrainingTraceActive(trace)
+                           ? "Current training trace"
+                           : "Last training trace")
+                    : "Process runtime";
+                const std::string backend_label = has_run_bound_device
+                    ? trace.effective_backend
+                    : DeviceTypeName(active_type);
 
                 ImGui::TextColored(DeviceTypeColor(active_type),
-                                   "ACTIVE  %s",
+                                   "%s  %s",
+                                   has_run_bound_device
+                                       ? (IsTrainingTraceActive(trace)
+                                              ? "ACTIVE RUN"
+                                              : "LAST RUN")
+                                       : "ACTIVE",
                                    DeviceTypeName(active_type));
                 if (ImGui::BeginTable("##active_runtime", 2,
                                       ImGuiTableFlags_SizingStretchProp |
@@ -123,10 +184,9 @@ void Viewport::Render() {
                                             120.0f);
                     ImGui::TableSetupColumn("Value",
                                             ImGuiTableColumnFlags_WidthStretch);
-                    SummaryRow("Backend", DeviceTypeName(active_type));
-                    SummaryRow("Device",
-                               active_info ? active_info->name.c_str()
-                                           : "Runtime device not in discovery list");
+                    SummaryRow("Source", source_label);
+                    SummaryRow("Backend", backend_label.c_str());
+                    SummaryRow("Device", active_name.c_str());
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
@@ -150,7 +210,7 @@ void Viewport::Render() {
                 }
             } else {
                 ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
-                                   "Active ArrayFire runtime is unavailable");
+                                   "ArrayFire runtime device is unavailable");
             }
 
             ImGui::Spacing();
@@ -163,31 +223,40 @@ void Viewport::Render() {
             if (cached_devices_.empty()) {
                 ImGui::TextDisabled("No compute devices discovered");
             } else {
-                const auto* active = cyxwiz::Device::GetCurrentDevice();
                 for (const auto& device : cached_devices_) {
-                    const bool is_active =
-                        active &&
-                        static_cast<int>(active->GetType()) == device.type &&
-                        active->GetDeviceId() == device.device_id;
+                    const bool is_run_bound =
+                        has_run_bound_device && trace_type.has_value() &&
+                        *trace_type == device.type &&
+                        trace.effective_device_id == device.device_id;
+                    const bool is_process_active =
+                        !has_run_bound_device && process_device &&
+                        static_cast<int>(process_device->GetType()) ==
+                            device.type &&
+                        process_device->GetDeviceId() == device.device_id;
                     ImGui::BulletText("%s", device.name.c_str());
                     ImGui::SameLine();
                     ImGui::TextDisabled("[%s:%d]",
                                         DeviceTypeName(device.type),
                                         device.device_id);
-                    if (is_active) {
+                    if (is_run_bound || is_process_active) {
                         ImGui::SameLine();
                         ImGui::TextColored(DeviceTypeColor(device.type),
-                                           "Active");
+                                           "%s",
+                                           is_run_bound
+                                               ? (IsTrainingTraceActive(trace)
+                                                      ? "Active run"
+                                                      : "Last run")
+                                               : "Active");
                     }
                 }
             }
 
             ImGui::Spacing();
             ImGui::TextWrapped(
-                "Active runtime reports the current ArrayFire backend/device "
-                "selection. Individual graph operators can still use an "
-                "explicit CPU fallback; compiler and run diagnostics remain "
-                "the source for per-operator placement.");
+                "Training trace reports the run-bound ArrayFire "
+                "backend/device when a run exists. Process runtime is shown "
+                "only when no run-bound trace is available. Native CPU "
+                "fallback is reported separately by run diagnostics.");
         } catch (const std::exception& error) {
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
                                "Device query failed: %s",

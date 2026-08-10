@@ -34,7 +34,8 @@ typedef enum {
     CYXWIZ_DEVICE_CUDA = 1,
     CYXWIZ_DEVICE_OPENCL = 2,
     CYXWIZ_DEVICE_METAL = 3,
-    CYXWIZ_DEVICE_VULKAN = 4
+    CYXWIZ_DEVICE_VULKAN = 4,
+    CYXWIZ_DEVICE_ONEAPI = 5
 } CyxWizDeviceType;
 
 typedef enum {

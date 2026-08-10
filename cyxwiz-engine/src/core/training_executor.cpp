@@ -3,8 +3,12 @@
 #include "checkpoint_manager.h"
 #include "crash_run_recorder.h"
 #include "error_codes.h"
+#include "algorithms/arrayfire_backend_utils.h"
 #include <cyxwiz/debug_hooks.h>
+#include "execution_device_context.h"
+#include "execution_device_preferences.h"
 #include "training_trace_collector.h"
+#include "backend_placement_capabilities.h"
 #include "model_builder.h"
 #include "sequence_model_input.h"
 #include "sequence_training_step.h"
@@ -22,9 +26,15 @@
 #include <cstdint>
 #include <algorithm>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
 
 namespace cyxwiz {
 
@@ -71,6 +81,234 @@ void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
     }
 }
 
+void HashPlacementField(uint64_t& hash, const std::string& value) {
+    constexpr uint64_t kFnvPrime = 1099511628211ull;
+    for (const unsigned char ch : value) {
+        hash ^= static_cast<uint64_t>(ch);
+        hash *= kFnvPrime;
+    }
+    hash ^= static_cast<uint64_t>('\x1f');
+    hash *= kFnvPrime;
+}
+
+std::string BuildPlacementPlanFingerprint(
+    const std::vector<BackendPlacementEntry>& placements) {
+    uint64_t hash = 14695981039346656037ull;
+    HashPlacementField(hash, std::to_string(placements.size()));
+    for (const auto& placement : placements) {
+        HashPlacementField(hash, std::to_string(placement.node_id));
+        HashPlacementField(hash, placement.node_name);
+        HashPlacementField(hash, placement.node_type);
+        HashPlacementField(hash, placement.requested_backend);
+        HashPlacementField(hash, placement.expected_backend);
+        HashPlacementField(hash, placement.fallback_backend);
+        HashPlacementField(hash, placement.status);
+        HashPlacementField(hash, placement.reason_code);
+        HashPlacementField(hash, placement.observation_device);
+        HashPlacementField(hash, placement.observation_dtype);
+        HashPlacementField(hash, placement.observation_shape_signature);
+        HashPlacementField(hash, placement.observation_probe_outcome);
+        HashPlacementField(hash, placement.observation_probe_scope);
+    }
+
+    std::ostringstream out;
+    out << "placement:" << std::hex << std::setw(16) << std::setfill('0')
+        << hash;
+    return out.str();
+}
+
+BackendPlacementEntry BuildTracePlacementEntry(int node_id,
+                                               const std::string& name,
+                                               const std::string& type,
+                                               const ExecutionDeviceContext& context,
+                                               const std::string& status,
+                                               const std::string& reason,
+                                               const std::string& expected_backend,
+                                               const std::string& detail) {
+    BackendPlacementEntry placement;
+    placement.node_id = node_id;
+    placement.node_name = name;
+    placement.node_type = type;
+    placement.requested_backend = context.requested_backend.empty()
+        ? "arrayfire"
+        : context.requested_backend;
+    placement.expected_backend = expected_backend.empty()
+        ? context.effective_backend
+        : expected_backend;
+    placement.fallback_backend =
+        context.fallback_policy == ArrayFireFallbackPolicy::AllowNativeCpuFallback
+            ? "native_cpu_recorded_compatibility"
+            : "";
+    placement.status = status;
+    placement.reason_code = reason;
+    placement.observation_device = context.device_name;
+    placement.observation_dtype = "float32";
+    placement.observation_probe_outcome = "runtime_trace_declared";
+    placement.observation_probe_scope = "training_executor_dense";
+    placement.explanation = detail;
+    return placement;
+}
+
+std::vector<BackendPlacementEntry> BuildEffectiveTrainingPlacementPlan(
+    const TrainingConfiguration& config,
+    const ExecutionDeviceContext& context) {
+    const std::string backend = context.effective_backend.empty()
+        ? "arrayfire_unknown"
+        : context.effective_backend;
+    const bool arrayfire_cpu = backend == "arrayfire_cpu";
+    const std::string runtime_status = arrayfire_cpu
+        ? BackendPlacementStatus::Cpu
+        : BackendPlacementStatus::Gpu;
+
+    std::vector<BackendPlacementEntry> placements;
+    placements.reserve(config.backend_placements.size() + config.layers.size() + 6);
+    for (const auto& compiler_placement : config.backend_placements) {
+        auto placement = compiler_placement;
+        if (placement.reason_code ==
+                BackendPlacementReason::ArrayFireTensorOpCapable &&
+            (placement.status == BackendPlacementStatus::Cpu ||
+             placement.status == BackendPlacementStatus::Gpu)) {
+            // Compiler capability probes may describe the process-global
+            // device that was active during graph compilation. Resolve only
+            // ArrayFire-capable entries against the immutable run context so
+            // a stale GPU probe cannot make an ArrayFire CPU run look mixed.
+            placement.requested_backend = context.requested_backend.empty()
+                ? backend
+                : context.requested_backend;
+            placement.expected_backend = backend;
+            placement.status = runtime_status;
+            placement.fallback_backend =
+                context.fallback_policy ==
+                        ArrayFireFallbackPolicy::AllowNativeCpuFallback
+                    ? "native_cpu_recorded_compatibility"
+                    : "";
+            placement.explanation +=
+                " Runtime placement resolved from the bound execution "
+                "context.";
+        }
+        placements.push_back(std::move(placement));
+    }
+    const std::string arrayfire_status = "arrayfire";
+    const std::string boundary_status = "declared_host_boundary";
+
+    placements.push_back(BuildTracePlacementEntry(
+        config.data_source_node_id >= 0 ? config.data_source_node_id : -1001,
+        "dataset_ingress",
+        "DatasetIngress",
+        context,
+        boundary_status,
+        "dataset_tensor_ingress",
+        backend,
+        "Dataset batches originate on host and are converted to tensors for "
+        "the selected ArrayFire backend."));
+
+    for (size_t i = 0; i < config.layers.size(); ++i) {
+        const auto& layer = config.layers[i];
+        const int node_id = layer.node_id >= 0
+            ? layer.node_id
+            : static_cast<int>(-2000 - static_cast<int>(i));
+        const std::string name = layer.name.empty()
+            ? fmt::format("layer_{}", i)
+            : layer.name;
+        placements.push_back(BuildTracePlacementEntry(
+            node_id,
+            name,
+            std::string("ModelForward.") +
+                backend_placement::LayerTypeName(layer.type),
+            context,
+            arrayfire_status,
+            "model_forward_arrayfire",
+            backend,
+            "Model forward for this dense TrainingExecutor layer is expected "
+            "to run on the selected ArrayFire backend unless a routed native "
+            "CPU fallback event is recorded."));
+    }
+
+    placements.push_back(BuildTracePlacementEntry(
+        config.loss_node_id >= 0 ? config.loss_node_id : -3001,
+        "loss",
+        "Loss." + config.GetLossName(),
+        context,
+        arrayfire_status,
+        "loss_arrayfire",
+        backend,
+        "Loss computation is expected to run on the selected ArrayFire "
+        "backend for the supported dense vertical."));
+
+    placements.push_back(BuildTracePlacementEntry(
+        -3002,
+        "metrics",
+        UsesContinuousTargetMetrics(config)
+            ? "Metrics.Regression"
+            : "Metrics.Classification",
+        context,
+        arrayfire_status,
+        "metrics_arrayfire_scalar_reduction",
+        backend,
+        "Dense metrics use ArrayFire reductions and read back bounded scalar "
+        "results for reporting."));
+
+    placements.push_back(BuildTracePlacementEntry(
+        -3003,
+        "backward",
+        "Backward",
+        context,
+        arrayfire_status,
+        "backward_arrayfire",
+        backend,
+        "Backward and gradient tensor operations are expected to run on the "
+        "selected ArrayFire backend for supported dense operations."));
+
+    placements.push_back(BuildTracePlacementEntry(
+        config.optimizer_node_id >= 0 ? config.optimizer_node_id : -3004,
+        "optimizer",
+        "Optimizer." + config.GetOptimizerName(),
+        context,
+        arrayfire_status,
+        "optimizer_arrayfire",
+        backend,
+        "Optimizer updates are expected to run on the selected ArrayFire "
+        "backend for the supported dense optimizer path."));
+
+    placements.push_back(BuildTracePlacementEntry(
+        -3005,
+        "loss_scalar_readback",
+        "OutputBoundary.LossScalar",
+        context,
+        boundary_status,
+        "loss_scalar_readback",
+        "host_scalar",
+        "One scalar loss value is read back to host for reporting and "
+        "callbacks; this is a declared output boundary, not native CPU "
+        "compute fallback."));
+
+    return placements;
+}
+
+std::string BuildPlacementPlanSummary(
+    const std::vector<BackendPlacementEntry>& placements) {
+    constexpr size_t kMaxSummaryChars = 900;
+    std::ostringstream out;
+    size_t summary_chars = 0;
+    bool first = true;
+    for (const auto& placement : placements) {
+        std::string item = placement.node_name + ":" +
+            placement.node_type + "=" + placement.expected_backend +
+            "(" + placement.reason_code + ")";
+        if (!first) {
+            item = "; " + item;
+        }
+        if (summary_chars + item.size() > kMaxSummaryChars) {
+            out << "; ...";
+            break;
+        }
+        out << item;
+        summary_chars += item.size();
+        first = false;
+    }
+    return out.str();
+}
+
 std::string DescribePinMemoryTransferStatus(
     const PinMemoryTransferStatus& status) {
     return fmt::format(
@@ -105,6 +343,29 @@ void ReportPinMemoryTransferStatus(const TrainingConfiguration& config) {
         severity);
 }
 
+void RecordArrayFireNativeCpuFallbackForActiveTrace(
+    const ArrayFireNativeCpuFallbackEvent& fallback) {
+    std::string detail = fallback.operation_name;
+    if (!fallback.reason_code.empty()) {
+        detail += " reason=" + fallback.reason_code;
+    }
+    if (!fallback.selected_backend.empty()) {
+        detail += " selected_backend=" + fallback.selected_backend;
+    }
+    if (!fallback.context.empty()) {
+        detail += " " + fallback.context;
+    }
+    CrashRunRecorder::Instance().MarkBackendEvent(
+        "ArrayFire.NativeCpuFallback",
+        detail);
+    TrainingTraceCollector::Instance().RecordNativeCpuFallback(fallback);
+}
+
+void RecordArrayFireHostSyncForActiveTrace(
+    const ArrayFireHostSyncEvent& sync) {
+    TrainingTraceCollector::Instance().RecordArrayFireHostSync(sync);
+}
+
 bool ShouldLogTrainingBatch(const TrainingConfiguration& config, int batch_num) {
     if (batch_num <= 1) {
         return true;
@@ -118,6 +379,221 @@ bool ShouldRunValidationEpoch(const TrainingConfiguration& config,
     const int validation_freq = std::max(1, config.validation_freq);
     return epoch == total_epochs || validation_freq <= 1 ||
            epoch % validation_freq == 0;
+}
+
+bool ShouldMaterializeFirstBatchDebugSamples(
+    const TrainingConfiguration& config) {
+    return !config.forbid_native_cpu_fallback;
+}
+
+void RecordSkippedFirstBatchDebugSampleDump() {
+    TrainingTraceCollector::Instance().RecordRuntimeEvent(
+        "TrainingExecutor.DebugSampleDump",
+        "Skipped first-batch debug host tensor dump because strict ArrayFire "
+        "residency forbids nonessential host materialization.");
+}
+
+void RecordDeclaredScalarLossOutputBoundary() {
+    const std::string message =
+        "Declared bounded host output boundary: loss_scalar_readback reads one "
+        "scalar loss value for reporting and callbacks; this is not native CPU "
+        "compute fallback.";
+    CrashRunRecorder::Instance().MarkBackendEvent(
+        "TrainingExecutor.OutputBoundary",
+        message);
+    TrainingTraceCollector::Instance().RecordRuntimeEvent(
+        "TrainingExecutor.OutputBoundary",
+        message);
+}
+
+std::string BuildRegressionMetricFallbackContext(
+    const Tensor& predictions,
+    const Tensor& targets,
+    size_t batch_size,
+    size_t output_width) {
+    return BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("predictions", predictions.Shape()) +
+        "; " +
+        BuildTensorShapeContext("targets", targets.Shape()) +
+        fmt::format("; batch_size={}; output_width={}",
+                    batch_size,
+                    output_width));
+}
+
+void AddRegressionMetricsNativeCpuFallback(
+    RegressionMetricAccumulator& regression,
+    const Tensor& predictions,
+    const Tensor& targets,
+    size_t batch_size,
+    size_t output_width) {
+    const float* pred_data = predictions.Data<float>();
+    const float* target_data = targets.Data<float>();
+    regression.Add(
+        pred_data,
+        target_data,
+        batch_size * output_width,
+        output_width);
+}
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool CanUseArrayFireRegressionMetrics(const Tensor& predictions,
+                                      const Tensor& targets,
+                                      size_t batch_size,
+                                      size_t output_width,
+                                      BackendFallbackReason& reason) {
+    if (predictions.GetDataType() != DataType::Float32 ||
+        targets.GetDataType() != DataType::Float32) {
+        reason = BackendFallbackReason::UnsupportedDtype;
+        return false;
+    }
+
+    const auto& pred_shape = predictions.Shape();
+    const auto& target_shape = targets.Shape();
+    if (batch_size == 0 || output_width == 0 ||
+        batch_size > std::numeric_limits<unsigned>::max() ||
+        output_width > std::numeric_limits<unsigned>::max() ||
+        pred_shape.size() != 2 || target_shape.size() != 2 ||
+        pred_shape[0] != batch_size || pred_shape[1] != output_width ||
+        target_shape[0] != batch_size || target_shape[1] != output_width) {
+        reason = BackendFallbackReason::UnsupportedShape;
+        return false;
+    }
+
+    return true;
+}
+
+void AddRegressionMetricsArrayFire(
+    RegressionMetricAccumulator& regression,
+    const Tensor& predictions,
+    const Tensor& targets,
+    size_t batch_size,
+    size_t output_width,
+    const RegressionTargetTransform& transform) {
+    af::array error =
+        predictions.GetArrayRowMajor2D() - targets.GetArrayRowMajor2D();
+
+    const bool restore_original_units =
+        transform.enabled && transform.resolved &&
+        transform.scales.size() == output_width;
+    if (restore_original_units) {
+        std::vector<float> scales;
+        scales.reserve(output_width);
+        for (double scale : transform.scales) {
+            scales.push_back(static_cast<float>(scale));
+        }
+
+        const af::array scale_row(
+            1,
+            static_cast<dim_t>(output_width),
+            scales.data());
+        error = error * af::tile(scale_row,
+                                 static_cast<unsigned>(batch_size),
+                                 1U);
+    }
+
+    af::array absolute_error =
+        af::sum(af::flat(af::abs(error.as(f32))));
+    af::array squared_error =
+        af::sum(af::flat((error * error).as(f32)));
+    absolute_error.eval();
+    squared_error.eval();
+
+    float absolute_error_sum = 0.0f;
+    float squared_error_sum = 0.0f;
+    absolute_error.host(&absolute_error_sum);
+    squared_error.host(&squared_error_sum);
+
+    regression.absolute_error_sum +=
+        static_cast<double>(absolute_error_sum);
+    regression.squared_error_sum +=
+        static_cast<double>(squared_error_sum);
+    regression.value_count += batch_size * output_width;
+}
+#endif
+
+void AddRegressionMetricScalars(
+    RegressionMetricAccumulator& regression,
+    const Tensor& predictions,
+    const Tensor& targets,
+    size_t batch_size,
+    size_t output_width,
+    const TrainingConfiguration& config) {
+    if (batch_size == 0 || output_width == 0) {
+        return;
+    }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    BackendFallbackReason unsupported_reason =
+        BackendFallbackReason::UnsupportedShape;
+    const std::string context = BuildRegressionMetricFallbackContext(
+        predictions, targets, batch_size, output_width);
+    if (!CanUseArrayFireRegressionMetrics(
+            predictions, targets, batch_size, output_width,
+            unsupported_reason)) {
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "RegressionMetricAccumulator",
+            unsupported_reason,
+            "unsupported regression metric tensor layout",
+            context);
+        if (ShouldLogArrayFireBackendFallbackOnce(
+                "RegressionMetricAccumulator",
+                unsupported_reason,
+                context)) {
+            spdlog::warn("{}",
+                         BuildArrayFireBackendFallbackMessage(
+                             "RegressionMetricAccumulator",
+                             unsupported_reason,
+                             true,
+                             "unsupported regression metric tensor layout",
+                             context));
+        }
+        AddRegressionMetricsNativeCpuFallback(
+            regression, predictions, targets, batch_size, output_width);
+        return;
+    }
+
+    try {
+        AddRegressionMetricsArrayFire(
+            regression,
+            predictions,
+            targets,
+            batch_size,
+            output_width,
+            config.regression_target_transform);
+        return;
+    } catch (const af::exception& e) {
+        const BackendFallbackReason reason =
+            ClassifyArrayFireBackendFallbackReason(e.what());
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "RegressionMetricAccumulator",
+            reason,
+            e.what(),
+            context);
+        if (ShouldLogArrayFireBackendFallbackOnce(
+                "RegressionMetricAccumulator",
+                reason,
+                context)) {
+            spdlog::warn("{}",
+                         BuildArrayFireBackendFallbackMessage(
+                             "RegressionMetricAccumulator",
+                             reason,
+                             true,
+                             e.what(),
+                             context));
+        }
+    }
+#else
+    const std::string context = BuildRegressionMetricFallbackContext(
+        predictions, targets, batch_size, output_width);
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "RegressionMetricAccumulator",
+        BackendFallbackReason::BackendInternalError,
+        "ArrayFire support is unavailable",
+        context);
+#endif
+
+    AddRegressionMetricsNativeCpuFallback(
+        regression, predictions, targets, batch_size, output_width);
 }
 
 } // namespace
@@ -301,6 +777,95 @@ void TrainingExecutor::Train(
     stop_requested_.store(false);
     is_paused_.store(false);
 
+    const auto pending_execution_device = GetPendingExecutionDeviceSelection();
+    try {
+        if (pending_execution_device.has_value()) {
+            ApplyPendingExecutionDeviceSelection();
+            spdlog::info(
+                "TrainingExecutor: applied pending ArrayFire runtime device selection");
+        }
+    } catch (const std::exception& e) {
+        is_training_.store(false);
+        spdlog::error(
+            "TrainingExecutor: failed to apply pending ArrayFire runtime device selection: {}",
+            e.what());
+        throw;
+    }
+
+    const ArrayFireFallbackPolicy fallback_policy_value =
+        config_.forbid_native_cpu_fallback
+            ? ArrayFireFallbackPolicy::ForbidNativeCpuFallback
+            : ArrayFireFallbackPolicy::AllowNativeCpuFallback;
+    const ScopedArrayFireFallbackPolicy fallback_policy(fallback_policy_value);
+    ExecutionDeviceContext execution_context =
+        CaptureCurrentExecutionDeviceContext(fallback_policy_value);
+    if (pending_execution_device.has_value()) {
+        execution_context.requested_backend =
+            ExecutionDeviceSelectionBackendName(pending_execution_device->type);
+        execution_context.requested_device_id =
+            pending_execution_device->device_id;
+    }
+    const ScopedExecutionDeviceContext execution_context_scope(
+        execution_context);
+    const ScopedActiveExecutionDeviceContext active_execution_context_scope;
+
+    if (config_.forbid_native_cpu_fallback) {
+        spdlog::info(
+            "TrainingExecutor: strict ArrayFire residency enabled; native CPU fallback is forbidden");
+    } else {
+        spdlog::info(
+            "TrainingExecutor: ArrayFire-first execution; native CPU fallback remains available for declared gaps");
+    }
+
+    CrashRunRecorder::Instance().StartTrainingRun(
+        config_,
+        epochs,
+        batch_size,
+        0);
+    const auto started_run = CrashRunRecorder::LoadLastRun();
+    TrainingTraceCollector::Instance().StartRun(
+        started_run ? started_run->run_id : "training-run");
+    CrashRunRecorder::Instance().MarkBackendEvent(
+        "ExecutionDeviceContext.Bind",
+        execution_context.Describe());
+    TrainingTraceCollector::Instance().RecordExecutionDeviceContext(
+        execution_context);
+    const auto effective_placements =
+        BuildEffectiveTrainingPlacementPlan(config_, execution_context);
+    const std::string placement_fingerprint =
+        BuildPlacementPlanFingerprint(effective_placements);
+    const std::string placement_summary =
+        BuildPlacementPlanSummary(effective_placements);
+    TrainingTraceCollector::Instance().RecordPlacementPlan(
+        placement_fingerprint,
+        static_cast<uint64_t>(effective_placements.size()),
+        placement_summary,
+        fmt::format("placement_entries={} fingerprint={} summary={}",
+                    effective_placements.size(),
+                    placement_fingerprint,
+                    placement_summary));
+    const ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
+        &RecordArrayFireNativeCpuFallbackForActiveTrace);
+    const ScopedArrayFireHostSyncObserver host_sync_observer(
+        &RecordArrayFireHostSyncForActiveTrace);
+    TrainingTraceCollector::Instance().RecordRuntimeEvent(
+        "TrainingDevicePolicy",
+        config_.forbid_native_cpu_fallback
+            ? "ArrayFire-first execution; native CPU fallback forbidden"
+            : "ArrayFire-first execution; native CPU fallback allowed and recorded");
+    RecordDeclaredScalarLossOutputBoundary();
+    auto fail_setup = [&](const std::string& reason) {
+        CrashRunRecorder::Instance().MarkFailed(reason);
+        TrainingTraceCollector::Instance().RecordTerminalEvent(
+            "failed",
+            reason,
+            0,
+            0.0f,
+            0.0f);
+        TrainingTraceCollector::Instance().FinishRun("failed");
+        is_training_.store(false);
+    };
+
     try {
         // Initialize
         if (!Initialize(batch_size)) {
@@ -308,7 +873,7 @@ void TrainingExecutor::Train(
                           errors::FormatError(
                               errors::Training::InvalidTrainingSetup,
                               "Failed to initialize"));
-            is_training_.store(false);
+            fail_setup("initialization_failed");
             return;
         }
         LogTrainingBackendPlacementPlan(config_);
@@ -384,6 +949,7 @@ void TrainingExecutor::Train(
 
         if (!external_batchers_.train) {
             spdlog::error("TrainingExecutor: external batcher mode but no Train batcher");
+            fail_setup("missing_external_train_batcher");
             return;
         }
 
@@ -403,6 +969,7 @@ void TrainingExecutor::Train(
 
         if (!sequence_batcher_) {
             spdlog::error("TrainingExecutor: sequence mode but no sequence batcher");
+            fail_setup("missing_sequence_batcher");
             return;
         }
 
@@ -489,7 +1056,7 @@ void TrainingExecutor::Train(
 #else
         spdlog::error("TrainingExecutor: legacy DatasetHandle mode is disabled "
                       "for this modern-only test build");
-        is_training_.store(false);
+        fail_setup("legacy_dataset_mode_disabled");
         return;
 #endif
     }
@@ -548,7 +1115,7 @@ void TrainingExecutor::Train(
     model_->SetTraining(true);
 
     spdlog::debug("TrainingExecutor: Step 3 - Entering training loop");
-    CrashRunRecorder::Instance().StartTrainingRun(config_, epochs, batch_size, num_train_samples);
+    CrashRunRecorder::Instance().UpdateSampleCount(num_train_samples);
     BackendDebugHooks::SetDebugEventCallback([](const std::string& source,
                                                 const std::string& message) {
         if (source.rfind("Model", 0) == 0) {
@@ -1087,8 +1654,11 @@ void TrainingExecutor::RunTrainingEpoch(
             TrainingTraceStage::Forward, epoch, batch_num,
             static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
 
-        // DEBUG: Log sample values for first batch of first epoch
-        if (epoch == 1 && batch_num == 1) {
+        // DEBUG: Log sample values for first batch of first epoch.
+        if (epoch == 1 && batch_num == 1 &&
+            !ShouldMaterializeFirstBatchDebugSamples(config_)) {
+            RecordSkippedFirstBatchDebugSampleDump();
+        } else if (epoch == 1 && batch_num == 1) {
             const float* input_data = batch.data.Data<float>();
             const float* pred_data_debug = predictions.Data<float>();
             const float* target_data_debug = batch.labels.Data<float>();
@@ -1143,11 +1713,13 @@ void TrainingExecutor::RunTrainingEpoch(
 
         // Compute objective-appropriate metrics.
         if (regression_metrics) {
-            const float* pred_data = predictions.Data<float>();
-            const float* target_data = batch.labels.Data<float>();
-            regression.Add(pred_data, target_data,
-                           batch.size * config_.output_size,
-                           config_.output_size);
+            AddRegressionMetricScalars(
+                regression,
+                predictions,
+                batch.labels,
+                batch.size,
+                config_.output_size,
+                config_);
         } else {
             const auto accuracy_count = CountClassificationDecisionScalars(
                 predictions, batch.labels, batch.size, config_.output_size,
@@ -1280,11 +1852,13 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
 
         // Compute objective-appropriate metrics.
         if (regression_metrics) {
-            const float* pred_data = predictions.Data<float>();
-            const float* target_data = batch.labels.Data<float>();
-            regression.Add(pred_data, target_data,
-                           batch.size * config_.output_size,
-                           config_.output_size);
+            AddRegressionMetricScalars(
+                regression,
+                predictions,
+                batch.labels,
+                batch.size,
+                config_.output_size,
+                config_);
         } else {
             const auto accuracy_count = CountClassificationDecisionScalars(
                 predictions, batch.labels, batch.size, config_.output_size,
@@ -1886,8 +2460,11 @@ void TrainingExecutor::RunTrainingEpochArrow(
             TrainingTraceStage::Forward, epoch, batch_num,
             static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
 
-        // DEBUG: Log sample values for first batch of first epoch
-        if (epoch == 1 && batch_num == 1) {
+        // DEBUG: Log sample values for first batch of first epoch.
+        if (epoch == 1 && batch_num == 1 &&
+            !ShouldMaterializeFirstBatchDebugSamples(config_)) {
+            RecordSkippedFirstBatchDebugSampleDump();
+        } else if (epoch == 1 && batch_num == 1) {
             const float* input_data = batch.data.Data<float>();
             float min_input = input_data[0], max_input = input_data[0];
             const auto& input_shape = batch.data.Shape();
@@ -1949,11 +2526,13 @@ void TrainingExecutor::RunTrainingEpochArrow(
 
         // Compute accuracy
         if (regression_metrics) {
-            const float* pred_data = predictions.Data<float>();
-            const float* target_data = batch.labels.Data<float>();
-            regression.Add(
-                pred_data, target_data, batch.size * config_.output_size,
-                config_.output_size);
+            AddRegressionMetricScalars(
+                regression,
+                predictions,
+                batch.labels,
+                batch.size,
+                config_.output_size,
+                config_);
         } else {
             const auto accuracy_count = CountClassificationDecisionScalars(
                 predictions, batch.labels, batch.size, config_.output_size,
@@ -2100,11 +2679,13 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
 
         // Compute accuracy
         if (regression_metrics) {
-            const float* pred_data = predictions.Data<float>();
-            const float* target_data = batch.labels.Data<float>();
-            regression.Add(
-                pred_data, target_data, batch.size * config_.output_size,
-                config_.output_size);
+            AddRegressionMetricScalars(
+                regression,
+                predictions,
+                batch.labels,
+                batch.size,
+                config_.output_size,
+                config_);
         } else {
             const auto accuracy_count = CountClassificationDecisionScalars(
                 predictions, batch.labels, batch.size, config_.output_size,

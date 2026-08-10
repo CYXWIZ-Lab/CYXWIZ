@@ -16,7 +16,7 @@ SGDOptimizer::SGDOptimizer(double learning_rate, double momentum)
     : momentum_(momentum) {
     learning_rate_ = learning_rate;
     step_count_ = 0;
-    optimizer_detail::OptimizerGpuAvailable();
+    optimizer_detail::OptimizerArrayFireAvailable();
 }
 
 void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -32,7 +32,7 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
         size_t num_elements = param.NumElements();
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (optimizer_detail::OptimizerGpuAvailable() && param.GetDataType() == DataType::Float32) {
+        if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
             try {
                 af::array param_gpu = param.GetArray();
                 af::array grad_gpu = grad.GetArray();

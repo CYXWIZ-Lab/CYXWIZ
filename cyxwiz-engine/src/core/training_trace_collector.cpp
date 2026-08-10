@@ -1,4 +1,6 @@
 #include "training_trace_collector.h"
+#include "algorithms/arrayfire_backend_utils.h"
+#include "execution_device_context.h"
 
 #include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/memory_manager.h>
@@ -7,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <sstream>
 #include <thread>
 
@@ -50,6 +53,48 @@ void PopulateMemorySnapshot(TrainingTraceEvent& event) {
 #endif
 }
 
+void PopulateStageExecutionContext(TrainingTraceEvent& event) {
+    const auto* context = CurrentExecutionDeviceContext();
+    if (!context) {
+        return;
+    }
+
+    event.stage_backend = context->effective_backend;
+    event.stage_device_id = context->effective_device_id;
+    event.stage_device_name = context->device_name;
+    event.execution_platform = context->platform;
+    event.execution_context_id = context->stable_identity;
+    event.capability_generation = context->capability_generation;
+}
+
+std::string TransferSummaryKey(const std::string& mode,
+                               const std::string& reason) {
+    const std::string safe_mode = mode.empty() ? "unknown" : mode;
+    const std::string safe_reason = reason.empty() ? "unknown" : reason;
+    return safe_mode + "/" + safe_reason;
+}
+
+std::string ReasonSummaryKey(const std::string& reason) {
+    return reason.empty() ? "unknown" : reason;
+}
+
+std::string FormatReasonCounts(const std::map<std::string, uint64_t>& counts) {
+    if (counts.empty()) {
+        return "";
+    }
+
+    std::ostringstream out;
+    bool first = true;
+    for (const auto& [reason, count] : counts) {
+        if (!first) {
+            out << "; ";
+        }
+        out << reason << "=" << count;
+        first = false;
+    }
+    return out.str();
+}
+
 nlohmann::json EventToJson(const TrainingTraceEvent& event) {
     return {
         {"timestamp", event.timestamp},
@@ -90,7 +135,29 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"transfer_mode", event.transfer_mode},
         {"transfer_reason", event.transfer_reason},
         {"transfer_backend", event.transfer_backend},
-        {"transfer_batch_size", event.transfer_batch_size}
+        {"transfer_batch_size", event.transfer_batch_size},
+        {"compute_backend", event.compute_backend},
+        {"stage_backend", event.stage_backend},
+        {"stage_device_id", event.stage_device_id},
+        {"stage_device_name", event.stage_device_name},
+        {"requested_backend", event.requested_backend},
+        {"requested_device_id", event.requested_device_id},
+        {"effective_backend", event.effective_backend},
+        {"effective_device_id", event.effective_device_id},
+        {"effective_device_name", event.effective_device_name},
+        {"execution_platform", event.execution_platform},
+        {"execution_context_id", event.execution_context_id},
+        {"capability_generation", event.capability_generation},
+        {"fallback_target", event.fallback_target},
+        {"fallback_operation", event.fallback_operation},
+        {"fallback_reason", event.fallback_reason},
+        {"fallback_policy", event.fallback_policy},
+        {"native_cpu_fallback", event.native_cpu_fallback},
+        {"arrayfire_host_sync_bytes", event.arrayfire_host_sync_bytes},
+        {"arrayfire_host_sync_reason", event.arrayfire_host_sync_reason},
+        {"placement_fingerprint", event.placement_fingerprint},
+        {"placement_entry_count", event.placement_entry_count},
+        {"placement_summary", event.placement_summary}
     };
 }
 
@@ -135,7 +202,195 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
     event.transfer_reason = j.value("transfer_reason", "");
     event.transfer_backend = j.value("transfer_backend", "");
     event.transfer_batch_size = j.value("transfer_batch_size", 0);
+    event.compute_backend = j.value("compute_backend", "");
+    event.stage_backend = j.value("stage_backend", "");
+    event.stage_device_id = j.value("stage_device_id", 0);
+    event.stage_device_name = j.value("stage_device_name", "");
+    event.requested_backend = j.value("requested_backend", "");
+    event.requested_device_id = j.value("requested_device_id", 0);
+    event.effective_backend = j.value("effective_backend", "");
+    event.effective_device_id = j.value("effective_device_id", 0);
+    event.effective_device_name = j.value("effective_device_name", "");
+    event.execution_platform = j.value("execution_platform", "");
+    event.execution_context_id = j.value("execution_context_id", "");
+    event.capability_generation =
+        j.value("capability_generation", uint64_t{0});
+    event.fallback_target = j.value("fallback_target", "");
+    event.fallback_operation = j.value("fallback_operation", "");
+    event.fallback_reason = j.value("fallback_reason", "");
+    event.fallback_policy = j.value("fallback_policy", "");
+    event.native_cpu_fallback = j.value("native_cpu_fallback", false);
+    event.arrayfire_host_sync_bytes =
+        j.value("arrayfire_host_sync_bytes", uint64_t{0});
+    event.arrayfire_host_sync_reason =
+        j.value("arrayfire_host_sync_reason", "");
+    event.placement_fingerprint = j.value("placement_fingerprint", "");
+    event.placement_entry_count =
+        j.value("placement_entry_count", uint64_t{0});
+    event.placement_summary = j.value("placement_summary", "");
     return event;
+}
+
+bool IsTerminalStatus(const std::string& status) {
+    return status == "completed" ||
+           status == "early_stopped" ||
+           status == "cancelled" ||
+           status == "failed";
+}
+
+bool IsSuccessfulTerminalStatus(const std::string& status) {
+    return status == "completed" || status == "early_stopped";
+}
+
+void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
+    bool saw_context_bind = !summary.execution_context_id.empty();
+    bool saw_placement_plan = !summary.placement_fingerprint.empty();
+    const bool derive_fallback_count =
+        summary.native_cpu_fallback_count == 0;
+    const bool derive_transfer_counts =
+        summary.transfer_event_count == 0 &&
+        summary.transfer_known_bytes == 0;
+    const bool derive_synchronization_counts =
+        summary.synchronization_event_count == 0 &&
+        summary.synchronization_known_bytes == 0;
+    const bool derive_output_boundary_count =
+        summary.declared_output_boundary_count == 0;
+    const bool derive_host_sync =
+        summary.arrayfire_host_sync_count == 0 &&
+        summary.arrayfire_host_sync_bytes == 0;
+    uint64_t derived_fallback_count = 0;
+    uint64_t derived_transfer_event_count = 0;
+    uint64_t derived_transfer_known_bytes = 0;
+    uint64_t derived_synchronization_event_count = 0;
+    uint64_t derived_synchronization_known_bytes = 0;
+    uint64_t derived_output_boundary_count = 0;
+    uint64_t derived_host_sync_count = 0;
+    uint64_t derived_host_sync_bytes = 0;
+    std::map<std::string, uint64_t> derived_transfer_reasons;
+    std::map<std::string, uint64_t> derived_synchronization_reasons;
+    for (const auto& event : summary.recent_events) {
+        if (event.native_cpu_fallback) {
+            ++derived_fallback_count;
+        }
+        if (!event.transfer_mode.empty()) {
+            ++derived_transfer_event_count;
+            derived_transfer_known_bytes += event.arrayfire_host_sync_bytes;
+            ++derived_transfer_reasons[
+                TransferSummaryKey(event.transfer_mode,
+                                   event.transfer_reason)];
+        }
+        if (event.stage == "ArrayFire.HostSync" ||
+            event.arrayfire_host_sync_bytes > 0) {
+            ++derived_synchronization_event_count;
+            derived_synchronization_known_bytes +=
+                event.arrayfire_host_sync_bytes;
+            ++derived_synchronization_reasons[
+                ReasonSummaryKey(event.arrayfire_host_sync_reason.empty()
+                                     ? event.transfer_reason
+                                     : event.arrayfire_host_sync_reason)];
+        }
+        if (event.stage == "TrainingExecutor.OutputBoundary") {
+            ++derived_output_boundary_count;
+        }
+        if (event.stage == "ArrayFire.HostSync" ||
+            event.arrayfire_host_sync_bytes > 0) {
+            ++derived_host_sync_count;
+            derived_host_sync_bytes += event.arrayfire_host_sync_bytes;
+        }
+        if (!saw_context_bind &&
+            event.stage == "ExecutionDeviceContext.Bind") {
+            saw_context_bind = true;
+            summary.execution_platform = event.execution_platform;
+            summary.requested_backend = event.requested_backend;
+            summary.requested_device_id = event.requested_device_id;
+            summary.effective_backend = event.effective_backend;
+            summary.effective_device_id = event.effective_device_id;
+            summary.effective_device_name = event.effective_device_name;
+            summary.execution_context_id = event.execution_context_id;
+            summary.fallback_policy = event.fallback_policy;
+        }
+        if (!saw_placement_plan &&
+            event.stage == "TrainingExecutor.PlacementPlan") {
+            saw_placement_plan = true;
+            summary.placement_fingerprint = event.placement_fingerprint;
+            summary.placement_entry_count = event.placement_entry_count;
+            summary.placement_summary = event.placement_summary;
+        }
+    }
+    if (derive_fallback_count) {
+        summary.native_cpu_fallback_count = derived_fallback_count;
+    }
+    if (derive_transfer_counts) {
+        summary.transfer_event_count = derived_transfer_event_count;
+        summary.transfer_known_bytes = derived_transfer_known_bytes;
+    }
+    if (summary.transfer_summary.empty()) {
+        summary.transfer_summary =
+            FormatReasonCounts(derived_transfer_reasons);
+    }
+    if (derive_synchronization_counts) {
+        summary.synchronization_event_count =
+            derived_synchronization_event_count;
+        summary.synchronization_known_bytes =
+            derived_synchronization_known_bytes;
+    }
+    if (summary.synchronization_summary.empty()) {
+        summary.synchronization_summary =
+            FormatReasonCounts(derived_synchronization_reasons);
+    }
+    if (derive_output_boundary_count) {
+        summary.declared_output_boundary_count =
+            derived_output_boundary_count;
+    }
+    if (derive_host_sync) {
+        summary.arrayfire_host_sync_count = derived_host_sync_count;
+        summary.arrayfire_host_sync_bytes = derived_host_sync_bytes;
+    }
+
+    if (!summary.available) {
+        summary.residency_verdict = "unavailable";
+        summary.residency_reason = "No training trace is available.";
+        return;
+    }
+    if (!saw_context_bind) {
+        summary.residency_verdict = "missing_execution_context";
+        summary.residency_reason =
+            "No execution device context bind event was recorded.";
+        return;
+    }
+    if (summary.native_cpu_fallback_count > 0) {
+        summary.residency_verdict = "native_cpu_fallback_observed";
+        summary.residency_reason =
+            "Native CPU fallback events were recorded for this run.";
+        return;
+    }
+    if (!IsTerminalStatus(summary.status)) {
+        summary.residency_verdict = "in_progress";
+        summary.residency_reason =
+            "Run has not reached a terminal state yet.";
+        return;
+    }
+    if (!IsSuccessfulTerminalStatus(summary.status)) {
+        summary.residency_verdict = "terminal_without_residency_pass";
+        summary.residency_reason =
+            "Run ended without native CPU fallback, but did not complete "
+            "successfully.";
+        return;
+    }
+    if (summary.fallback_policy == "forbid_native_cpu_fallback" &&
+        summary.execution_platform == "arrayfire") {
+        summary.residency_verdict =
+            "strict_arrayfire_declared_boundaries";
+        summary.residency_reason =
+            "Strict ArrayFire run completed with zero native CPU fallback "
+            "events; declared host output boundaries are recorded separately.";
+        return;
+    }
+
+    summary.residency_verdict = "compatibility_mode_no_fallback_observed";
+    summary.residency_reason =
+        "Run completed without recorded native CPU fallback, but native CPU "
+        "fallback was allowed by policy.";
 }
 
 } // namespace
@@ -152,6 +407,20 @@ void TrainingTraceCollector::StartRun(const std::string& run_id) {
     events_.clear();
     materialization_events_.clear();
     warnings_.clear();
+    execution_context_event_ = TrainingTraceEvent{};
+    has_execution_context_event_ = false;
+    placement_plan_event_ = TrainingTraceEvent{};
+    has_placement_plan_event_ = false;
+    native_cpu_fallback_count_ = 0;
+    transfer_event_count_ = 0;
+    transfer_known_bytes_ = 0;
+    transfer_reason_counts_.clear();
+    synchronization_event_count_ = 0;
+    synchronization_known_bytes_ = 0;
+    synchronization_reason_counts_.clear();
+    arrayfire_host_sync_count_ = 0;
+    arrayfire_host_sync_bytes_ = 0;
+    declared_output_boundary_count_ = 0;
     events_since_write_ = 0;
     if (settings_.persist_enabled) {
         WriteLocked();
@@ -185,8 +454,12 @@ void TrainingTraceCollector::RecordStage(TrainingTraceStage stage,
     event.duration_ms = duration_ms;
     event.status = status;
     event.message = message;
+    PopulateStageExecutionContext(event);
     PopulateMemorySnapshot(event);
     events_.push_back(event);
+    if (event.stage == "TrainingExecutor.OutputBoundary") {
+        ++declared_output_boundary_count_;
+    }
     while (events_.size() > settings_.max_recent_events) {
         events_.pop_front();
     }
@@ -254,6 +527,7 @@ void TrainingTraceCollector::RecordRuntimeEvent(const std::string& stage,
         event.loss = latest.loss;
         event.accuracy = latest.accuracy;
     }
+    PopulateStageExecutionContext(event);
     PopulateMemorySnapshot(event);
     events_.push_back(event);
     while (events_.size() > settings_.max_recent_events) {
@@ -309,8 +583,212 @@ void TrainingTraceCollector::RecordPinMemoryTransferStatus(
         event.loss = latest.loss;
         event.accuracy = latest.accuracy;
     }
+    PopulateStageExecutionContext(event);
     PopulateMemorySnapshot(event);
     events_.push_back(event);
+    ++transfer_event_count_;
+    ++transfer_reason_counts_[
+        TransferSummaryKey(event.transfer_mode, event.transfer_reason)];
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordNativeCpuFallback(
+    const ArrayFireNativeCpuFallbackEvent& fallback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = "ArrayFire.NativeCpuFallback";
+    event.thread_id = ThreadIdString();
+    event.status = fallback.fallback_forbidden ? "error" : "warning";
+    event.compute_backend = fallback.selected_backend;
+    event.fallback_target = "native_cpu";
+    event.fallback_operation = fallback.operation_name;
+    event.fallback_reason = fallback.reason_code;
+    event.fallback_policy = fallback.fallback_forbidden
+        ? "forbid_native_cpu_fallback"
+        : "allow_native_cpu_fallback";
+    event.native_cpu_fallback = true;
+    event.message = "ArrayFire operation '" + fallback.operation_name +
+        "' on backend '" + fallback.selected_backend +
+        "' attempted native CPU fallback";
+    if (!fallback.reason_code.empty()) {
+        event.message += " (reason=" + fallback.reason_code + ")";
+    }
+    if (!fallback.context.empty()) {
+        event.message += ". Context: " + fallback.context;
+    }
+    if (!events_.empty()) {
+        const auto& latest = events_.back();
+        event.epoch = latest.epoch;
+        event.batch = latest.batch;
+        event.total_batches = latest.total_batches;
+        event.loss = latest.loss;
+        event.accuracy = latest.accuracy;
+        event.validation_loss = latest.validation_loss;
+        event.validation_accuracy = latest.validation_accuracy;
+    }
+    PopulateStageExecutionContext(event);
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    ++native_cpu_fallback_count_;
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    warnings_.push_back(event.message);
+    if (warnings_.size() > 50) {
+        warnings_.erase(warnings_.begin());
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordArrayFireHostSync(
+    const ArrayFireHostSyncEvent& sync) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = "ArrayFire.HostSync";
+    event.thread_id = ThreadIdString();
+    event.status = "ok";
+    event.compute_backend = sync.selected_backend;
+    event.transfer_mode = "arrayfire_to_host";
+    event.transfer_reason = sync.reason_code;
+    event.transfer_backend = sync.selected_backend;
+    event.arrayfire_host_sync_bytes = sync.bytes;
+    event.arrayfire_host_sync_reason = sync.reason_code;
+    event.message = sync.operation_name.empty()
+        ? "ArrayFire tensor data synchronized to host"
+        : sync.operation_name + " synchronized ArrayFire tensor data to host";
+    if (!sync.context.empty()) {
+        event.message += ". Context: " + sync.context;
+    }
+    if (!events_.empty()) {
+        const auto& latest = events_.back();
+        event.epoch = latest.epoch;
+        event.batch = latest.batch;
+        event.total_batches = latest.total_batches;
+        event.loss = latest.loss;
+        event.accuracy = latest.accuracy;
+        event.validation_loss = latest.validation_loss;
+        event.validation_accuracy = latest.validation_accuracy;
+    }
+    PopulateStageExecutionContext(event);
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    ++transfer_event_count_;
+    transfer_known_bytes_ += sync.bytes;
+    ++transfer_reason_counts_[
+        TransferSummaryKey(event.transfer_mode, event.transfer_reason)];
+    ++synchronization_event_count_;
+    synchronization_known_bytes_ += sync.bytes;
+    ++synchronization_reason_counts_[
+        ReasonSummaryKey(event.arrayfire_host_sync_reason)];
+    ++arrayfire_host_sync_count_;
+    arrayfire_host_sync_bytes_ += sync.bytes;
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordExecutionDeviceContext(
+    const ExecutionDeviceContext& context) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = "ExecutionDeviceContext.Bind";
+    event.thread_id = ThreadIdString();
+    event.status = context.valid ? "ok" : "warning";
+    event.message = context.Describe();
+    event.compute_backend = context.effective_backend;
+    event.requested_backend = context.requested_backend;
+    event.requested_device_id = context.requested_device_id;
+    event.effective_backend = context.effective_backend;
+    event.effective_device_id = context.effective_device_id;
+    event.effective_device_name = context.device_name;
+    event.execution_platform = context.platform;
+    event.execution_context_id = context.stable_identity;
+    event.capability_generation = context.capability_generation;
+    event.stage_backend = context.effective_backend;
+    event.stage_device_id = context.effective_device_id;
+    event.stage_device_name = context.device_name;
+    event.fallback_policy = context.FallbackPolicyName();
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    execution_context_event_ = event;
+    has_execution_context_event_ = true;
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (!context.valid) {
+        warnings_.push_back(event.message);
+        if (warnings_.size() > 50) {
+            warnings_.erase(warnings_.begin());
+        }
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordPlacementPlan(
+    const std::string& fingerprint,
+    uint64_t entry_count,
+    const std::string& placement_summary,
+    const std::string& message) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = "TrainingExecutor.PlacementPlan";
+    event.thread_id = ThreadIdString();
+    event.status = "ok";
+    event.message = message;
+    event.placement_fingerprint = fingerprint;
+    event.placement_entry_count = entry_count;
+    event.placement_summary = placement_summary;
+    PopulateStageExecutionContext(event);
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    placement_plan_event_ = event;
+    has_placement_plan_event_ = true;
     while (events_.size() > settings_.max_recent_events) {
         events_.pop_front();
     }
@@ -367,6 +845,7 @@ void TrainingTraceCollector::RecordTaskProgress(
         event.validation_loss = latest.validation_loss;
         event.validation_accuracy = latest.validation_accuracy;
     }
+    PopulateStageExecutionContext(event);
     PopulateMemorySnapshot(event);
     events_.push_back(event);
     while (events_.size() > settings_.max_recent_events) {
@@ -410,6 +889,7 @@ void TrainingTraceCollector::RecordValidationMetrics(
     event.validation_accuracy = validation_accuracy;
     event.duration_ms = duration_ms;
     event.metric_scope = "validation";
+    PopulateStageExecutionContext(event);
     PopulateMemorySnapshot(event);
     events_.push_back(event);
     while (events_.size() > settings_.max_recent_events) {
@@ -444,6 +924,7 @@ void TrainingTraceCollector::RecordCheckpointSaved(
     event.metric_scope = "checkpoint";
     event.checkpoint_path = checkpoint_path;
     event.is_best_checkpoint = is_best_checkpoint;
+    PopulateStageExecutionContext(event);
     PopulateMemorySnapshot(event);
     events_.push_back(event);
     while (events_.size() > settings_.max_recent_events) {
@@ -480,6 +961,7 @@ void TrainingTraceCollector::RecordTerminalEvent(
     event.status = terminal_status.empty() ? "completed" : terminal_status;
     event.message = terminal_reason;
     event.terminal_reason = terminal_reason;
+    PopulateStageExecutionContext(event);
     PopulateMemorySnapshot(event);
     events_.push_back(event);
     while (events_.size() > settings_.max_recent_events) {
@@ -532,6 +1014,42 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
     summary.recent_events.assign(events_.begin(), events_.end());
     summary.materialization_events.assign(
         materialization_events_.begin(), materialization_events_.end());
+    summary.native_cpu_fallback_count = native_cpu_fallback_count_;
+    summary.transfer_event_count = transfer_event_count_;
+    summary.transfer_known_bytes = transfer_known_bytes_;
+    summary.transfer_summary = FormatReasonCounts(transfer_reason_counts_);
+    summary.synchronization_event_count = synchronization_event_count_;
+    summary.synchronization_known_bytes = synchronization_known_bytes_;
+    summary.synchronization_summary =
+        FormatReasonCounts(synchronization_reason_counts_);
+    summary.arrayfire_host_sync_count = arrayfire_host_sync_count_;
+    summary.arrayfire_host_sync_bytes = arrayfire_host_sync_bytes_;
+    if (has_placement_plan_event_) {
+        summary.placement_fingerprint =
+            placement_plan_event_.placement_fingerprint;
+        summary.placement_entry_count =
+            placement_plan_event_.placement_entry_count;
+        summary.placement_summary = placement_plan_event_.placement_summary;
+    }
+    summary.declared_output_boundary_count =
+        declared_output_boundary_count_;
+    if (has_execution_context_event_) {
+        summary.execution_platform =
+            execution_context_event_.execution_platform;
+        summary.requested_backend =
+            execution_context_event_.requested_backend;
+        summary.requested_device_id =
+            execution_context_event_.requested_device_id;
+        summary.effective_backend =
+            execution_context_event_.effective_backend;
+        summary.effective_device_id =
+            execution_context_event_.effective_device_id;
+        summary.effective_device_name =
+            execution_context_event_.effective_device_name;
+        summary.execution_context_id =
+            execution_context_event_.execution_context_id;
+        summary.fallback_policy = execution_context_event_.fallback_policy;
+    }
     if (!events_.empty()) {
         const auto& latest = events_.back();
         summary.latest_stage = latest.stage;
@@ -542,6 +1060,7 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
         summary.latest_loss = latest.loss;
         summary.latest_accuracy = latest.accuracy;
     }
+    PopulateRunLevelTraceSummary(summary);
     return summary;
 }
 
@@ -561,6 +1080,38 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
         summary.run_id = j.value("run_id", "");
         summary.status = j.value("status", "");
         summary.warnings = j.value("warnings", std::vector<std::string>{});
+        summary.native_cpu_fallback_count =
+            j.value("native_cpu_fallback_count", uint64_t{0});
+        summary.transfer_event_count =
+            j.value("transfer_event_count", uint64_t{0});
+        summary.transfer_known_bytes =
+            j.value("transfer_known_bytes", uint64_t{0});
+        summary.transfer_summary = j.value("transfer_summary", "");
+        summary.synchronization_event_count =
+            j.value("synchronization_event_count", uint64_t{0});
+        summary.synchronization_known_bytes =
+            j.value("synchronization_known_bytes", uint64_t{0});
+        summary.synchronization_summary =
+            j.value("synchronization_summary", "");
+        summary.arrayfire_host_sync_count =
+            j.value("arrayfire_host_sync_count", uint64_t{0});
+        summary.arrayfire_host_sync_bytes =
+            j.value("arrayfire_host_sync_bytes", uint64_t{0});
+        summary.placement_fingerprint =
+            j.value("placement_fingerprint", "");
+        summary.placement_entry_count =
+            j.value("placement_entry_count", uint64_t{0});
+        summary.placement_summary = j.value("placement_summary", "");
+        summary.execution_platform = j.value("execution_platform", "");
+        summary.requested_backend = j.value("requested_backend", "");
+        summary.requested_device_id = j.value("requested_device_id", 0);
+        summary.effective_backend = j.value("effective_backend", "");
+        summary.effective_device_id = j.value("effective_device_id", 0);
+        summary.effective_device_name = j.value("effective_device_name", "");
+        summary.execution_context_id = j.value("execution_context_id", "");
+        summary.fallback_policy = j.value("fallback_policy", "");
+        summary.declared_output_boundary_count =
+            j.value("declared_output_boundary_count", uint64_t{0});
         if (j.contains("events") && j["events"].is_array()) {
             for (const auto& item : j["events"]) {
                 summary.recent_events.push_back(EventFromJson(item));
@@ -589,6 +1140,7 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
             summary.latest_loss = latest.loss;
             summary.latest_accuracy = latest.accuracy;
         }
+        PopulateRunLevelTraceSummary(summary);
         return summary;
     } catch (...) {
         return std::nullopt;
@@ -611,8 +1163,94 @@ void TrainingTraceCollector::WriteLocked() const {
             {"status", status_},
             {"events", events},
             {"materialization_events", materialization_events},
-            {"warnings", warnings_}
+            {"warnings", warnings_},
+            {"native_cpu_fallback_count", native_cpu_fallback_count_},
+            {"transfer_event_count", transfer_event_count_},
+            {"transfer_known_bytes", transfer_known_bytes_},
+            {"transfer_summary",
+             FormatReasonCounts(transfer_reason_counts_)},
+            {"synchronization_event_count", synchronization_event_count_},
+            {"synchronization_known_bytes", synchronization_known_bytes_},
+            {"synchronization_summary",
+             FormatReasonCounts(synchronization_reason_counts_)},
+            {"arrayfire_host_sync_count", arrayfire_host_sync_count_},
+            {"arrayfire_host_sync_bytes", arrayfire_host_sync_bytes_}
         };
+        TrainingTraceSummary summary;
+        summary.available = !run_id_.empty();
+        summary.run_id = run_id_;
+        summary.status = status_;
+        summary.recent_events.assign(events_.begin(), events_.end());
+        summary.native_cpu_fallback_count = native_cpu_fallback_count_;
+        summary.transfer_event_count = transfer_event_count_;
+        summary.transfer_known_bytes = transfer_known_bytes_;
+        summary.transfer_summary =
+            FormatReasonCounts(transfer_reason_counts_);
+        summary.synchronization_event_count =
+            synchronization_event_count_;
+        summary.synchronization_known_bytes =
+            synchronization_known_bytes_;
+        summary.synchronization_summary =
+            FormatReasonCounts(synchronization_reason_counts_);
+        summary.arrayfire_host_sync_count = arrayfire_host_sync_count_;
+        summary.arrayfire_host_sync_bytes = arrayfire_host_sync_bytes_;
+        if (has_placement_plan_event_) {
+            summary.placement_fingerprint =
+                placement_plan_event_.placement_fingerprint;
+            summary.placement_entry_count =
+                placement_plan_event_.placement_entry_count;
+            summary.placement_summary =
+                placement_plan_event_.placement_summary;
+        }
+        summary.declared_output_boundary_count =
+            declared_output_boundary_count_;
+        if (has_execution_context_event_) {
+            summary.execution_platform =
+                execution_context_event_.execution_platform;
+            summary.requested_backend =
+                execution_context_event_.requested_backend;
+            summary.requested_device_id =
+                execution_context_event_.requested_device_id;
+            summary.effective_backend =
+                execution_context_event_.effective_backend;
+            summary.effective_device_id =
+                execution_context_event_.effective_device_id;
+            summary.effective_device_name =
+                execution_context_event_.effective_device_name;
+            summary.execution_context_id =
+                execution_context_event_.execution_context_id;
+            summary.fallback_policy =
+                execution_context_event_.fallback_policy;
+        }
+        PopulateRunLevelTraceSummary(summary);
+        j["execution_platform"] = summary.execution_platform;
+        j["requested_backend"] = summary.requested_backend;
+        j["requested_device_id"] = summary.requested_device_id;
+        j["effective_backend"] = summary.effective_backend;
+        j["effective_device_id"] = summary.effective_device_id;
+        j["effective_device_name"] = summary.effective_device_name;
+        j["execution_context_id"] = summary.execution_context_id;
+        j["fallback_policy"] = summary.fallback_policy;
+        j["declared_output_boundary_count"] =
+            summary.declared_output_boundary_count;
+        j["transfer_event_count"] = summary.transfer_event_count;
+        j["transfer_known_bytes"] = summary.transfer_known_bytes;
+        j["transfer_summary"] = summary.transfer_summary;
+        j["synchronization_event_count"] =
+            summary.synchronization_event_count;
+        j["synchronization_known_bytes"] =
+            summary.synchronization_known_bytes;
+        j["synchronization_summary"] =
+            summary.synchronization_summary;
+        j["arrayfire_host_sync_count"] =
+            summary.arrayfire_host_sync_count;
+        j["arrayfire_host_sync_bytes"] =
+            summary.arrayfire_host_sync_bytes;
+        j["placement_fingerprint"] = summary.placement_fingerprint;
+        j["placement_entry_count"] = summary.placement_entry_count;
+        j["placement_summary"] = summary.placement_summary;
+        j["residency_verdict"] = summary.residency_verdict;
+        j["residency_reason"] = summary.residency_reason;
         std::ofstream file(CurrentTracePath(), std::ios::trunc);
         file << std::setw(2) << j << '\n';
     } catch (...) {

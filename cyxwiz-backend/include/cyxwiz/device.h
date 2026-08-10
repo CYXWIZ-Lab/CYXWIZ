@@ -16,7 +16,8 @@ enum class DeviceType {
     CUDA = 1,
     OPENCL = 2,
     METAL = 3,
-    VULKAN = 4
+    VULKAN = 4,
+    ONEAPI = 5
 };
 
 struct DeviceInfo {
