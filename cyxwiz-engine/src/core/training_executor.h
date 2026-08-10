@@ -353,6 +353,7 @@ private:
     /**
      * Compute loss between predictions and targets
      */
+    Tensor ComputeLossTensor(const Tensor& predictions, const Tensor& targets);
     float ComputeLoss(const Tensor& predictions, const Tensor& targets);
 
     /**

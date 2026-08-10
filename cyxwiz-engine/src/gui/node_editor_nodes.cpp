@@ -727,7 +727,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["num_workers"] = std::to_string(cyxwiz::GetDefaultNumWorkers());
             node.parameters["prefetch_factor"] = "2";
             node.parameters["pin_memory"] = "false";    // serialized compatibility; unsupported by current batchers
-            node.parameters["log_interval"] = "10";     // log every N batches
+            node.parameters["log_interval"] = "10";     // report metrics/logs every N batches
             node.parameters["validation_freq"] = "1";   // validate every N epochs
             node.parameters["save_best_checkpoint"] = "true";
             node.parameters["early_stopping_patience"] = "5";

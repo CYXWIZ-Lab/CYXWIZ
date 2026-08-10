@@ -294,7 +294,7 @@ const char* ReductionName(Reduction reduction) {
 }
 
 af::array TensorToAf(const Tensor& t) {
-    return t.Shape().size() == 2 ? t.GetArrayRowMajor2D() : t.GetArray();
+    return t.GetSemanticArray();
 }
 
 Tensor AfToTensor(const af::array& arr) {

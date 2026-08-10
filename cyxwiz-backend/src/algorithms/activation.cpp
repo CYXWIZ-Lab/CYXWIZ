@@ -305,16 +305,6 @@ static Tensor AfToTensor(const af::array& arr) {
     return Tensor(materialized);
 }
 
-static af::array TensorToSemanticAf(const Tensor& t) {
-    return t.Shape().size() == 2 ? t.GetArrayRowMajor2D() : t.GetArray();
-}
-
-static Tensor SemanticAfToTensor(const af::array& arr, const Tensor& reference) {
-    af::array materialized = arr;
-    materialized.eval();
-    return reference.Shape().size() == 2 ? Tensor::FromArrayRowMajor2D(materialized) : Tensor(materialized);
-}
-
 static void LogActivationFallbackOnce(
     const char* operation_name,
     const char* error_message,
@@ -659,7 +649,7 @@ Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 Tensor SoftmaxActivation::Forward(const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array x = TensorToSemanticAf(input);
+        af::array x = input.GetSemanticArray();
 
         // Determine the axis for softmax (default is last dimension)
         int actual_axis = axis_;
@@ -685,7 +675,8 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
         af::array output = exp_x / af::tile(sum_exp, tile_dims);
         output.eval();
 
-        cached_output_ = SemanticAfToTensor(output, input);
+        cached_output_ =
+            Tensor::FromSemanticArray(output, input.Shape());
         return cached_output_;
     } catch (const af::exception& e) {
         LogActivationFallbackOnce(
@@ -698,8 +689,8 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
 Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array grad_out = TensorToSemanticAf(grad_output);
-        af::array softmax_out = TensorToSemanticAf(cached_output_);
+        af::array grad_out = grad_output.GetSemanticArray();
+        af::array softmax_out = cached_output_.GetSemanticArray();
 
         int actual_axis = axis_;
         if (actual_axis < 0) {
@@ -718,7 +709,7 @@ Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& inpu
         af::array dx = softmax_out * (grad_out - af::tile(sum_grad_softmax, tile_dims));
         dx.eval();
 
-        return SemanticAfToTensor(dx, input);
+        return Tensor::FromSemanticArray(dx, input.Shape());
     } catch (const af::exception& e) {
         LogActivationFallbackOnce(
             "Softmax::Backward", e.what(), grad_output, "grad_output");

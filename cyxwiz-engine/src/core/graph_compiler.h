@@ -464,7 +464,7 @@ struct TrainingConfiguration {
     bool drop_last = false;
     int num_workers = 0;                // forwarded to supported batchers
     int prefetch_factor = 0;            // bounded async batch queue depth; 0 disables prefetch
-    int log_interval = 10;              // batch progress log cadence; 0 logs first batch only
+    int log_interval = 10;              // batch metric/log cadence; 0 samples first/final only
     int validation_freq = 1;            // epoch-based validation cadence; final epoch always validates
     int dataloader_seed = 42;           // deterministic DataLoader split/shuffle seed
     int grad_accum_steps = 1;           // optimizer step every N backward passes

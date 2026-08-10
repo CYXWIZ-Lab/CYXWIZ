@@ -17,7 +17,7 @@
 namespace cyxwiz {
 
 af::array TensorToAf(const Tensor& t) {
-    return t.Shape().size() == 2 ? t.GetArrayRowMajor2D() : t.GetArray();
+    return t.GetSemanticArray();
 }
 
 af::array TensorToAf3DRowMajor(const Tensor& t) {

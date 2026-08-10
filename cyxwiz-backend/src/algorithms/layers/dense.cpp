@@ -165,10 +165,10 @@ Tensor DenseLayer::Forward(const Tensor& input) {
                       ? std::vector<size_t>{batch_size, static_cast<size_t>(out_features_)}
                       : std::vector<size_t>{static_cast<size_t>(out_features_)},
                   DataType::Float32);
-    const float* input_data = input.Data<float>();
-    const float* weight_data = weights_.Data<float>();
-    const float* bias_data = use_bias_ ? bias_.Data<float>() : nullptr;
-    float* output_data = output.Data<float>();
+    const float* input_data = input.ReadData<float>();
+    const float* weight_data = weights_.ReadData<float>();
+    const float* bias_data = use_bias_ ? bias_.ReadData<float>() : nullptr;
+    float* output_data = output.MutableData<float>();
 
     for (size_t batch = 0; batch < batch_size; ++batch) {
         for (size_t out = 0; out < static_cast<size_t>(out_features_); ++out) {
@@ -262,12 +262,12 @@ Tensor DenseLayer::Backward(const Tensor& grad_output) {
         grad_bias_ = Tensor::Zeros({static_cast<size_t>(out_features_)});
     }
 
-    const float* grad_output_data = grad_output.Data<float>();
-    const float* input_data = cached_input_.Data<float>();
-    const float* weight_data = weights_.Data<float>();
-    float* grad_input_data = grad_input.Data<float>();
-    float* grad_weight_data = grad_weights_.Data<float>();
-    float* grad_bias_data = use_bias_ ? grad_bias_.Data<float>() : nullptr;
+    const float* grad_output_data = grad_output.ReadData<float>();
+    const float* input_data = cached_input_.ReadData<float>();
+    const float* weight_data = weights_.ReadData<float>();
+    float* grad_input_data = grad_input.MutableData<float>();
+    float* grad_weight_data = grad_weights_.MutableData<float>();
+    float* grad_bias_data = use_bias_ ? grad_bias_.MutableData<float>() : nullptr;
 
     for (size_t batch = 0; batch < batch_size; ++batch) {
         for (size_t in = 0; in < static_cast<size_t>(in_features_); ++in) {

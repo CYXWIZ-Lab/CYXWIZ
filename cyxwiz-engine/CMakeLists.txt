@@ -3286,9 +3286,8 @@ set_target_properties(test_error_codes PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# ===== Test: TrainingExecutor Arrow/Parquet Parity =====
-add_executable(test_training_executor_arrow_parquet
-    tests/test_training_executor_arrow_parquet.cpp
+# ===== TrainingExecutor test and benchmark runtime =====
+set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/training_executor.cpp
     src/core/regression_target_transform.cpp
     src/core/preprocessing_state.cpp
@@ -3308,34 +3307,50 @@ add_executable(test_training_executor_arrow_parquet
     src/plugin/registries/plugin_training_hook_manager.cpp
 )
 
-target_include_directories(test_training_executor_arrow_parquet PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_training_executor_arrow_parquet PRIVATE
-    Arrow::arrow_shared
-    Parquet::parquet_shared
-    spdlog::spdlog
-    fmt::fmt
-    nlohmann_json::nlohmann_json
-    cyxwiz-backend
-)
-
-if(WIN32)
-    target_compile_definitions(test_training_executor_arrow_parquet PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+function(configure_training_executor_harness target_name)
+    target_include_directories(${target_name} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
-else()
-    target_compile_definitions(test_training_executor_arrow_parquet PRIVATE
-        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-    )
-endif()
 
-set_target_properties(test_training_executor_arrow_parquet PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    target_link_libraries(${target_name} PRIVATE
+        Arrow::arrow_shared
+        Parquet::parquet_shared
+        spdlog::spdlog
+        fmt::fmt
+        nlohmann_json::nlohmann_json
+        cyxwiz-backend
+    )
+
+    if(WIN32)
+        target_compile_definitions(${target_name} PRIVATE
+            _CRT_SECURE_NO_WARNINGS
+            NOMINMAX
+            CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+        )
+    else()
+        target_compile_definitions(${target_name} PRIVATE
+            CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+        )
+    endif()
+
+    set_target_properties(${target_name} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+endfunction()
+
+# ===== Test: TrainingExecutor Arrow/Parquet Parity =====
+add_executable(test_training_executor_arrow_parquet
+    tests/test_training_executor_arrow_parquet.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
 )
+configure_training_executor_harness(test_training_executor_arrow_parquet)
+
+# ===== Benchmark: Ticket 85 APS-style dense training =====
+add_executable(test_dense_training_benchmark
+    tests/benchmarks/test_dense_training_benchmark.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+)
+configure_training_executor_harness(test_dense_training_benchmark)
 
 # ===== Test: Graph Topology Utilities =====
 add_executable(test_graph_topology_utils

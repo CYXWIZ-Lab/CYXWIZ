@@ -55,7 +55,16 @@ public:
     DataType GetDataType() const { return dtype_; }
     int NumDimensions() const { return static_cast<int>(shape_.size()); }
 
-    // Data access
+    // Explicit host access. ReadData preserves a current device copy;
+    // MutableData invalidates it because the caller may modify host memory.
+    const void* ReadData() const;
+    void* MutableData();
+    template<typename T>
+    const T* ReadData() const { return static_cast<const T*>(ReadData()); }
+    template<typename T>
+    T* MutableData() { return static_cast<T*>(MutableData()); }
+
+    // Compatibility aliases. New code should use explicit host access.
     void* Data();
     const void* Data() const;
     template<typename T>
@@ -73,15 +82,24 @@ public:
     af::array GetArrayRowMajor2D() const;
     // 3D row-major Tensor view as semantic ArrayFire [dim0, dim1, dim2].
     af::array GetArrayRowMajor3D() const;
+    // Rank-aware semantic view: row-major for rank 2/3, native otherwise.
+    af::array GetSemanticArray() const;
     // Set from ArrayFire array, keeping device data resident until host data is requested.
     void SetFromArray(const af::array& arr);
     // Set from semantic row-major ArrayFire views, keeping device data resident.
     void SetFromArrayRowMajor2D(const af::array& arr);
     void SetFromArrayRowMajor3D(const af::array& arr);
+    // Store a semantic ArrayFire result with an explicit logical shape.
+    void SetFromSemanticArray(
+        const af::array& arr,
+        std::vector<size_t> semantic_shape);
     // Build a row-major 2D Tensor from semantic ArrayFire [rows, cols].
     static Tensor FromArrayRowMajor2D(const af::array& arr);
     // Build a row-major 3D Tensor from semantic ArrayFire [dim0, dim1, dim2].
     static Tensor FromArrayRowMajor3D(const af::array& arr);
+    static Tensor FromSemanticArray(
+        const af::array& arr,
+        std::vector<size_t> semantic_shape);
 #endif
 
     // Operations
@@ -111,7 +129,7 @@ public:
         if (idx >= NumElements()) {
             throw std::out_of_range("Tensor::AtAs: index out of range");
         }
-        return Data<T>()[idx];
+        return ReadData<T>()[idx];
     }
     template<typename T>
     T AtAs(size_t i, size_t j) const {
@@ -131,10 +149,7 @@ public:
         if (idx >= NumElements()) {
             throw std::out_of_range("Tensor::SetAs: index out of range");
         }
-        Data<T>()[idx] = value;
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-        MarkHostModified();
-#endif
+        MutableData<T>()[idx] = value;
     }
     template<typename T>
     void SetAs(size_t i, size_t j, T value) {

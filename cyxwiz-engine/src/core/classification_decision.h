@@ -2,13 +2,14 @@
 
 #include "../gui/node_editor.h"
 
+#include <cyxwiz/tensor.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <string_view>
 
 namespace cyxwiz {
-
-class Tensor;
 
 enum class ClassificationDecisionMode {
     MulticlassScores,
@@ -64,6 +65,11 @@ struct ClassificationDecisionCount {
     size_t total = 0;
 };
 
+struct ClassificationDecisionScalar {
+    Tensor correct;
+    size_t total = 0;
+};
+
 inline ClassificationDecisionCount CountClassificationDecisions(
     const float* predictions,
     const float* targets,
@@ -91,6 +97,17 @@ ClassificationDecisionCount CountClassificationDecisionScalars(
     size_t batch_size,
     size_t output_width,
     ClassificationDecisionMode mode);
+
+ClassificationDecisionScalar BuildClassificationDecisionScalar(
+    const Tensor& predictions,
+    const Tensor& targets,
+    size_t batch_size,
+    size_t output_width,
+    ClassificationDecisionMode mode);
+
+ClassificationDecisionCount ReadClassificationDecisionScalar(
+    const ClassificationDecisionScalar& scalar,
+    std::string_view operation = "ClassificationDecision::CorrectCount");
 
 inline float ClassificationAccuracy(
     const float* predictions,

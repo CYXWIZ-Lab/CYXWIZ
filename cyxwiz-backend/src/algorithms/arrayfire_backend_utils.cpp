@@ -7,6 +7,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -23,6 +24,8 @@ thread_local ArrayFireNativeCpuFallbackObserver
     g_arrayfire_native_cpu_fallback_observer = nullptr;
 thread_local ArrayFireHostSyncObserver
     g_arrayfire_host_sync_observer = nullptr;
+thread_local ArrayFireHostSyncAttribution
+    g_arrayfire_host_sync_attribution;
 
 std::string ToLowerAscii(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
@@ -83,6 +86,17 @@ ScopedArrayFireHostSyncObserver::~ScopedArrayFireHostSyncObserver() {
     SetArrayFireHostSyncObserver(previous_);
 }
 
+ScopedArrayFireHostSyncAttribution::ScopedArrayFireHostSyncAttribution(
+    ArrayFireHostSyncCategory category,
+    std::string operation_name)
+    : previous_(GetArrayFireHostSyncAttribution()) {
+    SetArrayFireHostSyncAttribution({category, std::move(operation_name)});
+}
+
+ScopedArrayFireHostSyncAttribution::~ScopedArrayFireHostSyncAttribution() {
+    SetArrayFireHostSyncAttribution(previous_);
+}
+
 bool IsArrayFireNativeCpuFallbackForbidden() {
     return GetArrayFireFallbackPolicy() ==
            ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
@@ -104,6 +118,58 @@ ArrayFireHostSyncObserver GetArrayFireHostSyncObserver() {
 
 void SetArrayFireHostSyncObserver(ArrayFireHostSyncObserver observer) {
     g_arrayfire_host_sync_observer = observer;
+}
+
+ArrayFireHostSyncAttribution GetArrayFireHostSyncAttribution() {
+    return g_arrayfire_host_sync_attribution;
+}
+
+void SetArrayFireHostSyncAttribution(
+    const ArrayFireHostSyncAttribution& attribution) {
+    g_arrayfire_host_sync_attribution = attribution;
+}
+
+const char* ArrayFireHostSyncCategoryName(
+    ArrayFireHostSyncCategory category) {
+    switch (category) {
+        case ArrayFireHostSyncCategory::LossScalarReadback:
+            return "loss_scalar_readback";
+        case ArrayFireHostSyncCategory::MetricScalarReadback:
+            return "metric_scalar_readback";
+        case ArrayFireHostSyncCategory::LayoutConversion:
+            return "layout_conversion";
+        case ArrayFireHostSyncCategory::DebugSampleDump:
+            return "debug_sample_dump";
+        case ArrayFireHostSyncCategory::LayerCpuPath:
+            return "layer_cpu_path";
+        case ArrayFireHostSyncCategory::OptimizerCpuPath:
+            return "optimizer_cpu_path";
+        case ArrayFireHostSyncCategory::CheckpointOutput:
+            return "checkpoint_output";
+        case ArrayFireHostSyncCategory::Unknown:
+        default:
+            return "unknown";
+    }
+}
+
+void NotifyArrayFireHostSync(ArrayFireHostSyncEvent event) {
+    const auto observer = GetArrayFireHostSyncObserver();
+    if (!observer) {
+        return;
+    }
+
+    const auto attribution = GetArrayFireHostSyncAttribution();
+    if (event.attribution_category.empty()) {
+        event.attribution_category =
+            ArrayFireHostSyncCategoryName(attribution.category);
+    }
+    if (event.attribution_operation.empty()) {
+        event.attribution_operation = attribution.operation_name;
+    }
+    if (event.selected_backend.empty()) {
+        event.selected_backend = CurrentArrayFireBackendName();
+    }
+    observer(event);
 }
 
 const char* BackendFallbackReasonName(BackendFallbackReason reason) {

@@ -10,6 +10,7 @@
 #include <new>
 #include <random>
 #include <string>
+#include <utility>
 #include <spdlog/spdlog.h>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -390,6 +391,22 @@ af::array Tensor::GetArray() const {
         throw std::runtime_error("Tensor::GetArray: ArrayFire supports at most 4 dimensions");
     }
 
+    if (device_current_ && af_array_ && shape_.size() == 2 &&
+        device_layout_ == TensorDeviceLayout::RowMajor2D) {
+        af::array transposed = af::transpose(*af_array_);
+        af::array converted = af::moddims(
+            transposed,
+            static_cast<dim_t>(shape_[0]),
+            static_cast<dim_t>(shape_[1]));
+        converted.eval();
+        af_array_ = std::make_unique<af::array>(std::move(converted));
+        device_layout_ = TensorDeviceLayout::ArrayFireNative;
+        return *af_array_;
+    }
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayoutConversion,
+        "Tensor::GetArray");
     EnsureHostCurrent();
 
     af::dim4 dims(1, 1, 1, 1);
@@ -416,6 +433,22 @@ af::array Tensor::GetArrayRowMajor2D() const {
         return *af_array_;
     }
 
+    if (device_current_ && af_array_ &&
+        device_layout_ == TensorDeviceLayout::ArrayFireNative) {
+        af::array reshaped = af::moddims(
+            *af_array_,
+            static_cast<dim_t>(shape_[1]),
+            static_cast<dim_t>(shape_[0]));
+        af::array converted = af::transpose(reshaped);
+        converted.eval();
+        af_array_ = std::make_unique<af::array>(std::move(converted));
+        device_layout_ = TensorDeviceLayout::RowMajor2D;
+        return *af_array_;
+    }
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayoutConversion,
+        "Tensor::GetArrayRowMajor2D");
     EnsureHostCurrent();
 
     af::dim4 swapped_dims(
@@ -442,6 +475,9 @@ af::array Tensor::GetArrayRowMajor3D() const {
         return *af_array_;
     }
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayoutConversion,
+        "Tensor::GetArrayRowMajor3D");
     EnsureHostCurrent();
 
     af::dim4 reversed_dims(
@@ -458,6 +494,16 @@ af::array Tensor::GetArrayRowMajor3D() const {
     device_current_ = true;
     device_layout_ = TensorDeviceLayout::RowMajor3D;
     return *af_array_;
+}
+
+af::array Tensor::GetSemanticArray() const {
+    if (shape_.size() == 2) {
+        return GetArrayRowMajor2D();
+    }
+    if (shape_.size() == 3) {
+        return GetArrayRowMajor3D();
+    }
+    return GetArray();
 }
 
 void Tensor::SetFromArray(const af::array& arr) {
@@ -505,6 +551,52 @@ void Tensor::SetFromArrayRowMajor3D(const af::array& arr) {
     device_layout_ = TensorDeviceLayout::RowMajor3D;
 }
 
+void Tensor::SetFromSemanticArray(
+    const af::array& arr,
+    std::vector<size_t> semantic_shape) {
+    if (semantic_shape.size() > 4) {
+        throw std::runtime_error(
+            "Tensor::SetFromSemanticArray: ArrayFire supports at most 4 dimensions");
+    }
+
+    size_t expected_elements = 1;
+    for (size_t dim : semantic_shape) {
+        size_t next = 0;
+        if (!tensor_utils::SafeMultiply(expected_elements, dim, next)) {
+            throw std::overflow_error(
+                "Tensor::SetFromSemanticArray: semantic shape element count overflow");
+        }
+        expected_elements = next;
+    }
+    if (expected_elements != static_cast<size_t>(arr.elements())) {
+        throw std::runtime_error(
+            "Tensor::SetFromSemanticArray: semantic shape does not match ArrayFire element count");
+    }
+
+    if (semantic_shape.size() == 2) {
+        if (arr.dims(0) != static_cast<dim_t>(semantic_shape[0]) ||
+            arr.dims(1) != static_cast<dim_t>(semantic_shape[1])) {
+            throw std::runtime_error(
+                "Tensor::SetFromSemanticArray: 2D semantic shape does not match ArrayFire dimensions");
+        }
+        SetFromArrayRowMajor2D(arr);
+        return;
+    }
+    if (semantic_shape.size() == 3) {
+        if (arr.dims(0) != static_cast<dim_t>(semantic_shape[0]) ||
+            arr.dims(1) != static_cast<dim_t>(semantic_shape[1]) ||
+            arr.dims(2) != static_cast<dim_t>(semantic_shape[2])) {
+            throw std::runtime_error(
+                "Tensor::SetFromSemanticArray: 3D semantic shape does not match ArrayFire dimensions");
+        }
+        SetFromArrayRowMajor3D(arr);
+        return;
+    }
+
+    SetFromArray(arr);
+    shape_ = std::move(semantic_shape);
+}
+
 Tensor Tensor::FromArrayRowMajor2D(const af::array& arr) {
     Tensor result;
     result.SetFromArrayRowMajor2D(arr);
@@ -514,6 +606,14 @@ Tensor Tensor::FromArrayRowMajor2D(const af::array& arr) {
 Tensor Tensor::FromArrayRowMajor3D(const af::array& arr) {
     Tensor result;
     result.SetFromArrayRowMajor3D(arr);
+    return result;
+}
+
+Tensor Tensor::FromSemanticArray(
+    const af::array& arr,
+    std::vector<size_t> semantic_shape) {
+    Tensor result;
+    result.SetFromSemanticArray(arr, std::move(semantic_shape));
     return result;
 }
 
@@ -549,7 +649,7 @@ void Tensor::EnsureHostCurrent() const {
         }
     }
     host_current_ = true;
-    if (const auto observer = GetArrayFireHostSyncObserver()) {
+    if (GetArrayFireHostSyncObserver()) {
         const auto layout_name = [this]() {
             switch (device_layout_) {
                 case TensorDeviceLayout::ArrayFireNative:
@@ -565,16 +665,19 @@ void Tensor::EnsureHostCurrent() const {
         };
         ArrayFireHostSyncEvent event;
         event.operation_name = "Tensor::EnsureHostCurrent";
-        event.selected_backend = CurrentArrayFireBackendName();
         event.reason_code = "tensor_host_materialization";
+        event.tensor_shape = shape_;
+        event.tensor_dtype =
+            tensor_backend_observation::DataTypeName(dtype_);
+        event.tensor_layout = layout_name();
         event.context =
             BuildTensorShapeContext("tensor", shape_) +
             "; dtype=" +
-            tensor_backend_observation::DataTypeName(dtype_) +
+            event.tensor_dtype +
             "; layout=" +
-            layout_name();
+            event.tensor_layout;
         event.bytes = static_cast<uint64_t>(bytes);
-        observer(event);
+        NotifyArrayFireHostSync(std::move(event));
     }
 }
 
@@ -611,18 +714,26 @@ size_t Tensor::NumBytes() const {
     return bytes;
 }
 
-void* Tensor::Data() {
+const void* Tensor::ReadData() const {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    EnsureHostCurrent();
+#endif
+    return HostData(host_buffer_);
+}
+
+void* Tensor::MutableData() {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     MarkHostModified();
 #endif
     return HostData(host_buffer_);
 }
 
+void* Tensor::Data() {
+    return MutableData();
+}
+
 const void* Tensor::Data() const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    EnsureHostCurrent();
-#endif
-    return HostData(host_buffer_);
+    return ReadData();
 }
 
 Tensor Tensor::Zeros(const std::vector<size_t>& shape, DataType dtype) {

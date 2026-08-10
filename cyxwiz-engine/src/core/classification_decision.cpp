@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <utility>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -24,8 +25,8 @@ ClassificationDecisionCount CountClassificationDecisionsCpu(
     size_t output_width,
     ClassificationDecisionMode mode) {
     return CountClassificationDecisions(
-        predictions.Data<float>(),
-        targets.Data<float>(),
+        predictions.ReadData<float>(),
+        targets.ReadData<float>(),
         batch_size,
         output_width,
         mode);
@@ -53,22 +54,7 @@ bool CanUseArrayFireDecisionCount(const Tensor& predictions,
            target_shape[1] == output_width;
 }
 
-size_t ReadBoundedCorrectCount(const af::array& correct_mask,
-                               size_t batch_size) {
-    af::array correct_scalar = af::sum(af::flat(correct_mask.as(f32)));
-    correct_scalar.eval();
-
-    float correct = 0.0f;
-    correct_scalar.host(&correct);
-    if (!std::isfinite(correct) || correct <= 0.0f) {
-        return 0;
-    }
-
-    const auto rounded = static_cast<size_t>(std::llround(correct));
-    return std::min(rounded, batch_size);
-}
-
-ClassificationDecisionCount CountClassificationDecisionsArrayFire(
+ClassificationDecisionScalar BuildClassificationDecisionScalarArrayFire(
     const Tensor& predictions,
     const Tensor& targets,
     size_t batch_size,
@@ -94,13 +80,18 @@ ClassificationDecisionCount CountClassificationDecisionsArrayFire(
     }
     correct_mask.eval();
 
-    return {ReadBoundedCorrectCount(correct_mask, batch_size), batch_size};
+    af::array correct_scalar = af::sum(af::flat(correct_mask.as(f32)));
+    correct_scalar.eval();
+    return {
+        Tensor::FromSemanticArray(correct_scalar, {1}),
+        batch_size,
+    };
 }
 #endif
 
 } // namespace
 
-ClassificationDecisionCount CountClassificationDecisionScalars(
+ClassificationDecisionScalar BuildClassificationDecisionScalar(
     const Tensor& predictions,
     const Tensor& targets,
     size_t batch_size,
@@ -114,7 +105,7 @@ ClassificationDecisionCount CountClassificationDecisionScalars(
     if (CanUseArrayFireDecisionCount(
             predictions, targets, batch_size, output_width)) {
         try {
-            return CountClassificationDecisionsArrayFire(
+            return BuildClassificationDecisionScalarArrayFire(
                 predictions, targets, batch_size, output_width, mode);
         } catch (const af::exception& e) {
             const BackendFallbackReason reason =
@@ -140,8 +131,44 @@ ClassificationDecisionCount CountClassificationDecisionScalars(
     }
 #endif
 
-    return CountClassificationDecisionsCpu(
+    const ClassificationDecisionCount cpu_count =
+        CountClassificationDecisionsCpu(
         predictions, targets, batch_size, output_width, mode);
+    const float correct = static_cast<float>(cpu_count.correct);
+    return {
+        Tensor({1}, &correct, DataType::Float32),
+        cpu_count.total,
+    };
+}
+
+ClassificationDecisionCount ReadClassificationDecisionScalar(
+    const ClassificationDecisionScalar& scalar,
+    std::string_view operation) {
+    if (scalar.total == 0 || scalar.correct.NumElements() != 1 ||
+        scalar.correct.GetDataType() != DataType::Float32) {
+        return {};
+    }
+
+    const ScopedArrayFireHostSyncAttribution sync_attribution(
+        ArrayFireHostSyncCategory::MetricScalarReadback,
+        std::string(operation));
+    const float correct = scalar.correct.ReadData<float>()[0];
+    if (!std::isfinite(correct) || correct <= 0.0f) {
+        return {0, scalar.total};
+    }
+    const auto rounded = static_cast<size_t>(std::llround(correct));
+    return {std::min(rounded, scalar.total), scalar.total};
+}
+
+ClassificationDecisionCount CountClassificationDecisionScalars(
+    const Tensor& predictions,
+    const Tensor& targets,
+    size_t batch_size,
+    size_t output_width,
+    ClassificationDecisionMode mode) {
+    return ReadClassificationDecisionScalar(
+        BuildClassificationDecisionScalar(
+            predictions, targets, batch_size, output_width, mode));
 }
 
 } // namespace cyxwiz

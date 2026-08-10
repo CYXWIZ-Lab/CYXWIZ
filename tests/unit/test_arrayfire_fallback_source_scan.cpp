@@ -351,3 +351,47 @@ TEST_CASE("ArrayFire backend availability decisions are not cached process-wide"
          FormatHits(stale_hits));
     REQUIRE(stale_hits.empty());
 }
+
+TEST_CASE("ArrayFire training hot path uses semantic and explicit host Tensor accessors",
+          "[arrayfire][residency][source_scan]") {
+    const fs::path repo_root = FindRepoRoot();
+    const std::vector<std::string> relative_paths = {
+        "cyxwiz-backend/src/algorithms/activations/relu.cpp",
+        "cyxwiz-backend/src/algorithms/activations/sigmoid.cpp",
+        "cyxwiz-backend/src/algorithms/activations/tanh.cpp",
+        "cyxwiz-backend/src/algorithms/layers/dense.cpp",
+        "cyxwiz-backend/src/algorithms/sequential/regularization_shape_modules.cpp",
+        "cyxwiz-backend/src/algorithms/optimizers/adam_family.cpp",
+        "cyxwiz-engine/src/core/classification_decision.cpp",
+        "cyxwiz-engine/src/core/training_executor.cpp",
+    };
+    const std::vector<std::string> implicit_access_needles = {
+        ".GetArray()",
+        ".SetFromArray(",
+        ".Data<",
+    };
+
+    std::vector<RawFallbackHit> implicit_access_hits;
+    for (const auto& relative_path : relative_paths) {
+        const fs::path path = repo_root / relative_path;
+        std::ifstream in(path);
+        REQUIRE(in.is_open());
+
+        std::string line;
+        size_t line_number = 0;
+        while (std::getline(in, line)) {
+            ++line_number;
+            for (const auto& needle : implicit_access_needles) {
+                if (line.find(needle) != std::string::npos) {
+                    implicit_access_hits.push_back(
+                        RawFallbackHit{
+                            relative_path, line_number, needle, line});
+                }
+            }
+        }
+    }
+
+    INFO("Implicit Tensor access in semantic training hot path:" +
+         FormatHits(implicit_access_hits));
+    REQUIRE(implicit_access_hits.empty());
+}

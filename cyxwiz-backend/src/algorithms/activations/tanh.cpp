@@ -59,13 +59,13 @@ Tensor Tanh::Forward(const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsCurrentArrayFireBackendAvailable()) {
         try {
-            af::array input_gpu = input.GetArray();
+            af::array input_gpu = input.GetSemanticArray();
 
             // Tanh
             af::array output_gpu = af::tanh(input_gpu);
             output_gpu.eval();
 
-            return Tensor(output_gpu);
+            return Tensor::FromSemanticArray(output_gpu, input.Shape());
         } catch (const af::exception& e) {
             LogTanhFallbackOnce("Tanh::Forward", e.what(), input, "input");
         }
@@ -93,15 +93,16 @@ Tensor Tanh::Backward(const Tensor& grad_output, const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsCurrentArrayFireBackendAvailable()) {
         try {
-            af::array grad_gpu = grad_output.GetArray();
-            af::array input_gpu = input.GetArray();
+            af::array grad_gpu = grad_output.GetSemanticArray();
+            af::array input_gpu = input.GetSemanticArray();
 
             // Gradient: grad * (1 - tanh(x)^2)
             af::array tanh_val = af::tanh(input_gpu);
             af::array grad_input_gpu = grad_gpu * (1.0f - tanh_val * tanh_val);
             grad_input_gpu.eval();
 
-            return Tensor(grad_input_gpu);
+            return Tensor::FromSemanticArray(
+                grad_input_gpu, grad_output.Shape());
         } catch (const af::exception& e) {
             LogTanhFallbackOnce(
                 "Tanh::Backward", e.what(), grad_output, "grad_output");

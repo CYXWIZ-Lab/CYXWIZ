@@ -5,6 +5,7 @@
 #include "../src/core/debug_node_inspector.h"
 #include "../src/core/debug_operator_trace_adapter.h"
 #include "../src/core/debug_operator_trace_producer.h"
+#include "../src/core/debug_run_paths.h"
 #include "../src/core/debug_run_store.h"
 #include "../src/core/debug_runtime_backend_classifier.h"
 #include "../src/core/debug_session_manager.h"
@@ -2009,12 +2010,12 @@ void TestOperatorTraceProducerContract() {
     Check(failed_tokenizer_traces[0].payload["source_symbol"].get<std::string>() ==
               "cyxwiz::DebugOperatorTraceProducer::BuildWarningTrace",
           "failed tokenizer warning should expose source symbol");
-    const auto original_cwd = std::filesystem::current_path();
     const auto test_root = std::filesystem::temp_directory_path() /
         "cyxwiz_debugger_operator_trace_producer_store";
     std::filesystem::remove_all(test_root);
     std::filesystem::create_directories(test_root);
-    std::filesystem::current_path(test_root);
+    const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
+        test_root / "debug_runs");
 
     cyxwiz::DebugRunStoreRecord record;
     record.summary.run_id = "operator-producer-store-run";
@@ -2034,8 +2035,11 @@ void TestOperatorTraceProducerContract() {
     Check(loaded->traces[0].payload["trace_producer"].get<std::string>() ==
               "DebugOperatorTraceProducer",
           "operator producer payload should round-trip through store");
+    Check(std::filesystem::exists(
+              cyxwiz::GetDebugRunRoot() / "studio" /
+              record.summary.run_id / "session.json"),
+          "operator producer store should use the injected debug-run root");
 
-    std::filesystem::current_path(original_cwd);
     std::filesystem::remove_all(test_root);
 }
 void TestSmokeSampleSelectionContract() {
@@ -2787,12 +2791,12 @@ void TestPreflightIssueCodeContract() {
 }
 
 void TestDebugRunStoreContract() {
-    const auto original_cwd = std::filesystem::current_path();
     const auto test_root =
         std::filesystem::temp_directory_path() / "cyxwiz_debugger_contract_store";
     std::filesystem::remove_all(test_root);
     std::filesystem::create_directories(test_root);
-    std::filesystem::current_path(test_root);
+    const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
+        test_root / "debug_runs");
 
     cyxwiz::DebugRunStoreRecord record;
     record.summary.run_id = "store-contract-run";
@@ -2935,8 +2939,11 @@ void TestDebugRunStoreContract() {
     cyxwiz::DebugRunStoreRecord invalid;
     Check(!cyxwiz::DebugRunStore::Save(invalid),
           "debug run store should reject empty run ids");
+    Check(std::filesystem::exists(
+              cyxwiz::GetDebugRunRoot() / "studio" /
+              record.summary.run_id / "session.json"),
+          "debug run store should use the injected root without changing CWD");
 
-    std::filesystem::current_path(original_cwd);
     std::filesystem::remove_all(test_root);
 }
 

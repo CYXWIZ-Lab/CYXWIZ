@@ -1,4 +1,5 @@
 #include "crash_run_recorder.h"
+#include "debug_run_paths.h"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -21,7 +22,7 @@ namespace cyxwiz {
 namespace {
 
 std::filesystem::path DebugRunDir() {
-    return std::filesystem::current_path() / ".cyxwiz" / "debug_runs";
+    return GetDebugRunRoot();
 }
 
 std::filesystem::path CurrentRunPath() {

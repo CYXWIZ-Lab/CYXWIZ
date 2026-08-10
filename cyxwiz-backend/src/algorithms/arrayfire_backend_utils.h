@@ -2,6 +2,8 @@
 
 #include "cyxwiz/api_export.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -23,6 +25,22 @@ enum class ArrayFireFallbackPolicy {
     ForbidNativeCpuFallback,
 };
 
+enum class ArrayFireHostSyncCategory {
+    Unknown,
+    LossScalarReadback,
+    MetricScalarReadback,
+    LayoutConversion,
+    DebugSampleDump,
+    LayerCpuPath,
+    OptimizerCpuPath,
+    CheckpointOutput,
+};
+
+struct ArrayFireHostSyncAttribution {
+    ArrayFireHostSyncCategory category = ArrayFireHostSyncCategory::Unknown;
+    std::string operation_name;
+};
+
 struct ArrayFireNativeCpuFallbackEvent {
     std::string operation_name;
     std::string reason_code;
@@ -36,6 +54,11 @@ struct ArrayFireHostSyncEvent {
     std::string operation_name;
     std::string selected_backend;
     std::string reason_code;
+    std::string attribution_category;
+    std::string attribution_operation;
+    std::vector<size_t> tensor_shape;
+    std::string tensor_dtype;
+    std::string tensor_layout;
     std::string context;
     uint64_t bytes = 0;
 };
@@ -88,6 +111,22 @@ private:
     ArrayFireHostSyncObserver previous_;
 };
 
+class CYXWIZ_API ScopedArrayFireHostSyncAttribution {
+public:
+    ScopedArrayFireHostSyncAttribution(
+        ArrayFireHostSyncCategory category,
+        std::string operation_name);
+    ~ScopedArrayFireHostSyncAttribution();
+
+    ScopedArrayFireHostSyncAttribution(
+        const ScopedArrayFireHostSyncAttribution&) = delete;
+    ScopedArrayFireHostSyncAttribution& operator=(
+        const ScopedArrayFireHostSyncAttribution&) = delete;
+
+private:
+    ArrayFireHostSyncAttribution previous_;
+};
+
 CYXWIZ_API ArrayFireFallbackPolicy GetArrayFireFallbackPolicy();
 CYXWIZ_API void SetArrayFireFallbackPolicy(ArrayFireFallbackPolicy policy);
 CYXWIZ_API bool IsArrayFireNativeCpuFallbackForbidden();
@@ -98,6 +137,12 @@ CYXWIZ_API void SetArrayFireNativeCpuFallbackObserver(
 CYXWIZ_API ArrayFireHostSyncObserver GetArrayFireHostSyncObserver();
 CYXWIZ_API void SetArrayFireHostSyncObserver(
     ArrayFireHostSyncObserver observer);
+CYXWIZ_API ArrayFireHostSyncAttribution GetArrayFireHostSyncAttribution();
+CYXWIZ_API void SetArrayFireHostSyncAttribution(
+    const ArrayFireHostSyncAttribution& attribution);
+CYXWIZ_API const char* ArrayFireHostSyncCategoryName(
+    ArrayFireHostSyncCategory category);
+CYXWIZ_API void NotifyArrayFireHostSync(ArrayFireHostSyncEvent event);
 CYXWIZ_API const char* BackendFallbackReasonName(BackendFallbackReason reason);
 CYXWIZ_API bool IsCudaJitFormalParameterOverflow(const char* message);
 CYXWIZ_API BackendFallbackReason ClassifyArrayFireBackendFallbackReason(

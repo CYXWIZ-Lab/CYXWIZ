@@ -1,10 +1,24 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include "algorithms/arrayfire_backend_utils.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/memory_manager.h>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+
+namespace {
+
+cyxwiz::ArrayFireHostSyncEvent g_tensor_host_sync_event;
+int g_tensor_host_sync_count = 0;
+
+void CaptureTensorHostSync(
+    const cyxwiz::ArrayFireHostSyncEvent& event) {
+    ++g_tensor_host_sync_count;
+    g_tensor_host_sync_event = event;
+}
+
+} // namespace
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -79,6 +93,140 @@ TEST_CASE("Tensor transpose swaps 2D row-major axes", "[tensor]") {
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+TEST_CASE("Tensor native to row-major layout conversion remains device-only",
+          "[tensor][arrayfire][host_sync]") {
+    float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    cyxwiz::Tensor host({2, 3}, data, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor device_only;
+    device_only.SetFromArray(host.GetArray());
+    g_tensor_host_sync_event = {};
+    g_tensor_host_sync_count = 0;
+
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureTensorHostSync);
+        af::array converted = device_only.GetArrayRowMajor2D();
+        REQUIRE(converted.dims(0) == 2);
+        REQUIRE(converted.dims(1) == 3);
+    }
+
+    REQUIRE(g_tensor_host_sync_count == 0);
+    const float* converted_data = device_only.Data<float>();
+    for (size_t index = 0; index < 6; ++index) {
+        REQUIRE(converted_data[index] == data[index]);
+    }
+}
+
+TEST_CASE("Tensor row-major to native layout conversion remains device-only",
+          "[tensor][arrayfire][host_sync]") {
+    float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    cyxwiz::Tensor host({2, 3}, data, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor device_only =
+        cyxwiz::Tensor::FromArrayRowMajor2D(host.GetArrayRowMajor2D());
+    g_tensor_host_sync_event = {};
+    g_tensor_host_sync_count = 0;
+
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureTensorHostSync);
+        af::array converted = device_only.GetArray();
+        REQUIRE(converted.dims(0) == 2);
+        REQUIRE(converted.dims(1) == 3);
+    }
+
+    REQUIRE(g_tensor_host_sync_count == 0);
+    const float* converted_data = device_only.Data<float>();
+    for (size_t index = 0; index < 6; ++index) {
+        REQUIRE(converted_data[index] == data[index]);
+    }
+}
+
+TEST_CASE("Tensor semantic ArrayFire contract preserves rank-aware layouts",
+          "[tensor][arrayfire][semantic_layout]") {
+    float matrix_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    cyxwiz::Tensor matrix_host(
+        {2, 3}, matrix_data, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor matrix_device = cyxwiz::Tensor::FromArrayRowMajor2D(
+        matrix_host.GetArrayRowMajor2D());
+
+    g_tensor_host_sync_event = {};
+    g_tensor_host_sync_count = 0;
+    cyxwiz::Tensor matrix_roundtrip;
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureTensorHostSync);
+        af::array semantic = matrix_device.GetSemanticArray();
+        REQUIRE(semantic.dims(0) == 2);
+        REQUIRE(semantic.dims(1) == 3);
+        matrix_roundtrip = cyxwiz::Tensor::FromSemanticArray(
+            semantic, {2, 3});
+    }
+
+    REQUIRE(g_tensor_host_sync_count == 0);
+    REQUIRE(matrix_roundtrip.Shape() == std::vector<size_t>{2, 3});
+    const float* matrix_out = matrix_roundtrip.Data<float>();
+    for (size_t index = 0; index < 6; ++index) {
+        REQUIRE(matrix_out[index] == matrix_data[index]);
+    }
+
+    float volume_data[] = {
+        1.0f, 2.0f, 3.0f, 4.0f,
+        5.0f, 6.0f, 7.0f, 8.0f,
+        9.0f, 10.0f, 11.0f, 12.0f,
+    };
+    cyxwiz::Tensor volume_host(
+        {2, 2, 3}, volume_data, cyxwiz::DataType::Float32);
+    af::array volume_semantic = volume_host.GetSemanticArray();
+    REQUIRE(volume_semantic.dims(0) == 2);
+    REQUIRE(volume_semantic.dims(1) == 2);
+    REQUIRE(volume_semantic.dims(2) == 3);
+
+    cyxwiz::Tensor volume_roundtrip =
+        cyxwiz::Tensor::FromSemanticArray(volume_semantic, {2, 2, 3});
+    REQUIRE(volume_roundtrip.Shape() == std::vector<size_t>{2, 2, 3});
+    const float* volume_out = volume_roundtrip.Data<float>();
+    for (size_t index = 0; index < 12; ++index) {
+        REQUIRE(volume_out[index] == volume_data[index]);
+    }
+}
+
+TEST_CASE("Tensor semantic ArrayFire contract rejects shape mismatches",
+          "[tensor][arrayfire][semantic_layout]") {
+    float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    cyxwiz::Tensor host({2, 3}, data, cyxwiz::DataType::Float32);
+
+    REQUIRE_THROWS_AS(
+        cyxwiz::Tensor::FromSemanticArray(
+            host.GetArrayRowMajor2D(), {3, 3}),
+        std::runtime_error);
+}
+
+TEST_CASE("Tensor explicit host access preserves read residency and invalidates on mutation",
+          "[tensor][arrayfire][host_sync][host_access]") {
+    float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    cyxwiz::Tensor host({2, 3}, data, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor device_only = cyxwiz::Tensor::FromSemanticArray(
+        host.GetSemanticArray(), {2, 3});
+
+    g_tensor_host_sync_event = {};
+    g_tensor_host_sync_count = 0;
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureTensorHostSync);
+        const float* read = device_only.ReadData<float>();
+        REQUIRE(read[4] == 5.0f);
+        REQUIRE(device_only.GetSemanticArray().dims(0) == 2);
+    }
+    REQUIRE(g_tensor_host_sync_count == 1);
+
+    float* writable = device_only.MutableData<float>();
+    writable[4] = 50.0f;
+    af::array updated = device_only.GetSemanticArray();
+    cyxwiz::Tensor roundtrip =
+        cyxwiz::Tensor::FromSemanticArray(updated, {2, 3});
+    REQUIRE(roundtrip.ReadData<float>()[4] == 50.0f);
+}
+
 TEST_CASE("Tensor transpose keeps Float32 ArrayFire output device-resident", "[tensor]") {
     float data[] = {
         1.0f, 2.0f, 3.0f,

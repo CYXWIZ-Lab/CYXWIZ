@@ -1,4 +1,5 @@
 #include "checkpoint_manager.h"
+#include "algorithms/arrayfire_backend_utils.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <fstream>
@@ -626,7 +627,10 @@ bool CheckpointManager::SaveTensor(const fs::path& path, const Tensor& tensor) {
         }
 
         // Write data
-        const float* data = tensor.Data<float>();
+        const ScopedArrayFireHostSyncAttribution checkpoint_attribution(
+            ArrayFireHostSyncCategory::CheckpointOutput,
+            "CheckpointManager::SaveTensor");
+        const float* data = tensor.ReadData<float>();
         size_t num_elements = tensor.NumElements();
         file.write(reinterpret_cast<const char*>(data), num_elements * sizeof(float));
         if (!file.good()) {
@@ -682,7 +686,7 @@ std::optional<Tensor> CheckpointManager::LoadTensor(const fs::path& path) {
         Tensor tensor(shape, static_cast<DataType>(dtype));
 
         // Read data
-        float* data = tensor.Data<float>();
+        float* data = tensor.MutableData<float>();
         size_t num_elements = tensor.NumElements();
         file.read(reinterpret_cast<char*>(data), num_elements * sizeof(float));
         if (!file.good()) {

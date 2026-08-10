@@ -1,4 +1,5 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/debug_run_paths.h"
 #include "../src/core/ner_sequence_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/preprocessing_state.h"
@@ -1047,13 +1048,22 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
 
     auto strict_config = config;
     strict_config.forbid_native_cpu_fallback = false;
+    strict_config.log_interval = 0;
+    strict_config.save_best_checkpoint = true;
     cyxwiz::TrainingExecutor executor(strict_config, dataset, "label");
 
     bool completed = false;
+    int batch_callback_count = 0;
+    int callback_total_batches = 0;
     executor.Train(
         1,
         2,
-        nullptr,
+        [&](int, int batch, int total_batches, float, float) {
+            ++batch_callback_count;
+            callback_total_batches = total_batches;
+            Check(batch == batch_callback_count,
+                  "strict training batch callback should remain responsive every batch");
+        },
         nullptr,
         [&](const cyxwiz::TrainingMetrics& metrics) {
             completed = metrics.is_complete;
@@ -1061,6 +1071,10 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
 
     Check(completed,
           "strict ArrayFire CPU dense training should complete");
+    Check(callback_total_batches >= 2,
+          "cadence regression requires at least two training batches");
+    Check(batch_callback_count == callback_total_batches,
+          "metric throttling must not throttle batch progress callbacks");
     Check(!cyxwiz::GetPendingExecutionDeviceSelection().has_value(),
           "strict ArrayFire CPU run should consume pending selection");
     Check(cyxwiz::GetNextRunExecutionPolicy() ==
@@ -1111,6 +1125,58 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
     Check(trace.synchronization_summary.find("tensor_host_materialization") !=
               std::string::npos,
           "strict ArrayFire CPU summary should explain synchronization reasons");
+    uint64_t grouped_host_sync_count = 0;
+    uint64_t grouped_host_sync_bytes = 0;
+    bool saw_loss_scalar_group = false;
+    bool saw_metric_scalar_group = false;
+    bool saw_layout_conversion_group = false;
+    bool saw_checkpoint_output_group = false;
+    bool saw_unknown_group = false;
+    uint64_t cadence_loss_scalar_readbacks = 0;
+    uint64_t cadence_metric_scalar_readbacks = 0;
+    for (const auto& group : trace.arrayfire_host_sync_groups) {
+        grouped_host_sync_count += group.event_count;
+        grouped_host_sync_bytes += group.bytes;
+        Check(!group.reason.empty(),
+              "host sync groups should retain the synchronization reason");
+        saw_loss_scalar_group = saw_loss_scalar_group ||
+            group.category == "loss_scalar_readback";
+        saw_metric_scalar_group = saw_metric_scalar_group ||
+            group.category == "metric_scalar_readback";
+        if (group.operation == "TrainingExecutor::ReadAccumulatedLoss") {
+            cadence_loss_scalar_readbacks += group.event_count;
+        }
+        if (group.operation ==
+              "TrainingExecutor::ReadAccumulatedAccuracy") {
+            cadence_metric_scalar_readbacks += group.event_count;
+        }
+        saw_layout_conversion_group = saw_layout_conversion_group ||
+            group.category == "layout_conversion";
+        saw_checkpoint_output_group = saw_checkpoint_output_group ||
+            group.category == "checkpoint_output";
+        saw_unknown_group = saw_unknown_group ||
+            group.category == "unknown";
+    }
+    Check(grouped_host_sync_count == trace.arrayfire_host_sync_count,
+          "host sync groups should account for every synchronization event");
+    Check(grouped_host_sync_bytes == trace.arrayfire_host_sync_bytes,
+          "host sync groups should account for every synchronized byte");
+    Check(saw_loss_scalar_group,
+          "host sync groups should attribute loss scalar readbacks");
+    Check(saw_metric_scalar_group,
+          "host sync groups should attribute metric scalar readbacks");
+    Check(cadence_loss_scalar_readbacks == 2,
+          "first/final cadence should read one loss scalar at two boundaries");
+    Check(cadence_metric_scalar_readbacks == 2,
+          "first/final cadence should read one metric scalar at two boundaries");
+    Check(!saw_layout_conversion_group,
+          "strict dense training should not synchronize for 2D layout conversion");
+    Check(saw_checkpoint_output_group,
+          "checkpoint parameter reads should be a named output boundary");
+    Check(!saw_unknown_group,
+          "strict dense training should not record unattributed host synchronization");
+    Check(!trace.arrayfire_host_sync_summary.empty(),
+          "strict ArrayFire CPU summary should format host sync groups");
     Check(!trace.placement_fingerprint.empty(),
           "strict ArrayFire CPU summary should record placement fingerprint");
     Check(trace.placement_entry_count >
@@ -1143,6 +1209,7 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
     bool saw_placement_plan = false;
     bool saw_cpu_stage = false;
     bool saw_host_sync = false;
+    bool saw_reporting_cadence = false;
     for (const auto& event : trace.recent_events) {
         if (!event.stage_backend.empty()) {
             Check(event.stage_backend == "arrayfire_cpu",
@@ -1163,12 +1230,26 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
             Check(event.placement_summary == trace.placement_summary,
                   "placement plan event should match summary placement text");
         }
+        if (event.stage == "TrainingExecutor.ReportingCadence") {
+            saw_reporting_cadence = true;
+            Check(event.message.find("first and final batch") !=
+                      std::string::npos,
+                  "trace should record the effective first/final metric cadence");
+        }
         if (event.stage == "ArrayFire.HostSync") {
             saw_host_sync = true;
             Check(event.transfer_mode == "arrayfire_to_host",
                   "host sync event should identify ArrayFire-to-host transfer mode");
             Check(event.arrayfire_host_sync_bytes > 0,
                   "host sync event should record byte count");
+            Check(!event.arrayfire_host_sync_category.empty(),
+                  "host sync event should record an attribution category");
+            Check(!event.arrayfire_host_sync_shape.empty(),
+                  "host sync event should record tensor shape");
+            Check(!event.arrayfire_host_sync_dtype.empty(),
+                  "host sync event should record tensor dtype");
+            Check(!event.arrayfire_host_sync_layout.empty(),
+                  "host sync event should record tensor layout");
         }
         if (event.stage != "ExecutionDeviceContext.Bind") {
             continue;
@@ -1195,6 +1276,8 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
           "strict ArrayFire CPU run should record stage backend/device fields");
     Check(saw_host_sync,
           "strict ArrayFire CPU run should record at least one host sync event");
+    Check(saw_reporting_cadence,
+          "strict ArrayFire CPU run should record metric reporting cadence");
 
     const auto persisted_trace =
         cyxwiz::TrainingTraceCollector::LoadLastTrace();
@@ -1218,6 +1301,12 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
         Check(persisted_trace->synchronization_summary ==
                   trace.synchronization_summary,
               "persisted trace should preserve synchronization summary");
+        Check(persisted_trace->arrayfire_host_sync_groups.size() ==
+                  trace.arrayfire_host_sync_groups.size(),
+              "persisted trace should preserve host sync groups");
+        Check(persisted_trace->arrayfire_host_sync_summary ==
+                  trace.arrayfire_host_sync_summary,
+              "persisted trace should preserve formatted host sync summary");
     }
 
     auto* active_device = cyxwiz::Device::GetCurrentDevice();
@@ -1590,6 +1679,13 @@ void TestRegressionTargetTransform(
 int main() {
     namespace fs = std::filesystem;
 
+    const fs::path work_dir =
+        fs::temp_directory_path() / "cyxwiz_training_executor_arrow_parquet";
+    fs::remove_all(work_dir);
+    fs::create_directories(work_dir);
+    const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
+        work_dir / "debug_runs");
+
     TestSequenceBatchContract();
     TestSequenceBatcherPadsNamedPayloads();
     TestSequenceBatcherDropLast();
@@ -1598,11 +1694,6 @@ int main() {
     TestNERSequenceBuilder();
     TestSequenceTrainingStep();
     TestSequenceTrainingExecutor();
-
-    const fs::path work_dir =
-        fs::temp_directory_path() / "cyxwiz_training_executor_arrow_parquet";
-    fs::remove_all(work_dir);
-    fs::create_directories(work_dir);
 
     const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
         MakeTrainingTable(), "training_executor_arrow");
@@ -1693,6 +1784,12 @@ int main() {
         cyxwiz::TrainingExecutor parquet_executor(config, parquet_dataset, "label");
         RunExecutor(parquet_executor, "Parquet TrainingExecutor");
     }
+
+    Check(fs::exists(
+              cyxwiz::GetDebugRunRoot() / "current_training_trace.json"),
+          "training traces should use the injected debug-run root");
+    Check(fs::exists(cyxwiz::GetDebugRunRoot() / "current_run.json"),
+          "crash run records should use the injected debug-run root");
 
     parquet_dataset.reset();
     fs::remove_all(work_dir);

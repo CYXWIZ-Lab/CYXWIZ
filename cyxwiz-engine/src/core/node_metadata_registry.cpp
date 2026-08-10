@@ -1198,7 +1198,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"drop_last", "bool", "false", "Drop incomplete final batch", {}, "", "", "Training", false, false},
          {"num_workers", "int", "0", "Worker count for batch preparation", {}, "0-128", "", "Runtime", false, true},
          {"prefetch_factor", "int", "2", "Prefetch factor when workers are active", {}, "0-64", "", "Runtime", false, true},
-         {"log_interval", "int", "10", "Training log interval in batches", {}, "0-100000", "", "Training", false, true},
+         {"log_interval", "int", "10", "Training metric and log interval in batches", {}, "0-100000", "", "Training", false, true},
          {"validation_freq", "int", "1", "Validation frequency in epochs", {}, "1-10000", "", "Training", false, true},
          {"seed", "int", "42", "Batching random seed", {}, "0-2147483647", "", "Training", false, true},
          {"grad_accum_steps", "int", "1", "Gradient accumulation steps", {}, "1-10000", "", "Training", false, true},

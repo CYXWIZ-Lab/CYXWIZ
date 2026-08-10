@@ -59,13 +59,13 @@ Tensor Sigmoid::Forward(const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsCurrentArrayFireBackendAvailable()) {
         try {
-            af::array input_gpu = input.GetArray();
+            af::array input_gpu = input.GetSemanticArray();
 
             // Sigmoid: 1 / (1 + exp(-x))
             af::array output_gpu = af::sigmoid(input_gpu);
             output_gpu.eval();
 
-            return Tensor(output_gpu);
+            return Tensor::FromSemanticArray(output_gpu, input.Shape());
         } catch (const af::exception& e) {
             LogSigmoidFallbackOnce(
                 "Sigmoid::Forward", e.what(), input, "input");
@@ -94,15 +94,16 @@ Tensor Sigmoid::Backward(const Tensor& grad_output, const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsCurrentArrayFireBackendAvailable()) {
         try {
-            af::array grad_gpu = grad_output.GetArray();
-            af::array input_gpu = input.GetArray();
+            af::array grad_gpu = grad_output.GetSemanticArray();
+            af::array input_gpu = input.GetSemanticArray();
 
             // Gradient: grad * sigmoid(x) * (1 - sigmoid(x))
             af::array sigmoid_val = af::sigmoid(input_gpu);
             af::array grad_input_gpu = grad_gpu * sigmoid_val * (1.0f - sigmoid_val);
             grad_input_gpu.eval();
 
-            return Tensor(grad_input_gpu);
+            return Tensor::FromSemanticArray(
+                grad_input_gpu, grad_output.Shape());
         } catch (const af::exception& e) {
             LogSigmoidFallbackOnce(
                 "Sigmoid::Backward", e.what(), grad_output, "grad_output");

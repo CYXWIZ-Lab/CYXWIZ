@@ -116,6 +116,7 @@ public:
     // first batch of that epoch runs (not at epoch end).
     void SetBatchProgress(int current_epoch, int current_batch, int total_batches,
                           float running_loss);
+    void SetMetricReportingCadence(int batch_interval);
     void AddRunComparisonRecord(const TrainingRunComparisonRecord& record);
     void ClearRunComparisonRecords();
 
@@ -208,6 +209,7 @@ private:
     int current_batch_ = 0;
     int total_batches_ = 0;
     float current_batch_loss_ = 0.0f;
+    int metric_reporting_interval_ = 10;
     float last_epoch_time_ = 0.0f;
     float avg_epoch_time_ = 0.0f;
     float samples_per_second_ = 0.0f;

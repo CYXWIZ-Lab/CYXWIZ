@@ -49,10 +49,10 @@ void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
             try {
-                af::array param_gpu = param.GetArray();
-                af::array grad_gpu = grad.GetArray();
-                af::array m_gpu = m_[name].GetArray();
-                af::array v_gpu = v_[name].GetArray();
+                af::array param_gpu = param.GetSemanticArray();
+                af::array grad_gpu = grad.GetSemanticArray();
+                af::array m_gpu = m_[name].GetSemanticArray();
+                af::array v_gpu = v_[name].GetSemanticArray();
 
                 float b1 = static_cast<float>(beta1_);
                 float b2 = static_cast<float>(beta2_);
@@ -77,9 +77,9 @@ void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
                 param_gpu = param_gpu - lr * m_hat / (af::sqrt(v_hat) + eps);
                 param_gpu.eval();
 
-                param.SetFromArray(param_gpu);
-                m_[name].SetFromArray(m_gpu);
-                v_[name].SetFromArray(v_gpu);
+                param.SetFromSemanticArray(param_gpu, param.Shape());
+                m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
+                v_[name].SetFromSemanticArray(v_gpu, v_[name].Shape());
                 continue;
                 } catch (const af::exception& e) {
                 optimizer_detail::LogOptimizerFallbackOnce(
@@ -90,10 +90,10 @@ void AdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         // CPU fallback
         if (param.GetDataType() == DataType::Float32) {
-            float* param_data = param.Data<float>();
-            const float* grad_data = grad.Data<float>();
-            float* m_data = m_[name].Data<float>();
-            float* v_data = v_[name].Data<float>();
+            float* param_data = param.MutableData<float>();
+            const float* grad_data = grad.ReadData<float>();
+            float* m_data = m_[name].MutableData<float>();
+            float* v_data = v_[name].MutableData<float>();
 
             float lr = static_cast<float>(learning_rate_);
             float b1 = static_cast<float>(beta1_);
@@ -261,10 +261,10 @@ void AdamWOptimizer::Step(std::map<std::string, Tensor>& parameters,
 #ifdef CYXWIZ_HAS_ARRAYFIRE
             if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
                 try {
-                    af::array param_gpu = param.GetArray();
+                    af::array param_gpu = param.GetSemanticArray();
                     param_gpu = param_gpu * (1.0f - wd);
                     param_gpu.eval();
-                    param.SetFromArray(param_gpu);
+                    param.SetFromSemanticArray(param_gpu, param.Shape());
                     continue;
     } catch (const af::exception& e) {
                     optimizer_detail::LogOptimizerFallbackOnce(
@@ -276,7 +276,7 @@ void AdamWOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
             // CPU fallback
             if (param.GetDataType() == DataType::Float32) {
-                float* param_data = param.Data<float>();
+                float* param_data = param.MutableData<float>();
                 for (size_t i = 0; i < num_elements; ++i) {
                     param_data[i] *= (1.0f - wd);
                 }
@@ -349,10 +349,10 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
             try {
-                af::array param_gpu = param.GetArray();
-                af::array grad_gpu = grad.GetArray();
-                af::array m_gpu = m_[name].GetArray();
-                af::array v_gpu = v_[name].GetArray();
+                af::array param_gpu = param.GetSemanticArray();
+                af::array grad_gpu = grad.GetSemanticArray();
+                af::array m_gpu = m_[name].GetSemanticArray();
+                af::array v_gpu = v_[name].GetSemanticArray();
 
                 // Update moments
                 m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
@@ -374,9 +374,9 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
                 param_gpu = param_gpu - lr * m_nesterov / (af::sqrt(v_hat) + eps);
                 param_gpu.eval();
 
-                param.SetFromArray(param_gpu);
-                m_[name].SetFromArray(m_gpu);
-                v_[name].SetFromArray(v_gpu);
+                param.SetFromSemanticArray(param_gpu, param.Shape());
+                m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
+                v_[name].SetFromSemanticArray(v_gpu, v_[name].Shape());
                 continue;
             } catch (const af::exception& e) {
                 optimizer_detail::LogOptimizerFallbackOnce(
@@ -387,10 +387,10 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         // CPU fallback
         if (param.GetDataType() == DataType::Float32) {
-            float* param_data = param.Data<float>();
-            const float* grad_data = grad.Data<float>();
-            float* m_data = m_[name].Data<float>();
-            float* v_data = v_[name].Data<float>();
+            float* param_data = param.MutableData<float>();
+            const float* grad_data = grad.ReadData<float>();
+            float* m_data = m_[name].MutableData<float>();
+            float* v_data = v_[name].MutableData<float>();
 
             for (size_t i = 0; i < num_elements; ++i) {
                 m_data[i] = b1 * m_data[i] + (1.0f - b1) * grad_data[i];

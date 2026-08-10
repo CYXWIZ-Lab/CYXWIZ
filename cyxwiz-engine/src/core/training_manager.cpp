@@ -996,6 +996,10 @@ void TrainingManager::TrainingThreadFunc(
         }
 
         if (exec) {
+            if (auto panel = plot_panel.lock()) {
+                panel->SetMetricReportingCadence(
+                    exec->GetConfig().log_interval);
+            }
             // Per-batch callback — keeps the Training Dashboard responsive during
             // the epoch. Without this, the dashboard stays on "Epoch 0/N" for the
             // full duration of the first epoch because epoch_callback only fires
@@ -1007,6 +1011,11 @@ void TrainingManager::TrainingThreadFunc(
                                                        float batch_loss, float batch_acc) {
                 const bool regression_mode =
                     exec && UsesRegressionMetrics(exec->GetConfig());
+                const int report_interval =
+                    exec ? std::max(0, exec->GetConfig().log_interval) : 0;
+                const bool metrics_sampled =
+                    batch <= 1 || batch >= total_batches ||
+                    (report_interval > 0 && batch % report_interval == 0);
                 {
                     std::lock_guard<std::mutex> lock(metrics_mutex_);
                     cached_metrics_.current_epoch = epoch;
@@ -1024,7 +1033,7 @@ void TrainingManager::TrainingThreadFunc(
                     // gives a smooth 0..N x-axis where each integer is an epoch
                     // boundary. The epoch_callback later writes the official
                     // x=epoch point with the averaged loss + val metrics.
-                    if (total_batches > 0) {
+                    if (metrics_sampled && total_batches > 0) {
                         double frac_epoch = static_cast<double>(epoch - 1) +
                                             static_cast<double>(batch) /
                                             static_cast<double>(total_batches);

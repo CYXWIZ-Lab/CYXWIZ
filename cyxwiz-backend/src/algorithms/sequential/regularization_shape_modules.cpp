@@ -20,7 +20,7 @@ Tensor SoftmaxModule::Forward(const Tensor& input) {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire implementation
-    af::array x = input.GetArray();
+    af::array x = input.GetSemanticArray();
 
     // Softmax: exp(x - max) / sum(exp(x - max))
     // Compute along dim 1 (classes dimension) for [batch, classes] input
@@ -31,7 +31,7 @@ Tensor SoftmaxModule::Forward(const Tensor& input) {
     af::array sum_exp = af::sum(exp_x, 1);  // [batch, 1]
     af::array softmax = exp_x / af::tile(sum_exp, 1, static_cast<unsigned>(x.dims(1)));
 
-    Tensor output(softmax);
+    Tensor output = Tensor::FromSemanticArray(softmax, input.Shape());
     output_cache_ = output.Clone();
     return output;
 #else
@@ -41,8 +41,8 @@ Tensor SoftmaxModule::Forward(const Tensor& input) {
     size_t num_classes = shape.size() > 1 ? shape[1] : shape[0];
 
     Tensor output({batch_size, num_classes}, DataType::Float32);
-    const float* in_data = input.Data<float>();
-    float* out_data = output.Data<float>();
+    const float* in_data = input.ReadData<float>();
+    float* out_data = output.MutableData<float>();
 
     for (size_t b = 0; b < batch_size; ++b) {
         float max_val = in_data[b * num_classes];
@@ -67,8 +67,8 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire implementation
     // Softmax backward: grad_input = softmax * (grad_output - sum(grad_output * softmax))
-    af::array grad = grad_output.GetArray();
-    af::array soft = output_cache_.GetArray();
+    af::array grad = grad_output.GetSemanticArray();
+    af::array soft = output_cache_.GetSemanticArray();
 
     // Compute dot product per sample: sum(grad * softmax) along classes dimension
     af::array dot = af::sum(grad * soft, 1);  // [batch, 1]
@@ -76,7 +76,7 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
     // grad_input = softmax * (grad - dot)
     af::array grad_input = soft * (grad - af::tile(dot, 1, static_cast<unsigned>(grad.dims(1))));
 
-    return Tensor(grad_input);
+    return Tensor::FromSemanticArray(grad_input, grad_output.Shape());
 #else
     // CPU fallback
     const auto& shape = grad_output.Shape();
@@ -84,9 +84,9 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
     size_t num_classes = shape.size() > 1 ? shape[1] : shape[0];
 
     Tensor grad_input({batch_size, num_classes}, DataType::Float32);
-    const float* grad_data = grad_output.Data<float>();
-    const float* soft_data = output_cache_.Data<float>();
-    float* out_data = grad_input.Data<float>();
+    const float* grad_data = grad_output.ReadData<float>();
+    const float* soft_data = output_cache_.ReadData<float>();
+    float* out_data = grad_input.MutableData<float>();
 
     for (size_t b = 0; b < batch_size; ++b) {
         float dot = 0.0f;
@@ -123,7 +123,7 @@ Tensor DropoutModule::Forward(const Tensor& input) {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire implementation
-    af::array x = input.GetArray();
+    af::array x = input.GetSemanticArray();
     float scale = 1.0f / (1.0f - p_);
 
     // Generate random mask: values > p are kept (scaled), values <= p are dropped
@@ -132,11 +132,11 @@ Tensor DropoutModule::Forward(const Tensor& input) {
     af::array scaled_mask = keep_mask * scale;
 
     // Store mask for backward pass
-    mask_ = Tensor(scaled_mask);
+    mask_ = Tensor::FromSemanticArray(scaled_mask, input.Shape());
 
     // Apply dropout
     af::array output = x * scaled_mask;
-    return Tensor(output);
+    return Tensor::FromSemanticArray(output, input.Shape());
 #else
     // CPU fallback
     const auto& shape = input.Shape();
@@ -145,9 +145,9 @@ Tensor DropoutModule::Forward(const Tensor& input) {
     Tensor output(shape, input.GetDataType());
     mask_ = Tensor(shape, DataType::Float32);
 
-    const float* in_data = input.Data<float>();
-    float* out_data = output.Data<float>();
-    float* mask_data = mask_.Data<float>();
+    const float* in_data = input.ReadData<float>();
+    float* out_data = output.MutableData<float>();
+    float* mask_data = mask_.MutableData<float>();
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -174,20 +174,20 @@ Tensor DropoutModule::Backward(const Tensor& grad_output) {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire implementation
-    af::array grad = grad_output.GetArray();
-    af::array mask = mask_.GetArray();
+    af::array grad = grad_output.GetSemanticArray();
+    af::array mask = mask_.GetSemanticArray();
 
     // grad_input = grad * mask (mask already has scaling applied)
     af::array grad_input = grad * mask;
-    return Tensor(grad_input);
+    return Tensor::FromSemanticArray(grad_input, grad_output.Shape());
 #else
     // CPU fallback
     const auto& shape = grad_output.Shape();
     Tensor grad_input(shape, DataType::Float32);
 
-    const float* grad_data = grad_output.Data<float>();
-    const float* mask_data = mask_.Data<float>();
-    float* out_data = grad_input.Data<float>();
+    const float* grad_data = grad_output.ReadData<float>();
+    const float* mask_data = mask_.ReadData<float>();
+    float* out_data = grad_input.MutableData<float>();
 
     size_t total = grad_output.NumElements();
     for (size_t i = 0; i < total; ++i) {
@@ -227,13 +227,13 @@ Tensor FlattenModule::Forward(const Tensor& input) {
     // row-major data layout (column-major AF produces transposed output
     // that LinearLayer can't consume). This approach is both correct
     // and faster than a GPU round-trip for a zero-compute operation.
-    const float* in_data = input.Data<float>();
+    const float* in_data = input.ReadData<float>();
     return Tensor({batch_size, flat_size}, in_data, input.GetDataType());
 }
 
 Tensor FlattenModule::Backward(const Tensor& grad_output) {
     // Pure CPU reshape back to original shape (same as Forward).
-    const float* grad_data = grad_output.Data<float>();
+    const float* grad_data = grad_output.ReadData<float>();
     return Tensor(original_shape_, grad_data, grad_output.GetDataType());
 }
 

@@ -4352,7 +4352,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
             out << "                 prefetch_factor=" << config.prefetch_factor
                 << " (bounded async queue for supported Arrow/Parquet batchers)\n";
         }
-        out << "                 log_interval=" << config.log_interval
+        out << "                 metric_report_interval=" << config.log_interval
             << " batches, validation_freq=" << config.validation_freq
             << " epochs (final epoch always validates)\n";
         out << "                 seed=" << config.dataloader_seed

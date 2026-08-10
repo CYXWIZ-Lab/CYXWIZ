@@ -64,13 +64,13 @@ Tensor ReLU::Forward(const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsCurrentArrayFireBackendAvailable()) {
         try {
-            af::array input_gpu = input.GetArray();
+            af::array input_gpu = input.GetSemanticArray();
 
             // ReLU: max(0, x)
             af::array output_gpu = af::max(input_gpu, 0.0f);
             output_gpu.eval();
 
-            return Tensor(output_gpu);
+            return Tensor::FromSemanticArray(output_gpu, input.Shape());
         } catch (const af::exception& e) {
             LogReluFallbackOnce("ReLU::Forward", e.what(), input, "input");
         }
@@ -98,15 +98,16 @@ Tensor ReLU::Backward(const Tensor& grad_output, const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (IsCurrentArrayFireBackendAvailable()) {
         try {
-            af::array grad_gpu = grad_output.GetArray();
-            af::array input_gpu = input.GetArray();
+            af::array grad_gpu = grad_output.GetSemanticArray();
+            af::array input_gpu = input.GetSemanticArray();
 
             // Gradient: grad * (input > 0)
             af::array mask = input_gpu > 0.0f;
             af::array grad_input_gpu = grad_gpu * mask.as(f32);
             grad_input_gpu.eval();
 
-            return Tensor(grad_input_gpu);
+            return Tensor::FromSemanticArray(
+                grad_input_gpu, grad_output.Shape());
         } catch (const af::exception& e) {
             LogReluFallbackOnce(
                 "ReLU::Backward", e.what(), grad_output, "grad_output");

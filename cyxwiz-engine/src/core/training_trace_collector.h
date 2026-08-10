@@ -75,9 +75,25 @@ struct TrainingTraceEvent {
     bool native_cpu_fallback = false;
     uint64_t arrayfire_host_sync_bytes = 0;
     std::string arrayfire_host_sync_reason;
+    std::string arrayfire_host_sync_category;
+    std::string arrayfire_host_sync_operation;
+    std::vector<size_t> arrayfire_host_sync_shape;
+    std::string arrayfire_host_sync_dtype;
+    std::string arrayfire_host_sync_layout;
     std::string placement_fingerprint;
     uint64_t placement_entry_count = 0;
     std::string placement_summary;
+};
+
+struct TrainingTraceHostSyncGroup {
+    std::string category;
+    std::string reason;
+    std::string operation;
+    std::vector<size_t> shape;
+    std::string dtype;
+    std::string layout;
+    uint64_t event_count = 0;
+    uint64_t bytes = 0;
 };
 
 struct TrainingTraceSummary {
@@ -103,6 +119,8 @@ struct TrainingTraceSummary {
     std::string synchronization_summary;
     uint64_t arrayfire_host_sync_count = 0;
     uint64_t arrayfire_host_sync_bytes = 0;
+    std::vector<TrainingTraceHostSyncGroup> arrayfire_host_sync_groups;
+    std::string arrayfire_host_sync_summary;
     std::string placement_fingerprint;
     uint64_t placement_entry_count = 0;
     std::string placement_summary;
@@ -219,6 +237,8 @@ private:
     std::map<std::string, uint64_t> synchronization_reason_counts_;
     uint64_t arrayfire_host_sync_count_ = 0;
     uint64_t arrayfire_host_sync_bytes_ = 0;
+    std::map<std::string, TrainingTraceHostSyncGroup>
+        arrayfire_host_sync_groups_;
     uint64_t declared_output_boundary_count_ = 0;
     TrainingTraceSettings settings_;
     size_t events_since_write_ = 0;

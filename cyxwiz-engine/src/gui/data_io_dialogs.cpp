@@ -1384,7 +1384,7 @@ void DataLoaderDialog::RenderContent() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::Text("Log every:");
+    ImGui::Text("Report every:");
     ImGui::SameLine(130);
     ImGui::SetNextItemWidth(120);
     if (ImGui::InputInt("##log_interval", &log_interval_)) {
@@ -1393,7 +1393,7 @@ void DataLoaderDialog::RenderContent() {
         has_changes_ = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(batches; 0 logs first batch only)");
+    ImGui::TextDisabled("(batches; 0 samples first/final only)");
 
     ImGui::Spacing();
     ImGui::Separator();

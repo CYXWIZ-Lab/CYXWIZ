@@ -1,4 +1,5 @@
 #include "training_trace_collector.h"
+#include "debug_run_paths.h"
 #include "algorithms/arrayfire_backend_utils.h"
 #include "execution_device_context.h"
 
@@ -12,6 +13,7 @@
 #include <map>
 #include <sstream>
 #include <thread>
+#include <utility>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -22,7 +24,7 @@ namespace cyxwiz {
 namespace {
 
 std::filesystem::path TraceDir() {
-    return std::filesystem::current_path() / ".cyxwiz" / "debug_runs";
+    return GetDebugRunRoot();
 }
 
 std::filesystem::path CurrentTracePath() {
@@ -95,6 +97,98 @@ std::string FormatReasonCounts(const std::map<std::string, uint64_t>& counts) {
     return out.str();
 }
 
+std::string FormatShape(const std::vector<size_t>& shape) {
+    if (shape.empty()) {
+        return "scalar";
+    }
+    std::ostringstream out;
+    for (size_t index = 0; index < shape.size(); ++index) {
+        if (index > 0) {
+            out << 'x';
+        }
+        out << shape[index];
+    }
+    return out.str();
+}
+
+std::string HostSyncGroupKey(const TrainingTraceHostSyncGroup& group) {
+    return group.category + "\n" + group.reason + "\n" +
+           group.operation + "\n" +
+           FormatShape(group.shape) + "\n" + group.dtype + "\n" +
+           group.layout;
+}
+
+void AddHostSyncGroup(
+    std::map<std::string, TrainingTraceHostSyncGroup>& groups,
+    TrainingTraceHostSyncGroup group) {
+    const std::string key = HostSyncGroupKey(group);
+    auto [it, inserted] = groups.emplace(key, group);
+    if (!inserted) {
+        it->second.event_count += group.event_count;
+        it->second.bytes += group.bytes;
+    }
+}
+
+std::vector<TrainingTraceHostSyncGroup> HostSyncGroupValues(
+    const std::map<std::string, TrainingTraceHostSyncGroup>& groups) {
+    std::vector<TrainingTraceHostSyncGroup> values;
+    values.reserve(groups.size());
+    for (const auto& [key, group] : groups) {
+        (void)key;
+        values.push_back(group);
+    }
+    return values;
+}
+
+std::string FormatHostSyncGroups(
+    const std::vector<TrainingTraceHostSyncGroup>& groups) {
+    std::ostringstream out;
+    bool first = true;
+    for (const auto& group : groups) {
+        if (!first) {
+            out << "; ";
+        }
+        out << (group.category.empty() ? "unknown" : group.category)
+            << '/' << (group.reason.empty() ? "unknown" : group.reason)
+            << '/' << (group.operation.empty() ? "unknown" : group.operation)
+            << '/' << FormatShape(group.shape)
+            << '/' << (group.dtype.empty() ? "unknown" : group.dtype)
+            << '/' << (group.layout.empty() ? "unknown" : group.layout)
+            << "=" << group.event_count << " events," << group.bytes
+            << " bytes";
+        first = false;
+    }
+    return out.str();
+}
+
+nlohmann::json HostSyncGroupToJson(
+    const TrainingTraceHostSyncGroup& group) {
+    return {
+        {"category", group.category},
+        {"reason", group.reason},
+        {"operation", group.operation},
+        {"shape", group.shape},
+        {"dtype", group.dtype},
+        {"layout", group.layout},
+        {"event_count", group.event_count},
+        {"bytes", group.bytes}
+    };
+}
+
+TrainingTraceHostSyncGroup HostSyncGroupFromJson(
+    const nlohmann::json& j) {
+    TrainingTraceHostSyncGroup group;
+    group.category = j.value("category", "unknown");
+    group.reason = j.value("reason", "");
+    group.operation = j.value("operation", "");
+    group.shape = j.value("shape", std::vector<size_t>{});
+    group.dtype = j.value("dtype", "");
+    group.layout = j.value("layout", "");
+    group.event_count = j.value("event_count", uint64_t{0});
+    group.bytes = j.value("bytes", uint64_t{0});
+    return group;
+}
+
 nlohmann::json EventToJson(const TrainingTraceEvent& event) {
     return {
         {"timestamp", event.timestamp},
@@ -155,6 +249,11 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"native_cpu_fallback", event.native_cpu_fallback},
         {"arrayfire_host_sync_bytes", event.arrayfire_host_sync_bytes},
         {"arrayfire_host_sync_reason", event.arrayfire_host_sync_reason},
+        {"arrayfire_host_sync_category", event.arrayfire_host_sync_category},
+        {"arrayfire_host_sync_operation", event.arrayfire_host_sync_operation},
+        {"arrayfire_host_sync_shape", event.arrayfire_host_sync_shape},
+        {"arrayfire_host_sync_dtype", event.arrayfire_host_sync_dtype},
+        {"arrayfire_host_sync_layout", event.arrayfire_host_sync_layout},
         {"placement_fingerprint", event.placement_fingerprint},
         {"placement_entry_count", event.placement_entry_count},
         {"placement_summary", event.placement_summary}
@@ -224,6 +323,16 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
         j.value("arrayfire_host_sync_bytes", uint64_t{0});
     event.arrayfire_host_sync_reason =
         j.value("arrayfire_host_sync_reason", "");
+    event.arrayfire_host_sync_category =
+        j.value("arrayfire_host_sync_category", "");
+    event.arrayfire_host_sync_operation =
+        j.value("arrayfire_host_sync_operation", "");
+    event.arrayfire_host_sync_shape =
+        j.value("arrayfire_host_sync_shape", std::vector<size_t>{});
+    event.arrayfire_host_sync_dtype =
+        j.value("arrayfire_host_sync_dtype", "");
+    event.arrayfire_host_sync_layout =
+        j.value("arrayfire_host_sync_layout", "");
     event.placement_fingerprint = j.value("placement_fingerprint", "");
     event.placement_entry_count =
         j.value("placement_entry_count", uint64_t{0});
@@ -268,6 +377,8 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
     uint64_t derived_host_sync_bytes = 0;
     std::map<std::string, uint64_t> derived_transfer_reasons;
     std::map<std::string, uint64_t> derived_synchronization_reasons;
+    std::map<std::string, TrainingTraceHostSyncGroup>
+        derived_host_sync_groups;
     for (const auto& event : summary.recent_events) {
         if (event.native_cpu_fallback) {
             ++derived_fallback_count;
@@ -296,6 +407,18 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
             event.arrayfire_host_sync_bytes > 0) {
             ++derived_host_sync_count;
             derived_host_sync_bytes += event.arrayfire_host_sync_bytes;
+            TrainingTraceHostSyncGroup group;
+            group.category = event.arrayfire_host_sync_category.empty()
+                ? "unknown"
+                : event.arrayfire_host_sync_category;
+            group.reason = event.arrayfire_host_sync_reason;
+            group.operation = event.arrayfire_host_sync_operation;
+            group.shape = event.arrayfire_host_sync_shape;
+            group.dtype = event.arrayfire_host_sync_dtype;
+            group.layout = event.arrayfire_host_sync_layout;
+            group.event_count = 1;
+            group.bytes = event.arrayfire_host_sync_bytes;
+            AddHostSyncGroup(derived_host_sync_groups, std::move(group));
         }
         if (!saw_context_bind &&
             event.stage == "ExecutionDeviceContext.Bind") {
@@ -345,6 +468,14 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
     if (derive_host_sync) {
         summary.arrayfire_host_sync_count = derived_host_sync_count;
         summary.arrayfire_host_sync_bytes = derived_host_sync_bytes;
+    }
+    if (summary.arrayfire_host_sync_groups.empty()) {
+        summary.arrayfire_host_sync_groups =
+            HostSyncGroupValues(derived_host_sync_groups);
+    }
+    if (summary.arrayfire_host_sync_summary.empty()) {
+        summary.arrayfire_host_sync_summary =
+            FormatHostSyncGroups(summary.arrayfire_host_sync_groups);
     }
 
     if (!summary.available) {
@@ -420,6 +551,7 @@ void TrainingTraceCollector::StartRun(const std::string& run_id) {
     synchronization_reason_counts_.clear();
     arrayfire_host_sync_count_ = 0;
     arrayfire_host_sync_bytes_ = 0;
+    arrayfire_host_sync_groups_.clear();
     declared_output_boundary_count_ = 0;
     events_since_write_ = 0;
     if (settings_.persist_enabled) {
@@ -677,6 +809,13 @@ void TrainingTraceCollector::RecordArrayFireHostSync(
     event.transfer_backend = sync.selected_backend;
     event.arrayfire_host_sync_bytes = sync.bytes;
     event.arrayfire_host_sync_reason = sync.reason_code;
+    event.arrayfire_host_sync_category = sync.attribution_category.empty()
+        ? "unknown"
+        : sync.attribution_category;
+    event.arrayfire_host_sync_operation = sync.attribution_operation;
+    event.arrayfire_host_sync_shape = sync.tensor_shape;
+    event.arrayfire_host_sync_dtype = sync.tensor_dtype;
+    event.arrayfire_host_sync_layout = sync.tensor_layout;
     event.message = sync.operation_name.empty()
         ? "ArrayFire tensor data synchronized to host"
         : sync.operation_name + " synchronized ArrayFire tensor data to host";
@@ -706,6 +845,16 @@ void TrainingTraceCollector::RecordArrayFireHostSync(
         ReasonSummaryKey(event.arrayfire_host_sync_reason)];
     ++arrayfire_host_sync_count_;
     arrayfire_host_sync_bytes_ += sync.bytes;
+    TrainingTraceHostSyncGroup group;
+    group.category = event.arrayfire_host_sync_category;
+    group.reason = event.arrayfire_host_sync_reason;
+    group.operation = event.arrayfire_host_sync_operation;
+    group.shape = event.arrayfire_host_sync_shape;
+    group.dtype = event.arrayfire_host_sync_dtype;
+    group.layout = event.arrayfire_host_sync_layout;
+    group.event_count = 1;
+    group.bytes = sync.bytes;
+    AddHostSyncGroup(arrayfire_host_sync_groups_, std::move(group));
     while (events_.size() > settings_.max_recent_events) {
         events_.pop_front();
     }
@@ -1024,6 +1173,10 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
         FormatReasonCounts(synchronization_reason_counts_);
     summary.arrayfire_host_sync_count = arrayfire_host_sync_count_;
     summary.arrayfire_host_sync_bytes = arrayfire_host_sync_bytes_;
+    summary.arrayfire_host_sync_groups =
+        HostSyncGroupValues(arrayfire_host_sync_groups_);
+    summary.arrayfire_host_sync_summary =
+        FormatHostSyncGroups(summary.arrayfire_host_sync_groups);
     if (has_placement_plan_event_) {
         summary.placement_fingerprint =
             placement_plan_event_.placement_fingerprint;
@@ -1108,6 +1261,15 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
             j.value("arrayfire_host_sync_count", uint64_t{0});
         summary.arrayfire_host_sync_bytes =
             j.value("arrayfire_host_sync_bytes", uint64_t{0});
+        summary.arrayfire_host_sync_summary =
+            j.value("arrayfire_host_sync_summary", "");
+        if (j.contains("arrayfire_host_sync_groups") &&
+            j["arrayfire_host_sync_groups"].is_array()) {
+            for (const auto& item : j["arrayfire_host_sync_groups"]) {
+                summary.arrayfire_host_sync_groups.push_back(
+                    HostSyncGroupFromJson(item));
+            }
+        }
         summary.placement_fingerprint =
             j.value("placement_fingerprint", "");
         summary.placement_entry_count =
@@ -1169,6 +1331,11 @@ void TrainingTraceCollector::WriteLocked() const {
         for (const auto& event : materialization_events_) {
             materialization_events.push_back(EventToJson(event));
         }
+        nlohmann::json host_sync_groups = nlohmann::json::array();
+        for (const auto& group :
+             HostSyncGroupValues(arrayfire_host_sync_groups_)) {
+            host_sync_groups.push_back(HostSyncGroupToJson(group));
+        }
         nlohmann::json j = {
             {"run_id", run_id_},
             {"status", status_},
@@ -1185,7 +1352,11 @@ void TrainingTraceCollector::WriteLocked() const {
             {"synchronization_summary",
              FormatReasonCounts(synchronization_reason_counts_)},
             {"arrayfire_host_sync_count", arrayfire_host_sync_count_},
-            {"arrayfire_host_sync_bytes", arrayfire_host_sync_bytes_}
+            {"arrayfire_host_sync_bytes", arrayfire_host_sync_bytes_},
+            {"arrayfire_host_sync_groups", host_sync_groups},
+            {"arrayfire_host_sync_summary",
+             FormatHostSyncGroups(
+                 HostSyncGroupValues(arrayfire_host_sync_groups_))}
         };
         TrainingTraceSummary summary;
         summary.available = !run_id_.empty();
@@ -1205,6 +1376,10 @@ void TrainingTraceCollector::WriteLocked() const {
             FormatReasonCounts(synchronization_reason_counts_);
         summary.arrayfire_host_sync_count = arrayfire_host_sync_count_;
         summary.arrayfire_host_sync_bytes = arrayfire_host_sync_bytes_;
+        summary.arrayfire_host_sync_groups =
+            HostSyncGroupValues(arrayfire_host_sync_groups_);
+        summary.arrayfire_host_sync_summary =
+            FormatHostSyncGroups(summary.arrayfire_host_sync_groups);
         if (has_placement_plan_event_) {
             summary.placement_fingerprint =
                 placement_plan_event_.placement_fingerprint;
@@ -1257,6 +1432,9 @@ void TrainingTraceCollector::WriteLocked() const {
             summary.arrayfire_host_sync_count;
         j["arrayfire_host_sync_bytes"] =
             summary.arrayfire_host_sync_bytes;
+        j["arrayfire_host_sync_groups"] = host_sync_groups;
+        j["arrayfire_host_sync_summary"] =
+            summary.arrayfire_host_sync_summary;
         j["placement_fingerprint"] = summary.placement_fingerprint;
         j["placement_entry_count"] = summary.placement_entry_count;
         j["placement_summary"] = summary.placement_summary;

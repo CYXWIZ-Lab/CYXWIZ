@@ -1,4 +1,5 @@
 #include "debug_run_store.h"
+#include "debug_run_paths.h"
 #include "training_trace_collector.h"
 
 #include <nlohmann/json.hpp>
@@ -13,7 +14,7 @@ namespace cyxwiz {
 namespace {
 
 std::filesystem::path StoreRoot() {
-    return std::filesystem::current_path() / ".cyxwiz" / "debug_runs" / "studio";
+    return GetDebugRunRoot() / "studio";
 }
 
 std::filesystem::path RunPath(const std::string& run_id) {

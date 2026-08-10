@@ -1,4 +1,5 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/debug_run_paths.h"
 #include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/model_builder.h"
@@ -625,6 +626,8 @@ int main() {
         fs::temp_directory_path() / "cyxwiz_saved_ner_sequence_smoke";
     fs::remove_all(work_dir);
     fs::create_directories(work_dir);
+    const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
+        work_dir / "debug_runs");
 
     auto training_config = MakePosFusedSequenceTrainingConfig(
         compiled, sequence_build, work_dir / "checkpoints");

@@ -16,11 +16,18 @@ constexpr const char* kForceFallbackEnv =
 
 int g_fallback_observer_count = 0;
 cyxwiz::ArrayFireNativeCpuFallbackEvent g_last_fallback_event;
+int g_host_sync_observer_count = 0;
+cyxwiz::ArrayFireHostSyncEvent g_last_host_sync_event;
 
 void CaptureFallbackEvent(
     const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
     ++g_fallback_observer_count;
     g_last_fallback_event = event;
+}
+
+void CaptureHostSyncEvent(const cyxwiz::ArrayFireHostSyncEvent& event) {
+    ++g_host_sync_observer_count;
+    g_last_host_sync_event = event;
 }
 
 void SetEnvVar(const char* name, const char* value) {
@@ -237,6 +244,46 @@ TEST_CASE("ArrayFire native CPU fallback observer sees allowed and strict attemp
             original_observer);
 
     cyxwiz::SetArrayFireFallbackPolicy(original_policy);
+}
+
+TEST_CASE("Scoped ArrayFire host sync attribution reaches observer and restores",
+          "[arrayfire][host_sync]") {
+    const auto original_attribution =
+        cyxwiz::GetArrayFireHostSyncAttribution();
+    const auto original_observer = cyxwiz::GetArrayFireHostSyncObserver();
+    g_host_sync_observer_count = 0;
+    g_last_host_sync_event = {};
+
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureHostSyncEvent);
+        const cyxwiz::ScopedArrayFireHostSyncAttribution attribution(
+            cyxwiz::ArrayFireHostSyncCategory::LossScalarReadback,
+            "UnitTest::ComputeLoss");
+        cyxwiz::ArrayFireHostSyncEvent event;
+        event.operation_name = "Tensor::EnsureHostCurrent";
+        event.reason_code = "tensor_host_materialization";
+        event.tensor_shape = {1};
+        event.tensor_dtype = "float32";
+        event.tensor_layout = "arrayfire_native";
+        event.bytes = sizeof(float);
+        cyxwiz::NotifyArrayFireHostSync(event);
+
+        REQUIRE(g_host_sync_observer_count == 1);
+        REQUIRE(g_last_host_sync_event.attribution_category ==
+                "loss_scalar_readback");
+        REQUIRE(g_last_host_sync_event.attribution_operation ==
+                "UnitTest::ComputeLoss");
+        REQUIRE(g_last_host_sync_event.tensor_shape ==
+                std::vector<size_t>{1});
+        REQUIRE(g_last_host_sync_event.selected_backend ==
+                cyxwiz::CurrentArrayFireBackendName());
+    }
+
+    const auto restored = cyxwiz::GetArrayFireHostSyncAttribution();
+    REQUIRE(restored.category == original_attribution.category);
+    REQUIRE(restored.operation_name == original_attribution.operation_name);
+    REQUIRE(cyxwiz::GetArrayFireHostSyncObserver() == original_observer);
 }
 
 TEST_CASE("Scoped ArrayFire fallback policy forbids and restores fallback",

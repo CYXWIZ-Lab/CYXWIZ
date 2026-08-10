@@ -580,6 +580,11 @@ void TrainingPlotPanel::SetBatchProgress(int current_epoch, int current_batch,
     current_batch_loss_ = running_loss;
 }
 
+void TrainingPlotPanel::SetMetricReportingCadence(int batch_interval) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    metric_reporting_interval_ = std::max(0, batch_interval);
+}
+
 void TrainingPlotPanel::ResetPlots() {
     Clear();
 }
@@ -2149,6 +2154,13 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         ImGui::ProgressBar(batch_progress, ImVec2(200, 0));
         ImGui::SameLine();
         ImGui::Text("running loss: %.4f", current_batch_loss_);
+        ImGui::SameLine();
+        if (metric_reporting_interval_ > 0) {
+            ImGui::TextDisabled("metrics every %d batches",
+                                metric_reporting_interval_);
+        } else {
+            ImGui::TextDisabled("metrics at first/final batch");
+        }
     }
 
     // Second row: timing info
