@@ -1,4 +1,5 @@
 #include "debug_run_store.h"
+#include "training_trace_collector.h"
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -172,6 +173,54 @@ DebugRecommendation RecommendationFromJson(const nlohmann::json& j) {
     return rec;
 }
 
+nlohmann::json ExecutionSummaryToJson(
+    const DebugRunExecutionSummary& execution) {
+    return {
+        {"available", execution.available},
+        {"training_run_id", execution.training_run_id},
+        {"status", execution.status},
+        {"requested_backend", execution.requested_backend},
+        {"requested_device_id", execution.requested_device_id},
+        {"effective_backend", execution.effective_backend},
+        {"effective_device_id", execution.effective_device_id},
+        {"effective_device_name", execution.effective_device_name},
+        {"execution_context_id", execution.execution_context_id},
+        {"placement_fingerprint", execution.placement_fingerprint},
+        {"residency_verdict", execution.residency_verdict},
+        {"native_cpu_fallback_count", execution.native_cpu_fallback_count},
+        {"transfer_event_count", execution.transfer_event_count},
+        {"transfer_known_bytes", execution.transfer_known_bytes},
+        {"synchronization_event_count", execution.synchronization_event_count},
+        {"synchronization_known_bytes", execution.synchronization_known_bytes}
+    };
+}
+
+DebugRunExecutionSummary ExecutionSummaryFromJson(const nlohmann::json& j) {
+    DebugRunExecutionSummary execution;
+    execution.available = j.value("available", false);
+    execution.training_run_id = j.value("training_run_id", "");
+    execution.status = j.value("status", "");
+    execution.requested_backend = j.value("requested_backend", "");
+    execution.requested_device_id = j.value("requested_device_id", 0);
+    execution.effective_backend = j.value("effective_backend", "");
+    execution.effective_device_id = j.value("effective_device_id", 0);
+    execution.effective_device_name = j.value("effective_device_name", "");
+    execution.execution_context_id = j.value("execution_context_id", "");
+    execution.placement_fingerprint = j.value("placement_fingerprint", "");
+    execution.residency_verdict = j.value("residency_verdict", "");
+    execution.native_cpu_fallback_count =
+        j.value("native_cpu_fallback_count", static_cast<size_t>(0));
+    execution.transfer_event_count =
+        j.value("transfer_event_count", static_cast<size_t>(0));
+    execution.transfer_known_bytes =
+        j.value("transfer_known_bytes", static_cast<uint64_t>(0));
+    execution.synchronization_event_count =
+        j.value("synchronization_event_count", static_cast<size_t>(0));
+    execution.synchronization_known_bytes =
+        j.value("synchronization_known_bytes", static_cast<uint64_t>(0));
+    return execution;
+}
+
 DebugRunStoreSummary SummaryFromJson(const nlohmann::json& j,
                                      const std::filesystem::path& path) {
     DebugRunStoreSummary summary;
@@ -185,6 +234,9 @@ DebugRunStoreSummary SummaryFromJson(const nlohmann::json& j,
     summary.recommendation_count = j.value("recommendation_count", static_cast<size_t>(0));
     summary.summary = j.value("summary", "");
     summary.file_path = path.string();
+    if (j.contains("execution") && j["execution"].is_object()) {
+        summary.execution = ExecutionSummaryFromJson(j["execution"]);
+    }
     return summary;
 }
 
@@ -218,6 +270,28 @@ DebugRunStoreRecord RecordFromJson(const nlohmann::json& j,
 }
 
 } // namespace
+
+DebugRunExecutionSummary MakeDebugRunExecutionSummary(
+    const TrainingTraceSummary& trace) {
+    DebugRunExecutionSummary execution;
+    execution.available = trace.available && !trace.run_id.empty();
+    execution.training_run_id = trace.run_id;
+    execution.status = trace.status;
+    execution.requested_backend = trace.requested_backend;
+    execution.requested_device_id = trace.requested_device_id;
+    execution.effective_backend = trace.effective_backend;
+    execution.effective_device_id = trace.effective_device_id;
+    execution.effective_device_name = trace.effective_device_name;
+    execution.execution_context_id = trace.execution_context_id;
+    execution.placement_fingerprint = trace.placement_fingerprint;
+    execution.residency_verdict = trace.residency_verdict;
+    execution.native_cpu_fallback_count = trace.native_cpu_fallback_count;
+    execution.transfer_event_count = trace.transfer_event_count;
+    execution.transfer_known_bytes = trace.transfer_known_bytes;
+    execution.synchronization_event_count = trace.synchronization_event_count;
+    execution.synchronization_known_bytes = trace.synchronization_known_bytes;
+    return execution;
+}
 
 bool DebugRunStore::Save(const DebugRunStoreRecord& record) {
     if (record.summary.run_id.empty()) {
@@ -258,6 +332,7 @@ bool DebugRunStore::Save(const DebugRunStoreRecord& record) {
             {"event_count", record.studio_events.size()},
             {"recommendation_count", record.recommendations.size()},
             {"summary", record.summary.summary},
+            {"execution", ExecutionSummaryToJson(record.summary.execution)},
             {"issues", issues},
             {"traces", traces},
             {"studio_events", events},

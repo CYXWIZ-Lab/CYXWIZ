@@ -91,7 +91,6 @@ private:
         size_t free_memory = 0;
         std::string backend;  // "CUDA", "OpenCL", "CPU", etc.
         int device_id = -1;
-        float utilization = 0.0f;  // 0-100%
         float temperature = 0.0f;  // Celsius
     };
     GPUInfo gpu_info_;

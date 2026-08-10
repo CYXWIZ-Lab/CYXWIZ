@@ -128,6 +128,13 @@ bool IsAllowedArrayFireCatchWithoutFallbackPolicy(
     const std::string& relative_path,
     const std::vector<std::string>& lines,
     size_t catch_index) {
+    if (relative_path ==
+            "cyxwiz-engine/src/core/execution_device_context.h" &&
+        WindowContains(lines, catch_index, "context.valid = false", 8) &&
+        WindowContains(lines, catch_index,
+                       "context.effective_backend = \"query_failed\"", 8)) {
+        return true;
+    }
     if (WindowContains(lines, catch_index, "GPU check failed", 8)) {
         return true;
     }
@@ -174,6 +181,33 @@ std::vector<fs::path> ArrayFireFallbackHandlerScanFiles(
     };
     for (const std::string& name : core_tensor_files) {
         const fs::path path = core_root / name;
+        if (fs::exists(path)) {
+            files.push_back(path);
+        }
+    }
+
+    const fs::path engine_core_root =
+        repo_root / "cyxwiz-engine" / "src" / "core";
+    const std::vector<std::string> engine_training_files = {
+        "arrow_dataset_batcher.cpp",
+        "checkpoint_manager.cpp",
+        "classification_decision.cpp",
+        "dataset_batcher.cpp",
+        "execution_device_context.cpp",
+        "execution_device_context.h",
+        "execution_device_preferences.h",
+        "execution_placement_plan.h",
+        "graph_compiler.cpp",
+        "graph_executable_model.cpp",
+        "image_dataset_batcher.cpp",
+        "parquet_arrow_batcher.cpp",
+        "sequence_model_input.h",
+        "training_executor.cpp",
+        "training_executor.h",
+        "training_manager.cpp",
+    };
+    for (const std::string& name : engine_training_files) {
+        const fs::path path = engine_core_root / name;
         if (fs::exists(path)) {
             files.push_back(path);
         }

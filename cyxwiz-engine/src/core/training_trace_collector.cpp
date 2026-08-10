@@ -1064,6 +1064,17 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
     return summary;
 }
 
+TrainingTraceSummary TrainingTraceCollector::LatestTrace() {
+    auto live = Instance().Snapshot();
+    if (live.available && !live.run_id.empty()) {
+        return live;
+    }
+    if (const auto persisted = LoadLastTrace()) {
+        return *persisted;
+    }
+    return live;
+}
+
 std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
     const auto path = CurrentTracePath();
     if (!std::filesystem::exists(path)) {

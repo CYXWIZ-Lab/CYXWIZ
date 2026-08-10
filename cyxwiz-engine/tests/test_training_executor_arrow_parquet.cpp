@@ -1041,9 +1041,12 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
     cyxwiz::SetPendingExecutionDeviceSelection(
         cyxwiz::DeviceType::CPU,
         cpu->device_id);
+    cyxwiz::ClearNextRunExecutionPolicy();
+    cyxwiz::SetNextRunExecutionPolicy(
+        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
 
     auto strict_config = config;
-    strict_config.forbid_native_cpu_fallback = true;
+    strict_config.forbid_native_cpu_fallback = false;
     cyxwiz::TrainingExecutor executor(strict_config, dataset, "label");
 
     bool completed = false;
@@ -1060,8 +1063,21 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
           "strict ArrayFire CPU dense training should complete");
     Check(!cyxwiz::GetPendingExecutionDeviceSelection().has_value(),
           "strict ArrayFire CPU run should consume pending selection");
+    Check(cyxwiz::GetNextRunExecutionPolicy() ==
+              cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback,
+          "GUI execution policy preference should persist for later runs");
 
     const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    const auto latest_trace =
+        cyxwiz::TrainingTraceCollector::LatestTrace();
+    Check(latest_trace.run_id == trace.run_id,
+          "latest trace authority should prefer the active in-memory run");
+    Check(latest_trace.requested_backend == trace.requested_backend,
+          "latest trace authority should preserve requested backend truth");
+    Check(latest_trace.effective_backend == trace.effective_backend,
+          "latest trace authority should preserve effective backend truth");
+    Check(latest_trace.placement_fingerprint == trace.placement_fingerprint,
+          "latest trace authority should preserve placement fingerprint truth");
     Check(trace.native_cpu_fallback_count == 0,
           "strict ArrayFire CPU dense training should record zero native CPU fallback events");
     Check(trace.residency_verdict ==
@@ -1211,6 +1227,109 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
           "strict ArrayFire CPU run should leave ArrayFire CPU active");
     Check(active_device->GetDeviceId() == cpu->device_id,
           "strict ArrayFire CPU run should leave selected CPU device active");
+    cyxwiz::ClearNextRunExecutionPolicy();
+}
+
+void TestStrictPlacementPreflightRejectsKnownNativeCpuStage(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const cyxwiz::TrainingConfiguration& config) {
+    auto strict_config = config;
+    strict_config.forbid_native_cpu_fallback = true;
+    strict_config.backend_placements.clear();
+
+    cyxwiz::BackendPlacementEntry cpu_stage;
+    cpu_stage.node_id = strict_config.layers.front().node_id;
+    cpu_stage.node_name = strict_config.layers.front().name;
+    cpu_stage.node_type = "Dense";
+    cpu_stage.expected_backend = "CPU";
+    cpu_stage.fallback_backend = "CPU";
+    cpu_stage.status = cyxwiz::BackendPlacementStatus::Cpu;
+    cpu_stage.reason_code =
+        cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked;
+    strict_config.backend_placements.push_back(cpu_stage);
+
+    cyxwiz::TrainingExecutor executor(strict_config, dataset, "label");
+    bool saw_batch = false;
+    bool completed = false;
+    executor.Train(
+        1,
+        2,
+        [&](int, int, int, float, float) { saw_batch = true; },
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics&) { completed = true; });
+
+    Check(!saw_batch,
+          "strict placement preflight should reject before the first batch");
+    Check(!completed,
+          "strict placement preflight rejection should not report completion");
+    Check(!executor.IsTraining(),
+          "strict placement preflight rejection should clear training state");
+
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(trace.status == "failed",
+          "strict placement preflight rejection should terminate the trace");
+    Check(trace.native_cpu_fallback_count == 0,
+          "known placement rejection should not attempt native CPU fallback");
+    Check(trace.residency_verdict == "terminal_without_residency_pass",
+          "strict placement preflight rejection should not claim residency");
+    bool saw_preflight_warning = false;
+    bool saw_preflight_terminal = false;
+    for (const auto& warning : trace.warnings) {
+        if (warning.find("placement_preflight_failed") != std::string::npos &&
+            warning.find("Dense") != std::string::npos) {
+            saw_preflight_warning = true;
+        }
+    }
+    for (const auto& event : trace.recent_events) {
+        if (event.terminal_reason.find("placement_preflight_failed") !=
+                std::string::npos) {
+            saw_preflight_terminal = true;
+        }
+    }
+    Check(saw_preflight_warning,
+          "trace should identify the compiler-known blocking stage");
+    Check(saw_preflight_terminal,
+          "terminal trace should preserve the placement preflight reason");
+}
+
+void TestExecutablePreflightRejectsUnsupportedOptimizer(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const cyxwiz::TrainingConfiguration& config) {
+    auto unsupported_config = config;
+    unsupported_config.optimizer_type = gui::NodeType::Output;
+
+    cyxwiz::TrainingExecutor executor(
+        unsupported_config, dataset, "label");
+    bool saw_batch = false;
+    bool completed = false;
+    executor.Train(
+        1,
+        2,
+        [&](int, int, int, float, float) { saw_batch = true; },
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics&) { completed = true; });
+
+    Check(!saw_batch,
+          "unsupported optimizer preflight should reject before the first batch");
+    Check(!completed,
+          "unsupported optimizer preflight should not report completion");
+    Check(!executor.IsTraining(),
+          "unsupported optimizer preflight should clear training state");
+
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(trace.status == "failed",
+          "unsupported optimizer preflight should terminate the trace");
+    Check(trace.native_cpu_fallback_count == 0,
+          "unsupported optimizer preflight should not attempt CPU fallback");
+    bool saw_execution_preflight = false;
+    for (const auto& warning : trace.warnings) {
+        if (warning.find("execution_preflight_failed") != std::string::npos &&
+            warning.find("optimizer_unsupported") != std::string::npos) {
+            saw_execution_preflight = true;
+        }
+    }
+    Check(saw_execution_preflight,
+          "trace should preserve the unsupported optimizer preflight reason");
 }
 #endif
 
@@ -1495,6 +1614,8 @@ int main() {
     TestStrictTrainingRejectsForcedLinearFallback(dataset, config);
     TestStrictTrainingSkipsFirstBatchDebugHostDump(dataset, config);
     TestStrictArrayFireCpuDenseTrainingDoesNotFallback(dataset, config);
+    TestStrictPlacementPreflightRejectsKnownNativeCpuStage(dataset, config);
+    TestExecutablePreflightRejectsUnsupportedOptimizer(dataset, config);
 #endif
     TestPendingExecutionDeviceSelectionAppliesAndClears(dataset, config);
     TestPendingExecutionDeviceSelectionRejectsNonArrayFireBackends();

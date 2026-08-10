@@ -62,6 +62,7 @@ struct StudioDebuggerSnapshot {
     SmokeRunResult smoke_result;
     CrashRunSummary last_run;
     TrainingTraceSummary training_trace;
+    DebugRunExecutionSummary execution;
     std::vector<DebugRecommendation> recommendations;
     std::vector<DebugRunStoreSummary> run_history;
 };

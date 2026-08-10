@@ -81,32 +81,48 @@ void TaskProgressPanel::Render() {
 }
 
 void TaskProgressPanel::RenderTrainingTraceSummary() {
-    const auto trace = TrainingTraceCollector::LoadLastTrace();
-    if (!trace || !trace->available || trace->effective_backend.empty()) {
+    const auto trace = TrainingTraceCollector::LatestTrace();
+    if (!trace.available || trace.effective_backend.empty()) {
         return;
     }
 
-    ImGui::Text("Last Training Run");
+    ImGui::Text(trace.status == "running"
+                    ? "Current Training Run"
+                    : "Last Training Run");
     ImGui::Separator();
-    ImGui::Text("Status: %s", trace->status.c_str());
-    ImGui::Text("Device: %s", trace->effective_backend.c_str());
-    if (!trace->effective_device_name.empty()) {
+    ImGui::Text("Status: %s", trace.status.c_str());
+    ImGui::Text("Requested: %s", trace.requested_backend.empty()
+        ? "not recorded" : trace.requested_backend.c_str());
+    ImGui::Text("Effective: %s", trace.effective_backend.c_str());
+    if (!trace.effective_device_name.empty()) {
         ImGui::SameLine();
-        ImGui::TextDisabled("(%s)", trace->effective_device_name.c_str());
+        ImGui::TextDisabled("(%s)", trace.effective_device_name.c_str());
     }
-    ImGui::Text("Residency: %s", trace->residency_verdict.empty()
-        ? "not recorded" : trace->residency_verdict.c_str());
+    if (!trace.fallback_policy.empty()) {
+        ImGui::Text("Policy: %s",
+                    trace.fallback_policy == "forbid_native_cpu_fallback"
+                        ? "Strict ArrayFire residency"
+                        : "Compatibility with recorded fallback");
+    }
+    ImGui::Text("Placement: %s", trace.placement_fingerprint.empty()
+        ? "not recorded" : trace.placement_fingerprint.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%llu entries)",
+                        static_cast<unsigned long long>(
+                            trace.placement_entry_count));
+    ImGui::Text("Residency: %s", trace.residency_verdict.empty()
+        ? "not recorded" : trace.residency_verdict.c_str());
     ImGui::Text("Transfers: %llu events, %llu known bytes",
-                static_cast<unsigned long long>(trace->transfer_event_count),
-                static_cast<unsigned long long>(trace->transfer_known_bytes));
+                static_cast<unsigned long long>(trace.transfer_event_count),
+                static_cast<unsigned long long>(trace.transfer_known_bytes));
     ImGui::Text("Syncs: %llu events, %llu known bytes",
-                static_cast<unsigned long long>(trace->synchronization_event_count),
-                static_cast<unsigned long long>(trace->synchronization_known_bytes));
-    if (trace->native_cpu_fallback_count > 0) {
+                static_cast<unsigned long long>(trace.synchronization_event_count),
+                static_cast<unsigned long long>(trace.synchronization_known_bytes));
+    if (trace.native_cpu_fallback_count > 0) {
         ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
                            "Native CPU fallback: %llu",
                            static_cast<unsigned long long>(
-                               trace->native_cpu_fallback_count));
+                               trace.native_cpu_fallback_count));
     } else {
         ImGui::Text("Native CPU fallback: 0");
     }

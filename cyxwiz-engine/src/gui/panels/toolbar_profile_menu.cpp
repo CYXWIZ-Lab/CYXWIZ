@@ -65,7 +65,7 @@ void ToolbarPanel::RenderProfileMenu() {
             ImGui::SetTooltip("Quick system metrics overlay:\n"
                               "- CPU utilization sparkline\n"
                               "- RAM usage sparkline\n"
-                              "- GPU usage sparkline\n"
+                              "- GPU VRAM occupancy sparkline\n"
                               "- Process memory info");
         }
 

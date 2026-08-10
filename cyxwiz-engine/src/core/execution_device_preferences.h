@@ -1,5 +1,7 @@
 #pragma once
 
+#include "algorithms/arrayfire_backend_utils.h"
+
 #include <cyxwiz/cyxwiz.h>
 
 #include <mutex>
@@ -83,6 +85,39 @@ inline bool ApplyPendingExecutionDeviceSelection() {
     device.SetActive();
     ClearPendingExecutionDeviceSelection();
     return true;
+}
+
+inline std::mutex& NextRunExecutionPolicyMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+inline std::optional<ArrayFireFallbackPolicy>&
+NextRunExecutionPolicySlot() {
+    static std::optional<ArrayFireFallbackPolicy> policy;
+    return policy;
+}
+
+inline void SetNextRunExecutionPolicy(ArrayFireFallbackPolicy policy) {
+    std::lock_guard<std::mutex> lock(NextRunExecutionPolicyMutex());
+    NextRunExecutionPolicySlot() = policy;
+}
+
+inline std::optional<ArrayFireFallbackPolicy> GetNextRunExecutionPolicy() {
+    std::lock_guard<std::mutex> lock(NextRunExecutionPolicyMutex());
+    return NextRunExecutionPolicySlot();
+}
+
+inline void ClearNextRunExecutionPolicy() {
+    std::lock_guard<std::mutex> lock(NextRunExecutionPolicyMutex());
+    NextRunExecutionPolicySlot().reset();
+}
+
+inline const char* ExecutionPolicyDisplayName(
+    ArrayFireFallbackPolicy policy) {
+    return policy == ArrayFireFallbackPolicy::ForbidNativeCpuFallback
+        ? "Strict ArrayFire residency"
+        : "Compatibility with recorded fallback";
 }
 
 } // namespace cyxwiz

@@ -402,7 +402,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     const bool training_active =
                         cyxwiz::TrainingManager::Instance().IsTrainingActive();
                     const auto active_run_trace =
-                        cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+                        cyxwiz::TrainingTraceCollector::LatestTrace();
                     const bool has_run_bound_device =
                         active_run_trace.available &&
                         !active_run_trace.effective_backend.empty();
@@ -438,6 +438,19 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 ? ""
                                 : " - ",
                             active_run_trace.effective_device_name.c_str());
+                        ImGui::TextDisabled(
+                            "Requested: %s device %d",
+                            active_run_trace.requested_backend.empty()
+                                ? "Not recorded"
+                                : active_run_trace.requested_backend.c_str(),
+                            active_run_trace.requested_device_id);
+                        ImGui::TextDisabled(
+                            "Placement: %s (%llu entries)",
+                            active_run_trace.placement_fingerprint.empty()
+                                ? "Not recorded"
+                                : active_run_trace.placement_fingerprint.c_str(),
+                            static_cast<unsigned long long>(
+                                active_run_trace.placement_entry_count));
                     } else {
                         try {
                         auto* current_device = cyxwiz::Device::GetCurrentDevice();
@@ -479,6 +492,79 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         } catch (...) {
                             ImGui::TextDisabled("Unable to query");
                         }
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Text("Execution Policy");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    if (has_run_bound_device &&
+                        !active_run_trace.fallback_policy.empty()) {
+                        const bool run_is_strict =
+                            active_run_trace.fallback_policy ==
+                            "forbid_native_cpu_fallback";
+                        ImGui::TextDisabled(
+                            training_active ? "Current run" : "Last run");
+                        ImGui::SameLine(130.0f);
+                        ImGui::TextColored(
+                            run_is_strict
+                                ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                                : ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                            "%s",
+                            run_is_strict
+                                ? "Strict ArrayFire residency"
+                                : "Compatibility with recorded fallback");
+                    }
+
+                    const auto next_run_policy =
+                        cyxwiz::GetNextRunExecutionPolicy();
+                    const auto selected_policy =
+                        next_run_policy.value_or(
+                            cyxwiz::ArrayFireFallbackPolicy::
+                                AllowNativeCpuFallback);
+                    ImGui::TextDisabled("Next runs");
+                    ImGui::SameLine(130.0f);
+                    if (training_active) {
+                        ImGui::BeginDisabled();
+                    }
+                    const bool compatibility_clicked = ImGui::RadioButton(
+                        "Compatibility##execution_policy",
+                        selected_policy ==
+                            cyxwiz::ArrayFireFallbackPolicy::
+                                AllowNativeCpuFallback);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Allow declared native CPU compatibility paths and record observed fallback");
+                    }
+                    ImGui::SameLine();
+                    const bool strict_clicked = ImGui::RadioButton(
+                        "Strict residency##execution_policy",
+                        selected_policy ==
+                            cyxwiz::ArrayFireFallbackPolicy::
+                                ForbidNativeCpuFallback);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Reject non-ArrayFire placement before training and terminate on unexpected fallback");
+                    }
+                    if (training_active) {
+                        ImGui::EndDisabled();
+                    }
+                    if (!training_active && compatibility_clicked) {
+                        cyxwiz::SetNextRunExecutionPolicy(
+                            cyxwiz::ArrayFireFallbackPolicy::
+                                AllowNativeCpuFallback);
+                        spdlog::info(
+                            "Queued compatibility execution policy for next training runs");
+                    } else if (!training_active && strict_clicked) {
+                        cyxwiz::SetNextRunExecutionPolicy(
+                            cyxwiz::ArrayFireFallbackPolicy::
+                                ForbidNativeCpuFallback);
+                        spdlog::info(
+                            "Queued strict ArrayFire residency policy for next training runs");
                     }
 
                     ImGui::Spacing();

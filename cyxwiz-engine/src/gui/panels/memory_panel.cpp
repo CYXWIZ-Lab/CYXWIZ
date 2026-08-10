@@ -386,15 +386,7 @@ void MemoryPanel::RenderGPUDetails() {
 
     ImGui::Separator();
 
-    // Utilization (if available)
-    if (gpu_info_.utilization >= 0) {
-        ImGui::Text("GPU Utilization:");
-        ImVec4 util_color = GetMemoryColor(gpu_info_.utilization);
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, util_color);
-        ImGui::ProgressBar(gpu_info_.utilization / 100.0f, ImVec2(-1, 20), "");
-        ImGui::PopStyleColor();
-        ImGui::Text("%.1f%%", gpu_info_.utilization);
-    }
+    ImGui::TextDisabled("Compute utilization: Not reported");
 
     // Temperature (if available)
     if (gpu_info_.temperature > 0) {
@@ -549,11 +541,9 @@ void MemoryPanel::FinalizeSnapshot(int epoch, int step) {
 void MemoryPanel::UpdateGPUStatus() {
     try {
         auto devices = Device::GetAvailableDevices();
-        const auto trace = TrainingTraceCollector::Instance().Snapshot();
-        const bool has_active_run_device =
-            TrainingManager::Instance().IsTrainingActive() &&
-            trace.available &&
-            !trace.effective_backend.empty();
+        const auto trace = TrainingTraceCollector::LatestTrace();
+        const bool has_run_device =
+            !trace.run_id.empty() && !trace.effective_backend.empty();
 
         auto use_device = [this](const DeviceInfo& dev) {
                 gpu_info_.device_id = dev.device_id;
@@ -575,18 +565,10 @@ void MemoryPanel::UpdateGPUStatus() {
                 gpu_info_.total_memory = dev.memory_total;
                 gpu_info_.free_memory = dev.memory_available;
 
-                // Calculate utilization percentage
-                if (dev.memory_total > 0) {
-                    size_t used = dev.memory_total - dev.memory_available;
-                    gpu_info_.utilization = 100.0f * static_cast<float>(used) / static_cast<float>(dev.memory_total);
-                } else {
-                    gpu_info_.utilization = 0.0f;
-                }
-
                 gpu_info_.temperature = 0.0f;  // Not available from Device API
         };
 
-        if (has_active_run_device) {
+        if (has_run_device) {
             for (const auto& dev : devices) {
                 if (dev.device_id == trace.effective_device_id &&
                     dev.name == trace.effective_device_name &&
@@ -621,7 +603,6 @@ void MemoryPanel::UpdateGPUStatus() {
         gpu_info_.backend = "None";
         gpu_info_.total_memory = 0;
         gpu_info_.free_memory = 0;
-        gpu_info_.utilization = 0.0f;
         gpu_info_.temperature = 0.0f;
     } catch (const std::exception& e) {
         spdlog::warn("Failed to query GPU status: {}", e.what());
@@ -630,7 +611,6 @@ void MemoryPanel::UpdateGPUStatus() {
         gpu_info_.backend = "Unknown";
         gpu_info_.total_memory = 0;
         gpu_info_.free_memory = 0;
-        gpu_info_.utilization = 0.0f;
         gpu_info_.temperature = 0.0f;
     }
 }

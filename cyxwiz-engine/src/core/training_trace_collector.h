@@ -190,6 +190,7 @@ public:
     void Configure(const TrainingTraceSettings& settings);
     TrainingTraceSettings GetSettings() const;
     TrainingTraceSummary Snapshot() const;
+    static TrainingTraceSummary LatestTrace();
     static std::optional<TrainingTraceSummary> LoadLastTrace();
 
 private:

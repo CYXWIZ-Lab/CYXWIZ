@@ -3641,6 +3641,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     session.studio_events = debug_session.studio_events;
     session.sample_summary = std::string("Studio Debugger mode: ") + mode_name +
         " | sample " + std::to_string(selected_sample_index);
+    const auto training_trace =
+        cyxwiz::TrainingTraceCollector::LatestTrace();
+    if (training_trace.available) {
+        session.training_trace = training_trace;
+        session.execution =
+            cyxwiz::MakeDebugRunExecutionSummary(session.training_trace);
+    }
     const std::string& run_id = session.run_id;
     auto save_session = [&session]() {
         cyxwiz::DebugRunStoreRecord record;
@@ -3651,6 +3658,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         record.summary.summary = session.failure_summary.empty()
             ? "Studio debugger run completed."
             : session.failure_summary;
+        record.summary.execution = session.execution;
         record.issues = session.issues;
         record.traces = session.traces;
         record.studio_events = session.studio_events;
@@ -3672,9 +3680,6 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     if (mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace) {
         if (auto last_run = cyxwiz::CrashRunRecorder::LoadLastRun()) {
             session.last_run = *last_run;
-        }
-        if (auto training_trace = cyxwiz::TrainingTraceCollector::LoadLastTrace()) {
-            session.training_trace = *training_trace;
         }
         cyxwiz::DebugRecommendationEngine recommendation_engine;
         session.recommendations = recommendation_engine.Build(
@@ -4212,8 +4217,10 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         if (auto last_run = cyxwiz::CrashRunRecorder::LoadLastRun()) {
             session.last_run = *last_run;
         }
-        if (auto training_trace = cyxwiz::TrainingTraceCollector::LoadLastTrace()) {
-            session.training_trace = *training_trace;
+        const auto runtime_training_trace =
+            cyxwiz::TrainingTraceCollector::LatestTrace();
+        if (runtime_training_trace.available) {
+            session.training_trace = runtime_training_trace;
         }
     }
     cyxwiz::DebugRecommendationEngine recommendation_engine;

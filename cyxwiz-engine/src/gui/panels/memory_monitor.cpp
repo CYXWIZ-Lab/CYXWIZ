@@ -1,5 +1,7 @@
 #include "memory_monitor.h"
 #include "../icons.h"
+#include "../../core/training_manager.h"
+#include "../../core/training_trace_collector.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
@@ -19,7 +21,7 @@ namespace cyxwiz {
 MemoryMonitor::MemoryMonitor() {
     cpu_history_.resize(SPARKLINE_POINTS, 0.0f);
     ram_history_.resize(SPARKLINE_POINTS, 0.0f);
-    gpu_history_.resize(SPARKLINE_POINTS, 0.0f);
+    gpu_vram_history_.resize(SPARKLINE_POINTS, 0.0f);
     process_mem_history_.resize(SPARKLINE_POINTS, 0.0f);
     last_update_ = std::chrono::steady_clock::now();
 
@@ -116,18 +118,52 @@ void MemoryMonitor::UpdateRAMUsage() {
 void MemoryMonitor::UpdateGPUStatus() {
     try {
         auto devices = Device::GetAvailableDevices();
+        const auto trace = TrainingTraceCollector::LatestTrace();
+        const bool has_run_device =
+            !trace.run_id.empty() && !trace.effective_backend.empty();
+
+        const auto use_device = [this](const DeviceInfo& dev) {
+            metrics_.gpu_available = true;
+            metrics_.gpu_name = dev.name;
+            metrics_.gpu_vram_total = dev.memory_total;
+            metrics_.gpu_vram_used = dev.memory_total - dev.memory_available;
+            metrics_.gpu_vram_usage_percent = dev.memory_total > 0
+                ? 100.0f * static_cast<float>(metrics_.gpu_vram_used) /
+                    static_cast<float>(metrics_.gpu_vram_total)
+                : 0.0f;
+        };
+
+        if (has_run_device) {
+            for (const auto& dev : devices) {
+                const bool backend_matches =
+                    (dev.type == DeviceType::CUDA &&
+                     trace.effective_backend == "arrayfire_cuda") ||
+                    (dev.type == DeviceType::OPENCL &&
+                     trace.effective_backend == "arrayfire_opencl") ||
+                    (dev.type == DeviceType::ONEAPI &&
+                     trace.effective_backend == "arrayfire_oneapi");
+                if (backend_matches &&
+                    dev.device_id == trace.effective_device_id &&
+                    dev.name == trace.effective_device_name) {
+                    use_device(dev);
+                    return;
+                }
+            }
+
+            // A CPU run must not be represented by an unrelated enumerated GPU.
+            metrics_.gpu_available = false;
+            metrics_.gpu_name = "No run-bound GPU";
+            metrics_.gpu_vram_used = 0;
+            metrics_.gpu_vram_total = 0;
+            metrics_.gpu_vram_usage_percent = 0.0f;
+            return;
+        }
 
         for (const auto& dev : devices) {
-            if (dev.type == DeviceType::CUDA || dev.type == DeviceType::OPENCL) {
-                metrics_.gpu_available = true;
-                metrics_.gpu_name = dev.name;
-                metrics_.gpu_vram_total = dev.memory_total;
-                metrics_.gpu_vram_used = dev.memory_total - dev.memory_available;
-                if (dev.memory_total > 0) {
-                    metrics_.gpu_usage_percent = 100.0f *
-                        static_cast<float>(metrics_.gpu_vram_used) /
-                        static_cast<float>(metrics_.gpu_vram_total);
-                }
+            if (dev.type == DeviceType::CUDA ||
+                dev.type == DeviceType::OPENCL ||
+                dev.type == DeviceType::ONEAPI) {
+                use_device(dev);
                 return;
             }
         }
@@ -136,7 +172,7 @@ void MemoryMonitor::UpdateGPUStatus() {
         metrics_.gpu_name = "None";
         metrics_.gpu_vram_used = 0;
         metrics_.gpu_vram_total = 0;
-        metrics_.gpu_usage_percent = 0.0f;
+        metrics_.gpu_vram_usage_percent = 0.0f;
     } catch (const std::exception& e) {
         spdlog::warn("Failed to query GPU: {}", e.what());
         metrics_.gpu_available = false;
@@ -206,12 +242,13 @@ void MemoryMonitor::ShiftHistory() {
     for (size_t i = 0; i < SPARKLINE_POINTS - 1; ++i) {
         cpu_history_[i] = cpu_history_[i + 1];
         ram_history_[i] = ram_history_[i + 1];
-        gpu_history_[i] = gpu_history_[i + 1];
+        gpu_vram_history_[i] = gpu_vram_history_[i + 1];
         process_mem_history_[i] = process_mem_history_[i + 1];
     }
     cpu_history_[SPARKLINE_POINTS - 1] = metrics_.cpu_usage_percent;
     ram_history_[SPARKLINE_POINTS - 1] = metrics_.ram_usage_percent;
-    gpu_history_[SPARKLINE_POINTS - 1] = metrics_.gpu_usage_percent;
+    gpu_vram_history_[SPARKLINE_POINTS - 1] =
+        metrics_.gpu_vram_usage_percent;
     process_mem_history_[SPARKLINE_POINTS - 1] =
         static_cast<float>(metrics_.process_memory_bytes) / (1024.0f * 1024.0f);
 }
@@ -340,8 +377,13 @@ void MemoryMonitor::Render() {
             snprintf(gpuInfo, sizeof(gpuInfo), "%s / %s",
                     FormatBytes(metrics_.gpu_vram_used).c_str(),
                     FormatBytes(metrics_.gpu_vram_total).c_str());
-            RenderMetricBar("VRAM", metrics_.gpu_usage_percent, gpuInfo);
-            RenderSparkline("##gpu_spark", gpu_history_, 50, ColorFromPercent(metrics_.gpu_usage_percent));
+            RenderMetricBar(
+                "VRAM occupancy", metrics_.gpu_vram_usage_percent, gpuInfo);
+            RenderSparkline(
+                "##gpu_vram_spark",
+                gpu_vram_history_,
+                50,
+                ColorFromPercent(metrics_.gpu_vram_usage_percent));
         } else {
             ImGui::TextDisabled(ICON_FA_DESKTOP " GPU: Not available");
             ImGui::TextDisabled("(Requires CUDA or OpenCL device)");

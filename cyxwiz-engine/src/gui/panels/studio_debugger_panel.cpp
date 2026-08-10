@@ -422,9 +422,12 @@ void StudioDebuggerPanel::SetSession(const StudioDebuggerSnapshot& session) {
     if (auto last_run = CrashRunRecorder::LoadLastRun()) {
         session_.last_run = *last_run;
     }
-    if (auto training_trace = TrainingTraceCollector::LoadLastTrace()) {
-        session_.training_trace = *training_trace;
-        current_session_.training_trace = *training_trace;
+    const auto training_trace = TrainingTraceCollector::LatestTrace();
+    if (training_trace.available) {
+        session_.training_trace = training_trace;
+        current_session_.training_trace = training_trace;
+        session_.execution = MakeDebugRunExecutionSummary(training_trace);
+        current_session_.execution = session_.execution;
     }
     session_.run_history = DebugRunStore::ListRecent(8);
     current_session_.run_history = session_.run_history;
@@ -508,8 +511,9 @@ std::string StudioDebuggerPanel::BuildAssistantDebuggerContextJson() const {
 std::string StudioDebuggerPanel::BuildAssistantTrainingContextJson() const {
     TrainingTraceSummary trace = session_.training_trace;
     if (!trace.available) {
-        if (auto latest = TrainingTraceCollector::LoadLastTrace()) {
-            trace = *latest;
+        const auto latest = TrainingTraceCollector::LatestTrace();
+        if (latest.available) {
+            trace = latest;
         }
     }
 
@@ -856,6 +860,7 @@ void StudioDebuggerPanel::LoadStoredRun(const std::string& run_id) {
     session_.traces = std::move(record->traces);
     session_.studio_events = std::move(record->studio_events);
     session_.recommendations = std::move(record->recommendations);
+    session_.execution = record->summary.execution;
     session_.run_history = history;
     has_session_ = true;
     selected_trace_index_ = session_.traces.empty() ? -1 : 0;
@@ -942,10 +947,11 @@ void StudioDebuggerPanel::RenderRunComparison() {
 }
 
 void StudioDebuggerPanel::RefreshLiveTrainingTrace() {
-    if (auto trace = TrainingTraceCollector::LoadLastTrace()) {
-        session_.training_trace = *trace;
+    const auto trace = TrainingTraceCollector::LatestTrace();
+    if (trace.available) {
+        session_.training_trace = trace;
         if (has_current_session_) {
-            current_session_.training_trace = *trace;
+            current_session_.training_trace = trace;
         }
     }
 }
@@ -1266,6 +1272,29 @@ void StudioDebuggerPanel::RenderRunHistory() {
                             run.issue_count, run.trace_count, run.event_count,
                             run.recommendation_count,
                             static_cast<unsigned long long>(run.graph_hash));
+        if (run.execution.available) {
+            ImGui::TextDisabled(
+                "training=%s effective=%s:%d device=%s residency=%s",
+                run.execution.training_run_id.c_str(),
+                run.execution.effective_backend.empty()
+                    ? "unknown"
+                    : run.execution.effective_backend.c_str(),
+                run.execution.effective_device_id,
+                run.execution.effective_device_name.empty()
+                    ? "unknown"
+                    : run.execution.effective_device_name.c_str(),
+                run.execution.residency_verdict.empty()
+                    ? "unknown"
+                    : run.execution.residency_verdict.c_str());
+            ImGui::TextDisabled(
+                "fallbacks=%zu transfers=%zu/%s syncs=%zu/%s",
+                run.execution.native_cpu_fallback_count,
+                run.execution.transfer_event_count,
+                FormatBytesCompact(run.execution.transfer_known_bytes).c_str(),
+                run.execution.synchronization_event_count,
+                FormatBytesCompact(
+                    run.execution.synchronization_known_bytes).c_str());
+        }
         if (!run.summary.empty()) {
             ImGui::TextWrapped("  %s", run.summary.c_str());
         }
@@ -1358,7 +1387,7 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
     RefreshLiveTrainingTrace();
 
     ImGui::Text("Training Trace");
-    ImGui::BeginChild("StudioDebuggerTrainingTrace", ImVec2(0, 255), true);
+    ImGui::BeginChild("StudioDebuggerTrainingTrace", ImVec2(0, 310), true);
 
     const auto& trace = session_.training_trace;
     if (!trace.available) {
@@ -1396,6 +1425,32 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
     ImGui::Text("Run: %s", trace.run_id.c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("Status: %s", trace.status.c_str());
+    ImGui::Text("Requested: %s:%d",
+                trace.requested_backend.empty()
+                    ? "unknown"
+                    : trace.requested_backend.c_str(),
+                trace.requested_device_id);
+    ImGui::SameLine(280);
+    ImGui::Text("Effective: %s:%d",
+                trace.effective_backend.empty()
+                    ? "unknown"
+                    : trace.effective_backend.c_str(),
+                trace.effective_device_id);
+    if (!trace.effective_device_name.empty()) {
+        ImGui::TextDisabled("Device: %s", trace.effective_device_name.c_str());
+    }
+    ImGui::Text("Residency: %s",
+                trace.residency_verdict.empty()
+                    ? "unknown"
+                    : trace.residency_verdict.c_str());
+    ImGui::SameLine(280);
+    ImGui::TextDisabled("fallbacks=%zu", trace.native_cpu_fallback_count);
+    ImGui::TextDisabled("transfers=%zu/%s  syncs=%zu/%s",
+                        trace.transfer_event_count,
+                        FormatBytesCompact(trace.transfer_known_bytes).c_str(),
+                        trace.synchronization_event_count,
+                        FormatBytesCompact(
+                            trace.synchronization_known_bytes).c_str());
     ImGui::Text("Latest: epoch %d batch %d/%d  stage=%s",
                 trace.latest_epoch, trace.latest_batch,
                 trace.latest_total_batches, trace.latest_stage.c_str());

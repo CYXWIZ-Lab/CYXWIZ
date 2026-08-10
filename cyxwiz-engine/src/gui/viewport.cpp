@@ -1,5 +1,6 @@
 #include "viewport.h"
 #include "panels/training_plot_panel.h"
+#include "../core/execution_device_preferences.h"
 #include "../core/training_trace_collector.h"
 
 #include <algorithm>
@@ -67,7 +68,7 @@ const CachedDeviceInfo* FindDevice(
 }
 
 bool HasRunBoundDevice(const cyxwiz::TrainingTraceSummary& trace) {
-    return trace.available && !trace.effective_backend.empty();
+    return !trace.run_id.empty() && !trace.effective_backend.empty();
 }
 
 bool IsTrainingTraceActive(const cyxwiz::TrainingTraceSummary& trace) {
@@ -135,11 +136,23 @@ void Viewport::Render() {
             }
 
             const auto trace =
-                cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+                cyxwiz::TrainingTraceCollector::LatestTrace();
             const bool has_run_bound_device = HasRunBoundDevice(trace);
+            const auto pending_selection =
+                cyxwiz::GetPendingExecutionDeviceSelection();
+            const auto next_run_policy =
+                cyxwiz::GetNextRunExecutionPolicy();
             const auto trace_type = has_run_bound_device
                 ? DeviceTypeFromExecutionBackend(trace.effective_backend)
                 : std::optional<int>{};
+            const int pending_type = pending_selection.has_value()
+                ? static_cast<int>(pending_selection->type)
+                : -1;
+            const auto* pending_info = pending_selection.has_value()
+                ? FindDevice(cached_devices_,
+                             pending_type,
+                             pending_selection->device_id)
+                : nullptr;
             auto* process_device = cyxwiz::Device::GetCurrentDevice();
             if (has_run_bound_device || process_device) {
                 const int active_type = trace_type.has_value()
@@ -185,7 +198,17 @@ void Viewport::Render() {
                     ImGui::TableSetupColumn("Value",
                                             ImGuiTableColumnFlags_WidthStretch);
                     SummaryRow("Source", source_label);
-                    SummaryRow("Backend", backend_label.c_str());
+                    if (has_run_bound_device) {
+                        SummaryRow(
+                            "Requested backend",
+                            trace.requested_backend.empty()
+                                ? "Not recorded"
+                                : trace.requested_backend.c_str());
+                        SummaryRow("Effective backend",
+                                   backend_label.c_str());
+                    } else {
+                        SummaryRow("Backend", backend_label.c_str());
+                    }
                     SummaryRow("Device", active_name.c_str());
 
                     ImGui::TableNextRow();
@@ -206,6 +229,59 @@ void Viewport::Render() {
                     } else {
                         ImGui::TextDisabled("Not reported by backend");
                     }
+
+                    if (has_run_bound_device) {
+                        SummaryRow(
+                            "Placement",
+                            trace.placement_fingerprint.empty()
+                                ? "Not recorded"
+                                : trace.placement_fingerprint.c_str());
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextDisabled("Placement entries");
+                        ImGui::TableNextColumn();
+                        ImGui::Text(
+                            "%llu",
+                            static_cast<unsigned long long>(
+                                trace.placement_entry_count));
+                        if (!trace.fallback_policy.empty()) {
+                            const bool run_is_strict =
+                                trace.fallback_policy ==
+                                "forbid_native_cpu_fallback";
+                            SummaryRow(
+                                "Run policy",
+                                run_is_strict
+                                    ? "Strict ArrayFire residency"
+                                    : "Compatibility with recorded fallback");
+                        }
+                    }
+
+                    const auto selected_policy =
+                        next_run_policy.value_or(
+                            cyxwiz::ArrayFireFallbackPolicy::
+                                AllowNativeCpuFallback);
+                    const std::string next_policy_label =
+                        std::string(cyxwiz::ExecutionPolicyDisplayName(
+                            selected_policy)) +
+                        (next_run_policy.has_value() ? "" : " (default)");
+                    SummaryRow("Next policy", next_policy_label.c_str());
+
+                    if (pending_selection.has_value()) {
+                        const std::string pending_backend =
+                            cyxwiz::ExecutionDeviceSelectionBackendName(
+                                pending_selection->type);
+                        const std::string pending_name = pending_info
+                            ? pending_info->name
+                            : "Queued device not in discovery list";
+                        SummaryRow("Next backend", pending_backend.c_str());
+                        SummaryRow("Next device", pending_name.c_str());
+
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextDisabled("Next device ID");
+                        ImGui::TableNextColumn();
+                        ImGui::Text("%d", pending_selection->device_id);
+                    }
                     ImGui::EndTable();
                 }
             } else {
@@ -218,6 +294,10 @@ void Viewport::Render() {
             ImGui::SameLine();
             if (ImGui::SmallButton("Refresh##viewport_devices")) {
                 RefreshDevices();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Re-enumerate available devices; queued selection is applied at training start");
             }
 
             if (cached_devices_.empty()) {
@@ -233,6 +313,10 @@ void Viewport::Render() {
                         static_cast<int>(process_device->GetType()) ==
                             device.type &&
                         process_device->GetDeviceId() == device.device_id;
+                    const bool is_pending =
+                        pending_selection.has_value() &&
+                        pending_type == device.type &&
+                        pending_selection->device_id == device.device_id;
                     ImGui::BulletText("%s", device.name.c_str());
                     ImGui::SameLine();
                     ImGui::TextDisabled("[%s:%d]",
@@ -248,6 +332,11 @@ void Viewport::Render() {
                                                       : "Last run")
                                                : "Active");
                     }
+                    if (is_pending) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(DeviceTypeColor(device.type),
+                                           "Next run");
+                    }
                 }
             }
 
@@ -255,8 +344,10 @@ void Viewport::Render() {
             ImGui::TextWrapped(
                 "Training trace reports the run-bound ArrayFire "
                 "backend/device when a run exists. Process runtime is shown "
-                "only when no run-bound trace is available. Native CPU "
-                "fallback is reported separately by run diagnostics.");
+                "only when no run-bound trace is available. Preferences "
+                "selection is shown separately as Next run and is applied at "
+                "training start. Native CPU fallback is reported separately "
+                "by run diagnostics.");
         } catch (const std::exception& error) {
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
                                "Device query failed: %s",

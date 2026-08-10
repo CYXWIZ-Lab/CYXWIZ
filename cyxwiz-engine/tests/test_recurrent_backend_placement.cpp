@@ -1,5 +1,6 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/backend_placement_capabilities.h"
+#include "../src/core/execution_placement_plan.h"
 #include "../src/gui/loaders/data_loader.h"
 #include "../../cyxwiz-backend/src/algorithms/arrayfire_backend_utils.h"
 #include "cyxwiz/backend_placement_observation.h"
@@ -613,6 +614,12 @@ int main() {
 
     auto gru_config = CompileRecurrentGraph(gui::NodeType::GRU, 32, false);
     Check(gru_config.is_valid, "GRU placement graph should compile");
+    Check(!gru_config.compiler_placement_fingerprint.empty(),
+          "compiler should produce a placement capability fingerprint");
+    Check(gru_config.compiler_placement_fingerprint ==
+              cyxwiz::FingerprintPlacementEntries(
+                  gru_config.backend_placements),
+          "compiler placement fingerprint should match its emitted entries");
     Check(gru_config.backend_placements.size() == 3,
           "GRU graph should produce placement entries for Embedding, GRU, Dense");
     const auto gru_summary = gru_config.SummarizeBackendPlacements();
@@ -620,6 +627,158 @@ int main() {
     Check(gru_summary.gpu == 2, "GRU placement summary should count Embedding and Dense as GPU");
     Check(gru_summary.cpu == 1, "GRU placement summary should count GRU as CPU");
     Check(gru_summary.unknown == 0, "GRU placement summary should have no unknown entries");
+
+    cyxwiz::ExecutionDeviceContext cpu_context;
+    cpu_context.requested_backend = "arrayfire_cpu";
+    cpu_context.effective_backend = "arrayfire_cpu";
+    cpu_context.device_name = "Contract CPU";
+    cpu_context.valid = true;
+    cpu_context.fallback_policy =
+        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+    const auto gru_cpu_plan =
+        cyxwiz::BuildExecutionPlacementPlan(gru_config, cpu_context);
+    const auto gru_cpu_plan_repeat =
+        cyxwiz::BuildExecutionPlacementPlan(gru_config, cpu_context);
+    Check(gru_cpu_plan.fingerprint == gru_cpu_plan_repeat.fingerprint,
+          "context-resolved placement fingerprint should be deterministic");
+    Check(gru_cpu_plan.compiler_fingerprint ==
+              gru_config.compiler_placement_fingerprint,
+          "executable plan should retain the compiler capability identity");
+    Check(!gru_cpu_plan.IsStrictlyExecutable(),
+          "strict preflight should reject the compiler-known native CPU GRU path");
+    Check(gru_cpu_plan.StrictBlockerSummary().find("GRU") !=
+              std::string::npos,
+          "strict preflight blocker should identify the GRU stage");
+
+    cyxwiz::TrainingConfiguration dense_config;
+    cyxwiz::CompiledLayer dense_layer;
+    dense_layer.node_id = 50;
+    dense_layer.name = "DenseContract";
+    dense_layer.type = gui::NodeType::Dense;
+    dense_layer.input_shape = {8};
+    dense_layer.output_shape = {2};
+    dense_layer.units = 2;
+    dense_config.layers.push_back(dense_layer);
+    cyxwiz::BackendPlacementEntry dense_capability;
+    dense_capability.node_id = dense_layer.node_id;
+    dense_capability.node_name = dense_layer.name;
+    dense_capability.node_type = "Dense";
+    dense_capability.status = cyxwiz::BackendPlacementStatus::Gpu;
+    dense_capability.reason_code =
+        cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable;
+    dense_config.backend_placements.push_back(dense_capability);
+    dense_config.compiler_placement_fingerprint =
+        cyxwiz::FingerprintPlacementEntries(dense_config.backend_placements);
+
+    const auto dense_cpu_plan =
+        cyxwiz::BuildExecutionPlacementPlan(dense_config, cpu_context);
+    Check(dense_cpu_plan.IsExecutable(),
+          "known dense loss/metric/optimizer stages should pass executable preflight");
+    Check(dense_cpu_plan.IsStrictlyExecutable(),
+          "ArrayFire CPU dense plan should not be classified as native CPU fallback");
+    size_t dense_forward_entries = 0;
+    bool saw_gradient_accumulation = false;
+    bool saw_gradient_averaging = false;
+    bool saw_optimizer_state = false;
+    bool saw_optimizer_update = false;
+    for (const auto& entry : dense_cpu_plan.entries) {
+        Check(entry.fallback_backend.empty(),
+              "executable plan entries must not predict an unobserved fallback");
+        if (entry.node_id == dense_layer.node_id) {
+            ++dense_forward_entries;
+            Check(entry.node_type == "ModelForward.Dense",
+                  "resolved dense entry should carry its executable stage name");
+            Check(entry.expected_backend == "arrayfire_cpu",
+                  "resolved dense entry should bind ArrayFire CPU exactly");
+            Check(entry.status == cyxwiz::ExecutionPlacementStatus::ArrayFire,
+                  "ArrayFire CPU should use the ArrayFire execution status");
+        }
+        saw_gradient_accumulation = saw_gradient_accumulation ||
+            entry.node_type == "GradientTransform.Accumulate";
+        saw_gradient_averaging = saw_gradient_averaging ||
+            entry.node_type == "GradientTransform.Average";
+        saw_optimizer_state = saw_optimizer_state ||
+            entry.node_type == "OptimizerState.Adam";
+        saw_optimizer_update = saw_optimizer_update ||
+            entry.node_type == "OptimizerUpdate.Adam";
+    }
+    Check(dense_forward_entries == 1,
+          "executable plan should not duplicate compiler and runtime Dense entries");
+    Check(saw_gradient_accumulation,
+          "executable plan should declare gradient accumulation");
+    Check(saw_gradient_averaging,
+          "executable plan should declare gradient averaging");
+    Check(saw_optimizer_state,
+          "executable plan should declare optimizer state placement");
+    Check(saw_optimizer_update,
+          "executable plan should declare optimizer update placement");
+
+    auto native_loss_config = dense_config;
+    native_loss_config.loss_type = gui::NodeType::SoftDiceLoss;
+    const auto native_loss_plan =
+        cyxwiz::BuildExecutionPlacementPlan(native_loss_config, cpu_context);
+    Check(native_loss_plan.IsExecutable(),
+          "declared native CPU loss should remain executable in compatibility mode");
+    Check(!native_loss_plan.IsStrictlyExecutable(),
+          "declared native CPU loss should block strict ArrayFire residency");
+    Check(native_loss_plan.StrictBlockerSummary().find(
+              "loss_native_cpu_compatibility") != std::string::npos,
+          "strict blocker should identify the native CPU loss reason");
+
+    auto sequence_metrics_config = dense_config;
+    sequence_metrics_config.sequence_batch.enabled = true;
+    sequence_metrics_config.target.value_kind =
+        cyxwiz::TargetValueKind::TokenIds;
+    const auto sequence_metrics_plan =
+        cyxwiz::BuildExecutionPlacementPlan(
+            sequence_metrics_config, cpu_context);
+    Check(sequence_metrics_plan.IsExecutable(),
+          "sequence metrics should remain executable in compatibility mode");
+    Check(!sequence_metrics_plan.IsStrictlyExecutable(),
+          "host sequence metrics should block strict ArrayFire residency");
+    Check(sequence_metrics_plan.StrictBlockerSummary().find(
+              "metrics_sequence_native_cpu_compatibility") !=
+              std::string::npos,
+          "strict blocker should identify sequence metric host materialization");
+    bool saw_sequence_metrics = false;
+    for (const auto& entry : sequence_metrics_plan.entries) {
+        if (entry.node_type != "Metrics.SequenceTokenAccuracy") {
+            continue;
+        }
+        saw_sequence_metrics = true;
+        Check(entry.status == cyxwiz::BackendPlacementStatus::Cpu,
+              "sequence token metrics should be declared native CPU");
+        Check(entry.expected_backend == "native_cpu",
+              "sequence token metrics should not claim the ArrayFire device");
+    }
+    Check(saw_sequence_metrics,
+          "sequence plan should include the token-accuracy metric stage");
+
+    auto unsupported_config = dense_config;
+    unsupported_config.loss_type = gui::NodeType::Output;
+    unsupported_config.optimizer_type = gui::NodeType::Output;
+    const auto unsupported_plan =
+        cyxwiz::BuildExecutionPlacementPlan(unsupported_config, cpu_context);
+    Check(!unsupported_plan.IsExecutable(),
+          "unknown loss and optimizer node types should fail executable preflight");
+    Check(unsupported_plan.FatalBlockerSummary().find("loss_unsupported") !=
+              std::string::npos,
+          "fatal preflight should identify an unsupported loss");
+    Check(unsupported_plan.FatalBlockerSummary().find("optimizer_unsupported") !=
+              std::string::npos,
+          "fatal preflight should identify an unsupported optimizer");
+
+    auto metric_mismatch_config = dense_config;
+    metric_mismatch_config.target.value_kind =
+        cyxwiz::TargetValueKind::Continuous;
+    const auto metric_mismatch_plan =
+        cyxwiz::BuildExecutionPlacementPlan(metric_mismatch_config, cpu_context);
+    Check(!metric_mismatch_plan.IsExecutable(),
+          "continuous targets with classification loss should fail metric preflight");
+    Check(metric_mismatch_plan.FatalBlockerSummary().find(
+              "metrics_loss_target_contract_unsupported") !=
+              std::string::npos,
+          "fatal preflight should identify the loss/metric target mismatch");
 
     const auto* gru_embedding_placement = FindPlacement(gru_config, 3);
     Check(gru_embedding_placement != nullptr,

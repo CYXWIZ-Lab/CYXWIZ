@@ -27,7 +27,7 @@ struct SystemMetrics {
     std::string gpu_name;
     size_t gpu_vram_used = 0;
     size_t gpu_vram_total = 0;
-    float gpu_usage_percent = 0.0f;
+    float gpu_vram_usage_percent = 0.0f;
 
     // Process
     size_t process_memory_bytes = 0;
@@ -57,7 +57,7 @@ private:
     static constexpr size_t SPARKLINE_POINTS = 60;
     std::vector<float> cpu_history_;
     std::vector<float> ram_history_;
-    std::vector<float> gpu_history_;
+    std::vector<float> gpu_vram_history_;
     std::vector<float> process_mem_history_;
 
     // Update timing

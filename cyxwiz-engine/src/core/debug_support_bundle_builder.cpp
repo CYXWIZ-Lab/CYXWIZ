@@ -205,7 +205,25 @@ nlohmann::json DebugSupportBundleBuilder::DebugRunToJson(
             {"event_count", record.summary.event_count},
             {"recommendation_count", record.summary.recommendation_count},
             {"summary", RedactString(record.summary.summary)},
-            {"file_path", "[REDACTED]"}
+            {"file_path", "[REDACTED]"},
+            {"execution", {
+                {"available", record.summary.execution.available},
+                {"training_run_id", record.summary.execution.training_run_id},
+                {"status", record.summary.execution.status},
+                {"requested_backend", record.summary.execution.requested_backend},
+                {"requested_device_id", record.summary.execution.requested_device_id},
+                {"effective_backend", record.summary.execution.effective_backend},
+                {"effective_device_id", record.summary.execution.effective_device_id},
+                {"effective_device_name", record.summary.execution.effective_device_name},
+                {"execution_context_id", record.summary.execution.execution_context_id},
+                {"placement_fingerprint", record.summary.execution.placement_fingerprint},
+                {"residency_verdict", record.summary.execution.residency_verdict},
+                {"native_cpu_fallback_count", record.summary.execution.native_cpu_fallback_count},
+                {"transfer_event_count", record.summary.execution.transfer_event_count},
+                {"transfer_known_bytes", record.summary.execution.transfer_known_bytes},
+                {"synchronization_event_count", record.summary.execution.synchronization_event_count},
+                {"synchronization_known_bytes", record.summary.execution.synchronization_known_bytes}
+            }}
         }},
         {"issues", issues},
         {"traces", traces},

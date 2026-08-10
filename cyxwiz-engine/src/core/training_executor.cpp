@@ -7,6 +7,7 @@
 #include <cyxwiz/debug_hooks.h>
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
+#include "execution_placement_plan.h"
 #include "training_trace_collector.h"
 #include "backend_placement_capabilities.h"
 #include "model_builder.h"
@@ -26,7 +27,6 @@
 #include <cstdint>
 #include <algorithm>
 #include <filesystem>
-#include <iomanip>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -79,234 +79,6 @@ void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
             spdlog::info("TrainingExecutor: {}", detail);
         }
     }
-}
-
-void HashPlacementField(uint64_t& hash, const std::string& value) {
-    constexpr uint64_t kFnvPrime = 1099511628211ull;
-    for (const unsigned char ch : value) {
-        hash ^= static_cast<uint64_t>(ch);
-        hash *= kFnvPrime;
-    }
-    hash ^= static_cast<uint64_t>('\x1f');
-    hash *= kFnvPrime;
-}
-
-std::string BuildPlacementPlanFingerprint(
-    const std::vector<BackendPlacementEntry>& placements) {
-    uint64_t hash = 14695981039346656037ull;
-    HashPlacementField(hash, std::to_string(placements.size()));
-    for (const auto& placement : placements) {
-        HashPlacementField(hash, std::to_string(placement.node_id));
-        HashPlacementField(hash, placement.node_name);
-        HashPlacementField(hash, placement.node_type);
-        HashPlacementField(hash, placement.requested_backend);
-        HashPlacementField(hash, placement.expected_backend);
-        HashPlacementField(hash, placement.fallback_backend);
-        HashPlacementField(hash, placement.status);
-        HashPlacementField(hash, placement.reason_code);
-        HashPlacementField(hash, placement.observation_device);
-        HashPlacementField(hash, placement.observation_dtype);
-        HashPlacementField(hash, placement.observation_shape_signature);
-        HashPlacementField(hash, placement.observation_probe_outcome);
-        HashPlacementField(hash, placement.observation_probe_scope);
-    }
-
-    std::ostringstream out;
-    out << "placement:" << std::hex << std::setw(16) << std::setfill('0')
-        << hash;
-    return out.str();
-}
-
-BackendPlacementEntry BuildTracePlacementEntry(int node_id,
-                                               const std::string& name,
-                                               const std::string& type,
-                                               const ExecutionDeviceContext& context,
-                                               const std::string& status,
-                                               const std::string& reason,
-                                               const std::string& expected_backend,
-                                               const std::string& detail) {
-    BackendPlacementEntry placement;
-    placement.node_id = node_id;
-    placement.node_name = name;
-    placement.node_type = type;
-    placement.requested_backend = context.requested_backend.empty()
-        ? "arrayfire"
-        : context.requested_backend;
-    placement.expected_backend = expected_backend.empty()
-        ? context.effective_backend
-        : expected_backend;
-    placement.fallback_backend =
-        context.fallback_policy == ArrayFireFallbackPolicy::AllowNativeCpuFallback
-            ? "native_cpu_recorded_compatibility"
-            : "";
-    placement.status = status;
-    placement.reason_code = reason;
-    placement.observation_device = context.device_name;
-    placement.observation_dtype = "float32";
-    placement.observation_probe_outcome = "runtime_trace_declared";
-    placement.observation_probe_scope = "training_executor_dense";
-    placement.explanation = detail;
-    return placement;
-}
-
-std::vector<BackendPlacementEntry> BuildEffectiveTrainingPlacementPlan(
-    const TrainingConfiguration& config,
-    const ExecutionDeviceContext& context) {
-    const std::string backend = context.effective_backend.empty()
-        ? "arrayfire_unknown"
-        : context.effective_backend;
-    const bool arrayfire_cpu = backend == "arrayfire_cpu";
-    const std::string runtime_status = arrayfire_cpu
-        ? BackendPlacementStatus::Cpu
-        : BackendPlacementStatus::Gpu;
-
-    std::vector<BackendPlacementEntry> placements;
-    placements.reserve(config.backend_placements.size() + config.layers.size() + 6);
-    for (const auto& compiler_placement : config.backend_placements) {
-        auto placement = compiler_placement;
-        if (placement.reason_code ==
-                BackendPlacementReason::ArrayFireTensorOpCapable &&
-            (placement.status == BackendPlacementStatus::Cpu ||
-             placement.status == BackendPlacementStatus::Gpu)) {
-            // Compiler capability probes may describe the process-global
-            // device that was active during graph compilation. Resolve only
-            // ArrayFire-capable entries against the immutable run context so
-            // a stale GPU probe cannot make an ArrayFire CPU run look mixed.
-            placement.requested_backend = context.requested_backend.empty()
-                ? backend
-                : context.requested_backend;
-            placement.expected_backend = backend;
-            placement.status = runtime_status;
-            placement.fallback_backend =
-                context.fallback_policy ==
-                        ArrayFireFallbackPolicy::AllowNativeCpuFallback
-                    ? "native_cpu_recorded_compatibility"
-                    : "";
-            placement.explanation +=
-                " Runtime placement resolved from the bound execution "
-                "context.";
-        }
-        placements.push_back(std::move(placement));
-    }
-    const std::string arrayfire_status = "arrayfire";
-    const std::string boundary_status = "declared_host_boundary";
-
-    placements.push_back(BuildTracePlacementEntry(
-        config.data_source_node_id >= 0 ? config.data_source_node_id : -1001,
-        "dataset_ingress",
-        "DatasetIngress",
-        context,
-        boundary_status,
-        "dataset_tensor_ingress",
-        backend,
-        "Dataset batches originate on host and are converted to tensors for "
-        "the selected ArrayFire backend."));
-
-    for (size_t i = 0; i < config.layers.size(); ++i) {
-        const auto& layer = config.layers[i];
-        const int node_id = layer.node_id >= 0
-            ? layer.node_id
-            : static_cast<int>(-2000 - static_cast<int>(i));
-        const std::string name = layer.name.empty()
-            ? fmt::format("layer_{}", i)
-            : layer.name;
-        placements.push_back(BuildTracePlacementEntry(
-            node_id,
-            name,
-            std::string("ModelForward.") +
-                backend_placement::LayerTypeName(layer.type),
-            context,
-            arrayfire_status,
-            "model_forward_arrayfire",
-            backend,
-            "Model forward for this dense TrainingExecutor layer is expected "
-            "to run on the selected ArrayFire backend unless a routed native "
-            "CPU fallback event is recorded."));
-    }
-
-    placements.push_back(BuildTracePlacementEntry(
-        config.loss_node_id >= 0 ? config.loss_node_id : -3001,
-        "loss",
-        "Loss." + config.GetLossName(),
-        context,
-        arrayfire_status,
-        "loss_arrayfire",
-        backend,
-        "Loss computation is expected to run on the selected ArrayFire "
-        "backend for the supported dense vertical."));
-
-    placements.push_back(BuildTracePlacementEntry(
-        -3002,
-        "metrics",
-        UsesContinuousTargetMetrics(config)
-            ? "Metrics.Regression"
-            : "Metrics.Classification",
-        context,
-        arrayfire_status,
-        "metrics_arrayfire_scalar_reduction",
-        backend,
-        "Dense metrics use ArrayFire reductions and read back bounded scalar "
-        "results for reporting."));
-
-    placements.push_back(BuildTracePlacementEntry(
-        -3003,
-        "backward",
-        "Backward",
-        context,
-        arrayfire_status,
-        "backward_arrayfire",
-        backend,
-        "Backward and gradient tensor operations are expected to run on the "
-        "selected ArrayFire backend for supported dense operations."));
-
-    placements.push_back(BuildTracePlacementEntry(
-        config.optimizer_node_id >= 0 ? config.optimizer_node_id : -3004,
-        "optimizer",
-        "Optimizer." + config.GetOptimizerName(),
-        context,
-        arrayfire_status,
-        "optimizer_arrayfire",
-        backend,
-        "Optimizer updates are expected to run on the selected ArrayFire "
-        "backend for the supported dense optimizer path."));
-
-    placements.push_back(BuildTracePlacementEntry(
-        -3005,
-        "loss_scalar_readback",
-        "OutputBoundary.LossScalar",
-        context,
-        boundary_status,
-        "loss_scalar_readback",
-        "host_scalar",
-        "One scalar loss value is read back to host for reporting and "
-        "callbacks; this is a declared output boundary, not native CPU "
-        "compute fallback."));
-
-    return placements;
-}
-
-std::string BuildPlacementPlanSummary(
-    const std::vector<BackendPlacementEntry>& placements) {
-    constexpr size_t kMaxSummaryChars = 900;
-    std::ostringstream out;
-    size_t summary_chars = 0;
-    bool first = true;
-    for (const auto& placement : placements) {
-        std::string item = placement.node_name + ":" +
-            placement.node_type + "=" + placement.expected_backend +
-            "(" + placement.reason_code + ")";
-        if (!first) {
-            item = "; " + item;
-        }
-        if (summary_chars + item.size() > kMaxSummaryChars) {
-            out << "; ...";
-            break;
-        }
-        out << item;
-        summary_chars += item.size();
-        first = false;
-    }
-    return out.str();
 }
 
 std::string DescribePinMemoryTransferStatus(
@@ -777,6 +549,16 @@ void TrainingExecutor::Train(
     stop_requested_.store(false);
     is_paused_.store(false);
 
+    const auto next_run_execution_policy = GetNextRunExecutionPolicy();
+    if (next_run_execution_policy.has_value()) {
+        config_.forbid_native_cpu_fallback =
+            *next_run_execution_policy ==
+            ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+        spdlog::info(
+            "TrainingExecutor: applied next-run execution policy: {}",
+            ExecutionPolicyDisplayName(*next_run_execution_policy));
+    }
+
     const auto pending_execution_device = GetPendingExecutionDeviceSelection();
     try {
         if (pending_execution_device.has_value()) {
@@ -830,20 +612,16 @@ void TrainingExecutor::Train(
         execution_context.Describe());
     TrainingTraceCollector::Instance().RecordExecutionDeviceContext(
         execution_context);
-    const auto effective_placements =
-        BuildEffectiveTrainingPlacementPlan(config_, execution_context);
-    const std::string placement_fingerprint =
-        BuildPlacementPlanFingerprint(effective_placements);
-    const std::string placement_summary =
-        BuildPlacementPlanSummary(effective_placements);
+    const auto execution_placement_plan =
+        BuildExecutionPlacementPlan(config_, execution_context);
     TrainingTraceCollector::Instance().RecordPlacementPlan(
-        placement_fingerprint,
-        static_cast<uint64_t>(effective_placements.size()),
-        placement_summary,
+        execution_placement_plan.fingerprint,
+        static_cast<uint64_t>(execution_placement_plan.entries.size()),
+        execution_placement_plan.summary,
         fmt::format("placement_entries={} fingerprint={} summary={}",
-                    effective_placements.size(),
-                    placement_fingerprint,
-                    placement_summary));
+                    execution_placement_plan.entries.size(),
+                    execution_placement_plan.fingerprint,
+                    execution_placement_plan.summary));
     const ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
         &RecordArrayFireNativeCpuFallbackForActiveTrace);
     const ScopedArrayFireHostSyncObserver host_sync_observer(
@@ -865,6 +643,29 @@ void TrainingExecutor::Train(
         TrainingTraceCollector::Instance().FinishRun("failed");
         is_training_.store(false);
     };
+
+    if (!execution_placement_plan.IsExecutable()) {
+        const std::string reason =
+            "execution_preflight_failed: " +
+            execution_placement_plan.FatalBlockerSummary();
+        TrainingTraceCollector::Instance().RecordRuntimeWarning(
+            "TrainingExecutor.ExecutionPreflight", reason);
+        spdlog::error("TrainingExecutor: {}", reason);
+        fail_setup(reason);
+        return;
+    }
+
+    if (config_.forbid_native_cpu_fallback &&
+        !execution_placement_plan.IsStrictlyExecutable()) {
+        const std::string reason =
+            "placement_preflight_failed: " +
+            execution_placement_plan.StrictBlockerSummary();
+        TrainingTraceCollector::Instance().RecordRuntimeWarning(
+            "TrainingExecutor.PlacementPreflight", reason);
+        spdlog::error("TrainingExecutor: {}", reason);
+        fail_setup(reason);
+        return;
+    }
 
     try {
         // Initialize

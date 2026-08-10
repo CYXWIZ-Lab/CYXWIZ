@@ -543,6 +543,10 @@ struct TrainingConfiguration {
     // Backend placement preflight entries. This is the compiler-owned execution
     // placement contract that the UI/runtime can surface before training starts.
     std::vector<BackendPlacementEntry> backend_placements;
+    // Deterministic identity of the compiler capability plan. Runtime
+    // resolution produces a separate executable fingerprint after binding the
+    // immutable execution-device context.
+    std::string compiler_placement_fingerprint;
 
     // ArrayFire-first production runs keep native CPU fallback available for
     // known gaps and diagnostics. Strict residency tests can opt in to forbid

@@ -185,6 +185,46 @@ bool HasResidencyVerdict(const TrainingTraceSummary& trace) {
            trace.residency_verdict != "unavailable" &&
            trace.residency_verdict != "in_progress";
 }
+
+const char* ResidencyVerdictDisplayName(const std::string& verdict) {
+    if (verdict == "strict_arrayfire_declared_boundaries") {
+        return "Strict ArrayFire residency";
+    }
+    if (verdict == "native_cpu_fallback_observed") {
+        return "Native CPU fallback observed";
+    }
+    if (verdict == "compatibility_no_observed_fallback") {
+        return "ArrayFire-first; no fallback observed";
+    }
+    if (verdict == "terminal_without_residency_pass") {
+        return "Residency not proven";
+    }
+    if (verdict == "in_progress") {
+        return "In progress";
+    }
+    return verdict.empty() || verdict == "unavailable"
+        ? "Not available"
+        : verdict.c_str();
+}
+
+ImVec4 ResidencyVerdictColor(const std::string& verdict) {
+    if (verdict == "strict_arrayfire_declared_boundaries") {
+        return ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+    }
+    if (verdict == "native_cpu_fallback_observed" ||
+        verdict == "terminal_without_residency_pass") {
+        return ImVec4(1.0f, 0.38f, 0.38f, 1.0f);
+    }
+    return ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+}
+
+void RenderExecutionTruthRow(const char* label, const std::string& value) {
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::TextDisabled("%s", label);
+    ImGui::TableNextColumn();
+    ImGui::TextWrapped("%s", value.empty() ? "Not recorded" : value.c_str());
+}
 #endif
 
 } // namespace
@@ -1532,108 +1572,175 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
 
 void TrainingPlotPanel::RenderTrainingWarningSummary() {
 #ifndef CYXWIZ_PLOTTING_MODULE
-    const auto trace = TrainingTraceCollector::Instance().Snapshot();
-    if (!trace.available) {
+    const auto trace = TrainingTraceCollector::LatestTrace();
+    if (!trace.available && trace.run_id.empty()) {
         return;
     }
 
     const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace);
     const TrainingTraceEvent* fallback =
         FindLatestNativeCpuFallbackEvent(trace);
+    const bool has_execution_truth =
+        !trace.requested_backend.empty() ||
+        !trace.effective_backend.empty() ||
+        !trace.placement_fingerprint.empty();
     if (!transfer && !fallback && trace.warnings.empty() &&
-        !HasResidencyVerdict(trace)) {
+        !HasResidencyVerdict(trace) && !has_execution_truth) {
         return;
     }
 
     ImGui::Spacing();
-    if (HasResidencyVerdict(trace)) {
-        const bool strict_resident =
-            trace.residency_verdict == "strict_arrayfire_declared_boundaries";
-        const bool fallback_observed =
-            trace.residency_verdict == "native_cpu_fallback_observed";
-        const ImVec4 color = strict_resident
-            ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-            : (fallback_observed
-                   ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
-                   : ImVec4(1.0f, 0.82f, 0.35f, 1.0f));
-        ImGui::TextColored(color, "Residency verdict:");
-        ImGui::SameLine(170);
-        ImGui::TextWrapped(
-            "%s requested=%s effective=%s boundaries=%llu transfers=%llu/%s "
-            "sync=%llu/%s transfer_reasons=%s sync_reasons=%s placement=%s "
-            "entries=%llu plan=%s",
-            trace.residency_verdict.c_str(),
-            trace.requested_backend.empty()
-                ? "unknown"
-                : trace.requested_backend.c_str(),
-            trace.effective_backend.empty()
-                ? "unknown"
-                : trace.effective_backend.c_str(),
-            static_cast<unsigned long long>(
-                trace.declared_output_boundary_count),
-            static_cast<unsigned long long>(
-                trace.transfer_event_count),
-            FormatTraceBytes(trace.transfer_known_bytes).c_str(),
-            static_cast<unsigned long long>(
-                trace.synchronization_event_count),
-            FormatTraceBytes(trace.synchronization_known_bytes).c_str(),
-            trace.transfer_summary.empty()
-                ? "none"
-                : trace.transfer_summary.c_str(),
-            trace.synchronization_summary.empty()
-                ? "none"
-                : trace.synchronization_summary.c_str(),
-            trace.placement_fingerprint.empty()
-                ? "unknown"
-                : trace.placement_fingerprint.c_str(),
-            static_cast<unsigned long long>(trace.placement_entry_count),
-            trace.placement_summary.empty()
-                ? "unknown"
-                : trace.placement_summary.c_str());
+    if (has_execution_truth || !trace.residency_verdict.empty()) {
+        ImGui::SeparatorText("Execution Truth");
+        if (ImGui::BeginTable(
+                "##training_execution_truth",
+                2,
+                ImGuiTableFlags_SizingStretchProp |
+                    ImGuiTableFlags_BordersInnerH |
+                    ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn(
+                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
+            ImGui::TableSetupColumn(
+                "Value", ImGuiTableColumnFlags_WidthStretch);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("Residency");
+            ImGui::TableNextColumn();
+            ImGui::TextColored(
+                ResidencyVerdictColor(trace.residency_verdict),
+                "%s",
+                ResidencyVerdictDisplayName(trace.residency_verdict));
+            if (!trace.residency_verdict.empty() &&
+                trace.residency_verdict != "unavailable") {
+                RenderExecutionTruthRow("Verdict code",
+                                        trace.residency_verdict);
+            }
+
+            RenderExecutionTruthRow("Requested backend",
+                                    trace.requested_backend);
+
+            std::string effective = trace.effective_backend;
+            if (!trace.effective_device_name.empty()) {
+                effective += " | " + trace.effective_device_name;
+            }
+            if (!trace.effective_backend.empty()) {
+                effective += " | device " +
+                    std::to_string(trace.effective_device_id);
+            }
+            RenderExecutionTruthRow("Effective backend", effective);
+            RenderExecutionTruthRow("Fallback policy",
+                                    trace.fallback_policy);
+
+            std::string placement = trace.placement_fingerprint;
+            if (!placement.empty()) {
+                placement += " | " +
+                    std::to_string(trace.placement_entry_count) +
+                    " entries";
+            }
+            RenderExecutionTruthRow("Placement", placement);
+            RenderExecutionTruthRow(
+                "Host boundaries",
+                std::to_string(trace.declared_output_boundary_count));
+            RenderExecutionTruthRow(
+                "Transfers",
+                std::to_string(trace.transfer_event_count) + " events | " +
+                    FormatTraceBytes(trace.transfer_known_bytes));
+            RenderExecutionTruthRow(
+                "Transfer reasons",
+                trace.transfer_summary.empty()
+                    ? "None recorded"
+                    : trace.transfer_summary);
+            RenderExecutionTruthRow(
+                "Synchronizations",
+                std::to_string(trace.synchronization_event_count) +
+                    " events | " +
+                    FormatTraceBytes(trace.synchronization_known_bytes));
+            RenderExecutionTruthRow(
+                "Sync reasons",
+                trace.synchronization_summary.empty()
+                    ? "None recorded"
+                    : trace.synchronization_summary);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("Native CPU fallback");
+            ImGui::TableNextColumn();
+            const ImVec4 fallback_count_color =
+                trace.native_cpu_fallback_count == 0
+                    ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                    : ImVec4(1.0f, 0.38f, 0.38f, 1.0f);
+            ImGui::TextColored(
+                fallback_count_color,
+                "%llu event%s",
+                static_cast<unsigned long long>(
+                    trace.native_cpu_fallback_count),
+                trace.native_cpu_fallback_count == 1 ? "" : "s");
+            ImGui::EndTable();
+        }
+
+        if (!trace.placement_summary.empty() &&
+            ImGui::TreeNodeEx(
+                "Placement stages",
+                ImGuiTreeNodeFlags_SpanAvailWidth)) {
+            ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
+            ImGui::TextWrapped("%s", trace.placement_summary.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::TreePop();
+        }
     }
 
     if (transfer) {
+        ImGui::SeparatorText("Transfer Detail");
         const ImVec4 color = transfer->status == "warning"
             ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
             : ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
-        ImGui::TextColored(color, "Pin-memory transfer:");
-        ImGui::SameLine(170);
-        ImGui::TextWrapped(
-            "mode=%s reason=%s backend=%s batch=%d",
-            transfer->transfer_mode.empty()
-                ? "unknown"
-                : transfer->transfer_mode.c_str(),
-            transfer->transfer_reason.empty()
-                ? "unknown"
-                : transfer->transfer_reason.c_str(),
-            transfer->transfer_backend.empty()
-                ? "unknown"
-                : transfer->transfer_backend.c_str(),
-            transfer->transfer_batch_size);
+        ImGui::TextColored(color, "Pin-memory transfer");
+        if (ImGui::BeginTable(
+                "##pin_memory_transfer_detail",
+                2,
+                ImGuiTableFlags_SizingStretchProp |
+                    ImGuiTableFlags_BordersInnerH)) {
+            ImGui::TableSetupColumn(
+                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
+            ImGui::TableSetupColumn(
+                "Value", ImGuiTableColumnFlags_WidthStretch);
+            RenderExecutionTruthRow("Mode", transfer->transfer_mode);
+            RenderExecutionTruthRow("Reason", transfer->transfer_reason);
+            RenderExecutionTruthRow("Backend", transfer->transfer_backend);
+            RenderExecutionTruthRow(
+                "Batch size",
+                std::to_string(transfer->transfer_batch_size));
+            ImGui::EndTable();
+        }
     }
 
     if (fallback) {
+        ImGui::SeparatorText("Fallback Detail");
         const ImVec4 color = fallback->status == "error"
             ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
             : ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
-        ImGui::TextColored(color, "Native CPU fallback:");
-        ImGui::SameLine(170);
-        ImGui::TextWrapped(
-            "count=%llu backend=%s op=%s reason=%s policy=%s",
-            static_cast<unsigned long long>(
-                trace.native_cpu_fallback_count),
-            fallback->compute_backend.empty()
-                ? "unknown"
-                : fallback->compute_backend.c_str(),
-            fallback->fallback_operation.empty()
-                ? "unknown"
-                : fallback->fallback_operation.c_str(),
-            fallback->fallback_reason.empty()
-                ? "unknown"
-                : fallback->fallback_reason.c_str(),
-            fallback->fallback_policy.empty()
-                ? "unknown"
-                : fallback->fallback_policy.c_str());
+        ImGui::TextColored(color, "Native CPU fallback");
+        if (ImGui::BeginTable(
+                "##native_cpu_fallback_detail",
+                2,
+                ImGuiTableFlags_SizingStretchProp |
+                    ImGuiTableFlags_BordersInnerH)) {
+            ImGui::TableSetupColumn(
+                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
+            ImGui::TableSetupColumn(
+                "Value", ImGuiTableColumnFlags_WidthStretch);
+            RenderExecutionTruthRow(
+                "Count",
+                std::to_string(trace.native_cpu_fallback_count));
+            RenderExecutionTruthRow("Selected backend",
+                                    fallback->compute_backend);
+            RenderExecutionTruthRow("Operation",
+                                    fallback->fallback_operation);
+            RenderExecutionTruthRow("Reason", fallback->fallback_reason);
+            RenderExecutionTruthRow("Policy", fallback->fallback_policy);
+            ImGui::EndTable();
+        }
     }
 
     bool rendered_warning_header = false;
@@ -1646,12 +1753,12 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                 continue;
             }
             if (!rendered_warning_header) {
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
-                                   "Training warnings:");
+                ImGui::SeparatorText("Warnings");
                 rendered_warning_header = true;
             }
-            ImGui::BulletText("%s", ClassifyTrainingWarning(warning));
-            ImGui::SameLine(170);
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                               "%s", ClassifyTrainingWarning(warning));
+            ImGui::SameLine(155.0f);
             ImGui::TextWrapped("%s", warning.c_str());
         }
     }

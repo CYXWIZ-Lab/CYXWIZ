@@ -2801,6 +2801,26 @@ void TestDebugRunStoreContract() {
     record.summary.success = true;
     record.summary.summary = "Debugger store contract run";
 
+    cyxwiz::TrainingTraceSummary execution_trace;
+    execution_trace.available = true;
+    execution_trace.run_id = "training-store-contract-run";
+    execution_trace.status = "completed";
+    execution_trace.requested_backend = "arrayfire_cuda";
+    execution_trace.requested_device_id = 2;
+    execution_trace.effective_backend = "arrayfire_cuda";
+    execution_trace.effective_device_id = 2;
+    execution_trace.effective_device_name = "Contract CUDA Device";
+    execution_trace.execution_context_id = "arrayfire:arrayfire_cuda:2";
+    execution_trace.placement_fingerprint = "placement-contract";
+    execution_trace.residency_verdict = "device_resident";
+    execution_trace.native_cpu_fallback_count = 0;
+    execution_trace.transfer_event_count = 3;
+    execution_trace.transfer_known_bytes = 4096;
+    execution_trace.synchronization_event_count = 2;
+    execution_trace.synchronization_known_bytes = 1024;
+    record.summary.execution =
+        cyxwiz::MakeDebugRunExecutionSummary(execution_trace);
+
     record.issues.push_back({
         cyxwiz::IssueLevel::Warning,
         7,
@@ -2869,6 +2889,21 @@ void TestDebugRunStoreContract() {
           "loaded event count should match persisted event count");
     Check(loaded->summary.recommendation_count == 1,
           "loaded recommendation count should match persisted recommendation count");
+    Check(loaded->summary.execution.available &&
+              loaded->summary.execution.training_run_id ==
+                  execution_trace.run_id &&
+              loaded->summary.execution.effective_backend ==
+                  execution_trace.effective_backend &&
+              loaded->summary.execution.effective_device_id == 2 &&
+              loaded->summary.execution.effective_device_name ==
+                  execution_trace.effective_device_name &&
+              loaded->summary.execution.residency_verdict ==
+                  execution_trace.residency_verdict &&
+              loaded->summary.execution.transfer_event_count == 3 &&
+              loaded->summary.execution.transfer_known_bytes == 4096 &&
+              loaded->summary.execution.synchronization_event_count == 2 &&
+              loaded->summary.execution.synchronization_known_bytes == 1024,
+          "linked training execution summary should round-trip");
     Check(loaded->issues.size() == 1 &&
               loaded->issues[0].message == "Contract warning" &&
               loaded->issues[0].error_code == "CW-C-0103",
@@ -2892,6 +2927,10 @@ void TestDebugRunStoreContract() {
     Check(recent.size() == 1, "ListRecent should return saved run");
     Check(recent[0].run_id == record.summary.run_id,
           "ListRecent should preserve run id");
+    Check(recent[0].execution.available &&
+              recent[0].execution.execution_context_id ==
+                  execution_trace.execution_context_id,
+          "ListRecent should expose the linked execution record");
 
     cyxwiz::DebugRunStoreRecord invalid;
     Check(!cyxwiz::DebugRunStore::Save(invalid),

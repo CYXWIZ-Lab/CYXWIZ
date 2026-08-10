@@ -1,6 +1,7 @@
 #include "graph_compiler.h"
 #include "error_codes.h"
 #include "backend_placement_capabilities.h"
+#include "execution_placement_plan.h"
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
@@ -4460,6 +4461,8 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     AddBackendPlacementReports(config);
+    config.compiler_placement_fingerprint =
+        FingerprintPlacementEntries(config.backend_placements);
     FinalizePinMemoryTransferStatus(config);
 
     // DataSplit ratios should sum to ~1.0. Drift > 0.05 is almost
@@ -4788,6 +4791,9 @@ TrainingConfiguration GraphCompiler::Compile(
             summary.risk,
             summary.unsupported,
             summary.unknown);
+        spdlog::info(
+            "GraphCompiler: Backend placement fingerprint={}",
+            config.compiler_placement_fingerprint);
         for (const auto& placement : config.backend_placements) {
             spdlog::info("  [{}] {} '{}' -> expected={}, fallback={}, reason={}",
                          placement.status,
