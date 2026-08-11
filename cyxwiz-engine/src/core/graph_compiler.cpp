@@ -5393,7 +5393,7 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
     CompiledLayer layer;
     layer.type = node.type;
     layer.node_id = node.id;
-    layer.name = node.name;
+    layer.name = gui::EffectiveNodeName(node);
     layer.parameters = node.parameters;
 
     // Extract specific parameters

@@ -663,6 +663,46 @@ struct MLNode {
     std::string plugin_qualified_name;   // "plugin_id:type_name" for calling ResolveDynamicPins
 };
 
+inline bool IsGeneratedDenseName(const std::string& name) {
+    constexpr const char* prefix = "Dense (";
+    constexpr size_t prefix_length = 7;
+    if (name.size() <= prefix_length + 1 ||
+        name.compare(0, prefix_length, prefix) != 0 ||
+        name.back() != ')') {
+        return false;
+    }
+
+    for (size_t index = prefix_length; index + 1 < name.size(); ++index) {
+        if (name[index] < '0' || name[index] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+inline std::string EffectiveNodeName(const MLNode& node) {
+    if (node.type != NodeType::Dense || !IsGeneratedDenseName(node.name)) {
+        return node.name;
+    }
+
+    const auto units = node.parameters.find("units");
+    if (units == node.parameters.end() || units->second.empty()) {
+        return node.name;
+    }
+    for (const char character : units->second) {
+        if (character < '0' || character > '9') {
+            return node.name;
+        }
+    }
+    return "Dense (" + units->second + ")";
+}
+
+inline void RefreshGeneratedNodeName(MLNode& node) {
+    if (IsGeneratedDenseName(node.name)) {
+        node.name = EffectiveNodeName(node);
+    }
+}
+
 // Connection/Link types for visual differentiation
 enum class LinkType {
     TensorFlow,         // Standard data flow (default)

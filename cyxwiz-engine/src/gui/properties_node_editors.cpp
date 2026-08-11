@@ -338,6 +338,7 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             ImGui::SetNextItemWidth(120.0f);
             if (ImGui::InputText("##units", u_buffer, sizeof(u_buffer), ImGuiInputTextFlags_CharsDecimal)) {
                 units = u_buffer;
+                RefreshGeneratedNodeName(node);
                 context.invalidate_shapes();
             }
 

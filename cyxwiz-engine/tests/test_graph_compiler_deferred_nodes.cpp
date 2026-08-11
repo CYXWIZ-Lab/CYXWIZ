@@ -330,6 +330,42 @@ int main() {
           "graph plan should include loss-to-optimizer edge");
     Check(plan.edges.size() == 4, "graph plan should contain only selected path edges");
 
+    auto stale_generated_dense = dense;
+    stale_generated_dense.name = "Dense (128)";
+    stale_generated_dense.parameters["units"] = "512";
+    nodes = {data, stale_generated_dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "compiler should accept a Dense node with a stale generated name");
+    Check(config.layers.size() == 1 && config.layers.front().units == 512,
+          "Dense execution width should come from the units parameter");
+    Check(config.layers.front().name == "Dense (512)",
+          "compiled Dense name should report the configured execution width");
+    const auto* dense_placement = FindPlacement(config, stale_generated_dense.id);
+    Check(dense_placement != nullptr &&
+              dense_placement->node_name == "Dense (512)",
+          "Dense placement should report the configured execution width");
+
+    auto custom_named_dense = stale_generated_dense;
+    custom_named_dense.name = "Classifier Head";
+    custom_named_dense.parameters["units"] = "256";
+    config = compiler.Compile({data, custom_named_dense, loss, optimizer},
+                              links,
+                              true);
+    Check(config.is_valid && config.layers.front().name == "Classifier Head",
+          "compiler should preserve custom Dense names");
+
+    gui::RefreshGeneratedNodeName(stale_generated_dense);
+    Check(stale_generated_dense.name == "Dense (512)",
+          "property edits should refresh generated Dense names");
+
     struct OptimizerCase {
         gui::NodeType node_type;
         cyxwiz::OptimizerType optimizer_type;
