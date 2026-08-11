@@ -133,6 +133,7 @@ void EngineConfig::SetDefaults() {
     connection_timeout_ = 10;
     request_timeout_ = 30;
     system_python_path_ = "";  // Will be auto-detected on first launch
+    runtime_log_saved_filters_.clear();
 }
 
 std::filesystem::path EngineConfig::GetUserConfigDir() const {
@@ -385,6 +386,28 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        runtime_log_saved_filters_.clear();
+        if (config.contains("observability") &&
+            config["observability"].is_object()) {
+            const auto& observability = config["observability"];
+            const int version = observability.value("saved_filters_version", 1);
+            if (version == 1 && observability.contains("saved_filters") &&
+                observability["saved_filters"].is_array()) {
+                for (const auto& item : observability["saved_filters"]) {
+                    if (!item.is_object() || !item.contains("name") ||
+                        !item.contains("expression") ||
+                        !item["name"].is_string() ||
+                        !item["expression"].is_string()) {
+                        continue;
+                    }
+                    if (runtime_log_saved_filters_.size() >= 32) break;
+                    runtime_log_saved_filters_.push_back({
+                        item["name"].get<std::string>(),
+                        item["expression"].get<std::string>()});
+                }
+            }
+        }
+
         // Recent projects
         if (config.contains("recent_projects")) {
             recent_projects_ = config["recent_projects"].get<std::vector<std::string>>();
@@ -460,6 +483,16 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         // Local Debug settings
         config["debug"] = {
             {"require_debug_before_train", require_debug_before_train_}
+        };
+
+        json saved_runtime_filters = json::array();
+        for (const auto& filter : runtime_log_saved_filters_) {
+            saved_runtime_filters.push_back({
+                {"name", filter.name}, {"expression", filter.expression}});
+        }
+        config["observability"] = {
+            {"saved_filters_version", 1},
+            {"saved_filters", std::move(saved_runtime_filters)}
         };
 
         // Recent projects
@@ -672,6 +705,21 @@ void EngineConfig::SetRequireDebugBeforeTrain(bool require) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (require_debug_before_train_ != require) {
         require_debug_before_train_ = require;
+        modified_ = true;
+    }
+}
+
+std::vector<RuntimeLogSavedFilterConfig>
+EngineConfig::GetRuntimeLogSavedFilters() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return runtime_log_saved_filters_;
+}
+
+void EngineConfig::SetRuntimeLogSavedFilters(
+    const std::vector<RuntimeLogSavedFilterConfig>& filters) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (runtime_log_saved_filters_ != filters) {
+        runtime_log_saved_filters_ = filters;
         modified_ = true;
     }
 }

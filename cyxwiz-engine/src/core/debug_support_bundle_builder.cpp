@@ -1,31 +1,9 @@
 #include "debug_support_bundle_builder.h"
-
-#include <algorithm>
-#include <cctype>
+#include "support_redaction.h"
 
 namespace cyxwiz {
 
 namespace {
-
-std::string ToLower(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return value;
-}
-
-bool IsSensitiveKey(const std::string& key) {
-    const std::string lower = ToLower(key);
-    return lower.find("path") != std::string::npos ||
-           lower.find("file") != std::string::npos ||
-           lower.find("dataset") != std::string::npos ||
-           lower.find("raw") != std::string::npos ||
-           lower.find("preview") != std::string::npos ||
-           lower.find("token") != std::string::npos ||
-           lower.find("password") != std::string::npos ||
-           lower.find("secret") != std::string::npos ||
-           lower.find("credential") != std::string::npos;
-}
 
 std::string IssueLevelName(IssueLevel level) {
     switch (level) {
@@ -92,12 +70,24 @@ nlohmann::json DebugSupportBundleBuilder::Build(
     const DebugSupportBundleInput& input) const {
     nlohmann::json environment = nlohmann::json::object();
     for (const auto& [key, value] : input.environment) {
-        environment[key] = IsSensitiveKey(key) ? "[REDACTED]" : RedactString(value);
+        environment[key] = SupportRedaction::IsSensitiveKey(key)
+            ? "[REDACTED]"
+            : RedactString(value);
     }
 
     nlohmann::json logs = nlohmann::json::array();
     for (const auto& log : input.recent_logs) {
         logs.push_back(RedactString(log));
+    }
+
+    nlohmann::json runtime_log_slice = {
+        {"included", false},
+        {"reason", "no explicit runtime-log slice supplied"}};
+    if (input.runtime_log_slice) {
+        const RuntimeLogRedactionOptions shareable_redaction;
+        runtime_log_slice = RuntimeLogExportService::SnapshotToJson(
+            *input.runtime_log_slice, shareable_redaction);
+        runtime_log_slice["included"] = true;
     }
 
     return {
@@ -114,58 +104,19 @@ nlohmann::json DebugSupportBundleBuilder::Build(
         {"placement_observations",
          PlacementObservationsToJson(input.placement_observations)},
         {"environment", environment},
-        {"recent_logs", logs}
+        {"recent_logs", logs},
+        {"runtime_log_slice", std::move(runtime_log_slice)}
     };
 }
 
 nlohmann::json DebugSupportBundleBuilder::RedactJson(
     const nlohmann::json& value) {
-    if (value.is_object()) {
-        nlohmann::json out = nlohmann::json::object();
-        for (auto it = value.begin(); it != value.end(); ++it) {
-            if (IsSensitiveKey(it.key())) {
-                out[it.key()] = "[REDACTED]";
-            } else {
-                out[it.key()] = RedactJson(it.value());
-            }
-        }
-        return out;
-    }
-
-    if (value.is_array()) {
-        nlohmann::json out = nlohmann::json::array();
-        for (const auto& item : value) {
-            out.push_back(RedactJson(item));
-        }
-        return out;
-    }
-
-    if (value.is_string()) {
-        return RedactString(value.get<std::string>());
-    }
-
-    return value;
+    return SupportRedaction::RedactJson(value);
 }
 
 std::string DebugSupportBundleBuilder::RedactString(
     const std::string& value) {
-    std::string out = value;
-    const std::vector<std::string> markers = {
-        "token=",
-        "password=",
-        "secret=",
-        "credential="
-    };
-
-    for (const auto& marker : markers) {
-        const auto lower = ToLower(out);
-        const auto pos = lower.find(marker);
-        if (pos != std::string::npos) {
-            out = out.substr(0, pos + marker.size()) + "[REDACTED]";
-        }
-    }
-
-    return out;
+    return SupportRedaction::RedactString(value);
 }
 
 nlohmann::json DebugSupportBundleBuilder::DebugRunToJson(

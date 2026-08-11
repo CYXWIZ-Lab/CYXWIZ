@@ -3,6 +3,7 @@
 #include "../src/core/ner_sequence_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/preprocessing_state.h"
+#include "../src/core/runtime_log_store.h"
 #include "../src/core/sequence_batcher.h"
 #include "../src/core/sequence_tag_metrics.h"
 #include "../src/core/sequence_training_step.h"
@@ -876,6 +877,30 @@ void TestAllowedTrainingRecordsForcedLinearFallback(
           "training trace should record one execution device context bind");
     Check(saw_linear_forward,
           "allowed fallback trace should name Linear forward");
+
+    const auto runtime_events =
+        cyxwiz::RuntimeLogStore::Instance().Snapshot().events;
+    bool saw_device_lifecycle = false;
+    bool saw_fallback_lifecycle = false;
+    for (const auto& event : runtime_events) {
+        if (event.run_id != trace.run_id) continue;
+        if (event.event_name == "ExecutionDeviceContext.Bind") {
+            saw_device_lifecycle = event.category == "device" &&
+                event.backend == trace.effective_backend &&
+                event.device_id == trace.effective_device_id;
+        }
+        if (event.event_name == "ArrayFire.NativeCpuFallback") {
+            saw_fallback_lifecycle = event.category == "training" &&
+                event.level == cyxwiz::RuntimeLogLevel::Warning &&
+                event.primary_error_code == "CW-G-0501" &&
+                event.message.find("LinearLayer::Forward") !=
+                    std::string::npos;
+        }
+    }
+    Check(saw_device_lifecycle,
+          "runtime log should retain one structured run-bound device bind");
+    Check(saw_fallback_lifecycle,
+          "runtime log should retain structured native CPU fallback evidence");
 }
 
 void TestStrictTrainingRejectsForcedLinearFallback(

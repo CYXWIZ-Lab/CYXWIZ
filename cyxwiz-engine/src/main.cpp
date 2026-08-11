@@ -4,6 +4,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include "core/runtime_log_sink.h"
 #include <iostream>
 #include <filesystem>
 #include <cstdlib>
@@ -82,8 +83,12 @@ int main(int argc, char** argv) {
 
         auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path.string(), true);
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+        auto runtime_sink = std::make_shared<cyxwiz::RuntimeLogSinkMt>(
+            cyxwiz::RuntimeLogStore::Instance());
 
-        auto logger = std::make_shared<spdlog::logger>("cyxwiz", spdlog::sinks_init_list{file_sink, console_sink});
+        auto logger = std::make_shared<spdlog::logger>(
+            "cyxwiz",
+            spdlog::sinks_init_list{file_sink, console_sink, runtime_sink});
         logger->set_level(spdlog::level::info);
         spdlog::set_default_logger(logger);
         spdlog::flush_on(spdlog::level::info);

@@ -4,8 +4,16 @@
 #include <string>
 #include <mutex>
 #include <filesystem>
+#include <vector>
 
 namespace cyxwiz::core {
+
+struct RuntimeLogSavedFilterConfig {
+    std::string name;
+    std::string expression;
+
+    bool operator==(const RuntimeLogSavedFilterConfig&) const = default;
+};
 
 /**
  * @brief Centralized configuration management for the CyxWiz Engine.
@@ -112,6 +120,12 @@ public:
     bool RequireDebugBeforeTrain() const;
     void SetRequireDebugBeforeTrain(bool require);
 
+    // ===== Runtime Observability =====
+
+    std::vector<RuntimeLogSavedFilterConfig> GetRuntimeLogSavedFilters() const;
+    void SetRuntimeLogSavedFilters(
+        const std::vector<RuntimeLogSavedFilterConfig>& filters);
+
     // ===== Recent Projects =====
 
     // Get list of recent projects (up to 10)
@@ -161,6 +175,8 @@ private:
 
     // Local Debug settings
     bool require_debug_before_train_ = false;
+
+    std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
 
     // Recent projects
     std::vector<std::string> recent_projects_;  // Recent project paths (max 10)

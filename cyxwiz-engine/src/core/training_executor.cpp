@@ -11,6 +11,7 @@
 #include "training_trace_collector.h"
 #include "backend_placement_capabilities.h"
 #include "model_builder.h"
+#include "runtime_log_store.h"
 #include "sequence_model_input.h"
 #include "sequence_training_step.h"
 #include "training_batcher_setup.h"
@@ -59,6 +60,54 @@ void RecordMetricScalarReadback(const char* operation,
     NotifyArrayFireHostSync(std::move(sync));
 }
 #endif
+
+void AppendExecutionDeviceLifecycleEvent(
+    const ExecutionDeviceContext& context, const std::string& run_id) {
+    RuntimeLogEvent event;
+    event.timestamp_utc = std::chrono::system_clock::now();
+    event.level = context.valid ? RuntimeLogLevel::Info
+                                : RuntimeLogLevel::Warning;
+    event.category = "device";
+    event.source = "TrainingExecutor";
+    event.event_name = "ExecutionDeviceContext.Bind";
+    event.run_id = run_id;
+    event.backend = context.effective_backend;
+    event.device_id = context.effective_device_id;
+    event.device_name = context.device_name;
+    event.message = context.Describe();
+    if (!context.valid) {
+        event.primary_error_code = errors::Runtime::ExecutionFailed;
+    }
+    event.details.emplace_back("requested_backend", context.requested_backend);
+    event.details.emplace_back(
+        "requested_device_id", std::to_string(context.requested_device_id));
+    event.details.emplace_back(
+        "fallback_policy", context.FallbackPolicyName());
+    RuntimeLogStore::Instance().Append(std::move(event));
+}
+
+void AppendNativeCpuFallbackLifecycleEvent(
+    const ArrayFireNativeCpuFallbackEvent& fallback,
+    const std::string& run_id, const std::string& detail) {
+    RuntimeLogEvent event;
+    event.timestamp_utc = std::chrono::system_clock::now();
+    event.level = fallback.fallback_forbidden ? RuntimeLogLevel::Error
+                                              : RuntimeLogLevel::Warning;
+    event.category = "training";
+    event.source = "TrainingExecutor";
+    event.event_name = "ArrayFire.NativeCpuFallback";
+    event.run_id = run_id;
+    event.backend = fallback.selected_backend;
+    event.primary_error_code = errors::Gpu::KernelExecutionFailed;
+    event.message = "Native CPU fallback: " + detail;
+    event.details.emplace_back("operation", fallback.operation_name);
+    event.details.emplace_back("reason", fallback.reason_code);
+    event.details.emplace_back(
+        "policy", fallback.fallback_forbidden
+            ? "forbid_native_cpu_fallback"
+            : "allow_native_cpu_fallback");
+    RuntimeLogStore::Instance().Append(std::move(event));
+}
 
 void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
     if (config.backend_placements.empty()) {
@@ -151,6 +200,8 @@ void RecordArrayFireNativeCpuFallbackForActiveTrace(
         "ArrayFire.NativeCpuFallback",
         detail);
     TrainingTraceCollector::Instance().RecordNativeCpuFallback(fallback);
+    const auto trace = TrainingTraceCollector::Instance().Snapshot();
+    AppendNativeCpuFallbackLifecycleEvent(fallback, trace.run_id, detail);
 }
 
 void RecordArrayFireHostSyncForActiveTrace(
@@ -675,13 +726,15 @@ void TrainingExecutor::Train(
         batch_size,
         0);
     const auto started_run = CrashRunRecorder::LoadLastRun();
-    TrainingTraceCollector::Instance().StartRun(
-        started_run ? started_run->run_id : "training-run");
+    const std::string training_run_id =
+        started_run ? started_run->run_id : "training-run";
+    TrainingTraceCollector::Instance().StartRun(training_run_id);
     CrashRunRecorder::Instance().MarkBackendEvent(
         "ExecutionDeviceContext.Bind",
         execution_context.Describe());
     TrainingTraceCollector::Instance().RecordExecutionDeviceContext(
         execution_context);
+    AppendExecutionDeviceLifecycleEvent(execution_context, training_run_id);
     const auto execution_placement_plan =
         BuildExecutionPlacementPlan(config_, execution_context);
     TrainingTraceCollector::Instance().RecordPlacementPlan(

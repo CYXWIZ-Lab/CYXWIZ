@@ -147,6 +147,13 @@ set(ENGINE_SOURCES
     src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
+    src/core/runtime_console_commands.cpp
+    src/core/runtime_truth_query.cpp
+    src/core/runtime_log_store.cpp
+    src/core/runtime_log_filter.cpp
+    src/core/runtime_log_inspector.cpp
+    src/core/runtime_log_export.cpp
+    src/core/support_redaction.cpp
     src/core/large_text_file.cpp
     src/core/dataset_audit.cpp
     src/core/graph_compiler.cpp
@@ -549,6 +556,13 @@ set(ENGINE_HEADERS
     src/core/node_metadata_registry.h  # Node Browser: metadata registry
     src/core/texture_manager.h
     src/core/async_task_manager.h
+    src/core/runtime_console_commands.h
+    src/core/runtime_truth_query.h
+    src/core/runtime_log_event.h
+    src/core/runtime_log_filter.h
+    src/core/runtime_log_inspector.h
+    src/core/runtime_log_sink.h
+    src/core/runtime_log_store.h
     src/core/large_text_file.h
     src/core/graph_compiler.h
     src/core/bert_encoder_contract.h
@@ -625,7 +639,7 @@ set(ENGINE_HEADERS
     src/gui/node_editor.h
     src/gui/node_documentation.h
     src/gui/console.h
-    src/gui/console_sink.h
+    src/gui/console_sink.h  # Compatibility alias to the core runtime sink
     src/gui/viewport.h
     src/gui/properties.h
     src/gui/panel.h
@@ -3115,6 +3129,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/checkpoint_manager.cpp
     src/core/crash_run_recorder.cpp
     src/core/training_trace_collector.cpp
+    src/core/runtime_log_store.cpp
     src/core/formats/cyxmodel_format.cpp
     src/plugin/registries/plugin_training_hook_manager.cpp
 )
@@ -3286,6 +3301,184 @@ set_target_properties(test_error_codes PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Bounded runtime log store and spdlog ingestion =====
+add_executable(test_runtime_log_store
+    tests/test_runtime_log_store.cpp
+    src/core/runtime_log_store.cpp
+)
+
+target_include_directories(test_runtime_log_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_runtime_log_store PRIVATE
+    spdlog::spdlog
+)
+
+if(WIN32)
+    target_compile_definitions(test_runtime_log_store PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_runtime_log_store PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Runtime log filter grammar, evaluation, and bounded query =====
+add_executable(test_runtime_log_filter
+    tests/test_runtime_log_filter.cpp
+    src/core/runtime_log_filter.cpp
+    src/core/runtime_log_store.cpp
+)
+
+target_include_directories(test_runtime_log_filter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+if(WIN32)
+    target_compile_definitions(test_runtime_log_filter PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_runtime_log_filter PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Runtime log inspector criteria, facets, and frozen views =====
+add_executable(test_runtime_log_inspector
+    tests/test_runtime_log_inspector.cpp
+    src/core/runtime_log_filter.cpp
+    src/core/runtime_log_inspector.cpp
+    src/core/runtime_log_store.cpp
+)
+
+target_include_directories(test_runtime_log_inspector PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+if(WIN32)
+    target_compile_definitions(test_runtime_log_inspector PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_runtime_log_inspector PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Benchmark: Runtime-log append/query cost and structural bounds =====
+add_executable(benchmark_runtime_log_observability
+    tests/benchmark_runtime_log_observability.cpp
+    src/core/runtime_log_filter.cpp
+    src/core/runtime_log_inspector.cpp
+    src/core/runtime_log_store.cpp
+)
+
+target_include_directories(benchmark_runtime_log_observability PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+if(WIN32)
+    target_compile_definitions(benchmark_runtime_log_observability PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(benchmark_runtime_log_observability PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Frozen runtime-log export, redaction, and serialization =====
+add_executable(test_runtime_log_export
+    tests/test_runtime_log_export.cpp
+    src/core/runtime_log_export.cpp
+    src/core/runtime_log_filter.cpp
+    src/core/runtime_log_store.cpp
+    src/core/support_redaction.cpp
+)
+
+target_include_directories(test_runtime_log_export PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_runtime_log_export PRIVATE
+    nlohmann_json::nlohmann_json
+)
+
+if(WIN32)
+    target_compile_definitions(test_runtime_log_export PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_runtime_log_export PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Runtime observability settings persistence =====
+add_executable(test_engine_config_observability
+    tests/test_engine_config_observability.cpp
+    src/core/engine_config.cpp
+)
+
+target_include_directories(test_engine_config_observability PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_engine_config_observability PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+)
+
+if(WIN32)
+    target_compile_definitions(test_engine_config_observability PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_engine_config_observability PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Runtime Console command registry and bounded log commands =====
+add_executable(test_runtime_console_commands
+    tests/test_runtime_console_commands.cpp
+    src/core/runtime_console_commands.cpp
+    src/core/runtime_log_filter.cpp
+    src/core/runtime_log_store.cpp
+)
+
+target_include_directories(test_runtime_console_commands PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+
+if(WIN32)
+    target_compile_definitions(test_runtime_console_commands PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_runtime_console_commands PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== TrainingExecutor test and benchmark runtime =====
 set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/training_executor.cpp
@@ -3304,6 +3497,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/checkpoint_manager.cpp
     src/core/crash_run_recorder.cpp
     src/core/training_trace_collector.cpp
+    src/core/runtime_log_store.cpp
     src/plugin/registries/plugin_training_hook_manager.cpp
 )
 
@@ -3483,6 +3677,10 @@ add_executable(test_debugger_contracts
     src/core/debug_runtime_backend_classifier.cpp
     src/core/debug_smoke_sample_selector.cpp
     src/core/debug_support_bundle_builder.cpp
+    src/core/runtime_log_export.cpp
+    src/core/runtime_log_filter.cpp
+    src/core/runtime_log_store.cpp
+    src/core/support_redaction.cpp
     src/core/debug_windows_crash_importer.cpp
     src/core/debug_session_manager.cpp
     src/core/debug_recommendation_engine.cpp

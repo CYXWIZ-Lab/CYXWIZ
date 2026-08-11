@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <string>
+#include <string_view>
 
 namespace cyxwiz::errors {
 
@@ -102,6 +104,109 @@ inline constexpr const char* PluginDependencyFailure = "CW-X-0601";
 inline constexpr const char* PythonBridgeFailure = "CW-X-0602";
 inline constexpr const char* RemoteServiceUnavailable = "CW-X-0701";
 } // namespace External
+
+struct DiagnosticCodeDescriptor {
+    const char* code;
+    const char* symbolic_name;
+};
+
+inline constexpr std::array<DiagnosticCodeDescriptor, 66> DiagnosticCodeCatalog{{
+    {Compiler::GenericIssue, "Compiler.GenericIssue"},
+    {Compiler::MissingTrainingPathNode, "Compiler.MissingTrainingPathNode"},
+    {Compiler::UnsupportedTrainingNode, "Compiler.UnsupportedTrainingNode"},
+    {Compiler::InvalidConnectivity, "Compiler.InvalidConnectivity"},
+    {Compiler::TensorShapeMismatch, "Compiler.TensorShapeMismatch"},
+    {Compiler::LabelOutputShapeMismatch, "Compiler.LabelOutputShapeMismatch"},
+    {Compiler::InvalidParameter, "Compiler.InvalidParameter"},
+    {Compiler::InvariantViolation, "Compiler.InvariantViolation"},
+    {Runtime::PipelineMalformed, "Runtime.PipelineMalformed"},
+    {Runtime::InvalidState, "Runtime.InvalidState"},
+    {Runtime::UnsupportedNode, "Runtime.UnsupportedNode"},
+    {Runtime::OperatorMissing, "Runtime.OperatorMissing"},
+    {Runtime::InputDatasetMissing, "Runtime.InputDatasetMissing"},
+    {Runtime::InvalidParameter, "Runtime.InvalidParameter"},
+    {Runtime::ExecutionFailed, "Runtime.ExecutionFailed"},
+    {Runtime::InvariantViolation, "Runtime.InvariantViolation"},
+    {Gpu::BackendUnavailable, "Gpu.BackendUnavailable"},
+    {Gpu::PathDisabledByPolicy, "Gpu.PathDisabledByPolicy"},
+    {Gpu::UnsupportedShape, "Gpu.UnsupportedShape"},
+    {Gpu::KernelExecutionFailed, "Gpu.KernelExecutionFailed"},
+    {Gpu::DependencyFailure, "Gpu.DependencyFailure"},
+    {Gpu::MemoryExhausted, "Gpu.MemoryExhausted"},
+    {Cpu::BackendUnavailable, "Cpu.BackendUnavailable"},
+    {Cpu::UnsupportedShape, "Cpu.UnsupportedShape"},
+    {Cpu::OperationFailed, "Cpu.OperationFailed"},
+    {Cpu::MemoryExhausted, "Cpu.MemoryExhausted"},
+    {Data::RequiredColumnMissing, "Data.RequiredColumnMissing"},
+    {Data::RequiredLabelColumnMissing, "Data.RequiredLabelColumnMissing"},
+    {Data::ColumnTypeMismatch, "Data.ColumnTypeMismatch"},
+    {Data::RowCountMismatch, "Data.RowCountMismatch"},
+    {Data::ClassLabelMismatch, "Data.ClassLabelMismatch"},
+    {Data::VocabularyCoverageWarning, "Data.VocabularyCoverageWarning"},
+    {Data::InvalidSplit, "Data.InvalidSplit"},
+    {Data::MaterializationFailed, "Data.MaterializationFailed"},
+    {File::PathMissing, "File.PathMissing"},
+    {File::NotFound, "File.NotFound"},
+    {File::UnsupportedFormat, "File.UnsupportedFormat"},
+    {File::InvalidOption, "File.InvalidOption"},
+    {File::ReadFailed, "File.ReadFailed"},
+    {File::WriteFailed, "File.WriteFailed"},
+    {File::PermissionDenied, "File.PermissionDenied"},
+    {Memory::ResourceCheckFailed, "Memory.ResourceCheckFailed"},
+    {Memory::HostExhausted, "Memory.HostExhausted"},
+    {Memory::GpuExhausted, "Memory.GpuExhausted"},
+    {Memory::BatchTooLarge, "Memory.BatchTooLarge"},
+    {Ui::InvalidWorkflowState, "Ui.InvalidWorkflowState"},
+    {Ui::MissingSelection, "Ui.MissingSelection"},
+    {Ui::RuntimeOnlyNode, "Ui.RuntimeOnlyNode"},
+    {Ui::InvalidParameter, "Ui.InvalidParameter"},
+    {Ui::StateInvariantViolation, "Ui.StateInvariantViolation"},
+    {Serialization::ArtifactPathMissing, "Serialization.ArtifactPathMissing"},
+    {Serialization::ExportFormatUnavailable, "Serialization.ExportFormatUnavailable"},
+    {Serialization::ExportFormatNotCompiled, "Serialization.ExportFormatNotCompiled"},
+    {Serialization::ModelSaveFailed, "Serialization.ModelSaveFailed"},
+    {Serialization::ModelLoadFailed, "Serialization.ModelLoadFailed"},
+    {Serialization::CheckpointSerializationFailed,
+     "Serialization.CheckpointSerializationFailed"},
+    {Training::InvalidTrainingSetup, "Training.InvalidTrainingSetup"},
+    {Training::ModelBuildFailed, "Training.ModelBuildFailed"},
+    {Training::LossSetupFailed, "Training.LossSetupFailed"},
+    {Training::OptimizerSetupFailed, "Training.OptimizerSetupFailed"},
+    {Training::TrainingExecutionFailed, "Training.TrainingExecutionFailed"},
+    {External::OptionalIntegrationUnavailable,
+     "External.OptionalIntegrationUnavailable"},
+    {External::ThirdPartyCallFailed, "External.ThirdPartyCallFailed"},
+    {External::PluginDependencyFailure, "External.PluginDependencyFailure"},
+    {External::PythonBridgeFailure, "External.PythonBridgeFailure"},
+    {External::RemoteServiceUnavailable, "External.RemoteServiceUnavailable"},
+}};
+
+inline constexpr const DiagnosticCodeDescriptor* FindDiagnosticCode(
+    std::string_view code) {
+    for (const auto& descriptor : DiagnosticCodeCatalog) {
+        if (code == descriptor.code) {
+            return &descriptor;
+        }
+    }
+    return nullptr;
+}
+
+inline constexpr std::string_view DiagnosticFamilyName(char family) {
+    switch (family) {
+        case 'C': return "compiler";
+        case 'R': return "runtime";
+        case 'G': return "gpu_backend";
+        case 'P': return "native_cpu_backend";
+        case 'D': return "data";
+        case 'F': return "file_io";
+        case 'M': return "memory";
+        case 'U': return "ui_workflow";
+        case 'S': return "serialization";
+        case 'T': return "training";
+        case 'X': return "external";
+        default: return "unknown";
+    }
+}
 
 inline bool HasCodePrefix(const std::string& message) {
     return message.size() >= 12 &&

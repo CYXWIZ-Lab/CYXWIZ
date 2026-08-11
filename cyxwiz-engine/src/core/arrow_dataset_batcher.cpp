@@ -339,9 +339,6 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
     Batch batch;
 
     try {
-        spdlog::debug("ArrowDatasetBatcher::GetNextBatch called, current_index_={}, indices_.size()={}",
-                      current_index_, indices_.size());
-
         if (!dataset_ || indices_.empty()) {
             spdlog::warn("ArrowDatasetBatcher::GetNextBatch: No dataset or empty indices");
             return batch;
@@ -395,28 +392,10 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
                 : 0,
             0.0f);
 
-        spdlog::debug("ArrowDatasetBatcher: Processing {} feature columns, batch_data.size()={}",
-                      feature_cols_.size(), batch_data.size());
-        spdlog::default_logger()->flush();  // Force flush to ensure logs are written before crash
-
         // OPTIMIZED: Process column by column (Arrow is columnar, this is much faster)
         auto process_feature_range = [&](size_t feat_begin, size_t feat_end) {
         for (size_t feat_idx = feat_begin; feat_idx < feat_end; ++feat_idx) {
             int col_idx = feature_cols_[feat_idx];
-
-            // Log first column for debugging
-            if (feat_idx == 0) {
-                spdlog::debug("ArrowDatasetBatcher: First column idx={}, type={}",
-                              col_idx, (col_idx < num_cols && table->column(col_idx)) ?
-                              table->column(col_idx)->type()->ToString() : "invalid");
-                spdlog::default_logger()->flush();
-            }
-
-            // Log progress every 100 columns; flush so crash bisection survives.
-            if (feat_idx > 0 && feat_idx % 100 == 0) {
-                spdlog::debug("ArrowDatasetBatcher: Processing column {}/{}", feat_idx, feature_cols_.size());
-                spdlog::default_logger()->flush();
-            }
 
             if (col_idx < 0 || col_idx >= num_cols) {
                 spdlog::warn("ArrowDatasetBatcher: Invalid col_idx={} (num_cols={})", col_idx, num_cols);
@@ -600,11 +579,6 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
             process_feature_range(0, feature_cols_.size());
         }
 
-        // CHECKPOINT: feature column loop completed successfully
-        spdlog::debug("ArrowDatasetBatcher: CHECKPOINT A - feature loop complete, all {} cols processed",
-                      feature_cols_.size());
-        spdlog::default_logger()->flush();
-
         // Extract labels - handles both single-chunk (fast path) and multi-chunk
         // (correct path) columns. The previous implementation always read chunk(0)
         // and crashed whenever Arrow's CSV reader split the table into multiple
@@ -612,13 +586,6 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
         if (label_col_idx_ >= 0 && label_col_idx_ < num_cols) {
             auto column = table->column(label_col_idx_);
             if (column && column->num_chunks() > 0) {
-                spdlog::debug("ArrowDatasetBatcher: label column has {} chunks, "
-                              "first chunk length={}, table num_rows={}",
-                              column->num_chunks(),
-                              column->chunk(0) ? column->chunk(0)->length() : -1,
-                              num_rows);
-                spdlog::default_logger()->flush();
-
                 // Generic per-row read that handles any number of chunks. Slower
                 // than a type-specific raw_values() loop on a single chunk, but
                 // correct regardless of chunking. Labels are small (1 element per
@@ -758,20 +725,11 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
             }
         }
 
-        // CHECKPOINT: label extraction complete
-        spdlog::debug("ArrowDatasetBatcher: CHECKPOINT B - label extraction complete, "
-                      "{} features, {} labels",
-                      batch_data.size(), batch_labels.size());
-        spdlog::default_logger()->flush();
-
         // Apply normalization if enabled
         if (normalize_ && norm_std_ != 0.0f) {
             for (float& val : batch_data) {
                 val = (val - norm_mean_) / norm_std_;
             }
-            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT C - normalization applied "
-                          "(mean={}, std={})", norm_mean_, norm_std_);
-            spdlog::default_logger()->flush();
         }
 
         // Validate data before creating tensor
@@ -781,33 +739,18 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
             return batch;
         }
 
-        spdlog::debug("ArrowDatasetBatcher: CHECKPOINT D - about to construct data tensor [{}, {}]",
-                      actual_batch_size, num_features_);
-        spdlog::default_logger()->flush();
-
         // Create data tensor [batch_size, num_features]
         std::vector<size_t> data_shape = {actual_batch_size, num_features_};
         batch.data = Tensor(data_shape, batch_data.data());
-
-        spdlog::debug("ArrowDatasetBatcher: CHECKPOINT E - data tensor constructed successfully");
-        spdlog::default_logger()->flush();
 
         // Create labels tensor
         // Float labels [batch, target_width] are used for regression and
         // scalar binary classification. This mode takes precedence over one-hot.
         if (scalar_label_mode_ && !batch_labels_float.empty()) {
-            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT F - creating float labels [{}, {}]",
-                          actual_batch_size, regression_target_width);
-            spdlog::default_logger()->flush();
             std::vector<size_t> label_shape = {
                 actual_batch_size, regression_target_width};
             batch.labels = Tensor(label_shape, batch_labels_float.data());
-            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT G - float labels tensor created");
-            spdlog::default_logger()->flush();
         } else if (one_hot_ && !batch_labels.empty()) {
-            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT F - creating one-hot labels [{}, {}]",
-                          actual_batch_size, num_classes_);
-            spdlog::default_logger()->flush();
             // One-hot encoding
             std::vector<float> onehot_data(actual_batch_size * num_classes_, 0.0f);
             for (size_t i = 0; i < batch_labels.size(); ++i) {
@@ -818,12 +761,7 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
             }
             std::vector<size_t> label_shape = {actual_batch_size, num_classes_};
             batch.labels = Tensor(label_shape, onehot_data.data());
-            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT G - one-hot labels tensor created");
-            spdlog::default_logger()->flush();
         } else if (!batch_labels.empty()) {
-            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT F - creating integer labels [{}]",
-                          actual_batch_size);
-            spdlog::default_logger()->flush();
             // Integer labels
             std::vector<float> label_data;
             label_data.reserve(batch_labels.size());
@@ -832,12 +770,8 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
             }
             std::vector<size_t> label_shape = {actual_batch_size};
             batch.labels = Tensor(label_shape, label_data.data());
-            spdlog::debug("ArrowDatasetBatcher: CHECKPOINT G - integer labels tensor created");
-            spdlog::default_logger()->flush();
         }
 
-        spdlog::debug("ArrowDatasetBatcher: CHECKPOINT H - returning batch to caller");
-        spdlog::default_logger()->flush();
         current_index_ = batch_end;
         return batch;
 

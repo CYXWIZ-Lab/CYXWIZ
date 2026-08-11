@@ -1023,6 +1023,31 @@ void TestSupportBundleContract() {
         "failed with token=secret-token",
         "normal warning"
     };
+    cyxwiz::RuntimeLogExportSnapshot runtime_log_slice;
+    runtime_log_slice.scope = "selected";
+    runtime_log_slice.effective_filter =
+        "run_id=train-42 and level>=warn";
+    runtime_log_slice.after_sequence = 40;
+    runtime_log_slice.through_sequence = 50;
+    runtime_log_slice.matched_count = 3;
+    runtime_log_slice.source_displayed_count = 3;
+    runtime_log_slice.store_stats.capacity = 4096;
+    runtime_log_slice.store_stats.size = 50;
+    cyxwiz::RuntimeLogEvent runtime_event;
+    runtime_event.sequence = 48;
+    runtime_event.timestamp_utc = std::chrono::system_clock::time_point(
+        std::chrono::milliseconds(1'700'000'000'000));
+    runtime_event.level = cyxwiz::RuntimeLogLevel::Warning;
+    runtime_event.category = "data";
+    runtime_event.source = "QueryConsole";
+    runtime_event.event_name = "sql.query";
+    runtime_event.run_id = "train-42";
+    runtime_event.dataset_name = "private.parquet";
+    runtime_event.message = "SELECT email FROM private_customers";
+    runtime_event.details = {
+        {"source_path", "C:/Users/private/private.parquet"}};
+    runtime_log_slice.events.push_back(std::move(runtime_event));
+    input.runtime_log_slice = std::move(runtime_log_slice);
     cyxwiz::BackendPlacementObservation placement_observation;
     placement_observation.op_type = "LSTM";
     placement_observation.backend = "CUDA";
@@ -1165,6 +1190,20 @@ void TestSupportBundleContract() {
     Check(bundle["recent_logs"][0].get<std::string>() ==
               "failed with token=[REDACTED]",
           "support bundle should redact tokens in recent logs");
+    Check(bundle["runtime_log_slice"]["included"].get<bool>() &&
+              bundle["runtime_log_slice"]["metadata"]["scope"] ==
+                  "selected" &&
+              bundle["runtime_log_slice"]["metadata"]["effective_filter"] ==
+                  "[REDACTED_FILTER]" &&
+              bundle["runtime_log_slice"]["events"].size() == 1,
+          "support bundle should include only the explicit frozen log slice");
+    Check(bundle["runtime_log_slice"]["events"][0]["dataset_name"] ==
+              "[REDACTED_DATASET]" &&
+              bundle["runtime_log_slice"]["events"][0]["message"] ==
+                  "[REDACTED_QUERY]" &&
+              bundle["runtime_log_slice"]["events"][0]["details"][0]
+                    ["value"] == "[REDACTED_PATH]",
+          "support-bundle runtime slices should always use shareable redaction");
 }
 
 void TestNodeInspectorSummaryContract() {

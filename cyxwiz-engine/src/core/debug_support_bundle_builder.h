@@ -4,11 +4,13 @@
 
 #include "crash_run_recorder.h"
 #include "debug_run_store.h"
+#include "runtime_log_export.h"
 #include "training_trace_collector.h"
 
 #include <nlohmann/json.hpp>
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,6 +25,7 @@ struct DebugSupportBundleInput {
     std::vector<BackendPlacementObservation> placement_observations;
     std::map<std::string, std::string> environment;
     std::vector<std::string> recent_logs;
+    std::optional<RuntimeLogExportSnapshot> runtime_log_slice;
     bool allow_hq_upload = false;
 };
 

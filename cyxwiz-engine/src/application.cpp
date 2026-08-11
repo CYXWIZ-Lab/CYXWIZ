@@ -1,7 +1,6 @@
 #include "application.h"
 #include "gui/main_window.h"
 #include "gui/console.h"
-#include "gui/console_sink.h"
 #include "gui/editor_fonts.h"
 #include "gui/theme.h"
 #include "gui/dialogs/python_setup_wizard.h"
@@ -821,41 +820,9 @@ void CyxWizApp::Render() {
             glfwSetWindowShouldClose(window_, GLFW_TRUE);
         });
 
-        // Register console sink with spdlog
-        if (main_window_ && main_window_->GetConsole()) {
-            auto* console = main_window_->GetConsole();
-
-            console->AddSuccess("=== CyxWiz Engine Console ===");
-            console->AddInfo("Console panel initialized - logs will appear here");
-
-            auto console_sink = std::make_shared<gui::ConsoleSinkMt>(console);
-            auto logger = spdlog::default_logger();
-            logger->sinks().push_back(console_sink);
-
-            spdlog::info("✓ Console logging enabled");
-            console->AddSuccess("✓ spdlog integration working");
-
-            // Show Python scan results
-            if (python_scan_.scanned) {
-                if (python_scan_.found) {
-                    console->AddSuccess("Python " + python_scan_.version + " detected at: " + python_scan_.path);
-                    if (!python_scan_.warning.empty()) {
-                        console->AddWarning(python_scan_.warning);
-                    }
-                } else {
-                    console->AddError("No Python installation found");
-                    console->AddWarning(python_scan_.warning);
-                }
-            }
-
-            // Show initialization message based on project status
-            if (!startup_project_path_.empty()) {
-                console->AddInfo("Project loaded - Python will be initialized from project's virtual environment");
-            } else {
-                console->AddInfo("No project loaded - Python not initialized");
-                console->AddInfo("Create or open a project to use Python");
-            }
-        }
+        // Runtime startup evidence is already captured by the core spdlog
+        // sink. The Commands transcript is reserved for interactive output.
+        spdlog::info("Console panel initialized; runtime logs available");
 
         // Restore saved auth session
         auto& auth = cyxwiz::auth::AuthClient::Instance();
@@ -863,27 +830,6 @@ void CyxWizApp::Render() {
             spdlog::info("Auth session restored for: {}", auth.GetUserInfo().email);
         }
 
-        // Log device information
-        if (main_window_ && main_window_->GetConsole()) {
-            auto* console = main_window_->GetConsole();
-            console->AddSuccess("CyxWiz Backend initialized");
-
-            auto devices = cyxwiz::Device::GetAvailableDevices();
-            console->AddInfo("Available compute devices:");
-
-            for (const auto& device : devices) {
-                std::string device_type_str;
-                switch(device.type) {
-                    case cyxwiz::DeviceType::CPU: device_type_str = "CPU"; break;
-                    case cyxwiz::DeviceType::CUDA: device_type_str = "CUDA GPU"; break;
-                    case cyxwiz::DeviceType::OPENCL: device_type_str = "OpenCL GPU"; break;
-                    default: device_type_str = "Unknown"; break;
-                }
-
-                std::string log_msg = "  - " + device.name + " (" + device_type_str + ")";
-                console->AddInfo(log_msg);
-            }
-        }
     }
 
     // Render main window (with docking)
@@ -932,17 +878,6 @@ void CyxWizApp::Render() {
 
 void CyxWizApp::Shutdown() {
     spdlog::info("Shutting down application...");
-
-    // Remove console sink from spdlog BEFORE destroying main_window
-    // The console sink points to the Console panel which will be destroyed
-    {
-        auto logger = spdlog::default_logger();
-        auto& sinks = logger->sinks();
-        // Keep only the first sink (stdout) - remove any additional sinks like ConsoleSink
-        if (sinks.size() > 1) {
-            sinks.resize(1);
-        }
-    }
 
     // Cleanup components
     job_manager_.reset();
