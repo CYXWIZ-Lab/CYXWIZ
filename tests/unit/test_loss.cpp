@@ -3,6 +3,7 @@
 #include <cyxwiz/device.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
+#include <algorithm>
 #include <cstdint>
 #include <cmath>
 #include <vector>
@@ -284,6 +285,82 @@ TEST_CASE("CrossEntropyLoss supports label smoothing", "[loss]") {
             Catch::Approx(probs[1] - targets_smoothed[1]).margin(1e-6f));
     REQUIRE(grad.Data<float>()[2] ==
             Catch::Approx(probs[2] - targets_smoothed[2]).margin(1e-6f));
+}
+
+TEST_CASE("CrossEntropyLoss weights and smooths one-hot targets", "[loss]") {
+    float logit_values[] = {
+        2.0f, 0.0f, -1.0f,
+        0.0f, 1.0f, 2.0f,
+    };
+    float target_values[] = {
+        1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f,
+    };
+    const float weights[] = {1.0f, 2.0f, 4.0f};
+    constexpr float smoothing = 0.1f;
+    cyxwiz::Tensor logits(
+        {2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets(
+        {2, 3}, target_values, cyxwiz::DataType::Float32);
+    cyxwiz::CrossEntropyLoss cross_entropy(
+        cyxwiz::Reduction::Mean,
+        -100,
+        {weights[0], weights[1], weights[2]},
+        smoothing);
+
+    cyxwiz::Tensor loss = cross_entropy.Forward(logits, targets);
+    cyxwiz::Tensor grad = cross_entropy.Backward(logits, targets);
+
+    float expected_loss = 0.0f;
+    float expected_grad[6] = {};
+    float denominator = 0.0f;
+    for (size_t row = 0; row < 2; ++row) {
+        const size_t base = row * 3;
+        float max_logit = logit_values[base];
+        for (size_t column = 1; column < 3; ++column) {
+            if (logit_values[base + column] > max_logit) {
+                max_logit = logit_values[base + column];
+            }
+        }
+        float exp_values[3];
+        float exp_sum = 0.0f;
+        for (size_t column = 0; column < 3; ++column) {
+            exp_values[column] =
+                std::exp(logit_values[base + column] - max_logit);
+            exp_sum += exp_values[column];
+        }
+
+        float row_weight = 0.0f;
+        float weighted_targets[3];
+        for (size_t column = 0; column < 3; ++column) {
+            const float smoothed_target =
+                target_values[base + column] * (1.0f - smoothing) +
+                smoothing / 3.0f;
+            weighted_targets[column] =
+                weights[column] * smoothed_target;
+            row_weight += weighted_targets[column];
+            expected_loss -= weighted_targets[column] *
+                std::log(exp_values[column] / exp_sum);
+        }
+        denominator += row_weight;
+        for (size_t column = 0; column < 3; ++column) {
+            const float probability = exp_values[column] / exp_sum;
+            expected_grad[base + column] =
+                probability * row_weight - weighted_targets[column];
+        }
+    }
+    expected_loss /= denominator;
+    for (float& value : expected_grad) {
+        value /= denominator;
+    }
+
+    REQUIRE(loss.ReadData<float>()[0] ==
+            Catch::Approx(expected_loss).margin(1e-6f));
+    const float* actual_grad = grad.ReadData<float>();
+    for (size_t index = 0; index < 6; ++index) {
+        REQUIRE(actual_grad[index] ==
+                Catch::Approx(expected_grad[index]).margin(1e-6f));
+    }
 }
 
 TEST_CASE("KL divergence computes forward reductions", "[loss]") {

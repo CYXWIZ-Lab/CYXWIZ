@@ -32,6 +32,7 @@ private:
     std::vector<float> class_weights_;
     float label_smoothing_;
     Tensor cached_softmax_;
+    Tensor cached_class_weights_;
 };
 
 class CYXWIZ_API NLLLoss : public Loss {

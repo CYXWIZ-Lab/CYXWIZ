@@ -501,6 +501,86 @@ Tensor CpuFocalBackward(const Tensor& predictions,
     return grad;
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+struct ArrayFireCrossEntropyTargets {
+    af::array weighted_targets;
+    af::array row_weights;
+};
+
+ArrayFireCrossEntropyTargets BuildArrayFireCrossEntropyTargets(
+    const af::array& predictions,
+    const af::array& targets,
+    bool targets_are_class_indices,
+    const std::vector<float>& class_weights,
+    float label_smoothing,
+    Tensor& cached_class_weights) {
+    const dim_t batch_size = predictions.dims(0);
+    const dim_t classes = predictions.dims(1);
+
+    af::array target_distribution;
+    if (targets_are_class_indices) {
+        const af::array target_indices = af::flat(targets.as(s32));
+        const af::array identity = af::identity(classes, classes, f32);
+        target_distribution =
+            af::transpose(identity(af::span, target_indices));
+    } else {
+        target_distribution = targets.as(f32);
+    }
+
+    if (label_smoothing > 0.0f) {
+        target_distribution =
+            target_distribution * (1.0f - label_smoothing) +
+            label_smoothing / static_cast<float>(classes);
+    }
+
+    if (!class_weights.empty()) {
+        const std::vector<size_t> expected_shape = {
+            1, static_cast<size_t>(classes)};
+        if (cached_class_weights.Shape() != expected_shape) {
+            cached_class_weights = Tensor(
+                expected_shape,
+                class_weights.data(),
+                DataType::Float32);
+        }
+        const af::array weights = cached_class_weights.GetSemanticArray();
+        target_distribution =
+            target_distribution *
+            af::tile(weights, static_cast<unsigned>(batch_size), 1);
+    }
+
+    target_distribution.eval();
+    af::array row_weights = af::sum(target_distribution, 1);
+    row_weights.eval();
+    return {target_distribution, row_weights};
+}
+
+af::array ApplyWeightedCrossEntropyReduction(
+    const af::array& per_sample_loss,
+    const af::array& row_weights,
+    Reduction reduction,
+    bool has_class_weights,
+    dim_t batch_size) {
+    if (reduction == Reduction::None) {
+        return per_sample_loss;
+    }
+
+    af::array total = af::sum(af::flat(per_sample_loss));
+    total.eval();
+    if (reduction != Reduction::Mean) {
+        return total;
+    }
+
+    if (!has_class_weights) {
+        return total / static_cast<float>(batch_size);
+    }
+
+    af::array denominator = af::sum(af::flat(row_weights));
+    denominator = denominator + (denominator == 0.0f).as(f32);
+    denominator.eval();
+    return total / denominator;
+}
+#endif
+
 } // namespace
 
 // ============================================================================
@@ -508,7 +588,11 @@ Tensor CpuFocalBackward(const Tensor& predictions,
 // ============================================================================
 
 Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
-    if (!class_weights_.empty() || label_smoothing_ > 0.0f) {
+    const bool enhanced_arrayfire_path =
+        (!class_weights_.empty() || label_smoothing_ > 0.0f) &&
+        predictions.Shape().size() == 2;
+    if ((!class_weights_.empty() || label_smoothing_ > 0.0f) &&
+        !enhanced_arrayfire_path) {
         return CpuCrossEntropyForward(
             predictions, targets, reduction_, ignore_index_, class_weights_,
             label_smoothing_, &cached_softmax_);
@@ -538,6 +622,38 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
         // Cross entropy: -sum(target * log(softmax))
         af::array log_softmax = af::log(softmax_pred + 1e-10f);
         af::array loss;
+
+        if (enhanced_arrayfire_path) {
+            const ClassAxisShape shape =
+                ValidateClassAxisPredictions(predictions, "CrossEntropy");
+            ValidateClassWeights(
+                class_weights_, shape.classes, "CrossEntropy");
+            const bool class_indices =
+                TargetsAreClassIndices(predictions, targets);
+            if (class_indices) {
+                ValidateClassIndexTargets(targets, shape, "CrossEntropy");
+            } else {
+                ValidateFloat32Pair(predictions, targets, "CrossEntropy");
+            }
+            const auto weighted = BuildArrayFireCrossEntropyTargets(
+                pred,
+                target,
+                class_indices,
+                class_weights_,
+                label_smoothing_,
+                cached_class_weights_);
+            af::array per_sample_loss =
+                -af::sum(weighted.weighted_targets * log_softmax, 1);
+            per_sample_loss.eval();
+            loss = ApplyWeightedCrossEntropyReduction(
+                per_sample_loss,
+                weighted.row_weights,
+                reduction_,
+                !class_weights_.empty(),
+                pred.dims(0));
+            loss.eval();
+            return AfToTensor(loss);
+        }
 
         // Check if target is one-hot encoded or class indices
         if (target.type() == af::dtype::s32 || target.type() == af::dtype::s64) {
@@ -584,7 +700,11 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
 }
 
 Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
-    if (!class_weights_.empty() || label_smoothing_ > 0.0f) {
+    const bool enhanced_arrayfire_path =
+        (!class_weights_.empty() || label_smoothing_ > 0.0f) &&
+        predictions.Shape().size() == 2;
+    if ((!class_weights_.empty() || label_smoothing_ > 0.0f) &&
+        !enhanced_arrayfire_path) {
         return CpuCrossEntropyBackward(
             predictions, targets, reduction_, ignore_index_, class_weights_,
             label_smoothing_, cached_softmax_);
@@ -614,6 +734,48 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
         af::array target = TensorToAf(targets);
 
         af::array grad;
+
+        if (enhanced_arrayfire_path) {
+            const ClassAxisShape shape =
+                ValidateClassAxisPredictions(predictions, "CrossEntropy");
+            ValidateClassWeights(
+                class_weights_, shape.classes, "CrossEntropy");
+            const bool class_indices =
+                TargetsAreClassIndices(predictions, targets);
+            if (class_indices) {
+                ValidateClassIndexTargets(targets, shape, "CrossEntropy");
+            } else {
+                ValidateFloat32Pair(predictions, targets, "CrossEntropy");
+            }
+            const auto weighted = BuildArrayFireCrossEntropyTargets(
+                pred,
+                target,
+                class_indices,
+                class_weights_,
+                label_smoothing_,
+                cached_class_weights_);
+            grad =
+                softmax_pred *
+                    af::tile(
+                        weighted.row_weights,
+                        1,
+                        static_cast<unsigned>(pred.dims(1))) -
+                weighted.weighted_targets;
+            if (reduction_ == Reduction::Mean) {
+                if (class_weights_.empty()) {
+                    grad = grad / static_cast<float>(pred.dims(0));
+                } else {
+                    af::array denominator =
+                        af::sum(af::flat(weighted.row_weights));
+                    denominator =
+                        denominator + (denominator == 0.0f).as(f32);
+                    denominator.eval();
+                    grad = grad / denominator;
+                }
+            }
+            grad.eval();
+            return AfToTensor(grad);
+        }
 
         // Check if target is one-hot encoded or class indices
         if (target.type() == af::dtype::s32 || target.type() == af::dtype::s64) {

@@ -1050,6 +1050,9 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
     strict_config.forbid_native_cpu_fallback = false;
     strict_config.log_interval = 0;
     strict_config.save_best_checkpoint = true;
+    strict_config.loss_params["class_weight"] = "manual";
+    strict_config.loss_params["class_weights"] = "[1.0, 2.0]";
+    strict_config.loss_params["label_smoothing"] = "0.1";
     cyxwiz::TrainingExecutor executor(strict_config, dataset, "label");
 
     bool completed = false;

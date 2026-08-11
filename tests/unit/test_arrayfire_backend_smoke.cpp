@@ -9,6 +9,10 @@
 #include <cyxwiz/losses/classification.h>
 #include <cyxwiz/tensor.h>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
+
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
@@ -18,6 +22,13 @@
 #include <vector>
 
 namespace {
+
+size_t g_cross_entropy_host_sync_count = 0;
+
+void CountCrossEntropyHostSync(
+    const cyxwiz::ArrayFireHostSyncEvent&) {
+    ++g_cross_entropy_host_sync_count;
+}
 
 bool ShapeEquals(const cyxwiz::Tensor& tensor, std::vector<size_t> expected) {
     return tensor.Shape() == expected;
@@ -235,4 +246,42 @@ TEST_CASE("Loss path returns clean forward value and gradient",
 
     cyxwiz::Tensor grad = loss.Backward(logits, targets);
     REQUIRE(ShapeEquals(grad, {2, 3}));
+}
+
+TEST_CASE("Weighted smoothed CrossEntropy keeps device logits resident",
+          "[arrayfire][backend_smoke][loss][residency]") {
+    float logit_values[] = {
+        2.0f, 0.0f, -1.0f,
+        0.0f, 1.0f, 2.0f,
+    };
+    float target_values[] = {
+        1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f,
+    };
+    cyxwiz::Tensor host_logits(
+        {2, 3}, logit_values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor logits = cyxwiz::Tensor::FromSemanticArray(
+        host_logits.GetSemanticArray(), host_logits.Shape());
+    cyxwiz::Tensor targets(
+        {2, 3}, target_values, cyxwiz::DataType::Float32);
+    cyxwiz::CrossEntropyLoss loss(
+        cyxwiz::Reduction::Mean,
+        -100,
+        {1.0f, 2.0f, 4.0f},
+        0.1f);
+
+    cyxwiz::Tensor loss_value;
+    cyxwiz::Tensor grad;
+    g_cross_entropy_host_sync_count = 0;
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CountCrossEntropyHostSync);
+        loss_value = loss.Forward(logits, targets);
+        grad = loss.Backward(logits, targets);
+    }
+
+    REQUIRE(g_cross_entropy_host_sync_count == 0);
+    REQUIRE(ShapeEquals(loss_value, {1}));
+    REQUIRE(ShapeEquals(grad, {2, 3}));
+    REQUIRE(std::isfinite(loss_value.ReadData<float>()[0]));
 }
