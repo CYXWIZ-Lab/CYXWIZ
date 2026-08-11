@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lean Software Guardrails"
+  short_description: "Guard against avoidable software bloat"
+  default_prompt: "Use $lean-software-guardrails to review this CyxWiz task or code for avoidable complexity, weak decomposition, and missing validation."
