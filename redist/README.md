@@ -55,11 +55,27 @@ Both shell families call one standard-library implementation:
 
 - `scripts/package_release.py`
 - `scripts/sign_pack_manifest.py`
+- `bootstrapper/` native Windows launcher and runtime-state resolver
 - `scripts/package_minimal.bat` and `package_minimal.sh`
 - `scripts/package_full.bat` and `package_full.sh`
 
 The base and optional-pack profiles call `package_release.py` directly so the
 release command explicitly names the artifact being produced.
+
+### Windows runtime bootstrapper
+
+The installed app-level `cyxwiz-runtime-bootstrapper.exe` reads only
+`runtime/active-runtime.json`, resolves one versioned base and its explicitly
+selected optional packs, and launches the Engine from that base. It replaces
+the inherited developer `PATH`, removes ArrayFire/Python path overrides, and
+the Engine installs `SetDefaultDllDirectories`/`AddDllDirectory` restrictions
+before it initializes optional runtimes. Direct Engine launch remains
+available for development builds when `CYXWIZ_ACTIVE_RUNTIME_ROOT` is absent.
+
+Bootstrap failures are printed to stderr and appended to the package-local
+`runtime/bootstrapper.log`. A base archive is a runtime component and no longer
+contains the legacy PATH-mutating batch launcher; activation and the app-level
+bootstrapper are required.
 
 This keeps validation, backend closure rules, manifests, hashes, and README
 rendering consistent across platforms.

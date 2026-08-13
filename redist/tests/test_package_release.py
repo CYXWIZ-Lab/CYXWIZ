@@ -36,6 +36,7 @@ class PackageReleaseTests(unittest.TestCase):
         template = "version={{VERSION}} platform={{PLATFORM}} backends={{BACKENDS}} af={{ARRAYFIRE_VERSION}}\n"
         (templates / "README_MINIMAL.md").write_text(template, encoding="utf-8")
         (templates / "README_FULL.md").write_text(template, encoding="utf-8")
+        (templates / "README_BASE.md").write_text(template, encoding="utf-8")
 
         build = self.root / "build" / "bin" / "Release"
         build.mkdir(parents=True)
@@ -267,6 +268,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertTrue((stage / "arrayfire" / "bin" / "af.dll").is_file())
         self.assertTrue((stage / "arrayfire" / "bin" / "afcpu.dll").is_file())
         self.assertFalse((stage / "arrayfire" / "bin" / "afopencl.dll").exists())
+        self.assertFalse((stage / "start_cyxwiz.bat").exists())
         manifest = json.loads(
             archive.with_suffix(".zip.manifest.json").read_text(encoding="utf-8")
         )

@@ -879,9 +879,8 @@ def build_split_artifact(
         package_arrayfire_base(arrayfire_root, stage, lib_suffix)
         copy_tree(python_root, stage / "python")
         copy_runtime_notices(stage, intel_notices_path, None)
-        create_launcher(stage, "full", system)
         render_readme(
-            paths.templates / "README_FULL.md",
+            paths.templates / "README_BASE.md",
             stage / "README.md",
             {
                 "VERSION": version,

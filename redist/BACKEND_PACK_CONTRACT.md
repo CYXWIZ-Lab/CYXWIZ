@@ -9,9 +9,11 @@ The implementation is dependency-free and lives in
 
 ## Runtime Layout
 
-CyxWiz owns one application-local runtime root:
+CyxWiz owns one application-local runtime root selected by an app-level native
+bootstrapper:
 
 ```text
+cyxwiz-runtime-bootstrapper.exe
 runtime/
   trust/
     trusted-keys.json
@@ -29,6 +31,10 @@ runtime/
     <runtime-set-id>/
   active-runtime.json
 ```
+
+The bootstrapper is installed beside `runtime/`, not inside a versioned base.
+It resolves the selected Engine from `active-runtime.json`; a base archive does
+not contain an independently launchable PATH-mutating script.
 
 The CPU backend is part of the required base and cannot be represented as an
 optional pack. A process resolves exactly one base and at most one pack per

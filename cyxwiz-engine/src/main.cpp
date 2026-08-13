@@ -9,6 +9,9 @@
 #include "core/compute_runtime_paths.h"
 #include "core/execution_device_preferences.h"
 #include "core/route_qualification_snapshot.h"
+#ifdef _WIN32
+#include "windows_dll_search.h"
+#endif
 #include <iostream>
 #include <filesystem>
 #include <cstdlib>
@@ -64,6 +67,15 @@ void SetLaunchCwdEnv(const std::filesystem::path& cwd) {
 } // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    std::string runtime_search_error;
+    if (!cyxwiz::runtime::ConfigureActiveRuntimeDllSearchFromEnvironment(
+            runtime_search_error)) {
+        std::cerr << "CyxWiz runtime setup failed: "
+                  << runtime_search_error << std::endl;
+        return 78;
+    }
+#endif
     std::filesystem::path launch_cwd = std::filesystem::current_path();
     SetLaunchCwdEnv(launch_cwd);
 
