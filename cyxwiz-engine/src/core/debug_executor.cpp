@@ -463,7 +463,11 @@ DebugResult DebugExecutor::Run() {
 
         // ---- Stage: OptimizerStep -----------------------------------------
         result.reached = DebugStage::OptimizerStep;
+        const auto optimizer_start = std::chrono::steady_clock::now();
         model_->UpdateParameters(optimizer_.get());
+        result.optimizer_step_ms =
+            std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - optimizer_start).count();
 
         const auto updated_params = model_->GetParameters();
         for (auto& entry : result.grad_norms) {

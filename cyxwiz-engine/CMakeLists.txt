@@ -170,11 +170,14 @@ set(ENGINE_SOURCES
     src/core/model_builder.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
+    src/core/debug_batch_inspector.cpp
     src/core/debug_session_manager.cpp
     src/core/debug_graph_trace_executor.cpp
     src/core/debug_operator_trace_adapter.cpp
     src/core/debug_operator_trace_producer.cpp
     src/core/debug_runtime_backend_classifier.cpp
+    src/core/debug_slow_path_detector.cpp
+    src/core/debug_error_code_timeline.cpp
     src/core/preflight_validator.cpp
     src/core/crash_run_recorder.cpp
     src/core/text_preprocessing_tracer.cpp
@@ -3698,6 +3701,7 @@ set_target_properties(test_text_preflight_nodes PROPERTIES
 # ===== Test: Studio Debugger Contracts =====
 add_executable(test_debugger_contracts
     tests/test_debugger_contracts.cpp
+    src/core/debug_batch_inspector.cpp
     src/core/debug_export_correlation_tracer.cpp
     src/core/debug_graph_trace_executor.cpp
     src/core/debug_memory_ownership_tracer.cpp
@@ -3705,6 +3709,8 @@ add_executable(test_debugger_contracts
     src/core/debug_operator_trace_adapter.cpp
     src/core/debug_operator_trace_producer.cpp
     src/core/debug_runtime_backend_classifier.cpp
+    src/core/debug_slow_path_detector.cpp
+    src/core/debug_error_code_timeline.cpp
     src/core/debug_smoke_sample_selector.cpp
     src/core/debug_support_bundle_builder.cpp
     src/core/runtime_log_export.cpp

@@ -1367,6 +1367,7 @@ void TestDebugExecutorGoldenPath() {
     assert(res.loss_finite && "loss must be finite on random init");
     assert(res.forward_total_ms >= 0.0f);
     assert(res.backward_total_ms >= 0.0f);
+    assert(res.optimizer_step_ms >= 0.0f);
 
     // 2 Linear modules -> 2 weight + 2 bias = 4 params expected.
     ExpectEq(res.params_with_grad, 4, "params_with_grad");

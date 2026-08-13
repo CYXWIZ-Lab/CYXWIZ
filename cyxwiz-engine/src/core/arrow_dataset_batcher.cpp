@@ -18,6 +18,124 @@ namespace cyxwiz {
 
 namespace {
 
+constexpr size_t kBatchInspectionColumnPreviewLimit = 32;
+
+bool IsTokenSlotColumnName(const std::string& name) {
+    if (name.rfind("tok_", 0) != 0 || name.size() == 4) {
+        return false;
+    }
+    return std::all_of(
+        name.begin() + 4,
+        name.end(),
+        [](unsigned char ch) { return std::isdigit(ch) != 0; });
+}
+
+bool TryIsNullAt(const std::shared_ptr<arrow::ChunkedArray>& column,
+                 int64_t global_row,
+                 bool& is_null) {
+    if (!column || global_row < 0 || global_row >= column->length()) {
+        return false;
+    }
+    int64_t offset = 0;
+    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
+        const auto& chunk = column->chunk(chunk_index);
+        if (!chunk) {
+            return false;
+        }
+        if (global_row < offset + chunk->length()) {
+            is_null = chunk->IsNull(global_row - offset);
+            return true;
+        }
+        offset += chunk->length();
+    }
+    return false;
+}
+
+void PopulateBatchInspection(
+    Batch& batch,
+    const std::shared_ptr<arrow::Table>& table,
+    const std::vector<int>& feature_columns,
+    const std::vector<int>& label_columns,
+    const std::vector<int64_t>& row_indices,
+    size_t batch_start,
+    size_t actual_batch_size) {
+    auto& inspection = batch.inspection;
+    inspection.available = table && table->schema();
+    inspection.row_count = actual_batch_size;
+    inspection.feature_column_count = feature_columns.size();
+    inspection.label_column_count = label_columns.size();
+    if (!inspection.available) {
+        return;
+    }
+
+    const auto schema = table->schema();
+    inspection.feature_columns_truncated =
+        feature_columns.size() > kBatchInspectionColumnPreviewLimit;
+    inspection.label_columns_truncated =
+        label_columns.size() > kBatchInspectionColumnPreviewLimit;
+    inspection.token_sequence_columns = !feature_columns.empty();
+
+    const auto append_preview = [&](const std::vector<int>& columns,
+                                    std::vector<BatchColumnInspection>& preview,
+                                    bool inspect_token_names) {
+        const size_t count = std::min(
+            columns.size(), kBatchInspectionColumnPreviewLimit);
+        preview.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+            const int column_index = columns[i];
+            if (column_index < 0 || column_index >= schema->num_fields()) {
+                continue;
+            }
+            const auto& field = schema->field(column_index);
+            preview.push_back({field->name(), field->type()->ToString()});
+        }
+        if (inspect_token_names) {
+            for (int column_index : columns) {
+                if (column_index < 0 || column_index >= schema->num_fields() ||
+                    !IsTokenSlotColumnName(schema->field(column_index)->name())) {
+                    inspection.token_sequence_columns = false;
+                    break;
+                }
+            }
+        }
+    };
+    append_preview(
+        feature_columns, inspection.feature_columns_preview, true);
+    append_preview(label_columns, inspection.label_columns_preview, false);
+
+    inspection.null_summary_available = true;
+    const auto count_nulls = [&](const std::vector<int>& columns,
+                                 uint64_t& null_count) {
+        for (int column_index : columns) {
+            if (column_index < 0 || column_index >= table->num_columns()) {
+                inspection.null_summary_available = false;
+                return;
+            }
+            const auto& column = table->column(column_index);
+            for (size_t row = 0; row < actual_batch_size; ++row) {
+                const size_t position = batch_start + row;
+                if (position >= row_indices.size()) {
+                    inspection.null_summary_available = false;
+                    return;
+                }
+                bool is_null = false;
+                if (!TryIsNullAt(column, row_indices[position], is_null)) {
+                    inspection.null_summary_available = false;
+                    return;
+                }
+                ++inspection.inspected_value_count;
+                if (is_null) {
+                    ++null_count;
+                }
+            }
+        }
+    };
+    count_nulls(feature_columns, inspection.feature_null_count);
+    if (inspection.null_summary_available) {
+        count_nulls(label_columns, inspection.label_null_count);
+    }
+}
+
 float ReadNumericChunkedValue(
     const std::shared_ptr<arrow::ChunkedArray>& column,
     int64_t global_row_idx) {
@@ -378,6 +496,17 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
 
         int64_t num_rows = table->num_rows();
         int num_cols = table->num_columns();
+
+        if (batch_inspection_enabled_) {
+            PopulateBatchInspection(
+                batch,
+                table,
+                feature_cols_,
+                label_col_indices_,
+                indices_,
+                batch_start,
+                actual_batch_size);
+        }
 
         // OPTIMIZED: Pre-allocate batch data as [batch_size, num_features] in row-major order
         std::vector<float> batch_data(actual_batch_size * num_features_, 0.0f);

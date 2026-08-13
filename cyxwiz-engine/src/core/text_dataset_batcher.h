@@ -51,6 +51,7 @@ public:
     void SetOneHotEncoding(size_t num_classes) override;
     void SetScalarLabelMode(bool enable) override;
     void SetFlatten(bool flatten) override;
+    void SetBatchInspectionEnabled(bool enable) override;
     void SetPhase(BatcherPhase phase) override;
 
     int GetMaxLength() const { return max_length_; }

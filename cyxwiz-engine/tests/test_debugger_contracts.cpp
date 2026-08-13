@@ -1,4 +1,7 @@
 #include "../src/core/debug_recommendation_engine.h"
+#include "../src/core/debug_batch_inspector.h"
+#include "../src/core/debug_error_code_timeline.h"
+#include "../src/core/debug_slow_path_detector.h"
 #include "../src/core/debug_export_correlation_tracer.h"
 #include "../src/core/debug_graph_trace_executor.h"
 #include "../src/core/debug_memory_ownership_tracer.h"
@@ -1252,6 +1255,299 @@ void TestSupportBundleContract() {
               bundle["runtime_log_slice"]["events"][0]["details"][0]
                     ["value"] == "[REDACTED_PATH]",
           "support-bundle runtime slices should always use shareable redaction");
+}
+
+void TestBatchInspectionContract() {
+    cyxwiz::Batch batch;
+    const std::vector<float> feature_values{
+        1.0f, 2.0f, 0.0f, 0.0f,
+        3.0f, 4.0f, 5.0f, 0.0f};
+    const std::vector<float> label_values{1.0f, 0.0f, 0.0f, 1.0f};
+    batch.data = cyxwiz::Tensor(
+        {2, 4}, feature_values.data(), cyxwiz::DataType::Float32);
+    batch.labels = cyxwiz::Tensor(
+        {2, 2}, label_values.data(), cyxwiz::DataType::Float32);
+    batch.size = 2;
+    batch.inspection.available = true;
+    batch.inspection.row_count = 2;
+    batch.inspection.feature_column_count = 4;
+    batch.inspection.label_column_count = 1;
+    batch.inspection.token_sequence_columns = true;
+    batch.inspection.null_summary_available = true;
+    batch.inspection.inspected_value_count = 10;
+    for (size_t i = 0; i < 4; ++i) {
+        batch.inspection.feature_columns_preview.push_back(
+            {"tok_" + std::to_string(i), "float"});
+    }
+    batch.inspection.label_columns_preview.push_back({"label", "int32"});
+
+    cyxwiz::TrainingConfiguration config;
+    config.loss_type = gui::NodeType::CrossEntropyLoss;
+    config.text_preprocessing.pad_value = 0;
+    auto trace = cyxwiz::DebugNodeTraceContract::Make(
+        "batch-inspection-run",
+        -1,
+        "First Smoke Batch",
+        "DatasetBatch",
+        "SmokeRun.BatchInput",
+        cyxwiz::DebugTraceRole::Activation,
+        batch.data.Shape(),
+        batch.labels.Shape(),
+        "float32",
+        "ArrayFire active backend",
+        "captured");
+
+    cyxwiz::AttachDebugBatchInspection(
+        trace, batch, config, "bounded-dataset", "ArrowDatasetBatcher", 32);
+
+    const auto& payload = trace.payload;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(trace),
+          "batch inspection should preserve canonical trace schema");
+    Check(payload["batch_inspector"].get<bool>(),
+          "batch inspection marker");
+    Check(payload["batch_inspection_scope"] == "first_smoke_batch",
+          "batch inspection scope");
+    Check(payload["actual_row_count"].get<size_t>() == 2,
+          "batch inspection actual rows");
+    Check(!payload["feature_values_captured"].get<bool>() &&
+              !payload["label_values_captured"].get<bool>(),
+          "batch inspection should not capture raw values");
+    Check(payload["feature_columns_preview"].size() == 4,
+          "batch inspection feature provenance");
+    Check(payload["null_summary_available"].get<bool>() &&
+              payload["inspected_source_value_count"].get<size_t>() == 10,
+          "batch inspection exact source null scope");
+    Check(payload["padding_summary_available"].get<bool>(),
+          "batch inspection padding summary");
+    Check(payload["pad_count"].get<size_t>() == 3,
+          "batch inspection padding count");
+    Check(payload["sequence_lengths"][0].get<size_t>() == 2 &&
+              payload["sequence_lengths"][1].get<size_t>() == 3,
+          "batch inspection row lengths");
+    Check(payload["sequence_length_mean"].get<double>() == 2.5,
+          "batch inspection mean row length");
+    Check(payload["padding_summary_scalar_read_count"].get<size_t>() == 2,
+          "batch padding host read should be row bounded");
+    Check(payload["class_balance_available"].get<bool>(),
+          "batch inspection class balance");
+    Check(payload["class_counts"].size() == 2 &&
+              payload["class_counts"][0]["count"].get<size_t>() == 1 &&
+              payload["class_counts"][1]["count"].get<size_t>() == 1,
+          "batch inspection class counts");
+    Check(payload["class_balance_scalar_read_count"].get<size_t>() == 2,
+          "batch class balance host read should be class bounded");
+    Check(!payload["post_conversion_non_finite_summary_available"].get<bool>(),
+          "batch inspection should state unavailable tensor scan");
+}
+
+void TestSlowPathDetectorContract() {
+    std::vector<cyxwiz::DebugTraceRecord> traces;
+    auto preprocessing = cyxwiz::DebugNodeTraceContract::Make(
+        "slow-path-run", 7, "Scale", "Scale", "OperatorTransform",
+        cyxwiz::DebugTraceRole::PreprocessingOutput,
+        {4, 2}, {4, 2}, "arrow::Table", "CPU", "ok");
+    preprocessing.duration_ms = 12.0f;
+    preprocessing.payload["trace_producer"] = "DebugOperatorTraceProducer";
+    traces.push_back(preprocessing);
+
+    auto export_trace = cyxwiz::DebugNodeTraceContract::Make(
+        "slow-path-run", -1, "Export", "Export", "ExportCorrelation",
+        cyxwiz::DebugTraceRole::GeneratedCode,
+        {}, {}, "artifact", "CPU", "ok");
+    export_trace.duration_ms = 7.0f;
+    traces.push_back(export_trace);
+
+    cyxwiz::TrainingTraceSummary training;
+    training.available = true;
+    training.run_id = "training-source-run";
+    training.status = "completed";
+    training.effective_backend = "arrayfire_cpu";
+    training.native_cpu_fallback_count = 1;
+    const auto add_event = [&](const std::string& stage, float duration_ms) {
+        cyxwiz::TrainingTraceEvent event;
+        event.run_id = training.run_id;
+        event.stage = stage;
+        event.duration_ms = duration_ms;
+        training.recent_events.push_back(event);
+    };
+    add_event("GetNextBatch", 8.0f);
+    add_event("GetNextBatch", 12.0f);
+    add_event("Forward", 20.0f);
+    add_event("Forward", 30.0f);
+    add_event("Backward", 35.0f);
+    add_event("Backward", 45.0f);
+    add_event("UpdateParameters", 5.0f);
+    add_event("UpdateParameters", 6.0f);
+
+    cyxwiz::DebugSlowPathDetector detector;
+    const auto summary = detector.BuildTrace(
+        "slow-path-run", traces, training);
+    const auto& payload = summary.payload;
+
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(summary),
+          "slow path summary should use canonical node trace schema");
+    Check(summary.phase == "RuntimeSlowPath",
+          "slow path summary phase");
+    Check(summary.duration_ms == 0.0f,
+          "summary trace should not claim the candidate duration as its own");
+    Check(payload["slow_path_schema"] ==
+              cyxwiz::DebugSlowPathDetector::kSchema,
+          "slow path payload schema");
+    Check(payload["measurement_semantics"] ==
+              "host_wall_clock_no_forced_arrayfire_sync",
+          "slow path should state host wall-clock semantics");
+    Check(!payload["device_kernel_time_proven"].get<bool>(),
+          "slow path should not claim device kernel timing");
+    Check(payload["timing_category_count"].get<size_t>() == 9,
+          "slow path should keep a bounded category set");
+    Check(payload["available_timing_category_count"].get<size_t>() == 6,
+          "slow path available category count");
+    Check(payload["slow_path_candidate_category"] == "backward" &&
+              payload["slow_path_candidate_max_ms"].get<double>() == 45.0,
+          "slow path should rank the largest observed max duration");
+    Check(!payload["candidate_is_regression_verdict"].get<bool>(),
+          "slow path candidate should not be a regression verdict");
+    Check(payload["source_training_run_id"] == "training-source-run",
+          "slow path should preserve training-run provenance");
+
+    const auto find_stage = [&](const std::string& category)
+        -> const nlohmann::json* {
+        for (const auto& stage : payload["stage_timings"]) {
+            if (stage["category"] == category) {
+                return &stage;
+            }
+        }
+        return nullptr;
+    };
+    const auto* batch_fetch = find_stage("batch_fetch");
+    Check(batch_fetch && (*batch_fetch)["timing_available"].get<bool>() &&
+              (*batch_fetch)["event_count"].get<size_t>() == 2 &&
+              (*batch_fetch)["mean_ms"].get<double>() == 10.0,
+          "slow path should aggregate all timed batch-fetch events");
+    const auto* batch_creation = find_stage("batch_creation");
+    Check(batch_creation &&
+              !(*batch_creation)["timing_available"].get<bool>() &&
+              (*batch_creation)["unavailable_reason"].get<std::string>().find(
+                  "combines") != std::string::npos,
+          "slow path should not fabricate separate batch-creation timing");
+    const auto* fallback = find_stage("native_cpu_fallback");
+    Check(fallback && !(*fallback)["timing_available"].get<bool>() &&
+              (*fallback)["occurrence_count"].get<uint64_t>() == 1,
+          "slow path should separate fallback occurrence from unavailable duration");
+}
+
+void TestErrorCodeTimelineContract() {
+    std::vector<cyxwiz::DebugTraceRecord> traces;
+    auto compile = cyxwiz::DebugNodeTraceContract::Make(
+        "timeline-run", 4, "Dense", "Dense", "Compile",
+        cyxwiz::DebugTraceRole::CompileArtifact,
+        {}, {}, "graph", "GraphCompiler", "warning");
+    cyxwiz::DebugNodeTraceContract::AddWarning(
+        compile, "Dense parameter needs review.",
+        cyxwiz::errors::Compiler::InvalidParameter);
+    traces.push_back(compile);
+
+    auto preflight = cyxwiz::DebugNodeTraceContract::Make(
+        "timeline-run", 1, "Dataset", "DataInput", "Preflight",
+        cyxwiz::DebugTraceRole::Error,
+        {}, {}, "graph", "PreflightValidator", "failed");
+    cyxwiz::DebugNodeTraceContract::AddError(
+        preflight, "Required label column is missing.",
+        cyxwiz::errors::Data::RequiredLabelColumnMissing);
+    traces.push_back(preflight);
+
+    cyxwiz::RuntimeLogEvent runtime_event;
+    runtime_event.sequence = 42;
+    runtime_event.timestamp_utc = std::chrono::system_clock::now();
+    runtime_event.level = cyxwiz::RuntimeLogLevel::Error;
+    runtime_event.run_id = "training-source-run";
+    runtime_event.event_name = "Training.Loss";
+    runtime_event.diagnostic_phase = "training_loss";
+    runtime_event.component = "TrainingExecutor";
+    runtime_event.primary_error_code =
+        cyxwiz::errors::Training::TrainingExecutionFailed;
+    runtime_event.message = "Loss computation failed.";
+
+    cyxwiz::CrashRunSummary crash;
+    crash.available = true;
+    crash.suspected_crash = true;
+    crash.run_id = "crashed-training-run";
+    crash.status = "failed";
+    crash.last_stage = "Backward";
+    crash.failure_reason = "Training process terminated unexpectedly.";
+
+    cyxwiz::DebugErrorCodeTimeline timeline;
+    const auto summary = timeline.BuildTrace(
+        "timeline-run", traces, {runtime_event}, crash);
+    const auto& payload = summary.payload;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(summary),
+          "error-code timeline should use canonical trace schema");
+    Check(summary.phase == "ErrorCodeTimeline" &&
+              payload["error_code_timeline_schema"] ==
+                  cyxwiz::DebugErrorCodeTimeline::kSchema,
+          "error-code timeline schema and phase");
+    Check(payload["entry_count"].get<size_t>() == 4 &&
+              payload["observed_entry_count"].get<size_t>() == 4,
+          "error-code timeline should avoid trace issue/payload duplicates");
+    Check(!payload["wall_clock_complete"].get<bool>() &&
+              payload["ordering_semantics"] ==
+                  "canonical_trace_capture_order_then_runtime_sequence",
+          "error-code timeline should state ordering limitations");
+
+    const auto find_entry = [&](const std::string& code)
+        -> const nlohmann::json* {
+        for (const auto& entry : payload["entries"]) {
+            if (entry["code"] == code) {
+                return &entry;
+            }
+        }
+        return nullptr;
+    };
+    const auto* compiler = find_entry(
+        cyxwiz::errors::Compiler::InvalidParameter);
+    Check(compiler && (*compiler)["phase"] == "compile" &&
+              (*compiler)["subsystem"] == "compiler" &&
+              (*compiler)["symbolic_name"] ==
+                  "Compiler.InvalidParameter",
+          "compiler code timeline metadata");
+    const auto* data = find_entry(
+        cyxwiz::errors::Data::RequiredLabelColumnMissing);
+    Check(data && (*data)["phase"] == "preflight" &&
+              (*data)["node_id"].get<int>() == 1,
+          "preflight code should preserve phase and node");
+    const auto* loss = find_entry(
+        cyxwiz::errors::Training::TrainingExecutionFailed);
+    Check(loss && (*loss)["phase"] == "loss" &&
+              (*loss)["source_run_id"] == "training-source-run" &&
+              (*loss)["runtime_sequence"].get<uint64_t>() == 42,
+          "runtime code should preserve phase, run, and sequence");
+    const auto* runtime = find_entry(
+        cyxwiz::errors::Runtime::ExecutionFailed);
+    Check(runtime && (*runtime)["phase"] == "crash_runtime" &&
+              (*runtime)["source_run_id"] == "crashed-training-run",
+          "crash summary should map to a coded runtime entry");
+
+    std::vector<cyxwiz::DebugTraceRecord> many_traces;
+    for (size_t i = 0; i < cyxwiz::DebugErrorCodeTimeline::kMaxEntries + 2;
+         ++i) {
+        auto trace = cyxwiz::DebugNodeTraceContract::Make(
+            "bounded-timeline-run", static_cast<int>(i), "Layer", "Dense",
+            "Forward", cyxwiz::DebugTraceRole::Warning,
+            {}, {}, "tensor", "ArrayFire", "warning");
+        cyxwiz::DebugNodeTraceContract::AddWarning(
+            trace,
+            "Forward warning " + std::to_string(i),
+            cyxwiz::errors::Runtime::ExecutionFailed);
+        many_traces.push_back(std::move(trace));
+    }
+    const auto bounded = timeline.BuildTrace(
+        "bounded-timeline-run", many_traces);
+    Check(bounded.payload["timeline_truncated"].get<bool>() &&
+              bounded.payload["entry_count"].get<size_t>() ==
+                  cyxwiz::DebugErrorCodeTimeline::kMaxEntries &&
+              bounded.payload["observed_entry_count"].get<size_t>() ==
+                  cyxwiz::DebugErrorCodeTimeline::kMaxEntries + 2,
+          "error-code timeline should cap persisted UI entries");
 }
 
 void TestNodeInspectorSummaryContract() {
@@ -2814,6 +3110,7 @@ void TestSmokeRunResultValueContract() {
     Check(result.issues[0].error_code ==
               cyxwiz::errors::Runtime::UnsupportedNode,
           "blocked smoke result should preserve issue code");
+
 }
 
 void TestPreflightIssueCodeContract() {
@@ -2954,6 +3251,9 @@ void TestDebugRunStoreContract() {
     cyxwiz::DebugRuntimeBackendClassifier backend_classifier;
     record.traces.push_back(backend_classifier.BuildPlacementTrace(
         record.summary.run_id, record.summary.graph_hash, stored_placement));
+    cyxwiz::DebugErrorCodeTimeline error_timeline;
+    record.traces.push_back(error_timeline.BuildTrace(
+        record.summary.run_id, record.traces));
 
     record.studio_events.push_back({
         record.summary.run_id,
@@ -2986,7 +3286,7 @@ void TestDebugRunStoreContract() {
     Check(loaded->summary.success, "loaded success should round-trip");
     Check(loaded->summary.issue_count == 1,
           "loaded issue count should match persisted issue count");
-    Check(loaded->summary.trace_count == 2,
+    Check(loaded->summary.trace_count == 3,
           "loaded trace count should match persisted trace count");
     Check(loaded->summary.event_count == 1,
           "loaded event count should match persisted event count");
@@ -3011,7 +3311,7 @@ void TestDebugRunStoreContract() {
               loaded->issues[0].message == "Contract warning" &&
               loaded->issues[0].error_code == "CW-C-0103",
           "issue payload and error code should round-trip");
-    Check(loaded->traces.size() == 2 &&
+    Check(loaded->traces.size() == 3 &&
               loaded->traces[0].role == cyxwiz::DebugTraceRole::Activation &&
               loaded->traces[0].input_shape == std::vector<size_t>{2, 3} &&
               loaded->traces[0].output_shape == std::vector<size_t>{2, 4} &&
@@ -3024,6 +3324,11 @@ void TestDebugRunStoreContract() {
                   "unobserved" &&
               loaded->traces[1].payload["graph_hash"].get<uint64_t>() == 0xCAFE,
           "canonical backend placement audit should persist without claiming runtime fact");
+    Check(loaded->traces[2].phase == "ErrorCodeTimeline" &&
+              loaded->traces[2].payload["entry_count"].get<size_t>() == 1 &&
+              loaded->traces[2].payload["entries"][0]["code"] ==
+                  "CW-C-0103",
+          "canonical error-code timeline should persist through the generic trace store");
     Check(loaded->studio_events.size() == 1 &&
               loaded->studio_events[0].action == "StudioDebugger.SelectTrace",
           "Studio event payload should round-trip");
@@ -3267,6 +3572,9 @@ int main() {
     TestGraphTraceExecutionSlice();
     TestRuntimeBackendClassificationContract();
     TestMemoryOwnershipTraceContract();
+    TestBatchInspectionContract();
+    TestSlowPathDetectorContract();
+    TestErrorCodeTimelineContract();
     TestExportCorrelationTraceContract();
     TestWindowsCrashImportContract();
     TestSupportBundleContract();

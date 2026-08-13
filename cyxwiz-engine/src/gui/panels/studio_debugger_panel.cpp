@@ -359,6 +359,234 @@ std::string JsonArrayPreview(const nlohmann::json& payload, const char* key, siz
     return out;
 }
 
+std::string BatchColumnPreview(const nlohmann::json& payload,
+                               const char* key,
+                               size_t limit = 32) {
+    if (!JsonHas(payload, key) || !payload.at(key).is_array()) {
+        return "";
+    }
+
+    const auto& columns = payload.at(key);
+    std::ostringstream out;
+    const size_t count = std::min(columns.size(), limit);
+    for (size_t i = 0; i < count; ++i) {
+        if (i) out << ", ";
+        const auto& column = columns[i];
+        if (!column.is_object()) {
+            out << column.dump();
+            continue;
+        }
+        out << JsonString(column, "name", "(unnamed)") << " ["
+            << JsonString(column, "source_dtype", "unknown") << " -> "
+            << JsonString(column, "tensor_dtype", "unknown") << "]";
+    }
+    if (columns.size() > limit) out << ", ...";
+    return out.str();
+}
+
+void RenderBatchInspection(const DebugTraceRecord& trace) {
+    const auto& payload = trace.payload;
+    if (!JsonBool(payload, "batch_inspector", false)) {
+        return;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("First Smoke Run batch");
+    ImGui::Text("Dataset: %s", JsonString(payload, "dataset_name", "(unknown)").c_str());
+    ImGui::Text("Batcher: %s", JsonString(payload, "batcher_source", "(unknown)").c_str());
+    ImGui::Text("Rows: %.0f actual / %.0f requested (limit %.0f)",
+                JsonNumber(payload, "actual_row_count"),
+                JsonNumber(payload, "requested_batch_size"),
+                JsonNumber(payload, "bounded_row_limit"));
+    ImGui::Text("Features: %s  %s",
+                JsonArrayPreview(payload, "feature_tensor_shape").c_str(),
+                JsonString(payload, "feature_tensor_dtype", "unknown").c_str());
+    ImGui::Text("Labels: %s  %s",
+                JsonArrayPreview(payload, "label_tensor_shape").c_str(),
+                JsonString(payload, "label_tensor_dtype", "unknown").c_str());
+
+    const std::string features = BatchColumnPreview(payload, "feature_columns_preview");
+    const std::string labels = BatchColumnPreview(payload, "label_columns_preview");
+    if (!features.empty()) {
+        ImGui::TextWrapped("Feature columns (%.0f): %s%s",
+            JsonNumber(payload, "feature_column_count"), features.c_str(),
+            JsonBool(payload, "feature_columns_truncated", false) ? " (preview truncated)" : "");
+    }
+    if (!labels.empty()) {
+        ImGui::TextWrapped("Label columns (%.0f): %s%s",
+            JsonNumber(payload, "label_column_count"), labels.c_str(),
+            JsonBool(payload, "label_columns_truncated", false) ? " (preview truncated)" : "");
+    }
+
+    if (JsonBool(payload, "null_summary_available", false)) {
+        ImGui::Text("Source nulls: %.0f feature, %.0f label / %.0f inspected values",
+                    JsonNumber(payload, "feature_null_count"),
+                    JsonNumber(payload, "label_null_count"),
+                    JsonNumber(payload, "inspected_source_value_count"));
+    } else {
+        ImGui::TextDisabled("Source null summary unavailable.");
+    }
+
+    if (JsonBool(payload, "padding_summary_available", false)) {
+        ImGui::Text("Sequence length: min %.0f, mean %.2f, max %.0f",
+                    JsonNumber(payload, "sequence_length_min"),
+                    JsonNumber(payload, "sequence_length_mean"),
+                    JsonNumber(payload, "sequence_length_max"));
+        ImGui::Text("Padding: %.0f values (%.2f%%)",
+                    JsonNumber(payload, "pad_count"),
+                    JsonNumber(payload, "pad_ratio") * 100.0);
+        const std::string lengths = JsonArrayPreview(payload, "sequence_lengths");
+        if (!lengths.empty()) ImGui::TextWrapped("Row lengths: %s", lengths.c_str());
+    } else if (JsonHas(payload, "padding_summary_reason")) {
+        ImGui::TextDisabled("Padding summary unavailable: %s",
+                            JsonString(payload, "padding_summary_reason").c_str());
+    }
+
+    if (JsonBool(payload, "class_balance_available", false)) {
+        ImGui::TextWrapped("Class counts: %s",
+                           JsonArrayPreview(payload, "class_counts", 64).c_str());
+    } else if (JsonHas(payload, "class_balance_reason")) {
+        ImGui::TextDisabled("Class balance unavailable: %s",
+                            JsonString(payload, "class_balance_reason").c_str());
+    }
+    ImGui::TextDisabled("Raw feature and label values were not captured.");
+    ImGui::TextDisabled("Post-conversion non-finite scan unavailable: %s",
+        JsonString(payload, "post_conversion_non_finite_summary_reason").c_str());
+}
+
+void RenderSlowPathInspection(const DebugTraceRecord& trace) {
+    const auto& payload = trace.payload;
+    if (!JsonBool(payload, "slow_path_detector", false)) {
+        return;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Slow path detector");
+    if (JsonBool(payload, "slow_path_candidate_available", false)) {
+        ImGui::Text("Largest observed stage: %s (%.2f ms max)",
+                    JsonString(payload, "slow_path_candidate_label").c_str(),
+                    JsonNumber(payload, "slow_path_candidate_max_ms"));
+        ImGui::TextDisabled("Source: %s | scope: %s",
+            JsonString(payload, "slow_path_candidate_source").c_str(),
+            JsonString(payload, "slow_path_candidate_scope").c_str());
+    } else {
+        ImGui::TextDisabled("No timed stage was available for ranking.");
+    }
+
+    const auto stages = payload.find("stage_timings");
+    if (stages != payload.end() && stages->is_array()) {
+        for (const auto& stage : *stages) {
+            const std::string label = JsonString(stage, "label", "Stage");
+            if (JsonBool(stage, "timing_available", false)) {
+                ImGui::Text("%s: mean %.2f ms, max %.2f ms (%.0f events)",
+                            label.c_str(),
+                            JsonNumber(stage, "mean_ms"),
+                            JsonNumber(stage, "max_ms"),
+                            JsonNumber(stage, "event_count"));
+            } else {
+                ImGui::TextDisabled("%s: unavailable (%s)",
+                    label.c_str(),
+                    JsonString(stage, "unavailable_reason").c_str());
+            }
+        }
+    }
+
+    if (JsonNumber(payload, "native_cpu_fallback_count") > 0.0) {
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            "Native CPU fallback occurrences: %.0f (duration unavailable)",
+            JsonNumber(payload, "native_cpu_fallback_count"));
+    }
+    ImGui::TextDisabled(
+        "Timing semantics: host wall clock; no ArrayFire synchronization was forced.");
+    ImGui::TextDisabled(
+        "Largest observed stage is a ranking candidate, not a regression verdict or device-kernel profile.");
+}
+
+void RenderErrorCodeTimeline(const std::vector<DebugTraceRecord>& traces) {
+    const auto timeline = std::find_if(
+        traces.begin(), traces.end(),
+        [](const DebugTraceRecord& trace) {
+            return trace.phase == "ErrorCodeTimeline" &&
+                   JsonBool(trace.payload, "error_code_timeline", false);
+        });
+    if (timeline == traces.end()) {
+        return;
+    }
+
+    ImGui::Text("Error-code timeline");
+    ImGui::TextDisabled(
+        "Ordered by canonical trace capture, then runtime event sequence.");
+    ImGui::BeginChild("StudioDebuggerErrorCodeTimeline", ImVec2(0, 230), true);
+    const auto entries = timeline->payload.find("entries");
+    if (entries == timeline->payload.end() || !entries->is_array() ||
+        entries->empty()) {
+        ImGui::TextDisabled("No coded warnings or errors were captured.");
+        ImGui::EndChild();
+        return;
+    }
+
+    if (ImGui::BeginTable(
+            "StudioDebuggerErrorCodeTimelineTable", 5,
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
+                ImGuiTableFlags_SizingStretchProp |
+                ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+        ImGui::TableSetupColumn("Phase", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+        ImGui::TableSetupColumn("Code", ImGuiTableColumnFlags_WidthFixed, 92.0f);
+        ImGui::TableSetupColumn("Severity", ImGuiTableColumnFlags_WidthFixed, 66.0f);
+        ImGui::TableSetupColumn("Where / message");
+        ImGui::TableHeadersRow();
+        for (const auto& entry : *entries) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%.0f", JsonNumber(entry, "ordinal"));
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(JsonString(entry, "phase").c_str());
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(JsonString(entry, "code").c_str());
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s | %s",
+                    JsonString(entry, "symbolic_name").c_str(),
+                    JsonString(entry, "subsystem").c_str());
+            }
+            ImGui::TableSetColumnIndex(3);
+            const std::string severity = JsonString(entry, "severity");
+            const ImVec4 severity_color = severity == "error"
+                ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
+                : severity == "warning"
+                    ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
+                    : ImVec4(0.65f, 0.72f, 0.82f, 1.0f);
+            ImGui::TextColored(severity_color, "%s", severity.c_str());
+            ImGui::TableSetColumnIndex(4);
+            const std::string node_name = JsonString(entry, "node_name");
+            if (!node_name.empty()) {
+                ImGui::Text("%s", node_name.c_str());
+                ImGui::SameLine();
+            }
+            ImGui::TextWrapped("%s", JsonString(entry, "message").c_str());
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("Source: %s",
+                            JsonString(entry, "source").c_str());
+                ImGui::Text("Run: %s",
+                            JsonString(entry, "source_run_id").c_str());
+                ImGui::Text("Component: %s",
+                            JsonString(entry, "component").c_str());
+                ImGui::EndTooltip();
+            }
+        }
+        ImGui::EndTable();
+    }
+    if (JsonBool(timeline->payload, "timeline_truncated", false)) {
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            "Timeline capped at %.0f entries.",
+            JsonNumber(timeline->payload, "entry_limit"));
+    }
+    ImGui::EndChild();
+}
+
 struct LayerTimingRow {
     std::string direction;
     int layer = -1;
@@ -580,7 +808,8 @@ void StudioDebuggerPanel::RenderToolbar() {
     }
     ImGui::SameLine();
 
-    if (run_in_progress_) {
+    const bool run_button_disabled = run_in_progress_;
+    if (run_button_disabled) {
         ImGui::BeginDisabled();
     }
     if (ImGui::Button(run_in_progress_ ? "Running..." : "Run")) {
@@ -636,7 +865,7 @@ void StudioDebuggerPanel::RenderToolbar() {
                 });
         }
     }
-    if (run_in_progress_) {
+    if (run_button_disabled) {
         ImGui::EndDisabled();
     }
     ImGui::SameLine();
@@ -2192,6 +2421,8 @@ void StudioDebuggerPanel::RenderTraceTimeline() {
 }
 
 void StudioDebuggerPanel::RenderStudioEvents() {
+    RenderErrorCodeTimeline(session_.traces);
+    ImGui::Spacing();
     ImGui::Text("Studio events");
     ImGui::BeginChild("StudioDebuggerStudioEvents", ImVec2(0, 130), true);
 
@@ -2391,6 +2622,14 @@ void StudioDebuggerPanel::RenderTraceDiagnosis(const DebugTraceRecord& trace) {
         meaning = "Tokenizer converts raw text into tokens before vocabulary lookup.";
         likely_cause = "If tokens look wrong, the tokenizer type, lowercasing, punctuation handling, or source text column may be wrong.";
         next_adjustment = "Compare raw text to token preview and confirm the selected tokenizer matches the dataset language/style.";
+    } else if (trace.phase == "RuntimeSlowPath") {
+        meaning = "This trace ranks bounded, already-recorded stage timings to identify the largest observed host-side path.";
+        likely_cause = "A dominant stage can reflect data preparation, host wait, kernel launch/JIT work, synchronization elsewhere, or the workload itself.";
+        next_adjustment = "Inspect the candidate source and scope, then reproduce with a fixed Release fixture before making a performance change.";
+    } else if (trace.phase == "ErrorCodeTimeline") {
+        meaning = "This trace orders canonical coded diagnostics from the run trace spine and linked runtime evidence.";
+        likely_cause = "Each row preserves the subsystem, phase, run, node, and source that reported the warning or error; entries without wall-clock time retain capture order only.";
+        next_adjustment = "Open the Studio Events lens, start with the earliest error-severity row, and use its code and component to inspect the owning trace or node.";
     } else if (trace.phase == "SmokeRun.Loss") {
         const bool pred_bad = JsonBool(payload, "predictions_have_non_finite", false);
         meaning = "Smoke loss validates that real data reaches the loss function and produces finite scalar feedback.";
@@ -2588,6 +2827,8 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
 
         RenderTraceDiagnosis(trace);
         RenderTextPayloadInspector(trace);
+        RenderBatchInspection(trace);
+        RenderSlowPathInspection(trace);
 
         if (!trace.payload.empty()) {
             ImGui::Separator();

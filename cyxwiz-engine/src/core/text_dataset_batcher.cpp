@@ -298,6 +298,18 @@ void TextDatasetBatcher::SetFlatten(bool /*flatten*/) {
     // Text token tables are already flat per sample.
 }
 
+void TextDatasetBatcher::SetBatchInspectionEnabled(bool enable) {
+    if (train_batcher_) {
+        train_batcher_->SetBatchInspectionEnabled(enable);
+    }
+    if (val_batcher_) {
+        val_batcher_->SetBatchInspectionEnabled(enable);
+    }
+    if (test_batcher_) {
+        test_batcher_->SetBatchInspectionEnabled(enable);
+    }
+}
+
 bool TextDatasetBatcher::TryApplyBalancedClassWeights(
     TrainingConfiguration& config) const {
     return TryApplyBalancedClassWeightsFromArrowTable(

@@ -1318,6 +1318,8 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
     bool saw_cpu_stage = false;
     bool saw_host_sync = false;
     bool saw_reporting_cadence = false;
+    bool saw_timed_batch_fetch = false;
+    bool saw_timed_optimizer_step = false;
     for (const auto& event : trace.recent_events) {
         if (!event.stage_backend.empty()) {
             Check(event.stage_backend == "arrayfire_cpu",
@@ -1343,6 +1345,16 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
             Check(event.message.find("first and final batch") !=
                       std::string::npos,
                   "trace should record the effective first/final metric cadence");
+        }
+        if (event.stage == "GetNextBatch") {
+            saw_timed_batch_fetch = true;
+            Check(event.duration_ms >= 0.0f,
+                  "batch fetch trace should carry host wall-clock duration");
+        }
+        if (event.stage == "UpdateParameters") {
+            saw_timed_optimizer_step = true;
+            Check(event.duration_ms >= 0.0f,
+                  "optimizer trace should carry host wall-clock duration");
         }
         if (event.stage == "ArrayFire.HostSync") {
             saw_host_sync = true;
@@ -1386,6 +1398,10 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
           "strict ArrayFire CPU run should record at least one host sync event");
     Check(saw_reporting_cadence,
           "strict ArrayFire CPU run should record metric reporting cadence");
+    Check(saw_timed_batch_fetch,
+          "strict training should record batch fetch timing");
+    Check(saw_timed_optimizer_step,
+          "strict training should record optimizer timing");
 
     const auto persisted_trace =
         cyxwiz::TrainingTraceCollector::LoadLastTrace();

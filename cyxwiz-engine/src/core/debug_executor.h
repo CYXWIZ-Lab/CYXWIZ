@@ -99,6 +99,7 @@ struct DebugResult {
     std::vector<DebugGraphTraceStep> model_build_traces;
     float forward_total_ms = 0.0f;
     float backward_total_ms = 0.0f;
+    float optimizer_step_ms = 0.0f;
 
     float loss_value = std::numeric_limits<float>::quiet_NaN();
     bool loss_finite = false;

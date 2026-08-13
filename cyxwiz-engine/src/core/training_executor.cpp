@@ -1563,11 +1563,15 @@ void TrainingExecutor::RunTrainingEpoch(
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
             static_cast<int>(total_batches));
+        const auto fetch_start = std::chrono::steady_clock::now();
+        Batch batch = batcher.GetNextBatch();
+        const auto fetch_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - fetch_start).count();
+        if (!batch.IsValid()) break;
+
         TrainingTraceCollector::Instance().RecordStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-            static_cast<int>(total_batches));
-        Batch batch = batcher.GetNextBatch();
-        if (!batch.IsValid()) break;
+            static_cast<int>(total_batches), 0.0f, 0.0f, fetch_ms);
 
         batch_num++;
 
@@ -1977,13 +1981,16 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         TrainingTraceStage::UpdateParameters, epoch, batch_num,
         total_batches, batch_loss, current_acc);
 
+    const auto optimizer_start = std::chrono::steady_clock::now();
     auto params = model_->GetParameters();
     optimizer_->Step(params, averaged_grads);
     model_->SetParameters(params);
+    const auto optimizer_ms = std::chrono::duration<float, std::milli>(
+        std::chrono::steady_clock::now() - optimizer_start).count();
 
     TrainingTraceCollector::Instance().RecordStage(
         TrainingTraceStage::UpdateParameters, epoch, batch_num,
-        total_batches, batch_loss, current_acc);
+        total_batches, batch_loss, current_acc, optimizer_ms);
 
     UpdateMetrics([](TrainingMetrics& m) {
         ++m.optimizer_step_count;
@@ -2135,12 +2142,14 @@ void TrainingExecutor::RunTrainingEpochSequence(
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
             static_cast<int>(total_batches));
+        const auto fetch_start = std::chrono::steady_clock::now();
+        SequenceBatch batch = batcher.GetNextSequenceBatch();
+        const auto fetch_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - fetch_start).count();
+        if (!batch.IsValid()) break;
         TrainingTraceCollector::Instance().RecordStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-            static_cast<int>(total_batches));
-
-        SequenceBatch batch = batcher.GetNextSequenceBatch();
-        if (!batch.IsValid()) break;
+            static_cast<int>(total_batches), 0.0f, 0.0f, fetch_ms);
         if (!batch.IsSupervised()) {
             throw std::runtime_error(
                 "TrainingExecutor: sequence batch is missing tag_ids or target_ids");
@@ -2415,14 +2424,16 @@ void TrainingExecutor::RunTrainingEpochArrow(
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
             static_cast<int>(total_batches));
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-            static_cast<int>(total_batches));
         const auto fetch_start = std::chrono::steady_clock::now();
         Batch batch = batcher.GetNextBatch();
         const double fetch_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - fetch_start).count();
         if (!batch.IsValid()) break;
+
+        TrainingTraceCollector::Instance().RecordStage(
+            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
+            static_cast<int>(total_batches), 0.0f, 0.0f,
+            static_cast<float>(fetch_ms));
 
         batch_num++;
         fetch_total_ms += fetch_ms;

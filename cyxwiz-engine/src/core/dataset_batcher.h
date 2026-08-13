@@ -11,6 +11,27 @@
 
 namespace cyxwiz {
 
+struct BatchColumnInspection {
+    std::string name;
+    std::string source_dtype;
+};
+
+struct BatchInspectionMetadata {
+    bool available = false;
+    size_t row_count = 0;
+    size_t feature_column_count = 0;
+    size_t label_column_count = 0;
+    std::vector<BatchColumnInspection> feature_columns_preview;
+    std::vector<BatchColumnInspection> label_columns_preview;
+    bool feature_columns_truncated = false;
+    bool label_columns_truncated = false;
+    bool null_summary_available = false;
+    uint64_t inspected_value_count = 0;
+    uint64_t feature_null_count = 0;
+    uint64_t label_null_count = 0;
+    bool token_sequence_columns = false;
+};
+
 // Forward declarations
 class AnnotationManager;
 
@@ -26,6 +47,7 @@ struct Batch {
     Tensor data;          // [batch_size, ...input_dims] - input features
     Tensor labels;        // [batch_size] or [batch_size, num_classes] if one-hot
     size_t size = 0;      // Actual batch size (may be < requested for last batch)
+    BatchInspectionMetadata inspection;
 
     bool IsValid() const { return size > 0; }
 };
@@ -144,6 +166,7 @@ public:
     virtual void SetOneHotEncoding(size_t num_classes) = 0;
     virtual void SetScalarLabelMode(bool /*enable*/) {}
     virtual void SetFlatten(bool flatten) = 0;
+    virtual void SetBatchInspectionEnabled(bool /*enable*/) {}
 
     // Switch between train/val/test index sets. Default: no-op (batchers
     // that already have a separate validation instance don't need this).
@@ -433,6 +456,9 @@ public:
     // existing behavior.
     void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
     void SetRegressionMode(bool enable) { SetScalarLabelMode(enable); }
+    void SetBatchInspectionEnabled(bool enable) override {
+        batch_inspection_enabled_ = enable;
+    }
 
     // Configure ordered regression targets. Width one consumes the primary
     // label; wider targets consume `<base>`, `<base>_1`, ... and remove every
@@ -477,6 +503,7 @@ private:
     size_t num_classes_ = 10;  // Default for MNIST
     bool flatten_ = true;
     bool scalar_label_mode_ = false;  // float [batch, 1] labels, no one-hot
+    bool batch_inspection_enabled_ = false;
 
     void ShuffleIndices();
     void InitializeColumns();

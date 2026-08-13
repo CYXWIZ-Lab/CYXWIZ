@@ -19,7 +19,9 @@
 #include "theme.h"
 #include "../core/error_codes.h"
 #include "../core/debug_graph_trace_executor.h"
+#include "../core/debug_error_code_timeline.h"
 #include "../core/debug_runtime_backend_classifier.h"
+#include "../core/debug_slow_path_detector.h"
 #include "../core/debug_trace_record.h"
 #include "../core/debug_operator_trace_producer.h"
 #include "../core/compute_runtime_config.h"
@@ -160,6 +162,7 @@
 #include "../core/debug_recommendation_engine.h"
 #include "../core/training_trace_collector.h"
 #include "../core/debug_run_store.h"
+#include "../core/runtime_log_store.h"
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
@@ -3554,6 +3557,7 @@ void MainWindow::LocalDebugGraphAndReport() {
     }
     out << "Forward time:      " << result.forward_total_ms << " ms\n";
     out << "Backward time:     " << result.backward_total_ms << " ms\n";
+    out << "Optimizer time:    " << result.optimizer_step_ms << " ms\n";
     out << "Loss:              " << result.loss_value
         << (result.loss_finite ? "" : "  (NON-FINITE)") << "\n";
     out << "Params with grad:  " << result.params_with_grad << "\n";
@@ -3673,6 +3677,42 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             cyxwiz::MakeDebugRunExecutionSummary(session.training_trace);
     }
     const std::string& run_id = session.run_id;
+    auto collect_runtime_diagnostics = [&session, &run_id]() {
+        cyxwiz::RuntimeLogSnapshotRequest request;
+        request.limit = cyxwiz::RuntimeLogStore::kDefaultCapacity;
+        const auto snapshot =
+            cyxwiz::RuntimeLogStore::Instance().Snapshot(request);
+        std::vector<cyxwiz::RuntimeLogEvent> events;
+        for (const auto& event : snapshot.events) {
+            const bool same_debug_run = event.run_id == run_id;
+            const bool linked_training_run =
+                !session.training_trace.run_id.empty() &&
+                event.run_id == session.training_trace.run_id;
+            if ((same_debug_run || linked_training_run) &&
+                (!event.primary_error_code.empty() ||
+                 !event.issue_codes.empty())) {
+                events.push_back(event);
+            }
+        }
+        return events;
+    };
+    auto append_error_timeline =
+        [&session, &run_id, &collect_runtime_diagnostics]() {
+            const bool already_present = std::any_of(
+                session.traces.begin(), session.traces.end(),
+                [](const cyxwiz::DebugTraceRecord& trace) {
+                    return trace.phase == "ErrorCodeTimeline";
+                });
+            if (already_present) {
+                return;
+            }
+            cyxwiz::DebugErrorCodeTimeline timeline;
+            session.traces.push_back(timeline.BuildTrace(
+                run_id,
+                session.traces,
+                collect_runtime_diagnostics(),
+                session.last_run));
+        };
     auto save_session = [&session]() {
         cyxwiz::DebugRunStoreRecord record;
         record.summary.run_id = session.run_id;
@@ -3706,6 +3746,10 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.last_run = *last_run;
         }
         cyxwiz::DebugRecommendationEngine recommendation_engine;
+        cyxwiz::DebugSlowPathDetector slow_path_detector;
+        session.traces.push_back(slow_path_detector.BuildTrace(
+            run_id, session.traces, session.training_trace));
+        append_error_timeline();
         session.recommendations = recommendation_engine.Build(
             session.traces, session.issues, session.smoke_result,
             session.last_run, session.training_trace);
@@ -3797,6 +3841,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             run_id, "", session.graph_hash, -1,
             "Compile", "failed", session.failure_summary
         });
+        append_error_timeline();
         save_session();
         return false;
     }
@@ -3847,6 +3892,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         session.recommendations = recommendation_engine.Build(
             session.traces, session.issues, session.smoke_result,
             session.last_run, session.training_trace);
+        append_error_timeline();
         save_session();
         return session.success;
     }
@@ -3895,20 +3941,25 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         cyxwiz::SmokeRunExecutor smoke_executor;
         session.smoke_result = smoke_executor.RunTextSmoke(
             config, nodes, links, run_id, 100);
+        session.traces.insert(session.traces.end(),
+                              std::make_move_iterator(session.smoke_result.traces.begin()),
+                              std::make_move_iterator(session.smoke_result.traces.end()));
         if (session.smoke_result.supported) {
-            session.traces.insert(session.traces.end(),
-                                  std::make_move_iterator(session.smoke_result.traces.begin()),
-                                  std::make_move_iterator(session.smoke_result.traces.end()));
             session.studio_events.push_back({
                 run_id, "", session.graph_hash, -1,
                 "SmokeRun", session.smoke_result.success ? "passed" : "failed",
                 session.smoke_result.summary
             });
-            if (!session.smoke_result.issues.empty()) {
-                session.issues.insert(session.issues.end(),
-                                      session.smoke_result.issues.begin(),
-                                      session.smoke_result.issues.end());
-            }
+        } else {
+            session.studio_events.push_back({
+                run_id, "", session.graph_hash, -1,
+                "SmokeRun", "unsupported", session.smoke_result.summary
+            });
+        }
+        if (!session.smoke_result.issues.empty()) {
+            session.issues.insert(session.issues.end(),
+                                  session.smoke_result.issues.begin(),
+                                  session.smoke_result.issues.end());
         }
     }
 
@@ -4280,6 +4331,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         out << "  Stage: " << stage_name << "\n";
         out << "  Forward time: " << session.debug_result.forward_total_ms << " ms\n";
         out << "  Backward time: " << session.debug_result.backward_total_ms << " ms\n";
+        out << "  Optimizer time: " << session.debug_result.optimizer_step_ms << " ms\n";
         out << "  Loss: " << session.debug_result.loss_value
             << (session.debug_result.loss_finite ? "" : " (NON-FINITE)") << "\n";
         out << "  Params with grad: " << session.debug_result.params_with_grad << "\n";
@@ -4299,12 +4351,14 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             run_id, "", session.graph_hash, -1,
             "LocalDebug", "failed", session.failure_summary
         });
+        append_error_timeline();
         save_session();
         return false;
     }
 
     if (!run_local_debug && run_smoke) {
-        session.success = session.smoke_result.supported ? session.smoke_result.success : session.preflight.ready;
+        session.success =
+            session.smoke_result.supported && session.smoke_result.success;
         session.failure_summary = session.success ? "" : session.smoke_result.summary;
     }
 
@@ -4318,6 +4372,22 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.training_trace = runtime_training_trace;
         }
     }
+    cyxwiz::DebugSlowPathLocalTimings local_timings;
+    if (session.has_debug_result) {
+        local_timings.forward_available =
+            session.debug_result.forward_total_ms > 0.0f;
+        local_timings.forward_ms = session.debug_result.forward_total_ms;
+        local_timings.backward_available =
+            session.debug_result.backward_total_ms > 0.0f;
+        local_timings.backward_ms = session.debug_result.backward_total_ms;
+        local_timings.optimizer_available =
+            session.debug_result.optimizer_step_ms > 0.0f;
+        local_timings.optimizer_ms = session.debug_result.optimizer_step_ms;
+    }
+    cyxwiz::DebugSlowPathDetector slow_path_detector;
+    session.traces.push_back(slow_path_detector.BuildTrace(
+        run_id, session.traces, session.training_trace, local_timings));
+    append_error_timeline();
     cyxwiz::DebugRecommendationEngine recommendation_engine;
     session.recommendations = recommendation_engine.Build(
         session.traces, session.issues, session.smoke_result,

@@ -6,6 +6,19 @@
 #include <iostream>
 #include <string>
 
+namespace cyxwiz {
+
+bool TryApplyBalancedClassWeightsFromArrowTable(
+    TrainingConfiguration&,
+    const std::shared_ptr<arrow::Table>&,
+    const std::string&,
+    const std::string&,
+    const std::string&) {
+    return false;
+}
+
+} // namespace cyxwiz
+
 namespace {
 
 void Check(bool condition, const std::string& message) {
@@ -73,6 +86,7 @@ int main() {
     Check(batcher.GetNumTestSamples() == 1, "test split should have one row");
     Check(batcher.GetNumBatches() == 1, "train split should have one batch");
 
+    batcher.SetBatchInspectionEnabled(true);
     auto train = batcher.GetNextBatch();
     Check(train.IsValid(), "train batch should be valid");
     Check(train.size == 2, "train batch size");
@@ -82,6 +96,31 @@ int main() {
     Check(train.labels.Shape().size() == 2, "train labels rank");
     Check(train.labels.Shape()[0] == 2, "train labels batch dim");
     Check(train.labels.Shape()[1] == 2, "train labels one-hot width");
+    Check(train.inspection.available, "inspection metadata should be available");
+    Check(train.inspection.row_count == 2, "inspection row count");
+    Check(train.inspection.feature_column_count == 4,
+          "inspection feature column count");
+    Check(train.inspection.label_column_count == 1,
+          "inspection label column count");
+    Check(train.inspection.feature_columns_preview.size() == 4,
+          "inspection feature preview size");
+    Check(train.inspection.label_columns_preview.size() == 1,
+          "inspection label preview size");
+    Check(train.inspection.feature_columns_preview[0].name == "tok_0",
+          "inspection should preserve token source columns");
+    Check(train.inspection.label_columns_preview[0].name == "y",
+          "inspection should preserve label source column");
+    Check(train.inspection.token_sequence_columns,
+          "token slot columns should be recognized");
+    Check(train.inspection.null_summary_available,
+          "source null summary should be available");
+    Check(train.inspection.inspected_value_count == 10,
+          "source null scan should cover selected source cells");
+    Check(train.inspection.feature_null_count == 0,
+          "feature source cells should not be null");
+    Check(train.inspection.label_null_count == 0,
+          "label source cells should not be null");
+    batcher.SetBatchInspectionEnabled(false);
 
     batcher.SetPhase(cyxwiz::BatcherPhase::Val);
     batcher.Reset();

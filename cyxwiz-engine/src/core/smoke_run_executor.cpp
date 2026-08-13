@@ -4,12 +4,14 @@
 
 #include "classification_decision.h"
 #include "data_registry.h"
+#include "debug_batch_inspector.h"
 #include "error_codes.h"
 #include "label_column_resolver.h"
 #include "model_builder.h"
 #include "pipeline_materializer.h"
 #include "text_dataset_batcher.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <sstream>
@@ -153,6 +155,16 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
 
     if (config.preprocessing_domain != PreprocessingDomain::Text) {
         result.summary = "Smoke Run currently supports text graphs in this slice.";
+        result.issues.push_back({
+            IssueLevel::Error, -1, "SmokeRun", result.summary,
+            errors::Runtime::UnsupportedNode
+        });
+        auto trace = MakeSmokeRecord(
+            run_id, "SmokeRun", DebugTraceRole::Error,
+            -1, "unsupported");
+        DebugNodeTraceContract::AddError(
+            trace, result.summary, errors::Runtime::UnsupportedNode);
+        result.traces.push_back(std::move(trace));
         return result;
     }
     result.supported = true;
@@ -284,6 +296,7 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     if (auto* text_batcher = dynamic_cast<TextDatasetBatcher*>(batcher.get())) {
         text_batcher->TryApplyBalancedClassWeights(config);
     }
+    batcher->SetBatchInspectionEnabled(true);
 
     BuiltModel built = BuildSequentialFromConfig(config);
     if (!built.ok() || !built.loss || !built.optimizer) {
@@ -305,7 +318,10 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     float loss_sum = 0.0f;
 
     for (int batch_index = 1; batch_index <= max_batches && !batcher->IsEpochComplete(); ++batch_index) {
+        const auto fetch_start = std::chrono::steady_clock::now();
         Batch batch = batcher->GetNextBatch();
+        const float fetch_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - fetch_start).count();
         if (!batch.IsValid()) {
             break;
         }
@@ -318,9 +334,25 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             model_node_id, "ok", ShapeOf(batch.data), ShapeOf(batch.labels));
         input_record.payload["batch"] = batch_index;
         input_record.payload["samples"] = batch.size;
+        input_record.duration_ms = fetch_ms;
+        input_record.payload["timing_scope"] =
+            "combined_batch_creation_and_data_wait";
+        if (batch_index == 1) {
+            AttachDebugBatchInspection(
+                input_record,
+                batch,
+                config,
+                config.dataset_name,
+                batcher_source,
+                static_cast<size_t>(batch_size));
+            batcher->SetBatchInspectionEnabled(false);
+        }
         result.traces.push_back(std::move(input_record));
 
+        const auto forward_start = std::chrono::steady_clock::now();
         Tensor predictions = built.model->Forward(batch.data);
+        const float forward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - forward_start).count();
         const bool pred_bad = HasNonFinite(predictions);
         if (pred_bad) {
             result.issues.push_back({
@@ -330,7 +362,10 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             });
         }
 
+        const auto loss_start = std::chrono::steady_clock::now();
         Tensor loss_tensor = built.loss->Forward(predictions, batch.labels);
+        const float loss_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - loss_start).count();
         const float loss = ExtractLossScalar(loss_tensor);
         const bool loss_ok = std::isfinite(loss);
         if (!loss_ok) {
@@ -355,15 +390,23 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         loss_record.payload["loss"] = loss;
         loss_record.payload["accuracy"] = result.last_accuracy;
         loss_record.payload["predictions_have_non_finite"] = pred_bad;
+        loss_record.duration_ms = loss_ms;
+        loss_record.payload["forward_duration_ms"] = forward_ms;
         result.traces.push_back(std::move(loss_record));
 
         if (!loss_ok || pred_bad) {
             break;
         }
 
+        const auto backward_start = std::chrono::steady_clock::now();
         Tensor grad = built.loss->Backward(predictions, batch.labels);
         built.model->Backward(grad);
+        const float backward_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - backward_start).count();
+        const auto optimizer_start = std::chrono::steady_clock::now();
         built.model->UpdateParameters(built.optimizer.get());
+        const float optimizer_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - optimizer_start).count();
 
         size_t grad_count = 0;
         size_t zero_grad_count = 0;
@@ -386,6 +429,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         grad_record.payload["gradient_tensor_count"] = grad_count;
         grad_record.payload["zero_gradient_tensor_count"] = zero_grad_count;
         grad_record.payload["max_gradient_l2_norm"] = max_grad_norm;
+        grad_record.duration_ms = backward_ms;
+        grad_record.payload["optimizer_step_duration_ms"] = optimizer_ms;
 
         if (grad_count == 0) {
             DebugNodeTraceContract::AddWarning(
