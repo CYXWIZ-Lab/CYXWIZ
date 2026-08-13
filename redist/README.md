@@ -54,6 +54,7 @@ an empty signature list and is a signing request, not a publishable artifact.
 Both shell families call one standard-library implementation:
 
 - `scripts/package_release.py`
+- `scripts/sign_pack_manifest.py`
 - `scripts/package_minimal.bat` and `package_minimal.sh`
 - `scripts/package_full.bat` and `package_full.sh`
 
@@ -122,10 +123,22 @@ py -3 redist\scripts\package_release.py pack --version 0.2.0 ^
   --arrayfire-dir "C:\Program Files\ArrayFire\v3"
 ```
 
-The packager prints the canonical `.signed.json` path. Sign those exact bytes
-with the release Ed25519 key, then rebuild with `--signing-key-id` and the
-unpadded base64url value in `--signature`. Use the same `--runtime-set-id` and
-matching `--base-pack-id` when preparing companion artifacts.
+The packager prints the canonical `.signed.json` path. Sign the prepared
+manifest as an explicit release step:
+
+```batch
+py -3 redist\scripts\sign_pack_manifest.py ^
+  redist\output\cyxwiz-af-opencl-3.10.0-1-win64.zip.manifest.json ^
+  --private-key "D:\release-secrets\backend-packs-ed25519.pem" ^
+  --key-id release-2026
+```
+
+The signer uses OpenSSL Ed25519, checks that `.signed.json` exactly matches the
+canonical manifest body, verifies its newly generated signature before an
+atomic manifest replacement, and never copies the private key. Keep production
+keys outside the repository, build trees, output directories, and application
+packages. Use the same `--runtime-set-id` and matching `--base-pack-id` when
+preparing companion artifacts.
 
 Example notice layout:
 

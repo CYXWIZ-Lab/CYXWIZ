@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,6 +16,13 @@ assert SPEC and SPEC.loader
 package_release = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = package_release
 SPEC.loader.exec_module(package_release)
+
+SIGN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "sign_pack_manifest.py"
+SIGN_SPEC = importlib.util.spec_from_file_location("sign_pack_manifest", SIGN_SCRIPT)
+assert SIGN_SPEC and SIGN_SPEC.loader
+sign_pack_manifest = importlib.util.module_from_spec(SIGN_SPEC)
+sys.modules[SIGN_SPEC.name] = sign_pack_manifest
+SIGN_SPEC.loader.exec_module(sign_pack_manifest)
 
 
 class PackageReleaseTests(unittest.TestCase):
@@ -312,6 +321,65 @@ class PackageReleaseTests(unittest.TestCase):
 
         self.assertTrue((stage / "runtime" / "afopencl.dll").is_file())
         self.assertIsNone(archive)
+
+    def test_signing_rejects_tampered_canonical_input(self) -> None:
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        archive.with_suffix(".zip.signed.json").write_bytes(b"tampered")
+
+        with self.assertRaisesRegex(sign_pack_manifest.SigningError, "does not match"):
+            sign_pack_manifest.load_signature_input(
+                archive.with_suffix(".zip.manifest.json")
+            )
+
+    def test_openssl_release_step_signs_and_self_verifies_manifest(self) -> None:
+        openssl = shutil.which("openssl")
+        if openssl is None:
+            self.skipTest("OpenSSL is not available")
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        manifest_path = archive.with_suffix(".zip.manifest.json")
+        private_key = self.root / "release-ed25519.pem"
+        subprocess.run(
+            [openssl, "genpkey", "-algorithm", "ED25519", "-out", str(private_key)],
+            check=True,
+            capture_output=True,
+        )
+
+        result = sign_pack_manifest.main(
+            [
+                str(manifest_path),
+                "--private-key",
+                str(private_key),
+                "--key-id",
+                "release-2026",
+                "--openssl",
+                openssl,
+            ]
+        )
+
+        self.assertEqual(0, result)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        package_release.validate_pack_manifest(manifest)
+        self.assertEqual("release-2026", manifest["signatures"][0]["key_id"])
 
 
 if __name__ == "__main__":

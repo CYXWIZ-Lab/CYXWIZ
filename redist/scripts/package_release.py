@@ -802,7 +802,7 @@ def write_pack_contract(
         "generated_utc": timestamp,
     }
     signed_path = archive.with_suffix(archive.suffix + ".signed.json")
-    signed_path.write_bytes(canonical_json_bytes(signed) + b"\n")
+    signed_path.write_bytes(canonical_json_bytes(signed))
     manifest = {
         "schema_version": 1,
         "kind": "cyxwiz-backend-pack-manifest",
