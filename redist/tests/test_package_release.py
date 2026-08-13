@@ -30,7 +30,13 @@ class PackageReleaseTests(unittest.TestCase):
 
         build = self.root / "build" / "bin" / "Release"
         build.mkdir(parents=True)
-        for name in ("cyxwiz-engine.exe", "cyxwiz-backend.dll", "fmt.dll", "python312.dll"):
+        for name in (
+            "cyxwiz-engine.exe",
+            "cyxwiz-route-probe.exe",
+            "cyxwiz-backend.dll",
+            "fmt.dll",
+            "python312.dll",
+        ):
             (build / name).write_bytes(name.encode("ascii"))
         resources = self.root / "cyxwiz-engine" / "resources"
         resources.mkdir(parents=True)

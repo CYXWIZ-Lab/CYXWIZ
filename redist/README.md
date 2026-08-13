@@ -4,6 +4,12 @@ This directory contains the source tooling for CyxWiz release packages.
 Generated staging directories and archives are written under `redist/output/`
 and are not source files.
 
+The frozen Ticket 88 base/backend-pack layout, signed metadata schemas, trust
+policy, and ownership boundaries are defined in
+[`BACKEND_PACK_CONTRACT.md`](BACKEND_PACK_CONTRACT.md). The current
+minimal/full profiles remain transitional compositions until the Phase 1 pack
+builder emits those artifacts directly.
+
 ## Package Profiles
 
 ### Minimal
