@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build truthful CyxWiz minimal and full redistribution archives."""
+"""Build truthful CyxWiz redistribution archives and backend packs."""
 
 from __future__ import annotations
 
@@ -13,9 +13,19 @@ import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from backend_pack_contract import (  # noqa: E402
+    canonical_json_bytes,
+    validate_pack_manifest,
+)
 
 
 SUPPORTED_BACKENDS = ("cpu", "cuda", "oneapi", "opencl")
@@ -47,7 +57,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build a validated CyxWiz redistribution package."
     )
-    parser.add_argument("profile", choices=("minimal", "full"))
+    parser.add_argument("profile", choices=("minimal", "full", "base", "pack"))
     parser.add_argument("--version", help="CyxWiz version; inferred when omitted")
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--resources-dir", type=Path)
@@ -69,6 +79,37 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--backends",
         default="cpu",
         help="Comma-separated full-package backends (cpu is always included)",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("cuda", "opencl", "oneapi"),
+        help="Single optional backend emitted by the pack profile",
+    )
+    parser.add_argument(
+        "--pack-version",
+        default="1",
+        help="Backend/base pack revision used in artifact identity",
+    )
+    parser.add_argument(
+        "--runtime-set-id",
+        help="Compatible runtime-set identity; inferred from ArrayFire when omitted",
+    )
+    parser.add_argument(
+        "--base-pack-id",
+        help="Companion base identity required by the pack profile",
+    )
+    parser.add_argument(
+        "--signing-key-id",
+        default="release-signing-required",
+        help="Public signing-key identity used for a supplied detached signature",
+    )
+    parser.add_argument(
+        "--signature",
+        help="Unpadded base64url Ed25519 signature over the emitted .signed.json",
+    )
+    parser.add_argument(
+        "--generated-utc",
+        help="Reproducible UTC timestamp; otherwise SOURCE_DATE_EPOCH/current UTC",
     )
     parser.add_argument(
         "--stage-only", action="store_true", help="Validate and stage without archiving"
@@ -161,6 +202,22 @@ def validate_release_version(version: str, label: str) -> str:
     if not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]*", version):
         raise PackageError(f"Invalid {label} version: {version!r}")
     return version
+
+
+def generated_utc(explicit: str | None) -> str:
+    if explicit:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", explicit):
+            raise PackageError("--generated-utc must use UTC YYYY-MM-DDTHH:MM:SSZ")
+        return explicit
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch is not None:
+        try:
+            value = dt.datetime.fromtimestamp(int(epoch), tz=dt.timezone.utc)
+        except (ValueError, OSError) as error:
+            raise PackageError("SOURCE_DATE_EPOCH must be an integer Unix timestamp") from error
+    else:
+        value = dt.datetime.now(dt.timezone.utc)
+    return value.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def validate_python_version(version: str) -> str:
@@ -384,6 +441,28 @@ def package_arrayfire(
     backends: Sequence[str],
     lib_suffix: str,
 ) -> str:
+    """Compose the legacy full payload from the base and optional-pack inputs."""
+    version = package_arrayfire_base(arrayfire_root, stage, lib_suffix)
+    destination = stage / "arrayfire" / ("bin" if lib_suffix == ".dll" else "lib")
+    for backend in backends:
+        if backend != "cpu":
+            package_arrayfire_backend(
+                arrayfire_root,
+                stage,
+                backend,
+                lib_suffix,
+                destination=destination,
+                include_licenses=False,
+            )
+    return version
+
+
+def package_arrayfire_base(
+    arrayfire_root: Path,
+    stage: Path,
+    lib_suffix: str,
+) -> str:
+    """Stage only the unified and required CPU runtime closure."""
     require_directory(arrayfire_root, "ArrayFire root")
     library_dir = arrayfire_library_dir(arrayfire_root)
     destination = stage / "arrayfire" / ("bin" if lib_suffix == ".dll" else "lib")
@@ -403,48 +482,72 @@ def package_arrayfire(
             destination,
         )
 
-    if "opencl" in backends:
-        copy_required_group(roots, f"{prefix}afopencl{suffix_pattern}", destination, "ArrayFire OpenCL backend")
-
-    if "cuda" in backends:
-        copy_required_group(roots, f"{prefix}afcuda{suffix_pattern}", destination, "ArrayFire CUDA backend")
-        if lib_suffix == ".dll":
-            for pattern, label in (
-                ("cublas64_*.dll", "CUDA cuBLAS runtime"),
-                ("cufft64_*.dll", "CUDA cuFFT runtime"),
-                ("cusolver64_*.dll", "CUDA cuSOLVER runtime"),
-                ("nvrtc64_*.dll", "CUDA NVRTC runtime"),
-            ):
-                copy_required_group(roots, pattern, destination, label)
-            copy_optional_groups(
-                roots,
-                ("cublasLt64_*.dll", "cusparse64_*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll", "cudnn*.dll"),
-                destination,
-            )
-
-    if "oneapi" in backends:
-        copy_required_group(roots, f"{prefix}afoneapi{suffix_pattern}", destination, "ArrayFire oneAPI backend")
-        if lib_suffix == ".dll":
-            for pattern, label in (
-                ("sycl*.dll", "oneAPI SYCL runtime"),
-                ("mkl_sycl_blas*.dll", "oneMKL SYCL BLAS runtime"),
-                ("mkl_sycl_lapack*.dll", "oneMKL SYCL LAPACK runtime"),
-                ("mkl_sycl_dft*.dll", "oneMKL SYCL DFT runtime"),
-                ("mkl_sycl_sparse*.dll", "oneMKL SYCL sparse runtime"),
-                ("ur_loader*.dll", "oneAPI Unified Runtime loader"),
-                ("ur_adapter_*.dll", "oneAPI Unified Runtime adapter"),
-                ("libmmd.dll", "Intel math runtime"),
-            ):
-                copy_required_group(roots, pattern, destination, label)
-            copy_optional_groups(
-                roots,
-                ("mkl_sycl_*.dll", "mkl_*.dll", "ur_*.dll", "umf*.dll", "tbb*.dll", "libhwloc*.dll"),
-                destination,
-            )
-
     licenses = arrayfire_root / "LICENSES"
     require_directory(licenses, "ArrayFire licenses")
     copy_tree(licenses, stage / "THIRD_PARTY_LICENSES" / "ArrayFire")
+    return arrayfire_version(arrayfire_root)
+
+
+def package_arrayfire_backend(
+    arrayfire_root: Path,
+    stage: Path,
+    backend: str,
+    lib_suffix: str,
+    *,
+    destination: Path | None = None,
+    include_licenses: bool = True,
+) -> str:
+    """Stage one optional plugin and its user-mode closure, never the CPU base."""
+    require_directory(arrayfire_root, "ArrayFire root")
+    library_dir = arrayfire_library_dir(arrayfire_root)
+    destination = destination or stage / "runtime"
+    destination.mkdir(parents=True, exist_ok=True)
+    prefix = "" if lib_suffix == ".dll" else "lib"
+    suffix_pattern = f"{lib_suffix}*" if lib_suffix != ".dll" else lib_suffix
+    roots = [library_dir]
+
+    copy_required_group(
+        roots,
+        f"{prefix}af{backend}{suffix_pattern}",
+        destination,
+        f"ArrayFire {backend} backend",
+    )
+    if backend == "cuda" and lib_suffix == ".dll":
+        for pattern, label in (
+            ("cublas64_*.dll", "CUDA cuBLAS runtime"),
+            ("cufft64_*.dll", "CUDA cuFFT runtime"),
+            ("cusolver64_*.dll", "CUDA cuSOLVER runtime"),
+            ("nvrtc64_*.dll", "CUDA NVRTC runtime"),
+        ):
+            copy_required_group(roots, pattern, destination, label)
+        copy_optional_groups(
+            roots,
+            ("cublasLt64_*.dll", "cusparse64_*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll", "cudnn*.dll"),
+            destination,
+        )
+    if backend == "oneapi" and lib_suffix == ".dll":
+        for pattern, label in (
+            ("sycl*.dll", "oneAPI SYCL runtime"),
+            ("mkl_sycl_blas*.dll", "oneMKL SYCL BLAS runtime"),
+            ("mkl_sycl_lapack*.dll", "oneMKL SYCL LAPACK runtime"),
+            ("mkl_sycl_dft*.dll", "oneMKL SYCL DFT runtime"),
+            ("mkl_sycl_sparse*.dll", "oneMKL SYCL sparse runtime"),
+            ("ur_loader*.dll", "oneAPI Unified Runtime loader"),
+            ("ur_adapter_*.dll", "oneAPI Unified Runtime adapter"),
+            ("libmmd.dll", "Intel math runtime"),
+        ):
+            copy_required_group(roots, pattern, destination, label)
+        copy_optional_groups(
+            roots,
+            ("mkl_sycl_*.dll", "mkl_*.dll", "ur_*.dll", "umf*.dll", "tbb*.dll", "libhwloc*.dll"),
+            destination,
+        )
+
+    if include_licenses:
+        copy_tree(
+            require_directory(arrayfire_root / "LICENSES", "ArrayFire licenses"),
+            stage / "THIRD_PARTY_LICENSES" / "ArrayFire",
+        )
     return arrayfire_version(arrayfire_root)
 
 
@@ -503,7 +606,11 @@ def render_readme(template: Path, destination: Path, values: dict[str, str]) -> 
 
 def classify_source(relative_path: Path) -> str:
     value = relative_path.as_posix()
-    if value.startswith("arrayfire/") or value.startswith("THIRD_PARTY_LICENSES/ArrayFire/"):
+    if (
+        value.startswith("arrayfire/")
+        or value.startswith("runtime/")
+        or value.startswith("THIRD_PARTY_LICENSES/ArrayFire/")
+    ):
         return "arrayfire"
     if value.startswith("THIRD_PARTY_LICENSES/Intel/"):
         return "intel-runtime-license"
@@ -572,6 +679,150 @@ def write_manifest(
     return path
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def create_deterministic_zip(stage: Path, destination: Path) -> Path:
+    """Create stable Windows pack bytes from sorted content and fixed metadata."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for path in sorted(item for item in stage.rglob("*") if item.is_file()):
+            relative = path.relative_to(stage).as_posix()
+            info = zipfile.ZipInfo(relative, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            executable = path.suffix.lower() in (".exe", ".dll", ".pyd", ".so", ".dylib")
+            info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
+            archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+    return destination
+
+
+def arrayfire_abi(version: str) -> str:
+    match = re.fullmatch(r"(\d+)\.(\d+)(?:\..*)?", version)
+    if not match:
+        raise PackageError(f"Cannot derive ArrayFire ABI from version {version!r}")
+    return f"arrayfire-{match.group(1)}.{match.group(2)}"
+
+
+def compatibility_contract(backend: str) -> dict[str, object]:
+    if backend == "cpu":
+        kinds = ["cpu"]
+        providers = ["arrayfire-cpu"]
+        recommendations: list[str] = []
+        confidence = "backend_local"
+    elif backend == "cuda":
+        kinds = ["gpu"]
+        providers = ["nvidia-driver"]
+        recommendations = ["opencl", "cpu"]
+        confidence = "stable_hardware"
+    elif backend == "opencl":
+        kinds = ["cpu", "gpu", "accelerator"]
+        providers = ["opencl-icd"]
+        recommendations = ["cuda", "oneapi", "cpu"]
+        confidence = "stable_hardware"
+    else:
+        kinds = ["cpu", "gpu", "accelerator"]
+        providers = ["sycl-unified-runtime"]
+        recommendations = ["opencl", "cpu"]
+        confidence = "stable_hardware"
+    return {
+        "device_kinds": kinds,
+        "cpu_features": [],
+        "provider_types": providers,
+        "minimum_driver_versions": {},
+        "tested_driver_ranges": {},
+        "minimum_identity_confidence": confidence,
+        "recommendation_targets": recommendations,
+        "operation_matrix_id": "cyxwiz-route-qualification-v1",
+        "training_scope": ["released-operation-matrix", "strict-training-micrograph"],
+        "support_status": "diagnostic",
+    }
+
+
+def write_pack_contract(
+    stage: Path,
+    archive: Path,
+    *,
+    pack_id: str,
+    pack_kind: str,
+    backend: str,
+    pack_version: str,
+    platform_name: str,
+    runtime_set_id: str,
+    cyxwiz_version: str,
+    af_version: str,
+    companion_base_id: str | None,
+    signing_key_id: str,
+    signature: str | None,
+    timestamp: str,
+) -> tuple[Path, Path]:
+    components = inventory(stage)
+    component_documents = [
+        {
+            "path": component.path,
+            "size": component.size,
+            "sha256": component.sha256,
+            "source": component.source,
+            "executable": Path(component.path).suffix.lower()
+            in (".exe", ".dll", ".pyd", ".so", ".dylib"),
+        }
+        for component in components
+    ]
+    licenses = [
+        {"component": component.source, "path": component.path}
+        for component in components
+        if component.path.startswith("THIRD_PARTY_LICENSES/")
+        or component.path == "LICENSE"
+    ]
+    signed = {
+        "pack_id": pack_id,
+        "pack_kind": pack_kind,
+        "backend": backend,
+        "package_version": pack_version,
+        "platform": platform_name,
+        "architecture": "x86_64",
+        "runtime_set_id": runtime_set_id,
+        "cyxwiz_release": {"minimum": cyxwiz_version, "maximum": cyxwiz_version},
+        "arrayfire": {"version": af_version, "abi": arrayfire_abi(af_version)},
+        "companion_base_id": companion_base_id,
+        "conflicts": [],
+        "compatibility": compatibility_contract(backend),
+        "components": component_documents,
+        "licenses": licenses,
+        "archive": {
+            "file_name": archive.name,
+            "size": archive.stat().st_size,
+            "sha256": sha256_file(archive),
+        },
+        "generated_utc": timestamp,
+    }
+    signed_path = archive.with_suffix(archive.suffix + ".signed.json")
+    signed_path.write_bytes(canonical_json_bytes(signed) + b"\n")
+    manifest = {
+        "schema_version": 1,
+        "kind": "cyxwiz-backend-pack-manifest",
+        "signed": signed,
+        "signatures": [],
+    }
+    if signature is not None:
+        manifest["signatures"] = [
+            {
+                "key_id": signing_key_id,
+                "algorithm": "ed25519",
+                "value": signature,
+            }
+        ]
+        validate_pack_manifest(manifest)
+    manifest_path = archive.with_suffix(archive.suffix + ".manifest.json")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest_path, signed_path
+
+
 def create_archive(stage: Path, output_root: Path, package_name: str, system: str) -> Path:
     base = output_root / package_name
     if system == "windows":
@@ -581,12 +832,139 @@ def create_archive(stage: Path, output_root: Path, package_name: str, system: st
     return archive
 
 
+def build_split_artifact(
+    args: argparse.Namespace,
+    paths: PackagePaths,
+    platform_name: str,
+    exe_suffix: str,
+    lib_suffix: str,
+    system: str,
+    version: str,
+) -> tuple[Path, Path | None]:
+    if system != "windows":
+        raise PackageError("Base/backend-pack artifacts are currently validated only on Windows")
+    pack_version = validate_release_version(args.pack_version, "pack")
+    arrayfire_root = (args.arrayfire_dir or Path(os.environ.get("ARRAYFIRE_DIR", r"C:\Program Files\ArrayFire\v3"))).resolve()
+    require_directory(arrayfire_root, "ArrayFire root")
+    af_version = arrayfire_version(arrayfire_root)
+    if af_version == "unknown":
+        raise PackageError("Split artifacts require an exact ArrayFire version")
+    runtime_set_id = args.runtime_set_id or f"arrayfire-{af_version}-{platform_name}-v{pack_version}"
+    validate_release_version(runtime_set_id, "runtime set")
+    timestamp = generated_utc(args.generated_utc)
+
+    if args.profile == "base":
+        if args.backend:
+            raise PackageError("The base profile does not accept --backend")
+        pack_id = f"cyxwiz-base-{version}-{pack_version}-{platform_name}"
+        stage = paths.output_root / "staging" / pack_id
+        safe_clean(stage, paths.output_root)
+        copy_build_payload(paths, stage, "full", system, exe_suffix, lib_suffix)
+
+        python_root = (args.python_dir or Path(os.environ.get("PYTHON_EMBED", r"C:\Python312-embed"))).resolve()
+        require_directory(python_root, "bundled Python runtime")
+        validate_windows_embedded_python(python_root)
+        full_python_version = validate_python_version(python_version(python_root, args.python_version))
+        python_license = next(
+            (path for path in (python_root / "LICENSE.txt", python_root / "LICENSE") if path.is_file()),
+            None,
+        )
+        if python_license is None:
+            raise PackageError(f"Missing bundled Python license in {python_root}")
+
+        intel_notices = args.intel_runtime_license_dir or os.environ.get("INTEL_RUNTIME_LICENSE_DIR")
+        if intel_notices is None:
+            raise PackageError("Pass --intel-runtime-license-dir for the CPU base MKL notices")
+        intel_notices_path = validate_intel_runtime_notices(Path(intel_notices).resolve(), ())
+        package_arrayfire_base(arrayfire_root, stage, lib_suffix)
+        copy_tree(python_root, stage / "python")
+        copy_runtime_notices(stage, intel_notices_path, None)
+        create_launcher(stage, "full", system)
+        render_readme(
+            paths.templates / "README_FULL.md",
+            stage / "README.md",
+            {
+                "VERSION": version,
+                "PLATFORM": platform_name,
+                "BACKENDS": "cpu base",
+                "ARRAYFIRE_VERSION": af_version,
+            },
+        )
+        # Ensure the detected embedded ABI participates in the staged content.
+        (stage / "RUNTIME_VERSIONS.json").write_text(
+            json.dumps({"arrayfire": af_version, "cyxwiz": version, "python": full_python_version}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        backend = "cpu"
+        pack_kind = "base"
+        companion_base_id = None
+    else:
+        if not args.backend:
+            raise PackageError("The pack profile requires exactly one --backend")
+        backend = args.backend
+        pack_id = f"cyxwiz-af-{backend}-{af_version}-{pack_version}-{platform_name}"
+        companion_base_id = args.base_pack_id or f"cyxwiz-base-{version}-{pack_version}-{platform_name}"
+        validate_release_version(companion_base_id, "base pack")
+        stage = paths.output_root / "staging" / pack_id
+        safe_clean(stage, paths.output_root)
+        package_arrayfire_backend(arrayfire_root, stage, backend, lib_suffix)
+        if backend == "oneapi":
+            intel_notices = args.intel_runtime_license_dir or os.environ.get("INTEL_RUNTIME_LICENSE_DIR")
+            if intel_notices is None:
+                raise PackageError("Pass --intel-runtime-license-dir for the oneAPI pack")
+            copy_tree(
+                validate_intel_runtime_notices(Path(intel_notices).resolve(), ("oneapi",)),
+                stage / "THIRD_PARTY_LICENSES" / "Intel",
+            )
+        if backend == "cuda":
+            nvidia_notices = args.nvidia_runtime_license_dir or os.environ.get("NVIDIA_RUNTIME_LICENSE_DIR")
+            if nvidia_notices is None:
+                raise PackageError("Pass --nvidia-runtime-license-dir for the CUDA pack")
+            copy_tree(
+                require_notice_directory(Path(nvidia_notices).resolve(), "NVIDIA runtime license directory"),
+                stage / "THIRD_PARTY_LICENSES" / "NVIDIA",
+            )
+        pack_kind = "backend_pack"
+
+    if args.stage_only:
+        return stage, None
+
+    archive = create_deterministic_zip(stage, paths.output_root / f"{pack_id}.zip")
+    write_pack_contract(
+        stage,
+        archive,
+        pack_id=pack_id,
+        pack_kind=pack_kind,
+        backend=backend,
+        pack_version=pack_version,
+        platform_name=platform_name,
+        runtime_set_id=runtime_set_id,
+        cyxwiz_version=version,
+        af_version=af_version,
+        companion_base_id=companion_base_id,
+        signing_key_id=args.signing_key_id,
+        signature=args.signature,
+        timestamp=timestamp,
+    )
+    return stage, archive
+
+
 def build_package(args: argparse.Namespace, script: Path | None = None) -> tuple[Path, Path | None]:
     script = script or Path(__file__)
     paths = default_paths(script, args)
     platform_name, exe_suffix, lib_suffix = host_platform()
     system = platform.system().lower()
     version = validate_release_version(args.version or infer_cyxwiz_version(paths.root), "CyxWiz")
+    if args.profile in ("base", "pack"):
+        return build_split_artifact(
+            args,
+            paths,
+            platform_name,
+            exe_suffix,
+            lib_suffix,
+            system,
+            version,
+        )
     backends = parse_backends(args.backends) if args.profile == "full" else ()
     if args.profile == "full" and system != "windows":
         raise PackageError(
@@ -691,6 +1069,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"[OK] Staged package: {stage}")
     if archive:
         print(f"[OK] Archive: {archive} ({archive.stat().st_size} bytes)")
+        if args.profile in ("base", "pack"):
+            print(f"[OK] Signature input: {archive.with_suffix(archive.suffix + '.signed.json')}")
+            print(f"[OK] Manifest: {archive.with_suffix(archive.suffix + '.manifest.json')}")
+            if not args.signature:
+                print("[SIGNING REQUIRED] The manifest is not publishable until an Ed25519 signature is supplied")
     else:
         print("[OK] Archive creation skipped (--stage-only)")
     return 0

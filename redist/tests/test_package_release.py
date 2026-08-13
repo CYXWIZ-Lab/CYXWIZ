@@ -61,7 +61,10 @@ class PackageReleaseTests(unittest.TestCase):
     def args(self, *values: str):
         return package_release.parse_args([*values, "--stage-only"])
 
-    def create_arrayfire(self, oneapi: bool = False) -> Path:
+    def artifact_args(self, *values: str):
+        return package_release.parse_args([*values])
+
+    def create_arrayfire(self, oneapi: bool = False, opencl: bool = False) -> Path:
         root = self.root / "arrayfire"
         library = root / "lib"
         licenses = root / "LICENSES"
@@ -73,6 +76,8 @@ class PackageReleaseTests(unittest.TestCase):
         (include / "version.h").write_text('#define AF_VERSION "3.10.0"\n', encoding="ascii")
         for name in ("af.dll", "afcpu.dll", "mkl_rt.2.dll"):
             (library / name).write_bytes(name.encode("ascii"))
+        if opencl:
+            (library / "afopencl.dll").write_bytes(b"opencl")
         if oneapi:
             for name in (
                 "afoneapi.dll",
@@ -228,6 +233,85 @@ class PackageReleaseTests(unittest.TestCase):
     def test_archive_version_cannot_escape_output_root(self) -> None:
         with self.assertRaisesRegex(package_release.PackageError, "Invalid CyxWiz"):
             package_release.validate_release_version("../release", "CyxWiz")
+
+    def test_base_profile_emits_cpu_only_deterministic_artifact(self) -> None:
+        arrayfire = self.create_arrayfire(opencl=True)
+        args = self.artifact_args(
+            "base",
+            "--arrayfire-dir",
+            str(arrayfire),
+            "--python-dir",
+            str(self.create_python()),
+            "--python-version",
+            "3.12.8",
+            "--intel-runtime-license-dir",
+            str(self.create_runtime_licenses()),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+        )
+
+        stage, archive = package_release.build_package(args, self.script)
+        first_hash = package_release.sha256_file(archive)
+        _, rebuilt = package_release.build_package(args, self.script)
+
+        self.assertEqual(first_hash, package_release.sha256_file(rebuilt))
+        self.assertTrue((stage / "arrayfire" / "bin" / "af.dll").is_file())
+        self.assertTrue((stage / "arrayfire" / "bin" / "afcpu.dll").is_file())
+        self.assertFalse((stage / "arrayfire" / "bin" / "afopencl.dll").exists())
+        manifest = json.loads(
+            archive.with_suffix(".zip.manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("base", manifest["signed"]["pack_kind"])
+        self.assertEqual("cpu", manifest["signed"]["backend"])
+        self.assertEqual([], manifest["signatures"])
+        self.assertTrue(archive.with_suffix(".zip.signed.json").is_file())
+
+    def test_opencl_pack_excludes_cpu_base_and_validates_signature(self) -> None:
+        arrayfire = self.create_arrayfire(opencl=True)
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(arrayfire),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+            "--signing-key-id",
+            "release-2026",
+            "--signature",
+            "A" * 86,
+        )
+
+        stage, archive = package_release.build_package(args, self.script)
+
+        self.assertTrue((stage / "runtime" / "afopencl.dll").is_file())
+        self.assertFalse((stage / "runtime" / "af.dll").exists())
+        self.assertFalse((stage / "runtime" / "afcpu.dll").exists())
+        manifest = json.loads(
+            archive.with_suffix(".zip.manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("backend_pack", manifest["signed"]["pack_kind"])
+        self.assertEqual("opencl", manifest["signed"]["backend"])
+        package_release.validate_pack_manifest(manifest)
+
+    def test_pack_profile_requires_one_optional_backend(self) -> None:
+        args = self.args("pack", "--arrayfire-dir", str(self.create_arrayfire()))
+        with self.assertRaisesRegex(package_release.PackageError, "requires exactly one"):
+            package_release.build_package(args, self.script)
+
+    def test_pack_stage_only_does_not_emit_archive(self) -> None:
+        args = self.args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+        )
+
+        stage, archive = package_release.build_package(args, self.script)
+
+        self.assertTrue((stage / "runtime" / "afopencl.dll").is_file())
+        self.assertIsNone(archive)
 
 
 if __name__ == "__main__":

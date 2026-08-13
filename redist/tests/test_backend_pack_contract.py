@@ -208,6 +208,21 @@ class BackendPackContractTests(unittest.TestCase):
         with self.assertRaisesRegex(contract.ContractError, "duplicate active backend"):
             contract.validate_active_runtime(document)
 
+    def test_runtime_composition_accepts_matching_base_and_pack(self) -> None:
+        base = pack_manifest("base", "cpu")
+        pack = pack_manifest()
+        base["signed"]["runtime_set_id"] = pack["signed"]["runtime_set_id"]
+        base["signed"]["arrayfire"] = copy.deepcopy(pack["signed"]["arrayfire"])
+        contract.validate_runtime_composition(base, pack)
+
+    def test_runtime_composition_rejects_arrayfire_abi_mixing(self) -> None:
+        base = pack_manifest("base", "cpu")
+        pack = pack_manifest()
+        base["signed"]["runtime_set_id"] = pack["signed"]["runtime_set_id"]
+        pack["signed"]["arrayfire"]["abi"] = "arrayfire-3.9"
+        with self.assertRaisesRegex(contract.ContractError, "incompatible ArrayFire ABI"):
+            contract.validate_runtime_composition(base, pack)
+
     def test_canonical_json_is_key_order_independent(self) -> None:
         left = {"b": [2, 1], "a": {"d": "x", "c": True}}
         right = {"a": {"c": True, "d": "x"}, "b": [2, 1]}

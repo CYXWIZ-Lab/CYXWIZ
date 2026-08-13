@@ -4,11 +4,12 @@ This directory contains the source tooling for CyxWiz release packages.
 Generated staging directories and archives are written under `redist/output/`
 and are not source files.
 
-The frozen Ticket 88 base/backend-pack layout, signed metadata schemas, trust
-policy, and ownership boundaries are defined in
+The frozen base/backend-pack layout, signed metadata schemas, trust policy,
+and ownership boundaries are defined in
 [`BACKEND_PACK_CONTRACT.md`](BACKEND_PACK_CONTRACT.md). The current
-minimal/full profiles remain transitional compositions until the Phase 1 pack
-builder emits those artifacts directly.
+`base` and `pack` profiles emit these artifacts directly. The legacy
+`minimal` and `full` profiles remain available during migration, with `full`
+composed from the same CPU-base and optional-backend closure functions.
 
 ## Package Profiles
 
@@ -36,6 +37,18 @@ archive and `PACKAGE_MANIFEST.json`.
 A full package is self-contained for application runtimes, not hardware
 drivers. It does not claim that every backend can execute on every machine.
 
+### Base and optional backend packs
+
+The `base` profile emits the Engine, embedded Python, ArrayFire unified/CPU
+runtime, and required notices. The `pack` profile emits exactly one optional
+`cuda`, `opencl`, or `oneapi` plugin closure. Base and pack archives are
+deterministic ZIPs with explicit runtime-set, companion-base, platform, and
+ArrayFire ABI identities.
+
+Each archive is accompanied by `.zip.signed.json` canonical signature input
+and `.zip.manifest.json`. Without `--signature`, the manifest intentionally has
+an empty signature list and is a signing request, not a publishable artifact.
+
 ## Implementation
 
 Both shell families call one standard-library implementation:
@@ -43,6 +56,9 @@ Both shell families call one standard-library implementation:
 - `scripts/package_release.py`
 - `scripts/package_minimal.bat` and `package_minimal.sh`
 - `scripts/package_full.bat` and `package_full.sh`
+
+The base and optional-pack profiles call `package_release.py` directly so the
+release command explicitly names the artifact being produced.
 
 This keeps validation, backend closure rules, manifests, hashes, and README
 rendering consistent across platforms.
@@ -88,6 +104,28 @@ redist\scripts\package_full.bat --version 0.2.0 ^
   --intel-runtime-license-dir "C:\release-notices\intel" ^
   --backends cpu,oneapi
 ```
+
+Windows CPU base:
+
+```batch
+py -3 redist\scripts\package_release.py base --version 0.2.0 ^
+  --arrayfire-dir "C:\Program Files\ArrayFire\v3" ^
+  --python-dir "C:\Python312-embed" ^
+  --intel-runtime-license-dir "C:\release-notices\intel"
+```
+
+Windows OpenCL pack:
+
+```batch
+py -3 redist\scripts\package_release.py pack --version 0.2.0 ^
+  --backend opencl ^
+  --arrayfire-dir "C:\Program Files\ArrayFire\v3"
+```
+
+The packager prints the canonical `.signed.json` path. Sign those exact bytes
+with the release Ed25519 key, then rebuild with `--signing-key-id` and the
+unpadded base64url value in `--signature`. Use the same `--runtime-set-id` and
+matching `--base-pack-id` when preparing companion artifacts.
 
 Example notice layout:
 

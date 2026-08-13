@@ -373,3 +373,23 @@ def validate_active_runtime(document: Any) -> None:
             raise ContractError(f"duplicate active backend: {backend}")
         seen.add(backend)
         _identifier(entry["pack_id"], f"{field}.pack_id")
+
+
+def validate_runtime_composition(base_document: Any, pack_document: Any) -> None:
+    """Reject base/plugin mixing before a runtime set can be activated."""
+    validate_pack_manifest(base_document)
+    validate_pack_manifest(pack_document)
+    base = _object(base_document["signed"], "base.signed")
+    pack = _object(pack_document["signed"], "pack.signed")
+    if base["pack_kind"] != "base":
+        raise ContractError("runtime composition base document is not a base pack")
+    if pack["pack_kind"] != "backend_pack":
+        raise ContractError("runtime composition optional document is not a backend pack")
+    if pack["companion_base_id"] != base["pack_id"]:
+        raise ContractError("backend pack requires a different companion base")
+    if pack["runtime_set_id"] != base["runtime_set_id"]:
+        raise ContractError("backend pack and base use different runtime sets")
+    if pack["platform"] != base["platform"] or pack["architecture"] != base["architecture"]:
+        raise ContractError("backend pack and base target different platforms")
+    if pack["arrayfire"] != base["arrayfire"]:
+        raise ContractError("backend pack and base have incompatible ArrayFire ABI")
