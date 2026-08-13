@@ -413,6 +413,8 @@ endif()
 if(NOT CYXWIZ_ANDROID_BUILD)
     if(CYXWIZ_BUILD_ENGINE)
         add_subdirectory(cyxwiz-engine)
+        include(CyxWizReleasePackaging)
+        cyxwiz_add_release_packaging_targets()
     endif()
 
     if(CYXWIZ_BUILD_SERVER_NODE)

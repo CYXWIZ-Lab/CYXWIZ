@@ -1,6 +1,7 @@
 #include "runtime_console_commands.h"
 
 #include "error_codes.h"
+#include "route_recommendation.h"
 
 #include <algorithm>
 #include <charconv>
@@ -308,6 +309,108 @@ std::string RecordedOr(std::string_view value) {
     return value.empty() ? "not_recorded" : std::string(value);
 }
 
+const char* MatrixStatus(bool evidence_available, bool passed) {
+    if (!evidence_available) return "no_evidence";
+    return passed ? "passed" : "failed";
+}
+
+std::optional<DeviceType> ParseDeviceBackend(std::string_view backend) {
+    const auto normalized = LowerAscii(backend);
+    if (normalized == "cpu" || normalized == "arrayfire_cpu") {
+        return DeviceType::CPU;
+    }
+    if (normalized == "cuda" || normalized == "arrayfire_cuda") {
+        return DeviceType::CUDA;
+    }
+    if (normalized == "opencl" || normalized == "arrayfire_opencl") {
+        return DeviceType::OPENCL;
+    }
+    if (normalized == "oneapi" || normalized == "arrayfire_oneapi") {
+        return DeviceType::ONEAPI;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::pair<DeviceType, int>> ParseDeviceRoute(
+    std::string_view route) {
+    const auto separator = route.rfind(':');
+    if (separator == std::string_view::npos || separator == 0 ||
+        separator + 1 >= route.size()) {
+        return std::nullopt;
+    }
+    const auto backend = ParseDeviceBackend(route.substr(0, separator));
+    if (!backend.has_value()) return std::nullopt;
+    int device_id = -1;
+    const auto id = route.substr(separator + 1);
+    const auto parsed = std::from_chars(
+        id.data(), id.data() + id.size(), device_id);
+    if (parsed.ec != std::errc{} || parsed.ptr != id.data() + id.size() ||
+        device_id < 0) {
+        return std::nullopt;
+    }
+    return std::pair{*backend, device_id};
+}
+
+DeviceKind ParseDeviceKind(std::string_view kind) {
+    const auto normalized = LowerAscii(kind);
+    if (normalized == "cpu") return DeviceKind::CPU;
+    if (normalized == "gpu") return DeviceKind::GPU;
+    if (normalized == "accelerator") return DeviceKind::Accelerator;
+    return DeviceKind::Unknown;
+}
+
+DeviceIdentityConfidence ParseIdentityConfidence(
+    std::string_view confidence) {
+    const auto normalized = LowerAscii(confidence);
+    if (normalized == "stable_hardware") {
+        return DeviceIdentityConfidence::StableHardware;
+    }
+    if (normalized == "provider_reported") {
+        return DeviceIdentityConfidence::ProviderReported;
+    }
+    if (normalized == "backend_local") {
+        return DeviceIdentityConfidence::BackendLocal;
+    }
+    return DeviceIdentityConfidence::Unknown;
+}
+
+std::optional<DeviceInfo> ToDeviceInfo(
+    const RuntimeDeviceEntryTruth& entry) {
+    const auto type = ParseDeviceBackend(entry.backend);
+    if (!type.has_value()) return std::nullopt;
+    DeviceInfo info;
+    info.type = *type;
+    info.device_id = entry.device_id;
+    info.name = entry.name;
+    info.name_is_fallback = entry.name_is_fallback;
+    info.kind = ParseDeviceKind(entry.device_kind);
+    info.identity_confidence =
+        ParseIdentityConfidence(entry.identity_confidence);
+    info.provider = entry.provider;
+    info.driver_version = entry.driver_version;
+    info.hardware_vendor_id = entry.hardware_vendor_id;
+    info.hardware_device_id = entry.hardware_device_id;
+    info.physical_fingerprint = entry.physical_fingerprint;
+    info.provider_known = entry.provider_known;
+    info.driver_version_known = entry.driver_version_known;
+    info.hardware_vendor_id_known = entry.hardware_vendor_id_known;
+    info.hardware_device_id_known = entry.hardware_device_id_known;
+    info.physical_fingerprint_known = entry.physical_fingerprint_known;
+    return info;
+}
+
+std::string DeviceRouteLabel(const DeviceInfo& route) {
+    std::string backend;
+    switch (route.type) {
+        case DeviceType::CPU: backend = "arrayfire_cpu"; break;
+        case DeviceType::CUDA: backend = "arrayfire_cuda"; break;
+        case DeviceType::OPENCL: backend = "arrayfire_opencl"; break;
+        case DeviceType::ONEAPI: backend = "arrayfire_oneapi"; break;
+        default: backend = "arrayfire_unknown"; break;
+    }
+    return backend + ':' + std::to_string(route.device_id);
+}
+
 void AddTrainingSummary(RuntimeConsoleCommandResult& result,
                         const RuntimeTrainingTruth& truth) {
     AddLine(result, RuntimeConsoleOutputLevel::Info,
@@ -336,7 +439,31 @@ void AddTrainingSummary(RuntimeConsoleCommandResult& result,
                 " effective=" + RecordedOr(truth.effective_backend) + ':' +
                 std::to_string(truth.effective_device_id) + " device='" +
                 RecordedOr(truth.effective_device_name) + "' context=" +
-                RecordedOr(truth.execution_context_id));
+                RecordedOr(truth.execution_context_id) + " preflight=" +
+                RecordedOr(truth.preflight_stage) + " execution=" +
+                (truth.execution_validated ? "validated" : "not_validated") +
+                " selection_fallback=" +
+                (truth.selection_fallback_applied ? "true" : "false"));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Qualification: requested=" +
+                std::string(MatrixStatus(
+                    !truth.requested_qualification_matrix_id.empty(),
+                    truth.requested_route_qualified)) +
+                " evidence='" +
+                RouteQualificationEvidenceLabel(
+                    truth.requested_qualification_matrix_id) + "'" +
+                " effective=" +
+                MatrixStatus(
+                    !truth.effective_qualification_matrix_id.empty(),
+                    truth.effective_route_qualified) +
+                " evidence='" +
+                RouteQualificationEvidenceLabel(
+                    truth.effective_qualification_matrix_id) + "'");
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Identity: confidence=" +
+                RecordedOr(truth.identity_confidence) +
+                " fingerprint=" +
+                RecordedOr(truth.physical_fingerprint));
     AddLine(result, RuntimeConsoleOutputLevel::Info,
             "Policy: fallback=" + RecordedOr(truth.fallback_policy) +
                 " residency=" + RecordedOr(truth.residency_verdict) +
@@ -519,7 +646,9 @@ RuntimeConsoleCommandService::Registry() {
           "  show codes last <n>\n"
           "  show codes where <filter>\n"
           "  show training current|last|trace|fallback|host-sync|placement|materialization\n"
-          "  show device active|available|queued|backends|oneapi\n"
+          "  show device active|available|queued|backends|oneapi|qualification\n"
+          "  show device route <backend>:<id>\n"
+          "  show device recommendations <backend>:<id>\n"
           "  show run current\n"
           "  show run <run_id> summary|events|codes|host-sync|fallback\n"
           "  show run <run_id> code <CW-X-NNNN>\n"
@@ -533,6 +662,8 @@ RuntimeConsoleCommandService::Registry() {
           "  show codes family CW-G-*\n"
           "  show training current\n"
           "  show device active\n"
+          "  show device qualification\n"
+          "  show device recommendations cuda:0\n"
           "  show run train-1786337176120 fallback\n"
           "  show materialization last"},
          &RuntimeConsoleCommandService::ExecuteShow, true},
@@ -1003,17 +1134,24 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowTraining(
 RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowDevice(
     std::string_view arguments) {
     const auto tokens = TokenizeCommand(arguments);
-    if (tokens.error || tokens.values.size() != 1) {
-        return Usage("show device active|available|queued|backends|oneapi");
+    if (tokens.error || tokens.values.empty() || tokens.values.size() > 2) {
+        return Usage(
+            "show device active|available|queued|backends|oneapi|qualification | show device route|recommendations <backend>:<id>");
     }
     if (!truth_provider_) {
         return ErrorResult("Runtime device truth provider is unavailable");
     }
     const auto mode = LowerAscii(tokens.values[0].text);
     const bool include_inventory =
-        mode == "available" || mode == "backends" || mode == "oneapi";
-    if (mode != "active" && mode != "queued" && !include_inventory) {
-        return Usage("show device active|available|queued|backends|oneapi");
+        mode == "available" || mode == "backends" || mode == "oneapi" ||
+        mode == "qualification" || mode == "route" ||
+        mode == "recommendations";
+    const bool requires_route = mode == "route" || mode == "recommendations";
+    if ((requires_route && tokens.values.size() != 2) ||
+        (!requires_route && tokens.values.size() != 1) ||
+        (mode != "active" && mode != "queued" && !include_inventory)) {
+        return Usage(
+            "show device active|available|queued|backends|oneapi|qualification | show device route|recommendations <backend>:<id>");
     }
     const auto truth = truth_provider_->GetDeviceTruth(include_inventory);
     RuntimeConsoleCommandResult result;
@@ -1029,7 +1167,10 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowDevice(
                     RecordedOr(truth.active_source) + " backend=" +
                     RecordedOr(truth.active_backend) + " device_id=" +
                     std::to_string(truth.active_device_id) + " name='" +
-                    RecordedOr(truth.active_device_name) + "'");
+                    RecordedOr(truth.active_device_name) + "' preflight=" +
+                    RecordedOr(truth.active_preflight_stage) + " execution=" +
+                    (truth.active_execution_validated ? "validated" :
+                                                        "not_validated"));
         if (!truth.active_run_id.empty()) {
             AddLine(result, RuntimeConsoleOutputLevel::Info,
                     "Active run: " + truth.active_run_id);
@@ -1052,6 +1193,151 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowDevice(
         return result;
     }
 
+    std::vector<DeviceInfo> inventory;
+    inventory.reserve(truth.available_devices.size());
+    for (const auto& entry : truth.available_devices) {
+        if (auto route = ToDeviceInfo(entry)) {
+            inventory.push_back(std::move(*route));
+        }
+    }
+    if (mode == "qualification") {
+        const auto snapshot = GetRouteQualificationSnapshot();
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Qualification: evidence='" +
+                    std::string(RouteQualificationEvidenceLabel(
+                        snapshot ? snapshot->matrix_id : std::string{})) + "'" +
+                    " routes=" + std::to_string(inventory.size()));
+        for (const auto& route : inventory) {
+            const auto decision =
+                EvaluateRouteQualification(route, snapshot);
+            const auto authorization =
+                EvaluateRouteTrainingAuthorization(route, decision);
+            const std::string display_name =
+                decision.display_name_available ? decision.display_name
+                                                : route.name;
+            AddLine(result,
+                    decision.qualified
+                        ? RuntimeConsoleOutputLevel::Success
+                        : RuntimeConsoleOutputLevel::Warning,
+                    "  route=" + DeviceRouteLabel(route) + " name='" +
+                        RecordedOr(display_name) + "' matrix_status=" +
+                        MatrixStatus(decision.evidence_available,
+                                     decision.qualified) +
+                        " authorization=" +
+                        RouteTrainingAuthorizationStatusName(
+                            authorization.status) +
+                        " failure_category=" +
+                        RouteFailureCategoryName(
+                            authorization.failure.category) +
+                        (authorization.failure.operation.empty()
+                             ? ""
+                             : " failed_operation=" +
+                                   authorization.failure.operation) +
+                        " reason=" + authorization.message +
+                        (authorization.failure.observed_fact.empty()
+                             ? ""
+                             : " observed='" +
+                                   authorization.failure.observed_fact + "'"));
+        }
+        return result;
+    }
+    if (requires_route) {
+        const auto requested = ParseDeviceRoute(tokens.values[1].text);
+        if (!requested.has_value()) {
+            return ErrorResult(
+                "Invalid route; expected cpu:0, cuda:0, opencl:0, or oneapi:0");
+        }
+        const auto failed = std::find_if(
+            inventory.begin(), inventory.end(), [&](const DeviceInfo& route) {
+                return route.type == requested->first &&
+                       route.device_id == requested->second;
+            });
+        if (failed == inventory.end()) {
+            return ErrorResult("Route is not present in retained inventory: " +
+                               tokens.values[1].text);
+        }
+        if (mode == "route") {
+            const auto decision = EvaluateRouteQualification(
+                *failed, GetRouteQualificationSnapshot());
+            const auto authorization =
+                EvaluateRouteTrainingAuthorization(*failed, decision);
+            const std::string display_name =
+                decision.display_name_available ? decision.display_name
+                                                : failed->name;
+            const DeviceKind display_kind = decision.device_kind_known
+                ? decision.device_kind
+                : failed->kind;
+            const std::string identity_source =
+                decision.display_name_available
+                    ? RecordedOr(decision.identity_source)
+                    : (failed->name_is_fallback ? "fallback" : "provider");
+            AddLine(result, RuntimeConsoleOutputLevel::Info,
+                    "Route: " + DeviceRouteLabel(*failed) + " name='" +
+                        RecordedOr(display_name) + "' name_source=" +
+                        identity_source + " kind=" +
+                        DeviceKindName(display_kind) + " identity=" +
+                        DeviceIdentityConfidenceName(
+                            failed->identity_confidence) +
+                        " fingerprint=" +
+                        (failed->physical_fingerprint_known
+                             ? failed->physical_fingerprint
+                             : "unknown"));
+            AddLine(result,
+                    decision.qualified
+                        ? RuntimeConsoleOutputLevel::Success
+                        : RuntimeConsoleOutputLevel::Warning,
+                    std::string("Qualification: matrix_status=") +
+                        MatrixStatus(decision.evidence_available,
+                                     decision.qualified) +
+                        " evidence='" +
+                        RouteQualificationEvidenceLabel(decision.matrix_id) +
+                        "'" +
+                        " authorization=" +
+                        RouteTrainingAuthorizationStatusName(
+                            authorization.status) +
+                        " failure_category=" +
+                        RouteFailureCategoryName(
+                            authorization.failure.category) +
+                        (authorization.failure.operation.empty()
+                             ? ""
+                             : " failed_operation=" +
+                                   authorization.failure.operation) +
+                        " reason=" + authorization.message +
+                        (authorization.failure.recommended_action.empty()
+                             ? ""
+                             : " action='" +
+                                   authorization.failure.recommended_action +
+                                   "'"));
+            return result;
+        }
+
+        const auto recommendations = RecommendExecutionRoutes(
+            *failed, inventory, GetRouteQualificationSnapshot());
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Recommendations: failed=" + DeviceRouteLabel(*failed) +
+                    " eligible=" +
+                    std::to_string(recommendations.recommendations.size()) +
+                    " rejected=" +
+                    std::to_string(recommendations.rejections.size()));
+        for (const auto& recommendation :
+             recommendations.recommendations) {
+            AddLine(result, RuntimeConsoleOutputLevel::Success,
+                    "  route=" + DeviceRouteLabel(recommendation.route) +
+                        " class=" +
+                        (recommendation.remediation ==
+                                 RouteRecommendationClass::SamePhysicalDevice
+                             ? "same_physical_device"
+                             : "arrayfire_cpu_recovery") +
+                        " reason=" + recommendation.reason);
+        }
+        for (const auto& rejection : recommendations.rejections) {
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    "  rejected=" + DeviceRouteLabel(rejection.route) +
+                        " reason=" + rejection.reason);
+        }
+        return result;
+    }
+
     AddLine(result, RuntimeConsoleOutputLevel::Info,
             "Device inventory: source=" +
                 RecordedOr(truth.inventory_source) + " status=" +
@@ -1069,15 +1355,68 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowDevice(
         return result;
     }
     size_t shown = 0;
+    const auto snapshot = GetRouteQualificationSnapshot();
     for (const auto& device : truth.available_devices) {
         if (mode == "oneapi" && device.backend != "arrayfire_oneapi") {
             continue;
         }
+        const auto route = ToDeviceInfo(device);
+        const auto qualification = route.has_value()
+            ? EvaluateRouteQualification(*route, snapshot)
+            : RouteQualificationDecision{};
+        const auto authorization = route.has_value()
+            ? EvaluateRouteTrainingAuthorization(*route, qualification)
+            : RouteTrainingAuthorizationDecision{};
+        const std::string display_name =
+            qualification.display_name_available
+                ? qualification.display_name
+                : device.name;
+        const std::string display_kind = qualification.device_kind_known
+            ? DeviceKindName(qualification.device_kind)
+            : RecordedOr(device.device_kind);
+        const std::string name_source = qualification.display_name_available
+            ? RecordedOr(qualification.identity_source)
+            : (device.name_is_fallback ? "fallback" : "provider");
         AddLine(result, RuntimeConsoleOutputLevel::Info,
                 "  backend=" + device.backend + " device_id=" +
                     std::to_string(device.device_id) + " name='" +
-                    RecordedOr(device.name) + "' memory=" +
-                    FormatByteCount(device.memory_total));
+                    RecordedOr(display_name) + "' name_source=" +
+                    name_source +
+                    " selectable=" +
+                    (device.device_selectable ? "true" : "false") +
+                    " kind=" + display_kind +
+                    " identity=" +
+                    RecordedOr(device.identity_confidence) +
+                    " provider='" +
+                    (device.provider_known ? device.provider : "unknown") +
+                    "' driver='" +
+                    (device.driver_version_known
+                         ? device.driver_version
+                         : "unknown") +
+                    "' fingerprint=" +
+                    (device.physical_fingerprint_known
+                         ? device.physical_fingerprint
+                         : "unknown") +
+                    " metadata=" + RecordedOr(device.metadata_status) +
+                    " execution=" +
+                    (device.execution_validated ? "validated" : "not_validated") +
+                    " matrix_status=" +
+                    MatrixStatus(qualification.evidence_available,
+                                 qualification.qualified) +
+                    " authorization=" +
+                    RouteTrainingAuthorizationStatusName(
+                        authorization.status) +
+                    " failure_category=" +
+                    RouteFailureCategoryName(
+                        authorization.failure.category) +
+                    " memory=" +
+                    (device.memory_total_known
+                         ? FormatByteCount(device.memory_total)
+                         : "unknown") +
+                    (device.metadata_error_code != 0
+                         ? " arrayfire_error=" +
+                               std::to_string(device.metadata_error_code)
+                         : ""));
         ++shown;
     }
     if (mode == "oneapi" && shown == 0) {

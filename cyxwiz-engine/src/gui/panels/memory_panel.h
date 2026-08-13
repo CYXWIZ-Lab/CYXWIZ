@@ -89,6 +89,10 @@ private:
         std::string name;
         size_t total_memory = 0;
         size_t free_memory = 0;
+        bool total_memory_known = false;
+        bool free_memory_known = false;
+        bool name_is_fallback = false;
+        int metadata_status = 0;
         std::string backend;  // "CUDA", "OpenCL", "CPU", etc.
         int device_id = -1;
         float temperature = 0.0f;  // Celsius

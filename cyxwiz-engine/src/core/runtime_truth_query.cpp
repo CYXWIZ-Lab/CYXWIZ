@@ -77,6 +77,28 @@ RuntimeTrainingTruth MakeTrainingTruth(
     truth.effective_device_id = trace.effective_device_id;
     truth.effective_device_name = trace.effective_device_name;
     truth.execution_context_id = trace.execution_context_id;
+    truth.physical_fingerprint = trace.physical_fingerprint;
+    truth.identity_confidence = trace.identity_confidence;
+    truth.requested_qualification_evidence_available =
+        trace.requested_qualification_evidence_available;
+    truth.requested_route_qualified = trace.requested_route_qualified;
+    truth.requested_qualification_matrix_id =
+        trace.requested_qualification_matrix_id;
+    truth.requested_qualification_message =
+        trace.requested_qualification_message;
+    truth.effective_qualification_evidence_available =
+        trace.effective_qualification_evidence_available;
+    truth.effective_route_qualified = trace.effective_route_qualified;
+    truth.effective_qualification_matrix_id =
+        trace.effective_qualification_matrix_id;
+    truth.effective_qualification_message =
+        trace.effective_qualification_message;
+    truth.activation_succeeded = trace.activation_succeeded;
+    truth.execution_validated = trace.execution_validated;
+    truth.selection_fallback_applied =
+        trace.selection_fallback_applied;
+    truth.preflight_stage = trace.preflight_stage;
+    truth.preflight_error_code = trace.preflight_error_code;
     truth.fallback_policy = trace.fallback_policy;
     truth.native_cpu_fallback_count = trace.native_cpu_fallback_count;
     truth.transfer_event_count = trace.transfer_event_count;
@@ -115,6 +137,8 @@ void ApplyTrainingTruth(RuntimeRunTruth& run,
     run.effective_device_id = training.effective_device_id;
     run.effective_device_name = training.effective_device_name;
     run.execution_context_id = training.execution_context_id;
+    run.execution_validated = training.execution_validated;
+    run.preflight_stage = training.preflight_stage;
     run.placement_fingerprint = training.placement_fingerprint;
     run.residency_verdict = training.residency_verdict;
     run.native_cpu_fallback_count = training.native_cpu_fallback_count;
@@ -278,6 +302,9 @@ public:
             truth.active_backend = training.effective_backend;
             truth.active_device_id = training.effective_device_id;
             truth.active_device_name = training.effective_device_name;
+            truth.active_execution_validated =
+                training.execution_validated;
+            truth.active_preflight_stage = training.preflight_stage;
         } else {
             try {
                 if (auto* process = Device::GetCurrentDevice()) {
@@ -328,6 +355,44 @@ public:
                     entry.name = device.name;
                     entry.memory_total =
                         static_cast<uint64_t>(device.memory_total);
+                    entry.backend_available = device.backend_available;
+                    entry.device_selectable = device.device_selectable;
+                    entry.execution_validated = device.execution_validated;
+                    entry.device_kind = DeviceKindName(device.kind);
+                    entry.identity_confidence =
+                        DeviceIdentityConfidenceName(
+                            device.identity_confidence);
+                    entry.provider = device.provider;
+                    entry.driver_version = device.driver_version;
+                    entry.hardware_vendor_id = device.hardware_vendor_id;
+                    entry.hardware_device_id = device.hardware_device_id;
+                    entry.pci_domain = device.pci_domain;
+                    entry.pci_bus = device.pci_bus;
+                    entry.pci_device = device.pci_device;
+                    entry.pci_function = device.pci_function;
+                    entry.hardware_uuid = device.hardware_uuid;
+                    entry.hardware_luid = device.hardware_luid;
+                    entry.physical_fingerprint =
+                        device.physical_fingerprint;
+                    entry.provider_known = device.provider_known;
+                    entry.driver_version_known =
+                        device.driver_version_known;
+                    entry.hardware_vendor_id_known =
+                        device.hardware_vendor_id_known;
+                    entry.hardware_device_id_known =
+                        device.hardware_device_id_known;
+                    entry.pci_location_known = device.pci_location_known;
+                    entry.hardware_uuid_known = device.hardware_uuid_known;
+                    entry.hardware_luid_known = device.hardware_luid_known;
+                    entry.physical_fingerprint_known =
+                        device.physical_fingerprint_known;
+                    entry.metadata_status =
+                        DeviceMetadataStatusName(device.metadata_status);
+                    entry.metadata_error_code = device.metadata_error_code;
+                    entry.metadata_message = device.metadata_message;
+                    entry.name_known = device.name_known;
+                    entry.name_is_fallback = device.name_is_fallback;
+                    entry.memory_total_known = device.memory_total_known;
                     inventory_.push_back(std::move(entry));
                 }
                 inventory_initialized_ = true;

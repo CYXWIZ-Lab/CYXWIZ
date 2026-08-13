@@ -680,33 +680,24 @@ void TrainingExecutor::Train(
             ExecutionPolicyDisplayName(*next_run_execution_policy));
     }
 
-    const auto pending_execution_device = GetPendingExecutionDeviceSelection();
-    try {
-        if (pending_execution_device.has_value()) {
-            ApplyPendingExecutionDeviceSelection();
-            spdlog::info(
-                "TrainingExecutor: applied pending ArrayFire runtime device selection");
-        }
-    } catch (const std::exception& e) {
-        is_training_.store(false);
-        spdlog::error(
-            "TrainingExecutor: failed to apply pending ArrayFire runtime device selection: {}",
-            e.what());
-        throw;
-    }
-
     const ArrayFireFallbackPolicy fallback_policy_value =
         config_.forbid_native_cpu_fallback
             ? ArrayFireFallbackPolicy::ForbidNativeCpuFallback
             : ArrayFireFallbackPolicy::AllowNativeCpuFallback;
     const ScopedArrayFireFallbackPolicy fallback_policy(fallback_policy_value);
-    ExecutionDeviceContext execution_context =
-        CaptureCurrentExecutionDeviceContext(fallback_policy_value);
-    if (pending_execution_device.has_value()) {
-        execution_context.requested_backend =
-            ExecutionDeviceSelectionBackendName(pending_execution_device->type);
-        execution_context.requested_device_id =
-            pending_execution_device->device_id;
+    ExecutionDeviceContext execution_context;
+    try {
+        execution_context =
+            PrepareExecutionDeviceForRun(fallback_policy_value);
+        spdlog::info(
+            "TrainingExecutor: ArrayFire device preflight completed: {}",
+            execution_context.Describe());
+    } catch (const std::exception& e) {
+        is_training_.store(false);
+        spdlog::error(
+            "TrainingExecutor: ArrayFire device preflight failed: {}",
+            e.what());
+        throw;
     }
     const ScopedExecutionDeviceContext execution_context_scope(
         execution_context);

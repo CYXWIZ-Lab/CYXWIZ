@@ -116,7 +116,8 @@ void Viewport::Render() {
         ImGui::Separator();
 
         try {
-            if (!devices_initialized_) {
+            if (!devices_initialized_ &&
+                !cyxwiz::HasActiveExecutionDeviceContext()) {
                 cached_devices_.clear();
                 const auto raw_devices = cyxwiz::Device::GetAvailableDevices();
                 cached_devices_.reserve(raw_devices.size());
@@ -130,6 +131,62 @@ void Viewport::Render() {
                     cached.compute_units = device.compute_units;
                     cached.supports_fp64 = device.supports_fp64;
                     cached.supports_fp16 = device.supports_fp16;
+                    cached.kind = static_cast<int>(device.kind);
+                    cached.identity_confidence =
+                        static_cast<int>(device.identity_confidence);
+                    cached.provider = device.provider;
+                    cached.driver_version = device.driver_version;
+                    cached.physical_fingerprint =
+                        device.physical_fingerprint;
+                    cached.provider_known = device.provider_known;
+                    cached.driver_version_known =
+                        device.driver_version_known;
+                    cached.physical_fingerprint_known =
+                        device.physical_fingerprint_known;
+                    cached.metadata_status =
+                        static_cast<int>(device.metadata_status);
+                    cached.device_selectable = device.device_selectable;
+                    cached.execution_validated = device.execution_validated;
+                    cached.name_is_fallback = device.name_is_fallback;
+                    cached.memory_total_known = device.memory_total_known;
+                    const auto qualification =
+                        cyxwiz::EvaluateRouteQualification(device);
+                    if (cached.name_is_fallback &&
+                        qualification.display_name_available) {
+                        cached.name = qualification.display_name;
+                        cached.name_from_qualification = true;
+                    }
+                    if (cached.kind == static_cast<int>(
+                            cyxwiz::DeviceKind::Unknown) &&
+                        qualification.device_kind_known) {
+                        cached.kind = static_cast<int>(
+                            qualification.device_kind);
+                    }
+                    cached.identity_source = qualification.identity_source;
+                    cached.qualification_evidence_available =
+                        qualification.evidence_available;
+                    cached.matrix_qualified = qualification.qualified;
+                    const auto authorization =
+                        cyxwiz::EvaluateRouteTrainingAuthorization(
+                            device, qualification);
+                    cached.training_authorized = authorization.authorized;
+                    cached.training_authorization_status =
+                        static_cast<int>(authorization.status);
+                    cached.qualification_matrix_id =
+                        qualification.matrix_id;
+                    cached.qualification_message = qualification.message;
+                    cached.training_authorization_message =
+                        authorization.message;
+                    cached.failure_category =
+                        cyxwiz::RouteFailureCategoryName(
+                            authorization.failure.category);
+                    cached.failed_operation = authorization.failure.operation;
+                    cached.observed_failure =
+                        authorization.failure.observed_fact;
+                    cached.failure_interpretation =
+                        authorization.failure.bounded_interpretation;
+                    cached.recommended_action =
+                        authorization.failure.recommended_action;
                     cached_devices_.push_back(std::move(cached));
                 }
                 devices_initialized_ = true;
@@ -211,6 +268,108 @@ void Viewport::Render() {
                     }
                     SummaryRow("Device", active_name.c_str());
 
+                    if (has_run_bound_device) {
+                        SummaryRow("Execution",
+                                   trace.execution_validated
+                                       ? "Validated"
+                                       : "Not validated");
+                        SummaryRow("Preflight",
+                                   trace.preflight_stage.empty()
+                                       ? "Not recorded"
+                                       : trace.preflight_stage.c_str());
+                        if (trace.selection_fallback_applied) {
+                            SummaryRow("Selection fallback",
+                                       "Applied to ArrayFire CPU");
+                        }
+                        SummaryRow(
+                            "Requested verification",
+                            !trace.requested_qualification_evidence_available
+                                ? "No evidence"
+                                : (trace.requested_route_qualified
+                                       ? "Passed"
+                                       : "Failed"));
+                        SummaryRow(
+                            "Effective verification",
+                            !trace.effective_qualification_evidence_available
+                                ? "No evidence"
+                                : (trace.effective_route_qualified
+                                       ? "Passed"
+                                       : "Failed"));
+                        SummaryRow(
+                            "Qualification evidence",
+                            cyxwiz::RouteQualificationEvidenceLabel(
+                                trace.effective_qualification_matrix_id));
+                        SummaryRow(
+                            "Identity",
+                            trace.identity_confidence.empty()
+                                ? "Not recorded"
+                                : trace.identity_confidence.c_str());
+                        SummaryRow(
+                            "Physical identity",
+                            trace.physical_fingerprint.empty()
+                                ? "Unknown"
+                                : trace.physical_fingerprint.c_str());
+                    }
+
+                    if (active_info) {
+                        SummaryRow(
+                            "Device kind",
+                            cyxwiz::DeviceKindName(
+                                static_cast<cyxwiz::DeviceKind>(
+                                    active_info->kind)));
+                        if (!has_run_bound_device) {
+                            SummaryRow(
+                                "Identity",
+                                cyxwiz::DeviceIdentityConfidenceName(
+                                    static_cast<
+                                        cyxwiz::DeviceIdentityConfidence>(
+                                            active_info->identity_confidence)));
+                        }
+                        SummaryRow(
+                            "Provider",
+                            active_info->provider_known
+                                ? active_info->provider.c_str()
+                                : "Unknown");
+                        SummaryRow(
+                            "Driver",
+                            active_info->driver_version_known
+                                ? active_info->driver_version.c_str()
+                                : "Unknown");
+                        if (!has_run_bound_device) {
+                            SummaryRow(
+                                "Physical identity",
+                                active_info->physical_fingerprint_known
+                                    ? active_info->physical_fingerprint.c_str()
+                                    : "Unknown");
+                        }
+                        const auto metadata_status =
+                            static_cast<cyxwiz::DeviceMetadataStatus>(
+                                active_info->metadata_status);
+                        SummaryRow("Metadata",
+                                   cyxwiz::DeviceMetadataStatusName(
+                                       metadata_status));
+                        if (!has_run_bound_device) {
+                            SummaryRow(
+                                "Route verification",
+                                !active_info->qualification_evidence_available
+                                    ? "No evidence"
+                                    : (active_info->matrix_qualified
+                                           ? "Passed"
+                                           : "Failed"));
+                            SummaryRow(
+                                "Training authorization",
+                                cyxwiz::RouteTrainingAuthorizationStatusName(
+                                    static_cast<
+                                        cyxwiz::RouteTrainingAuthorizationStatus>(
+                                            active_info
+                                                ->training_authorization_status)));
+                            SummaryRow(
+                                "Qualification evidence",
+                                cyxwiz::RouteQualificationEvidenceLabel(
+                                    active_info->qualification_matrix_id));
+                        }
+                    }
+
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
                     ImGui::TextDisabled("Device ID");
@@ -221,13 +380,13 @@ void Viewport::Render() {
                     ImGui::TableNextColumn();
                     ImGui::TextDisabled("Total memory");
                     ImGui::TableNextColumn();
-                    if (active_info && active_info->memory_total > 0) {
+                    if (active_info && active_info->memory_total_known) {
                         const double total_gb =
                             active_info->memory_total /
                             (1024.0 * 1024.0 * 1024.0);
                         ImGui::Text("%.2f GB", total_gb);
                     } else {
-                        ImGui::TextDisabled("Not reported by backend");
+                        ImGui::TextDisabled("Unknown");
                     }
 
                     if (has_run_bound_device) {
@@ -322,6 +481,64 @@ void Viewport::Render() {
                     ImGui::TextDisabled("[%s:%d]",
                                         DeviceTypeName(device.type),
                                         device.device_id);
+                    ImGui::SameLine();
+                    ImGui::TextDisabled(
+                        "kind=%s identity=%s provider=%s",
+                        cyxwiz::DeviceKindName(
+                            static_cast<cyxwiz::DeviceKind>(device.kind)),
+                        cyxwiz::DeviceIdentityConfidenceName(
+                            static_cast<
+                                cyxwiz::DeviceIdentityConfidence>(
+                                    device.identity_confidence)),
+                        device.provider_known ? device.provider.c_str()
+                                              : "unknown");
+                    if (device.name_from_qualification) {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("Evidence identity");
+                    } else if (device.name_is_fallback) {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("Fallback label");
+                    }
+                    if (device.metadata_status ==
+                            static_cast<int>(
+                                cyxwiz::DeviceMetadataStatus::Unsupported) ||
+                        device.metadata_status ==
+                            static_cast<int>(
+                                cyxwiz::DeviceMetadataStatus::Failed)) {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("Metadata limited");
+                    }
+                    ImGui::SameLine();
+                    if (!device.qualification_evidence_available) {
+                        ImGui::TextDisabled("No verification evidence");
+                    } else {
+                        ImGui::TextColored(
+                            device.matrix_qualified
+                                ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
+                                : ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                            "%s",
+                            device.matrix_qualified ? "Verification passed"
+                                                    : "Verification failed");
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "%s\nEvidence: %s\nAuthorization: %s",
+                            device.qualification_message.c_str(),
+                            cyxwiz::RouteQualificationEvidenceLabel(
+                                device.qualification_matrix_id),
+                            device.training_authorization_message.c_str());
+                    }
+                    if (device.matrix_qualified) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(
+                            device.training_authorized
+                                ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
+                                : ImVec4(0.45f, 0.75f, 1.0f, 1.0f),
+                            "%s",
+                            device.training_authorized
+                                ? "Training ready"
+                                : "Diagnostic only");
+                    }
                     if (is_run_bound || is_process_active) {
                         ImGui::SameLine();
                         ImGui::TextColored(DeviceTypeColor(device.type),

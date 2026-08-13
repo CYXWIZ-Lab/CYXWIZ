@@ -323,8 +323,16 @@ TensorMaskOp ParseTensorMaskOp(const CompiledLayer& layer) {
 // Populate `model` with modules per config.layers. Returns false if
 // config produced zero layers. Logging is identical to the pre-extraction
 // path so existing training regression tests still match on log output.
-bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config) {
+bool BuildSequential(
+    SequentialModel& model,
+    const TrainingConfiguration& config,
+    std::vector<BuiltModuleProvenance>* provenance) {
     spdlog::info("TrainingExecutor: Building model from {} layer configs", config.layers.size());
+
+    if (provenance) {
+        provenance->clear();
+        provenance->reserve(config.layers.size());
+    }
 
     // Track input size for each layer
     size_t current_input_size = config.input_size;
@@ -332,6 +340,7 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
 
     for (size_t i = 0; i < config.layers.size(); ++i) {
         const auto& layer_cfg = config.layers[i];
+        const size_t module_count_before = model.Size();
 
         switch (layer_cfg.type) {
             case gui::NodeType::Dense: {
@@ -1118,6 +1127,40 @@ bool BuildSequential(SequentialModel& model, const TrainingConfiguration& config
                 spdlog::warn("  [{}] Unknown layer type: {}", i, static_cast<int>(layer_cfg.type));
                 break;
         }
+
+        if (provenance) {
+            const size_t module_count_after = model.Size();
+            if (module_count_after == module_count_before) {
+                provenance->push_back({
+                    i,
+                    std::nullopt,
+                    layer_cfg.node_id,
+                    layer_cfg.name,
+                    layer_cfg.type,
+                    {},
+                    layer_cfg.input_shape,
+                    layer_cfg.output_shape,
+                    layer_cfg.parameters,
+                });
+            } else {
+                for (size_t module_index = module_count_before;
+                     module_index < module_count_after;
+                     ++module_index) {
+                    Module* module = model.GetModule(module_index);
+                    provenance->push_back({
+                        i,
+                        module_index,
+                        layer_cfg.node_id,
+                        layer_cfg.name,
+                        layer_cfg.type,
+                        module ? module->GetName() : std::string{},
+                        layer_cfg.input_shape,
+                        layer_cfg.output_shape,
+                        layer_cfg.parameters,
+                    });
+                }
+            }
+        }
     }
 
     if (model.Size() == 0) {
@@ -1315,7 +1358,7 @@ BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
 
     try {
         out.model = std::make_unique<SequentialModel>();
-        if (!BuildSequential(*out.model, config)) {
+        if (!BuildSequential(*out.model, config, &out.module_provenance)) {
             out.error_message = errors::FormatError(
                 errors::Compiler::UnsupportedTrainingNode,
                 "ModelBuilder could not add any supported trainable layers");

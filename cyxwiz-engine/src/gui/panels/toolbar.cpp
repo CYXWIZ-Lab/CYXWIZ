@@ -18,6 +18,7 @@
 #include <initializer_list>
 #include "../dock_style.h"
 #include "../../core/project_manager.h"
+#include "../../core/route_qualification_service.h"
 #include "../icons.h"
 
 namespace cyxwiz {
@@ -99,6 +100,8 @@ ToolbarPanel::ToolbarPanel()
     : Panel("Toolbar", true)
     , show_new_project_dialog_(false)
     , show_about_dialog_(false)
+    , route_qualification_service_(
+          std::make_shared<RouteQualificationService>())
 {
     memset(project_name_buffer_, 0, sizeof(project_name_buffer_));
     memset(project_path_buffer_, 0, sizeof(project_path_buffer_));

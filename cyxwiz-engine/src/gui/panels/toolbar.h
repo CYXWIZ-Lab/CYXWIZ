@@ -4,6 +4,7 @@
 #include "plot_window.h"
 #include "python_settings_panel.h"
 #include "auth/auth_client.h"
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@
 namespace cyxwiz {
     enum class DeviceType;
     struct DeviceInfo;
+    class RouteQualificationService;
 }
 
 namespace cyxwiz {
@@ -307,7 +309,13 @@ public:
     void SetEditorAutoIndent(bool indent) { editor_auto_indent_ = indent; }
 
     // Compute device selection callback
-    void SetComputeDeviceChangedCallback(std::function<void(DeviceType, int)> cb) { compute_device_changed_callback_ = cb; }
+    void SetComputeDeviceChangedCallback(
+        std::function<bool(DeviceType,
+                           int,
+                           const std::string&,
+                           std::string&)> cb) {
+        compute_device_changed_callback_ = std::move(cb);
+    }
 
     // Access to created plot windows
     const std::vector<std::shared_ptr<PlotWindow>>& GetPlotWindows() const { return plot_windows_; }
@@ -543,15 +551,60 @@ private:
 
     // Device preferences
     int selected_device_index_ = -1;  // Active index into cached_devices_
+    int selected_backend_type_ = -1;
+    bool show_oneapi_training_warning_ = false;
+    int pending_oneapi_device_index_ = -1;
+    bool device_selection_dirty_ = false;
+    bool show_device_selection_error_ = false;
+    std::string device_selection_error_;
+    std::vector<int> device_selection_recommendation_indices_;
     bool devices_initialized_ = false;
     struct CachedDevice {
-        int type;  // 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal, 4=Vulkan, 5=oneAPI
-        int device_id;
+        int type = -1;  // 0=CPU, 1=CUDA, 2=OpenCL, 3=Metal, 4=Vulkan, 5=oneAPI
+        int device_id = -1;
         std::string name;
-        size_t memory_total;
-        size_t memory_available;
+        size_t memory_total = 0;
+        size_t memory_available = 0;
+        int kind = 0;
+        int identity_confidence = 0;
+        std::string provider;
+        std::string driver_version;
+        std::string physical_fingerprint;
+        uint32_t hardware_vendor_id = 0;
+        bool hardware_vendor_id_known = false;
+        bool provider_known = false;
+        bool driver_version_known = false;
+        bool pci_location_known = false;
+        int pci_domain = 0;
+        int pci_bus = 0;
+        int pci_device = 0;
+        int pci_function = 0;
+        bool physical_fingerprint_known = false;
+        int metadata_status = 0;
+        bool device_selectable = false;
+        bool execution_validated = false;
+        bool name_is_fallback = false;
+        bool memory_total_known = false;
+        bool memory_available_known = false;
+        bool name_from_qualification = false;
+        std::string identity_source;
+        bool qualification_evidence_available = false;
+        bool matrix_qualified = false;
+        bool training_authorized = false;
+        int training_authorization_status = 0;
+        std::string qualification_matrix_id;
+        std::string qualification_message;
+        std::string training_authorization_message;
+        std::string failure_category;
+        std::string failed_operation;
+        std::string observed_failure;
+        std::string failure_interpretation;
+        std::string recommended_action;
     };
     std::vector<CachedDevice> cached_devices_;
+    std::shared_ptr<RouteQualificationService> route_qualification_service_;
+    uint64_t route_qualification_task_id_ = 0;
+    bool route_qualification_task_refreshed_ = true;
 
     // Go to Line dialog state
     bool show_go_to_line_dialog_ = false;
@@ -721,7 +774,10 @@ private:
     int compute_device_index_ = 0;
     std::vector<cyxwiz::DeviceInfo> compute_devices_;
     bool compute_devices_initialized_ = false;
-    std::function<void(cyxwiz::DeviceType, int)> compute_device_changed_callback_;
+    std::function<bool(cyxwiz::DeviceType,
+                       int,
+                       const std::string&,
+                       std::string&)> compute_device_changed_callback_;
 
     // Command Palette state
     bool show_command_palette_ = false;

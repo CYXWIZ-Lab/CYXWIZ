@@ -21,6 +21,33 @@ struct CachedDeviceInfo {
     int compute_units = 0;
     bool supports_fp64 = false;
     bool supports_fp16 = false;
+    int kind = 0;
+    int identity_confidence = 0;
+    std::string provider;
+    std::string driver_version;
+    std::string physical_fingerprint;
+    bool provider_known = false;
+    bool driver_version_known = false;
+    bool physical_fingerprint_known = false;
+    int metadata_status = 0;
+    bool device_selectable = false;
+    bool execution_validated = false;
+    bool name_is_fallback = false;
+    bool memory_total_known = false;
+    bool name_from_qualification = false;
+    std::string identity_source;
+    bool qualification_evidence_available = false;
+    bool matrix_qualified = false;
+    bool training_authorized = false;
+    int training_authorization_status = 0;
+    std::string qualification_matrix_id;
+    std::string qualification_message;
+    std::string training_authorization_message;
+    std::string failure_category;
+    std::string failed_operation;
+    std::string observed_failure;
+    std::string failure_interpretation;
+    std::string recommended_action;
 };
 
 class Viewport {

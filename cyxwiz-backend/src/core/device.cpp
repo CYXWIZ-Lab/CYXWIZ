@@ -1,21 +1,395 @@
 #include "cyxwiz/device.h"
+#include "device_identity.h"
+#include "device_probe.h"
 #include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <cstdlib>
+#include <mutex>
+#include <set>
+#include <tuple>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-// Include platform-specific headers for memory queries
-#ifdef CYXWIZ_ENABLE_OPENCL
-#define CL_TARGET_OPENCL_VERSION 120
-#ifdef __APPLE__
-#include <OpenCL/opencl.h>
-#else
-#include <CL/cl.h>
-#endif
-#include <af/opencl.h>  // For afcl namespace
-#endif
 #endif
 
 namespace cyxwiz {
+
+namespace {
+
+const char* DeviceTypeDisplayName(DeviceType type) {
+    switch (type) {
+        case DeviceType::CPU: return "CPU";
+        case DeviceType::CUDA: return "CUDA";
+        case DeviceType::OPENCL: return "OpenCL";
+        case DeviceType::ONEAPI: return "oneAPI";
+        case DeviceType::METAL: return "Metal";
+        case DeviceType::VULKAN: return "Vulkan";
+        default: return "Unknown";
+    }
+}
+
+std::string FallbackDeviceName(DeviceType type, int device_id) {
+    return std::string(DeviceTypeDisplayName(type)) + " device " +
+           std::to_string(device_id);
+}
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool TryGetArrayFireBackend(DeviceType type, af::Backend& backend) {
+    switch (type) {
+        case DeviceType::CPU:
+            backend = AF_BACKEND_CPU;
+            return true;
+        case DeviceType::CUDA:
+            backend = AF_BACKEND_CUDA;
+            return true;
+        case DeviceType::OPENCL:
+            backend = AF_BACKEND_OPENCL;
+            return true;
+        case DeviceType::ONEAPI:
+            backend = AF_BACKEND_ONEAPI;
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool IsArrayFireBackendBuilt(DeviceType type) {
+    switch (type) {
+        case DeviceType::CPU:
+        case DeviceType::ONEAPI:
+            return true;
+        case DeviceType::CUDA:
+#ifdef CYXWIZ_ENABLE_CUDA
+            return true;
+#else
+            return false;
+#endif
+        case DeviceType::OPENCL:
+#ifdef CYXWIZ_ENABLE_OPENCL
+            return true;
+#else
+            return false;
+#endif
+        default:
+            return false;
+    }
+}
+
+DeviceType DeviceTypeFromArrayFireBackend(af::Backend backend) {
+    switch (backend) {
+        case AF_BACKEND_CUDA: return DeviceType::CUDA;
+        case AF_BACKEND_OPENCL: return DeviceType::OPENCL;
+        case AF_BACKEND_ONEAPI: return DeviceType::ONEAPI;
+        case AF_BACKEND_CPU:
+        default:
+            return DeviceType::CPU;
+    }
+}
+
+const char* ArrayFireErrorName(af_err error) {
+    const char* name = af_err_to_string(error);
+    return name != nullptr ? name : "unknown ArrayFire error";
+}
+
+class ScopedArrayFireDeviceState {
+public:
+    ScopedArrayFireDeviceState() {
+        try {
+            backend_ = af::getActiveBackend();
+            backend_known_ = true;
+            device_ = af::getDevice();
+            device_known_ = true;
+        } catch (const af::exception&) {
+            backend_known_ = false;
+            device_known_ = false;
+        }
+    }
+
+    ~ScopedArrayFireDeviceState() {
+        if (!restore_ || !backend_known_) return;
+        try {
+            af::setBackend(backend_);
+            if (device_known_) af::setDevice(device_);
+        } catch (af::exception& error) {
+            spdlog::warn(
+                "Temporary ArrayFire device query could not restore backend/device: error={} ({})",
+                static_cast<int>(error.err()),
+                ArrayFireErrorName(error.err()));
+        }
+    }
+
+    ScopedArrayFireDeviceState(const ScopedArrayFireDeviceState&) = delete;
+    ScopedArrayFireDeviceState& operator=(const ScopedArrayFireDeviceState&) = delete;
+
+    void Dismiss() noexcept { restore_ = false; }
+
+private:
+    af::Backend backend_ = AF_BACKEND_DEFAULT;
+    int device_ = 0;
+    bool backend_known_ = false;
+    bool device_known_ = false;
+    bool restore_ = true;
+};
+
+void LogMetadataLimitationOnce(const DeviceInfo& info) {
+    if (info.type != DeviceType::ONEAPI ||
+        info.metadata_status == DeviceMetadataStatus::Available) {
+        return;
+    }
+    static std::once_flag warning_once;
+    std::call_once(warning_once, [&info]() {
+        spdlog::warn(
+            "oneAPI device {} discovered; detailed device properties are {} "
+            "category=device backend=arrayfire_oneapi device_id={} "
+            "probe_stage=metadata capability_status={} arrayfire_error={}",
+            info.device_id,
+            info.metadata_status == DeviceMetadataStatus::Unsupported
+                ? "unsupported by the installed ArrayFire oneAPI plugin"
+                : "unavailable",
+            info.device_id,
+            DeviceMetadataStatusName(info.metadata_status),
+            info.metadata_error_code);
+    });
+}
+
+DeviceInfo QuerySelectedArrayFireDeviceInfo(DeviceType type, int device_id) {
+    DeviceInfo info{};
+    info.type = type;
+    info.device_id = device_id;
+    info.name = FallbackDeviceName(type, device_id);
+    info.name_is_fallback = true;
+    info.backend_available = true;
+    info.device_selectable = true;
+    info.identity_confidence = DeviceIdentityConfidence::BackendLocal;
+    if (type == DeviceType::CPU) {
+        info.kind = DeviceKind::CPU;
+    } else if (type == DeviceType::CUDA) {
+        info.kind = DeviceKind::GPU;
+    }
+
+    char name[256] = {};
+    char platform[256] = {};
+    char toolkit[256] = {};
+    char compute[256] = {};
+    try {
+        af::deviceInfo(name, platform, toolkit, compute);
+        info.name = std::string(name);
+        info.name_known = true;
+        info.name_is_fallback = false;
+        info.metadata_status = DeviceMetadataStatus::Available;
+        if (platform[0] != '\0') {
+            info.provider = platform;
+            info.provider_known = true;
+        }
+        spdlog::debug("Device info: {}, Platform: {}", name, platform);
+    } catch (af::exception& error) {
+        info.metadata_error_code = static_cast<int>(error.err());
+        info.metadata_status = error.err() == AF_ERR_NOT_SUPPORTED
+            ? DeviceMetadataStatus::Unsupported
+            : DeviceMetadataStatus::Failed;
+        info.metadata_message = error.err() == AF_ERR_NOT_SUPPORTED
+            ? "Detailed device properties are unsupported by the installed ArrayFire backend"
+            : "Detailed device properties could not be queried";
+        LogMetadataLimitationOnce(info);
+    }
+
+    detail::EnrichSelectedDeviceIdentity(info);
+
+    return info;
+}
+
+class ProductionArrayFireProbeAdapter final
+    : public detail::ArrayFireProbeAdapter {
+public:
+    detail::DeviceProbeStatus SelectBackend(DeviceType type) override {
+        af::Backend backend = AF_BACKEND_DEFAULT;
+        if (!TryGetArrayFireBackend(type, backend) ||
+            !IsArrayFireBackendBuilt(type)) {
+            return {false, 0, "ArrayFire backend is not enabled in this build"};
+        }
+        try {
+            af::setBackend(backend);
+            return {true, 0, {}};
+        } catch (af::exception& error) {
+            return Failure(error);
+        }
+    }
+
+    detail::DeviceCountProbeResult GetDeviceCount(DeviceType) override {
+        try {
+            return {{true, 0, {}}, af::getDeviceCount()};
+        } catch (af::exception& error) {
+            return {Failure(error), 0};
+        }
+    }
+
+    detail::DeviceProbeStatus SelectDevice(DeviceType, int device_id) override {
+        try {
+            af::setDevice(device_id);
+            return {true, 0, {}};
+        } catch (af::exception& error) {
+            return Failure(error);
+        }
+    }
+
+    DeviceInfo QuerySelectedDeviceMetadata(DeviceType type,
+                                           int device_id) override {
+        return QuerySelectedArrayFireDeviceInfo(type, device_id);
+    }
+
+private:
+    static detail::DeviceProbeStatus Failure(af::exception& error) {
+        return {false,
+                static_cast<int>(error.err()),
+                ArrayFireErrorName(error.err())};
+    }
+};
+
+const char* DeviceProbeStageName(detail::DeviceProbeStage stage) {
+    switch (stage) {
+        case detail::DeviceProbeStage::BackendSelection:
+            return "backend_selection";
+        case detail::DeviceProbeStage::Enumeration:
+            return "enumeration";
+        case detail::DeviceProbeStage::DeviceSelection:
+            return "device_selection";
+        case detail::DeviceProbeStage::Metadata:
+            return "metadata";
+        default:
+            return "unknown";
+    }
+}
+
+const char* DeviceProbeFailureCategory(
+    const detail::DeviceProbeFailure& failure) {
+    switch (static_cast<af_err>(failure.error_code)) {
+        case AF_ERR_LOAD_LIB:
+        case AF_ERR_LOAD_SYM:
+        case AF_ERR_NOT_CONFIGURED:
+            return "backend_pack_missing_or_incompatible";
+        case AF_ERR_DRIVER:
+            return "driver_or_provider_failure";
+        case AF_ERR_RUNTIME:
+            return "runtime_or_provider_initialization_failure";
+        default:
+            break;
+    }
+    if (failure.stage == detail::DeviceProbeStage::Enumeration &&
+        failure.error_code == 0) {
+        return "no_compatible_device_or_provider";
+    }
+    return "backend_probe_failure";
+}
+
+const char* DeviceProbeFailureRemediation(
+    const detail::DeviceProbeFailure& failure) {
+    switch (static_cast<af_err>(failure.error_code)) {
+        case AF_ERR_LOAD_LIB:
+        case AF_ERR_LOAD_SYM:
+        case AF_ERR_NOT_CONFIGURED:
+            return "Install the matching ArrayFire backend pack and its exact transitive runtime dependencies";
+        case AF_ERR_DRIVER:
+            return "Install or update the hardware vendor driver/provider";
+        case AF_ERR_RUNTIME:
+            return "Verify the backend runtime, provider, and hardware driver versions";
+        default:
+            break;
+    }
+    if (failure.stage == detail::DeviceProbeStage::Enumeration &&
+        failure.error_code == 0) {
+        return "Install a compatible provider/driver or select another backend";
+    }
+    return "Inspect the backend pack, runtime provider, and driver configuration";
+}
+
+void LogDeviceProbeFailureOnce(const detail::DeviceProbeFailure& failure) {
+    static std::mutex mutex;
+    static std::set<std::tuple<int, int, int>> logged_failures;
+    const auto key = std::make_tuple(static_cast<int>(failure.type),
+                                     static_cast<int>(failure.stage),
+                                     failure.error_code);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!logged_failures.insert(key).second) {
+            return;
+        }
+    }
+
+    spdlog::warn(
+        "{} backend unavailable: category={} stage={} device={} error={} ({}) remediation={}",
+        DeviceTypeDisplayName(failure.type),
+        DeviceProbeFailureCategory(failure),
+        DeviceProbeStageName(failure.stage),
+        failure.device_id,
+        failure.error_code,
+        failure.message,
+        DeviceProbeFailureRemediation(failure));
+}
+#endif
+
+} // namespace
+
+const char* DeviceMetadataStatusName(DeviceMetadataStatus status) {
+    switch (status) {
+        case DeviceMetadataStatus::Available: return "available";
+        case DeviceMetadataStatus::Unsupported: return "unsupported";
+        case DeviceMetadataStatus::Failed: return "failed";
+        case DeviceMetadataStatus::NotQueried:
+        default:
+            return "not_queried";
+    }
+}
+
+const char* DeviceKindName(DeviceKind kind) {
+    switch (kind) {
+        case DeviceKind::CPU: return "cpu";
+        case DeviceKind::GPU: return "gpu";
+        case DeviceKind::Accelerator: return "accelerator";
+        case DeviceKind::Unknown:
+        default:
+            return "unknown";
+    }
+}
+
+const char* DeviceIdentityConfidenceName(
+    DeviceIdentityConfidence confidence) {
+    switch (confidence) {
+        case DeviceIdentityConfidence::BackendLocal:
+            return "backend_local";
+        case DeviceIdentityConfidence::ProviderReported:
+            return "provider_reported";
+        case DeviceIdentityConfidence::StableHardware:
+            return "stable_hardware";
+        case DeviceIdentityConfidence::Unknown:
+        default:
+            return "unknown";
+    }
+}
+
+const char* DeviceActivationStageName(DeviceActivationStage stage) {
+    switch (stage) {
+        case DeviceActivationStage::BackendSelection:
+            return "backend_selection";
+        case DeviceActivationStage::DeviceSelection:
+            return "device_selection";
+        case DeviceActivationStage::ExecutionValidation:
+            return "execution_validation";
+        case DeviceActivationStage::EffectiveStateQuery:
+            return "effective_state_query";
+        case DeviceActivationStage::Complete:
+            return "complete";
+        case DeviceActivationStage::NotStarted:
+        default:
+            return "not_started";
+    }
+}
+
+bool IsUncertifiedOneAPITrainingEnabled() {
+    const char* value =
+        std::getenv("CYXWIZ_ENABLE_UNCERTIFIED_ONEAPI_TRAINING");
+    return value != nullptr && std::string(value) == "1";
+}
 
 Device::Device(DeviceType type, int device_id)
     : type_(type), device_id_(device_id) {
@@ -24,176 +398,150 @@ Device::Device(DeviceType type, int device_id)
 Device::~Device() = default;
 
 DeviceInfo Device::GetInfo() const {
-    DeviceInfo info;
+    DeviceInfo info{};
     info.type = type_;
     info.device_id = device_id_;
+    info.name = FallbackDeviceName(type_, device_id_);
+    info.name_is_fallback = true;
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (type_ == DeviceType::CUDA ||
-        type_ == DeviceType::OPENCL ||
-        type_ == DeviceType::ONEAPI) {
-        char name[256];
-        char platform[256];
-        char toolkit[256];
-        char compute[256];
-        af::deviceInfo(name, platform, toolkit, compute);
-
-        info.name = std::string(name);
-
-        // Get actual device memory using platform-specific APIs
-        af::Backend backend = af::getActiveBackend();
-
-        if (backend == AF_BACKEND_CUDA) {
-            // Avoid direct CUDA runtime linkage so backend can load on non-NVIDIA systems.
-            // Memory telemetry for CUDA is unavailable without cudart and is reported as unknown.
-            info.memory_total = 0;
-            info.memory_available = 0;
-            spdlog::debug("CUDA memory query unavailable without direct CUDA runtime linkage");
-        } else if (backend == AF_BACKEND_OPENCL) {
-#ifdef CYXWIZ_ENABLE_OPENCL
-            // Use OpenCL API to get device memory
-            // ArrayFire stores device info that we can query directly
-            try {
-                // Get the OpenCL device ID from ArrayFire's internal context
-                cl_device_id cl_device = afcl::getDeviceId();
-
-                cl_ulong total_mem = 0;
-                cl_int err = clGetDeviceInfo(cl_device, CL_DEVICE_GLOBAL_MEM_SIZE,
-                    sizeof(cl_ulong), &total_mem, nullptr);
-
-                if (err == CL_SUCCESS && total_mem > 0) {
-                    // OpenCL doesn't have a standard way to get available memory
-                    // We'll estimate it based on ArrayFire's memory manager
-                    size_t alloc_bytes, alloc_buffers, lock_bytes, lock_buffers;
-                    af::deviceMemInfo(&alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
-
-                    info.memory_total = total_mem;
-                    // Estimate available as total minus what ArrayFire has allocated
-                    info.memory_available = total_mem - (alloc_bytes + lock_bytes);
-
-                    spdlog::debug("OpenCL device {}: {} GB total, ~{} GB available (AF allocated: {} MB)",
-                        device_id_,
-                        total_mem / (1024.0 * 1024.0 * 1024.0),
-                        info.memory_available / (1024.0 * 1024.0 * 1024.0),
-                        (alloc_bytes + lock_bytes) / (1024.0 * 1024.0));
-                } else {
-                    spdlog::warn("Failed to query OpenCL memory: clGetDeviceInfo returned error {}", err);
-                    info.memory_total = 0;
-                    info.memory_available = 0;
-                }
-            } catch (const std::exception& e) {
-                spdlog::warn("Failed to query OpenCL memory: {}", e.what());
-                // Fallback: try to estimate from device name
-                // Many GPUs have standard memory sizes we can guess from
-                std::string device_name = info.name;
-                info.memory_total = 0;
-                info.memory_available = 0;
-
-                // Try to extract memory size from device name (e.g., "GTX 1050 Ti 4GB")
-                if (device_name.find("1050") != std::string::npos) {
-                    info.memory_total = 4LL * 1024 * 1024 * 1024; // 4 GB
-                    info.memory_available = static_cast<size_t>(info.memory_total * 0.9); // Estimate 90% available
-                    spdlog::info("Using estimated memory for {}: {} GB", device_name,
-                        info.memory_total / (1024.0 * 1024.0 * 1024.0));
-                } else if (device_name.find("UHD") != std::string::npos ||
-                           device_name.find("Intel") != std::string::npos) {
-                    // Integrated Intel graphics typically share system RAM
-                    info.memory_total = 2LL * 1024 * 1024 * 1024; // 2 GB shared
-                    info.memory_available = static_cast<size_t>(info.memory_total * 0.8);
-                    spdlog::info("Using estimated memory for {}: {} GB shared", device_name,
-                        info.memory_total / (1024.0 * 1024.0 * 1024.0));
-                }
+    af::Backend backend = AF_BACKEND_DEFAULT;
+    if (TryGetArrayFireBackend(type_, backend) &&
+        IsArrayFireBackendBuilt(type_)) {
+        ScopedArrayFireDeviceState restore_state;
+        try {
+            af::setBackend(backend);
+            info.backend_available = true;
+            const int count = af::getDeviceCount();
+            if (device_id_ < 0 || device_id_ >= count) {
+                return info;
             }
-#else
-            // OpenCL not available
-            info.memory_total = 0;
-            info.memory_available = 0;
-#endif
-        } else {
-            // Unknown backend, use ArrayFire's memory info as fallback
-            size_t alloc_bytes, alloc_buffers, lock_bytes, lock_buffers;
-            af::deviceMemInfo(&alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
-            info.memory_total = alloc_bytes + lock_bytes;
-            info.memory_available = lock_bytes;
+            af::setDevice(device_id_);
+            info.device_selectable = true;
+        } catch (const af::exception&) {
+            return info;
         }
 
-        // Note: ArrayFire doesn't expose compute units directly
-        info.compute_units = 0;
-        info.supports_fp64 = true; // Assume true for now
-        info.supports_fp16 = false;
-
-        spdlog::debug("Device info: {}, Platform: {}", name, platform);
+        info = QuerySelectedArrayFireDeviceInfo(type_, device_id_);
     } else
 #endif
     {
-        info.name = "CPU";
-        info.memory_total = 0;
-        info.memory_available = 0;
-        info.compute_units = 0;
-        info.supports_fp64 = true;
-        info.supports_fp16 = false;
+        info.backend_available = type_ == DeviceType::CPU;
+        info.device_selectable = type_ == DeviceType::CPU;
+        if (info.device_selectable) {
+            info.kind = DeviceKind::CPU;
+            info.identity_confidence =
+                DeviceIdentityConfidence::BackendLocal;
+        }
     }
 
     return info;
 }
 
-void Device::SetActive() {
+DeviceActivationResult Device::ActivateExact(bool validate_execution) const {
+    DeviceActivationResult result{};
+    result.requested_type = type_;
+    result.requested_device_id = device_id_;
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+    af::Backend backend = AF_BACKEND_DEFAULT;
+    if (!TryGetArrayFireBackend(type_, backend) ||
+        !IsArrayFireBackendBuilt(type_)) {
+        result.stage = DeviceActivationStage::BackendSelection;
+        result.message =
+            "Requested ArrayFire backend is not enabled in this build";
+        return result;
+    }
+    ScopedArrayFireDeviceState restore_on_failure;
+
     try {
-        // Switch backend based on device type
-        switch (type_) {
-            case DeviceType::CUDA:
-#ifdef CYXWIZ_ENABLE_CUDA
-                af::setBackend(AF_BACKEND_CUDA);
-                af::setDevice(device_id_);
-                spdlog::info("Switched to CUDA backend, device {}", device_id_);
-#else
-                spdlog::warn("CUDA backend requested but CYXWIZ_ENABLE_CUDA is not enabled; using ArrayFire CPU backend");
-                af::setBackend(AF_BACKEND_CPU);
-                type_ = DeviceType::CPU;
-                device_id_ = 0;
-#endif
-                break;
-            case DeviceType::OPENCL:
-#ifdef CYXWIZ_ENABLE_OPENCL
-                af::setBackend(AF_BACKEND_OPENCL);
-                af::setDevice(device_id_);
-                spdlog::info("Switched to OpenCL backend, device {}", device_id_);
-#else
-                spdlog::warn("OpenCL backend requested but CYXWIZ_ENABLE_OPENCL is not enabled; using ArrayFire CPU backend");
-                af::setBackend(AF_BACKEND_CPU);
-                type_ = DeviceType::CPU;
-                device_id_ = 0;
-#endif
-                break;
-            case DeviceType::ONEAPI:
-                af::setBackend(AF_BACKEND_ONEAPI);
-                af::setDevice(device_id_);
-                spdlog::info("Switched to oneAPI backend, device {}", device_id_);
-                break;
-            case DeviceType::CPU:
-                af::setBackend(AF_BACKEND_CPU);
-                spdlog::info("Switched to CPU backend");
-                break;
-            default:
-                spdlog::warn("Unknown device type, defaulting to ArrayFire CPU backend");
-                af::setBackend(AF_BACKEND_CPU);
-                type_ = DeviceType::CPU;
-                device_id_ = 0;
-                break;
+        result.stage = DeviceActivationStage::BackendSelection;
+        af::setBackend(backend);
+
+        result.stage = DeviceActivationStage::DeviceSelection;
+        const int count = af::getDeviceCount();
+        if (device_id_ < 0 || device_id_ >= count) {
+            result.message = "Requested ArrayFire device ID is out of range";
+            return result;
         }
-    } catch (const af::exception& e) {
-        spdlog::warn("Failed to switch to requested backend (type {}, device {}): {}. Falling back to ArrayFire CPU backend.",
-                     static_cast<int>(type_), device_id_, e.what());
+        af::setDevice(device_id_);
+
+        if (validate_execution) {
+            result.stage = DeviceActivationStage::ExecutionValidation;
+            af::array input = af::constant(1.0f, af::dim4(4), f32);
+            af::array output = input + 2.0f;
+            output.eval();
+            af::sync();
+            result.execution_validated = true;
+        }
+
+        result.stage = DeviceActivationStage::EffectiveStateQuery;
+        result.effective_type =
+            DeviceTypeFromArrayFireBackend(af::getActiveBackend());
+        result.effective_device_id = af::getDevice();
+        if (result.effective_type != type_ ||
+            result.effective_device_id != device_id_) {
+            result.message =
+                "ArrayFire effective backend/device differs from the request";
+            return result;
+        }
+
+        result.stage = DeviceActivationStage::Complete;
+        result.success = true;
+        result.message = "Requested ArrayFire backend/device activated";
+        restore_on_failure.Dismiss();
+    } catch (af::exception& error) {
+        result.error_code = static_cast<int>(error.err());
+        result.message = ArrayFireErrorName(error.err());
         try {
-            af::setBackend(AF_BACKEND_CPU);
-            type_ = DeviceType::CPU;
-            device_id_ = 0;
-        } catch (const af::exception& cpu_error) {
-            spdlog::error("ArrayFire CPU backend activation failed: {}", cpu_error.what());
+            result.effective_type =
+                DeviceTypeFromArrayFireBackend(af::getActiveBackend());
+            result.effective_device_id = af::getDevice();
+        } catch (const af::exception&) {
+            // The failed stage and error remain authoritative.
         }
     }
+#else
+    result.stage = DeviceActivationStage::Complete;
+    result.success = type_ == DeviceType::CPU && device_id_ == 0;
+    result.execution_validated = result.success && validate_execution;
+    result.effective_type = DeviceType::CPU;
+    result.effective_device_id = 0;
+    result.message = result.success
+        ? "Native development CPU device selected"
+        : "ArrayFire backend is unavailable in this reduced build";
 #endif
+
+    return result;
+}
+
+void Device::SetActive() {
+    const auto activation = ActivateExact(false);
+    if (activation.success) {
+        spdlog::info("Switched to {} backend, device {}",
+                     DeviceTypeDisplayName(type_), device_id_);
+        return;
+    }
+
+    spdlog::warn(
+        "Failed to switch to requested backend: type={} device={} stage={} error={} ({}); falling back to ArrayFire CPU",
+        static_cast<int>(type_),
+        device_id_,
+        DeviceActivationStageName(activation.stage),
+        activation.error_code,
+        activation.message);
+    const auto cpu_activation =
+        Device(DeviceType::CPU, 0).ActivateExact(false);
+    if (cpu_activation.success) {
+        type_ = DeviceType::CPU;
+        device_id_ = 0;
+    } else {
+        spdlog::error(
+            "ArrayFire CPU activation failed: stage={} error={} ({})",
+            DeviceActivationStageName(cpu_activation.stage),
+            cpu_activation.error_code,
+            cpu_activation.message);
+    }
 }
 
 bool Device::IsActive() const {
@@ -206,109 +554,30 @@ bool Device::IsActive() const {
 std::vector<DeviceInfo> Device::GetAvailableDevices() {
     std::vector<DeviceInfo> devices;
 
-    // Always add CPU first
-    Device cpu_device(DeviceType::CPU, 0);
-    devices.push_back(cpu_device.GetInfo());
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    // Save current backend to restore later
-    af::Backend original_backend = af::getActiveBackend();
-    int original_device = 0;
-    try {
-        original_device = af::getDevice();
-    } catch (...) {
-        // Ignore if no device is set
-    }
-
-    // Try CUDA backend
+    ScopedArrayFireDeviceState restore_state;
+    ProductionArrayFireProbeAdapter adapter;
+    std::vector<DeviceType> backend_types = {DeviceType::CPU};
 #ifdef CYXWIZ_ENABLE_CUDA
-    try {
-        af::setBackend(AF_BACKEND_CUDA);
-        int cuda_count = af::getDeviceCount();
-        spdlog::debug("CUDA backend: {} device(s) found", cuda_count);
-
-        for (int i = 0; i < cuda_count; i++) {
-            af::setDevice(i);
-            Device cuda_device(DeviceType::CUDA, i);
-            devices.push_back(cuda_device.GetInfo());
-        }
-    } catch (const af::exception& e) {
-        spdlog::debug("CUDA backend not available: {}", e.what());
-    }
+    backend_types.push_back(DeviceType::CUDA);
 #endif
-
-    // Try oneAPI backend
-    try {
-        af::setBackend(AF_BACKEND_ONEAPI);
-        int oneapi_count = af::getDeviceCount();
-        spdlog::debug("oneAPI backend: {} device(s) found", oneapi_count);
-
-        for (int i = 0; i < oneapi_count; i++) {
-            af::setDevice(i);
-            Device oneapi_device(DeviceType::ONEAPI, i);
-            DeviceInfo info = oneapi_device.GetInfo();
-
-            bool is_duplicate = false;
-            for (const auto& existing : devices) {
-                if (existing.name == info.name &&
-                    (existing.type == DeviceType::CUDA ||
-                     existing.type == DeviceType::OPENCL)) {
-                    spdlog::debug(
-                        "Skipping duplicate oneAPI device: {} (already listed as another backend)",
-                        info.name);
-                    is_duplicate = true;
-                    break;
-                }
-            }
-            if (!is_duplicate) {
-                devices.push_back(info);
-            }
-        }
-    } catch (const af::exception& e) {
-        spdlog::debug("oneAPI backend not available: {}", e.what());
-    }
-
-    // Try OpenCL backend
+    backend_types.push_back(DeviceType::ONEAPI);
 #ifdef CYXWIZ_ENABLE_OPENCL
-    try {
-        af::setBackend(AF_BACKEND_OPENCL);
-        int opencl_count = af::getDeviceCount();
-        spdlog::debug("OpenCL backend: {} device(s) found", opencl_count);
-
-        for (int i = 0; i < opencl_count; i++) {
-            af::setDevice(i);
-            Device opencl_device(DeviceType::OPENCL, i);
-            DeviceInfo info = opencl_device.GetInfo();
-
-            // Skip duplicate devices already listed through a preferred backend.
-            bool is_duplicate = false;
-            for (const auto& existing : devices) {
-                if (existing.name == info.name &&
-                    (existing.type == DeviceType::CUDA ||
-                     existing.type == DeviceType::ONEAPI)) {
-                    spdlog::debug(
-                        "Skipping duplicate OpenCL device: {} (already listed as another backend)",
-                        info.name);
-                    is_duplicate = true;
-                    break;
-                }
-            }
-            if (!is_duplicate) {
-                devices.push_back(info);
-            }
-        }
-    } catch (const af::exception& e) {
-        spdlog::debug("OpenCL backend not available: {}", e.what());
-    }
+    backend_types.push_back(DeviceType::OPENCL);
 #endif
-
-    // Restore original backend
-    try {
-        af::setBackend(original_backend);
-        af::setDevice(original_device);
-    } catch (const af::exception& e) {
-        spdlog::warn("Failed to restore original backend: {}", e.what());
+    auto probe = detail::ProbeAvailableArrayFireDevices(adapter, backend_types);
+    devices = std::move(probe.devices);
+    for (const auto& failure : probe.failures) {
+        if (failure.stage == detail::DeviceProbeStage::Metadata) {
+            continue;
+        }
+        LogDeviceProbeFailureOnce(failure);
     }
+#else
+    DeviceInfo cpu = Device(DeviceType::CPU, 0).GetInfo();
+    cpu.backend_available = true;
+    cpu.device_selectable = true;
+    devices.push_back(std::move(cpu));
 #endif
 
     spdlog::info("Total devices found: {}", devices.size());

@@ -1,4 +1,5 @@
 #include "../src/core/runtime_console_commands.h"
+#include "../src/core/route_qualification_snapshot.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -316,6 +317,23 @@ void TestRuntimeTruthCommands() {
     provider.current_training.effective_device_id = 0;
     provider.current_training.effective_device_name = "Intel UHD 630";
     provider.current_training.execution_context_id = "ctx-42";
+    provider.current_training.physical_fingerprint = "uuid:opencl-42";
+    provider.current_training.identity_confidence = "stable_hardware";
+    provider.current_training.requested_qualification_evidence_available = true;
+    provider.current_training.requested_route_qualified = false;
+    provider.current_training.requested_qualification_matrix_id =
+        "console-matrix";
+    provider.current_training.requested_qualification_message =
+        "CUDA route rejected";
+    provider.current_training.effective_qualification_evidence_available = true;
+    provider.current_training.effective_route_qualified = true;
+    provider.current_training.effective_qualification_matrix_id =
+        "console-matrix";
+    provider.current_training.effective_qualification_message =
+        "OpenCL route certified";
+    provider.current_training.activation_succeeded = true;
+    provider.current_training.execution_validated = true;
+    provider.current_training.preflight_stage = "complete";
     provider.current_training.fallback_policy =
         "allow_native_cpu_fallback";
     provider.current_training.native_cpu_fallback_count = 1;
@@ -365,6 +383,8 @@ void TestRuntimeTruthCommands() {
     provider.device.active_backend = "arrayfire_opencl";
     provider.device.active_device_id = 0;
     provider.device.active_device_name = "Intel UHD 630";
+    provider.device.active_execution_validated = true;
+    provider.device.active_preflight_stage = "complete";
     provider.device.queued_available = true;
     provider.device.queued_backend = "arrayfire_cpu";
     provider.device.queued_device_id = 0;
@@ -375,8 +395,56 @@ void TestRuntimeTruthCommands() {
     provider.device.available_devices = {
         {"arrayfire_cpu", 0, "CPU", 0},
         {"arrayfire_opencl", 0, "Intel UHD 630", 2147483648ULL},
-        {"arrayfire_oneapi", 0, "Intel GPU", 2147483648ULL},
+        {"arrayfire_oneapi", 0, "oneAPI device 0", 0},
     };
+    auto& cpu_device = provider.device.available_devices[0];
+    cpu_device.device_kind = "cpu";
+    cpu_device.identity_confidence = "provider_reported";
+    auto& oneapi_device = provider.device.available_devices.back();
+    oneapi_device.backend_available = true;
+    oneapi_device.device_selectable = true;
+    oneapi_device.metadata_status = "unsupported";
+    oneapi_device.metadata_error_code = 301;
+    oneapi_device.name_is_fallback = true;
+    oneapi_device.device_kind = "unknown";
+    oneapi_device.identity_confidence = "backend_local";
+    auto& opencl_device = provider.device.available_devices[1];
+    opencl_device.device_kind = "gpu";
+    opencl_device.identity_confidence = "stable_hardware";
+    opencl_device.provider = "Intel";
+    opencl_device.provider_known = true;
+    opencl_device.driver_version = "31.0";
+    opencl_device.driver_version_known = true;
+    opencl_device.physical_fingerprint = "uuid:opencl-42";
+    opencl_device.physical_fingerprint_known = true;
+
+    cyxwiz::RouteQualificationSnapshot qualification;
+    qualification.matrix_id = "console-matrix";
+    const auto add_qualification =
+        [&](cyxwiz::DeviceType type, int device_id,
+            std::string fingerprint, int crash_count) {
+            cyxwiz::RouteQualificationRecord record;
+            record.type = type;
+            record.device_id = device_id;
+            record.physical_fingerprint = std::move(fingerprint);
+            record.operation_count =
+                cyxwiz::kRouteQualificationOperationCount;
+            record.pass_count =
+                cyxwiz::kRouteQualificationOperationCount - crash_count;
+            record.crash_count = crash_count;
+            record.certified = crash_count == 0;
+            qualification.routes.push_back(std::move(record));
+        };
+    add_qualification(cyxwiz::DeviceType::CPU, 0, {}, 0);
+    add_qualification(cyxwiz::DeviceType::OPENCL, 0,
+                      "uuid:opencl-42", 0);
+    add_qualification(cyxwiz::DeviceType::ONEAPI, 0, {}, 1);
+    auto& oneapi_qualification = qualification.routes.back();
+    oneapi_qualification.display_name = "Intel(R) Iris(R) Xe Graphics";
+    oneapi_qualification.device_kind = cyxwiz::DeviceKind::GPU;
+    oneapi_qualification.device_kind_known = true;
+    oneapi_qualification.identity_source = "intel_ur_selector_opencl_gpu";
+    cyxwiz::InstallRouteQualificationSnapshot(std::move(qualification));
 
     cyxwiz::RuntimeConsoleCommandService service(store, &provider);
     const auto current = service.Execute("show training current");
@@ -384,6 +452,12 @@ void TestRuntimeTruthCommands() {
               ContainsLine(current, "epoch=3/10 batch=7/20") &&
               ContainsLine(current, "requested=arrayfire_cuda:1") &&
               ContainsLine(current, "effective=arrayfire_opencl:0") &&
+              ContainsLine(current, "preflight=complete") &&
+              ContainsLine(current, "execution=validated") &&
+              ContainsLine(current,
+                           "Qualification: requested=failed evidence='Legacy route qualification evidence' effective=passed evidence='Legacy route qualification evidence'") &&
+              ContainsLine(current,
+                           "Identity: confidence=stable_hardware fingerprint=uuid:opencl-42") &&
               ContainsLine(current, "native_cpu_fallback=1"),
           "current training should preserve progress and requested/effective truth");
 
@@ -416,6 +490,8 @@ void TestRuntimeTruthCommands() {
     Check(active.success &&
               ContainsLine(active, "source=active_training_trace") &&
               ContainsLine(active, "backend=arrayfire_opencl") &&
+              ContainsLine(active, "preflight=complete") &&
+              ContainsLine(active, "execution=validated") &&
               ContainsLine(active, "Active run: train-42") &&
               !provider.last_inventory_requested,
           "active device should use run-bound truth without discovery");
@@ -425,14 +501,66 @@ void TestRuntimeTruthCommands() {
               ContainsLine(queued, "forbid_native_cpu_fallback"),
           "queued device and next-run policy should remain separately labeled");
     const auto backends = service.Execute("show device backends");
+    const auto available = service.Execute("show device available");
     const auto oneapi = service.Execute("show device oneapi");
     Check(provider.last_inventory_requested &&
               ContainsLine(backends, "source=cached_discovery") &&
               ContainsLine(backends, "arrayfire_cpu") &&
-              ContainsLine(backends, "arrayfire_opencl") &&
-              ContainsLine(oneapi, "backend=arrayfire_oneapi") &&
+              ContainsLine(backends, "arrayfire_opencl"),
+          "backend inventory should label its source and available backends");
+    Check(ContainsLine(available, "provider='Intel'"),
+          "available-device inventory should expose provider");
+    Check(ContainsLine(available, "driver='31.0'"),
+          "available-device inventory should expose driver");
+    Check(ContainsLine(available, "identity=stable_hardware"),
+          "available-device inventory should expose identity confidence");
+    Check(ContainsLine(available, "fingerprint=uuid:opencl-42"),
+          "available-device inventory should expose physical fingerprint");
+    Check(ContainsLine(oneapi, "backend=arrayfire_oneapi") &&
+              ContainsLine(oneapi, "name='Intel(R) Iris(R) Xe Graphics'") &&
+              ContainsLine(oneapi,
+                           "name_source=intel_ur_selector_opencl_gpu") &&
+              ContainsLine(oneapi, "selectable=true") &&
+              ContainsLine(oneapi, "kind=gpu") &&
+              ContainsLine(oneapi, "identity=backend_local") &&
+              ContainsLine(oneapi, "metadata=unsupported") &&
+              ContainsLine(oneapi, "matrix_status=failed") &&
+              ContainsLine(oneapi, "authorization=matrix_rejected") &&
+              ContainsLine(oneapi, "memory=unknown") &&
+              ContainsLine(oneapi, "arrayfire_error=301") &&
               !ContainsLine(oneapi, "backend=arrayfire_opencl"),
-          "inventory commands should label discovery and filter oneAPI exactly");
+          "oneAPI inventory should preserve unknown identity and filter exactly");
+
+    const auto qualification_result =
+        service.Execute("show device qualification");
+    const auto route = service.Execute("show device route opencl:0");
+    const auto recommendations =
+        service.Execute("show device recommendations oneapi:0");
+    Check(qualification_result.success &&
+              ContainsLine(qualification_result,
+                           "evidence='Legacy route qualification evidence'") &&
+              !ContainsLine(qualification_result, "console-matrix") &&
+              ContainsLine(qualification_result,
+                           "route=arrayfire_cpu:0 name='") &&
+              ContainsLine(qualification_result, "matrix_status=passed") &&
+              ContainsLine(qualification_result, "crash=1"),
+          "qualification command should expose exact retained matrix evidence");
+    Check(route.success &&
+              ContainsLine(route, "Route: arrayfire_opencl:0") &&
+              ContainsLine(route, "matrix_status=passed") &&
+              ContainsLine(route, "authorization=ready") &&
+              ContainsLine(route, "fingerprint=uuid:opencl-42"),
+          "route command should combine inventory identity and qualification");
+    Check(recommendations.success &&
+              ContainsLine(recommendations, "failed=arrayfire_oneapi:0") &&
+              ContainsLine(recommendations, "arrayfire_cpu_recovery") &&
+              ContainsLine(recommendations,
+                           "Stable physical identity does not prove"),
+          "recommendations should use shared identity and certification policy");
+    Check(!service.Execute("show device route cuda:not-a-number").success &&
+              !service.Execute("show device recommendations cuda:9").success,
+          "device route commands should reject malformed or absent routes");
+    cyxwiz::ClearRouteQualificationSnapshot();
 
     provider.current_run.available = true;
     provider.current_run.source = "current_training_trace";

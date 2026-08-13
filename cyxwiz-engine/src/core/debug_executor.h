@@ -1,5 +1,6 @@
 #pragma once
 
+#include "debug_graph_trace_executor.h"
 #include "graph_compiler.h"
 #include "../gui/node_editor.h"
 #include <cyxwiz/loss.h>
@@ -27,28 +28,62 @@ enum class DebugStage {
     Complete,
 };
 
+enum class ShapeMismatchKind {
+    None,
+    Input,
+    Output,
+    InputAndOutput,
+};
+
+const char* ShapeMismatchKindName(ShapeMismatchKind kind);
+
+inline constexpr float kDebugNormDenominatorFloor = 1.0e-12f;
+
 // Per-layer trace emitted during a DebugExecutor forward pass.
 struct LayerTrace {
     int node_id = -1;
-    std::string name;                     // e.g. "Dense_3"
+    std::string name;                     // graph node name when available
+    std::string module_name;              // actual constructed module name
     gui::NodeType type = gui::NodeType::Dense;
+    size_t module_index = 0;
+    size_t compiled_layer_index = 0;
+    std::vector<size_t> predicted_input_shape;
+    std::vector<size_t> actual_input_shape;
     std::vector<size_t> predicted_shape;  // from CompiledLayer::output_shape
     std::vector<size_t> actual_shape;     // observed at runtime
     float forward_ms = 0.0f;
-    bool shape_matches = false;
+    bool input_shape_matches = false;
+    bool shape_matches = false;           // output shape comparison
+    ShapeMismatchKind shape_mismatch = ShapeMismatchKind::None;
+    bool is_first_shape_mismatch = false;
+    int upstream_node_id = -1;
+    std::string upstream_node_name;
     bool has_nan = false;
     bool has_inf = false;
+
+    bool has_shape_mismatch() const {
+        return shape_mismatch != ShapeMismatchKind::None;
+    }
 };
 
 // Gradient norm for one learnable parameter tensor. Used to detect dead
 // subgraphs (is_zero for every param in a layer) and silent NaN explosions.
 struct GradNormEntry {
     std::string param_name;
-    int layer_index = -1;
+    int layer_index = -1;                 // actual SequentialModel module index
+    size_t compiled_layer_index = 0;
+    int node_id = -1;
+    std::string node_name;
+    float parameter_l2_norm = 0.0f;
     float l2_norm = 0.0f;
+    float grad_parameter_ratio = 0.0f;
+    float update_l2_norm = 0.0f;
+    float update_parameter_ratio = 0.0f;
+    bool update_observed = false;
     bool has_gradient = false;
     bool is_nan = false;
     bool is_zero = false;
+    std::string missing_gradient_reason;
 };
 
 // Full result of a single Local Debug run: one forward + one backward +
@@ -61,6 +96,7 @@ struct DebugResult {
     std::string failure_summary;
 
     std::vector<LayerTrace> layer_traces;
+    std::vector<DebugGraphTraceStep> model_build_traces;
     float forward_total_ms = 0.0f;
     float backward_total_ms = 0.0f;
 

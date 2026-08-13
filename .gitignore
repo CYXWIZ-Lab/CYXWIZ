@@ -18,6 +18,7 @@ cmake_install.cmake
 *.cmake
 !CMakeLists.txt
 !cmake/*.cmake
+!tests/smoke/run_oneapi_operation_matrix.cmake
 
 # Compiled files
 *.o
@@ -169,5 +170,5 @@ install-solana*.ps1
 
 *.gguf
 
-# Redistribution packages (large binaries)
-redist/
+# Generated redistribution packages (large binaries)
+redist/output/

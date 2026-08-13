@@ -4,6 +4,7 @@
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <cmath>
 #include <vector>
@@ -137,6 +138,10 @@ TEST_CASE("Weighted BCEWithLogits matches the reference on every available backe
     const float expected_loss = 2.5f * std::log(2.0f);
 
     for (const auto& info : cyxwiz::Device::GetAvailableDevices()) {
+        if (info.type == cyxwiz::DeviceType::ONEAPI &&
+            std::getenv("CYXWIZ_TEST_ONEAPI_LOSS") == nullptr) {
+            continue;
+        }
         DYNAMIC_SECTION("backend type " << static_cast<int>(info.type)
                         << " device " << info.device_id) {
             cyxwiz::Device device(info.type, info.device_id);

@@ -3,6 +3,7 @@
 #include "debug_trace_record.h"
 #include "graph_compiler.h"
 
+#include <cstdint>
 #include <string>
 
 namespace cyxwiz {
@@ -23,8 +24,13 @@ struct DebugRuntimeBackendClassification {
     std::string observation_timestamp;
     std::string observation_probe_outcome;
     std::string observation_probe_scope;
+    std::string evidence_scope = "compiler_capability";
+    std::string actual_backend = "unobserved";
     bool proven = false;
     bool fallback_possible = false;
+    bool prior_runtime_fallback_observed = false;
+    bool actual_backend_observed = false;
+    bool cost_estimate_available = false;
     bool needs_attention = false;
 };
 
@@ -35,6 +41,11 @@ public:
 
     void AttachToTrace(DebugTraceRecord& trace,
                        const BackendPlacementEntry& placement) const;
+
+    DebugTraceRecord BuildPlacementTrace(
+        const std::string& run_id,
+        uint64_t graph_hash,
+        const BackendPlacementEntry& placement) const;
 };
 
 } // namespace cyxwiz

@@ -8,6 +8,7 @@
 #include "../src/core/sequence_model_input.h"
 #include "../src/core/sequence_tag_metrics.h"
 #include "../src/core/training_executor.h"
+#include "route_qualification_test_fixture.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <arrow/api.h>
@@ -562,6 +563,8 @@ void CheckPackagedSequenceAssets(const std::filesystem::path& package_path,
 
 int main() {
     namespace fs = std::filesystem;
+
+    cyxwiz::test::InstallQualifiedRouteSnapshot();
 
     const fs::path repo_root = FindRepoRoot();
     const fs::path ner_dir = repo_root / "examples" / "cyxgraph" / "NER";

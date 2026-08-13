@@ -6,6 +6,7 @@
 #include "../../core/training_trace_collector.h"
 #endif
 #include "../../core/training_run_comparison.h"
+#include "../../core/route_qualification_snapshot.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
@@ -224,6 +225,25 @@ void RenderExecutionTruthRow(const char* label, const std::string& value) {
     ImGui::TextDisabled("%s", label);
     ImGui::TableNextColumn();
     ImGui::TextWrapped("%s", value.empty() ? "Not recorded" : value.c_str());
+}
+
+std::string FormatRouteQualification(
+    bool evidence_available,
+    bool qualified,
+    const std::string& matrix_id,
+    const std::string& message) {
+    std::string value;
+    if (!evidence_available) {
+        value = "No evidence";
+    } else {
+        value = qualified ? "Passed" : "Failed";
+    }
+    value += " | ";
+    value += RouteQualificationEvidenceLabel(matrix_id);
+    if (!message.empty()) {
+        value += " | " + message;
+    }
+    return value;
 }
 #endif
 
@@ -1624,6 +1644,13 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
 
             RenderExecutionTruthRow("Requested backend",
                                     trace.requested_backend);
+            RenderExecutionTruthRow(
+                "Requested qualification",
+                FormatRouteQualification(
+                    trace.requested_qualification_evidence_available,
+                    trace.requested_route_qualified,
+                    trace.requested_qualification_matrix_id,
+                    trace.requested_qualification_message));
 
             std::string effective = trace.effective_backend;
             if (!trace.effective_device_name.empty()) {
@@ -1634,6 +1661,33 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
                     std::to_string(trace.effective_device_id);
             }
             RenderExecutionTruthRow("Effective backend", effective);
+            RenderExecutionTruthRow(
+                "Effective qualification",
+                FormatRouteQualification(
+                    trace.effective_qualification_evidence_available,
+                    trace.effective_route_qualified,
+                    trace.effective_qualification_matrix_id,
+                    trace.effective_qualification_message));
+            std::string identity = trace.identity_confidence;
+            if (!trace.physical_fingerprint.empty()) {
+                if (!identity.empty()) {
+                    identity += " | ";
+                }
+                identity += trace.physical_fingerprint;
+            }
+            RenderExecutionTruthRow("Physical identity", identity);
+            RenderExecutionTruthRow(
+                "Execution preflight",
+                trace.execution_validated
+                    ? "Validated"
+                    : (trace.preflight_stage.empty()
+                           ? "Not recorded"
+                           : "Not validated | " + trace.preflight_stage));
+            if (trace.selection_fallback_applied) {
+                RenderExecutionTruthRow(
+                    "Selection fallback",
+                    "Applied to ArrayFire CPU");
+            }
             RenderExecutionTruthRow("Fallback policy",
                                     trace.fallback_policy);
 

@@ -18,8 +18,12 @@
 #include "icons.h"
 #include "theme.h"
 #include "../core/error_codes.h"
+#include "../core/debug_graph_trace_executor.h"
+#include "../core/debug_runtime_backend_classifier.h"
 #include "../core/debug_trace_record.h"
 #include "../core/debug_operator_trace_producer.h"
+#include "../core/compute_runtime_config.h"
+#include "../core/compute_runtime_paths.h"
 #include "../core/execution_device_preferences.h"
 #include "../core/keyboard_shortcuts.h"
 #include "../core/sequence_arrow_batcher.h"
@@ -1315,22 +1319,42 @@ MainWindow::MainWindow()
     });
 
     // Set up Compute Device selection callback (Preferences -> Device tab)
-    toolbar_->SetComputeDeviceChangedCallback([](cyxwiz::DeviceType type, int device_id) {
-        cyxwiz::SetPendingExecutionDeviceSelection(type, device_id);
-
-        const char* type_str = "Unknown";
-        switch (type) {
-            case cyxwiz::DeviceType::CPU: type_str = "CPU"; break;
-            case cyxwiz::DeviceType::CUDA: type_str = "CUDA"; break;
-            case cyxwiz::DeviceType::OPENCL: type_str = "OpenCL"; break;
-            case cyxwiz::DeviceType::ONEAPI: type_str = "oneAPI"; break;
-            case cyxwiz::DeviceType::METAL: type_str = "Metal"; break;
-            case cyxwiz::DeviceType::VULKAN: type_str = "Vulkan"; break;
-        }
-        spdlog::info("Queued compute device for next training run: {} device {}",
-                     type_str,
-                     device_id);
-    });
+    toolbar_->SetComputeDeviceChangedCallback(
+        [](cyxwiz::DeviceType type,
+           int device_id,
+           const std::string& physical_fingerprint,
+           std::string& error) {
+            const auto result = cyxwiz::CommitExecutionDeviceSelection(
+                {type, device_id, physical_fingerprint},
+                [](const cyxwiz::PendingExecutionDeviceSelection& selection) {
+                    cyxwiz::PreferredComputeRoute preferred;
+                    preferred.type = selection.type;
+                    preferred.last_device_id = selection.device_id;
+                    preferred.physical_fingerprint =
+                        selection.physical_fingerprint;
+                    std::string persistence_error;
+                    if (!cyxwiz::UpdatePreferredComputeRouteAtomic(
+                            cyxwiz::GetComputeRuntimeConfigPath(),
+                            preferred,
+                            persistence_error)) {
+                        throw std::runtime_error(persistence_error);
+                    }
+                    cyxwiz::CommitExecutionDeviceSelectionState(selection);
+                });
+            if (!result.committed) {
+                error = "stage=" + std::string(
+                    cyxwiz::DeviceSelectionTransactionStageName(result.stage)) +
+                    " reason=" + result.message;
+                spdlog::warn(
+                    "Compute device selection was not committed: {}", error);
+                return false;
+            }
+            spdlog::info(
+                "Committed compute device for next training run: backend={} device={}",
+                cyxwiz::ExecutionDeviceSelectionBackendName(type),
+                device_id);
+            return true;
+        });
 
     // Set up Verbose Python Logging pointer (View menu - Developer Tools)
     if (scripting_engine_) {
@@ -3749,6 +3773,21 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     compile_trace.payload["summary"] = compile_summary;
     session.traces.push_back(std::move(compile_trace));
 
+    if (!config.backend_placements.empty()) {
+        cyxwiz::DebugRuntimeBackendClassifier backend_classifier;
+        for (const auto& placement : config.backend_placements) {
+            session.traces.push_back(backend_classifier.BuildPlacementTrace(
+                run_id, session.graph_hash, placement));
+        }
+        session.studio_events.push_back({
+            run_id, "", session.graph_hash, -1,
+            "BackendPlacementAudit", "captured",
+            "Captured " + std::to_string(config.backend_placements.size()) +
+                " compiler placement decision(s); actual runtime backend "
+                "remains unobserved without same-run execution evidence."
+        });
+    }
+
     if (!compile_success) {
         session.success = false;
         if (session.failure_summary.empty()) {
@@ -3884,6 +3923,16 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.issues = session.debug_result.issues;
         }
 
+        if (!session.debug_result.model_build_traces.empty()) {
+            cyxwiz::DebugGraphTraceExecutor graph_trace_executor;
+            auto model_build_traces = graph_trace_executor.TraceSteps(
+                run_id, session.debug_result.model_build_traces);
+            session.traces.insert(
+                session.traces.end(),
+                std::make_move_iterator(model_build_traces.begin()),
+                std::make_move_iterator(model_build_traces.end()));
+        }
+
         const bool local_debug_build_failed =
             session.debug_result.reached == cyxwiz::DebugStage::BuildModel &&
             !session.debug_result.success &&
@@ -3917,6 +3966,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         }
 
         for (const auto& trace : session.debug_result.layer_traces) {
+            const bool has_shape_mismatch = trace.has_shape_mismatch();
             cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
                 run_id,
                 trace.node_id,
@@ -3924,28 +3974,56 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 std::to_string(static_cast<int>(trace.type)),
                 "Forward",
                 cyxwiz::DebugTraceRole::Activation,
-                {},
+                trace.actual_input_shape,
                 trace.actual_shape,
                 "float32",
                 "LocalDebug",
                 (trace.has_nan || trace.has_inf) ? "warning" :
-                    (trace.shape_matches ? "ok" : "shape_mismatch"));
+                    (has_shape_mismatch ? "shape_mismatch" : "ok"));
             record.duration_ms = trace.forward_ms;
+            record.payload["module_index"] = trace.module_index;
+            record.payload["compiled_layer_index"] =
+                trace.compiled_layer_index;
+            record.payload["module_name"] = trace.module_name;
+            record.payload["predicted_input_shape"] =
+                trace.predicted_input_shape;
+            record.payload["actual_input_shape"] =
+                trace.actual_input_shape;
+            record.payload["input_shape_matches"] =
+                trace.input_shape_matches;
             record.payload["predicted_shape"] = trace.predicted_shape;
             record.payload["actual_shape"] = trace.actual_shape;
+            record.payload["output_shape_matches"] = trace.shape_matches;
             record.payload["shape_matches"] = trace.shape_matches;
+            record.payload["all_shapes_match"] = !has_shape_mismatch;
+            record.payload["shape_mismatch_kind"] =
+                cyxwiz::ShapeMismatchKindName(trace.shape_mismatch);
+            record.payload["is_first_shape_mismatch"] =
+                trace.is_first_shape_mismatch;
+            record.payload["upstream_node_id"] = trace.upstream_node_id;
+            record.payload["upstream_node_name"] =
+                trace.upstream_node_name;
             record.payload["has_nan"] = trace.has_nan;
             record.payload["has_inf"] = trace.has_inf;
-            record.payload["success"] = trace.shape_matches &&
+            record.payload["success"] = !has_shape_mismatch &&
                 !trace.has_nan && !trace.has_inf;
-            if (!trace.shape_matches) {
+            if (has_shape_mismatch) {
                 record.issues.push_back({
                     cyxwiz::IssueLevel::Warning,
                     trace.node_id,
                     trace.name,
-                    "Local Debug forward shape differed from compiler prediction.",
+                    std::string(
+                        "Local Debug shape differed from compiler prediction") +
+                        (trace.is_first_shape_mismatch
+                            ? " at the first observed divergence."
+                            : "."),
                     cyxwiz::errors::Compiler::TensorShapeMismatch
                 });
+                record.payload["suggested_fix"] = trace.upstream_node_id >= 0
+                    ? "Inspect this node's configured shapes and the recorded "
+                      "upstream graph node."
+                    : "Inspect this node's configured shapes and the Local "
+                      "Debug model input.";
             }
             if (trace.has_nan || trace.has_inf) {
                 record.issues.push_back({
@@ -4076,8 +4154,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         for (const auto& grad : session.debug_result.grad_norms) {
             cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
                 run_id,
-                grad.layer_index,
-                grad.param_name,
+                grad.node_id,
+                grad.node_name.empty() ? grad.param_name : grad.node_name,
                 "Parameter",
                 "Backward",
                 cyxwiz::DebugTraceRole::Gradient,
@@ -4088,32 +4166,49 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 !grad.has_gradient ? "missing_gradient" :
                     (grad.is_nan ? "nan" : (grad.is_zero ? "zero" : "ok")));
             record.payload["l2_norm"] = grad.l2_norm;
+            record.payload["gradient_l2_norm"] = grad.l2_norm;
+            record.payload["parameter_l2_norm"] =
+                grad.parameter_l2_norm;
+            record.payload["grad_parameter_ratio"] =
+                grad.grad_parameter_ratio;
+            record.payload["update_l2_norm"] = grad.update_l2_norm;
+            record.payload["update_parameter_ratio"] =
+                grad.update_parameter_ratio;
+            record.payload["relative_norm_denominator_floor"] =
+                cyxwiz::kDebugNormDenominatorFloor;
+            record.payload["update_observed"] = grad.update_observed;
+            record.payload["parameter_name"] = grad.param_name;
+            record.payload["module_index"] = grad.layer_index;
+            record.payload["compiled_layer_index"] =
+                grad.compiled_layer_index;
             record.payload["has_gradient"] = grad.has_gradient;
             record.payload["is_nan"] = grad.is_nan;
             record.payload["is_zero"] = grad.is_zero;
+            record.payload["missing_gradient_reason"] =
+                grad.missing_gradient_reason;
             record.payload["success"] = grad.has_gradient &&
                 !grad.is_nan && !grad.is_zero;
             if (!grad.has_gradient) {
                 record.issues.push_back({
                     cyxwiz::IssueLevel::Warning,
-                    grad.layer_index,
-                    grad.param_name,
-                    "Local Debug gradient was missing.",
+                    grad.node_id,
+                    grad.node_name.empty() ? grad.param_name : grad.node_name,
+                    grad.missing_gradient_reason,
                     cyxwiz::errors::Training::TrainingExecutionFailed
                 });
             } else if (grad.is_nan) {
                 record.issues.push_back({
                     cyxwiz::IssueLevel::Warning,
-                    grad.layer_index,
-                    grad.param_name,
+                    grad.node_id,
+                    grad.node_name.empty() ? grad.param_name : grad.node_name,
                     "Local Debug gradient norm was NaN.",
                     cyxwiz::errors::Training::TrainingExecutionFailed
                 });
             } else if (grad.is_zero) {
                 record.issues.push_back({
                     cyxwiz::IssueLevel::Warning,
-                    grad.layer_index,
-                    grad.param_name,
+                    grad.node_id,
+                    grad.node_name.empty() ? grad.param_name : grad.node_name,
                     "Local Debug gradient norm was zero.",
                     cyxwiz::errors::Training::TrainingExecutionFailed
                 });

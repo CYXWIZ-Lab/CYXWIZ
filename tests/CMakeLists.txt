@@ -4,6 +4,7 @@ find_package(Catch2 CONFIG REQUIRED)
 
 # Unit tests
 add_executable(cyxwiz-tests
+    unit/test_main.cpp
     unit/test_tensor.cpp
     unit/test_engine.cpp
     unit/test_c_api.cpp
@@ -28,11 +29,24 @@ add_executable(cyxwiz-tests
     ../cyxwiz-engine/src/core/formats/cyxmodel_format.cpp
     ../cyxwiz-engine/src/core/language_model_training.cpp
     ../cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp
+    ../cyxwiz-engine/src/core/compute_runtime_config.cpp
+    ../cyxwiz-engine/src/core/route_qualification_snapshot.cpp
+    ../cyxwiz-engine/src/core/route_qualification_service.cpp
+    ../cyxwiz-engine/src/core/route_recommendation.cpp
     ../cyxwiz-engine/src/inference/text_inference_input.cpp
 )
 
 target_link_libraries(cyxwiz-tests PRIVATE
-    Catch2::Catch2WithMain
+    Catch2::Catch2
+    cyxwiz-backend
+    nlohmann_json::nlohmann_json
+)
+
+add_executable(cyxwiz-device-inventory
+    smoke/device_inventory_report.cpp
+)
+
+target_link_libraries(cyxwiz-device-inventory PRIVATE
     cyxwiz-backend
 )
 
@@ -52,6 +66,56 @@ target_link_libraries(test_tensor_fan_in_benchmark PRIVATE
     cyxwiz-backend
 )
 
+if(CYXWIZ_BUILD_ENGINE)
+    add_custom_target(test_oneapi_operation_matrix
+        COMMAND ${CMAKE_COMMAND}
+            "-DPROBE_EXE=$<TARGET_FILE:cyxwiz-route-probe>"
+            "-DREPORT_PATH=$<TARGET_FILE_DIR:cyxwiz-route-probe>/oneapi-operation-matrix.txt"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/smoke/run_oneapi_operation_matrix.cmake"
+        DEPENDS cyxwiz-route-probe
+        USES_TERMINAL
+        VERBATIM
+    )
+
+    add_custom_target(test_arrayfire_route_matrix
+        COMMAND ${CMAKE_COMMAND}
+            "-DPROBE_EXE=$<TARGET_FILE:cyxwiz-route-probe>"
+            "-DREPORT_PATH=$<TARGET_FILE_DIR:cyxwiz-route-probe>/arrayfire-route-matrix.txt"
+            "-DSUMMARY_PATH=$<TARGET_FILE_DIR:cyxwiz-route-probe>/arrayfire-route-qualification.json"
+            "-DROUTES=cpu:0|cuda:0|opencl:0|opencl:1|opencl:2|oneapi:0|oneapi:1"
+            "-DMATRIX_ID=cyxwiz-route-qualification-v1"
+            "-DPACK_ID=local-arrayfire-installation"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/smoke/run_arrayfire_route_matrix.cmake"
+        DEPENDS cyxwiz-route-probe
+        USES_TERMINAL
+        VERBATIM
+    )
+
+    add_executable(test_route_qualification_process
+        ../cyxwiz-engine/tests/test_route_qualification_process.cpp
+        ../cyxwiz-engine/src/core/route_qualification_service.cpp
+        ../cyxwiz-engine/src/core/route_qualification_snapshot.cpp
+    )
+    target_include_directories(test_route_qualification_process PRIVATE
+        ${CMAKE_SOURCE_DIR}/cyxwiz-engine/src
+        ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+    )
+    target_link_libraries(test_route_qualification_process PRIVATE
+        cyxwiz-backend
+        nlohmann_json::nlohmann_json
+    )
+    set_target_properties(test_route_qualification_process PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_dependencies(test_route_qualification_process cyxwiz-route-probe)
+    add_test(
+        NAME RouteQualificationProcessContracts
+        COMMAND test_route_qualification_process
+                $<TARGET_FILE:cyxwiz-route-probe>
+    )
+endif()
+
 # DuckDB compile definition for data loader tests
 if(CYXWIZ_HAS_DUCKDB)
     target_compile_definitions(cyxwiz-tests PRIVATE CYXWIZ_HAS_DUCKDB)
@@ -62,7 +126,7 @@ include(CTest)
 # Register the core suite as one process. Per-case Catch2 discovery made CTest
 # restart ArrayFire and hardware detection hundreds of times, turning an
 # 18-second suite into an impractical validation command.
-add_test(NAME CyxWizCoreTests COMMAND cyxwiz-tests)
+add_test(NAME CyxWizCoreTests COMMAND cyxwiz-tests "~[oneapi]")
 
 # ONNX Export Tests (conditional on ONNX export support)
 if(CYXWIZ_HAS_ONNX_EXPORT)

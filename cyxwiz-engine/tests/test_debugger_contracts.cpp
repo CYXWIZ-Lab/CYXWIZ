@@ -436,6 +436,11 @@ void TestRuntimeBackendClassificationContract() {
           "GPU backend placement should preserve fallback path");
     Check(!gpu_classification.needs_attention,
           "GPU backend placement should not need user attention");
+    Check(gpu_classification.evidence_scope == "compiler_capability",
+          "GPU placement without observations should remain capability evidence");
+    Check(!gpu_classification.actual_backend_observed &&
+              gpu_classification.actual_backend == "unobserved",
+          "compiler placement must not claim an actual runtime backend");
 
     cyxwiz::DebugTraceRecord trace = cyxwiz::DebugNodeTraceContract::Make(
         "backend-classification-run",
@@ -479,6 +484,47 @@ void TestRuntimeBackendClassificationContract() {
           "healthy backend trace should mark success");
     Check(trace.payload["warning_count"].get<size_t>() == 0,
           "healthy backend placement should not add warnings");
+    Check(trace.payload["backend_intended"].get<std::string>() ==
+              "ArrayFire active backend",
+          "backend trace should expose intended placement");
+    Check(trace.payload["backend_actual"].get<std::string>() == "unobserved" &&
+              !trace.payload["backend_actual_observed"].get<bool>(),
+          "backend trace should not relabel placement as runtime fact");
+    Check(!trace.payload["backend_cost_estimate_available"].get<bool>(),
+          "backend trace should not invent an unavailable cost estimate");
+
+    const auto placement_trace = classifier.BuildPlacementTrace(
+        "backend-audit-run", 12345, gpu);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(placement_trace),
+          "placement audit should use the canonical node trace schema");
+    Check(placement_trace.run_id == "backend-audit-run" &&
+              placement_trace.node_id == gpu.node_id,
+          "placement audit should preserve run and graph-node identity");
+    Check(placement_trace.phase == "BackendPlacement" &&
+              placement_trace.payload["graph_hash"].get<uint64_t>() == 12345,
+          "placement audit should expose phase and graph correlation");
+    Check(placement_trace.payload["trace_producer"].get<std::string>() ==
+              "DebugRuntimeBackendClassifier",
+          "placement audit should expose its existing classifier producer");
+
+    auto prior_fallback = gpu;
+    prior_fallback.expected_backend = "CPU";
+    prior_fallback.status = cyxwiz::BackendPlacementStatus::Cpu;
+    prior_fallback.observation_source =
+        cyxwiz::BackendPlacementObservationSource::RuntimeFallback;
+    prior_fallback.observation_device = "af_device=0;name=prior-device";
+    const auto prior_fallback_trace = classifier.BuildPlacementTrace(
+        "backend-audit-run", 12345, prior_fallback);
+    Check(prior_fallback_trace.payload[
+              "backend_prior_runtime_fallback_observed"].get<bool>(),
+          "cached runtime fallback should be identified as prior evidence");
+    Check(prior_fallback_trace.payload["backend_evidence_scope"].get<std::string>() ==
+              "prior_runtime_fallback",
+          "cached runtime fallback should expose its historical evidence scope");
+    Check(!prior_fallback_trace.payload[
+              "backend_fallback_observed_this_run"].get<bool>() &&
+              !prior_fallback_trace.payload["backend_actual_observed"].get<bool>(),
+          "cached fallback must not be claimed as current-run execution fact");
 
     cyxwiz::BackendPlacementEntry mha_cpu;
     mha_cpu.node_id = 88;
@@ -520,6 +566,8 @@ void TestRuntimeBackendClassificationContract() {
           "MHA CPU-backed placement should preserve probe scope");
     Check(mha_classification.needs_attention,
           "MHA CPU-backed self-attention should require debugger attention");
+    Check(mha_classification.evidence_scope == "preflight_probe",
+          "preflight observation should remain preflight-scoped evidence");
 
     cyxwiz::DebugTraceRecord mha_trace =
         cyxwiz::DebugNodeTraceContract::Make(
@@ -2895,6 +2943,18 @@ void TestDebugRunStoreContract() {
     });
     record.traces.push_back(std::move(trace));
 
+    cyxwiz::BackendPlacementEntry stored_placement;
+    stored_placement.node_id = 8;
+    stored_placement.node_name = "StoredBackendNode";
+    stored_placement.node_type = "Dense";
+    stored_placement.expected_backend = "ArrayFire active backend";
+    stored_placement.status = cyxwiz::BackendPlacementStatus::Gpu;
+    stored_placement.reason_code =
+        cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable;
+    cyxwiz::DebugRuntimeBackendClassifier backend_classifier;
+    record.traces.push_back(backend_classifier.BuildPlacementTrace(
+        record.summary.run_id, record.summary.graph_hash, stored_placement));
+
     record.studio_events.push_back({
         record.summary.run_id,
         "2026-06-18T00:00:01",
@@ -2926,7 +2986,7 @@ void TestDebugRunStoreContract() {
     Check(loaded->summary.success, "loaded success should round-trip");
     Check(loaded->summary.issue_count == 1,
           "loaded issue count should match persisted issue count");
-    Check(loaded->summary.trace_count == 1,
+    Check(loaded->summary.trace_count == 2,
           "loaded trace count should match persisted trace count");
     Check(loaded->summary.event_count == 1,
           "loaded event count should match persisted event count");
@@ -2951,7 +3011,7 @@ void TestDebugRunStoreContract() {
               loaded->issues[0].message == "Contract warning" &&
               loaded->issues[0].error_code == "CW-C-0103",
           "issue payload and error code should round-trip");
-    Check(loaded->traces.size() == 1 &&
+    Check(loaded->traces.size() == 2 &&
               loaded->traces[0].role == cyxwiz::DebugTraceRole::Activation &&
               loaded->traces[0].input_shape == std::vector<size_t>{2, 3} &&
               loaded->traces[0].output_shape == std::vector<size_t>{2, 4} &&
@@ -2959,6 +3019,11 @@ void TestDebugRunStoreContract() {
               loaded->traces[0].issues.size() == 1 &&
               loaded->traces[0].issues[0].error_code == "CW-C-0103",
           "trace payload and issue error code should round-trip");
+    Check(loaded->traces[1].phase == "BackendPlacement" &&
+              loaded->traces[1].payload["backend_actual"].get<std::string>() ==
+                  "unobserved" &&
+              loaded->traces[1].payload["graph_hash"].get<uint64_t>() == 0xCAFE,
+          "canonical backend placement audit should persist without claiming runtime fact");
     Check(loaded->studio_events.size() == 1 &&
               loaded->studio_events[0].action == "StudioDebugger.SelectTrace",
           "Studio event payload should round-trip");

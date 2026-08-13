@@ -158,6 +158,7 @@ bool IsValueTrace(const DebugTraceRecord& trace) {
 
 bool IsRuntimeTrace(const DebugTraceRecord& trace) {
     return trace.duration_ms > 0.0f ||
+        trace.phase.find("Backend") != std::string::npos ||
         trace.phase.find("SmokeRun") != std::string::npos ||
         trace.phase.find("Train") != std::string::npos ||
         trace.status == "failed" ||
@@ -2153,9 +2154,9 @@ void StudioDebuggerPanel::RenderTraceTimeline() {
         ImVec4 row_color = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
         if (trace.has_nan || trace.has_inf) {
             row_color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
-        } else if (!trace.shape_matches && !trace.predicted_shape.empty()) {
+        } else if (trace.has_shape_mismatch()) {
             row_color = ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
-        } else if (trace.shape_matches) {
+        } else {
             row_color = ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
         }
 
@@ -2173,9 +2174,16 @@ void StudioDebuggerPanel::RenderTraceTimeline() {
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             ImGui::Text("%s", trace.name.c_str());
-            ImGui::Text("Predicted: %s", FormatShape(trace.predicted_shape).c_str());
-            ImGui::Text("Actual: %s", FormatShape(trace.actual_shape).c_str());
-            ImGui::Text("Shape match: %s", trace.shape_matches ? "yes" : "no");
+            ImGui::Text("Input predicted: %s",
+                        FormatShape(trace.predicted_input_shape).c_str());
+            ImGui::Text("Input actual: %s",
+                        FormatShape(trace.actual_input_shape).c_str());
+            ImGui::Text("Output predicted: %s",
+                        FormatShape(trace.predicted_shape).c_str());
+            ImGui::Text("Output actual: %s",
+                        FormatShape(trace.actual_shape).c_str());
+            ImGui::Text("Mismatch: %s",
+                        ShapeMismatchKindName(trace.shape_mismatch));
             ImGui::EndTooltip();
         }
     }
@@ -2456,6 +2464,87 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
         }
         ImGui::Text("Duration: %.2f ms", trace.duration_ms);
 
+        if (JsonHas(trace.payload, "backend_status")) {
+            ImGui::Separator();
+            ImGui::Text("Backend decision audit");
+            ImGui::Text("Requested: %s",
+                        JsonString(trace.payload, "backend_requested").c_str());
+            ImGui::Text("Intended: %s",
+                        JsonString(trace.payload, "backend_intended").c_str());
+            ImGui::Text("Actual: %s",
+                        JsonString(trace.payload, "backend_actual").c_str());
+            ImGui::Text("Evidence: %s",
+                        JsonString(trace.payload,
+                                   "backend_evidence_scope").c_str());
+            ImGui::Text("Status: %s",
+                        JsonString(trace.payload, "backend_status").c_str());
+            ImGui::TextWrapped("Reason: %s",
+                JsonString(trace.payload, "backend_reason_code").c_str());
+            if (JsonHas(trace.payload, "backend_fallback") &&
+                !JsonString(trace.payload, "backend_fallback").empty()) {
+                ImGui::Text("Fallback path: %s",
+                    JsonString(trace.payload, "backend_fallback").c_str());
+            }
+            ImGui::Text("Same-run fallback observed: %s",
+                JsonBool(trace.payload,
+                         "backend_fallback_observed_this_run", false)
+                    ? "yes"
+                    : "no");
+            if (JsonBool(trace.payload,
+                         "backend_prior_runtime_fallback_observed", false)) {
+                ImGui::TextDisabled(
+                    "A matching fallback was observed before this debug run.");
+            }
+            if (!JsonBool(trace.payload,
+                          "backend_cost_estimate_available", false)) {
+                ImGui::TextWrapped("Cost estimate: unavailable (%s)",
+                    JsonString(trace.payload,
+                               "backend_cost_estimate_reason").c_str());
+            }
+            if (JsonHas(trace.payload, "backend_explanation")) {
+                ImGui::TextWrapped("Explanation: %s",
+                    JsonString(trace.payload,
+                               "backend_explanation").c_str());
+            }
+            if (JsonHas(trace.payload, "backend_suggested_action")) {
+                ImGui::TextWrapped("Suggested action: %s",
+                    JsonString(trace.payload,
+                               "backend_suggested_action").c_str());
+            }
+        }
+
+        if (IsGradientTrace(trace) &&
+            JsonHas(trace.payload, "parameter_name")) {
+            ImGui::Separator();
+            ImGui::Text("Gradient health");
+            if (JsonHas(trace.payload, "parameter_name")) {
+                ImGui::Text("Parameter: %s",
+                            JsonString(trace.payload, "parameter_name").c_str());
+            }
+            ImGui::Text("Parameter norm: %.4e",
+                        JsonNumber(trace.payload, "parameter_l2_norm"));
+            ImGui::Text("Gradient norm: %.4e",
+                        JsonNumber(trace.payload, "gradient_l2_norm"));
+            ImGui::Text("Gradient / parameter: %.4e",
+                        JsonNumber(trace.payload, "grad_parameter_ratio"));
+            if (JsonBool(trace.payload, "update_observed", false)) {
+                ImGui::Text("Update norm: %.4e",
+                            JsonNumber(trace.payload, "update_l2_norm"));
+                ImGui::Text("Update / parameter: %.4e",
+                            JsonNumber(trace.payload,
+                                       "update_parameter_ratio"));
+            } else {
+                ImGui::TextDisabled("Optimizer update was not observed.");
+            }
+            if (JsonHas(trace.payload, "missing_gradient_reason") &&
+                !JsonString(trace.payload,
+                            "missing_gradient_reason").empty()) {
+                ImGui::TextWrapped("Missing gradient: %s",
+                    JsonString(trace.payload,
+                               "missing_gradient_reason").c_str());
+            }
+        }
+
         if (trace.node_id >= 0 && focus_node_callback_) {
             if (ImGui::Button("Focus Node")) {
                 focus_node_callback_(trace.node_id);
@@ -2528,14 +2617,29 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
     ImGui::Text("Name: %s", trace.name.c_str());
     ImGui::Text("Node id: %d", trace.node_id);
     ImGui::Text("Type: %d", static_cast<int>(trace.type));
-    ImGui::Text("Predicted: %s", FormatShape(trace.predicted_shape).c_str());
-    ImGui::Text("Actual: %s", FormatShape(trace.actual_shape).c_str());
+    ImGui::Text("Input predicted: %s",
+                FormatShape(trace.predicted_input_shape).c_str());
+    ImGui::Text("Input actual: %s",
+                FormatShape(trace.actual_input_shape).c_str());
+    ImGui::Text("Output predicted: %s",
+                FormatShape(trace.predicted_shape).c_str());
+    ImGui::Text("Output actual: %s",
+                FormatShape(trace.actual_shape).c_str());
     ImGui::Text("Duration: %.2f ms", trace.forward_ms);
 
-    if (trace.shape_matches) {
+    if (!trace.has_shape_mismatch()) {
         ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f), "Shape match");
-    } else if (!trace.predicted_shape.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "Shape mismatch");
+    } else {
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            "Shape mismatch: %s%s",
+            ShapeMismatchKindName(trace.shape_mismatch),
+            trace.is_first_shape_mismatch ? " (first divergence)" : "");
+        if (trace.upstream_node_id >= 0) {
+            ImGui::Text("Upstream: %s [node %d]",
+                        trace.upstream_node_name.c_str(),
+                        trace.upstream_node_id);
+        }
     }
 
     if (trace.has_nan) {

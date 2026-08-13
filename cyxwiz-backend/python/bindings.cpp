@@ -219,6 +219,47 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("VULKAN", cyxwiz::DeviceType::VULKAN)
         .export_values();
 
+    py::enum_<cyxwiz::DeviceMetadataStatus>(m, "DeviceMetadataStatus")
+        .value("NotQueried", cyxwiz::DeviceMetadataStatus::NotQueried)
+        .value("Available", cyxwiz::DeviceMetadataStatus::Available)
+        .value("Unsupported", cyxwiz::DeviceMetadataStatus::Unsupported)
+        .value("Failed", cyxwiz::DeviceMetadataStatus::Failed);
+
+    py::enum_<cyxwiz::DeviceKind>(m, "DeviceKind")
+        .value("Unknown", cyxwiz::DeviceKind::Unknown)
+        .value("CPU", cyxwiz::DeviceKind::CPU)
+        .value("GPU", cyxwiz::DeviceKind::GPU)
+        .value("Accelerator", cyxwiz::DeviceKind::Accelerator);
+
+    py::enum_<cyxwiz::DeviceIdentityConfidence>(m,
+                                                "DeviceIdentityConfidence")
+        .value("Unknown", cyxwiz::DeviceIdentityConfidence::Unknown)
+        .value("BackendLocal",
+               cyxwiz::DeviceIdentityConfidence::BackendLocal)
+        .value("ProviderReported",
+               cyxwiz::DeviceIdentityConfidence::ProviderReported)
+        .value("StableHardware",
+               cyxwiz::DeviceIdentityConfidence::StableHardware);
+
+    py::enum_<cyxwiz::DeviceActivationStage>(m, "DeviceActivationStage")
+        .value("NotStarted", cyxwiz::DeviceActivationStage::NotStarted)
+        .value("BackendSelection", cyxwiz::DeviceActivationStage::BackendSelection)
+        .value("DeviceSelection", cyxwiz::DeviceActivationStage::DeviceSelection)
+        .value("ExecutionValidation", cyxwiz::DeviceActivationStage::ExecutionValidation)
+        .value("EffectiveStateQuery", cyxwiz::DeviceActivationStage::EffectiveStateQuery)
+        .value("Complete", cyxwiz::DeviceActivationStage::Complete);
+
+    py::class_<cyxwiz::DeviceActivationResult>(m, "DeviceActivationResult")
+        .def_readonly("requested_type", &cyxwiz::DeviceActivationResult::requested_type)
+        .def_readonly("requested_device_id", &cyxwiz::DeviceActivationResult::requested_device_id)
+        .def_readonly("effective_type", &cyxwiz::DeviceActivationResult::effective_type)
+        .def_readonly("effective_device_id", &cyxwiz::DeviceActivationResult::effective_device_id)
+        .def_readonly("stage", &cyxwiz::DeviceActivationResult::stage)
+        .def_readonly("success", &cyxwiz::DeviceActivationResult::success)
+        .def_readonly("execution_validated", &cyxwiz::DeviceActivationResult::execution_validated)
+        .def_readonly("error_code", &cyxwiz::DeviceActivationResult::error_code)
+        .def_readonly("message", &cyxwiz::DeviceActivationResult::message);
+
     // DataType enum
     py::enum_<cyxwiz::DataType>(m, "DataType")
         .value("Float32", cyxwiz::DataType::Float32)
@@ -237,7 +278,52 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_readonly("memory_available", &cyxwiz::DeviceInfo::memory_available)
         .def_readonly("compute_units", &cyxwiz::DeviceInfo::compute_units)
         .def_readonly("supports_fp64", &cyxwiz::DeviceInfo::supports_fp64)
-        .def_readonly("supports_fp16", &cyxwiz::DeviceInfo::supports_fp16);
+        .def_readonly("supports_fp16", &cyxwiz::DeviceInfo::supports_fp16)
+        .def_readonly("backend_available", &cyxwiz::DeviceInfo::backend_available)
+        .def_readonly("device_selectable", &cyxwiz::DeviceInfo::device_selectable)
+        .def_readonly("execution_validated", &cyxwiz::DeviceInfo::execution_validated)
+        .def_readonly("kind", &cyxwiz::DeviceInfo::kind)
+        .def_readonly("identity_confidence",
+                      &cyxwiz::DeviceInfo::identity_confidence)
+        .def_readonly("provider", &cyxwiz::DeviceInfo::provider)
+        .def_readonly("driver_version", &cyxwiz::DeviceInfo::driver_version)
+        .def_readonly("hardware_vendor_id",
+                      &cyxwiz::DeviceInfo::hardware_vendor_id)
+        .def_readonly("hardware_device_id",
+                      &cyxwiz::DeviceInfo::hardware_device_id)
+        .def_readonly("pci_domain", &cyxwiz::DeviceInfo::pci_domain)
+        .def_readonly("pci_bus", &cyxwiz::DeviceInfo::pci_bus)
+        .def_readonly("pci_device", &cyxwiz::DeviceInfo::pci_device)
+        .def_readonly("pci_function", &cyxwiz::DeviceInfo::pci_function)
+        .def_readonly("hardware_uuid", &cyxwiz::DeviceInfo::hardware_uuid)
+        .def_readonly("hardware_luid", &cyxwiz::DeviceInfo::hardware_luid)
+        .def_readonly("physical_fingerprint",
+                      &cyxwiz::DeviceInfo::physical_fingerprint)
+        .def_readonly("provider_known", &cyxwiz::DeviceInfo::provider_known)
+        .def_readonly("driver_version_known",
+                      &cyxwiz::DeviceInfo::driver_version_known)
+        .def_readonly("hardware_vendor_id_known",
+                      &cyxwiz::DeviceInfo::hardware_vendor_id_known)
+        .def_readonly("hardware_device_id_known",
+                      &cyxwiz::DeviceInfo::hardware_device_id_known)
+        .def_readonly("pci_location_known",
+                      &cyxwiz::DeviceInfo::pci_location_known)
+        .def_readonly("hardware_uuid_known",
+                      &cyxwiz::DeviceInfo::hardware_uuid_known)
+        .def_readonly("hardware_luid_known",
+                      &cyxwiz::DeviceInfo::hardware_luid_known)
+        .def_readonly("physical_fingerprint_known",
+                      &cyxwiz::DeviceInfo::physical_fingerprint_known)
+        .def_readonly("metadata_status", &cyxwiz::DeviceInfo::metadata_status)
+        .def_readonly("metadata_error_code", &cyxwiz::DeviceInfo::metadata_error_code)
+        .def_readonly("metadata_message", &cyxwiz::DeviceInfo::metadata_message)
+        .def_readonly("name_known", &cyxwiz::DeviceInfo::name_known)
+        .def_readonly("name_is_fallback", &cyxwiz::DeviceInfo::name_is_fallback)
+        .def_readonly("memory_total_known", &cyxwiz::DeviceInfo::memory_total_known)
+        .def_readonly("memory_available_known", &cyxwiz::DeviceInfo::memory_available_known)
+        .def_readonly("compute_units_known", &cyxwiz::DeviceInfo::compute_units_known)
+        .def_readonly("supports_fp64_known", &cyxwiz::DeviceInfo::supports_fp64_known)
+        .def_readonly("supports_fp16_known", &cyxwiz::DeviceInfo::supports_fp16_known);
 
     // Device
     py::class_<cyxwiz::Device>(m, "Device")
@@ -246,6 +332,8 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("get_type", &cyxwiz::Device::GetType)
         .def("get_device_id", &cyxwiz::Device::GetDeviceId)
         .def("get_info", &cyxwiz::Device::GetInfo)
+        .def("activate_exact", &cyxwiz::Device::ActivateExact,
+             py::arg("validate_execution") = false)
         .def("set_active", &cyxwiz::Device::SetActive)
         .def("is_active", &cyxwiz::Device::IsActive)
         .def_static("get_available_devices", &cyxwiz::Device::GetAvailableDevices)

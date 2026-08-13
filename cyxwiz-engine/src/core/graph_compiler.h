@@ -23,8 +23,8 @@ namespace cyxwiz {
  * Represents a compiled layer ready for execution
  */
 struct CompiledLayer {
-    gui::NodeType type;
-    int node_id;
+    gui::NodeType type = gui::NodeType::Dense;
+    int node_id = -1;
     std::string name;
     std::map<std::string, std::string> parameters;
 

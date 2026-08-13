@@ -104,6 +104,10 @@ set(ENGINE_SOURCES
     src/core/engine_config.cpp
     src/core/python_detector.cpp
     src/core/window_manager.cpp
+    src/core/compute_runtime_config.cpp
+    src/core/route_qualification_snapshot.cpp
+    src/core/route_qualification_service.cpp
+    src/core/route_recommendation.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry.cpp
     src/core/data_registry_config.cpp
@@ -170,6 +174,7 @@ set(ENGINE_SOURCES
     src/core/debug_graph_trace_executor.cpp
     src/core/debug_operator_trace_adapter.cpp
     src/core/debug_operator_trace_producer.cpp
+    src/core/debug_runtime_backend_classifier.cpp
     src/core/preflight_validator.cpp
     src/core/crash_run_recorder.cpp
     src/core/text_preprocessing_tracer.cpp
@@ -837,10 +842,23 @@ set(ENGINE_HEADERS
 )
 
 # Create executable
+add_executable(cyxwiz-route-probe
+    ${CMAKE_SOURCE_DIR}/tests/smoke/test_oneapi_operation_probe.cpp
+)
+target_link_libraries(cyxwiz-route-probe PRIVATE cyxwiz-backend)
+target_include_directories(cyxwiz-route-probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(cyxwiz-route-probe PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 add_executable(cyxwiz-engine
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
 )
+add_dependencies(cyxwiz-engine cyxwiz-route-probe)
 
 # Include directories
 # Use BEFORE to ensure bundled libraries take priority over system-installed versions
@@ -3129,6 +3147,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/checkpoint_manager.cpp
     src/core/crash_run_recorder.cpp
     src/core/training_trace_collector.cpp
+    src/core/route_qualification_snapshot.cpp
     src/core/runtime_log_store.cpp
     src/core/formats/cyxmodel_format.cpp
     src/plugin/registries/plugin_training_hook_manager.cpp
@@ -3460,11 +3479,18 @@ add_executable(test_runtime_console_commands
     src/core/runtime_console_commands.cpp
     src/core/runtime_log_filter.cpp
     src/core/runtime_log_store.cpp
+    src/core/route_qualification_snapshot.cpp
+    src/core/route_recommendation.cpp
 )
 
 target_include_directories(test_runtime_console_commands PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+
+target_link_libraries(test_runtime_console_commands PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
 )
 
 if(WIN32)
@@ -3497,6 +3523,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/checkpoint_manager.cpp
     src/core/crash_run_recorder.cpp
     src/core/training_trace_collector.cpp
+    src/core/route_qualification_snapshot.cpp
     src/core/runtime_log_store.cpp
     src/plugin/registries/plugin_training_hook_manager.cpp
 )
@@ -3545,6 +3572,9 @@ add_executable(test_dense_training_benchmark
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
 )
 configure_training_executor_harness(test_dense_training_benchmark)
+if(WIN32)
+    target_link_libraries(test_dense_training_benchmark PRIVATE Psapi)
+endif()
 
 # ===== Test: Graph Topology Utilities =====
 add_executable(test_graph_topology_utils

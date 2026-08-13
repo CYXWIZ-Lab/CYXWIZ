@@ -1,6 +1,7 @@
 #include "memory_panel.h"
 #include "../icons.h"
 #include "../../core/training_manager.h"
+#include "../../core/execution_device_context.h"
 #include "../../core/training_trace_collector.h"
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -362,27 +363,43 @@ void MemoryPanel::RenderGPUDetails() {
     ImGui::Text("Device: %s", gpu_info_.name.c_str());
     ImGui::Text("Backend: %s", gpu_info_.backend.c_str());
     ImGui::Text("Device ID: %d", gpu_info_.device_id);
+    ImGui::Text("Metadata: %s",
+                DeviceMetadataStatusName(
+                    static_cast<DeviceMetadataStatus>(
+                        gpu_info_.metadata_status)));
 
     ImGui::Separator();
 
     // Memory bar
-    size_t used_memory = gpu_info_.total_memory - gpu_info_.free_memory;
-    float memory_usage = gpu_info_.total_memory > 0
-        ? static_cast<float>(used_memory) / gpu_info_.total_memory
-        : 0.0f;
+    const bool usage_known = gpu_info_.total_memory_known &&
+        gpu_info_.free_memory_known &&
+        gpu_info_.free_memory <= gpu_info_.total_memory;
+    if (usage_known) {
+        const size_t used_memory =
+            gpu_info_.total_memory - gpu_info_.free_memory;
+        const float memory_usage = gpu_info_.total_memory > 0
+            ? static_cast<float>(used_memory) / gpu_info_.total_memory
+            : 0.0f;
 
-    ImGui::Text("Memory Usage:");
-    ImGui::SameLine();
-    ImVec4 mem_color = GetMemoryColor(memory_usage * 100);
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, mem_color);
-    ImGui::ProgressBar(memory_usage, ImVec2(-1, 20), "");
-    ImGui::PopStyleColor();
+        ImGui::Text("Memory Usage:");
+        ImGui::SameLine();
+        ImVec4 mem_color = GetMemoryColor(memory_usage * 100);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, mem_color);
+        ImGui::ProgressBar(memory_usage, ImVec2(-1, 20), "");
+        ImGui::PopStyleColor();
 
-    ImGui::Text("Used: %s / %s (%.1f%%)",
-        FormatBytes(used_memory).c_str(),
-        FormatBytes(gpu_info_.total_memory).c_str(),
-        memory_usage * 100);
-    ImGui::Text("Free: %s", FormatBytes(gpu_info_.free_memory).c_str());
+        ImGui::Text("Used: %s / %s (%.1f%%)",
+            FormatBytes(used_memory).c_str(),
+            FormatBytes(gpu_info_.total_memory).c_str(),
+            memory_usage * 100);
+        ImGui::Text("Free: %s", FormatBytes(gpu_info_.free_memory).c_str());
+    } else if (gpu_info_.total_memory_known) {
+        ImGui::Text("Memory total: %s",
+                    FormatBytes(gpu_info_.total_memory).c_str());
+        ImGui::TextDisabled("Memory occupancy: Unknown");
+    } else {
+        ImGui::TextDisabled("Memory: Unknown");
+    }
 
     ImGui::Separator();
 
@@ -540,10 +557,35 @@ void MemoryPanel::FinalizeSnapshot(int epoch, int step) {
 
 void MemoryPanel::UpdateGPUStatus() {
     try {
-        auto devices = Device::GetAvailableDevices();
         const auto trace = TrainingTraceCollector::LatestTrace();
         const bool has_run_device =
             !trace.run_id.empty() && !trace.effective_backend.empty();
+
+        if (HasActiveExecutionDeviceContext()) {
+            const bool trace_is_active = trace.status == "running";
+            gpu_info_.device_id = trace_is_active
+                ? trace.effective_device_id
+                : -1;
+            gpu_info_.name = !trace_is_active
+                ? "Execution starting"
+                : (trace.effective_device_name.empty()
+                       ? trace.effective_backend
+                       : trace.effective_device_name);
+            gpu_info_.backend = trace_is_active
+                ? trace.effective_backend
+                : "ArrayFire";
+            gpu_info_.total_memory = 0;
+            gpu_info_.free_memory = 0;
+            gpu_info_.total_memory_known = false;
+            gpu_info_.free_memory_known = false;
+            gpu_info_.name_is_fallback = false;
+            gpu_info_.metadata_status =
+                static_cast<int>(DeviceMetadataStatus::NotQueried);
+            gpu_info_.temperature = 0.0f;
+            return;
+        }
+
+        auto devices = Device::GetAvailableDevices();
 
         auto use_device = [this](const DeviceInfo& dev) {
                 gpu_info_.device_id = dev.device_id;
@@ -564,6 +606,11 @@ void MemoryPanel::UpdateGPUStatus() {
                 }
                 gpu_info_.total_memory = dev.memory_total;
                 gpu_info_.free_memory = dev.memory_available;
+                gpu_info_.total_memory_known = dev.memory_total_known;
+                gpu_info_.free_memory_known = dev.memory_available_known;
+                gpu_info_.name_is_fallback = dev.name_is_fallback;
+                gpu_info_.metadata_status =
+                    static_cast<int>(dev.metadata_status);
 
                 gpu_info_.temperature = 0.0f;  // Not available from Device API
         };
@@ -571,7 +618,6 @@ void MemoryPanel::UpdateGPUStatus() {
         if (has_run_device) {
             for (const auto& dev : devices) {
                 if (dev.device_id == trace.effective_device_id &&
-                    dev.name == trace.effective_device_name &&
                     ((dev.type == DeviceType::CPU &&
                       trace.effective_backend == "arrayfire_cpu") ||
                      (dev.type == DeviceType::CUDA &&
@@ -584,6 +630,21 @@ void MemoryPanel::UpdateGPUStatus() {
                     return;
                 }
             }
+
+            gpu_info_.device_id = trace.effective_device_id;
+            gpu_info_.name = trace.effective_device_name.empty()
+                ? "Run device not in inventory"
+                : trace.effective_device_name;
+            gpu_info_.backend = trace.effective_backend;
+            gpu_info_.total_memory = 0;
+            gpu_info_.free_memory = 0;
+            gpu_info_.total_memory_known = false;
+            gpu_info_.free_memory_known = false;
+            gpu_info_.name_is_fallback = false;
+            gpu_info_.metadata_status =
+                static_cast<int>(DeviceMetadataStatus::NotQueried);
+            gpu_info_.temperature = 0.0f;
+            return;
         }
 
         // Find first GPU device (CUDA, OpenCL, or oneAPI) when no run-bound
@@ -603,6 +664,11 @@ void MemoryPanel::UpdateGPUStatus() {
         gpu_info_.backend = "None";
         gpu_info_.total_memory = 0;
         gpu_info_.free_memory = 0;
+        gpu_info_.total_memory_known = false;
+        gpu_info_.free_memory_known = false;
+        gpu_info_.name_is_fallback = false;
+        gpu_info_.metadata_status =
+            static_cast<int>(DeviceMetadataStatus::NotQueried);
         gpu_info_.temperature = 0.0f;
     } catch (const std::exception& e) {
         spdlog::warn("Failed to query GPU status: {}", e.what());
@@ -611,6 +677,11 @@ void MemoryPanel::UpdateGPUStatus() {
         gpu_info_.backend = "Unknown";
         gpu_info_.total_memory = 0;
         gpu_info_.free_memory = 0;
+        gpu_info_.total_memory_known = false;
+        gpu_info_.free_memory_known = false;
+        gpu_info_.name_is_fallback = false;
+        gpu_info_.metadata_status =
+            static_cast<int>(DeviceMetadataStatus::Failed);
         gpu_info_.temperature = 0.0f;
     }
 }

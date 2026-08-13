@@ -41,16 +41,28 @@ TrainingConfiguration MakeTabularConfig() {
 
     CompiledLayer l1;
     l1.type  = gui::NodeType::Dense;
+    l1.node_id = 101;
+    l1.name = "Input Dense";
     l1.units = 32;
+    l1.input_shape = {10};
+    l1.output_shape = {32};
     cfg.layers.push_back(l1);
 
     CompiledLayer l2;
     l2.type = gui::NodeType::ReLU;
+    l2.node_id = 102;
+    l2.name = "Hidden ReLU";
+    l2.input_shape = {32};
+    l2.output_shape = {32};
     cfg.layers.push_back(l2);
 
     CompiledLayer l3;
     l3.type  = gui::NodeType::Dense;
+    l3.node_id = 103;
+    l3.name = "Output Dense";
     l3.units = 4;
+    l3.input_shape = {32};
+    l3.output_shape = {4};
     cfg.layers.push_back(l3);
 
     cfg.loss_type      = gui::NodeType::CrossEntropyLoss;
@@ -254,6 +266,39 @@ void TestBuildSequentialTabular() {
     // Layer count: Dense, ReLU, Dense = 3 modules. Output node / losses
     // are filtered out by the builder.
     ExpectEq(built.model->Size(), 3, "model.Size()");
+    ExpectEq(built.module_provenance.size(), 3,
+             "module_provenance.size()");
+    for (size_t i = 0; i < built.module_provenance.size(); ++i) {
+        const auto& provenance = built.module_provenance[i];
+        ExpectTrue(provenance.created(),
+                   "tabular layer should create a module");
+        ExpectEq(*provenance.module_index, i,
+                 "module provenance index");
+        ExpectEq(provenance.compiled_layer_index, i,
+                 "compiled layer provenance index");
+        ExpectEq(provenance.node_id, 101 + static_cast<int>(i),
+                 "module provenance node id");
+    }
+
+    auto skipped_cfg = MakeTabularConfig();
+    CompiledLayer unsupported;
+    unsupported.type = gui::NodeType::Conv2D;
+    unsupported.node_id = 99;
+    unsupported.name = "Unsupported Conv";
+    skipped_cfg.layers.insert(skipped_cfg.layers.begin(), unsupported);
+    auto skipped = BuildSequentialFromConfig(skipped_cfg);
+    ExpectTrue(skipped.ok(),
+               "supported layers after a skipped layer should still build");
+    ExpectEq(skipped.module_provenance.size(), 4,
+             "skipped module provenance size");
+    ExpectTrue(!skipped.module_provenance[0].created(),
+               "unsupported compiled layer should be recorded as skipped");
+    ExpectEq(skipped.module_provenance[0].node_id, 99,
+             "skipped provenance node id");
+    ExpectEq(*skipped.module_provenance[1].module_index, 0,
+             "first created module index after skipped layer");
+    ExpectEq(skipped.module_provenance[1].compiled_layer_index, 1,
+             "compiled index should not be inferred from module index");
     spdlog::info("  OK: model has {} modules", built.model->Size());
 }
 
@@ -1329,7 +1374,40 @@ void TestDebugExecutorGoldenPath() {
 
     // Per-layer traces: one per module (Dense, ReLU, Dense = 3 modules).
     ExpectEq(res.layer_traces.size(), 3, "layer_traces.size()");
-    for (const auto& t : res.layer_traces) {
+    ExpectEq(res.model_build_traces.size(), 3,
+             "model_build_traces.size()");
+    for (size_t i = 0; i < res.model_build_traces.size(); ++i) {
+        const auto& build_trace = res.model_build_traces[i];
+        ExpectTrue(build_trace.status == "ok",
+                   "created module build trace should be successful");
+        ExpectTrue(build_trace.payload["module_created"].get<bool>(),
+                   "build trace should identify a created module");
+        ExpectEq(build_trace.payload["module_index"].get<size_t>(), i,
+                 "build trace module index");
+        ExpectEq(build_trace.payload["compiled_layer_index"].get<size_t>(), i,
+                 "build trace compiled layer index");
+        ExpectTrue(
+            build_trace.payload["parameter_summary_available"].get<bool>(),
+            "created module should expose bounded parameter metadata");
+    }
+    ExpectEq(
+        res.model_build_traces[0].payload["parameter_tensor_count"].get<size_t>(),
+        2,
+        "input Dense parameter tensor count");
+    ExpectEq(
+        res.model_build_traces[0].payload["parameter_numel"].get<size_t>(),
+        352,
+        "input Dense parameter element count");
+
+    for (size_t i = 0; i < res.layer_traces.size(); ++i) {
+        const auto& t = res.layer_traces[i];
+        ExpectEq(t.node_id, 101 + static_cast<int>(i),
+                 "forward trace graph node id");
+        ExpectEq(t.module_index, i, "forward trace module index");
+        ExpectEq(t.compiled_layer_index, i,
+                 "forward trace compiled layer index");
+        ExpectTrue(t.input_shape_matches,
+                   "forward input should match its exact compiled layer");
         if (t.has_nan || t.has_inf) {
             std::cerr << "FAIL: non-finite forward output in trace "
                       << t.name << "\n";
@@ -1340,11 +1418,90 @@ void TestDebugExecutorGoldenPath() {
                       << t.name << "\n";
             std::exit(1);
         }
+        ExpectTrue(t.shape_matches,
+                   "forward trace should match its exact compiled layer");
+        ExpectTrue(!t.has_shape_mismatch(),
+                   "golden path should have no shape divergence");
     }
     spdlog::info("  OK: reached=Complete, params_with_grad={}, "
                  "layer_traces={}, loss={}",
                  res.params_with_grad, res.layer_traces.size(),
                  res.loss_value);
+}
+
+void TestDebugExecutorFirstShapeMismatch() {
+    spdlog::info("--- TestDebugExecutorFirstShapeMismatch ---");
+    auto cfg = MakeTabularConfig();
+    cfg.layers[0].output_shape = {31};
+    cfg.layers[1].input_shape = {31};
+
+    DebugExecutor exe(cfg);
+    auto res = exe.Run();
+    ExpectTrue(res.reached == DebugStage::Complete,
+               "shape prophecy mismatch should remain observational");
+    ExpectEq(res.layer_traces.size(), 3,
+             "shape mismatch layer trace count");
+
+    const auto& first = res.layer_traces[0];
+    ExpectTrue(first.shape_mismatch == ShapeMismatchKind::Output,
+               "first divergence should identify the output prediction");
+    ExpectTrue(first.is_first_shape_mismatch,
+               "first divergence should be marked once");
+    ExpectTrue(first.upstream_node_id == -1,
+               "first module should not claim an upstream graph node");
+
+    const auto& second = res.layer_traces[1];
+    ExpectTrue(second.shape_mismatch == ShapeMismatchKind::Input,
+               "downstream trace should identify its input mismatch");
+    ExpectTrue(!second.is_first_shape_mismatch,
+               "later divergence should not replace the first one");
+    ExpectEq(second.upstream_node_id, 101,
+             "downstream mismatch upstream graph node");
+    ExpectTrue(second.upstream_node_name == "Input Dense",
+               "downstream mismatch upstream graph name");
+    spdlog::info("  OK: first shape divergence and upstream node are exact");
+}
+
+void TestDebugExecutorSkippedLayerMapping() {
+    spdlog::info("--- TestDebugExecutorSkippedLayerMapping ---");
+    auto cfg = MakeTabularConfig();
+
+    CompiledLayer unsupported;
+    unsupported.type = gui::NodeType::Conv2D;
+    unsupported.node_id = 99;
+    unsupported.name = "Unsupported Conv";
+    cfg.layers.insert(cfg.layers.begin(), unsupported);
+
+    DebugExecutor exe(cfg);
+    auto res = exe.Run();
+    ExpectTrue(res.reached == DebugStage::Complete,
+               "supported modules after a skipped layer should execute");
+    ExpectEq(res.model_build_traces.size(), 4,
+             "skipped layer model build traces");
+
+    const auto& skipped = res.model_build_traces.front();
+    ExpectTrue(skipped.status == "skipped",
+               "unsupported compiled layer should emit a skipped build trace");
+    ExpectTrue(!skipped.payload["module_created"].get<bool>(),
+               "skipped build trace should not claim module creation");
+    ExpectTrue(skipped.payload["module_index"].is_null(),
+               "skipped build trace should not have a module index");
+    ExpectTrue(!skipped.warnings.empty(),
+               "skipped build trace should explain the omission");
+
+    ExpectEq(
+        res.model_build_traces[1].payload["module_index"].get<size_t>(),
+        0,
+        "first created module index after skipped layer");
+    ExpectEq(
+        res.model_build_traces[1].payload["compiled_layer_index"].get<size_t>(),
+        1,
+        "first created module compiled index after skipped layer");
+    ExpectEq(res.layer_traces.front().node_id, 101,
+             "forward trace should map to the actual first graph module");
+    ExpectEq(res.layer_traces.front().compiled_layer_index, 1,
+             "forward trace should retain the non-positional compiled index");
+    spdlog::info("  OK: skipped layers cannot shift module trace identity");
 }
 
 void TestDebugExecutorGradNormBookkeeping() {
@@ -1363,6 +1520,7 @@ void TestDebugExecutorGradNormBookkeeping() {
     ExpectEq(res.grad_norms.size(), 4, "grad_norms size");
 
     bool any_positive_norm = false;
+    bool any_positive_update = false;
     for (const auto& g : res.grad_norms) {
         if (g.layer_index < 0) {
             std::cerr << "FAIL: grad_norms entry missing layer_index for "
@@ -1370,10 +1528,26 @@ void TestDebugExecutorGradNormBookkeeping() {
             std::exit(1);
         }
         assert(g.has_gradient && "golden path grad norm should know the gradient exists");
+        ExpectTrue(g.node_id == 101 || g.node_id == 103,
+                   "gradient should resolve to its graph layer node");
+        ExpectTrue(!g.node_name.empty(),
+                   "gradient should preserve graph layer name");
+        ExpectTrue(std::isfinite(g.parameter_l2_norm),
+                   "parameter norm should be a bounded scalar");
+        ExpectTrue(std::isfinite(g.grad_parameter_ratio),
+                   "gradient/parameter ratio should be finite");
+        ExpectTrue(g.update_observed,
+                   "completed optimizer step should expose its update");
+        ExpectTrue(std::isfinite(g.update_l2_norm),
+                   "update norm should be a bounded scalar");
+        ExpectTrue(std::isfinite(g.update_parameter_ratio),
+                   "update/parameter ratio should be finite");
         assert(!g.is_nan && "grad norm NaN on random init is a backend bug");
         if (g.l2_norm > 0.0f) any_positive_norm = true;
+        if (g.update_l2_norm > 0.0f) any_positive_update = true;
     }
     assert(any_positive_norm && "at least one grad should have nonzero norm");
+    assert(any_positive_update && "at least one parameter should be updated");
     spdlog::info("  OK: grad_norms fully populated with valid layer_index");
 }
 
@@ -1512,6 +1686,8 @@ int main() {
         TestTimeDistributedDenseModule();
         TestBuildSequentialTimeDistributedHead();
         TestDebugExecutorGoldenPath();
+        TestDebugExecutorFirstShapeMismatch();
+        TestDebugExecutorSkippedLayerMapping();
         TestDebugExecutorGradNormBookkeeping();
         TestDebugExecutorTextGraph();
         if (run_slow_sentiment) {

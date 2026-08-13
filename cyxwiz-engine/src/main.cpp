@@ -5,6 +5,10 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include "core/runtime_log_sink.h"
+#include "core/compute_runtime_config.h"
+#include "core/compute_runtime_paths.h"
+#include "core/execution_device_preferences.h"
+#include "core/route_qualification_snapshot.h"
 #include <iostream>
 #include <filesystem>
 #include <cstdlib>
@@ -107,10 +111,88 @@ int main(int argc, char** argv) {
 
     spdlog::info("Starting CyxWiz Engine v{}", cyxwiz::GetVersionString());
 
+    const auto qualification_cache =
+        cyxwiz::GetRouteQualificationCachePath();
+    const auto legacy_qualification =
+        std::filesystem::current_path() /
+        "arrayfire-route-qualification.json";
+    std::error_code qualification_path_error;
+    const bool qualification_cache_exists =
+        std::filesystem::exists(
+            qualification_cache, qualification_path_error) &&
+        !qualification_path_error;
+    auto qualification =
+        qualification_cache_exists
+            ? cyxwiz::LoadAndInstallRouteQualificationSnapshot(
+                  qualification_cache)
+            : cyxwiz::LoadAndInstallRouteQualificationSnapshot(
+                  legacy_qualification);
+    if (qualification.loaded && !qualification_cache_exists) {
+        std::string migration_error;
+        const auto snapshot = cyxwiz::GetRouteQualificationSnapshot();
+        if (snapshot.has_value() &&
+            cyxwiz::SaveRouteQualificationSnapshotAtomic(
+                qualification_cache, *snapshot, migration_error)) {
+            spdlog::info(
+                "Migrated route qualification evidence to machine-local cache {}",
+                qualification_cache.string());
+        } else {
+            spdlog::warn(
+                "Could not migrate route qualification evidence to {}: {}",
+                qualification_cache.string(), migration_error);
+        }
+    }
+    if (qualification.loaded) {
+        spdlog::info(
+            "Loaded route qualification evidence for {} routes",
+            qualification.route_count);
+    } else {
+        spdlog::warn(
+            "Compute route changes are disabled until qualification evidence "
+            "is available: {}",
+            qualification.message);
+    }
+
     // Initialize backend
     if (!cyxwiz::Initialize()) {
         spdlog::error("Failed to initialize CyxWiz backend");
         return 1;
+    }
+
+    const auto runtime_config_path =
+        cyxwiz::GetComputeRuntimeConfigPath();
+    const auto runtime_config =
+        cyxwiz::LoadComputeRuntimeConfig(runtime_config_path);
+    if (runtime_config.loaded) {
+        cyxwiz::SetNextRunExecutionPolicy(
+            runtime_config.config.default_fallback_policy);
+        if (runtime_config.config.preferred_route.has_value()) {
+            const auto& preferred =
+                *runtime_config.config.preferred_route;
+            cyxwiz::CommitExecutionDeviceSelectionState(
+                {preferred.type,
+                 preferred.last_device_id,
+                 preferred.physical_fingerprint});
+            spdlog::info(
+                "Loaded machine compute preference: backend={} device_hint={} identity={}",
+                cyxwiz::ExecutionDeviceSelectionBackendName(preferred.type),
+                preferred.last_device_id,
+                preferred.physical_fingerprint.empty()
+                    ? "backend_local"
+                    : preferred.physical_fingerprint);
+        }
+    } else if (runtime_config.file_exists) {
+        spdlog::warn(
+            "Machine compute runtime configuration was not applied: {}",
+            runtime_config.message);
+    } else {
+        std::string config_error;
+        if (!cyxwiz::SaveComputeRuntimeConfigAtomic(
+                runtime_config_path, runtime_config.config, config_error)) {
+            spdlog::warn(
+                "Could not initialize machine compute runtime configuration: {}",
+                config_error);
+        }
     }
 
     // List available devices

@@ -1,6 +1,7 @@
 #include "memory_monitor.h"
 #include "../icons.h"
 #include "../../core/training_manager.h"
+#include "../../core/execution_device_context.h"
 #include "../../core/training_trace_collector.h"
 #include <imgui.h>
 #include <implot.h>
@@ -117,17 +118,48 @@ void MemoryMonitor::UpdateRAMUsage() {
 
 void MemoryMonitor::UpdateGPUStatus() {
     try {
-        auto devices = Device::GetAvailableDevices();
         const auto trace = TrainingTraceCollector::LatestTrace();
         const bool has_run_device =
             !trace.run_id.empty() && !trace.effective_backend.empty();
+
+        if (HasActiveExecutionDeviceContext()) {
+            const bool trace_is_active = trace.status == "running";
+            const bool accelerator_run =
+                trace_is_active &&
+                (trace.effective_backend == "arrayfire_cuda" ||
+                 trace.effective_backend == "arrayfire_opencl" ||
+                 trace.effective_backend == "arrayfire_oneapi");
+            metrics_.gpu_available = accelerator_run;
+            metrics_.gpu_name = !trace_is_active
+                ? "Execution starting"
+                : (accelerator_run
+                       ? (trace.effective_device_name.empty()
+                              ? trace.effective_backend
+                              : trace.effective_device_name)
+                       : "No run-bound GPU");
+            metrics_.gpu_vram_used = 0;
+            metrics_.gpu_vram_total = 0;
+            metrics_.gpu_vram_usage_percent = 0.0f;
+            metrics_.gpu_vram_total_known = false;
+            metrics_.gpu_vram_used_known = false;
+            return;
+        }
+
+        auto devices = Device::GetAvailableDevices();
 
         const auto use_device = [this](const DeviceInfo& dev) {
             metrics_.gpu_available = true;
             metrics_.gpu_name = dev.name;
             metrics_.gpu_vram_total = dev.memory_total;
-            metrics_.gpu_vram_used = dev.memory_total - dev.memory_available;
-            metrics_.gpu_vram_usage_percent = dev.memory_total > 0
+            metrics_.gpu_vram_total_known = dev.memory_total_known;
+            metrics_.gpu_vram_used_known =
+                dev.memory_total_known && dev.memory_available_known &&
+                dev.memory_available <= dev.memory_total;
+            metrics_.gpu_vram_used = metrics_.gpu_vram_used_known
+                ? dev.memory_total - dev.memory_available
+                : 0;
+            metrics_.gpu_vram_usage_percent = metrics_.gpu_vram_used_known &&
+                                                      dev.memory_total > 0
                 ? 100.0f * static_cast<float>(metrics_.gpu_vram_used) /
                     static_cast<float>(metrics_.gpu_vram_total)
                 : 0.0f;
@@ -143,8 +175,7 @@ void MemoryMonitor::UpdateGPUStatus() {
                     (dev.type == DeviceType::ONEAPI &&
                      trace.effective_backend == "arrayfire_oneapi");
                 if (backend_matches &&
-                    dev.device_id == trace.effective_device_id &&
-                    dev.name == trace.effective_device_name) {
+                    dev.device_id == trace.effective_device_id) {
                     use_device(dev);
                     return;
                 }
@@ -156,6 +187,8 @@ void MemoryMonitor::UpdateGPUStatus() {
             metrics_.gpu_vram_used = 0;
             metrics_.gpu_vram_total = 0;
             metrics_.gpu_vram_usage_percent = 0.0f;
+            metrics_.gpu_vram_total_known = false;
+            metrics_.gpu_vram_used_known = false;
             return;
         }
 
@@ -173,9 +206,13 @@ void MemoryMonitor::UpdateGPUStatus() {
         metrics_.gpu_vram_used = 0;
         metrics_.gpu_vram_total = 0;
         metrics_.gpu_vram_usage_percent = 0.0f;
+        metrics_.gpu_vram_total_known = false;
+        metrics_.gpu_vram_used_known = false;
     } catch (const std::exception& e) {
         spdlog::warn("Failed to query GPU: {}", e.what());
         metrics_.gpu_available = false;
+        metrics_.gpu_vram_total_known = false;
+        metrics_.gpu_vram_used_known = false;
     }
 }
 
@@ -373,17 +410,24 @@ void MemoryMonitor::Render() {
 
             ImGui::Separator();
 
-            char gpuInfo[64];
-            snprintf(gpuInfo, sizeof(gpuInfo), "%s / %s",
-                    FormatBytes(metrics_.gpu_vram_used).c_str(),
-                    FormatBytes(metrics_.gpu_vram_total).c_str());
-            RenderMetricBar(
-                "VRAM occupancy", metrics_.gpu_vram_usage_percent, gpuInfo);
-            RenderSparkline(
-                "##gpu_vram_spark",
-                gpu_vram_history_,
-                50,
-                ColorFromPercent(metrics_.gpu_vram_usage_percent));
+            if (metrics_.gpu_vram_used_known) {
+                char gpuInfo[64];
+                snprintf(gpuInfo, sizeof(gpuInfo), "%s / %s",
+                        FormatBytes(metrics_.gpu_vram_used).c_str(),
+                        FormatBytes(metrics_.gpu_vram_total).c_str());
+                RenderMetricBar(
+                    "VRAM occupancy", metrics_.gpu_vram_usage_percent, gpuInfo);
+                RenderSparkline(
+                    "##gpu_vram_spark",
+                    gpu_vram_history_,
+                    50,
+                    ColorFromPercent(metrics_.gpu_vram_usage_percent));
+            } else if (metrics_.gpu_vram_total_known) {
+                ImGui::TextDisabled("VRAM total: %s; occupancy unknown",
+                                    FormatBytes(metrics_.gpu_vram_total).c_str());
+            } else {
+                ImGui::TextDisabled("VRAM: Unknown");
+            }
         } else {
             ImGui::TextDisabled(ICON_FA_DESKTOP " GPU: Not available");
             ImGui::TextDisabled("(Requires CUDA or OpenCL device)");

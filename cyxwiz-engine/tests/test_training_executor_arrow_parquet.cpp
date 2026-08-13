@@ -13,12 +13,14 @@
 #include "../src/core/training_trace_collector.h"
 #include "../src/core/execution_device_context.h"
 #include "../src/core/execution_device_preferences.h"
+#include "route_qualification_test_fixture.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
 #include <arrow/api.h>
 #include <arrow/io/api.h>
 #include <parquet/arrow/writer.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -855,6 +857,12 @@ void TestAllowedTrainingRecordsForcedLinearFallback(
                   "execution context should record stable identity");
             Check(event.capability_generation > 0,
                   "execution context should record capability generation");
+            Check(event.activation_succeeded,
+                  "execution context should record exact activation success");
+            Check(event.execution_validated,
+                  "execution context should record bounded execution validation");
+            Check(event.preflight_stage == "complete",
+                  "execution context should record completed preflight stage");
             Check(event.fallback_policy == "allow_native_cpu_fallback",
                   "execution context should record fallback policy");
         }
@@ -1054,6 +1062,69 @@ std::optional<cyxwiz::DeviceInfo> FirstDeviceOfType(
     return std::nullopt;
 }
 
+void TestRunPreflightEnforcesRouteQualification() {
+    const auto inventory = cyxwiz::Device::GetAvailableDevices();
+    const auto rejected = std::find_if(
+        inventory.begin(), inventory.end(),
+        [](const cyxwiz::DeviceInfo& device) {
+            return device.type == cyxwiz::DeviceType::CUDA ||
+                   device.type == cyxwiz::DeviceType::OPENCL;
+        });
+    if (rejected == inventory.end()) {
+        std::cout
+            << "SKIP: route qualification recovery requires an accelerator route\n";
+        return;
+    }
+
+    auto snapshot = cyxwiz::test::MakeQualifiedRouteSnapshot(
+        inventory, "test-run-preflight-rejection");
+    for (auto& route : snapshot.routes) {
+        if (route.type == rejected->type &&
+            route.device_id == rejected->device_id) {
+            route.pass_count = 0;
+            route.failure_count = 1;
+            route.certified = false;
+        }
+    }
+    cyxwiz::InstallRouteQualificationSnapshot(std::move(snapshot));
+
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(
+        rejected->type, rejected->device_id);
+    bool strict_rejected = false;
+    try {
+        (void)cyxwiz::PrepareExecutionDeviceForRun(
+            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        strict_rejected =
+            !message.empty() &&
+            message.find("test-run-preflight-rejection") == std::string::npos;
+    }
+    Check(strict_rejected,
+          "strict run preflight should reject an uncertified requested route "
+          "without exposing the internal evidence identifier");
+
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(
+        rejected->type, rejected->device_id);
+    const auto recovered = cyxwiz::PrepareExecutionDeviceForRun(
+        cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+    Check(recovered.selection_fallback_applied,
+          "compatibility preflight should record ArrayFire CPU route recovery");
+    Check(!recovered.requested_qualification.qualified,
+          "recovered context should retain rejected requested qualification");
+    Check(recovered.effective_backend == "arrayfire_cpu",
+          "compatibility preflight should recover to ArrayFire CPU");
+    Check(recovered.effective_qualification.qualified,
+          "compatibility preflight should require certified CPU recovery");
+    Check(recovered.effective_qualification.matrix_id ==
+              "test-run-preflight-rejection",
+          "recovered context should retain effective qualification matrix");
+
+    cyxwiz::test::InstallQualifiedRouteSnapshot(inventory);
+}
+
 #ifndef NDEBUG
 void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
     const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
@@ -1131,6 +1202,15 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
           "strict ArrayFire CPU summary should record requested CPU backend");
     Check(trace.effective_backend == "arrayfire_cpu",
           "strict ArrayFire CPU summary should record effective CPU backend");
+    Check(trace.requested_route_qualified,
+          "strict ArrayFire CPU summary should record requested certification");
+    Check(trace.effective_route_qualified,
+          "strict ArrayFire CPU summary should record effective certification");
+    Check(trace.requested_qualification_matrix_id ==
+              "test-qualified-routes",
+          "strict ArrayFire CPU summary should retain qualification matrix");
+    Check(!trace.identity_confidence.empty(),
+          "strict ArrayFire CPU summary should retain identity confidence");
     Check(trace.fallback_policy == "forbid_native_cpu_fallback",
           "strict ArrayFire CPU summary should record strict fallback policy");
     Check(trace.declared_output_boundary_count > 0,
@@ -1312,6 +1392,13 @@ void TestStrictArrayFireCpuDenseTrainingDoesNotFallback(
     Check(persisted_trace.has_value(),
           "strict ArrayFire CPU run should persist the training trace");
     if (persisted_trace.has_value()) {
+        Check(persisted_trace->requested_route_qualified,
+              "persisted trace should retain requested route certification");
+        Check(persisted_trace->effective_route_qualified,
+              "persisted trace should retain effective route certification");
+        Check(persisted_trace->effective_qualification_matrix_id ==
+                  "test-qualified-routes",
+              "persisted trace should retain qualification matrix identity");
         Check(persisted_trace->transfer_event_count ==
                   trace.transfer_event_count,
               "persisted trace should preserve transfer event count");
@@ -1468,9 +1555,16 @@ void TestTrainingDeviceSelectionSwitchesBetweenRuns(
     }
 
     const auto oneapi = FirstDeviceOfType(devices, cyxwiz::DeviceType::ONEAPI);
-    if (oneapi.has_value()) {
+    const char* oneapi_training =
+        std::getenv("CYXWIZ_TEST_ONEAPI_TRAINING");
+    if (oneapi.has_value() && oneapi_training != nullptr &&
+        std::string(oneapi_training) == "1") {
         run_order.push_back(*oneapi);
         run_order.push_back(*cpu);
+    } else if (oneapi.has_value()) {
+        std::cout
+            << "SKIP: oneAPI full training matrix is opt-in; bounded exact "
+               "activation is covered by test_device\n";
     }
 
     const auto opencl = FirstDeviceOfType(devices, cyxwiz::DeviceType::OPENCL);
@@ -1521,6 +1615,19 @@ void TestTrainingDeviceSelectionSwitchesBetweenRuns(
                   "device switch bind should activate requested backend");
             Check(event.effective_device_id == selection.device_id,
                   "device switch bind should activate requested device id");
+            Check(event.activation_succeeded,
+                  "device switch bind should record exact activation success");
+            Check(event.execution_validated,
+                  "device switch bind should record execution validation");
+            Check(event.requested_route_qualified,
+                  "device switch bind should record requested certification");
+            Check(event.effective_route_qualified,
+                  "device switch bind should record effective certification");
+            Check(event.requested_qualification_matrix_id ==
+                      "test-qualified-routes",
+                  "device switch bind should retain qualification matrix");
+            Check(event.preflight_stage == "complete",
+                  "device switch bind should record completed preflight");
         }
         Check(saw_bind,
               "device switch run should record execution context bind");
@@ -1713,6 +1820,9 @@ int main() {
     fs::create_directories(work_dir);
     const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
         work_dir / "debug_runs");
+    cyxwiz::test::InstallQualifiedRouteSnapshot();
+
+    TestRunPreflightEnforcesRouteQualification();
 
     TestSequenceBatchContract();
     TestSequenceBatcherPadsNamedPayloads();

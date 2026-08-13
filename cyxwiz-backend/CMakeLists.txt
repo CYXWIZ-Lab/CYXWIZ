@@ -81,6 +81,9 @@ set(BACKEND_SOURCES
     src/core/tensor_indexing.cpp
     src/core/tensor_concat.cpp
     src/core/device.cpp
+    src/core/device_identity.cpp
+    src/core/device_identity.h
+    src/core/device_probe.h
     src/core/memory_manager.cpp
     src/core/cyxwiz_c.cpp
     src/algorithms/optimizer.cpp
@@ -356,6 +359,10 @@ if(CYXWIZ_HAS_ARRAYFIRE)
         )
         target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
     endif()
+endif()
+
+if(CMAKE_DL_LIBS)
+    target_link_libraries(cyxwiz-backend PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 # Link libsndfile and FFTW3 if available (for audio processing)

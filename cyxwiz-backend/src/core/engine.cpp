@@ -35,6 +35,29 @@ const char* BackendToString(af::Backend backend) {
     }
 }
 
+const char* ArrayFireErrorName(af_err error) {
+    const char* name = af_err_to_string(error);
+    return name != nullptr ? name : "unknown ArrayFire error";
+}
+
+void LogActiveDevice(const char* backend_name, DeviceType type, int device_id) {
+    const DeviceInfo info = Device(type, device_id).GetInfo();
+    spdlog::info(
+        "{} backend active - Device {}: {} (metadata={})",
+        backend_name,
+        device_id,
+        info.name,
+        DeviceMetadataStatusName(info.metadata_status));
+}
+
+void LogActivationFailure(const char* backend_name, af::exception& error) {
+    spdlog::warn(
+        "Failed to activate {} backend: error={} ({})",
+        backend_name,
+        static_cast<int>(error.err()),
+        ArrayFireErrorName(error.err()));
+}
+
 #ifdef CYXWIZ_ENABLE_OPENCL
 bool IsLikelyDiscreteGpu(const std::string& device_name) {
     return device_name.find("NVIDIA") != std::string::npos ||
@@ -57,24 +80,23 @@ bool TryActivateOpenCLBackend() {
 
         for (int i = 0; i < num_devices; ++i) {
             af::setDevice(i);
-            char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
-            af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
-
-            if (!found_discrete && IsLikelyDiscreteGpu(std::string(d_name))) {
+            const DeviceInfo info = Device(DeviceType::OPENCL, i).GetInfo();
+            if (!found_discrete && info.name_known && IsLikelyDiscreteGpu(info.name)) {
                 best_device = i;
                 found_discrete = true;
-                spdlog::info("OpenCL discrete GPU candidate found: {} (device {})", d_name, i);
+                spdlog::info(
+                    "OpenCL discrete GPU candidate found: {} (device {})",
+                    info.name,
+                    i);
                 break;
             }
         }
 
         af::setDevice(best_device);
-        char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
-        af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
-        spdlog::info("OpenCL backend active - Device {}: {}", best_device, d_name);
+        LogActiveDevice("OpenCL", DeviceType::OPENCL, best_device);
         return true;
-    } catch (const af::exception& e) {
-        spdlog::warn("Failed to activate OpenCL backend: {}", e.what());
+    } catch (af::exception& error) {
+        LogActivationFailure("OpenCL", error);
         return false;
     }
 }
@@ -91,12 +113,10 @@ bool TryActivateCUDABackend() {
         }
 
         af::setDevice(0);
-        char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
-        af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
-        spdlog::info("CUDA backend active - Device: {}", d_name);
+        LogActiveDevice("CUDA", DeviceType::CUDA, 0);
         return true;
-    } catch (const af::exception& e) {
-        spdlog::warn("Failed to activate CUDA backend: {}", e.what());
+    } catch (af::exception& error) {
+        LogActivationFailure("CUDA", error);
         return false;
     }
 }
@@ -112,12 +132,10 @@ bool TryActivateOneAPIBackend() {
         }
 
         af::setDevice(0);
-        char d_name[256], d_platform[256], d_toolkit[256], d_compute[256];
-        af::deviceInfo(d_name, d_platform, d_toolkit, d_compute);
-        spdlog::info("oneAPI backend active - Device: {}", d_name);
+        LogActiveDevice("oneAPI", DeviceType::ONEAPI, 0);
         return true;
-    } catch (const af::exception& e) {
-        spdlog::warn("Failed to activate oneAPI backend: {}", e.what());
+    } catch (af::exception& error) {
+        LogActivationFailure("oneAPI", error);
         return false;
     }
 }
@@ -128,8 +146,11 @@ bool TryActivateCpuBackend() {
         af::setDevice(0);
         spdlog::info("ArrayFire CPU backend active");
         return true;
-    } catch (const af::exception& e) {
-        spdlog::error("Failed to activate ArrayFire CPU backend: {}", e.what());
+    } catch (af::exception& error) {
+        spdlog::error(
+            "Failed to activate ArrayFire CPU backend: error={} ({})",
+            static_cast<int>(error.err()),
+            ArrayFireErrorName(error.err()));
         return false;
     }
 }
@@ -157,8 +178,16 @@ bool Initialize() {
     backend_activated = TryActivateCUDABackend();
 #endif
 
-    if (!backend_activated) {
+    if (!backend_activated && IsUncertifiedOneAPITrainingEnabled()) {
         backend_activated = TryActivateOneAPIBackend();
+    } else if (!backend_activated) {
+        spdlog::info(
+            "Skipping automatic oneAPI activation because training support "
+            "is not certified by this CyxWiz release; this is not a "
+            "device-specific qualification result. Discovery remains "
+            "available and "
+            "CYXWIZ_ENABLE_UNCERTIFIED_ONEAPI_TRAINING=1 enables isolated "
+            "diagnostics");
     }
 
 #ifdef CYXWIZ_ENABLE_OPENCL

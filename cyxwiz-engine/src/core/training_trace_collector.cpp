@@ -65,8 +65,33 @@ void PopulateStageExecutionContext(TrainingTraceEvent& event) {
     event.stage_device_id = context->effective_device_id;
     event.stage_device_name = context->device_name;
     event.execution_platform = context->platform;
-    event.execution_context_id = context->stable_identity;
+    event.execution_context_id = context->route_identity;
+    event.physical_fingerprint = context->physical_fingerprint;
+    event.identity_confidence =
+        DeviceIdentityConfidenceName(context->identity_confidence);
+    event.requested_qualification_evidence_available =
+        context->requested_qualification.evidence_available;
+    event.requested_route_qualified =
+        context->requested_qualification.qualified;
+    event.requested_qualification_matrix_id =
+        context->requested_qualification.matrix_id;
+    event.requested_qualification_message =
+        context->requested_qualification.message;
+    event.effective_qualification_evidence_available =
+        context->effective_qualification.evidence_available;
+    event.effective_route_qualified =
+        context->effective_qualification.qualified;
+    event.effective_qualification_matrix_id =
+        context->effective_qualification.matrix_id;
+    event.effective_qualification_message =
+        context->effective_qualification.message;
     event.capability_generation = context->capability_generation;
+    event.activation_succeeded = context->activation_succeeded;
+    event.execution_validated = context->execution_validated;
+    event.selection_fallback_applied =
+        context->selection_fallback_applied;
+    event.preflight_stage = context->preflight_stage;
+    event.preflight_error_code = context->preflight_error_code;
 }
 
 std::string TransferSummaryKey(const std::string& mode,
@@ -241,7 +266,28 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"effective_device_name", event.effective_device_name},
         {"execution_platform", event.execution_platform},
         {"execution_context_id", event.execution_context_id},
+        {"physical_fingerprint", event.physical_fingerprint},
+        {"identity_confidence", event.identity_confidence},
+        {"requested_qualification_evidence_available",
+         event.requested_qualification_evidence_available},
+        {"requested_route_qualified", event.requested_route_qualified},
+        {"requested_qualification_matrix_id",
+         event.requested_qualification_matrix_id},
+        {"requested_qualification_message",
+         event.requested_qualification_message},
+        {"effective_qualification_evidence_available",
+         event.effective_qualification_evidence_available},
+        {"effective_route_qualified", event.effective_route_qualified},
+        {"effective_qualification_matrix_id",
+         event.effective_qualification_matrix_id},
+        {"effective_qualification_message",
+         event.effective_qualification_message},
         {"capability_generation", event.capability_generation},
+        {"activation_succeeded", event.activation_succeeded},
+        {"execution_validated", event.execution_validated},
+        {"selection_fallback_applied", event.selection_fallback_applied},
+        {"preflight_stage", event.preflight_stage},
+        {"preflight_error_code", event.preflight_error_code},
         {"fallback_target", event.fallback_target},
         {"fallback_operation", event.fallback_operation},
         {"fallback_reason", event.fallback_reason},
@@ -312,8 +358,33 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
     event.effective_device_name = j.value("effective_device_name", "");
     event.execution_platform = j.value("execution_platform", "");
     event.execution_context_id = j.value("execution_context_id", "");
+    event.physical_fingerprint = j.value("physical_fingerprint", "");
+    event.identity_confidence = j.value("identity_confidence", "");
+    event.requested_qualification_evidence_available =
+        j.value("requested_qualification_evidence_available", false);
+    event.requested_route_qualified =
+        j.value("requested_route_qualified", false);
+    event.requested_qualification_matrix_id =
+        j.value("requested_qualification_matrix_id", "");
+    event.requested_qualification_message =
+        j.value("requested_qualification_message", "");
+    event.effective_qualification_evidence_available =
+        j.value("effective_qualification_evidence_available", false);
+    event.effective_route_qualified =
+        j.value("effective_route_qualified", false);
+    event.effective_qualification_matrix_id =
+        j.value("effective_qualification_matrix_id", "");
+    event.effective_qualification_message =
+        j.value("effective_qualification_message", "");
     event.capability_generation =
         j.value("capability_generation", uint64_t{0});
+    event.activation_succeeded =
+        j.value("activation_succeeded", false);
+    event.execution_validated = j.value("execution_validated", false);
+    event.selection_fallback_applied =
+        j.value("selection_fallback_applied", false);
+    event.preflight_stage = j.value("preflight_stage", "");
+    event.preflight_error_code = j.value("preflight_error_code", 0);
     event.fallback_target = j.value("fallback_target", "");
     event.fallback_operation = j.value("fallback_operation", "");
     event.fallback_reason = j.value("fallback_reason", "");
@@ -430,6 +501,30 @@ void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
             summary.effective_device_id = event.effective_device_id;
             summary.effective_device_name = event.effective_device_name;
             summary.execution_context_id = event.execution_context_id;
+            summary.physical_fingerprint = event.physical_fingerprint;
+            summary.identity_confidence = event.identity_confidence;
+            summary.requested_qualification_evidence_available =
+                event.requested_qualification_evidence_available;
+            summary.requested_route_qualified =
+                event.requested_route_qualified;
+            summary.requested_qualification_matrix_id =
+                event.requested_qualification_matrix_id;
+            summary.requested_qualification_message =
+                event.requested_qualification_message;
+            summary.effective_qualification_evidence_available =
+                event.effective_qualification_evidence_available;
+            summary.effective_route_qualified =
+                event.effective_route_qualified;
+            summary.effective_qualification_matrix_id =
+                event.effective_qualification_matrix_id;
+            summary.effective_qualification_message =
+                event.effective_qualification_message;
+            summary.activation_succeeded = event.activation_succeeded;
+            summary.execution_validated = event.execution_validated;
+            summary.selection_fallback_applied =
+                event.selection_fallback_applied;
+            summary.preflight_stage = event.preflight_stage;
+            summary.preflight_error_code = event.preflight_error_code;
             summary.fallback_policy = event.fallback_policy;
         }
         if (!saw_placement_plan &&
@@ -886,8 +981,32 @@ void TrainingTraceCollector::RecordExecutionDeviceContext(
     event.effective_device_id = context.effective_device_id;
     event.effective_device_name = context.device_name;
     event.execution_platform = context.platform;
-    event.execution_context_id = context.stable_identity;
+    event.execution_context_id = context.route_identity;
+    event.physical_fingerprint = context.physical_fingerprint;
+    event.identity_confidence =
+        DeviceIdentityConfidenceName(context.identity_confidence);
+    event.requested_qualification_evidence_available =
+        context.requested_qualification.evidence_available;
+    event.requested_route_qualified =
+        context.requested_qualification.qualified;
+    event.requested_qualification_matrix_id =
+        context.requested_qualification.matrix_id;
+    event.requested_qualification_message =
+        context.requested_qualification.message;
+    event.effective_qualification_evidence_available =
+        context.effective_qualification.evidence_available;
+    event.effective_route_qualified =
+        context.effective_qualification.qualified;
+    event.effective_qualification_matrix_id =
+        context.effective_qualification.matrix_id;
+    event.effective_qualification_message =
+        context.effective_qualification.message;
     event.capability_generation = context.capability_generation;
+    event.activation_succeeded = context.activation_succeeded;
+    event.execution_validated = context.execution_validated;
+    event.selection_fallback_applied = context.selection_fallback_applied;
+    event.preflight_stage = context.preflight_stage;
+    event.preflight_error_code = context.preflight_error_code;
     event.stage_backend = context.effective_backend;
     event.stage_device_id = context.effective_device_id;
     event.stage_device_name = context.device_name;
@@ -1201,6 +1320,35 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
             execution_context_event_.effective_device_name;
         summary.execution_context_id =
             execution_context_event_.execution_context_id;
+        summary.physical_fingerprint =
+            execution_context_event_.physical_fingerprint;
+        summary.identity_confidence =
+            execution_context_event_.identity_confidence;
+        summary.requested_qualification_evidence_available =
+            execution_context_event_.requested_qualification_evidence_available;
+        summary.requested_route_qualified =
+            execution_context_event_.requested_route_qualified;
+        summary.requested_qualification_matrix_id =
+            execution_context_event_.requested_qualification_matrix_id;
+        summary.requested_qualification_message =
+            execution_context_event_.requested_qualification_message;
+        summary.effective_qualification_evidence_available =
+            execution_context_event_.effective_qualification_evidence_available;
+        summary.effective_route_qualified =
+            execution_context_event_.effective_route_qualified;
+        summary.effective_qualification_matrix_id =
+            execution_context_event_.effective_qualification_matrix_id;
+        summary.effective_qualification_message =
+            execution_context_event_.effective_qualification_message;
+        summary.activation_succeeded =
+            execution_context_event_.activation_succeeded;
+        summary.execution_validated =
+            execution_context_event_.execution_validated;
+        summary.selection_fallback_applied =
+            execution_context_event_.selection_fallback_applied;
+        summary.preflight_stage = execution_context_event_.preflight_stage;
+        summary.preflight_error_code =
+            execution_context_event_.preflight_error_code;
         summary.fallback_policy = execution_context_event_.fallback_policy;
     }
     if (!events_.empty()) {
@@ -1282,6 +1430,32 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
         summary.effective_device_id = j.value("effective_device_id", 0);
         summary.effective_device_name = j.value("effective_device_name", "");
         summary.execution_context_id = j.value("execution_context_id", "");
+        summary.physical_fingerprint = j.value("physical_fingerprint", "");
+        summary.identity_confidence = j.value("identity_confidence", "");
+        summary.requested_qualification_evidence_available =
+            j.value("requested_qualification_evidence_available", false);
+        summary.requested_route_qualified =
+            j.value("requested_route_qualified", false);
+        summary.requested_qualification_matrix_id =
+            j.value("requested_qualification_matrix_id", "");
+        summary.requested_qualification_message =
+            j.value("requested_qualification_message", "");
+        summary.effective_qualification_evidence_available =
+            j.value("effective_qualification_evidence_available", false);
+        summary.effective_route_qualified =
+            j.value("effective_route_qualified", false);
+        summary.effective_qualification_matrix_id =
+            j.value("effective_qualification_matrix_id", "");
+        summary.effective_qualification_message =
+            j.value("effective_qualification_message", "");
+        summary.activation_succeeded =
+            j.value("activation_succeeded", false);
+        summary.execution_validated =
+            j.value("execution_validated", false);
+        summary.selection_fallback_applied =
+            j.value("selection_fallback_applied", false);
+        summary.preflight_stage = j.value("preflight_stage", "");
+        summary.preflight_error_code = j.value("preflight_error_code", 0);
         summary.fallback_policy = j.value("fallback_policy", "");
         summary.declared_output_boundary_count =
             j.value("declared_output_boundary_count", uint64_t{0});
@@ -1405,6 +1579,36 @@ void TrainingTraceCollector::WriteLocked() const {
                 execution_context_event_.effective_device_name;
             summary.execution_context_id =
                 execution_context_event_.execution_context_id;
+            summary.physical_fingerprint =
+                execution_context_event_.physical_fingerprint;
+            summary.identity_confidence =
+                execution_context_event_.identity_confidence;
+            summary.requested_qualification_evidence_available =
+                execution_context_event_.requested_qualification_evidence_available;
+            summary.requested_route_qualified =
+                execution_context_event_.requested_route_qualified;
+            summary.requested_qualification_matrix_id =
+                execution_context_event_.requested_qualification_matrix_id;
+            summary.requested_qualification_message =
+                execution_context_event_.requested_qualification_message;
+            summary.effective_qualification_evidence_available =
+                execution_context_event_.effective_qualification_evidence_available;
+            summary.effective_route_qualified =
+                execution_context_event_.effective_route_qualified;
+            summary.effective_qualification_matrix_id =
+                execution_context_event_.effective_qualification_matrix_id;
+            summary.effective_qualification_message =
+                execution_context_event_.effective_qualification_message;
+            summary.activation_succeeded =
+                execution_context_event_.activation_succeeded;
+            summary.execution_validated =
+                execution_context_event_.execution_validated;
+            summary.selection_fallback_applied =
+                execution_context_event_.selection_fallback_applied;
+            summary.preflight_stage =
+                execution_context_event_.preflight_stage;
+            summary.preflight_error_code =
+                execution_context_event_.preflight_error_code;
             summary.fallback_policy =
                 execution_context_event_.fallback_policy;
         }
@@ -1416,6 +1620,30 @@ void TrainingTraceCollector::WriteLocked() const {
         j["effective_device_id"] = summary.effective_device_id;
         j["effective_device_name"] = summary.effective_device_name;
         j["execution_context_id"] = summary.execution_context_id;
+        j["physical_fingerprint"] = summary.physical_fingerprint;
+        j["identity_confidence"] = summary.identity_confidence;
+        j["requested_qualification_evidence_available"] =
+            summary.requested_qualification_evidence_available;
+        j["requested_route_qualified"] =
+            summary.requested_route_qualified;
+        j["requested_qualification_matrix_id"] =
+            summary.requested_qualification_matrix_id;
+        j["requested_qualification_message"] =
+            summary.requested_qualification_message;
+        j["effective_qualification_evidence_available"] =
+            summary.effective_qualification_evidence_available;
+        j["effective_route_qualified"] =
+            summary.effective_route_qualified;
+        j["effective_qualification_matrix_id"] =
+            summary.effective_qualification_matrix_id;
+        j["effective_qualification_message"] =
+            summary.effective_qualification_message;
+        j["activation_succeeded"] = summary.activation_succeeded;
+        j["execution_validated"] = summary.execution_validated;
+        j["selection_fallback_applied"] =
+            summary.selection_fallback_applied;
+        j["preflight_stage"] = summary.preflight_stage;
+        j["preflight_error_code"] = summary.preflight_error_code;
         j["fallback_policy"] = summary.fallback_policy;
         j["declared_output_boundary_count"] =
             summary.declared_output_boundary_count;
