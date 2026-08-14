@@ -42,6 +42,18 @@ target_link_libraries(cyxwiz-tests PRIVATE
     nlohmann_json::nlohmann_json
 )
 
+if(CYXWIZ_BUILD_ENGINE AND WIN32)
+    target_sources(cyxwiz-tests PRIVATE
+        ../cyxwiz-engine/src/core/backend_pack_qualification_adapter.cpp
+    )
+    target_link_libraries(cyxwiz-tests PRIVATE
+        cyxwiz-backend-pack-service
+    )
+    target_compile_definitions(cyxwiz-tests PRIVATE
+        CYXWIZ_HAS_BACKEND_PACK_QUALIFICATION_ADAPTER
+    )
+endif()
+
 add_executable(cyxwiz-device-inventory
     smoke/device_inventory_report.cpp
 )

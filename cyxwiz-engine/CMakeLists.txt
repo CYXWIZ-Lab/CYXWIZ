@@ -863,6 +863,11 @@ add_executable(cyxwiz-engine
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
 )
+if(WIN32)
+    target_sources(cyxwiz-engine PRIVATE
+        src/core/backend_pack_qualification_adapter.cpp
+    )
+endif()
 add_dependencies(cyxwiz-engine cyxwiz-route-probe)
 
 if(CYXWIZ_BUILD_TESTS)

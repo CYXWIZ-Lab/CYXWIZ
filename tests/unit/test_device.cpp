@@ -9,6 +9,9 @@
 #include "../../cyxwiz-engine/src/core/execution_device_preferences.h"
 #include "../../cyxwiz-engine/src/core/route_qualification_service.h"
 #include "../../cyxwiz-engine/src/core/route_recommendation.h"
+#ifdef CYXWIZ_HAS_BACKEND_PACK_QUALIFICATION_ADAPTER
+#include "../../cyxwiz-engine/src/core/backend_pack_qualification_adapter.h"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -1313,6 +1316,116 @@ TEST_CASE("Staged runtime verification propagates an exact candidate probe runti
     CHECK_FALSE(incomplete_probe_called);
     std::filesystem::remove_all(root, cleanup_error);
 }
+
+#ifdef CYXWIZ_HAS_BACKEND_PACK_QUALIFICATION_ADAPTER
+TEST_CASE("Backend pack lifecycle qualification uses exact staged routes",
+          "[device][qualification][runtime-pack][lifecycle]") {
+    RouteQualificationStateGuard state_guard;
+    const auto root = std::filesystem::temp_directory_path() /
+        "cyxwiz-backend-pack-qualification-adapter";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+    const auto base = root / "base" / "base-v1";
+    const auto pack = root / "packs" / "opencl" / "opencl-v2";
+    std::filesystem::create_directories(pack / "runtime");
+    std::filesystem::create_directories(base);
+    std::ofstream(base / "cyxwiz-engine.exe", std::ios::binary).put('\0');
+    std::ofstream(base / "cyxwiz-route-probe.exe", std::ios::binary).put('\0');
+    std::ofstream(pack / "runtime" / "afopencl.dll", std::ios::binary).put('\0');
+
+    std::vector<cyxwiz::RouteProbeInvocation> qualification_invocations;
+    auto service = std::make_shared<cyxwiz::RouteQualificationService>(
+        [&](const cyxwiz::RouteProbeInvocation& invocation,
+            const cyxwiz::RouteQualificationCancelCheck&) {
+            qualification_invocations.push_back(invocation);
+            cyxwiz::RouteProbeResult result;
+            result.status = cyxwiz::RouteProbeStatus::Passed;
+            return result;
+        });
+    cyxwiz::BackendPackQualificationAdapterOptions options;
+    options.runtime_root = std::filesystem::absolute(root);
+    options.probe_executable =
+        std::filesystem::absolute(base / "cyxwiz-route-probe.exe");
+    options.cache_path =
+        std::filesystem::absolute(root / "route-qualification.json");
+
+    bool discovery_called = false;
+    const auto hook = cyxwiz::CreateBackendPackQualificationHook(
+        service, options,
+        [&](cyxwiz::RouteProbeInvocation invocation,
+            const cyxwiz::RouteQualificationCancelCheck&) {
+            discovery_called = true;
+            CHECK(invocation.enumerate_backend);
+            CHECK(invocation.type == cyxwiz::DeviceType::OPENCL);
+            CHECK(invocation.runtime_root ==
+                  std::filesystem::canonical(root));
+            REQUIRE(invocation.runtime_identity.has_value());
+            CHECK(invocation.runtime_identity->generation == 2);
+            cyxwiz::DeviceInfo route;
+            route.type = cyxwiz::DeviceType::OPENCL;
+            route.device_id = 0;
+            route.name = "Fixture GPU";
+            route.name_known = true;
+            route.kind = cyxwiz::DeviceKind::GPU;
+            route.identity_confidence =
+                cyxwiz::DeviceIdentityConfidence::ProviderReported;
+            route.metadata_status = cyxwiz::DeviceMetadataStatus::Available;
+            cyxwiz::IsolatedRouteDiscoveryResult result;
+            result.status = cyxwiz::RouteProbeStatus::Passed;
+            result.routes.push_back(std::move(route));
+            return result;
+        });
+
+    cyxwiz::runtime::VerifiedBackendPackManifest manifest;
+    manifest.pack_id = "opencl-v2";
+    manifest.backend = "opencl";
+    manifest.runtime_set_id = "runtime-v1";
+    manifest.companion_base_id = "base-v1";
+    manifest.compatibility.operation_matrix_id =
+        cyxwiz::kRouteQualificationMatrixId;
+    cyxwiz::runtime::ActiveRuntimeState candidate;
+    candidate.runtime_set_id = "runtime-v1";
+    candidate.generation = 2;
+    candidate.base_pack_id = "base-v1";
+    candidate.packs.push_back({"opencl", "opencl-v2"});
+
+    const auto qualified = hook(manifest, pack, candidate);
+    INFO(qualified.message);
+    REQUIRE(discovery_called);
+    CHECK(qualified.disposition ==
+          cyxwiz::runtime::BackendPackQualificationDisposition::Qualified);
+    REQUIRE_FALSE(qualification_invocations.empty());
+    for (const auto& invocation : qualification_invocations) {
+        REQUIRE(invocation.runtime_identity.has_value());
+        CHECK(invocation.runtime_identity->runtime_set_id == "runtime-v1");
+        CHECK(invocation.runtime_identity->backend_packs.front().pack_id ==
+              "opencl-v2");
+        CHECK(invocation.runtime_dll_directories.back() == pack / "runtime");
+    }
+
+    options.failure_policy =
+        cyxwiz::RuntimeQualificationFailurePolicy::RequireRollback;
+    const auto empty_hook = cyxwiz::CreateBackendPackQualificationHook(
+        service, options,
+        [](cyxwiz::RouteProbeInvocation,
+           const cyxwiz::RouteQualificationCancelCheck&) {
+            cyxwiz::IsolatedRouteDiscoveryResult result;
+            result.status = cyxwiz::RouteProbeStatus::Passed;
+            result.message = "Candidate backend exposed no routes";
+            return result;
+        });
+    const auto empty = empty_hook(manifest, pack, candidate);
+    CHECK(empty.disposition ==
+          cyxwiz::runtime::BackendPackQualificationDisposition::RollbackRequired);
+
+    const auto mismatched = hook(
+        manifest, root / "packs" / "opencl" / "different", candidate);
+    CHECK(mismatched.disposition ==
+          cyxwiz::runtime::BackendPackQualificationDisposition::InstalledUnqualified);
+    CHECK(mismatched.message.find("does not match") != std::string::npos);
+    std::filesystem::remove_all(root, cleanup_error);
+}
+#endif
 
 TEST_CASE("Runtime pack removal invalidates only its retained routes",
           "[device][selection][qualification][service][runtime-pack]") {

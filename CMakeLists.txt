@@ -419,6 +419,7 @@ if(NOT CYXWIZ_ANDROID_BUILD)
         if(WIN32)
             target_link_libraries(cyxwiz-engine PRIVATE
                 cyxwiz-backend-pack-maintenance
+                cyxwiz-backend-pack-service
                 cyxwiz-runtime-bootstrap
             )
         endif()
