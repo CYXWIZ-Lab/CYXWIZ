@@ -24,6 +24,7 @@ cyxwiz::BackendPackManagerRecord Pack(
     pack.pack_id = std::move(id);
     pack.catalog_support = support;
     pack.installed = installed;
+    if (installed) pack.installed_pack_id = pack.pack_id;
     return pack;
 }
 
@@ -85,6 +86,15 @@ void TestActionPolicy() {
     Check(cyxwiz::EvaluateBackendPackAction(
               cyxwiz::BackendPackAction::Rollback, context).enabled,
           "Validated rollback state should enable rollback");
+    installed.delivery_metadata_available = true;
+    Check(!cyxwiz::EvaluateBackendPackAction(
+               cyxwiz::BackendPackAction::Repair, context, &installed).enabled,
+          "In-process UI must keep active-pack repair exit-only");
+    context.repair_available = true;
+    Check(cyxwiz::EvaluateBackendPackAction(
+              cyxwiz::BackendPackAction::Repair, context, &installed).enabled,
+          "An exit-safe delivery host may repair the exact installed pack");
+    context.repair_available = false;
 
     context.training_active = true;
     Check(!cyxwiz::EvaluateBackendPackAction(
@@ -145,6 +155,7 @@ void TestCatalogAdapter() {
           "Catalog view must retain current packs absent from the catalog");
     const auto& update = records[0];
     Check(update.pack_id == "opencl-v2" && update.installed &&
+              !update.active &&
               update.installed_pack_id == "opencl-v1" &&
               update.update_available &&
               update.delivery_metadata_available &&

@@ -4,18 +4,23 @@
 #include "plot_window.h"
 #include "python_settings_panel.h"
 #include "auth/auth_client.h"
+#include "../../core/backend_pack_manager_model.h"
 #include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
 #include <memory>
 #include <future>
+#include <filesystem>
 
 // Forward declarations to avoid including device.h (which pulls in CUDA/OpenCL headers)
 namespace cyxwiz {
     enum class DeviceType;
     struct DeviceInfo;
     class RouteQualificationService;
+    namespace runtime {
+        class BackendPackLifecycleService;
+    }
 }
 
 namespace cyxwiz {
@@ -614,6 +619,18 @@ private:
     std::string backend_pack_maintenance_pack_id_;
     std::string backend_pack_maintenance_message_;
     bool backend_pack_maintenance_queued_ = false;
+    std::filesystem::path backend_pack_runtime_root_;
+    std::shared_ptr<runtime::BackendPackLifecycleService>
+        backend_pack_lifecycle_service_;
+    std::vector<BackendPackManagerRecord> backend_pack_catalog_records_;
+    bool backend_pack_catalog_loaded_ = false;
+    bool backend_pack_catalog_available_ = false;
+    std::string backend_pack_catalog_message_;
+    uint64_t backend_pack_delivery_task_id_ = 0;
+    std::string backend_pack_delivery_message_;
+    bool show_backend_pack_delivery_confirm_ = false;
+    int backend_pack_delivery_action_ = 0;
+    std::string backend_pack_delivery_pack_id_;
 
     // Go to Line dialog state
     bool show_go_to_line_dialog_ = false;

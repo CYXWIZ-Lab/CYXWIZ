@@ -108,6 +108,10 @@ BackendPackActionDecision EvaluateBackendPackAction(
                 ? Disabled("This backend pack is already installed")
                 : BackendPackActionDecision{true, {}};
         case BackendPackAction::Repair:
+            if (!context.repair_available) {
+                return Disabled(
+                    "Repair must be applied safely after the Engine exits");
+            }
             return record->installed &&
                     record->installed_pack_id == record->pack_id
                 ? BackendPackActionDecision{true, {}}

@@ -70,8 +70,8 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
         }
         if (installed) {
             record.installed = true;
-            record.active = true;
             record.installed_pack_id = installed->pack_id;
+            record.active = record.installed_pack_id == record.pack_id;
             record.update_available =
                 record.delivery_metadata_available &&
                 record.installed_pack_id != record.pack_id;
