@@ -440,6 +440,8 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     preferences_tab_ = 6;
                     ImGui::Spacing();
 
+                    bool backend_manager_verify_requested = false;
+
                     const bool training_active =
                         cyxwiz::TrainingManager::Instance().IsTrainingActive();
                     const auto active_run_trace =
@@ -663,6 +665,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Spacing();
                     ImGui::Separator();
                     ImGui::Spacing();
+
+                    backend_manager_verify_requested =
+                        RenderBackendManagerSection(training_active);
 
                     ImGui::Text("Available Compute Devices");
                     ImGui::Separator();
@@ -1315,6 +1320,11 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                         }
                                     });
                         };
+
+                    if (backend_manager_verify_requested) {
+                        begin_verification(
+                            cyxwiz::Device::GetAvailableDevices());
+                    }
 
                     if (qualification_running) {
                         const auto progress =

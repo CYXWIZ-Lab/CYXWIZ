@@ -151,6 +151,7 @@ set(ENGINE_SOURCES
     src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
+    src/core/backend_pack_manager_model.cpp
     src/core/runtime_console_commands.cpp
     src/core/runtime_truth_query.cpp
     src/core/runtime_log_store.cpp
@@ -330,6 +331,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_dialogs.cpp
     src/gui/panels/toolbar_account_dialogs.cpp
     src/gui/panels/toolbar_preferences_dialog.cpp
+    src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
@@ -862,6 +864,20 @@ add_executable(cyxwiz-engine
     ${ENGINE_HEADERS}
 )
 add_dependencies(cyxwiz-engine cyxwiz-route-probe)
+
+if(CYXWIZ_BUILD_TESTS)
+    add_executable(test_backend_pack_manager_model
+        tests/test_backend_pack_manager_model.cpp
+        src/core/backend_pack_manager_model.cpp
+    )
+    target_include_directories(test_backend_pack_manager_model PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    set_target_properties(test_backend_pack_manager_model PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+endif()
 
 # Include directories
 # Use BEFORE to ensure bundled libraries take priority over system-installed versions

@@ -1,0 +1,86 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace cyxwiz {
+
+enum class BackendPackInstallChoice {
+    Recommended,
+    CpuOnly,
+    Custom
+};
+
+enum class BackendPackCatalogSupport {
+    Unavailable,
+    Supported,
+    Diagnostic,
+    Blocked,
+    Revoked
+};
+
+enum class BackendPackAction {
+    Install,
+    Verify,
+    Repair,
+    Update,
+    Remove,
+    Details,
+    Rollback
+};
+
+struct BackendPackManagerRecord {
+    std::string backend;
+    std::string pack_id;
+    std::string package_version;
+    std::uint64_t download_size_bytes = 0;
+    std::vector<std::string> licenses;
+    std::vector<std::string> provider_requirements;
+    BackendPackCatalogSupport catalog_support =
+        BackendPackCatalogSupport::Unavailable;
+    bool installed = false;
+    bool active = false;
+    bool integrity_verified = false;
+    bool qualification_evidence_available = false;
+    bool training_authorized = false;
+    bool update_available = false;
+    bool recommended = false;
+};
+
+struct BackendPackManagerContext {
+    bool packaged_runtime = false;
+    bool catalog_available = false;
+    bool delivery_available = false;
+    bool maintenance_available = false;
+    bool operation_running = false;
+    bool training_active = false;
+    bool rollback_available = false;
+};
+
+struct BackendPackActionDecision {
+    bool enabled = false;
+    std::string reason;
+};
+
+struct BackendPackInstallerSelection {
+    bool valid = false;
+    std::vector<std::string> pack_ids;
+    std::string message;
+};
+
+BackendPackActionDecision EvaluateBackendPackAction(
+    BackendPackAction action,
+    const BackendPackManagerContext& context,
+    const BackendPackManagerRecord* record = nullptr);
+
+BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
+    BackendPackInstallChoice choice,
+    const std::vector<BackendPackManagerRecord>& catalog_records,
+    const std::vector<std::string>& custom_pack_ids = {});
+
+const char* BackendPackCatalogSupportName(
+    BackendPackCatalogSupport support);
+std::string FormatBackendPackByteSize(std::uint64_t bytes);
+
+}  // namespace cyxwiz

@@ -347,6 +347,7 @@ private:
     void RenderSearchDialogs();
     void RenderAccountDialogs();
     void RenderPreferencesDialog();
+    bool RenderBackendManagerSection(bool training_active);
 
     // Command Palette functionality
     void InitializeToolEntries();
@@ -605,6 +606,8 @@ private:
     std::shared_ptr<RouteQualificationService> route_qualification_service_;
     uint64_t route_qualification_task_id_ = 0;
     bool route_qualification_task_refreshed_ = true;
+    int backend_pack_install_choice_ = 0;
+    std::string backend_pack_details_id_;
 
     // Go to Line dialog state
     bool show_go_to_line_dialog_ = false;

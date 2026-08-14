@@ -444,6 +444,12 @@ endif()
 if(CYXWIZ_BUILD_TESTS)
     enable_testing()
     find_package(Catch2 CONFIG REQUIRED)
+    if(TARGET test_backend_pack_manager_model)
+        add_test(
+            NAME backend_pack_manager_model_contract
+            COMMAND test_backend_pack_manager_model
+        )
+    endif()
     add_subdirectory(tests)
 endif()
 
