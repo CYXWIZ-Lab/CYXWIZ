@@ -13,6 +13,18 @@ struct ActivePack {
     std::filesystem::path directory;
 };
 
+struct ActivePackState {
+    std::string backend;
+    std::string pack_id;
+};
+
+struct ActiveRuntimeState {
+    std::string runtime_set_id;
+    std::uint64_t generation = 0;
+    std::string base_pack_id;
+    std::vector<ActivePackState> packs;
+};
+
 struct ActiveRuntime {
     std::string runtime_set_id;
     std::uint64_t generation = 0;
@@ -26,6 +38,19 @@ struct ActiveRuntime {
 
 bool ResolveActiveRuntime(
     const std::filesystem::path& runtime_root,
+    ActiveRuntime& output,
+    std::string& error);
+bool LoadActiveRuntimeState(
+    const std::filesystem::path& path,
+    ActiveRuntimeState& output,
+    std::string& error);
+bool SaveActiveRuntimeStateAtomic(
+    const std::filesystem::path& path,
+    const ActiveRuntimeState& state,
+    std::string& error);
+bool ResolveRuntimeState(
+    const std::filesystem::path& runtime_root,
+    const ActiveRuntimeState& state,
     ActiveRuntime& output,
     std::string& error);
 

@@ -2,6 +2,7 @@
 
 #include "algorithms/arrayfire_backend_utils.h"
 #include "route_qualification_snapshot.h"
+#include "../../../redist/bootstrapper/runtime_mutation_gate.h"
 
 #include <cyxwiz/device.h>
 
@@ -225,6 +226,9 @@ public:
         ActiveExecutionDeviceContextCount().fetch_sub(
             1, std::memory_order_acq_rel);
     }
+
+private:
+    runtime::RuntimeExecutionLease runtime_execution_lease_;
 };
 
 class ScopedExecutionDeviceContext {

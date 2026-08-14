@@ -13,6 +13,14 @@
 
 #include <nlohmann/json.hpp>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 namespace cyxwiz::runtime {
 namespace {
 
@@ -130,56 +138,13 @@ bool ReadIdentifier(
     const Json& object,
     const char* key,
     std::string& output,
-    std::string& error) {
-    if (!object.at(key).is_string()) {
-        error = std::string(key) + " must be a string";
-        return false;
-    }
-    output = object.at(key).get<std::string>();
-    if (!IsIdentifier(output)) {
-        error = std::string(key) + " is not a safe identifier";
-        return false;
-    }
-    return true;
-}
+    std::string& error);
 
-void AddDirectoryIfPresent(
-    const std::filesystem::path& canonical_root,
-    const std::filesystem::path& candidate,
-    std::vector<std::filesystem::path>& directories) {
-    std::error_code filesystem_error;
-    if (!std::filesystem::is_directory(candidate, filesystem_error) || filesystem_error) {
-        return;
-    }
-    const auto canonical = std::filesystem::canonical(candidate, filesystem_error);
-    if (!filesystem_error && IsWithin(canonical_root, canonical)) {
-        directories.push_back(canonical);
-    }
-}
-
-}  // namespace
-
-bool ResolveActiveRuntime(
-    const std::filesystem::path& runtime_root,
-    ActiveRuntime& output,
+bool ParseState(
+    const Json& state,
+    ActiveRuntimeState& output,
     std::string& error) {
     output = {};
-    error.clear();
-    std::error_code filesystem_error;
-    if (!std::filesystem::is_directory(runtime_root, filesystem_error) || filesystem_error) {
-        error = "runtime root is missing: " + runtime_root.string();
-        return false;
-    }
-    const auto canonical_root = std::filesystem::canonical(runtime_root, filesystem_error);
-    if (filesystem_error) {
-        error = "runtime root cannot be resolved";
-        return false;
-    }
-
-    Json state;
-    if (!ReadState(canonical_root / "active-runtime.json", state, error)) {
-        return false;
-    }
     if (!HasExactKeys(
             state,
             {"schema_version", "runtime_set_id", "generation", "base_pack_id", "packs"})) {
@@ -209,6 +174,191 @@ bool ResolveActiveRuntime(
         return false;
     }
 
+    static constexpr std::array<const char*, 3> kBackends = {
+        "cuda", "opencl", "oneapi"};
+    std::set<std::string> seen_backends;
+    for (std::size_t index = 0; index < state["packs"].size(); ++index) {
+        const auto& entry = state["packs"][index];
+        if (!HasExactKeys(entry, {"backend", "pack_id"})) {
+            error = "packs[" + std::to_string(index) +
+                    "] has unknown or missing fields";
+            return false;
+        }
+        ActivePackState pack;
+        if (!ReadIdentifier(entry, "backend", pack.backend, error) ||
+            !ReadIdentifier(entry, "pack_id", pack.pack_id, error)) {
+            return false;
+        }
+        if (std::find(kBackends.begin(), kBackends.end(), pack.backend) ==
+            kBackends.end()) {
+            error = "packs[" + std::to_string(index) +
+                    "].backend is unsupported";
+            return false;
+        }
+        if (!seen_backends.insert(pack.backend).second) {
+            error = "duplicate active backend: " + pack.backend;
+            return false;
+        }
+        output.packs.push_back(std::move(pack));
+    }
+    std::sort(
+        output.packs.begin(), output.packs.end(),
+        [](const ActivePackState& left, const ActivePackState& right) {
+            return left.backend < right.backend;
+        });
+    return true;
+}
+
+Json StateDocument(const ActiveRuntimeState& state) {
+    Json packs = Json::array();
+    for (const auto& pack : state.packs) {
+        packs.push_back({{"backend", pack.backend}, {"pack_id", pack.pack_id}});
+    }
+    return {
+        {"schema_version", std::uint64_t{1}},
+        {"runtime_set_id", state.runtime_set_id},
+        {"generation", state.generation},
+        {"base_pack_id", state.base_pack_id},
+        {"packs", std::move(packs)}};
+}
+
+bool ReadIdentifier(
+    const Json& object,
+    const char* key,
+    std::string& output,
+    std::string& error) {
+    if (!object.at(key).is_string()) {
+        error = std::string(key) + " must be a string";
+        return false;
+    }
+    output = object.at(key).get<std::string>();
+    if (!IsIdentifier(output)) {
+        error = std::string(key) + " is not a safe identifier";
+        return false;
+    }
+    return true;
+}
+
+void AddDirectoryIfPresent(
+    const std::filesystem::path& canonical_root,
+    const std::filesystem::path& candidate,
+    std::vector<std::filesystem::path>& directories) {
+    std::error_code filesystem_error;
+    if (!std::filesystem::is_directory(candidate, filesystem_error) || filesystem_error) {
+        return;
+    }
+    const auto canonical = std::filesystem::canonical(candidate, filesystem_error);
+    if (!filesystem_error && IsWithin(canonical_root, canonical)) {
+        directories.push_back(canonical);
+    }
+}
+
+}  // namespace
+
+bool LoadActiveRuntimeState(
+    const std::filesystem::path& path,
+    ActiveRuntimeState& output,
+    std::string& error) {
+    error.clear();
+    Json state;
+    return ReadState(path, state, error) && ParseState(state, output, error);
+}
+
+bool SaveActiveRuntimeStateAtomic(
+    const std::filesystem::path& path,
+    const ActiveRuntimeState& state,
+    std::string& error) {
+    error.clear();
+    ActiveRuntimeState normalized;
+    if (!ParseState(StateDocument(state), normalized, error)) return false;
+
+    std::error_code filesystem_error;
+    std::filesystem::create_directories(path.parent_path(), filesystem_error);
+    if (filesystem_error) {
+        error = "cannot create runtime-state directory: " +
+                filesystem_error.message();
+        return false;
+    }
+    auto temporary = path;
+    temporary += ".tmp." + std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    try {
+        std::ofstream stream(
+            temporary, std::ios::binary | std::ios::trunc);
+        if (!stream) {
+            error = "cannot create temporary runtime state";
+            return false;
+        }
+        stream << StateDocument(normalized).dump(2) << '\n';
+        stream.flush();
+        if (!stream) {
+            error = "cannot write temporary runtime state";
+            stream.close();
+            std::filesystem::remove(temporary, filesystem_error);
+            return false;
+        }
+        stream.close();
+#ifdef _WIN32
+        if (std::filesystem::exists(path, filesystem_error)) {
+            if (!::ReplaceFileW(
+                    path.c_str(), temporary.c_str(), nullptr,
+                    REPLACEFILE_WRITE_THROUGH, nullptr, nullptr)) {
+                error = "cannot atomically replace runtime state; Win32 error " +
+                        std::to_string(::GetLastError());
+                std::filesystem::remove(temporary, filesystem_error);
+                return false;
+            }
+        } else if (!::MoveFileExW(
+                       temporary.c_str(), path.c_str(),
+                       MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING)) {
+            error = "cannot atomically publish runtime state; Win32 error " +
+                    std::to_string(::GetLastError());
+            std::filesystem::remove(temporary, filesystem_error);
+            return false;
+        }
+#else
+        std::filesystem::rename(temporary, path, filesystem_error);
+        if (filesystem_error) {
+            error = "cannot atomically publish runtime state: " +
+                    filesystem_error.message();
+            std::filesystem::remove(temporary, filesystem_error);
+            return false;
+        }
+#endif
+    } catch (const std::exception& exception) {
+        error = std::string("runtime-state publication failed: ") +
+                exception.what();
+        std::filesystem::remove(temporary, filesystem_error);
+        return false;
+    }
+    return true;
+}
+
+bool ResolveRuntimeState(
+    const std::filesystem::path& runtime_root,
+    const ActiveRuntimeState& state,
+    ActiveRuntime& output,
+    std::string& error) {
+    output = {};
+    error.clear();
+    std::error_code filesystem_error;
+    if (!std::filesystem::is_directory(runtime_root, filesystem_error) ||
+        filesystem_error) {
+        error = "runtime root is missing: " + runtime_root.string();
+        return false;
+    }
+    const auto canonical_root =
+        std::filesystem::canonical(runtime_root, filesystem_error);
+    if (filesystem_error) {
+        error = "runtime root cannot be resolved";
+        return false;
+    }
+
+    ActiveRuntimeState normalized;
+    if (!ParseState(StateDocument(state), normalized, error)) return false;
+    output.runtime_set_id = normalized.runtime_set_id;
+    output.generation = normalized.generation;
+    output.base_pack_id = normalized.base_pack_id;
     output.runtime_root = canonical_root;
     if (!ResolveContainedDirectory(
             canonical_root,
@@ -222,33 +372,17 @@ bool ResolveActiveRuntime(
         return false;
     }
     output.dll_directories.push_back(output.base_directory);
-    AddDirectoryIfPresent(canonical_root, output.base_directory / "arrayfire" / "bin",
-                          output.dll_directories);
-    AddDirectoryIfPresent(canonical_root, output.base_directory / "python",
-                          output.dll_directories);
+    AddDirectoryIfPresent(
+        canonical_root, output.base_directory / "arrayfire" / "bin",
+        output.dll_directories);
+    AddDirectoryIfPresent(
+        canonical_root, output.base_directory / "python",
+        output.dll_directories);
 
-    static constexpr std::array<const char*, 3> kBackends = {
-        "cuda", "opencl", "oneapi"};
-    std::set<std::string> seen_backends;
-    for (std::size_t index = 0; index < state["packs"].size(); ++index) {
-        const auto& entry = state["packs"][index];
-        if (!HasExactKeys(entry, {"backend", "pack_id"})) {
-            error = "packs[" + std::to_string(index) + "] has unknown or missing fields";
-            return false;
-        }
+    for (const auto& state_pack : normalized.packs) {
         ActivePack pack;
-        if (!ReadIdentifier(entry, "backend", pack.backend, error) ||
-            !ReadIdentifier(entry, "pack_id", pack.pack_id, error)) {
-            return false;
-        }
-        if (std::find(kBackends.begin(), kBackends.end(), pack.backend) == kBackends.end()) {
-            error = "packs[" + std::to_string(index) + "].backend is unsupported";
-            return false;
-        }
-        if (!seen_backends.insert(pack.backend).second) {
-            error = "duplicate active backend: " + pack.backend;
-            return false;
-        }
+        pack.backend = state_pack.backend;
+        pack.pack_id = state_pack.pack_id;
         if (!ResolveContainedDirectory(
                 canonical_root,
                 canonical_root / "packs" / pack.backend / pack.pack_id,
@@ -258,27 +392,33 @@ bool ResolveActiveRuntime(
         std::filesystem::path runtime_directory;
         if (!ResolveContainedDirectory(
                 canonical_root, pack.directory / "runtime",
-                "active " + pack.backend + " runtime", runtime_directory, error)) {
+                "active " + pack.backend + " runtime",
+                runtime_directory, error)) {
             return false;
         }
-        const auto plugin_name = "af" + pack.backend + ".dll";
         std::filesystem::path plugin;
         if (!ResolveContainedFile(
-                canonical_root, runtime_directory / plugin_name,
+                canonical_root,
+                runtime_directory / ("af" + pack.backend + ".dll"),
                 "active " + pack.backend + " plugin", plugin, error)) {
             return false;
         }
         output.packs.push_back(std::move(pack));
     }
-    std::sort(
-        output.packs.begin(), output.packs.end(),
-        [](const ActivePack& left, const ActivePack& right) {
-            return left.backend < right.backend;
-        });
     for (const auto& pack : output.packs) {
         output.dll_directories.push_back(pack.directory / "runtime");
     }
     return true;
+}
+
+bool ResolveActiveRuntime(
+    const std::filesystem::path& runtime_root,
+    ActiveRuntime& output,
+    std::string& error) {
+    ActiveRuntimeState state;
+    const auto path = runtime_root / "active-runtime.json";
+    return LoadActiveRuntimeState(path, state, error) &&
+           ResolveRuntimeState(runtime_root, state, output, error);
 }
 
 void AppendBootstrapDiagnostic(

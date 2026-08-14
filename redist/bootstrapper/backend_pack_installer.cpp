@@ -1,0 +1,571 @@
+#include "backend_pack_installer.h"
+#include "runtime_mutation_gate.h"
+
+#include <openssl/evp.h>
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <chrono>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <memory>
+#include <set>
+#include <sstream>
+#include <string_view>
+#include <utility>
+
+namespace cyxwiz::runtime {
+namespace {
+
+bool IsIdentifier(const std::string& value) {
+    if (value.empty() || value.size() > 128 ||
+        !std::isalnum(static_cast<unsigned char>(value.front()))) {
+        return false;
+    }
+    return std::all_of(value.begin(), value.end(), [](unsigned char value) {
+        return std::islower(value) || std::isdigit(value) || value == '.' ||
+               value == '_' || value == '-';
+    });
+}
+
+bool IsOptionalBackend(const std::string& backend) {
+    return backend == "cuda" || backend == "opencl" ||
+           backend == "oneapi";
+}
+
+std::string FoldAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return value;
+}
+
+bool IsSha256(const std::string& value) {
+    return value.size() == 64 &&
+           std::all_of(value.begin(), value.end(), [](unsigned char character) {
+               return std::isdigit(character) ||
+                      (character >= 'a' && character <= 'f');
+           });
+}
+
+bool IsCanonicalRelativePath(const std::string& value) {
+    if (value.empty() || value.front() == '/' || value.back() == '/' ||
+        value.find('\\') != std::string::npos ||
+        value.find(':') != std::string::npos) {
+        return false;
+    }
+    std::size_t begin = 0;
+    while (begin < value.size()) {
+        const std::size_t end = value.find('/', begin);
+        const std::string_view part(
+            value.data() + begin,
+            (end == std::string::npos ? value.size() : end) - begin);
+        if (part.empty() || part == "." || part == "..") return false;
+        begin = end == std::string::npos ? value.size() : end + 1;
+    }
+    return true;
+}
+
+std::filesystem::path NativeRelativePath(const std::string& value) {
+    std::filesystem::path output;
+    std::size_t begin = 0;
+    while (begin < value.size()) {
+        const std::size_t end = value.find('/', begin);
+        output /= value.substr(
+            begin,
+            (end == std::string::npos ? value.size() : end) - begin);
+        begin = end == std::string::npos ? value.size() : end + 1;
+    }
+    return output;
+}
+
+bool IsWithin(
+    const std::filesystem::path& root,
+    const std::filesystem::path& child) {
+    const auto relative = child.lexically_relative(root);
+    return !relative.empty() && !relative.is_absolute() &&
+           *relative.begin() != "..";
+}
+
+bool HashFile(
+    const std::filesystem::path& path,
+    std::string& digest,
+    std::string& error) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+        error = "Cannot open component for hashing: " + path.string();
+        return false;
+    }
+    EVP_MD_CTX* raw_context = EVP_MD_CTX_new();
+    if (!raw_context) {
+        error = "Cannot allocate SHA-256 context";
+        return false;
+    }
+    const auto free_context = [](EVP_MD_CTX* context) {
+        EVP_MD_CTX_free(context);
+    };
+    std::unique_ptr<EVP_MD_CTX, decltype(free_context)> context(
+        raw_context, free_context);
+    if (EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) {
+        error = "Cannot initialize SHA-256";
+        return false;
+    }
+    std::array<char, 64 * 1024> buffer{};
+    while (stream) {
+        stream.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = stream.gcount();
+        if (count > 0 &&
+            EVP_DigestUpdate(
+                context.get(), buffer.data(), static_cast<std::size_t>(count)) !=
+                1) {
+            error = "Cannot update SHA-256";
+            return false;
+        }
+    }
+    if (!stream.eof()) {
+        error = "Cannot read component while hashing: " + path.string();
+        return false;
+    }
+    std::array<unsigned char, EVP_MAX_MD_SIZE> bytes{};
+    unsigned int size = 0;
+    if (EVP_DigestFinal_ex(context.get(), bytes.data(), &size) != 1 ||
+        size != 32) {
+        error = "Cannot finalize SHA-256";
+        return false;
+    }
+    std::ostringstream output;
+    output << std::hex << std::setfill('0');
+    for (unsigned int index = 0; index < size; ++index) {
+        output << std::setw(2) << static_cast<unsigned int>(bytes[index]);
+    }
+    digest = output.str();
+    return true;
+}
+
+bool ValidateFile(
+    const std::filesystem::path& path,
+    const VerifiedPackComponent& component,
+    std::string& error) {
+    std::error_code filesystem_error;
+    const auto status = std::filesystem::symlink_status(path, filesystem_error);
+    if (filesystem_error || !std::filesystem::is_regular_file(status) ||
+        std::filesystem::is_symlink(status)) {
+        error = "Component is missing or is not a regular file: " +
+                component.relative_path;
+        return false;
+    }
+    const auto size = std::filesystem::file_size(path, filesystem_error);
+    if (filesystem_error || size != component.size) {
+        error = "Component size differs from signed metadata: " +
+                component.relative_path;
+        return false;
+    }
+    std::string digest;
+    if (!HashFile(path, digest, error)) return false;
+    if (digest != component.sha256) {
+        error = "Component SHA-256 differs from signed metadata: " +
+                component.relative_path;
+        return false;
+    }
+    return true;
+}
+
+bool EnumerateExactPayload(
+    const std::filesystem::path& root,
+    const std::set<std::string>& expected,
+    std::string& error) {
+    std::error_code filesystem_error;
+    const auto root_status =
+        std::filesystem::symlink_status(root, filesystem_error);
+    if (filesystem_error || !std::filesystem::is_directory(root_status) ||
+        std::filesystem::is_symlink(root_status)) {
+        error = "Pack payload root is missing or unsafe";
+        return false;
+    }
+    std::set<std::string> observed;
+    for (std::filesystem::recursive_directory_iterator iterator(root), end;
+         iterator != end; ++iterator) {
+        const auto status = iterator->symlink_status(filesystem_error);
+        if (filesystem_error || std::filesystem::is_symlink(status)) {
+            error = "Pack payload contains a link or unreadable entry";
+            return false;
+        }
+        if (std::filesystem::is_directory(status)) continue;
+        if (!std::filesystem::is_regular_file(status)) {
+            error = "Pack payload contains an unsupported filesystem entry";
+            return false;
+        }
+        const auto relative =
+            std::filesystem::relative(iterator->path(), root, filesystem_error);
+        if (filesystem_error) {
+            error = "Cannot resolve a pack payload path";
+            return false;
+        }
+        observed.insert(FoldAscii(relative.generic_string()));
+    }
+    if (observed != expected) {
+        error = "Pack payload files differ from signed component inventory";
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+BackendPackInstaller::BackendPackInstaller(
+    std::filesystem::path runtime_root,
+    BackendPackExecutionActiveCheck execution_active,
+    BackendPackInstallObserver observer,
+    BackendPackInstallCheckpointHook checkpoint)
+    : runtime_root_(std::move(runtime_root)),
+      execution_active_(std::move(execution_active)),
+      observer_(std::move(observer)),
+      checkpoint_(std::move(checkpoint)) {}
+
+BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes) {
+    std::unique_lock<std::mutex> install_lock(
+        install_mutex_, std::try_to_lock);
+    if (!install_lock.owns_lock()) {
+        return {BackendPackInstallStatus::Busy,
+                "A backend-pack installation is already running"};
+    }
+    if (execution_active_ && execution_active_()) {
+        return {BackendPackInstallStatus::ExecutionActive,
+                "Backend-pack installation is blocked while an execution context is active"};
+    }
+    cancel_requested_.store(false);
+
+    BackendPackInstallProgress progress;
+    progress.stage = BackendPackInstallStage::Validating;
+    progress.backend = payload.backend;
+    progress.pack_id = payload.pack_id;
+    progress.component_count = payload.components.size();
+    progress.message = "Validating verified pack payload metadata";
+    SetProgress(progress);
+
+    if (!IsIdentifier(payload.runtime_set_id) ||
+        !IsIdentifier(payload.companion_base_id) ||
+        !IsOptionalBackend(payload.backend) ||
+        !IsIdentifier(payload.pack_id) || payload.components.empty() ||
+        payload.source_directory.empty()) {
+        return Finish(
+            BackendPackInstallStatus::InvalidRequest,
+            "Verified backend-pack payload is incomplete");
+    }
+    ActiveRuntimeState active;
+    std::string error;
+    if (!LoadActiveRuntimeState(
+            runtime_root_ / "active-runtime.json", active, error) ||
+        active.runtime_set_id != payload.runtime_set_id ||
+        active.base_pack_id != payload.companion_base_id) {
+        return Finish(
+            BackendPackInstallStatus::InvalidRequest,
+            error.empty()
+                ? "Pack requires a different active runtime set or base"
+                : error);
+    }
+
+    std::set<std::string> expected_paths;
+    std::uint64_t total_bytes = 0;
+    for (const auto& component : payload.components) {
+        if (!IsCanonicalRelativePath(component.relative_path) ||
+            !IsSha256(component.sha256) ||
+            total_bytes > std::numeric_limits<std::uint64_t>::max() -
+                              component.size ||
+            !expected_paths.insert(
+                FoldAscii(component.relative_path)).second) {
+            return Finish(
+                BackendPackInstallStatus::InvalidRequest,
+                "Pack component inventory is invalid");
+        }
+        total_bytes += component.size;
+    }
+    progress.total_bytes = total_bytes;
+    SetProgress(progress);
+    if ((disk_budget_bytes > 0 && total_bytes > disk_budget_bytes)) {
+        return Finish(
+            BackendPackInstallStatus::DiskBudgetExceeded,
+            "Pack payload exceeds the approved disk budget");
+    }
+    std::error_code filesystem_error;
+    const auto disk = std::filesystem::space(runtime_root_, filesystem_error);
+    if (filesystem_error || disk.available < total_bytes) {
+        return Finish(
+            BackendPackInstallStatus::DiskBudgetExceeded,
+            "Insufficient free space for the staged pack payload");
+    }
+    if (!EnumerateExactPayload(
+            payload.source_directory, expected_paths, error)) {
+        return Finish(BackendPackInstallStatus::IntegrityFailure, error);
+    }
+    for (const auto& component : payload.components) {
+        if (!ValidateFile(
+                payload.source_directory /
+                    NativeRelativePath(component.relative_path),
+                component, error)) {
+            return Finish(BackendPackInstallStatus::IntegrityFailure, error);
+        }
+    }
+    if (checkpoint_ &&
+        !checkpoint_(BackendPackInstallCheckpoint::AfterValidation)) {
+        return Finish(
+            BackendPackInstallStatus::Interrupted,
+            "Pack installation interrupted after validation");
+    }
+
+    const auto destination = runtime_root_ / "packs" / payload.backend /
+                             payload.pack_id;
+    const bool already_installed =
+        std::filesystem::is_directory(destination, filesystem_error) &&
+        !filesystem_error;
+    std::unique_ptr<RuntimeMutationLease> mutation_lease;
+    if (already_installed) {
+        if (!EnumerateExactPayload(destination, expected_paths, error)) {
+            return Finish(BackendPackInstallStatus::IntegrityFailure, error);
+        }
+        for (const auto& component : payload.components) {
+            if (!ValidateFile(
+                    destination /
+                        NativeRelativePath(component.relative_path),
+                    component, error)) {
+                return Finish(
+                    BackendPackInstallStatus::IntegrityFailure, error);
+            }
+        }
+    }
+
+    std::filesystem::path staging_root;
+    if (!already_installed) {
+        staging_root = runtime_root_ / "staging" /
+            (payload.pack_id + "-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        const auto staged_payload = staging_root / "payload";
+        std::filesystem::create_directories(staged_payload, filesystem_error);
+        if (filesystem_error) {
+            return Finish(
+                BackendPackInstallStatus::FilesystemFailure,
+                "Cannot create pack staging directory: " +
+                    filesystem_error.message());
+        }
+        progress.stage = BackendPackInstallStage::Copying;
+        progress.message = "Copying verified components into staging";
+        SetProgress(progress);
+        for (std::size_t index = 0; index < payload.components.size(); ++index) {
+            if (cancel_requested_.load()) {
+                std::filesystem::remove_all(staging_root, filesystem_error);
+                return Finish(
+                    BackendPackInstallStatus::Interrupted,
+                    "Pack installation cancelled");
+            }
+            const auto& component = payload.components[index];
+            const auto relative = NativeRelativePath(component.relative_path);
+            const auto target = staged_payload / relative;
+            std::filesystem::create_directories(
+                target.parent_path(), filesystem_error);
+            if (filesystem_error || !std::filesystem::copy_file(
+                    payload.source_directory / relative, target,
+                    std::filesystem::copy_options::none, filesystem_error)) {
+                std::filesystem::remove_all(staging_root, filesystem_error);
+                return Finish(
+                    BackendPackInstallStatus::FilesystemFailure,
+                    "Cannot copy a verified pack component into staging");
+            }
+            progress.component_index = index + 1;
+            progress.completed_bytes += component.size;
+            SetProgress(progress);
+        }
+        if (checkpoint_ &&
+            !checkpoint_(BackendPackInstallCheckpoint::AfterCopy)) {
+            std::filesystem::remove_all(staging_root, filesystem_error);
+            return Finish(
+                BackendPackInstallStatus::Interrupted,
+                "Pack installation interrupted after staging");
+        }
+
+        progress.stage = BackendPackInstallStage::Verifying;
+        progress.message = "Verifying staged component hashes";
+        SetProgress(progress);
+        for (const auto& component : payload.components) {
+            if (!ValidateFile(
+                    staged_payload /
+                        NativeRelativePath(component.relative_path),
+                    component, error)) {
+                std::filesystem::remove_all(staging_root, filesystem_error);
+                return Finish(
+                    BackendPackInstallStatus::IntegrityFailure, error);
+            }
+        }
+        if (checkpoint_ &&
+            !checkpoint_(BackendPackInstallCheckpoint::BeforePackPublish)) {
+            std::filesystem::remove_all(staging_root, filesystem_error);
+            return Finish(
+                BackendPackInstallStatus::Interrupted,
+                "Pack installation interrupted before publication");
+        }
+        if (execution_active_ && execution_active_()) {
+            std::filesystem::remove_all(staging_root, filesystem_error);
+            return Finish(
+                BackendPackInstallStatus::ExecutionActive,
+                "Execution started before pack publication");
+        }
+        mutation_lease = std::make_unique<RuntimeMutationLease>();
+        if (!mutation_lease->OwnsMutation()) {
+            std::filesystem::remove_all(staging_root, filesystem_error);
+            return Finish(
+                BackendPackInstallStatus::ExecutionActive,
+                "Execution started before pack publication");
+        }
+
+        progress.stage = BackendPackInstallStage::PublishingPack;
+        progress.message = "Publishing the complete versioned pack directory";
+        SetProgress(progress);
+        std::filesystem::create_directories(
+            destination.parent_path(), filesystem_error);
+        if (filesystem_error || std::filesystem::exists(destination)) {
+            std::filesystem::remove_all(staging_root, filesystem_error);
+            return Finish(
+                BackendPackInstallStatus::FilesystemFailure,
+                "Pack destination became unavailable during publication");
+        }
+        std::filesystem::rename(staged_payload, destination, filesystem_error);
+        if (filesystem_error) {
+            std::filesystem::remove_all(staging_root, filesystem_error);
+            return Finish(
+                BackendPackInstallStatus::FilesystemFailure,
+                "Cannot atomically publish the pack directory: " +
+                    filesystem_error.message());
+        }
+        if (IsWithin(
+                std::filesystem::absolute(runtime_root_),
+                std::filesystem::absolute(staging_root))) {
+            std::filesystem::remove_all(staging_root, filesystem_error);
+        }
+        if (checkpoint_ &&
+            !checkpoint_(BackendPackInstallCheckpoint::AfterPackPublish)) {
+            return Finish(
+                BackendPackInstallStatus::Interrupted,
+                "Pack installation interrupted after publication",
+                destination);
+        }
+    }
+
+    if (!mutation_lease) {
+        mutation_lease = std::make_unique<RuntimeMutationLease>();
+        if (!mutation_lease->OwnsMutation()) {
+            return Finish(
+                BackendPackInstallStatus::ExecutionActive,
+                "Execution is active before pack activation",
+                destination);
+        }
+    }
+
+    if (checkpoint_ &&
+        !checkpoint_(BackendPackInstallCheckpoint::BeforeActivation)) {
+        return Finish(
+            BackendPackInstallStatus::InstalledUnqualified,
+            "Complete pack is installed but was not activated",
+            destination);
+    }
+    progress.stage = BackendPackInstallStage::Activating;
+    progress.message = "Activating the complete installed pack";
+    SetProgress(progress);
+    BackendPackStateService state_service(runtime_root_, execution_active_);
+    auto activation = state_service.ActivateOptionalPack(
+        payload.backend, payload.pack_id);
+    if (activation.status != BackendPackStateStatus::Completed) {
+        return Finish(
+            BackendPackInstallStatus::InstalledUnqualified,
+            "Complete pack is installed but activation failed: " +
+                activation.message,
+            destination, std::move(activation));
+    }
+
+    return Finish(
+        already_installed
+            ? BackendPackInstallStatus::AlreadyInstalledAndActivated
+            : BackendPackInstallStatus::InstalledAndActivated,
+        "Pack installed and activated", destination, std::move(activation));
+}
+
+void BackendPackInstaller::Cancel() {
+    cancel_requested_.store(true);
+}
+
+BackendPackInstallProgress BackendPackInstaller::GetProgress() const {
+    std::lock_guard<std::mutex> lock(progress_mutex_);
+    return progress_;
+}
+
+BackendPackInstallResult BackendPackInstaller::Finish(
+    BackendPackInstallStatus status,
+    std::string message,
+    std::filesystem::path installed_directory,
+    std::optional<BackendPackStateResult> activation) {
+    auto progress = GetProgress();
+    progress.stage =
+        status == BackendPackInstallStatus::InstalledAndActivated ||
+                status ==
+                    BackendPackInstallStatus::AlreadyInstalledAndActivated ||
+                status == BackendPackInstallStatus::InstalledUnqualified
+            ? BackendPackInstallStage::Complete
+            : BackendPackInstallStage::Failed;
+    progress.message = message;
+    SetProgress(progress);
+    return {status, std::move(message), std::move(installed_directory),
+            std::move(activation)};
+}
+
+void BackendPackInstaller::SetProgress(
+    BackendPackInstallProgress progress) {
+    {
+        std::lock_guard<std::mutex> lock(progress_mutex_);
+        progress_ = progress;
+    }
+    if (observer_) observer_(progress);
+}
+
+const char* BackendPackInstallStatusName(BackendPackInstallStatus status) {
+    switch (status) {
+        case BackendPackInstallStatus::InstalledAndActivated:
+            return "installed_and_activated";
+        case BackendPackInstallStatus::AlreadyInstalledAndActivated:
+            return "already_installed_and_activated";
+        case BackendPackInstallStatus::InstalledUnqualified:
+            return "installed_unqualified";
+        case BackendPackInstallStatus::Busy: return "busy";
+        case BackendPackInstallStatus::ExecutionActive:
+            return "execution_active";
+        case BackendPackInstallStatus::InvalidRequest:
+            return "invalid_request";
+        case BackendPackInstallStatus::DiskBudgetExceeded:
+            return "disk_budget_exceeded";
+        case BackendPackInstallStatus::IntegrityFailure:
+            return "integrity_failure";
+        case BackendPackInstallStatus::Interrupted: return "interrupted";
+        case BackendPackInstallStatus::FilesystemFailure:
+            return "filesystem_failure";
+        default: return "unknown";
+    }
+}
+
+const char* BackendPackInstallStageName(BackendPackInstallStage stage) {
+    switch (stage) {
+        case BackendPackInstallStage::Idle: return "idle";
+        case BackendPackInstallStage::Validating: return "validating";
+        case BackendPackInstallStage::Copying: return "copying";
+        case BackendPackInstallStage::Verifying: return "verifying";
+        case BackendPackInstallStage::PublishingPack:
+            return "publishing_pack";
+        case BackendPackInstallStage::Activating: return "activating";
+        case BackendPackInstallStage::Complete: return "complete";
+        case BackendPackInstallStage::Failed: return "failed";
+        default: return "unknown";
+    }
+}
+
+}  // namespace cyxwiz::runtime
