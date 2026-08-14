@@ -46,15 +46,29 @@ void ExportDialog::SetModelData(
     SequentialModel* model,
     const Optimizer* optimizer,
     const TrainingMetrics* metrics,
-    const std::string& graph_json
+    const std::string& graph_json,
+    uint64_t graph_hash
 ) {
     model_ = model;
     optimizer_ = optimizer;
     metrics_ = metrics;
     graph_json_ = graph_json;
+    graph_hash_ = graph_hash;
 }
 
 void ExportDialog::Render() {
+    if (completion_pending_.exchange(false)) {
+        show_result_ = true;
+        if (export_complete_callback_) {
+            export_complete_callback_(
+                last_result_,
+                completed_export_options_,
+                completed_graph_hash_,
+                completed_graph_json_,
+                completed_optimizer_available_,
+                completed_metrics_available_);
+        }
+    }
     if (!is_open_) return;
 
     ImGui::SetNextWindowSize(ImVec2(500, 550), ImGuiCond_FirstUseEver);
@@ -333,7 +347,8 @@ void ExportDialog::RenderButtons() {
     ImGui::Spacing();
 
     // Export button
-    bool can_export = (strlen(output_path_) > 0) && model_ && !is_exporting_;
+    bool can_export = (strlen(output_path_) > 0) && model_ &&
+        !is_exporting_ && !completion_pending_.load();
 
     ImGui::BeginDisabled(!can_export);
     if (ImGui::Button(ICON_FA_DOWNLOAD " Export", ImVec2(120, 30))) {
@@ -389,8 +404,18 @@ void ExportDialog::StartExport() {
         export_thread_->join();
     }
 
+    SequentialModel* model = model_;
+    const Optimizer* optimizer = optimizer_;
+    const TrainingMetrics* metrics = metrics_;
+    const std::string graph_json = graph_json_;
+    const std::string output_path = output_path_;
+    const uint64_t graph_hash = graph_hash_;
+    const ExportOptions options = export_options_;
+
     // Start export in background thread
-    export_thread_ = std::make_unique<std::thread>([this]() {
+    export_thread_ = std::make_unique<std::thread>(
+        [this, model, optimizer, metrics, graph_json, output_path, graph_hash,
+         options]() {
         ModelExporter exporter;
 
         auto progress_callback = [this](int current, int total, const std::string& status) {
@@ -402,28 +427,29 @@ void ExportDialog::StartExport() {
             }
         };
 
-        last_result_ = exporter.Export(
-            *model_,
-            optimizer_,
-            metrics_,
-            graph_json_,
-            output_path_,
-            export_options_,
+        ExportResult result = exporter.Export(
+            *model,
+            optimizer,
+            metrics,
+            graph_json,
+            output_path,
+            options,
             progress_callback
         );
 
+        last_result_ = result;
+        completed_export_options_ = options;
+        completed_graph_hash_ = graph_hash;
+        completed_graph_json_ = graph_json;
+        completed_optimizer_available_ = optimizer != nullptr;
+        completed_metrics_available_ = metrics != nullptr;
+        completion_pending_ = true;
         is_exporting_ = false;
-        show_result_ = true;
 
-        // Call callback on main thread (if set)
-        if (export_complete_callback_) {
-            export_complete_callback_(last_result_);
-        }
-
-        if (last_result_.success) {
-            spdlog::info("Model exported successfully to {}", last_result_.output_path);
+        if (result.success) {
+            spdlog::info("Model exported successfully to {}", result.output_path);
         } else {
-            spdlog::error("Model export failed: {}", last_result_.error_message);
+            spdlog::error("Model export failed: {}", result.error_message);
         }
     });
 }

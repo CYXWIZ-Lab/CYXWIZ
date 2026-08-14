@@ -49,6 +49,17 @@ void ImportDialog::Close() {
 }
 
 void ImportDialog::Render() {
+    if (completion_pending_.exchange(false)) {
+        show_result_ = true;
+        if (import_complete_callback_) {
+            import_complete_callback_(
+                last_result_,
+                completed_import_options_,
+                completed_probe_result_,
+                imported_graph_json_,
+                completed_input_path_);
+        }
+    }
     if (!is_open_) return;
 
     ImGui::SetNextWindowSize(ImVec2(550, 500), ImGuiCond_FirstUseEver);
@@ -321,7 +332,8 @@ void ImportDialog::RenderProgress() {
 }
 
 void ImportDialog::RenderButtons() {
-    bool can_import = file_probed_ && probe_result_.valid && !is_importing_;
+    bool can_import = file_probed_ && probe_result_.valid &&
+        !is_importing_ && !completion_pending_.load();
 
     ImGui::BeginDisabled(!can_import);
     if (ImGui::Button(ICON_FA_FILE_IMPORT " Inspect", ImVec2(120, 30))) {
@@ -375,8 +387,13 @@ void ImportDialog::StartImport() {
         import_thread_->join();
     }
 
+    const std::string input_path = input_path_;
+    const ProbeResult probe_result = probe_result_;
+    const ImportOptions import_options = import_options_;
+
     // Start import in background thread
-    import_thread_ = std::make_unique<std::thread>([this]() {
+    import_thread_ = std::make_unique<std::thread>(
+        [this, input_path, probe_result, import_options]() {
         ModelImporter importer;
 
         auto progress_callback = [this](int current, int total, const std::string& status) {
@@ -391,11 +408,13 @@ void ImportDialog::StartImport() {
         progress_callback(1, 2, "Inspecting model metadata...");
 
         // For .cyxmodel, also extract the graph
-        if (probe_result_.format == ModelFormat::CyxModel && probe_result_.has_graph) {
+        std::string graph_json;
+        if (probe_result.format == ModelFormat::CyxModel &&
+            probe_result.has_graph) {
             progress_callback(2, 2, "Extracting .cyxmodel graph JSON...");
-            auto graph = importer.ExtractGraph(input_path_);
+            auto graph = importer.ExtractGraph(input_path);
             if (graph.has_value()) {
-                imported_graph_json_ = graph.value();
+                graph_json = graph.value();
             }
         }
 
@@ -403,31 +422,31 @@ void ImportDialog::StartImport() {
         // SequentialModel. That requires a separate import-to-training
         // contract for parameter mapping, tokenizer/preprocessor packaging,
         // shape validation, and freeze/unfreeze optimizer ownership.
-        last_result_.success = probe_result_.valid;
-        last_result_.model_name = probe_result_.model_name;
-        last_result_.format_version = probe_result_.format_version;
-        last_result_.num_parameters = probe_result_.num_parameters;
-        last_result_.num_layers = probe_result_.num_layers;
-        last_result_.layer_names = probe_result_.layer_names;
-        last_result_.warnings.clear();
-        last_result_.warnings.push_back(
+        ImportResult result;
+        result.success = probe_result.valid;
+        result.model_name = probe_result.model_name;
+        result.format_version = probe_result.format_version;
+        result.num_parameters = probe_result.num_parameters;
+        result.num_layers = probe_result.num_layers;
+        result.layer_names = probe_result.layer_names;
+        result.warnings.push_back(
             "No weights were loaded into a trainable Studio model.");
-        last_result_.warnings.push_back(
+        result.warnings.push_back(
             "Fine-tuning/freeze controls require a future import-to-training contract.");
-        last_result_.load_time_ms = 0;
+        result.load_time_ms = 0;
 
+        last_result_ = result;
+        completed_import_options_ = import_options;
+        completed_probe_result_ = probe_result;
+        completed_input_path_ = input_path;
+        imported_graph_json_ = std::move(graph_json);
+        completion_pending_ = true;
         is_importing_ = false;
-        show_result_ = true;
 
-        // Call callback on main thread (if set)
-        if (import_complete_callback_) {
-            import_complete_callback_(last_result_, imported_graph_json_);
-        }
-
-        if (last_result_.success) {
-            spdlog::info("Model inspection completed for {}", std::string(input_path_));
+        if (result.success) {
+            spdlog::info("Model inspection completed for {}", input_path);
         } else {
-            spdlog::error("Model inspection failed: {}", last_result_.error_message);
+            spdlog::error("Model inspection failed: {}", result.error_message);
         }
     });
 }

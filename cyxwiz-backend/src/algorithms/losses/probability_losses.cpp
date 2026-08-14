@@ -72,7 +72,7 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
             grad.eval();
         }
 
-        return AfToTensor(grad);
+        return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "BCELoss::Backward", e.what(), predictions, targets, reduction_);
@@ -133,7 +133,7 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
             grad.eval();
         }
 
-        return AfToTensor(grad);
+        return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "BCEWithLogitsLoss::Backward", e.what(), predictions, targets, reduction_);
@@ -205,7 +205,7 @@ Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
             grad.eval();
         }
 
-        return AfToTensor(grad);
+        return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "KLDivLoss::Backward", e.what(), predictions, targets, reduction_);

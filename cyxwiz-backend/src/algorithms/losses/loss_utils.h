@@ -56,6 +56,8 @@ Tensor CpuKLDivBackward(const Tensor& predictions,
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array TensorToAf(const Tensor& t);
 Tensor AfToTensor(const af::array& arr);
+Tensor AfToTensor(const af::array& arr,
+                  const std::vector<size_t>& semantic_shape);
 void LogArrayFireLossFallbackOnce(
     const char* operation_name,
     const char* error_message,

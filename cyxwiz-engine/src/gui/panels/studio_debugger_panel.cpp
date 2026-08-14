@@ -153,6 +153,8 @@ bool IsValueTrace(const DebugTraceRecord& trace) {
         trace.role == DebugTraceRole::Loss ||
         trace.payload.contains("loss") ||
         trace.payload.contains("average_loss") ||
+        trace.payload.contains("numeric_summary_available") ||
+        trace.payload.contains("prediction_target_shape_check_available") ||
         trace.payload.contains("token_ids_preview");
 }
 
@@ -322,6 +324,10 @@ std::string TraceSourceLabel(const DebugTraceRecord& trace) {
     if (trace.phase.find("Export") != std::string::npos ||
         diagnostic_phase.find("export") != std::string::npos) {
         return "export correlation trace";
+    }
+    if (trace.phase == "ArtifactConsistency" ||
+        diagnostic_phase == "artifact_consistency") {
+        return "artifact consistency trace";
     }
     if (trace.phase.find("Crash") != std::string::npos ||
         diagnostic_phase.find("crash") != std::string::npos) {
@@ -664,6 +670,20 @@ void StudioDebuggerPanel::SetSession(const StudioDebuggerSnapshot& session) {
     selected_trace_index_ = session_.debug_result.layer_traces.empty() ? -1 : 0;
 }
 
+void StudioDebuggerPanel::ShowNodeExplanation(int node_id) {
+    active_lens_ = StudioDebuggerLens::Overview;
+    selected_trace_index_ = -1;
+    for (int index = 0; index < static_cast<int>(session_.traces.size());
+         ++index) {
+        const auto& trace = session_.traces[index];
+        if (trace.node_id == node_id && trace.phase == "NodeExplanation") {
+            selected_trace_index_ = index;
+            break;
+        }
+    }
+    Show();
+}
+
 void StudioDebuggerPanel::Clear() {
     if (run_in_progress_) {
         return;
@@ -880,7 +900,7 @@ void StudioDebuggerPanel::RenderToolbar() {
     }
     ImGui::SameLine();
     const std::array<const char*, 8> lenses = {
-        "Overview", "Preprocessing", "Shapes", "Values",
+        "Overview", "Preprocessing", "Shapes", "Numerics",
         "Gradients", "Runtime", "Studio Events", "Recommendations"
     };
     int lens_index = static_cast<int>(active_lens_);
@@ -917,7 +937,7 @@ const char* StudioDebuggerPanel::ActiveLensName() const {
         case StudioDebuggerLens::Overview: return "Overview";
         case StudioDebuggerLens::Preprocessing: return "Preprocessing";
         case StudioDebuggerLens::Shapes: return "Shapes";
-        case StudioDebuggerLens::Values: return "Values";
+        case StudioDebuggerLens::Values: return "Numerics";
         case StudioDebuggerLens::Gradients: return "Gradients";
         case StudioDebuggerLens::Runtime: return "Runtime";
         case StudioDebuggerLens::StudioEvents: return "Studio Events";
@@ -2308,6 +2328,19 @@ void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary&
 
 void StudioDebuggerPanel::RenderTraceTimeline() {
     if (!session_.traces.empty()) {
+        if (selected_trace_index_ < 0 ||
+            selected_trace_index_ >= static_cast<int>(session_.traces.size()) ||
+            !TraceMatchesWorkflowFilter(
+                session_.traces[selected_trace_index_])) {
+            selected_trace_index_ = -1;
+            for (int i = 0; i < static_cast<int>(session_.traces.size()); ++i) {
+                if (TraceMatchesWorkflowFilter(session_.traces[i])) {
+                    selected_trace_index_ = i;
+                    break;
+                }
+            }
+        }
+
         ImGui::Text("Trace timeline - %s lens", ActiveLensName());
         RenderTraceFilters();
         ImGui::BeginChild("StudioDebuggerUnifiedTraceTimeline", ImVec2(0, 220), true);
@@ -2626,6 +2659,12 @@ void StudioDebuggerPanel::RenderTraceDiagnosis(const DebugTraceRecord& trace) {
         meaning = "This trace ranks bounded, already-recorded stage timings to identify the largest observed host-side path.";
         likely_cause = "A dominant stage can reflect data preparation, host wait, kernel launch/JIT work, synchronization elsewhere, or the workload itself.";
         next_adjustment = "Inspect the candidate source and scope, then reproduce with a fixed Release fixture before making a performance change.";
+    } else if (trace.phase == "TrainingStallAnalysis") {
+        meaning = "This trace checks bounded canonical debug and training evidence for common reasons learning may stall.";
+        likely_cause = JsonBool(payload, "has_suspected_stall_cause", false)
+            ? "One or more evidence-backed heuristics crossed its recorded threshold. Unobserved checks remain unknown, not healthy."
+            : "No observed check crossed its threshold, although unavailable evidence can still hide a cause.";
+        next_adjustment = "Open the findings below, address suspected causes first, and collect a short controlled training trace for unobserved checks.";
     } else if (trace.phase == "ErrorCodeTimeline") {
         meaning = "This trace orders canonical coded diagnostics from the run trace spine and linked runtime evidence.";
         likely_cause = "Each row preserves the subsystem, phase, run, node, and source that reported the warning or error; entries without wall-clock time retain capture order only.";
@@ -2669,7 +2708,11 @@ void StudioDebuggerPanel::RenderTraceDiagnosis(const DebugTraceRecord& trace) {
 
 void StudioDebuggerPanel::RenderSelectedTraceDetails() {
     if (!session_.traces.empty()) {
-        ImGui::Text("Node Inspector");
+        const bool graph_level_trace = selected_trace_index_ >= 0 &&
+            selected_trace_index_ < static_cast<int>(session_.traces.size()) &&
+            session_.traces[selected_trace_index_].node_id < 0;
+        ImGui::Text("%s Inspector",
+                    graph_level_trace ? "Trace" : "Node");
         ImGui::BeginChild("StudioDebuggerUnifiedTraceDetails", ImVec2(0, 260), true);
 
         if (selected_trace_index_ < 0 ||
@@ -2680,8 +2723,17 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
         }
 
         const auto& trace = session_.traces[selected_trace_index_];
-        ImGui::Text("Node: %s", trace.node_name.empty() ? "(graph)" : trace.node_name.c_str());
-        ImGui::Text("Node id: %d", trace.node_id);
+        if (trace.node_id < 0) {
+            ImGui::Text("Diagnostic: %s",
+                        trace.node_name.empty() ? "Graph" :
+                            trace.node_name.c_str());
+            ImGui::Text("Scope: Graph-wide (no node id)");
+        } else {
+            ImGui::Text("Node: %s",
+                        trace.node_name.empty() ? "(unnamed)" :
+                            trace.node_name.c_str());
+            ImGui::Text("Node id: %d", trace.node_id);
+        }
         ImGui::Text("Type: %s", trace.node_type.c_str());
         ImGui::Text("Phase: %s", trace.phase.c_str());
         ImGui::Text("Role: %s", DebugTraceRoleName(trace.role));
@@ -2696,12 +2748,320 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
             ImGui::Text("Producer: %s",
                         JsonString(trace.payload, "trace_producer").c_str());
         }
-        ImGui::Text("Input: %s", FormatShape(trace.input_shape).c_str());
-        ImGui::Text("Output: %s", FormatShape(trace.output_shape).c_str());
+        if (trace.node_id < 0 && trace.input_shape.empty() &&
+            trace.output_shape.empty()) {
+            ImGui::TextDisabled(
+                "Tensor input/output shapes: not applicable to this trace.");
+        } else {
+            ImGui::Text("Input: %s", FormatShape(trace.input_shape).c_str());
+            ImGui::Text("Output: %s", FormatShape(trace.output_shape).c_str());
+        }
         if (!trace.dtype.empty()) {
             ImGui::Text("DType: %s", trace.dtype.c_str());
         }
         ImGui::Text("Duration: %.2f ms", trace.duration_ms);
+
+        if (trace.phase == "NodeExplanation") {
+            ImGui::Separator();
+            ImGui::Text("Node explanation");
+            ImGui::Text("Graph role: %s",
+                        JsonString(trace.payload, "graph_role").c_str());
+            ImGui::Text("Selected training path: %s",
+                        JsonString(trace.payload,
+                                   "training_path_status").c_str());
+            ImGui::Text("Tensor evidence: %s",
+                        JsonString(trace.payload,
+                                   "data_evidence_scope").c_str());
+            const std::string evidence_phase =
+                JsonString(trace.payload, "data_evidence_phase");
+            if (!evidence_phase.empty()) {
+                ImGui::Text("Tensor evidence phase: %s",
+                            evidence_phase.c_str());
+            }
+            ImGui::Text("Expected backend: %s",
+                        JsonString(trace.payload,
+                                   "backend_expected").c_str());
+            ImGui::Text("Actual backend: %s",
+                        JsonString(trace.payload,
+                                   "backend_actual").c_str());
+            ImGui::Text("Backend evidence: %s",
+                        JsonString(trace.payload,
+                                   "backend_evidence_scope").c_str());
+
+            const auto render_neighbors = [&trace](const char* label,
+                                                   const char* key) {
+                const auto it = trace.payload.find(key);
+                if (it == trace.payload.end() || !it->is_array() ||
+                    it->empty()) {
+                    ImGui::TextDisabled("%s: none", label);
+                    return;
+                }
+                ImGui::Text("%s:", label);
+                for (const auto& neighbor : *it) {
+                    const int neighbor_id = neighbor.value("node_id", -1);
+                    const std::string neighbor_name =
+                        neighbor.value("node_name", std::string{});
+                    ImGui::BulletText("%s (node %d)",
+                        neighbor_name.empty() ? "Unnamed" :
+                            neighbor_name.c_str(),
+                        neighbor_id);
+                }
+            };
+            render_neighbors("Upstream", "upstream_nodes");
+            render_neighbors("Downstream", "downstream_nodes");
+
+            const std::string next_action = JsonString(
+                trace.payload, "next_inspection_action");
+            if (!next_action.empty()) {
+                ImGui::TextWrapped("Inspect next: %s", next_action.c_str());
+            }
+        }
+
+        if (trace.phase == "TrainingStallAnalysis") {
+            ImGui::Separator();
+            ImGui::Text("Training stall checks");
+            ImGui::Text("Suspected: %.0f  Not detected: %.0f  Unobserved: %.0f",
+                        JsonNumber(trace.payload, "suspected_count"),
+                        JsonNumber(trace.payload, "not_detected_count"),
+                        JsonNumber(trace.payload, "unobserved_count"));
+            const auto findings = trace.payload.find("findings");
+            if (findings != trace.payload.end() && findings->is_array()) {
+                for (const auto& finding : *findings) {
+                    if (!finding.is_object()) {
+                        continue;
+                    }
+                    const std::string label =
+                        finding.value("label", std::string{"Unknown check"});
+                    const std::string status =
+                        finding.value("status", std::string{"unobserved"});
+                    const std::string detail =
+                        finding.value("detail", std::string{});
+                    ImGui::BulletText("%s: %s", label.c_str(), status.c_str());
+                    if (!detail.empty()) {
+                        ImGui::Indent();
+                        ImGui::TextWrapped("%s", detail.c_str());
+                        ImGui::Unindent();
+                    }
+                }
+            }
+        }
+
+        if (trace.phase == "ArtifactConsistency") {
+            ImGui::Separator();
+            ImGui::Text("Export/import consistency");
+            ImGui::Text("Action: %s",
+                        JsonString(trace.payload,
+                                   "artifact_action").c_str());
+            ImGui::Text("Format: %s",
+                        JsonString(trace.payload,
+                                   "artifact_kind").c_str());
+            ImGui::TextWrapped("Artifact: %s",
+                JsonString(trace.payload, "artifact_path").c_str());
+            const std::string outcome = JsonString(
+                trace.payload, "consistency_outcome", "unobserved");
+            ImGui::TextColored(
+                outcome == "compatible"
+                    ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                    : (outcome == "unobserved" || outcome == "warning"
+                        ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
+                        : ImVec4(1.0f, 0.45f, 0.45f, 1.0f)),
+                "Consistency: %s", outcome.c_str());
+            ImGui::Text("Inspection: %s (%s)",
+                JsonBool(trace.payload, "inspection_available", false)
+                    ? "available"
+                    : "unobserved",
+                JsonString(trace.payload,
+                           "inspection_scope",
+                           "unobserved").c_str());
+            ImGui::Text("Graph hash: %s",
+                JsonString(trace.payload, "graph_hash_hex").c_str());
+
+            if (JsonBool(trace.payload,
+                         "graph_fingerprints_comparable", false)) {
+                ImGui::Text("Packaged graph: %s",
+                    JsonBool(trace.payload,
+                             "graph_fingerprints_match", false)
+                        ? "matches source"
+                        : "MISMATCH");
+            } else {
+                ImGui::TextDisabled(
+                    "Packaged graph comparison: unobserved");
+            }
+
+            const auto render_asset = [&trace](const char* label,
+                                                const char* expected_key,
+                                                const char* present_key,
+                                                bool required = true) {
+                if (!JsonBool(trace.payload, expected_key, false)) {
+                    return;
+                }
+                const bool present = JsonBool(
+                    trace.payload, present_key, false);
+                ImGui::TextColored(
+                    present
+                        ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                        : (required
+                            ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
+                            : ImVec4(1.0f, 0.82f, 0.35f, 1.0f)),
+                    "%s: %s", label, present ? "present" : "missing");
+            };
+            render_asset("Manifest", "manifest_expected",
+                         "manifest_present");
+            render_asset("Training config", "training_config_expected",
+                         "training_config_present");
+            render_asset("Weights manifest", "weights_manifest_expected",
+                         "weights_manifest_present");
+            render_asset("Graph", "graph_expected", "graph_present");
+            render_asset("Tokenizer config", "tokenizer_config_required",
+                         "tokenizer_config_present");
+            render_asset("Tokenizer vocabulary",
+                         "tokenizer_vocabulary_required",
+                         "tokenizer_vocabulary_present");
+            render_asset("Optimizer state", "optimizer_state_expected",
+                         "optimizer_state_present", false);
+            render_asset("Training history", "training_history_expected",
+                         "training_history_present", false);
+
+            if (JsonBool(trace.payload,
+                         "parameter_counts_comparable", false)) {
+                ImGui::Text("Parameters: expected %.0f, observed %.0f (%s)",
+                    JsonNumber(trace.payload, "expected_parameter_count"),
+                    JsonNumber(trace.payload, "observed_parameter_count"),
+                    JsonBool(trace.payload,
+                             "parameter_counts_match", false)
+                        ? "match"
+                        : "MISMATCH");
+            } else if (JsonBool(trace.payload,
+                                "observed_parameter_count_available", false)) {
+                ImGui::Text("Parameters observed: %.0f",
+                    JsonNumber(trace.payload, "observed_parameter_count"));
+            }
+            if (JsonBool(trace.payload, "layer_counts_comparable", false)) {
+                ImGui::Text("Layers: expected %.0f, observed %.0f (%s)",
+                    JsonNumber(trace.payload, "expected_layer_count"),
+                    JsonNumber(trace.payload, "observed_layer_count"),
+                    JsonBool(trace.payload, "layer_counts_match", false)
+                        ? "match"
+                        : "MISMATCH");
+            } else if (JsonBool(trace.payload,
+                                "observed_layer_count_available", false)) {
+                ImGui::Text("Layers observed: %.0f",
+                    JsonNumber(trace.payload, "observed_layer_count"));
+            }
+
+            const std::string observed_input = JsonString(
+                trace.payload, "observed_input_contract");
+            const std::string observed_output = JsonString(
+                trace.payload, "observed_output_contract");
+            if (!observed_input.empty()) {
+                ImGui::TextWrapped("Input contract: %s",
+                                   observed_input.c_str());
+            }
+            if (!observed_output.empty()) {
+                ImGui::TextWrapped("Output contract: %s",
+                                   observed_output.c_str());
+            }
+
+            const auto warnings = trace.payload.find("package_warnings");
+            if (warnings != trace.payload.end() && warnings->is_array() &&
+                !warnings->empty()) {
+                ImGui::Text("Package warnings:");
+                for (const auto& warning : *warnings) {
+                    if (warning.is_string()) {
+                        ImGui::BulletText("%s",
+                            warning.get_ref<const std::string&>().c_str());
+                    }
+                }
+            }
+            ImGui::TextDisabled(
+                "Inventory only; raw graph, manifest, tokenizer, weights, and tensors are not stored.");
+        }
+
+        const bool has_numeric_summary =
+            JsonBool(trace.payload, "numeric_summary_available", false);
+        const bool has_shape_check = JsonBool(
+            trace.payload,
+            "prediction_target_shape_check_available",
+            false);
+        if (has_numeric_summary || has_shape_check) {
+            ImGui::Separator();
+            ImGui::Text("Bounded numerics");
+            if (has_numeric_summary) {
+                ImGui::Text("Subject: %s",
+                            JsonString(trace.payload,
+                                       "numeric_subject",
+                                       "tensor").c_str());
+                ImGui::Text("Elements: %.0f  finite: %.0f  NaN: %.0f  Inf: %.0f",
+                            JsonNumber(trace.payload, "numeric_element_count"),
+                            JsonNumber(trace.payload, "numeric_finite_count"),
+                            JsonNumber(trace.payload, "numeric_nan_count"),
+                            JsonNumber(trace.payload, "numeric_inf_count"));
+                if (JsonHas(trace.payload, "numeric_min")) {
+                    ImGui::Text("Min: %.6g  Max: %.6g  Mean: %.6g",
+                                JsonNumber(trace.payload, "numeric_min"),
+                                JsonNumber(trace.payload, "numeric_max"),
+                                JsonNumber(trace.payload, "numeric_mean"));
+                    ImGui::Text("Max |x|: %.6g  L2: %.6g",
+                                JsonNumber(trace.payload, "numeric_max_abs"),
+                                JsonNumber(trace.payload, "numeric_l2_norm"));
+                }
+                ImGui::Text("Zero ratio: %.2f%%",
+                            JsonNumber(trace.payload, "numeric_zero_ratio") *
+                                100.0);
+                const bool exploding = JsonBool(
+                    trace.payload, "numeric_exploding_values", false);
+                ImGui::TextColored(
+                    exploding
+                        ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
+                        : ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
+                    "Exploding-value candidates: %.0f (|x| >= %.6g)",
+                    JsonNumber(trace.payload, "numeric_exploding_count"),
+                    JsonNumber(trace.payload,
+                               "numeric_exploding_abs_threshold"));
+                if (JsonBool(trace.payload,
+                             "saturation_summary_available", false)) {
+                    ImGui::Text("Saturation candidates: %.0f / %.0f (%.2f%%)",
+                        JsonNumber(trace.payload,
+                                   "saturation_candidate_count"),
+                        JsonNumber(trace.payload,
+                                   "saturation_observation_count"),
+                        JsonNumber(trace.payload,
+                                   "saturation_candidate_ratio") * 100.0);
+                    ImGui::TextWrapped("Definition: %s",
+                        JsonString(trace.payload,
+                                   "saturation_definition").c_str());
+                    if (JsonBool(trace.payload,
+                                 "dead_relu_candidate", false)) {
+                        ImGui::TextColored(
+                            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                            "Dead ReLU / zero-output candidate");
+                    }
+                    if (JsonBool(trace.payload,
+                                 "softmax_saturation_candidate", false)) {
+                        ImGui::TextColored(
+                            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                            "Softmax saturation candidate");
+                    }
+                }
+            }
+            if (has_shape_check) {
+                const bool compatible = JsonBool(
+                    trace.payload,
+                    "prediction_target_shapes_compatible",
+                    false);
+                ImGui::TextColored(
+                    compatible
+                        ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                        : ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                    "Prediction/target shape contract: %s",
+                    compatible ? "compatible" : "mismatch");
+                ImGui::TextWrapped("%s",
+                    JsonString(trace.payload,
+                               "prediction_target_shape_reason").c_str());
+            }
+            ImGui::TextDisabled(
+                "Summary only; tensor values are not stored in the trace.");
+        }
 
         if (JsonHas(trace.payload, "backend_status")) {
             ImGui::Separator();
@@ -3005,21 +3365,21 @@ void StudioDebuggerPanel::RenderLensContent() {
             return;
 
         case StudioDebuggerLens::Values:
-            RenderGraphTraceView();
-            ImGui::Separator();
             RenderTraceTimeline();
             ImGui::Separator();
             RenderSelectedTraceDetails();
+            ImGui::Separator();
+            RenderGraphTraceView();
             ImGui::Separator();
             RenderIssueList();
             return;
 
         case StudioDebuggerLens::Gradients:
-            RenderGraphTraceView();
-            ImGui::Separator();
             RenderTraceTimeline();
             ImGui::Separator();
             RenderSelectedTraceDetails();
+            ImGui::Separator();
+            RenderGraphTraceView();
             ImGui::Separator();
             RenderRecommendations();
             return;
@@ -3030,6 +3390,8 @@ void StudioDebuggerPanel::RenderLensContent() {
             RenderTrainingTrace();
             ImGui::Separator();
             RenderTraceTimeline();
+            ImGui::Separator();
+            RenderSelectedTraceDetails();
             ImGui::Separator();
             RenderStudioEvents();
             ImGui::Separator();

@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
@@ -127,6 +128,40 @@ std::string BuildLayerNormGraphJson() {
     return graph.dump();
 }
 
+void WriteBinaryProbeFixture(const std::filesystem::path& path) {
+    using json = nlohmann::json;
+    const json metadata = {
+        {"metadata", {
+            {"name", "Binary probe fixture"},
+            {"author", "CyxWiz"},
+            {"description", "CYXW probe regression fixture"}
+        }},
+        {"modules", json::array({{
+            {"name", "Linear(4 -> 2)"},
+            {"has_parameters", true},
+            {"parameters", json::array({
+                {{"name", "weight"}, {"shape", json::array({2, 4})}},
+                {{"name", "bias"}, {"shape", json::array({2})}}
+            })}
+        }})}
+    };
+    const std::string metadata_text = metadata.dump();
+    const uint32_t magic = 0x43595857;
+    const uint32_t version = 2;
+    const uint64_t metadata_length = metadata_text.size();
+    const size_t module_count = 1;
+
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+    output.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    output.write(reinterpret_cast<const char*>(&metadata_length),
+                 sizeof(metadata_length));
+    output.write(metadata_text.data(),
+                 static_cast<std::streamsize>(metadata_text.size()));
+    output.write(reinterpret_cast<const char*>(&module_count),
+                 sizeof(module_count));
+}
+
 } // namespace
 
 int main() {
@@ -173,6 +208,22 @@ int main() {
     import_options.strict_mode = true;
 
     cyxwiz::ModelImporter importer;
+    const fs::path binary_path = root / "probe.cyxmodel";
+    WriteBinaryProbeFixture(binary_path);
+    const cyxwiz::ProbeResult binary_probe =
+        importer.ProbeFile(binary_path.string());
+    Check(binary_probe.valid,
+          "binary CYXW probe should not require a directory manifest: " +
+              binary_probe.error_message);
+    Check(binary_probe.model_name == "Binary probe fixture",
+          "binary CYXW probe should expose its metadata name");
+    Check(binary_probe.format_version == "CYXW v2",
+          "binary CYXW probe should expose its format version");
+    Check(binary_probe.num_layers == 1,
+          "binary CYXW probe should expose its module count");
+    Check(binary_probe.num_parameters == 10,
+          "binary CYXW probe should count metadata parameters");
+
     const cyxwiz::ImportResult imported_result = importer.ImportCyxModel(
         package_path.string(),
         imported,

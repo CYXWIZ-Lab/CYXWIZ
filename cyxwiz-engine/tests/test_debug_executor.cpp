@@ -7,6 +7,7 @@
 // dead-subgraph warning path.
 
 #include "../src/core/debug_executor.h"
+#include "../src/core/debug_numerics.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/synthetic_batch.h"
 #include "../src/core/graph_compiler.h"
@@ -1268,6 +1269,17 @@ void TestBCEWithLogitsPosWeightBackend() {
     Tensor fractional_grad = loss.Backward(fractional_predictions, fractional_labels);
     ExpectNear(fractional_grad.Data<float>()[0], -0.125f, 1e-6f,
                "BCEWithLogits pos_weight grad should support fractional targets");
+
+    const float singleton_logit = 0.0f;
+    const float singleton_target = 1.0f;
+    Tensor singleton_predictions(
+        {1, 1}, &singleton_logit, DataType::Float32);
+    Tensor singleton_labels(
+        {1, 1}, &singleton_target, DataType::Float32);
+    Tensor singleton_grad = loss.Backward(
+        singleton_predictions, singleton_labels);
+    ExpectTrue(singleton_grad.Shape() == std::vector<size_t>({1, 1}),
+               "BCEWithLogits grad should preserve singleton 2D rank");
 }
 
 void TestTimeDistributedDenseModule() {
@@ -1351,6 +1363,85 @@ void TestBuildSequentialTimeDistributedHead() {
     spdlog::info("  OK: ModelBuilder creates TimeDistributed token head");
 }
 
+void TestDebugNumericsContract() {
+    spdlog::info("--- TestDebugNumericsContract ---");
+    const float values[] = {
+        -2.0f,
+        0.0f,
+        2.0f,
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+    };
+    Tensor tensor({5}, values, DataType::Float32);
+    const auto summary = ScanDebugTensorNumerics(
+        tensor, gui::NodeType::Dense);
+    ExpectTrue(summary.available, "Float32 numeric summary availability");
+    ExpectEq(summary.element_count, 5, "numeric element count");
+    ExpectEq(summary.finite_count, 3, "numeric finite count");
+    ExpectEq(summary.nan_count, 1, "numeric NaN count");
+    ExpectEq(summary.inf_count, 1, "numeric Inf count");
+    ExpectEq(summary.zero_count, 1, "numeric zero count");
+    ExpectNear(static_cast<float>(summary.minimum), -2.0f, 1e-6f,
+               "numeric minimum");
+    ExpectNear(static_cast<float>(summary.maximum), 2.0f, 1e-6f,
+               "numeric maximum");
+    ExpectNear(static_cast<float>(summary.mean), 0.0f, 1e-6f,
+               "numeric mean");
+    ExpectNear(static_cast<float>(summary.l2_norm), std::sqrt(8.0f), 1e-6f,
+               "numeric L2 norm");
+    auto trace = DebugNodeTraceContract::Make(
+        "numeric-run", -1, "Numerics", "Diagnostic", "Numerics",
+        DebugTraceRole::Activation, {}, {}, "float32", "LocalDebug", "ok");
+    AttachDebugNumericsPayload(trace, summary, "activation");
+    ExpectTrue(trace.payload["numerics_schema"].get<std::string>() ==
+                   kDebugNumericsSchema,
+               "numeric trace schema");
+    ExpectTrue(trace.payload["numeric_host_read_performed"].get<bool>(),
+               "numeric trace should disclose its bounded host read");
+    ExpectTrue(!trace.payload["numeric_values_included"].get<bool>(),
+               "numeric trace should not include raw tensor values");
+
+    std::vector<float> dead_values(100, 0.0f);
+    dead_values.back() = 1.0f;
+    Tensor dead_relu({10, 10}, dead_values.data(), DataType::Float32);
+    const auto relu = ScanDebugTensorNumerics(
+        dead_relu, gui::NodeType::ReLU);
+    ExpectTrue(relu.saturation_summary_available,
+               "ReLU saturation summary availability");
+    ExpectTrue(relu.dead_relu_candidate,
+               "99 percent zero ReLU should be a dead-output candidate");
+    ExpectNear(static_cast<float>(relu.saturation_candidate_ratio),
+               0.99f, 1e-6f, "ReLU zero-output ratio");
+
+    const float softmax_values[] = {
+        0.9995f, 0.0003f, 0.0002f,
+        0.9997f, 0.0002f, 0.0001f,
+    };
+    Tensor softmax({2, 3}, softmax_values, DataType::Float32);
+    const auto softmax_summary = ScanDebugTensorNumerics(
+        softmax, gui::NodeType::Softmax);
+    ExpectTrue(softmax_summary.softmax_saturation_candidate,
+               "confident Softmax rows should be a saturation candidate");
+    ExpectEq(softmax_summary.saturation_candidate_count, 2,
+             "Softmax saturated row count");
+    ExpectEq(softmax_summary.saturation_observation_count, 2,
+             "Softmax observed row count");
+
+    const auto token_targets = CheckDebugPredictionTargetShapes(
+        {2, 3, 4}, {2, 3}, gui::NodeType::CrossEntropyLoss);
+    ExpectTrue(token_targets.available && token_targets.compatible,
+               "token class-index targets should match logits prefix");
+    const auto one_hot_targets = CheckDebugPredictionTargetShapes(
+        {8, 4}, {8, 4}, gui::NodeType::CrossEntropyLoss);
+    ExpectTrue(one_hot_targets.compatible,
+               "one-hot targets should match logits exactly");
+    const auto mismatch = CheckDebugPredictionTargetShapes(
+        {8, 4}, {7}, gui::NodeType::CrossEntropyLoss);
+    ExpectTrue(mismatch.available && !mismatch.compatible,
+               "wrong target batch should report a shape mismatch");
+    spdlog::info("  OK: bounded summaries and shape contracts");
+}
+
 void TestDebugExecutorGoldenPath() {
     spdlog::info("--- TestDebugExecutorGoldenPath ---");
     auto cfg = MakeTabularConfig();
@@ -1423,11 +1514,47 @@ void TestDebugExecutorGoldenPath() {
                    "forward trace should match its exact compiled layer");
         ExpectTrue(!t.has_shape_mismatch(),
                    "golden path should have no shape divergence");
+        ExpectTrue(t.numerics.available,
+                   "forward trace should expose bounded numerics");
+        ExpectEq(t.numerics.finite_count, t.numerics.element_count,
+                 "golden path forward values should all be finite");
+        ExpectTrue(t.numerics.minimum <= t.numerics.mean &&
+                       t.numerics.mean <= t.numerics.maximum,
+                   "forward mean should remain within min/max");
     }
+    ExpectTrue(res.layer_traces[1].numerics.saturation_summary_available,
+               "ReLU layer should expose zero-output saturation evidence");
+    ExpectTrue(res.loss_target_compatibility.available &&
+                   res.loss_target_compatibility.compatible,
+               "golden path prediction/target shape contract");
     spdlog::info("  OK: reached=Complete, params_with_grad={}, "
                  "layer_traces={}, loss={}",
                  res.params_with_grad, res.layer_traces.size(),
                  res.loss_value);
+}
+
+void TestDebugExecutorBinaryHeadBackward() {
+    spdlog::info("--- TestDebugExecutorBinaryHeadBackward ---");
+    auto cfg = MakeTabularConfig();
+    cfg.output_size = 1;
+    cfg.layers.back().units = 1;
+    cfg.layers.back().output_shape = {1};
+    cfg.loss_type = gui::NodeType::BCEWithLogits;
+
+    DebugExecutor exe(cfg);
+    const auto res = exe.Run();
+    ExpectTrue(res.reached == DebugStage::Complete,
+               "binary-head Local Debug should complete backward");
+    ExpectTrue(res.success,
+               "binary-head Local Debug should succeed");
+    ExpectTrue(res.loss_target_compatibility.available &&
+                   res.loss_target_compatibility.compatible,
+               "binary-head prediction/target shapes should be compatible");
+    ExpectEq(res.params_with_grad, 4,
+             "binary-head parameters with gradients");
+    ExpectEq(res.params_missing_grad, 0,
+             "binary-head parameters missing gradients");
+    spdlog::info("  OK: binary head completes forward/loss/backward/update");
 }
 
 void TestDebugExecutorFirstShapeMismatch() {
@@ -1544,6 +1671,11 @@ void TestDebugExecutorGradNormBookkeeping() {
         ExpectTrue(std::isfinite(g.update_parameter_ratio),
                    "update/parameter ratio should be finite");
         assert(!g.is_nan && "grad norm NaN on random init is a backend bug");
+        assert(!g.is_inf && "grad norm Inf on random init is a backend bug");
+        ExpectTrue(g.numerics.available,
+                   "gradient should expose bounded numerics");
+        ExpectNear(static_cast<float>(g.numerics.l2_norm), g.l2_norm,
+                   1e-5f, "gradient numeric summary should own the L2 scan");
         if (g.l2_norm > 0.0f) any_positive_norm = true;
         if (g.update_l2_norm > 0.0f) any_positive_update = true;
     }
@@ -1686,7 +1818,9 @@ int main() {
         TestBCEWithLogitsPosWeightBackend();
         TestTimeDistributedDenseModule();
         TestBuildSequentialTimeDistributedHead();
+        TestDebugNumericsContract();
         TestDebugExecutorGoldenPath();
+        TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
         TestDebugExecutorSkippedLayerMapping();
         TestDebugExecutorGradNormBookkeeping();

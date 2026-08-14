@@ -4,6 +4,7 @@
 #include "../../core/model_format.h"
 #include "../../core/model_exporter.h"
 #include <string>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <thread>
@@ -38,11 +39,18 @@ public:
         SequentialModel* model,
         const Optimizer* optimizer,
         const TrainingMetrics* metrics,
-        const std::string& graph_json
+        const std::string& graph_json,
+        uint64_t graph_hash
     );
 
     // Callbacks
-    using ExportCompleteCallback = std::function<void(const ExportResult&)>;
+    using ExportCompleteCallback = std::function<void(
+        const ExportResult&,
+        const ExportOptions&,
+        uint64_t,
+        const std::string&,
+        bool,
+        bool)>;
     void SetExportCompleteCallback(ExportCompleteCallback callback) {
         export_complete_callback_ = callback;
     }
@@ -68,6 +76,7 @@ private:
     const Optimizer* optimizer_ = nullptr;
     const TrainingMetrics* metrics_ = nullptr;
     std::string graph_json_;
+    uint64_t graph_hash_ = 0;
 
     // Export settings
     ModelFormat selected_format_ = ModelFormat::CyxModel;
@@ -97,6 +106,12 @@ private:
 
     ExportResult last_result_;
     bool show_result_ = false;
+    std::atomic<bool> completion_pending_{false};
+    ExportOptions completed_export_options_;
+    uint64_t completed_graph_hash_ = 0;
+    std::string completed_graph_json_;
+    bool completed_optimizer_available_ = false;
+    bool completed_metrics_available_ = false;
 
     // Callbacks
     ExportCompleteCallback export_complete_callback_;

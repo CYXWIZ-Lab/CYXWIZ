@@ -5,6 +5,7 @@
 #include "classification_decision.h"
 #include "data_registry.h"
 #include "debug_batch_inspector.h"
+#include "debug_numerics.h"
 #include "error_codes.h"
 #include "label_column_resolver.h"
 #include "model_builder.h"
@@ -27,19 +28,6 @@ float ExtractLossScalar(const Tensor& t) {
     return t.Data<float>()[0];
 }
 
-bool HasNonFinite(const Tensor& t) {
-    if (t.GetDataType() != DataType::Float32) {
-        return false;
-    }
-    const float* p = t.Data<float>();
-    for (size_t i = 0; i < t.NumElements(); ++i) {
-        if (std::isnan(p[i]) || std::isinf(p[i])) {
-            return true;
-        }
-    }
-    return false;
-}
-
 float Accuracy(const Tensor& predictions,
                const Tensor& targets,
                ClassificationDecisionMode mode) {
@@ -53,18 +41,6 @@ float Accuracy(const Tensor& predictions,
     return ClassificationAccuracy(
         predictions.Data<float>(), targets.Data<float>(),
         batch_size, num_classes, mode);
-}
-
-float L2Norm(const Tensor& t) {
-    if (t.GetDataType() != DataType::Float32) {
-        return 0.0f;
-    }
-    const float* p = t.Data<float>();
-    double acc = 0.0;
-    for (size_t i = 0; i < t.NumElements(); ++i) {
-        acc += static_cast<double>(p[i]) * static_cast<double>(p[i]);
-    }
-    return static_cast<float>(std::sqrt(acc));
 }
 
 std::vector<size_t> ShapeOf(const Tensor& t) {
@@ -315,6 +291,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
                           static_cast<size_t>(batch_size) - 1) /
                          static_cast<size_t>(batch_size)));
     const int model_node_id = FindFirstModelNode(nodes);
+    const gui::NodeType output_node_type = config.layers.empty()
+        ? gui::NodeType::Dense
+        : config.layers.back().type;
     float loss_sum = 0.0f;
 
     for (int batch_index = 1; batch_index <= max_batches && !batcher->IsEpochComplete(); ++batch_index) {
@@ -353,7 +332,10 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         Tensor predictions = built.model->Forward(batch.data);
         const float forward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - forward_start).count();
-        const bool pred_bad = HasNonFinite(predictions);
+        const auto prediction_numerics = ScanDebugTensorNumerics(
+            predictions, output_node_type);
+        const bool pred_bad = prediction_numerics.nan_count > 0 ||
+            prediction_numerics.inf_count > 0;
         if (pred_bad) {
             result.issues.push_back({
                 IssueLevel::Error, model_node_id, "SmokeRun",
@@ -382,14 +364,41 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             predictions, batch.labels,
             ClassificationDecisionModeForLoss(config.loss_type));
 
+        const auto shape_compatibility = CheckDebugPredictionTargetShapes(
+            predictions.Shape(), batch.labels.Shape(), config.loss_type);
+        const bool target_shape_mismatch =
+            shape_compatibility.available && !shape_compatibility.compatible;
         auto loss_record = MakeSmokeRecord(
             run_id, "SmokeRun.Loss", DebugTraceRole::Loss,
-            model_node_id, loss_ok && !pred_bad ? "ok" : "failed",
+            model_node_id,
+            !loss_ok || pred_bad ? "failed" :
+                (target_shape_mismatch ? "warning" : "ok"),
             ShapeOf(predictions), ShapeOf(loss_tensor));
         loss_record.payload["batch"] = batch_index;
         loss_record.payload["loss"] = loss;
         loss_record.payload["accuracy"] = result.last_accuracy;
         loss_record.payload["predictions_have_non_finite"] = pred_bad;
+        loss_record.payload["prediction_shape"] = predictions.Shape();
+        loss_record.payload["target_shape"] = batch.labels.Shape();
+        loss_record.payload["prediction_target_shape_check_available"] =
+            shape_compatibility.available;
+        loss_record.payload["prediction_target_shapes_compatible"] =
+            shape_compatibility.compatible;
+        loss_record.payload["prediction_target_shape_reason"] =
+            shape_compatibility.reason;
+        AttachDebugNumericsPayload(
+            loss_record, prediction_numerics, "predictions");
+        if (target_shape_mismatch) {
+            DebugNodeTraceContract::AddWarning(
+                loss_record,
+                "Smoke Run prediction and target shapes are incompatible for the configured loss.",
+                errors::Compiler::TensorShapeMismatch);
+            result.issues.push_back({
+                IssueLevel::Warning, model_node_id, "SmokeRun",
+                "Smoke Run prediction and target shapes are incompatible for the configured loss.",
+                errors::Compiler::TensorShapeMismatch
+            });
+        }
         loss_record.duration_ms = loss_ms;
         loss_record.payload["forward_duration_ms"] = forward_ms;
         result.traces.push_back(std::move(loss_record));
@@ -411,9 +420,13 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         size_t grad_count = 0;
         size_t zero_grad_count = 0;
         float max_grad_norm = 0.0f;
+        DebugTensorNumericSummary gradient_numerics;
         for (const auto& [name, tensor] : built.model->GetGradients()) {
             (void)name;
-            const float norm = L2Norm(tensor);
+            const auto tensor_numerics = ScanDebugTensorNumerics(
+                tensor, gui::NodeType::Dense);
+            const float norm = static_cast<float>(tensor_numerics.l2_norm);
+            MergeDebugTensorNumerics(gradient_numerics, tensor_numerics);
             max_grad_norm = std::max(max_grad_norm, norm);
             grad_count++;
             if (norm == 0.0f) {
@@ -429,6 +442,8 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
         grad_record.payload["gradient_tensor_count"] = grad_count;
         grad_record.payload["zero_gradient_tensor_count"] = zero_grad_count;
         grad_record.payload["max_gradient_l2_norm"] = max_grad_norm;
+        AttachDebugNumericsPayload(
+            grad_record, gradient_numerics, "gradients");
         grad_record.duration_ms = backward_ms;
         grad_record.payload["optimizer_step_duration_ms"] = optimizer_ms;
 

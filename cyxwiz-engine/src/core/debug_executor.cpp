@@ -1,4 +1,5 @@
 #include "debug_executor.h"
+#include "debug_numerics.h"
 #include "error_codes.h"
 #include "model_builder.h"
 #include "synthetic_batch.h"
@@ -37,23 +38,6 @@ const char* StageName(DebugStage s) {
         case DebugStage::Complete:      return "Complete";
     }
     return "?";
-}
-
-// NaN + Inf scan. Only Float32 can carry non-finite values; int tensors
-// (text token IDs, classification labels) are always finite by construction.
-// Returns {has_nan, has_inf}.
-std::pair<bool, bool> ScanFinite(const Tensor& t) {
-    if (t.GetDataType() != DataType::Float32) return {false, false};
-    bool has_nan = false;
-    bool has_inf = false;
-    const float* p = t.ReadData<float>();
-    const size_t n = t.NumElements();
-    for (size_t i = 0; i < n; ++i) {
-        if (std::isnan(p[i])) { has_nan = true; }
-        else if (std::isinf(p[i])) { has_inf = true; }
-        if (has_nan && has_inf) break;
-    }
-    return {has_nan, has_inf};
 }
 
 // L2 norm at the bounded Local Debug reporting boundary. The elementwise
@@ -315,15 +299,15 @@ DebugResult DebugExecutor::Run() {
                 found_shape_mismatch = true;
             }
 
-            auto [has_nan, has_inf] = ScanFinite(current);
-            trace.has_nan = has_nan;
-            trace.has_inf = has_inf;
-            if (has_nan) {
+            trace.numerics = ScanDebugTensorNumerics(current, trace.type);
+            trace.has_nan = trace.numerics.nan_count > 0;
+            trace.has_inf = trace.numerics.inf_count > 0;
+            if (trace.has_nan) {
                 result.issues.push_back({IssueLevel::Error,
                                          trace.node_id, trace.name,
                                          "Forward output contains NaN",
                                          errors::Training::TrainingExecutionFailed});
-            } else if (has_inf) {
+            } else if (trace.has_inf) {
                 result.issues.push_back({IssueLevel::Error,
                                          trace.node_id, trace.name,
                                          "Forward output contains Inf",
@@ -339,6 +323,12 @@ DebugResult DebugExecutor::Run() {
 
         // ---- Stage: Loss --------------------------------------------------
         result.reached = DebugStage::Loss;
+        result.loss_prediction_shape = current.Shape();
+        result.loss_target_shape = batch.labels.Shape();
+        result.loss_target_compatibility = CheckDebugPredictionTargetShapes(
+            result.loss_prediction_shape,
+            result.loss_target_shape,
+            config_.loss_type);
         Tensor loss_tensor = loss_->Forward(current, batch.labels);
         result.loss_value = ExtractLossScalar(loss_tensor);
         result.loss_finite = std::isfinite(result.loss_value);
@@ -408,19 +398,21 @@ DebugResult DebugExecutor::Run() {
             } else {
                 entry.has_gradient = true;
                 const Tensor& g = grad_it->second;
-                auto [gnan, ginf] = ScanFinite(g);
-                entry.is_nan  = gnan;
-                entry.l2_norm = L2Norm(g);
+                entry.numerics = ScanDebugTensorNumerics(
+                    g, gui::NodeType::Dense);
+                entry.is_nan = entry.numerics.nan_count > 0;
+                entry.is_inf = entry.numerics.inf_count > 0;
+                entry.l2_norm = static_cast<float>(entry.numerics.l2_norm);
                 entry.grad_parameter_ratio = RelativeNorm(
                     entry.l2_norm, entry.parameter_l2_norm);
                 entry.is_zero = (entry.l2_norm == 0.0f);
                 ++result.params_with_grad;
-                if (gnan) {
+                if (entry.is_nan) {
                     result.issues.push_back({IssueLevel::Error, -1,
                                              param_name,
                                              "Gradient contains NaN",
                                              errors::Training::TrainingExecutionFailed});
-                } else if (ginf) {
+                } else if (entry.is_inf) {
                     result.issues.push_back({IssueLevel::Error, -1,
                                              param_name,
                                              "Gradient contains Inf",

@@ -176,6 +176,8 @@ nlohmann::json DebugSupportBundleBuilder::DebugRunToJson(
                 {"synchronization_known_bytes", record.summary.execution.synchronization_known_bytes}
             }}
         }},
+        {"replay_capsule", RedactJson(
+            DebugRunReplayCapsuleToJson(record.replay_capsule))},
         {"issues", issues},
         {"traces", traces},
         {"studio_events", events},

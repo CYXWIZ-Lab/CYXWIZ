@@ -20,6 +20,7 @@
 #include "../core/error_codes.h"
 #include "../core/debug_graph_trace_executor.h"
 #include "../core/debug_error_code_timeline.h"
+#include "../core/debug_export_correlation_tracer.h"
 #include "../core/debug_runtime_backend_classifier.h"
 #include "../core/debug_slow_path_detector.h"
 #include "../core/debug_trace_record.h"
@@ -160,6 +161,8 @@
 #include "../core/text_preprocessing_tracer.h"
 #include "../core/smoke_run_executor.h"
 #include "../core/debug_recommendation_engine.h"
+#include "../core/debug_training_stall_detector.h"
+#include "../core/debug_node_inspector.h"
 #include "../core/training_trace_collector.h"
 #include "../core/debug_run_store.h"
 #include "../core/runtime_log_store.h"
@@ -168,6 +171,8 @@
 #include "../core/test_manager.h"
 #include "../core/test_dataset_selection.h"
 #include "../core/model_converter.h"
+#include "../core/model_importer.h"
+#include "../core/node_metadata_registry.h"
 #include "../serving/inference_server.h"
 
 #include <imgui.h>
@@ -413,6 +418,106 @@ std::string MakeDebuggerRunId(uint64_t graph_hash) {
     std::ostringstream out;
     out << "local-debug-" << std::hex << graph_hash << "-" << std::dec << ms;
     return out.str();
+}
+
+std::string MakeArtifactRunId(const std::string& action,
+                              uint64_t graph_hash) {
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    std::ostringstream out;
+    out << "artifact-" << (action.empty() ? "action" : action) << "-"
+        << std::hex << graph_hash << "-" << std::dec << ms;
+    return out.str();
+}
+
+bool DirectoryHasRegularFile(const std::filesystem::path& path) {
+    if (!std::filesystem::is_directory(path)) {
+        return false;
+    }
+    std::error_code error;
+    for (std::filesystem::directory_iterator it(path, error), end;
+         !error && it != end;
+         it.increment(error)) {
+        if (it->is_regular_file(error)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+cyxwiz::DebugArtifactObservation ObserveModelArtifact(
+    const std::string& path,
+    const cyxwiz::ProbeResult& probe,
+    bool inspection_supported) {
+    cyxwiz::DebugArtifactObservation observed;
+    observed.available = inspection_supported;
+    observed.manifest_valid = inspection_supported && probe.valid;
+    observed.format_version = probe.format_version;
+    observed.model_family = probe.model_family;
+    if (!inspection_supported) {
+        observed.evidence_scope = "unobserved_probe_unsupported";
+        return observed;
+    }
+
+    if (probe.valid) {
+        observed.parameter_count =
+            static_cast<size_t>(std::max(0, probe.num_parameters));
+        observed.layer_count =
+            static_cast<size_t>(std::max(0, probe.num_layers));
+        observed.optimizer_state_present = probe.has_optimizer_state;
+        observed.training_history_present = probe.has_training_history;
+        observed.sequence_assets_present = probe.has_sequence;
+        observed.tree_model_artifact_present =
+            probe.has_tree_model_artifact;
+        observed.input_contract = probe.supports_bert_encoder
+            ? probe.bert_encoder_input_kind
+            : std::string{};
+        observed.output_contract = probe.supports_generation
+            ? probe.generation_output_contract
+            : (probe.supports_bert_encoder
+                ? probe.bert_encoder_output_contract
+                : std::string{});
+    }
+
+    const std::filesystem::path artifact_path(path);
+    if (probe.format == cyxwiz::ModelFormat::CyxModel &&
+        std::filesystem::is_directory(artifact_path)) {
+        observed.evidence_scope = "cyxmodel_directory_manifest_and_inventory";
+        observed.manifest_present =
+            std::filesystem::is_regular_file(artifact_path / "manifest.json");
+        observed.training_config_present =
+            std::filesystem::is_regular_file(artifact_path / "config.json");
+        observed.weights_manifest_present = std::filesystem::is_regular_file(
+            artifact_path / "weights" / "manifest.json");
+        observed.graph_present = std::filesystem::is_regular_file(
+            artifact_path / "graph.cyxgraph");
+        observed.tokenizer_config_present = std::filesystem::is_regular_file(
+            artifact_path / "tokenizer" / "config.json");
+        observed.tokenizer_vocabulary_present =
+            std::filesystem::is_regular_file(
+                artifact_path / "tokenizer" / "vocab.txt");
+        observed.optimizer_state_present =
+            DirectoryHasRegularFile(artifact_path / "optimizer");
+        observed.training_history_present =
+            std::filesystem::is_regular_file(artifact_path / "history.json");
+        observed.sequence_assets_present =
+            DirectoryHasRegularFile(artifact_path / "sequence");
+        observed.tree_model_artifact_present =
+            std::filesystem::is_regular_file(
+                artifact_path / "tree" / "model.json");
+    } else if (probe.format == cyxwiz::ModelFormat::CyxModel &&
+               std::filesystem::is_regular_file(artifact_path)) {
+        observed.evidence_scope = "cyxw_binary_header";
+    } else if (probe.format == cyxwiz::ModelFormat::Safetensors) {
+        observed.evidence_scope = "safetensors_header";
+    } else {
+        observed.evidence_scope = "manifest_probe";
+        observed.graph_present = probe.has_graph;
+        observed.tokenizer_config_present = probe.has_tokenizer;
+        observed.tokenizer_vocabulary_present = probe.has_vocabulary;
+    }
+    return observed;
 }
 
 } // anonymous namespace
@@ -715,6 +820,24 @@ MainWindow::MainWindow()
             }
         });
     }
+
+    node_editor_->SetExplainNodeCallback([this](int node_id) {
+        if (!node_editor_ || !studio_debugger_panel_) {
+            return;
+        }
+        auto nodes = node_editor_->GetNodes();
+        auto links = node_editor_->GetLinks();
+        cyxwiz::StudioDebuggerSnapshot session;
+        BuildStudioDebuggerSessionFromSnapshot(
+            session,
+            cyxwiz::StudioDebuggerRunMode::Preflight,
+            0,
+            std::move(nodes),
+            std::move(links),
+            node_id);
+        studio_debugger_panel_->SetSession(session);
+        studio_debugger_panel_->ShowNodeExplanation(node_id);
+    });
 
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
@@ -1093,7 +1216,20 @@ MainWindow::MainWindow()
                     graph_json = node_editor_->GetGraphJson();
                 }
 
-                export_dialog_->SetModelData(model, optimizer, &metrics, graph_json);
+                const auto nodes = node_editor_
+                    ? node_editor_->GetNodes()
+                    : std::vector<MLNode>{};
+                const auto links = node_editor_
+                    ? node_editor_->GetLinks()
+                    : std::vector<NodeLink>{};
+                export_dialog_->SetModelData(
+                    model,
+                    optimizer,
+                    &metrics,
+                    graph_json,
+                    node_editor_
+                        ? HashGraphStructure(nodes, links)
+                        : 0);
                 spdlog::info("Loaded trained model into Export dialog");
             } else {
                 spdlog::warn("No trained model available for export");
@@ -1103,6 +1239,99 @@ MainWindow::MainWindow()
             spdlog::info("Opened Export Model dialog (format index: {})", format_index);
         }
     });
+
+    export_dialog_->SetExportCompleteCallback(
+        [this](const cyxwiz::ExportResult& result,
+               const cyxwiz::ExportOptions& options,
+               uint64_t graph_hash,
+               const std::string& source_graph,
+               bool optimizer_available,
+               bool metrics_available) {
+            cyxwiz::DebugArtifactConsistencyInput input;
+            input.action = "export";
+            input.artifact_kind = cyxwiz::GetFormatName(options.format);
+            input.artifact_path = result.output_path;
+            input.producer_name = "ModelExporter";
+            input.graph_hash = graph_hash;
+            input.operation_success = result.success;
+            input.operation_status = result.success
+                ? "Model export completed."
+                : result.error_message;
+            input.source_graph_content = source_graph;
+
+            const bool is_cyxmodel =
+                options.format == cyxwiz::ModelFormat::CyxModel;
+            const bool inspection_supported = is_cyxmodel ||
+                options.format == cyxwiz::ModelFormat::Safetensors;
+            cyxwiz::ProbeResult probe;
+            probe.format = options.format;
+            if (result.success && inspection_supported) {
+                cyxwiz::ModelImporter importer;
+                probe = importer.ProbeFile(result.output_path);
+                if (is_cyxmodel && probe.valid && probe.has_graph) {
+                    const auto graph = importer.ExtractGraph(result.output_path);
+                    if (graph) {
+                        input.artifact_graph_content = *graph;
+                    }
+                }
+            }
+            input.observed = ObserveModelArtifact(
+                result.output_path,
+                probe,
+                result.success && inspection_supported);
+
+            const bool is_cyxmodel_directory =
+                is_cyxmodel &&
+                std::filesystem::is_directory(result.output_path);
+            input.expected.manifest_expected = is_cyxmodel_directory;
+            input.expected.training_config_expected = is_cyxmodel_directory;
+            input.expected.weights_manifest_expected = is_cyxmodel_directory;
+            input.expected.graph_expected =
+                is_cyxmodel && options.include_graph &&
+                !source_graph.empty();
+            const auto family_it =
+                options.custom_metadata.find("model_family");
+            const std::string expected_family =
+                family_it == options.custom_metadata.end()
+                    ? std::string{}
+                    : family_it->second;
+            const bool tokenizer_required =
+                probe.supports_generation || probe.supports_bert_encoder ||
+                expected_family == "causal_lm" ||
+                expected_family == "bert_encoder";
+            input.expected.tokenizer_config_required = tokenizer_required;
+            input.expected.tokenizer_vocabulary_required =
+                tokenizer_required;
+            input.expected.optimizer_state_expected =
+                is_cyxmodel && options.include_optimizer_state &&
+                optimizer_available;
+            input.expected.training_history_expected =
+                is_cyxmodel && options.include_training_history &&
+                metrics_available;
+            if (result.success) {
+                input.expected.parameter_count = static_cast<size_t>(
+                    std::max(0, result.num_parameters));
+                if (is_cyxmodel) {
+                    input.expected.layer_count = static_cast<size_t>(
+                        std::max(0, result.num_layers));
+                }
+            }
+            const auto expected_input_it =
+                options.custom_metadata.find("bert_encoder_input_kind");
+            if (expected_input_it != options.custom_metadata.end()) {
+                input.expected.input_contract = expected_input_it->second;
+            }
+            const auto generation_output_it = options.custom_metadata.find(
+                "generation_output_contract");
+            const auto bert_output_it = options.custom_metadata.find(
+                "bert_encoder_output_contract");
+            if (generation_output_it != options.custom_metadata.end()) {
+                input.expected.output_contract = generation_output_it->second;
+            } else if (bert_output_it != options.custom_metadata.end()) {
+                input.expected.output_contract = bert_output_it->second;
+            }
+            RecordArtifactConsistencyTrace(input);
+        });
 
     // Set up Import Model callback
     toolbar_->SetImportModelCallback([this]() {
@@ -1114,7 +1343,12 @@ MainWindow::MainWindow()
 
     // Set up Import Complete callback - load graph into node editor
     import_dialog_->SetImportCompleteCallback(
-        [this](const cyxwiz::ImportResult& result, const std::string& graph_json) {
+        [this](const cyxwiz::ImportResult& result,
+               const cyxwiz::ImportOptions& options,
+               const cyxwiz::ProbeResult& probe,
+               const std::string& graph_json,
+               const std::string& input_path) {
+            bool graph_loaded = false;
             if (result.success) {
                 spdlog::info("Model inspection completed: {} ({} layers, {} params)",
                              result.model_name, result.num_layers, result.num_parameters);
@@ -1122,6 +1356,7 @@ MainWindow::MainWindow()
                 // Load graph into node editor if available
                 if (!graph_json.empty() && node_editor_) {
                     if (node_editor_->LoadGraphFromString(graph_json)) {
+                        graph_loaded = true;
                         node_editor_->Show();
                         spdlog::info("Loaded inspected model graph into Node Editor");
                     } else {
@@ -1131,6 +1366,47 @@ MainWindow::MainWindow()
             } else {
                 spdlog::error("Model inspection failed: {}", result.error_message);
             }
+
+            uint64_t graph_hash = 0;
+            if (graph_loaded && node_editor_) {
+                graph_hash = HashGraphStructure(
+                    node_editor_->GetNodes(), node_editor_->GetLinks());
+            }
+            cyxwiz::DebugArtifactConsistencyInput input;
+            input.action = "import_inspection";
+            input.artifact_kind = cyxwiz::GetFormatName(probe.format);
+            input.artifact_path = input_path;
+            input.producer_name = "ModelImporter";
+            input.graph_hash = graph_hash;
+            input.operation_success = result.success;
+            input.operation_status = result.success
+                ? "Model package inspection completed; weights were not loaded."
+                : result.error_message;
+            input.artifact_graph_content = graph_json;
+            const bool inspection_supported =
+                probe.format == cyxwiz::ModelFormat::CyxModel ||
+                probe.format == cyxwiz::ModelFormat::Safetensors;
+            input.observed = ObserveModelArtifact(
+                input_path, probe, inspection_supported);
+            input.observed.package_warnings = result.warnings;
+            const bool is_cyxmodel =
+                probe.format == cyxwiz::ModelFormat::CyxModel;
+            const bool is_cyxmodel_directory =
+                is_cyxmodel &&
+                std::filesystem::is_directory(input_path);
+            input.expected.manifest_expected = is_cyxmodel_directory;
+            input.expected.training_config_expected = is_cyxmodel_directory;
+            input.expected.weights_manifest_expected = is_cyxmodel_directory;
+            input.expected.graph_expected = is_cyxmodel && probe.has_graph;
+            input.expected.tokenizer_config_required =
+                probe.supports_generation || probe.supports_bert_encoder;
+            input.expected.tokenizer_vocabulary_required =
+                probe.supports_generation || probe.supports_bert_encoder;
+            input.expected.optimizer_state_expected =
+                options.load_optimizer_state;
+            input.expected.training_history_expected =
+                options.load_training_history;
+            RecordArtifactConsistencyTrace(input);
         }
     );
 
@@ -3622,6 +3898,71 @@ void MainWindow::LocalDebugGraphAndReport() {
     }
 }
 
+void MainWindow::RecordArtifactConsistencyTrace(
+    const cyxwiz::DebugArtifactConsistencyInput& input) {
+    if (!studio_debugger_panel_) {
+        return;
+    }
+
+    cyxwiz::DebugExportCorrelationTracer tracer;
+    const std::string run_id = MakeArtifactRunId(
+        input.action, input.graph_hash);
+    cyxwiz::DebugTraceRecord trace = tracer.BuildConsistencyTrace(
+        run_id, input);
+
+    cyxwiz::StudioDebuggerSnapshot session;
+    session.run_id = run_id;
+    session.graph_hash = input.graph_hash;
+    session.success = trace.payload.value("success", false);
+    const std::string outcome = trace.payload.value(
+        "consistency_outcome", std::string{"unobserved"});
+    session.failure_summary = session.success
+        ? std::string{}
+        : std::string("Artifact consistency outcome: ") + outcome;
+    session.graph_summary =
+        std::string("Artifact consistency outcome: ") + outcome;
+    session.sample_summary = input.action + ": " + input.artifact_path;
+    session.issues = trace.issues;
+    session.traces.push_back(trace);
+    session.studio_events.push_back({
+        run_id,
+        NowLocalTimestampForDebugStore(),
+        input.graph_hash,
+        -1,
+        input.action.rfind("import", 0) == 0
+            ? "Model.ImportConsistency"
+            : "Model.ExportConsistency",
+        session.success ? "completed" : "failed",
+        input.operation_status
+    });
+
+    cyxwiz::DebugRecommendationEngine recommendation_engine;
+    session.recommendations = recommendation_engine.Build(
+        session.traces,
+        session.issues,
+        session.smoke_result,
+        session.last_run,
+        session.training_trace);
+
+    cyxwiz::DebugRunStoreRecord record;
+    record.summary.run_id = run_id;
+    record.summary.timestamp = NowLocalTimestampForDebugStore();
+    record.summary.graph_hash = input.graph_hash;
+    record.summary.success = session.success;
+    record.summary.summary = session.graph_summary;
+    record.issues = session.issues;
+    record.traces = session.traces;
+    record.studio_events = session.studio_events;
+    record.recommendations = session.recommendations;
+    if (!cyxwiz::DebugRunStore::Save(record)) {
+        spdlog::warn(
+            "Failed to persist artifact consistency run {}", run_id);
+    }
+    session.run_history = cyxwiz::DebugRunStore::ListRecent(8);
+    studio_debugger_panel_->SetSession(session);
+    studio_debugger_panel_->Show();
+}
+
 bool MainWindow::BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session,
                                             cyxwiz::StudioDebuggerRunMode mode,
                                             int sample_index) {
@@ -3642,7 +3983,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     cyxwiz::StudioDebuggerRunMode mode,
     int sample_index,
     std::vector<MLNode> nodes,
-    std::vector<NodeLink> links) {
+    std::vector<NodeLink> links,
+    int explain_node_id) {
     session = cyxwiz::StudioDebuggerSnapshot{};
 
     session.node_count = nodes.size();
@@ -3677,6 +4019,9 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             cyxwiz::MakeDebugRunExecutionSummary(session.training_trace);
     }
     const std::string& run_id = session.run_id;
+    cyxwiz::DebugRunReplayCapsule replay_capsule =
+        cyxwiz::MakeDebugRunReplayCapsule(
+            debug_session, nullptr, session.execution);
     auto collect_runtime_diagnostics = [&session, &run_id]() {
         cyxwiz::RuntimeLogSnapshotRequest request;
         request.limit = cyxwiz::RuntimeLogStore::kDefaultCapacity;
@@ -3713,7 +4058,27 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 collect_runtime_diagnostics(),
                 session.last_run));
         };
-    auto save_session = [&session]() {
+    auto append_training_stall_analysis =
+        [&session, &run_id](
+            const cyxwiz::TrainingConfiguration* training_config) {
+            const bool already_present = std::any_of(
+                session.traces.begin(), session.traces.end(),
+                [](const cyxwiz::DebugTraceRecord& trace) {
+                    return trace.phase == "TrainingStallAnalysis";
+                });
+            if (already_present) {
+                return;
+            }
+            cyxwiz::DebugTrainingStallConfigEvidence evidence;
+            if (training_config) {
+                evidence.learning_rate_available = true;
+                evidence.learning_rate = training_config->learning_rate;
+            }
+            cyxwiz::DebugTrainingStallDetector detector;
+            session.traces.push_back(detector.BuildTrace(
+                run_id, session.traces, session.training_trace, evidence));
+        };
+    auto save_session = [&session, &replay_capsule]() {
         cyxwiz::DebugRunStoreRecord record;
         record.summary.run_id = session.run_id;
         record.summary.timestamp = NowLocalTimestampForDebugStore();
@@ -3723,6 +4088,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             ? "Studio debugger run completed."
             : session.failure_summary;
         record.summary.execution = session.execution;
+        record.replay_capsule = replay_capsule;
         record.issues = session.issues;
         record.traces = session.traces;
         record.studio_events = session.studio_events;
@@ -3749,6 +4115,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         cyxwiz::DebugSlowPathDetector slow_path_detector;
         session.traces.push_back(slow_path_detector.BuildTrace(
             run_id, session.traces, session.training_trace));
+        append_training_stall_analysis(nullptr);
         append_error_timeline();
         session.recommendations = recommendation_engine.Build(
             session.traces, session.issues, session.smoke_result,
@@ -3762,10 +4129,12 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
 
     cyxwiz::TrainingConfiguration config;
     bool compile_success = false;
+    bool compile_completed = false;
     std::string compile_summary;
     try {
         cyxwiz::GraphCompiler compiler;
         config = compiler.Compile(nodes, links);
+        compile_completed = true;
         session.issues = config.issues;
         compile_success = config.is_valid;
 
@@ -3790,6 +4159,12 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         });
         compile_summary = session.failure_summary;
     }
+
+    replay_capsule = cyxwiz::MakeDebugRunReplayCapsule(
+        debug_session,
+        &config,
+        session.execution,
+        run_smoke ? 100 : 0);
 
     cyxwiz::DebugTraceRecord compile_trace = cyxwiz::DebugNodeTraceContract::Make(
         run_id,
@@ -3832,6 +4207,49 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         });
     }
 
+    auto append_node_explanation =
+        [&session, &run_id, &nodes, &links, explain_node_id](
+            const cyxwiz::TrainingConfiguration* explanation_config) {
+            if (explain_node_id < 0) {
+                return;
+            }
+            const auto node_it = std::find_if(
+                nodes.begin(), nodes.end(),
+                [explain_node_id](const MLNode& node) {
+                    return node.id == explain_node_id;
+                });
+            if (node_it == nodes.end()) {
+                return;
+            }
+            std::string node_type = node_it->name;
+            if (const auto* metadata =
+                    cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(
+                        node_it->type)) {
+                node_type = metadata->name;
+            }
+            cyxwiz::DebugNodeInspector inspector;
+            session.traces.push_back(inspector.BuildExplanationTrace(
+                run_id,
+                session.graph_hash,
+                *node_it,
+                node_type,
+                explanation_config,
+                nodes,
+                links,
+                session.traces,
+                session.issues,
+                session.recommendations));
+            session.studio_events.push_back({
+                run_id,
+                "",
+                session.graph_hash,
+                explain_node_id,
+                "StudioDebugger.ExplainNode",
+                "captured",
+                "Captured node explanation from the frozen debug snapshot."
+            });
+        };
+
     if (!compile_success) {
         session.success = false;
         if (session.failure_summary.empty()) {
@@ -3841,7 +4259,14 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             run_id, "", session.graph_hash, -1,
             "Compile", "failed", session.failure_summary
         });
+        if (explain_node_id >= 0) {
+            cyxwiz::DebugRecommendationEngine recommendation_engine;
+            session.recommendations = recommendation_engine.Build(
+                session.traces, session.issues, session.smoke_result,
+                session.last_run, session.training_trace);
+        }
         append_error_timeline();
+        append_node_explanation(compile_completed ? &config : nullptr);
         save_session();
         return false;
     }
@@ -3888,11 +4313,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     if (mode == cyxwiz::StudioDebuggerRunMode::Preflight) {
         session.success = session.preflight.ready && compile_success;
         session.failure_summary = session.success ? "" : "Preflight reported issues.";
+        append_training_stall_analysis(&config);
         cyxwiz::DebugRecommendationEngine recommendation_engine;
         session.recommendations = recommendation_engine.Build(
             session.traces, session.issues, session.smoke_result,
             session.last_run, session.training_trace);
         append_error_timeline();
+        append_node_explanation(&config);
         save_session();
         return session.success;
     }
@@ -4056,6 +4483,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 trace.upstream_node_name;
             record.payload["has_nan"] = trace.has_nan;
             record.payload["has_inf"] = trace.has_inf;
+            cyxwiz::AttachDebugNumericsPayload(
+                record, trace.numerics, "activation");
             record.payload["success"] = !has_shape_mismatch &&
                 !trace.has_nan && !trace.has_inf;
             if (has_shape_mismatch) {
@@ -4152,6 +4581,16 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             record.payload["loss"] = session.debug_result.loss_value;
             record.payload["loss_finite"] = session.debug_result.loss_finite;
             record.payload["loss_stage_failed"] = loss_stage_failed;
+            record.payload["prediction_shape"] =
+                session.debug_result.loss_prediction_shape;
+            record.payload["target_shape"] =
+                session.debug_result.loss_target_shape;
+            record.payload["prediction_target_shape_check_available"] =
+                session.debug_result.loss_target_compatibility.available;
+            record.payload["prediction_target_shapes_compatible"] =
+                session.debug_result.loss_target_compatibility.compatible;
+            record.payload["prediction_target_shape_reason"] =
+                session.debug_result.loss_target_compatibility.reason;
             record.payload["success"] = session.debug_result.loss_finite && !loss_stage_failed;
             if (!session.debug_result.loss_finite) {
                 cyxwiz::DebugNodeTraceContract::AddError(
@@ -4234,7 +4673,10 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 grad.compiled_layer_index;
             record.payload["has_gradient"] = grad.has_gradient;
             record.payload["is_nan"] = grad.is_nan;
+            record.payload["is_inf"] = grad.is_inf;
             record.payload["is_zero"] = grad.is_zero;
+            cyxwiz::AttachDebugNumericsPayload(
+                record, grad.numerics, "gradient");
             record.payload["missing_gradient_reason"] =
                 grad.missing_gradient_reason;
             record.payload["success"] = grad.has_gradient &&
@@ -4387,11 +4829,14 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     cyxwiz::DebugSlowPathDetector slow_path_detector;
     session.traces.push_back(slow_path_detector.BuildTrace(
         run_id, session.traces, session.training_trace, local_timings));
+    append_training_stall_analysis(&config);
     append_error_timeline();
     cyxwiz::DebugRecommendationEngine recommendation_engine;
     session.recommendations = recommendation_engine.Build(
         session.traces, session.issues, session.smoke_result,
         session.last_run, session.training_trace);
+
+    append_node_explanation(&config);
 
     save_session();
     return session.success;

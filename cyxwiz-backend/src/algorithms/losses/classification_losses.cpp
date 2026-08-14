@@ -774,7 +774,7 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
                 }
             }
             grad.eval();
-            return AfToTensor(grad);
+            return AfToTensor(grad, predictions.Shape());
         }
 
         // Check if target is one-hot encoded or class indices
@@ -811,7 +811,7 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
             grad.eval();
         }
 
-        return AfToTensor(grad);
+        return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "CrossEntropyLoss::Backward", e.what(), predictions, targets, reduction_);
@@ -909,7 +909,7 @@ Tensor NLLLoss::Backward(const Tensor& predictions, const Tensor& targets) {
             grad = grad / static_cast<float>(batch_size);
         }
 
-        return AfToTensor(grad);
+        return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "NLLLoss::Backward", e.what(), predictions, targets, reduction_);
@@ -1002,7 +1002,7 @@ Tensor FocalLoss::Backward(const Tensor& predictions, const Tensor& targets) {
             grad.eval();
         }
 
-        return AfToTensor(grad);
+        return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "FocalLoss::Backward", e.what(), predictions, targets, reduction_);

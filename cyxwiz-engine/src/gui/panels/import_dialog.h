@@ -33,7 +33,12 @@ public:
     bool IsOpen() const { return is_open_; }
 
     // Callbacks
-    using ImportCompleteCallback = std::function<void(const ImportResult&, const std::string& graph_json)>;
+    using ImportCompleteCallback = std::function<void(
+        const ImportResult&,
+        const ImportOptions&,
+        const ProbeResult&,
+        const std::string& graph_json,
+        const std::string& input_path)>;
     void SetImportCompleteCallback(ImportCompleteCallback callback) {
         import_complete_callback_ = callback;
     }
@@ -96,6 +101,10 @@ private:
     ImportResult last_result_;
     std::string imported_graph_json_;
     bool show_result_ = false;
+    std::atomic<bool> completion_pending_{false};
+    ImportOptions completed_import_options_;
+    ProbeResult completed_probe_result_;
+    std::string completed_input_path_;
 
     // Callbacks
     ImportCompleteCallback import_complete_callback_;

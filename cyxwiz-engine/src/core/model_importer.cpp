@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -19,6 +20,82 @@ namespace cyxwiz {
 
 // Forward declaration
 static bool IsCyxwBinaryFormat(const std::string& path);
+
+struct CyxwHeader {
+    uint32_t version = 0;
+    nlohmann::json metadata;
+    size_t num_modules = 0;
+};
+
+static bool ReadCyxwHeader(std::ifstream& file,
+                           CyxwHeader& header,
+                           std::string& error) {
+    constexpr uint32_t kCyxwMagic = 0x43595857;
+    constexpr uint32_t kSupportedVersion = 2;
+    constexpr uint64_t kMaxMetadataBytes = 100ULL * 1024ULL * 1024ULL;
+
+    uint32_t magic = 0;
+    if (!file.read(reinterpret_cast<char*>(&magic), sizeof(magic))) {
+        error = "Truncated CYXW magic";
+        return false;
+    }
+    if (magic != kCyxwMagic) {
+        error = "Invalid CYXW magic number";
+        return false;
+    }
+
+    if (!file.read(reinterpret_cast<char*>(&header.version),
+                   sizeof(header.version))) {
+        error = "Truncated CYXW version";
+        return false;
+    }
+    if (header.version != kSupportedVersion) {
+        error = "Unsupported CYXW format version: " +
+                std::to_string(header.version);
+        return false;
+    }
+
+    uint64_t json_length = 0;
+    if (!file.read(reinterpret_cast<char*>(&json_length), sizeof(json_length))) {
+        error = "Truncated CYXW metadata length";
+        return false;
+    }
+    if (json_length > kMaxMetadataBytes) {
+        error = "CYXW metadata exceeds the 100 MiB safety limit";
+        return false;
+    }
+
+    const std::streampos metadata_position = file.tellg();
+    file.seekg(0, std::ios::end);
+    const std::streampos file_end = file.tellg();
+    file.seekg(metadata_position);
+    if (metadata_position < 0 || file_end < metadata_position ||
+        static_cast<uint64_t>(file_end - metadata_position) <
+            json_length + sizeof(size_t)) {
+        error = "Truncated CYXW metadata";
+        return false;
+    }
+
+    std::string json_text(static_cast<size_t>(json_length), '\0');
+    if (!file.read(json_text.data(), static_cast<std::streamsize>(json_length))) {
+        error = "Failed to read CYXW metadata";
+        return false;
+    }
+
+    try {
+        header.metadata = nlohmann::json::parse(json_text);
+    } catch (const std::exception& exception) {
+        error = std::string("Invalid CYXW metadata JSON: ") + exception.what();
+        return false;
+    }
+
+    if (!file.read(reinterpret_cast<char*>(&header.num_modules),
+                   sizeof(header.num_modules))) {
+        error = "Truncated CYXW module count";
+        return false;
+    }
+    return true;
+}
 
 static bool IsTrainingOnlyParameter(const std::string& name) {
     return name.find("grad_") != std::string::npos ||
@@ -128,6 +205,84 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
     // Format-specific probing
     switch (result.format) {
         case ModelFormat::CyxModel: {
+            if (IsCyxwBinaryFormat(input_path)) {
+                std::ifstream file(input_path, std::ios::binary);
+                CyxwHeader header;
+                std::string error;
+                if (!file || !ReadCyxwHeader(file, header, error)) {
+                    result.valid = false;
+                    result.error_message = errors::FormatError(
+                        errors::Serialization::ModelLoadFailed,
+                        "Invalid binary .cyxmodel",
+                        error);
+                    break;
+                }
+
+                result.format = ModelFormat::CyxModel;
+                result.file_size = std::filesystem::file_size(input_path);
+                result.format_version =
+                    "CYXW v" + std::to_string(header.version);
+                result.num_layers = static_cast<int>(std::min<size_t>(
+                    header.num_modules,
+                    static_cast<size_t>(std::numeric_limits<int>::max())));
+
+                try {
+                    if (header.metadata.contains("metadata")) {
+                        const auto& metadata = header.metadata["metadata"];
+                        result.model_name = metadata.value("name", "");
+                        result.author = metadata.value("author", "");
+                        result.description = metadata.value("description", "");
+                    }
+
+                    int64_t parameter_count = 0;
+                    if (header.metadata.contains("modules") &&
+                        header.metadata["modules"].is_array()) {
+                        for (const auto& module : header.metadata["modules"]) {
+                            result.layer_names.push_back(
+                                module.value("name", "Unnamed module"));
+                            if (!module.contains("parameters") ||
+                                !module["parameters"].is_array()) {
+                                continue;
+                            }
+                            for (const auto& parameter : module["parameters"]) {
+                                if (!parameter.contains("shape") ||
+                                    !parameter["shape"].is_array()) {
+                                    continue;
+                                }
+                                int64_t tensor_parameters = 1;
+                                for (const auto& dimension : parameter["shape"]) {
+                                    const int64_t value = dimension.get<int64_t>();
+                                    if (value < 0 ||
+                                        (value != 0 && tensor_parameters >
+                                            std::numeric_limits<int64_t>::max() / value)) {
+                                        tensor_parameters = 0;
+                                        break;
+                                    }
+                                    tensor_parameters *= value;
+                                }
+                                if (parameter_count <=
+                                    std::numeric_limits<int64_t>::max() -
+                                        tensor_parameters) {
+                                    parameter_count += tensor_parameters;
+                                }
+                            }
+                        }
+                    }
+                    result.num_parameters = static_cast<int>(std::min<int64_t>(
+                        parameter_count,
+                        std::numeric_limits<int>::max()));
+                } catch (const std::exception& exception) {
+                    result.valid = false;
+                    result.error_message = errors::FormatError(
+                        errors::Serialization::ModelLoadFailed,
+                        "Invalid binary .cyxmodel metadata",
+                        exception.what());
+                    break;
+                }
+                result.valid = true;
+                break;
+            }
+
             formats::CyxModelFormat cyxmodel;
             result = cyxmodel.Probe(input_path);
             break;
@@ -287,32 +442,15 @@ ImportResult ModelImporter::ImportCyxModelBinary(
             return result;
         }
 
-        // Read and verify magic
-        uint32_t magic;
-        file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-        if (magic != 0x43595857) {
-            result.error_message = "Invalid magic number";
-            return result;
-        }
-
-        // Read version
-        uint32_t version;
-        file.read(reinterpret_cast<char*>(&version), sizeof(version));
-        if (version != 2) {
-            result.error_message = "Unsupported format version: " + std::to_string(version);
+        CyxwHeader header;
+        std::string header_error;
+        if (!ReadCyxwHeader(file, header, header_error)) {
+            result.error_message = header_error;
             return result;
         }
 
         if (progress_cb) progress_cb(1, 5, "Reading metadata...");
-
-        // Read JSON metadata
-        uint64_t json_len;
-        file.read(reinterpret_cast<char*>(&json_len), sizeof(json_len));
-
-        std::string json_str(json_len, '\0');
-        file.read(json_str.data(), json_len);
-
-        auto meta = nlohmann::json::parse(json_str);
+        const auto& meta = header.metadata;
 
         // Extract model info
         if (meta.contains("metadata")) {
@@ -320,9 +458,7 @@ ImportResult ModelImporter::ImportCyxModelBinary(
         }
         result.format_version = "CYXW v2";
 
-        // Read number of modules
-        size_t num_modules;
-        file.read(reinterpret_cast<char*>(&num_modules), sizeof(num_modules));
+        const size_t num_modules = header.num_modules;
 
         if (progress_cb) progress_cb(2, 5, "Building model from metadata...");
 

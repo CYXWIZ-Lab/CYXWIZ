@@ -2,6 +2,7 @@
 #include "../src/core/debug_batch_inspector.h"
 #include "../src/core/debug_error_code_timeline.h"
 #include "../src/core/debug_slow_path_detector.h"
+#include "../src/core/debug_training_stall_detector.h"
 #include "../src/core/debug_export_correlation_tracer.h"
 #include "../src/core/debug_graph_trace_executor.h"
 #include "../src/core/debug_memory_ownership_tracer.h"
@@ -971,6 +972,25 @@ void TestSupportBundleContract() {
     record.summary.recommendation_count = 1;
     record.summary.summary = "Support bundle contract token=secret-token";
     record.summary.file_path = "C:/Users/private/.cyxwiz/debug_runs/support-run.json";
+    record.replay_capsule.available = true;
+    record.replay_capsule.mode = "SmokeRun";
+    record.replay_capsule.graph_hash = record.summary.graph_hash;
+    record.replay_capsule.graph_snapshot_trace_available = true;
+    record.replay_capsule.dataset_reference = "private_dataset";
+    record.replay_capsule.selected_sample_index = 4;
+    record.replay_capsule.smoke_sample_limit = 100;
+    record.replay_capsule.smoke_batch_size_limit = 32;
+    record.replay_capsule.compiled_config.available = true;
+    record.replay_capsule.compiled_config.valid = true;
+    record.replay_capsule.compiled_config.batch_size = 64;
+    record.replay_capsule.compiled_config.loss = "CrossEntropy";
+    record.replay_capsule.split_seed = 17;
+    record.replay_capsule.dataloader_seed = 19;
+    record.replay_capsule.balance_seed = 23;
+    record.replay_capsule.environment = {
+        {"platform", "windows"},
+        {"dataset_path", "C:/Users/private/data.csv"}
+    };
 
     record.issues.push_back({
         cyxwiz::IssueLevel::Error,
@@ -1143,6 +1163,20 @@ void TestSupportBundleContract() {
     Check(bundle["debug_run"]["summary"]["file_path"].get<std::string>() ==
               "[REDACTED]",
           "support bundle should redact debug run file path");
+    Check(bundle["debug_run"]["replay_capsule"]["schema"].get<std::string>() ==
+              cyxwiz::DebugRunReplayCapsule::kSchema,
+          "support bundle should preserve replay capsule schema");
+    Check(bundle["debug_run"]["replay_capsule"]["dataset_reference"].get<std::string>() ==
+              "[REDACTED]",
+          "support bundle should redact replay dataset references");
+    Check(bundle["debug_run"]["replay_capsule"]["environment"]
+                ["dataset_path"].get<std::string>() == "[REDACTED]",
+          "support bundle should redact replay environment paths");
+    Check(!bundle["debug_run"]["replay_capsule"]
+                  ["data_values_included"].get<bool>() &&
+              !bundle["debug_run"]["replay_capsule"]
+                   ["exact_replay_claimed"].get<bool>(),
+          "support bundle should preserve replay limitation facts");
     Check(bundle["debug_run"]["traces"][0]["payload"]["raw_text_preview"].get<std::string>() ==
               "[REDACTED]",
           "support bundle should redact dataset row previews");
@@ -1255,6 +1289,142 @@ void TestSupportBundleContract() {
               bundle["runtime_log_slice"]["events"][0]["details"][0]
                     ["value"] == "[REDACTED_PATH]",
           "support-bundle runtime slices should always use shareable redaction");
+}
+
+void TestArtifactConsistencyTraceContract() {
+    cyxwiz::DebugArtifactConsistencyInput input;
+    input.action = "export";
+    input.artifact_kind = "CyxWiz Model";
+    input.artifact_path = "exports/debug_model.cyxmodel";
+    input.producer_name = "ModelExporter";
+    input.graph_hash = 0xA551;
+    input.operation_success = true;
+    input.operation_status = "export completed";
+    input.source_graph_content = R"({"nodes":[1,2],"links":[[1,2]]})";
+    input.artifact_graph_content = input.source_graph_content;
+    input.expected.graph_expected = true;
+    input.expected.manifest_expected = true;
+    input.expected.training_config_expected = true;
+    input.expected.weights_manifest_expected = true;
+    input.expected.tokenizer_config_required = true;
+    input.expected.tokenizer_vocabulary_required = true;
+    input.expected.optimizer_state_expected = true;
+    input.expected.training_history_expected = true;
+    input.expected.parameter_count = 33;
+    input.expected.layer_count = 2;
+    input.expected.input_contract = "token_ids+attention_mask";
+    input.expected.output_contract = "Float32[1,seq,vocab]";
+    input.observed.available = true;
+    input.observed.manifest_valid = true;
+    input.observed.evidence_scope = "cyxmodel_directory_inventory";
+    input.observed.format_version = "1.0";
+    input.observed.model_family = "causal_lm";
+    input.observed.manifest_present = true;
+    input.observed.training_config_present = true;
+    input.observed.weights_manifest_present = true;
+    input.observed.graph_present = true;
+    input.observed.tokenizer_config_present = true;
+    input.observed.tokenizer_vocabulary_present = true;
+    input.observed.optimizer_state_present = true;
+    input.observed.training_history_present = true;
+    input.observed.sequence_assets_present = true;
+    input.observed.parameter_count = 33;
+    input.observed.layer_count = 2;
+    input.observed.input_contract = "token_ids+attention_mask";
+    input.observed.output_contract = "Float32[1,seq,vocab]";
+    input.observed.package_warnings = {"bounded package warning"};
+
+    cyxwiz::DebugExportCorrelationTracer tracer;
+    const auto compatible = tracer.BuildConsistencyTrace(
+        "artifact-consistency-run", input);
+
+    Check(compatible.phase == "ArtifactConsistency" &&
+              compatible.status == "ok",
+          "matching artifact consistency evidence should be ok");
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(compatible),
+          "artifact consistency should use the canonical node trace contract");
+    Check(compatible.payload["schema"].get<std::string>() ==
+              cyxwiz::DebugExportCorrelationTracer::kConsistencySchema,
+          "artifact consistency should expose its stable schema");
+    Check(compatible.payload["consistency_outcome"].get<std::string>() ==
+              "compatible" &&
+              compatible.payload["consistency_verified"].get<bool>(),
+          "matching observed artifact facts should verify compatibility");
+    Check(compatible.payload["graph_fingerprints_match"].get<bool>() &&
+              compatible.payload["parameter_counts_match"].get<bool>() &&
+              compatible.payload["layer_counts_match"].get<bool>(),
+          "artifact consistency should compare graph and model inventory");
+    Check(!compatible.payload["raw_artifact_content_included"].get<bool>(),
+          "artifact consistency must not persist raw artifact content");
+    Check(compatible.payload["package_warnings"].is_array() &&
+              compatible.payload["package_warnings"].size() == 1,
+          "artifact consistency should retain bounded package warnings");
+
+    auto mismatch_input = input;
+    mismatch_input.artifact_graph_content = R"({"nodes":[1]})";
+    mismatch_input.observed.parameter_count = 32;
+    mismatch_input.observed.tokenizer_vocabulary_present = false;
+    mismatch_input.observed.optimizer_state_present = false;
+    const auto mismatch = tracer.BuildConsistencyTrace(
+        "artifact-consistency-mismatch", mismatch_input);
+
+    Check(mismatch.status == "failed" &&
+              mismatch.payload["consistency_outcome"].get<std::string>() ==
+                  "mismatch",
+          "required asset or content mismatches should fail consistency");
+    Check(mismatch.payload["error_count"].get<size_t>() == 3,
+          "graph, parameter, and required tokenizer mismatches should be errors");
+    Check(mismatch.payload["warning_count"].get<size_t>() == 1,
+          "missing requested optimizer state should remain a warning");
+    Check(mismatch.payload["primary_error_code"].get<std::string>() ==
+              cyxwiz::errors::Serialization::ModelSaveFailed,
+          "artifact mismatches should use the serialization diagnostic code");
+
+    auto invalid_export_input = input;
+    invalid_export_input.observed.manifest_valid = false;
+    const auto invalid_export = tracer.BuildConsistencyTrace(
+        "artifact-consistency-invalid-export", invalid_export_input);
+    Check(invalid_export.payload["primary_error_code"].get<std::string>() ==
+              cyxwiz::errors::Serialization::ModelSaveFailed,
+          "invalid exported headers should use the model-save diagnostic code");
+
+    cyxwiz::DebugArtifactConsistencyInput unobserved_input;
+    unobserved_input.action = "export";
+    unobserved_input.artifact_kind = "ONNX";
+    unobserved_input.artifact_path = "exports/debug_model.onnx";
+    unobserved_input.operation_success = true;
+    unobserved_input.operation_status = "export completed; probe unsupported";
+    const auto unobserved = tracer.BuildConsistencyTrace(
+        "artifact-consistency-unobserved", unobserved_input);
+    Check(unobserved.status == "unobserved" &&
+              unobserved.payload["consistency_outcome"].get<std::string>() ==
+                  "unobserved" &&
+              unobserved.payload["success"].get<bool>(),
+          "unsupported inspection must remain unobserved without failing a successful export");
+
+    cyxwiz::DebugArtifactConsistencyInput binary_input;
+    binary_input.action = "import_inspection";
+    binary_input.artifact_kind = "CyxWiz Model";
+    binary_input.artifact_path = "models/aps.cyxmodel";
+    binary_input.producer_name = "ModelImporter";
+    binary_input.operation_success = true;
+    binary_input.operation_status = "binary model inspection completed";
+    binary_input.observed.available = true;
+    binary_input.observed.manifest_valid = true;
+    binary_input.observed.evidence_scope = "cyxw_binary_header";
+    binary_input.observed.format_version = "CYXW v2";
+    binary_input.observed.parameter_count = 30209;
+    binary_input.observed.layer_count = 7;
+    const auto binary = tracer.BuildConsistencyTrace(
+        "artifact-consistency-binary", binary_input);
+    Check(binary.status == "ok" &&
+              binary.payload["consistency_outcome"].get<std::string>() ==
+                  "compatible" &&
+              binary.payload["consistency_verified"].get<bool>(),
+          "validated CYXW header should be compatible without directory assets");
+    Check(binary.payload["consistency_check_count"].get<size_t>() == 1 &&
+              binary.payload["error_count"].get<size_t>() == 0,
+          "CYXW consistency should validate its header without requiring manifests");
 }
 
 void TestBatchInspectionContract() {
@@ -1434,6 +1604,129 @@ void TestSlowPathDetectorContract() {
     Check(fallback && !(*fallback)["timing_available"].get<bool>() &&
               (*fallback)["occurrence_count"].get<uint64_t>() == 1,
           "slow path should separate fallback occurrence from unavailable duration");
+}
+
+void TestTrainingStallDetectorContract() {
+    std::vector<cyxwiz::DebugTraceRecord> traces;
+    for (int batch = 1; batch <= 3; ++batch) {
+        auto loss = cyxwiz::DebugNodeTraceContract::Make(
+            "stall-run", 8, "Loss", "Loss", "SmokeRun.Loss",
+            cyxwiz::DebugTraceRole::Loss,
+            {}, {}, "float32", "LocalDebug", "ok");
+        loss.payload["batch"] = batch;
+        loss.payload["loss"] = 0.75;
+        traces.push_back(std::move(loss));
+    }
+
+    auto smoke_gradient = cyxwiz::DebugNodeTraceContract::Make(
+        "stall-run", 7, "Dense", "Dense", "SmokeRun.Backward",
+        cyxwiz::DebugTraceRole::Gradient,
+        {}, {}, "float32", "LocalDebug", "warning");
+    smoke_gradient.payload["gradient_tensor_count"] = 2;
+    smoke_gradient.payload["zero_gradient_tensor_count"] = 2;
+    traces.push_back(std::move(smoke_gradient));
+
+    auto activation = cyxwiz::DebugNodeTraceContract::Make(
+        "stall-run", 6, "Sigmoid", "Sigmoid", "Forward",
+        cyxwiz::DebugTraceRole::Activation,
+        {}, {}, "float32", "LocalDebug", "ok");
+    activation.payload["saturation_summary_available"] = true;
+    activation.payload["saturation_candidate_ratio"] = 0.98;
+    traces.push_back(std::move(activation));
+
+    auto batch = cyxwiz::DebugNodeTraceContract::Make(
+        "stall-run", 1, "Dataset", "DataInput", "SmokeRun.BatchInput",
+        cyxwiz::DebugTraceRole::ModelInput,
+        {}, {}, "float32", "LocalDebug", "ok");
+    batch.payload["batch"] = 1;
+    batch.payload["batch_inspector"] = true;
+    batch.payload["class_balance_available"] = true;
+    batch.payload["class_counts"] = nlohmann::json::array({
+        {{"class_index", 0}, {"count", 10}},
+        {{"class_index", 1}, {"count", 0}},
+    });
+    batch.payload["source_metadata_available"] = true;
+    batch.payload["label_column_count"] = 1;
+    batch.payload["label_null_count"] = 1;
+    traces.push_back(std::move(batch));
+
+    auto update = cyxwiz::DebugNodeTraceContract::Make(
+        "stall-run", 7, "Dense", "Parameter", "Backward",
+        cyxwiz::DebugTraceRole::Gradient,
+        {}, {}, "float32", "LocalDebug", "zero");
+    update.payload["has_gradient"] = true;
+    update.payload["is_zero"] = true;
+    update.payload["update_observed"] = true;
+    update.payload["update_l2_norm"] = 0.0;
+    traces.push_back(std::move(update));
+
+    cyxwiz::TrainingTraceSummary training;
+    training.available = true;
+    training.run_id = "linked-training-run";
+    training.status = "running";
+    for (int repeat = 0; repeat < 4; ++repeat) {
+        cyxwiz::TrainingTraceEvent event;
+        event.run_id = training.run_id;
+        event.stage = "GetNextBatch";
+        event.status = "ok";
+        event.epoch = 2;
+        event.batch = 5;
+        training.recent_events.push_back(std::move(event));
+    }
+
+    cyxwiz::DebugTrainingStallConfigEvidence config;
+    config.learning_rate_available = true;
+    config.learning_rate = 1.0e-9;
+
+    cyxwiz::DebugTrainingStallDetector detector;
+    const auto summary = detector.BuildTrace(
+        "stall-run", traces, training, config);
+    const auto& payload = summary.payload;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(summary),
+          "stall analysis should use canonical trace schema");
+    Check(summary.phase == "TrainingStallAnalysis" &&
+              payload["training_stall_schema"] ==
+                  cyxwiz::DebugTrainingStallDetector::kSchema,
+          "stall analysis schema and phase");
+    Check(payload["finding_count"].get<size_t>() == 9,
+          "stall detector should keep the requested bounded cause set");
+    Check(payload["suspected_count"].get<size_t>() == 8 &&
+              payload["not_detected_count"].get<size_t>() == 1 &&
+              payload["unobserved_count"].get<size_t>() == 0,
+          "stall detector should classify observed evidence without unknowns");
+    Check(payload["source_training_run_id"] == "linked-training-run",
+          "stall analysis should preserve linked training provenance");
+
+    const auto find_cause = [&payload](const std::string& cause)
+        -> const nlohmann::json* {
+        for (const auto& finding : payload["findings"]) {
+            if (finding["cause"] == cause) {
+                return &finding;
+            }
+        }
+        return nullptr;
+    };
+    const auto* flat_loss = find_cause("loss_not_changing");
+    Check(flat_loss && (*flat_loss)["status"] == "suspected" &&
+              (*flat_loss)["evidence"]["observation_count"] == 3,
+          "flat loss should be suspected from three finite observations");
+    const auto* high_lr = find_cause("learning_rate_too_high");
+    Check(high_lr && (*high_lr)["status"] == "not_detected",
+          "low learning rate should not also be classified as high");
+    const auto* batcher = find_cause("batcher_not_advancing");
+    Check(batcher && (*batcher)["status"] == "suspected" &&
+              (*batcher)["evidence"]["repeat_threshold"] == 4,
+          "repeated completed fetch cursor should be suspected");
+    const auto* class_balance = find_cause("class_imbalance");
+    Check(class_balance && (*class_balance)["status"] == "suspected" &&
+              !(*class_balance)["evidence"]["dataset_level_conclusion"].get<bool>(),
+          "first-batch imbalance should not claim dataset-wide proof");
+
+    const auto unavailable = detector.BuildTrace(
+        "stall-run-empty", {}, cyxwiz::TrainingTraceSummary{});
+    Check(unavailable.payload["suspected_count"].get<size_t>() == 0 &&
+              unavailable.payload["unobserved_count"].get<size_t>() == 9,
+          "missing evidence should remain unobserved, not become a diagnosis");
 }
 
 void TestErrorCodeTimelineContract() {
@@ -1620,6 +1913,128 @@ void TestNodeInspectorSummaryContract() {
           "node inspector should include only related recommendations");
     Check(summary.recommendations[0].title == "CPU fallback",
           "node inspector should preserve recommendation details");
+}
+
+void TestNodeExplanationTraceContract() {
+    const auto data = MakeNode(1, gui::NodeType::DataInput, "Data");
+    const auto dense = MakeNode(2, gui::NodeType::Dense, "Dense");
+    const auto unused = MakeNode(3, gui::NodeType::ReLU, "Unused ReLU");
+    const std::vector<gui::MLNode> nodes = {data, dense, unused};
+
+    gui::NodeLink link;
+    link.id = 10;
+    link.from_node = 1;
+    link.to_node = 2;
+    const std::vector<gui::NodeLink> links = {link};
+
+    cyxwiz::TrainingConfiguration configuration;
+    configuration.data_source_node_id = 1;
+    configuration.graph_plan.available = true;
+    configuration.graph_plan.nodes = {
+        {gui::NodeType::DataInput, 1, "Data"},
+        {gui::NodeType::Dense, 2, "Dense"}
+    };
+    cyxwiz::CompiledLayer layer;
+    layer.node_id = 2;
+    layer.name = "Dense";
+    layer.input_shape = {4, 8};
+    layer.output_shape = {4, 3};
+    configuration.layers.push_back(layer);
+
+    cyxwiz::BackendPlacementEntry placement;
+    placement.node_id = 2;
+    placement.node_name = "Dense";
+    placement.node_type = "Dense";
+    placement.requested_backend = "auto";
+    placement.expected_backend = "gpu";
+    placement.status = cyxwiz::BackendPlacementStatus::Gpu;
+    placement.reason_code = "arrayfire_tensor_op_capable";
+    cyxwiz::DebugRuntimeBackendClassifier classifier;
+    std::vector<cyxwiz::DebugTraceRecord> traces = {
+        classifier.BuildPlacementTrace("explain-run", 0x1234, placement)
+    };
+
+    const cyxwiz::ValidationIssue issue = {
+        cyxwiz::IssueLevel::Warning,
+        2,
+        "Dense",
+        "Check the Dense input width.",
+        "Compiler.ShapeWarning"
+    };
+    traces[0].issues.push_back(issue);
+    const std::vector<cyxwiz::DebugRecommendation> recommendations = {{
+        cyxwiz::DebugRecommendationSeverity::Warning,
+        2,
+        "Shapes",
+        "Inspect Dense width",
+        "The input width needs review.",
+        "Compare the upstream output width with Dense input width."
+    }};
+
+    cyxwiz::DebugNodeInspector inspector;
+    const auto predicted = inspector.BuildExplanationTrace(
+        "explain-run", 0x1234, dense, "Dense", &configuration,
+        nodes, links, traces, {issue}, recommendations);
+
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(predicted),
+          "node explanation should retain the canonical trace schema");
+    Check(predicted.phase == "NodeExplanation",
+          "node explanation phase should be stable");
+    Check(predicted.payload["explanation_schema"] ==
+              "cyxwiz.debug.node_explanation.v1",
+          "node explanation should expose its payload schema");
+    Check(predicted.payload["graph_role"] == "model_layer" &&
+              predicted.payload["training_path_status"] == "selected",
+          "compiled layer should be identified on the selected path");
+    Check(predicted.input_shape == std::vector<size_t>{4, 8} &&
+              predicted.output_shape == std::vector<size_t>{4, 3} &&
+              predicted.payload["data_evidence_scope"] ==
+                  "compiler_prediction",
+          "explanation should label compiler-predicted shapes");
+    Check(predicted.payload["backend_expected"] == "gpu" &&
+              predicted.payload["backend_actual"] == "unobserved" &&
+              !predicted.payload["backend_actual_observed"].get<bool>(),
+          "expected placement must not be presented as actual execution");
+    Check(predicted.issues.size() == 1,
+          "node explanation should deduplicate matching issues");
+    Check(predicted.payload["recommendations"].size() == 1 &&
+              predicted.payload["next_inspection_action"] ==
+                  recommendations[0].action,
+          "node explanation should reuse the existing recommendation action");
+    Check(predicted.payload["upstream_nodes"].size() == 1 &&
+              predicted.payload["upstream_nodes"][0]["node_id"] == 1,
+          "node explanation should expose direct upstream wiring");
+
+    auto observed = cyxwiz::DebugNodeTraceContract::Make(
+        "explain-run", 2, "Dense", "Dense", "Forward",
+        cyxwiz::DebugTraceRole::Activation,
+        {2, 8}, {2, 3}, "float32", "ArrayFire", "ok");
+    observed.payload["backend_actual"] = "ArrayFire/CUDA";
+    observed.payload["backend_actual_observed"] = true;
+    traces.push_back(std::move(observed));
+    const auto runtime = inspector.BuildExplanationTrace(
+        "explain-run", 0x1234, dense, "Dense", &configuration,
+        nodes, links, traces, {}, {});
+    Check(runtime.input_shape == std::vector<size_t>{2, 8} &&
+              runtime.payload["data_evidence_scope"] == "same_run_trace" &&
+              runtime.payload["data_evidence_phase"] == "Forward",
+          "same-run trace data should take precedence over prediction");
+    Check(runtime.payload["backend_actual"] == "ArrayFire/CUDA" &&
+              runtime.payload["backend_actual_observed"].get<bool>() &&
+              runtime.payload["backend_evidence_scope"] ==
+                  "same_run_runtime",
+          "observed runtime backend should be identified explicitly");
+
+    const auto outside = inspector.BuildExplanationTrace(
+        "explain-run", 0x1234, unused, "ReLU", &configuration,
+        nodes, links, traces, {}, {});
+    Check(outside.payload["graph_role"] ==
+              "outside_selected_training_path" &&
+              outside.payload["training_path_status"] == "outside",
+          "unselected node should be explicitly outside the training path");
+    Check(outside.payload["data_evidence_scope"] == "unobserved" &&
+              outside.payload["backend_evidence_scope"] == "unobserved",
+          "outside node should not invent data or backend evidence");
 }
 
 void TestOperatorBackedPreprocessingTraceContract() {
@@ -2978,6 +3393,21 @@ void TestRecommendationContract() {
           "export recommendation fixture should use canonical trace schema");
     traces.push_back(std::move(export_trace));
 
+    cyxwiz::DebugArtifactConsistencyInput artifact_input;
+    artifact_input.action = "export";
+    artifact_input.artifact_kind = "CyxWiz Model";
+    artifact_input.artifact_path = "exports/incomplete.cyxmodel";
+    artifact_input.operation_success = true;
+    artifact_input.operation_status = "export completed";
+    artifact_input.expected.manifest_expected = true;
+    artifact_input.observed.available = true;
+    artifact_input.observed.manifest_valid = true;
+    artifact_input.observed.evidence_scope =
+        "cyxmodel_directory_manifest_and_inventory";
+    artifact_input.observed.manifest_present = false;
+    traces.push_back(export_tracer.BuildConsistencyTrace(
+        "recommendation-run", artifact_input));
+
     cyxwiz::CrashRunSummary crash_run;
     crash_run.available = true;
     crash_run.suspected_crash = true;
@@ -3067,6 +3497,8 @@ void TestRecommendationContract() {
           "failed export correlation trace should produce recommendation");
     Check(HasRecommendation(recs, "Export artifact path missing"),
           "missing export artifact path should produce recommendation");
+    Check(HasRecommendation(recs, "Export/import consistency failed"),
+          "artifact consistency mismatch should produce recommendation");
     Check(HasRecommendation(recs, "Windows crash report unavailable"),
           "missing Windows crash report should produce recommendation");
     Check(HasRecommendation(recs, "Smoke Run needs attention"),
@@ -3209,6 +3641,52 @@ void TestDebugRunStoreContract() {
     record.summary.execution =
         cyxwiz::MakeDebugRunExecutionSummary(execution_trace);
 
+    auto replay_data = MakeNode(
+        1, gui::NodeType::DataInput, "Replay Data Input");
+    replay_data.parameters = {{"dataset_name", "replay_dataset"}};
+    auto replay_dense = MakeNode(
+        2, gui::NodeType::Dense, "Replay Dense");
+    gui::NodeLink replay_link;
+    replay_link.id = 101;
+    replay_link.from_node = 1;
+    replay_link.from_pin = 0;
+    replay_link.to_node = 2;
+    replay_link.to_pin = 0;
+    const auto replay_session = cyxwiz::DebugSessionManager::StartSession(
+        record.summary.run_id,
+        "SmokeRun",
+        record.summary.graph_hash,
+        {replay_data, replay_dense},
+        {replay_link},
+        9);
+    cyxwiz::TrainingConfiguration replay_config;
+    replay_config.is_valid = true;
+    replay_config.dataset_name = "replay_dataset";
+    replay_config.input_shape = {8};
+    replay_config.input_size = 8;
+    replay_config.output_size = 3;
+    replay_config.batch_size = 64;
+    replay_config.epochs = 5;
+    replay_config.shuffle = true;
+    replay_config.drop_last = true;
+    replay_config.num_workers = 2;
+    replay_config.prefetch_factor = 3;
+    replay_config.log_interval = 4;
+    replay_config.validation_freq = 2;
+    replay_config.grad_accum_steps = 2;
+    replay_config.train_ratio = 0.7f;
+    replay_config.val_ratio = 0.2f;
+    replay_config.test_ratio = 0.1f;
+    replay_config.stratified = true;
+    replay_config.split_seed = 17;
+    replay_config.dataloader_seed = 19;
+    replay_config.balance_seed = 23;
+    replay_config.learning_rate = 0.005f;
+    replay_config.compiler_placement_fingerprint = "replay-placement";
+    replay_config.forbid_native_cpu_fallback = true;
+    record.replay_capsule = cyxwiz::MakeDebugRunReplayCapsule(
+        replay_session, &replay_config, record.summary.execution, 100);
+
     record.issues.push_back({
         cyxwiz::IssueLevel::Warning,
         7,
@@ -3307,6 +3785,49 @@ void TestDebugRunStoreContract() {
               loaded->summary.execution.synchronization_event_count == 2 &&
               loaded->summary.execution.synchronization_known_bytes == 1024,
           "linked training execution summary should round-trip");
+    Check(loaded->replay_capsule.available &&
+              loaded->replay_capsule.mode == "SmokeRun" &&
+              loaded->replay_capsule.graph_hash == 0xCAFE &&
+              loaded->replay_capsule.graph_snapshot_trace_available &&
+              loaded->replay_capsule.graph_snapshot_trace_index == 0,
+          "replay capsule should reference the persisted graph snapshot trace");
+    Check(loaded->replay_capsule.dataset_reference == "replay_dataset" &&
+              loaded->replay_capsule.selected_sample_index == 9 &&
+              loaded->replay_capsule.smoke_sample_limit == 100 &&
+              loaded->replay_capsule.smoke_batch_size_limit == 32,
+          "replay capsule should preserve dataset and bounded sample selection");
+    Check(loaded->replay_capsule.compiled_config.available &&
+              loaded->replay_capsule.compiled_config.valid &&
+              loaded->replay_capsule.compiled_config.input_shape ==
+                  std::vector<size_t>{8} &&
+              loaded->replay_capsule.compiled_config.batch_size == 64 &&
+              loaded->replay_capsule.compiled_config.grad_accum_steps == 2 &&
+              loaded->replay_capsule.compiled_config.learning_rate == 0.005f &&
+              loaded->replay_capsule.compiled_config
+                      .compiler_placement_fingerprint == "replay-placement" &&
+              loaded->replay_capsule.compiled_config
+                  .forbid_native_cpu_fallback,
+          "replay capsule should round-trip reconstruction-critical config");
+    Check(loaded->replay_capsule.split_seed == 17 &&
+              loaded->replay_capsule.dataloader_seed == 19 &&
+              loaded->replay_capsule.balance_seed == 23,
+          "replay capsule should preserve all run-affecting seeds");
+    Check(loaded->replay_capsule.backend_evidence_scope ==
+                  "linked_training_run" &&
+              loaded->replay_capsule.backend_source_run_id ==
+                  execution_trace.run_id &&
+              loaded->replay_capsule.requested_backend ==
+                  execution_trace.requested_backend &&
+              loaded->replay_capsule.effective_backend ==
+                  execution_trace.effective_backend,
+          "replay capsule should preserve scoped backend selection evidence");
+    Check(loaded->replay_capsule.environment.count("platform") == 1 &&
+              loaded->replay_capsule.environment.count("architecture") == 1 &&
+              loaded->replay_capsule.environment.count(
+                  "build_configuration") == 1 &&
+              !loaded->replay_capsule.raw_dataset_values_included &&
+              !loaded->replay_capsule.exact_replay_claimed,
+          "replay capsule should preserve bounded environment and limitations");
     Check(loaded->issues.size() == 1 &&
               loaded->issues[0].message == "Contract warning" &&
               loaded->issues[0].error_code == "CW-C-0103",
@@ -3574,11 +4095,14 @@ int main() {
     TestMemoryOwnershipTraceContract();
     TestBatchInspectionContract();
     TestSlowPathDetectorContract();
+    TestTrainingStallDetectorContract();
     TestErrorCodeTimelineContract();
     TestExportCorrelationTraceContract();
+    TestArtifactConsistencyTraceContract();
     TestWindowsCrashImportContract();
     TestSupportBundleContract();
     TestNodeInspectorSummaryContract();
+    TestNodeExplanationTraceContract();
     TestOperatorBackedPreprocessingTraceContract();
     TestOperatorTraceProducerContract();
     TestSmokeSampleSelectionContract();

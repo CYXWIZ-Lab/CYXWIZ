@@ -1,6 +1,7 @@
 #pragma once
 
 #include "debug_graph_trace_executor.h"
+#include "debug_numerics.h"
 #include "graph_compiler.h"
 #include "../gui/node_editor.h"
 #include <cyxwiz/loss.h>
@@ -60,6 +61,7 @@ struct LayerTrace {
     std::string upstream_node_name;
     bool has_nan = false;
     bool has_inf = false;
+    DebugTensorNumericSummary numerics;
 
     bool has_shape_mismatch() const {
         return shape_mismatch != ShapeMismatchKind::None;
@@ -82,7 +84,9 @@ struct GradNormEntry {
     bool update_observed = false;
     bool has_gradient = false;
     bool is_nan = false;
+    bool is_inf = false;
     bool is_zero = false;
+    DebugTensorNumericSummary numerics;
     std::string missing_gradient_reason;
 };
 
@@ -103,6 +107,9 @@ struct DebugResult {
 
     float loss_value = std::numeric_limits<float>::quiet_NaN();
     bool loss_finite = false;
+    std::vector<size_t> loss_prediction_shape;
+    std::vector<size_t> loss_target_shape;
+    DebugPredictionTargetCompatibility loss_target_compatibility;
 
     std::vector<GradNormEntry> grad_norms;
     size_t params_with_grad = 0;

@@ -82,6 +82,7 @@ public:
     void SetFocusNodeCallback(FocusNodeCallback callback) { focus_node_callback_ = std::move(callback); }
 
     void SetSession(const StudioDebuggerSnapshot& session);
+    void ShowNodeExplanation(int node_id);
     void Clear();
 
     bool HasSession() const { return has_session_; }

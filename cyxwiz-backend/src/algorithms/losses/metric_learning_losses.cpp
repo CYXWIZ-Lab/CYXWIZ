@@ -414,7 +414,7 @@ Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
             grad.eval();
         }
 
-        return AfToTensor(grad);
+        return AfToTensor(grad, x1.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "CosineEmbeddingLoss::Backward", e.what(), x1, "x1");
@@ -541,7 +541,7 @@ Tensor TripletLoss::Backward(const Tensor& anchor, const Tensor& positive) {
             grad_a.eval();
         }
 
-        return AfToTensor(grad_a);
+        return AfToTensor(grad_a, anchor.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "TripletLoss::Backward", e.what(), anchor, "anchor");
@@ -636,7 +636,7 @@ Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
             grad.eval();
         }
 
-        return AfToTensor(grad);
+        return AfToTensor(grad, x1.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "ContrastiveLoss::Backward", e.what(), x1, "x1");

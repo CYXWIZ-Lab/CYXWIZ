@@ -967,6 +967,10 @@ public:
     using OpenStudioDebuggerCallback = std::function<void()>;
     void SetOpenStudioDebuggerCallback(OpenStudioDebuggerCallback callback) { open_studio_debugger_callback_ = callback; }
 
+    // Explain Node callback - opens a node-scoped explanation in Studio Debugger.
+    using ExplainNodeCallback = std::function<void(int)>;
+    void SetExplainNodeCallback(ExplainNodeCallback callback) { explain_node_callback_ = std::move(callback); }
+
     // Check if graph is ready for training
     bool IsGraphValid() const;
 
@@ -1194,6 +1198,8 @@ private:
 
     // File operations
     bool SaveGraph(const std::string& filepath);
+    bool LoadGraphJson(const nlohmann::json& graph_json,
+                       const std::string& source_description);
     void ShowSaveDialog();
     void ShowLoadDialog();
     void ExportCodeToFile();
@@ -1373,6 +1379,9 @@ private:
 
     // Open Studio Debugger callback (opens StudioDebuggerPanel)
     OpenStudioDebuggerCallback open_studio_debugger_callback_;
+
+    // Explain selected node in Studio Debugger.
+    ExplainNodeCallback explain_node_callback_;
 
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.

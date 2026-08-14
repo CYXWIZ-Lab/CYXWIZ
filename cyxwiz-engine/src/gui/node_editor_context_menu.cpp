@@ -82,6 +82,12 @@ void NodeEditor::ShowSingleNodeContextMenu() {
         ImGui::CloseCurrentPopup();
     }
 
+    if (explain_node_callback_ &&
+        ImGui::MenuItem(ICON_FA_BUG " Explain in Studio Debugger")) {
+        explain_node_callback_(right_clicked_node_id_);
+        ImGui::CloseCurrentPopup();
+    }
+
     // Group operations
     NodeGroup* existing_group = FindGroupContainingNode(right_clicked_node_id_);
     if (existing_group) {

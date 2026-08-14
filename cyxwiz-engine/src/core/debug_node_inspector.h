@@ -2,6 +2,7 @@
 
 #include "debug_recommendation_engine.h"
 #include "debug_trace_record.h"
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,18 @@ class DebugNodeInspector {
 public:
     DebugNodeInspectorSummary BuildSummary(
         const DebugTraceRecord& trace,
+        const std::vector<DebugRecommendation>& recommendations) const;
+
+    DebugTraceRecord BuildExplanationTrace(
+        const std::string& run_id,
+        uint64_t graph_hash,
+        const gui::MLNode& node,
+        const std::string& node_type,
+        const TrainingConfiguration* configuration,
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        const std::vector<DebugTraceRecord>& traces,
+        const std::vector<ValidationIssue>& issues,
         const std::vector<DebugRecommendation>& recommendations) const;
 };
 

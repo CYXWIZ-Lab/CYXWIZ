@@ -644,27 +644,41 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
         ImGui::EndTooltip();
     }
 
+    const bool item_clicked = ImGui::IsItemClicked(0);
+    const bool item_double_clicked =
+        item_clicked && ImGui::IsMouseDoubleClicked(0);
+
     // Handle selection with Ctrl/Shift modifiers for multi-select
-    if (ImGui::IsItemClicked(0)) {
+    if (item_clicked) {
         bool ctrl_held = ImGui::GetIO().KeyCtrl;
         bool shift_held = ImGui::GetIO().KeyShift;
         SelectItem(&item, ctrl_held, shift_held);
     }
 
+    const auto open_graph_in_studio = [this, &item]() {
+        if (!on_open_in_node_editor_) {
+            spdlog::error("Asset Browser graph callback is not configured: {}",
+                          item.absolute_path);
+            return;
+        }
+        spdlog::info("Asset Browser opening graph in CyxWiz Studio: {}",
+                     item.absolute_path);
+        on_open_in_node_editor_(item.absolute_path);
+    };
+
     // Handle double-click for files (directories are handled by TreeNode arrow)
-    if (!item.is_directory && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+    if (!item.is_directory && item_double_clicked) {
         // Special handling for graph files - open in Node Editor
         if (item.type == AssetType::Graph) {
-            if (on_open_in_node_editor_) {
-                on_open_in_node_editor_(item.absolute_path);
-            }
+            open_graph_in_studio();
         }
         // Dataset files create a configured Data Input; only that node applies a load.
         else if (IsDatasetFile(item)) {
             CreateDataInputFromItem(item);
         }
-        // Dataset files already performed their dedicated action above.
-        if (on_double_click_ && !IsDatasetFile(item)) {
+        // Other files use the generic open callback. Graph and dataset files
+        // already performed their dedicated action above.
+        else if (on_double_click_) {
             on_double_click_(item);
         }
     }
@@ -714,9 +728,7 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
             // Open in CyxWiz Studio (for .cyxgraph files only)
             if (item.type == AssetType::Graph) {
                 if (ImGui::MenuItem(ICON_FA_DIAGRAM_PROJECT " Open in CyxWiz Studio")) {
-                    if (on_open_in_node_editor_) {
-                        on_open_in_node_editor_(item.absolute_path);
-                    }
+                    open_graph_in_studio();
                 }
             }
         }

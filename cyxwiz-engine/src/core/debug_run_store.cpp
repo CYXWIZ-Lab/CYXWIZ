@@ -1,5 +1,6 @@
 #include "debug_run_store.h"
 #include "debug_run_paths.h"
+#include "debug_session.h"
 #include "training_trace_collector.h"
 
 #include <nlohmann/json.hpp>
@@ -174,6 +175,75 @@ DebugRecommendation RecommendationFromJson(const nlohmann::json& j) {
     return rec;
 }
 
+DebugReplayCompiledConfigSummary CompiledConfigSummaryFromJson(
+    const nlohmann::json& j) {
+    DebugReplayCompiledConfigSummary config;
+    config.available = j.value("available", false);
+    config.valid = j.value("valid", false);
+    config.layer_count = j.value("layer_count", static_cast<size_t>(0));
+    config.input_shape = j.value("input_shape", std::vector<size_t>{});
+    config.input_size = j.value("input_size", static_cast<size_t>(0));
+    config.output_size = j.value("output_size", static_cast<size_t>(0));
+    config.batch_size = j.value("batch_size", 0);
+    config.epochs = j.value("epochs", 0);
+    config.shuffle = j.value("shuffle", false);
+    config.drop_last = j.value("drop_last", false);
+    config.num_workers = j.value("num_workers", 0);
+    config.prefetch_factor = j.value("prefetch_factor", 0);
+    config.log_interval = j.value("log_interval", 0);
+    config.validation_freq = j.value("validation_freq", 0);
+    config.grad_accum_steps = j.value("grad_accum_steps", 0);
+    config.train_ratio = j.value("train_ratio", 0.0f);
+    config.val_ratio = j.value("val_ratio", 0.0f);
+    config.test_ratio = j.value("test_ratio", 0.0f);
+    config.stratified = j.value("stratified", false);
+    config.loss = j.value("loss", "");
+    config.optimizer = j.value("optimizer", "");
+    config.learning_rate = j.value("learning_rate", 0.0f);
+    config.momentum = j.value("momentum", 0.0f);
+    config.beta1 = j.value("beta1", 0.0f);
+    config.beta2 = j.value("beta2", 0.0f);
+    config.weight_decay = j.value("weight_decay", 0.0f);
+    config.compiler_placement_fingerprint =
+        j.value("compiler_placement_fingerprint", "");
+    config.backend_placement_count =
+        j.value("backend_placement_count", static_cast<size_t>(0));
+    config.forbid_native_cpu_fallback =
+        j.value("forbid_native_cpu_fallback", false);
+    return config;
+}
+
+std::map<std::string, std::string> ReplayEnvironmentSummary() {
+    std::map<std::string, std::string> environment;
+#if defined(_WIN32)
+    environment["platform"] = "windows";
+#elif defined(__APPLE__)
+    environment["platform"] = "macos";
+#elif defined(__linux__)
+    environment["platform"] = "linux";
+#else
+    environment["platform"] = "unknown";
+#endif
+
+#if defined(_M_X64) || defined(__x86_64__)
+    environment["architecture"] = "x86_64";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    environment["architecture"] = "arm64";
+#elif defined(_M_IX86) || defined(__i386__)
+    environment["architecture"] = "x86";
+#else
+    environment["architecture"] = "unknown";
+#endif
+
+#if defined(NDEBUG)
+    environment["build_configuration"] = "release";
+#else
+    environment["build_configuration"] = "debug";
+#endif
+    environment["compute_platform"] = "ArrayFire";
+    return environment;
+}
+
 nlohmann::json ExecutionSummaryToJson(
     const DebugRunExecutionSummary& execution) {
     return {
@@ -246,6 +316,11 @@ DebugRunStoreRecord RecordFromJson(const nlohmann::json& j,
     DebugRunStoreRecord record;
     record.summary = SummaryFromJson(j, path);
 
+    if (j.contains("replay_capsule") && j["replay_capsule"].is_object()) {
+        record.replay_capsule =
+            DebugRunReplayCapsuleFromJson(j["replay_capsule"]);
+    }
+
     if (j.contains("issues") && j["issues"].is_array()) {
         for (const auto& item : j["issues"]) {
             record.issues.push_back(IssueFromJson(item));
@@ -271,6 +346,211 @@ DebugRunStoreRecord RecordFromJson(const nlohmann::json& j,
 }
 
 } // namespace
+
+DebugRunReplayCapsule MakeDebugRunReplayCapsule(
+    const DebugSession& session,
+    const TrainingConfiguration* config,
+    const DebugRunExecutionSummary& execution,
+    size_t smoke_sample_limit) {
+    DebugRunReplayCapsule capsule;
+    capsule.available = !session.run_id.empty();
+    capsule.mode = session.mode_name;
+    capsule.graph_hash = session.graph_hash;
+    capsule.selected_sample_index = session.selected_sample_index;
+    capsule.smoke_sample_limit = smoke_sample_limit;
+    capsule.environment = ReplayEnvironmentSummary();
+
+    for (size_t i = 0; i < session.traces.size(); ++i) {
+        if (session.traces[i].phase == "GraphSnapshot") {
+            capsule.graph_snapshot_trace_available = true;
+            capsule.graph_snapshot_trace_index = i;
+            break;
+        }
+    }
+
+    if (config) {
+        capsule.dataset_reference = config->dataset_name;
+        capsule.smoke_batch_size_limit = smoke_sample_limit == 0
+            ? 0
+            : static_cast<size_t>(std::max(1, std::min(config->batch_size, 32)));
+        capsule.split_seed = config->split_seed;
+        capsule.dataloader_seed = config->dataloader_seed;
+        capsule.balance_seed = config->balance_seed;
+
+        auto& compiled = capsule.compiled_config;
+        compiled.available = true;
+        compiled.valid = config->is_valid;
+        compiled.layer_count = config->layers.size();
+        compiled.input_shape = config->input_shape;
+        compiled.input_size = config->input_size;
+        compiled.output_size = config->output_size;
+        compiled.batch_size = config->batch_size;
+        compiled.epochs = config->epochs;
+        compiled.shuffle = config->shuffle;
+        compiled.drop_last = config->drop_last;
+        compiled.num_workers = config->num_workers;
+        compiled.prefetch_factor = config->prefetch_factor;
+        compiled.log_interval = config->log_interval;
+        compiled.validation_freq = config->validation_freq;
+        compiled.grad_accum_steps = config->grad_accum_steps;
+        compiled.train_ratio = config->train_ratio;
+        compiled.val_ratio = config->val_ratio;
+        compiled.test_ratio = config->test_ratio;
+        compiled.stratified = config->stratified;
+        compiled.loss = config->GetLossName();
+        compiled.optimizer = config->GetOptimizerName();
+        compiled.learning_rate = config->learning_rate;
+        compiled.momentum = config->momentum;
+        compiled.beta1 = config->beta1;
+        compiled.beta2 = config->beta2;
+        compiled.weight_decay = config->weight_decay;
+        compiled.compiler_placement_fingerprint =
+            config->compiler_placement_fingerprint;
+        compiled.backend_placement_count = config->backend_placements.size();
+        compiled.forbid_native_cpu_fallback =
+            config->forbid_native_cpu_fallback;
+    }
+
+    if (execution.available) {
+        capsule.backend_evidence_scope = "linked_training_run";
+        capsule.backend_source_run_id = execution.training_run_id;
+        capsule.requested_backend = execution.requested_backend;
+        capsule.requested_device_id = execution.requested_device_id;
+        capsule.effective_backend = execution.effective_backend;
+        capsule.effective_device_id = execution.effective_device_id;
+        capsule.effective_device_name = execution.effective_device_name;
+    }
+    return capsule;
+}
+
+nlohmann::json DebugRunReplayCapsuleToJson(
+    const DebugRunReplayCapsule& capsule) {
+    const auto& config = capsule.compiled_config;
+    return {
+        {"schema", DebugRunReplayCapsule::kSchema},
+        {"available", capsule.available},
+        {"mode", capsule.mode},
+        {"replay_scope", capsule.replay_scope},
+        {"graph_hash", capsule.graph_hash},
+        {"graph_snapshot_trace_available",
+         capsule.graph_snapshot_trace_available},
+        {"graph_snapshot_trace_index", capsule.graph_snapshot_trace_index},
+        {"dataset_reference", capsule.dataset_reference},
+        {"selected_sample_index", capsule.selected_sample_index},
+        {"smoke_sample_limit", capsule.smoke_sample_limit},
+        {"smoke_batch_size_limit", capsule.smoke_batch_size_limit},
+        {"compiled_config", {
+            {"available", config.available},
+            {"valid", config.valid},
+            {"scope", "reconstruction_critical_summary"},
+            {"graph_snapshot_is_source_of_truth", true},
+            {"layer_count", config.layer_count},
+            {"input_shape", config.input_shape},
+            {"input_size", config.input_size},
+            {"output_size", config.output_size},
+            {"batch_size", config.batch_size},
+            {"epochs", config.epochs},
+            {"shuffle", config.shuffle},
+            {"drop_last", config.drop_last},
+            {"num_workers", config.num_workers},
+            {"prefetch_factor", config.prefetch_factor},
+            {"log_interval", config.log_interval},
+            {"validation_freq", config.validation_freq},
+            {"grad_accum_steps", config.grad_accum_steps},
+            {"train_ratio", config.train_ratio},
+            {"val_ratio", config.val_ratio},
+            {"test_ratio", config.test_ratio},
+            {"stratified", config.stratified},
+            {"loss", config.loss},
+            {"optimizer", config.optimizer},
+            {"learning_rate", config.learning_rate},
+            {"momentum", config.momentum},
+            {"beta1", config.beta1},
+            {"beta2", config.beta2},
+            {"weight_decay", config.weight_decay},
+            {"compiler_placement_fingerprint",
+             config.compiler_placement_fingerprint},
+            {"backend_placement_count", config.backend_placement_count},
+            {"forbid_native_cpu_fallback",
+             config.forbid_native_cpu_fallback}
+        }},
+        {"seeds", {
+            {"split", capsule.split_seed},
+            {"dataloader", capsule.dataloader_seed},
+            {"class_balance", capsule.balance_seed}
+        }},
+        {"backend_selection", {
+            {"evidence_scope", capsule.backend_evidence_scope},
+            {"source_run_id", capsule.backend_source_run_id},
+            {"requested_backend", capsule.requested_backend},
+            {"requested_device_id", capsule.requested_device_id},
+            {"effective_backend", capsule.effective_backend},
+            {"effective_device_id", capsule.effective_device_id},
+            {"effective_device_name", capsule.effective_device_name}
+        }},
+        {"environment", capsule.environment},
+        {"trace_records_embedded", capsule.trace_records_embedded},
+        {"issues_embedded", capsule.issues_embedded},
+        {"data_values_included", capsule.raw_dataset_values_included},
+        {"exact_replay_claimed", capsule.exact_replay_claimed}
+    };
+}
+
+DebugRunReplayCapsule DebugRunReplayCapsuleFromJson(
+    const nlohmann::json& value) {
+    DebugRunReplayCapsule capsule;
+    capsule.available = value.value("available", false);
+    capsule.mode = value.value("mode", "");
+    capsule.replay_scope =
+        value.value("replay_scope", "explain_and_recompile");
+    capsule.graph_hash = value.value("graph_hash", static_cast<uint64_t>(0));
+    capsule.graph_snapshot_trace_available =
+        value.value("graph_snapshot_trace_available", false);
+    capsule.graph_snapshot_trace_index =
+        value.value("graph_snapshot_trace_index", static_cast<size_t>(0));
+    capsule.dataset_reference = value.value("dataset_reference", "");
+    capsule.selected_sample_index =
+        value.value("selected_sample_index", static_cast<size_t>(0));
+    capsule.smoke_sample_limit =
+        value.value("smoke_sample_limit", static_cast<size_t>(0));
+    capsule.smoke_batch_size_limit =
+        value.value("smoke_batch_size_limit", static_cast<size_t>(0));
+    if (value.contains("compiled_config") &&
+        value["compiled_config"].is_object()) {
+        capsule.compiled_config =
+            CompiledConfigSummaryFromJson(value["compiled_config"]);
+    }
+    if (value.contains("seeds") && value["seeds"].is_object()) {
+        const auto& seeds = value["seeds"];
+        capsule.split_seed = seeds.value("split", 0);
+        capsule.dataloader_seed = seeds.value("dataloader", 0);
+        capsule.balance_seed = seeds.value("class_balance", 0);
+    }
+    if (value.contains("backend_selection") &&
+        value["backend_selection"].is_object()) {
+        const auto& backend = value["backend_selection"];
+        capsule.backend_evidence_scope =
+            backend.value("evidence_scope", "unobserved");
+        capsule.backend_source_run_id = backend.value("source_run_id", "");
+        capsule.requested_backend = backend.value("requested_backend", "");
+        capsule.requested_device_id = backend.value("requested_device_id", 0);
+        capsule.effective_backend = backend.value("effective_backend", "");
+        capsule.effective_device_id = backend.value("effective_device_id", 0);
+        capsule.effective_device_name =
+            backend.value("effective_device_name", "");
+    }
+    capsule.environment = value.value(
+        "environment", std::map<std::string, std::string>{});
+    capsule.trace_records_embedded =
+        value.value("trace_records_embedded", true);
+    capsule.issues_embedded = value.value("issues_embedded", true);
+    capsule.raw_dataset_values_included = value.value(
+        "data_values_included",
+        value.value("raw_dataset_values_included", false));
+    capsule.exact_replay_claimed =
+        value.value("exact_replay_claimed", false);
+    return capsule;
+}
 
 DebugRunExecutionSummary MakeDebugRunExecutionSummary(
     const TrainingTraceSummary& trace) {
@@ -334,6 +614,8 @@ bool DebugRunStore::Save(const DebugRunStoreRecord& record) {
             {"recommendation_count", record.recommendations.size()},
             {"summary", record.summary.summary},
             {"execution", ExecutionSummaryToJson(record.summary.execution)},
+            {"replay_capsule",
+             DebugRunReplayCapsuleToJson(record.replay_capsule)},
             {"issues", issues},
             {"traces", traces},
             {"studio_events", events},

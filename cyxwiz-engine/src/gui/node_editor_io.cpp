@@ -10,8 +10,10 @@
 #include "../core/file_dialogs.h"
 #include "../core/project_manager.h"
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <fstream>
 #include <filesystem>
+#include <stdexcept>
 #include <unordered_map>
 #include <spdlog/spdlog.h>
 
@@ -1056,102 +1058,109 @@ static bool ResolveSavedGraphLinkPins(const nlohmann::json& link_json,
     return true;
 }
 
-bool NodeEditor::LoadGraph(const std::string& filepath) {
-    using json = nlohmann::json;
+bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
+                               const std::string& source_description) {
+    if (!graph_json.is_object() ||
+        !graph_json.contains("nodes") || !graph_json["nodes"].is_array() ||
+        !graph_json.contains("links") || !graph_json["links"].is_array()) {
+        spdlog::error("Cannot load graph from {}: expected nodes and links arrays",
+                      source_description);
+        return false;
+    }
+
+    struct CounterRollback {
+        int& node_id;
+        int& pin_id;
+        int saved_node_id;
+        int saved_pin_id;
+        bool active = true;
+
+        CounterRollback(int& node_id_ref, int& pin_id_ref)
+            : node_id(node_id_ref),
+              pin_id(pin_id_ref),
+              saved_node_id(node_id_ref),
+              saved_pin_id(pin_id_ref) {}
+
+        void Restore() {
+            if (!active) return;
+            node_id = saved_node_id;
+            pin_id = saved_pin_id;
+            active = false;
+        }
+
+        ~CounterRollback() { Restore(); }
+    } counters(next_node_id_, next_pin_id_);
 
     try {
-        std::ifstream file(filepath);
-        if (!file.is_open()) {
-            spdlog::error("Failed to open file for reading: {}", filepath);
-            return false;
-        }
+        // CreateNode owns the pin contract, so use it to build a complete
+        // replacement graph without touching the live node/link containers.
+        next_node_id_ = 1;
+        next_pin_id_ = 1;
 
-        json j;
-        file >> j;
-
-        // Check if this is a pattern template format (has "template" key with nodes inside)
-        if (j.contains("template") && j["template"].is_object() &&
-            j["template"].contains("nodes")) {
-            spdlog::info("Detected pattern template format, converting to graph format");
-            return LoadPatternAsGraph(j);
-        }
-
-        // Clear existing graph
-        ClearGraph();
+        std::vector<MLNode> loaded_nodes;
+        std::vector<NodeLink> loaded_links;
+        std::map<int, ImVec2> loaded_positions;
+        std::vector<NodeGroup> loaded_groups;
+        std::vector<CanvasAnnotation> loaded_annotations;
+        int loaded_next_group_id = 1;
+        int loaded_next_annotation_id = 1;
+        int max_node_id = 0;
+        int max_link_id = 0;
 
         const bool preserve_legacy_data_boundary =
-            detail::PreserveLegacyDataBoundaryPins(j);
+            detail::PreserveLegacyDataBoundaryPins(graph_json);
         if (preserve_legacy_data_boundary) {
             spdlog::warn(
                 "Loading an unversioned/legacy data boundary without changing its pins or links. Use the Data Split migration action to adopt Dataset v2 explicitly.");
         }
 
-        // Unified Canvas Phase 7: Check version and load execution_mode
-        std::string version = "1.0";
-        if (j.contains("version")) {
-            version = j["version"].get<std::string>();
+        CodeFramework loaded_framework = selected_framework_;
+        if (graph_json.contains("framework")) {
+            loaded_framework = static_cast<CodeFramework>(
+                graph_json["framework"].get<int>());
         }
 
-        // Update next IDs to avoid conflicts
-        int max_node_id = 0;
-        int max_link_id = 0;
-
-        // Load framework
-        if (j.contains("framework")) {
-            selected_framework_ = static_cast<CodeFramework>(j["framework"].get<int>());
+        ExecutionMode loaded_execution_mode = ExecutionMode::CodeGeneration;
+        if (graph_json.contains("execution_mode")) {
+            loaded_execution_mode = static_cast<ExecutionMode>(
+                graph_json["execution_mode"].get<int>());
         }
+        const std::string loaded_workflow_description =
+            graph_json.value("workflow_description", std::string{});
 
-        // Unified Canvas Phase 7: Load execution_mode (v2.0+)
-        if (j.contains("execution_mode")) {
-            execution_mode_ = static_cast<ExecutionMode>(j["execution_mode"].get<int>());
-            spdlog::info("Loaded execution mode: {}", static_cast<int>(execution_mode_));
-        } else {
-            // Backward compatibility: v1.0 files default to CodeGeneration
-            execution_mode_ = ExecutionMode::CodeGeneration;
-            spdlog::info("Legacy v1.0 format - defaulting to CodeGeneration mode");
-        }
-
-        // CyxWiz Studio: Load workflow description (v2.1+)
-        if (j.contains("workflow_description")) {
-            std::string desc = j["workflow_description"].get<std::string>();
-            SetWorkflowDescription(desc);
-            spdlog::info("Loaded workflow description ({} chars)", desc.length());
-        } else {
-            SetWorkflowDescription("");
-        }
-
-        // CyxWiz Studio: Load canvas annotations (v2.1+)
-        annotations_.clear();
-        next_annotation_id_ = 1;
-        if (j.contains("annotations") && j["annotations"].is_array()) {
-            for (const auto& ann_json : j["annotations"]) {
-                CanvasAnnotation annotation;
-                annotation.id = ann_json.value("id", next_annotation_id_);
-                annotation.title = ann_json.value("title", "");
-                annotation.content = ann_json.value("content", "");
-                annotation.position.x = ann_json.value("pos_x", 0.0f);
-                annotation.position.y = ann_json.value("pos_y", 0.0f);
-                annotation.size.x = ann_json.value("width", 200.0f);
-                annotation.size.y = ann_json.value("height", 100.0f);
-                annotation.color = ann_json.value("color", (ImU32)IM_COL32(255, 255, 200, 255));
-                annotation.is_minimized = ann_json.value("minimized", false);
-
-                annotations_.push_back(annotation);
-                next_annotation_id_ = std::max(next_annotation_id_, annotation.id + 1);
+        if (graph_json.contains("annotations")) {
+            if (!graph_json["annotations"].is_array()) {
+                throw std::runtime_error("annotations must be an array");
             }
-            spdlog::info("Loaded {} canvas annotations", annotations_.size());
+            for (const auto& annotation_json : graph_json["annotations"]) {
+                CanvasAnnotation annotation;
+                annotation.id = annotation_json.value("id", loaded_next_annotation_id);
+                annotation.title = annotation_json.value("title", "");
+                annotation.content = annotation_json.value("content", "");
+                annotation.position.x = annotation_json.value("pos_x", 0.0f);
+                annotation.position.y = annotation_json.value("pos_y", 0.0f);
+                annotation.size.x = annotation_json.value("width", 200.0f);
+                annotation.size.y = annotation_json.value("height", 100.0f);
+                annotation.color = annotation_json.value(
+                    "color", static_cast<ImU32>(IM_COL32(255, 255, 200, 255)));
+                annotation.is_minimized = annotation_json.value("minimized", false);
+                loaded_annotations.push_back(std::move(annotation));
+                loaded_next_annotation_id = std::max(
+                    loaded_next_annotation_id,
+                    loaded_annotations.back().id + 1);
+            }
         }
 
-        // CyxWiz Studio: Load node groups (v2.1+)
-        groups_.clear();
-        next_group_id_ = 1;
-        if (j.contains("groups") && j["groups"].is_array()) {
-            for (const auto& group_json : j["groups"]) {
+        if (graph_json.contains("groups")) {
+            if (!graph_json["groups"].is_array()) {
+                throw std::runtime_error("groups must be an array");
+            }
+            for (const auto& group_json : graph_json["groups"]) {
                 NodeGroup group;
-                group.id = group_json.value("id", next_group_id_);
+                group.id = group_json.value("id", loaded_next_group_id);
                 group.name = group_json.value("name", "Group");
                 group.description = group_json.value("description", "");
-                if (group_json.contains("node_ids") && group_json["node_ids"].is_array()) {
+                if (group_json.contains("node_ids")) {
                     group.node_ids = group_json["node_ids"].get<std::vector<int>>();
                 }
                 group.color.x = group_json.value("color_r", 0.2f);
@@ -1160,104 +1169,143 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
                 group.color.w = group_json.value("color_a", 0.3f);
                 group.collapsed = group_json.value("collapsed", false);
                 group.padding = group_json.value("padding", 20.0f);
-
-                groups_.push_back(group);
-                next_group_id_ = std::max(next_group_id_, group.id + 1);
+                loaded_groups.push_back(std::move(group));
+                loaded_next_group_id = std::max(
+                    loaded_next_group_id,
+                    loaded_groups.back().id + 1);
             }
-            spdlog::info("Loaded {} node groups", groups_.size());
         }
 
-        // Load nodes
-        for (const auto& node_json : j["nodes"]) {
-            MLNode node;
-            node.id = node_json["id"];
-            node.name = node_json["name"];
-            if (!TryReadSerializedNodeType(node_json, node.type)) {
-                ClearGraph();
+        loaded_nodes.reserve(graph_json["nodes"].size());
+        for (const auto& node_json : graph_json["nodes"]) {
+            NodeType node_type = NodeType::Unknown;
+            if (!TryReadSerializedNodeType(node_json, node_type)) {
                 return false;
             }
-            if (node_json.contains("description")) {
-                node.description = node_json["description"];
-            }
 
+            const int saved_node_id = node_json.at("id").get<int>();
+            const std::string saved_node_name =
+                node_json.at("name").get<std::string>();
+            MLNode node = CreateNode(node_type, saved_node_name);
+            node.id = saved_node_id;
+            node.name = saved_node_name;
+            node.description = node_json.value("description", std::string{});
             if (node_json.contains("parameters")) {
-                node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+                node.parameters = node_json["parameters"].get<
+                    std::map<std::string, std::string>>();
             }
             MigrateLegacyNodeParameters(node.type, node.parameters);
             if (RejectDenseEncodedSequencePlaceholder(node, "Saved graph")) {
-                ClearGraph();
                 return false;
             }
 
-            // Recreate pins based on node type using fresh pin IDs
-            // Create node with fresh pin IDs
-            MLNode template_node = CreateNode(node.type, node.name);
-            node.inputs = template_node.inputs;
-            node.outputs = template_node.outputs;
             if (node.type == NodeType::DataInput ||
                 node.type == NodeType::DataSplit ||
                 node.type == NodeType::DataLoader) {
                 RebuildDataBoundaryPins(node, preserve_legacy_data_boundary);
             }
 
-            // Update max IDs
             max_node_id = std::max(max_node_id, node.id);
-
-            nodes_.push_back(node);
-
-            // Queue position restore for next render frame (must be inside ImNodes scope)
             if (node_json.contains("pos_x") && node_json.contains("pos_y")) {
-                float pos_x = node_json["pos_x"];
-                float pos_y = node_json["pos_y"];
-                pending_positions_[node.id] = ImVec2(pos_x, pos_y);
+                loaded_positions[node.id] = ImVec2(
+                    node_json["pos_x"].get<float>(),
+                    node_json["pos_y"].get<float>());
             }
+            loaded_nodes.push_back(std::move(node));
         }
 
-        // Need to apply positions for multiple frames because ImNodes needs the node
-        // to exist before SetNodeGridSpacePos takes effect
-        pending_positions_frames_ = 3;  // Apply for 3 frames to ensure positions stick
+        const auto find_loaded_node = [&loaded_nodes](int node_id) -> const MLNode* {
+            const auto it = std::find_if(
+                loaded_nodes.begin(), loaded_nodes.end(),
+                [node_id](const MLNode& node) { return node.id == node_id; });
+            return it == loaded_nodes.end() ? nullptr : &*it;
+        };
 
-        // Load links with pin index support for multi-pin nodes
-        for (const auto& link_json : j["links"]) {
+        loaded_links.reserve(graph_json["links"].size());
+        for (const auto& link_json : graph_json["links"]) {
             NodeLink link;
-            link.id = link_json["id"];
-            link.from_node = link_json["from_node"];
-            link.to_node = link_json["to_node"];
-
-            // Find actual pin IDs from loaded nodes using pin indices
-            const MLNode* from_node = FindNodeById(link.from_node);
-            const MLNode* to_node = FindNodeById(link.to_node);
-
-            if (!ResolveSavedGraphLinkPins(link_json, from_node, to_node, link)) {
+            link.id = link_json.at("id").get<int>();
+            link.from_node = link_json.at("from_node").get<int>();
+            link.to_node = link_json.at("to_node").get<int>();
+            if (!ResolveSavedGraphLinkPins(
+                    link_json,
+                    find_loaded_node(link.from_node),
+                    find_loaded_node(link.to_node),
+                    link)) {
                 continue;
             }
-
-            // Load link type for skip connection visualization
             if (link_json.contains("link_type")) {
                 link.type = static_cast<LinkType>(link_json["link_type"].get<int>());
-            } else {
-                link.type = LinkType::TensorFlow;  // Default for legacy files
             }
-
-            links_.push_back(link);
             max_link_id = std::max(max_link_id, link.id);
+            loaded_links.push_back(link);
         }
 
-        // Update next IDs
+        const int loaded_next_pin_id = next_pin_id_;
+        counters.Restore();
+
+        // Commit only after the complete replacement graph has been built.
+        ClearGraph();
+        nodes_ = std::move(loaded_nodes);
+        links_ = std::move(loaded_links);
+        groups_ = std::move(loaded_groups);
+        annotations_ = std::move(loaded_annotations);
+        pending_positions_ = std::move(loaded_positions);
+        pending_positions_frames_ = pending_positions_.empty() ? 0 : 3;
+        cached_node_positions_.clear();
         next_node_id_ = max_node_id + 1;
+        next_pin_id_ = loaded_next_pin_id;
         next_link_id_ = max_link_id + 1;
-
-        current_file_path_ = filepath;
-
-        // Rebuild pin lookup after loading graph
+        next_group_id_ = loaded_next_group_id;
+        next_annotation_id_ = loaded_next_annotation_id;
+        selected_framework_ = loaded_framework;
+        execution_mode_ = loaded_execution_mode;
+        SetWorkflowDescription(loaded_workflow_description);
         RebuildPinLookup();
 
-        spdlog::info("Graph loaded from: {} ({} nodes, {} links)",
-                     filepath, nodes_.size(), links_.size());
+        spdlog::info(
+            "Graph loaded from {} ({} nodes, {} links, execution mode {})",
+            source_description,
+            nodes_.size(),
+            links_.size(),
+            static_cast<int>(execution_mode_));
         return true;
+    } catch (const std::exception& error) {
+        spdlog::error("Error loading graph from {}: {}",
+                      source_description,
+                      error.what());
+        return false;
+    }
+}
 
-    } catch (const std::exception& e) {
-        spdlog::error("Error loading graph: {}", e.what());
+bool NodeEditor::LoadGraph(const std::string& filepath) {
+    using json = nlohmann::json;
+
+    spdlog::info("Loading graph from: {}", filepath);
+    try {
+        std::ifstream file(filepath);
+        if (!file.is_open()) {
+            spdlog::error("Failed to open file for reading: {}", filepath);
+            return false;
+        }
+
+        json graph_json;
+        file >> graph_json;
+
+        if (graph_json.contains("template") &&
+            graph_json["template"].is_object() &&
+            graph_json["template"].contains("nodes")) {
+            spdlog::info("Detected pattern template format, converting to graph format");
+            return LoadPatternAsGraph(graph_json);
+        }
+
+        if (!LoadGraphJson(graph_json, filepath)) {
+            return false;
+        }
+        current_file_path_ = filepath;
+        return true;
+    } catch (const std::exception& error) {
+        spdlog::error("Error loading graph from {}: {}", filepath, error.what());
         return false;
     }
 }
@@ -1354,114 +1402,9 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
     }
 
     try {
-        json j = json::parse(json_string);
-
-        // Clear existing graph
-        ClearGraph();
-
-        const bool preserve_legacy_data_boundary =
-            detail::PreserveLegacyDataBoundaryPins(j);
-        if (preserve_legacy_data_boundary) {
-            spdlog::warn(
-                "Loading JSON with an unversioned/legacy data boundary without changing its pins or links. Explicit migration is required for Dataset v2.");
-        }
-
-        // Update next IDs to avoid conflicts
-        int max_node_id = 0;
-        int max_link_id = 0;
-
-        // Load framework
-        if (j.contains("framework")) {
-            selected_framework_ = static_cast<CodeFramework>(j["framework"].get<int>());
-        }
-
-        // Load nodes
-        for (const auto& node_json : j["nodes"]) {
-            MLNode node;
-            node.id = node_json["id"];
-            node.name = node_json["name"];
-            if (!TryReadSerializedNodeType(node_json, node.type)) {
-                ClearGraph();
-                return false;
-            }
-            if (node_json.contains("description")) {
-                node.description = node_json["description"];
-            }
-
-            if (node_json.contains("parameters")) {
-                node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
-            }
-            MigrateLegacyNodeParameters(node.type, node.parameters);
-            if (RejectDenseEncodedSequencePlaceholder(node, "Saved graph")) {
-                ClearGraph();
-                return false;
-            }
-
-            // Recreate pins based on node type using fresh pin IDs
-            MLNode template_node = CreateNode(node.type, node.name);
-            node.inputs = template_node.inputs;
-            node.outputs = template_node.outputs;
-            if (node.type == NodeType::DataInput ||
-                node.type == NodeType::DataSplit ||
-                node.type == NodeType::DataLoader) {
-                RebuildDataBoundaryPins(node, preserve_legacy_data_boundary);
-            }
-
-            // Update max IDs
-            max_node_id = std::max(max_node_id, node.id);
-
-            nodes_.push_back(node);
-
-            // Queue position restore for next render frame
-            if (node_json.contains("pos_x") && node_json.contains("pos_y")) {
-                float pos_x = node_json["pos_x"];
-                float pos_y = node_json["pos_y"];
-                pending_positions_[node.id] = ImVec2(pos_x, pos_y);
-            }
-        }
-
-        // Need to apply positions for multiple frames
-        pending_positions_frames_ = 3;
-
-        // Load links with pin index support
-        for (const auto& link_json : j["links"]) {
-            NodeLink link;
-            link.id = link_json["id"];
-            link.from_node = link_json["from_node"];
-            link.to_node = link_json["to_node"];
-
-            // Find actual pin IDs from loaded nodes using pin indices
-            const MLNode* from_node = FindNodeById(link.from_node);
-            const MLNode* to_node = FindNodeById(link.to_node);
-
-            if (!ResolveSavedGraphLinkPins(link_json, from_node, to_node, link)) {
-                continue;
-            }
-
-            // Load link type
-            if (link_json.contains("link_type")) {
-                link.type = static_cast<LinkType>(link_json["link_type"].get<int>());
-            } else {
-                link.type = LinkType::TensorFlow;
-            }
-
-            links_.push_back(link);
-            max_link_id = std::max(max_link_id, link.id);
-        }
-
-        // Update next IDs
-        next_node_id_ = max_node_id + 1;
-        next_link_id_ = max_link_id + 1;
-
-        // Rebuild pin lookup after loading graph
-        RebuildPinLookup();
-
-        spdlog::info("Graph loaded from JSON string ({} nodes, {} links)",
-                     nodes_.size(), links_.size());
-        return true;
-
-    } catch (const std::exception& e) {
-        spdlog::error("Error loading graph from JSON string: {}", e.what());
+        return LoadGraphJson(json::parse(json_string), "JSON string");
+    } catch (const std::exception& error) {
+        spdlog::error("Error parsing graph JSON string: {}", error.what());
         return false;
     }
 }

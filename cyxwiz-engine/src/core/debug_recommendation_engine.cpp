@@ -268,6 +268,33 @@ std::vector<DebugRecommendation> DebugRecommendationEngine::Build(
             }
         }
 
+        if (trace.phase == "ArtifactConsistency") {
+            const std::string outcome = PayloadString(
+                trace, "consistency_outcome");
+            if (outcome == "failed" || outcome == "mismatch") {
+                Add(out, DebugRecommendationSeverity::Critical,
+                    trace.node_id,
+                    "Artifact",
+                    "Export/import consistency failed",
+                    "The persisted artifact inventory disagrees with the source expectation or the artifact action failed.",
+                    "Inspect the missing or mismatched graph, manifest, model-count, tokenizer, and contract rows before deploying or resuming from this artifact.");
+            } else if (outcome == "warning") {
+                Add(out, DebugRecommendationSeverity::Warning,
+                    trace.node_id,
+                    "Artifact",
+                    "Artifact is usable with missing optional state",
+                    "Core consistency checks passed, but a requested optional training asset was not present.",
+                    "Confirm whether optimizer state or training history is required before attempting to resume training.");
+            } else if (outcome == "unobserved") {
+                Add(out, DebugRecommendationSeverity::Info,
+                    trace.node_id,
+                    "Artifact",
+                    "Artifact consistency was not inspected",
+                    "The action completed, but this format has no supported bounded package probe in the current engine.",
+                    "Validate the artifact with its format-specific runtime or importer before deployment.");
+            }
+        }
+
         if (trace.phase == "WindowsCrashImport") {
             const bool report_available = PayloadBool(trace, "report_available", true);
             const bool matched = PayloadBool(trace, "matched", true);

@@ -314,6 +314,11 @@ Tensor AfToTensor(const af::array& arr) {
     return Tensor(arr);
 }
 
+Tensor AfToTensor(const af::array& arr,
+                  const std::vector<size_t>& semantic_shape) {
+    return Tensor::FromSemanticArray(arr, semantic_shape);
+}
+
 void LogArrayFireLossFallbackOnce(
     const char* operation_name,
     const char* error_message,

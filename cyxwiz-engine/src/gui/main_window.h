@@ -8,6 +8,7 @@
 
 namespace cyxwiz {
 class TaskProgressPanel;
+struct DebugArtifactConsistencyInput;
 } // namespace cyxwiz
 
 namespace gui {
@@ -240,7 +241,10 @@ private:
                                                 cyxwiz::StudioDebuggerRunMode mode,
                                                 int sample_index,
                                                 std::vector<MLNode> nodes,
-                                                std::vector<NodeLink> links);
+                                                std::vector<NodeLink> links,
+                                                int explain_node_id = -1);
+    void RecordArtifactConsistencyTrace(
+        const cyxwiz::DebugArtifactConsistencyInput& input);
 
     // Run Local Debug: gate on Compile, then execute one forward +
     // one backward pass on synthetic data via DebugExecutor. Feeds the
