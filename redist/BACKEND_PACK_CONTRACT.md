@@ -162,6 +162,22 @@ only affected route evidence. Ticket 91 remains the sole owner of isolated
 verification, route diagnostics, training authorization, and selected-route
 configuration.
 
+## Repair and Removal
+
+Versioned pack directories are immutable while active. Repair first verifies
+and stages the complete signed payload, deactivates the affected route,
+rewrites any rollback reference to a complete retained runtime, quarantines
+the corrupt directory, publishes the repaired directory, and only then may
+reactivate it. It never overwrites an active directory in place.
+
+Removal accepts optional backend packs only. It holds the shared runtime
+mutation lease, deactivates an exact active pack, removes any rollback
+reference to that pack, and atomically moves the directory into a private
+per-pack quarantine before deletion. A process interruption may leave only an
+inactive quarantine; repeating removal validates active and rollback state
+before finishing that cleanup. The CPU base, active packs, rollback-protected
+packs, links, and paths resolving outside the runtime root are never deleted.
+
 ## Trust and Rotation Policy
 
 - Production pack and catalog signatures use Ed25519 detached signatures.
@@ -197,6 +213,7 @@ and compatibility requirements must be reviewed and represented explicitly.
 ## Validation Ownership
 
 `backend_pack_contract.py` validates schema shape and semantic invariants
-without executing package code. Archive extraction, signature verification,
-transaction staging, rollback, and runtime probing are later Ticket 88 phases.
-They must consume this contract rather than widen it inside GUI code.
+without executing package code. Native services own archive extraction,
+signature verification, transaction staging, rollback, repair, and removal.
+Runtime probing remains owned by Ticket 91. All consumers must use these
+contracts rather than widen them inside GUI code.

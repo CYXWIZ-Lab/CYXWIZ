@@ -19,6 +19,7 @@ enum class BackendPackInstallStage {
     Validating,
     Copying,
     Verifying,
+    Deactivating,
     PublishingPack,
     Activating,
     Complete,
@@ -42,6 +43,8 @@ enum class BackendPackInstallCheckpoint {
     AfterValidation,
     AfterCopy,
     BeforePackPublish,
+    AfterDeactivation,
+    AfterQuarantine,
     AfterPackPublish,
     BeforeActivation
 };
@@ -81,10 +84,17 @@ public:
     BackendPackInstallResult InstallOrUpdate(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
+    BackendPackInstallResult Repair(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes);
     void Cancel();
     BackendPackInstallProgress GetProgress() const;
 
 private:
+    BackendPackInstallResult Apply(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes,
+        bool repair);
     BackendPackInstallResult Finish(
         BackendPackInstallStatus status,
         std::string message,

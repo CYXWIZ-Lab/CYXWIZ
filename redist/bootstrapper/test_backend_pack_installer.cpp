@@ -86,6 +86,12 @@ public:
         std::ofstream(path, std::ios::binary).put(value);
     }
 
+    static char ReadByte(const std::filesystem::path& path) {
+        char value = '\xff';
+        std::ifstream(path, std::ios::binary).get(value);
+        return value;
+    }
+
     std::filesystem::path root;
     std::filesystem::path source;
     static inline int sequence = 0;
@@ -225,6 +231,81 @@ int main() {
                 cyxwiz::runtime::BackendPackInstallStatus::ExecutionActive &&
                 fixture.Active().generation == 1,
             "an active execution context must block pack publication and activation");
+    }
+    {
+        Fixture fixture;
+        cyxwiz::runtime::BackendPackInstaller installer(fixture.root);
+        const auto installed =
+            installer.InstallOrUpdate(fixture.Payload(), 1024);
+        Fixture::Touch(
+            fixture.root / "packs" / "opencl" / "opencl-v1" /
+                "runtime" / "afopencl.dll",
+            'x');
+        const auto repaired = installer.Repair(fixture.Payload(), 1024);
+        const auto active = fixture.Active();
+        cyxwiz::runtime::ActiveRuntimeState rollback;
+        std::string rollback_error;
+        const bool loaded_rollback =
+            cyxwiz::runtime::LoadActiveRuntimeState(
+                fixture.root / "rollback" / "set-v1" /
+                    "previous-active-runtime.json",
+                rollback, rollback_error);
+        failures += !Expect(
+            installed.status == cyxwiz::runtime::BackendPackInstallStatus::
+                                    InstalledAndActivated &&
+                repaired.status == cyxwiz::runtime::BackendPackInstallStatus::
+                                       InstalledAndActivated &&
+                active.generation == 4 &&
+                HasPack(active, "opencl", "opencl-v1") && loaded_rollback &&
+                rollback.generation == 3 && rollback.packs.empty(),
+            "repair must deactivate, replace, and reactivate without retaining a corrupt rollback reference");
+        failures += !Expect(
+            std::filesystem::file_size(
+                fixture.root / "packs" / "opencl" / "opencl-v1" /
+                "runtime" / "afopencl.dll") == 1 &&
+                Fixture::ReadByte(
+                    fixture.root / "packs" / "opencl" / "opencl-v1" /
+                    "runtime" / "afopencl.dll") == '\0' &&
+                installer.GetProgress().stage ==
+                    cyxwiz::runtime::BackendPackInstallStage::Complete,
+            "repair must publish the exact verified payload and terminal progress");
+    }
+    for (const auto checkpoint : {
+             cyxwiz::runtime::BackendPackInstallCheckpoint::AfterDeactivation,
+             cyxwiz::runtime::BackendPackInstallCheckpoint::AfterQuarantine,
+             cyxwiz::runtime::BackendPackInstallCheckpoint::AfterPackPublish}) {
+        Fixture fixture;
+        cyxwiz::runtime::BackendPackInstaller initial(fixture.root);
+        initial.InstallOrUpdate(fixture.Payload(), 1024);
+        const auto installed_file =
+            fixture.root / "packs" / "opencl" / "opencl-v1" /
+            "runtime" / "afopencl.dll";
+        Fixture::Touch(installed_file, 'x');
+        cyxwiz::runtime::BackendPackInstaller repair(
+            fixture.root, [] { return false; }, {},
+            [checkpoint](auto current) { return current != checkpoint; });
+        const auto result = repair.Repair(fixture.Payload(), 1024);
+        const auto active = fixture.Active();
+        failures += !Expect(
+            (result.status ==
+                 cyxwiz::runtime::BackendPackInstallStatus::Interrupted ||
+             result.status == cyxwiz::runtime::BackendPackInstallStatus::
+                                  InstalledUnqualified) &&
+                active.generation == 3 && active.packs.empty(),
+            "repair interruption after deactivation must retain a complete CPU-only active runtime");
+        failures += !Expect(
+            std::filesystem::is_regular_file(installed_file),
+            "repair interruption must leave either the quarantined old pack restored or the complete repaired pack published");
+    }
+    {
+        Fixture fixture;
+        cyxwiz::runtime::BackendPackInstaller installer(fixture.root);
+        const auto result = installer.Repair(fixture.Payload(), 1024);
+        failures += !Expect(
+            result.status ==
+                cyxwiz::runtime::BackendPackInstallStatus::InvalidRequest &&
+                fixture.Active().generation == 1,
+            "repair must not silently turn a missing pack into an install");
     }
 
     if (failures == 0) {

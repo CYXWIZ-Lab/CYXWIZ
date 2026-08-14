@@ -121,6 +121,19 @@ BackendPackInstaller::BackendPackInstaller(
 BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
+    return Apply(payload, disk_budget_bytes, false);
+}
+
+BackendPackInstallResult BackendPackInstaller::Repair(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes) {
+    return Apply(payload, disk_budget_bytes, true);
+}
+
+BackendPackInstallResult BackendPackInstaller::Apply(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes,
+    bool repair) {
     std::unique_lock<std::mutex> install_lock(
         install_mutex_, std::try_to_lock);
     if (!install_lock.owns_lock()) {
@@ -213,23 +226,48 @@ BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
 
     const auto destination = runtime_root_ / "packs" / payload.backend /
                              payload.pack_id;
-    const bool already_installed =
-        std::filesystem::is_directory(destination, filesystem_error) &&
+    const bool destination_exists =
+        std::filesystem::exists(destination, filesystem_error) &&
         !filesystem_error;
+    if (repair && !destination_exists) {
+        return Finish(
+            BackendPackInstallStatus::InvalidRequest,
+            "The requested backend pack is not installed");
+    }
+    bool already_installed = false;
+    bool replace_existing = false;
     std::unique_ptr<RuntimeMutationLease> mutation_lease;
-    if (already_installed) {
-        if (!EnumerateExactPayload(destination, expected_paths, error)) {
-            return Finish(BackendPackInstallStatus::IntegrityFailure, error);
-        }
+    if (destination_exists) {
+        bool valid = EnumerateExactPayload(destination, expected_paths, error);
         for (const auto& component : payload.components) {
-            if (!ValidateFile(
+            if (valid && !ValidateFile(
                     destination /
                         BackendPackNativeRelativePath(component.relative_path),
                     component, error)) {
-                return Finish(
-                    BackendPackInstallStatus::IntegrityFailure, error);
+                valid = false;
             }
         }
+        if (!valid && !repair) {
+            return Finish(BackendPackInstallStatus::IntegrityFailure, error);
+        }
+        if (!valid && repair) {
+            const auto status = std::filesystem::symlink_status(
+                destination, filesystem_error);
+            const auto canonical_root = std::filesystem::canonical(
+                runtime_root_, filesystem_error);
+            const auto canonical_destination = std::filesystem::canonical(
+                destination, filesystem_error);
+            if (filesystem_error ||
+                !std::filesystem::is_directory(status) ||
+                std::filesystem::is_symlink(status) ||
+                !IsWithin(canonical_root, canonical_destination)) {
+                return Finish(
+                    BackendPackInstallStatus::FilesystemFailure,
+                    "The installed pack directory is unsafe to repair");
+            }
+        }
+        already_installed = valid;
+        replace_existing = !valid;
     }
 
     std::filesystem::path staging_root;
@@ -318,9 +356,130 @@ BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
         progress.stage = BackendPackInstallStage::PublishingPack;
         progress.message = "Publishing the complete versioned pack directory";
         SetProgress(progress);
+        std::filesystem::path quarantined;
+        if (replace_existing) {
+            const auto active_pack = std::find_if(
+                active.packs.begin(), active.packs.end(),
+                [&](const ActivePackState& pack) {
+                    return pack.backend == payload.backend &&
+                           pack.pack_id == payload.pack_id;
+                });
+            bool invalidate_rollback = false;
+            if (active_pack != active.packs.end()) {
+                progress.stage = BackendPackInstallStage::Deactivating;
+                progress.message =
+                    "Deactivating the corrupt pack before repair";
+                SetProgress(progress);
+                BackendPackStateService state_service(
+                    runtime_root_, execution_active_);
+                auto deactivation = state_service.DeactivateOptionalPack(
+                    payload.backend);
+                if (deactivation.status != BackendPackStateStatus::Completed ||
+                    !deactivation.current) {
+                    std::filesystem::remove_all(
+                        staging_root, filesystem_error);
+                    return Finish(
+                        BackendPackInstallStatus::FilesystemFailure,
+                        "Cannot deactivate the corrupt pack before repair: " +
+                            deactivation.message);
+                }
+                active = *deactivation.current;
+                invalidate_rollback = true;
+                if (checkpoint_ &&
+                    !checkpoint_(
+                        BackendPackInstallCheckpoint::AfterDeactivation)) {
+                    std::filesystem::remove_all(
+                        staging_root, filesystem_error);
+                    return Finish(
+                        BackendPackInstallStatus::Interrupted,
+                        "Pack repair interrupted after safe deactivation",
+                        destination);
+                }
+            } else {
+                ActiveRuntime resolved;
+                if (!ResolveRuntimeState(
+                        runtime_root_, active, resolved, error)) {
+                    std::filesystem::remove_all(
+                        staging_root, filesystem_error);
+                    return Finish(
+                        BackendPackInstallStatus::IntegrityFailure, error);
+                }
+            }
+            const auto rollback_path = runtime_root_ / "rollback" /
+                active.runtime_set_id / "previous-active-runtime.json";
+            filesystem_error.clear();
+            error.clear();
+            if (!invalidate_rollback &&
+                std::filesystem::exists(rollback_path, filesystem_error)) {
+                ActiveRuntimeState rollback;
+                if (!LoadActiveRuntimeState(
+                        rollback_path, rollback, error)) {
+                    std::filesystem::remove_all(
+                        staging_root, filesystem_error);
+                    return Finish(
+                        BackendPackInstallStatus::IntegrityFailure,
+                        "Cannot validate the runtime rollback state: " +
+                            error);
+                }
+                invalidate_rollback = std::any_of(
+                    rollback.packs.begin(), rollback.packs.end(),
+                    [&](const ActivePackState& pack) {
+                        return pack.backend == payload.backend &&
+                               pack.pack_id == payload.pack_id;
+                    });
+            }
+            if (filesystem_error ||
+                (invalidate_rollback && !SaveActiveRuntimeStateAtomic(
+                    rollback_path, active, error))) {
+                std::filesystem::remove_all(staging_root, filesystem_error);
+                return Finish(
+                    BackendPackInstallStatus::FilesystemFailure,
+                    "Cannot invalidate the corrupt pack rollback reference: " +
+                        (filesystem_error ? filesystem_error.message() :
+                                            error));
+            }
+            quarantined = staging_root;
+            quarantined += "-previous";
+            std::filesystem::rename(
+                destination, quarantined, filesystem_error);
+            if (filesystem_error) {
+                std::filesystem::remove_all(staging_root, filesystem_error);
+                return Finish(
+                    BackendPackInstallStatus::FilesystemFailure,
+                    "Cannot quarantine the corrupt pack before repair: " +
+                        filesystem_error.message());
+            }
+            if (checkpoint_ &&
+                !checkpoint_(BackendPackInstallCheckpoint::AfterQuarantine)) {
+                std::error_code restore_error;
+                std::filesystem::rename(
+                    quarantined, destination, restore_error);
+                if (!restore_error) {
+                    std::filesystem::remove_all(
+                        staging_root, filesystem_error);
+                }
+                return Finish(
+                    restore_error
+                        ? BackendPackInstallStatus::FilesystemFailure
+                        : BackendPackInstallStatus::Interrupted,
+                    restore_error
+                        ? "Pack repair was interrupted and the quarantined pack could not be restored"
+                        : "Pack repair interrupted after quarantine");
+            }
+        }
         std::filesystem::create_directories(
             destination.parent_path(), filesystem_error);
         if (filesystem_error || std::filesystem::exists(destination)) {
+            if (!quarantined.empty()) {
+                std::error_code restore_error;
+                std::filesystem::rename(
+                    quarantined, destination, restore_error);
+                if (restore_error) {
+                    return Finish(
+                        BackendPackInstallStatus::FilesystemFailure,
+                        "Pack destination became unavailable and the quarantined pack could not be restored");
+                }
+            }
             std::filesystem::remove_all(staging_root, filesystem_error);
             return Finish(
                 BackendPackInstallStatus::FilesystemFailure,
@@ -328,6 +487,16 @@ BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
         }
         std::filesystem::rename(staged_payload, destination, filesystem_error);
         if (filesystem_error) {
+            if (!quarantined.empty()) {
+                std::error_code restore_error;
+                std::filesystem::rename(
+                    quarantined, destination, restore_error);
+                if (restore_error) {
+                    return Finish(
+                        BackendPackInstallStatus::FilesystemFailure,
+                        "Cannot publish the repair or restore the quarantined pack");
+                }
+            }
             std::filesystem::remove_all(staging_root, filesystem_error);
             return Finish(
                 BackendPackInstallStatus::FilesystemFailure,
@@ -338,6 +507,11 @@ BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
                 std::filesystem::absolute(runtime_root_),
                 std::filesystem::absolute(staging_root))) {
             std::filesystem::remove_all(staging_root, filesystem_error);
+        }
+        if (!quarantined.empty() && IsWithin(
+                std::filesystem::absolute(runtime_root_),
+                std::filesystem::absolute(quarantined))) {
+            std::filesystem::remove_all(quarantined, filesystem_error);
         }
         if (checkpoint_ &&
             !checkpoint_(BackendPackInstallCheckpoint::AfterPackPublish)) {
@@ -453,6 +627,7 @@ const char* BackendPackInstallStageName(BackendPackInstallStage stage) {
         case BackendPackInstallStage::Validating: return "validating";
         case BackendPackInstallStage::Copying: return "copying";
         case BackendPackInstallStage::Verifying: return "verifying";
+        case BackendPackInstallStage::Deactivating: return "deactivating";
         case BackendPackInstallStage::PublishingPack:
             return "publishing_pack";
         case BackendPackInstallStage::Activating: return "activating";
