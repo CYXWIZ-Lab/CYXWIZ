@@ -121,19 +121,32 @@ BackendPackInstaller::BackendPackInstaller(
 BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, false);
+    return Apply(payload, disk_budget_bytes, false, true);
+}
+
+BackendPackInstallResult BackendPackInstaller::StageInstallOrUpdate(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes) {
+    return Apply(payload, disk_budget_bytes, false, false);
 }
 
 BackendPackInstallResult BackendPackInstaller::Repair(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, true);
+    return Apply(payload, disk_budget_bytes, true, true);
+}
+
+BackendPackInstallResult BackendPackInstaller::StageRepair(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes) {
+    return Apply(payload, disk_budget_bytes, true, false);
 }
 
 BackendPackInstallResult BackendPackInstaller::Apply(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes,
-    bool repair) {
+    bool repair,
+    bool activate) {
     std::unique_lock<std::mutex> install_lock(
         install_mutex_, std::try_to_lock);
     if (!install_lock.owns_lock()) {
@@ -537,6 +550,12 @@ BackendPackInstallResult BackendPackInstaller::Apply(
         return Finish(
             BackendPackInstallStatus::InstalledUnqualified,
             "Complete pack is installed but was not activated",
+            destination);
+    }
+    if (!activate) {
+        return Finish(
+            BackendPackInstallStatus::InstalledUnqualified,
+            "Complete pack is installed and awaiting route qualification",
             destination);
     }
     progress.stage = BackendPackInstallStage::Activating;

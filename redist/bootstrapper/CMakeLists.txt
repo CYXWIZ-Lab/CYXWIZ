@@ -22,6 +22,7 @@ add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_hash.cpp
     backend_pack_https_source.cpp
     backend_pack_installer.cpp
+    backend_pack_lifecycle_service.cpp
     backend_pack_metadata_verifier.cpp
     backend_pack_path.cpp
     backend_pack_remover.cpp
@@ -138,5 +139,21 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME backend_pack_maintenance_contract
         COMMAND test_backend_pack_maintenance
+    )
+
+    add_executable(test_backend_pack_lifecycle_service
+        test_backend_pack_lifecycle_service.cpp
+    )
+    target_link_libraries(test_backend_pack_lifecycle_service PRIVATE
+        cyxwiz-backend-pack-service
+        LibArchive::LibArchive
+        OpenSSL::Crypto
+    )
+    set_target_properties(test_backend_pack_lifecycle_service PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME backend_pack_lifecycle_service_contract
+        COMMAND test_backend_pack_lifecycle_service
     )
 endif()

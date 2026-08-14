@@ -84,7 +84,13 @@ public:
     BackendPackInstallResult InstallOrUpdate(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
+    BackendPackInstallResult StageInstallOrUpdate(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes);
     BackendPackInstallResult Repair(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes);
+    BackendPackInstallResult StageRepair(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
     void Cancel();
@@ -94,7 +100,8 @@ private:
     BackendPackInstallResult Apply(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes,
-        bool repair);
+        bool repair,
+        bool activate);
     BackendPackInstallResult Finish(
         BackendPackInstallStatus status,
         std::string message,

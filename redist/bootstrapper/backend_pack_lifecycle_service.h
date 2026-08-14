@@ -1,0 +1,160 @@
+#pragma once
+
+#include "backend_pack_acquisition.h"
+#include "backend_pack_archive_extractor.h"
+#include "backend_pack_installer.h"
+#include "backend_pack_metadata_verifier.h"
+#include "backend_pack_remover.h"
+
+#include <atomic>
+#include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <mutex>
+#include <optional>
+#include <string>
+
+namespace cyxwiz::runtime {
+
+enum class BackendPackQualificationDisposition {
+    Qualified,
+    InstalledUnqualified,
+    RollbackRequired
+};
+
+struct BackendPackQualificationDecision {
+    BackendPackQualificationDisposition disposition =
+        BackendPackQualificationDisposition::InstalledUnqualified;
+    std::string message;
+};
+
+using BackendPackQualificationHook = std::function<
+    BackendPackQualificationDecision(
+        const VerifiedBackendPackManifest&,
+        const std::filesystem::path&,
+        const ActiveRuntimeState&)>;
+
+struct BackendPackDeliveryRequest {
+    std::filesystem::path catalog_path;
+    std::filesystem::path manifest_path;
+    std::string current_utc;
+    std::string pack_id;
+    std::uint64_t acquisition_disk_budget_bytes = 0;
+    std::uint64_t extraction_disk_budget_bytes = 0;
+    std::uint64_t installation_disk_budget_bytes = 0;
+    bool repair = false;
+};
+
+enum class BackendPackLifecycleStage {
+    Idle,
+    VerifyingCatalog,
+    VerifyingManifest,
+    Acquiring,
+    Extracting,
+    Installing,
+    Qualifying,
+    Activating,
+    Removing,
+    RollingBack,
+    Complete,
+    Failed
+};
+
+enum class BackendPackLifecycleStatus {
+    InstalledAndActivated,
+    InstalledUnqualified,
+    Removed,
+    RolledBack,
+    Busy,
+    InvalidRequest,
+    PolicyRejected,
+    MetadataFailure,
+    AcquisitionFailure,
+    ExtractionFailure,
+    InstallationFailure,
+    QualificationFailure,
+    ActivationFailure,
+    MaintenanceFailure,
+    Interrupted
+};
+
+struct BackendPackLifecycleProgress {
+    BackendPackLifecycleStage stage = BackendPackLifecycleStage::Idle;
+    std::string pack_id;
+    std::string backend;
+    std::string message;
+};
+
+struct BackendPackLifecycleResult {
+    BackendPackLifecycleStatus status =
+        BackendPackLifecycleStatus::InvalidRequest;
+    std::string message;
+    std::string pack_id;
+    std::string backend;
+    std::filesystem::path installed_directory;
+    std::optional<BackendPackQualificationDecision> qualification;
+};
+
+using BackendPackLifecycleObserver =
+    std::function<void(const BackendPackLifecycleProgress&)>;
+
+class BackendPackLifecycleService {
+public:
+    BackendPackLifecycleService(
+        std::filesystem::path runtime_root,
+        BackendPackMetadataVerifier metadata_verifier,
+        BackendPackExecutionActiveCheck execution_active = {},
+        BackendPackQualificationHook qualification = {},
+        BackendPackLifecycleObserver observer = {});
+
+    bool ReadCatalog(
+        const std::filesystem::path& catalog_path,
+        const std::string& current_utc,
+        VerifiedBackendPackCatalog& output,
+        std::string& error) const;
+    BackendPackLifecycleResult Deliver(
+        const BackendPackDeliveryRequest& request,
+        BackendPackArtifactSource& source);
+    BackendPackLifecycleResult Remove(
+        std::string backend,
+        std::string pack_id);
+    BackendPackLifecycleResult Rollback();
+
+    void Cancel();
+    BackendPackLifecycleProgress GetProgress() const;
+
+private:
+    BackendPackLifecycleResult Finish(
+        BackendPackLifecycleStatus status,
+        std::string message,
+        std::string pack_id = {},
+        std::string backend = {},
+        std::filesystem::path installed_directory = {},
+        std::optional<BackendPackQualificationDecision> qualification =
+            std::nullopt);
+    void SetProgress(BackendPackLifecycleProgress progress);
+    void SetStage(BackendPackLifecycleStage stage, std::string message);
+
+    std::filesystem::path runtime_root_;
+    BackendPackMetadataVerifier metadata_verifier_;
+    BackendPackExecutionActiveCheck execution_active_;
+    BackendPackQualificationHook qualification_;
+    BackendPackLifecycleObserver observer_;
+    BackendPackArtifactAcquirer acquirer_;
+    BackendPackArchiveExtractor extractor_;
+    BackendPackInstaller installer_;
+    BackendPackRemover remover_;
+    std::atomic<bool> cancel_requested_{false};
+    std::mutex operation_mutex_;
+    mutable std::mutex progress_mutex_;
+    BackendPackLifecycleProgress progress_;
+};
+
+const char* BackendPackLifecycleStatusName(
+    BackendPackLifecycleStatus status);
+const char* BackendPackLifecycleStageName(
+    BackendPackLifecycleStage stage);
+const char* BackendPackQualificationDispositionName(
+    BackendPackQualificationDisposition disposition);
+
+}  // namespace cyxwiz::runtime

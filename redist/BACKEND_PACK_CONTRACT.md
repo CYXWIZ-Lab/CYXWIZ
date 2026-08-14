@@ -162,6 +162,16 @@ only affected route evidence. Ticket 91 remains the sole owner of isolated
 verification, route diagnostics, training authorization, and selected-route
 configuration.
 
+The non-GUI lifecycle service is the composition boundary for catalog read,
+exact user-selected pack delivery, extraction, staging, qualification policy,
+activation, rollback, repair, and removal. It exposes the verified catalog to
+hardware-aware recommendation consumers but never silently selects a pack.
+Before qualification it constructs the exact prospective runtime identity and
+passes that identity to the shared qualification adapter. It activates only a
+`supported` pack with a qualified result, and only if the active runtime state
+is unchanged when qualification completes. Diagnostic, missing-adapter,
+failed, cancelled, and stale-evidence results leave a complete pack inactive.
+
 ## Repair and Removal
 
 Versioned pack directories are immutable while active. Repair first verifies
