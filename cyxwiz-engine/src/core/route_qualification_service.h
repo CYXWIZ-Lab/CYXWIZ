@@ -86,6 +86,7 @@ struct RouteQualificationOptions {
     std::filesystem::path cache_path;
     std::string matrix_id;
     std::string pack_id;
+    std::string runtime_version;
     std::optional<RuntimeQualificationIdentity> runtime_identity;
     std::chrono::milliseconds operation_timeout{20000};
     size_t output_limit_bytes = 64 * 1024;

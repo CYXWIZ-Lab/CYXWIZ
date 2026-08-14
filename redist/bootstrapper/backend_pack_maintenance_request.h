@@ -4,12 +4,14 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 namespace cyxwiz::runtime {
 
 enum class BackendPackMaintenanceAction {
     Remove,
+    Repair,
     Rollback
 };
 
@@ -36,6 +38,10 @@ struct BackendPackMaintenanceApplyResult {
     std::string message;
 };
 
+using BackendPackRepairHandler = std::function<bool(
+    const BackendPackMaintenanceRequest& request,
+    std::string& message)>;
+
 std::filesystem::path BackendPackMaintenanceRequestPath(
     const std::filesystem::path& runtime_root);
 
@@ -56,7 +62,8 @@ bool HasValidBackendPackRollback(
 
 BackendPackMaintenanceApplyResult ApplyPendingBackendPackMaintenance(
     const std::filesystem::path& runtime_root,
-    const ActiveRuntimeState& launched_runtime);
+    const ActiveRuntimeState& launched_runtime,
+    const BackendPackRepairHandler& repair = {});
 
 const char* BackendPackMaintenanceActionName(
     BackendPackMaintenanceAction action);

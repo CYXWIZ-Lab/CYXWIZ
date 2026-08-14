@@ -234,6 +234,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/layer.h
     include/cyxwiz/model.h
     include/cyxwiz/cyxwiz.h
+    include/cyxwiz/version.h
     include/cyxwiz/cyxwiz_c.h
     include/cyxwiz/layers/attention.h
     include/cyxwiz/layers/convolution.h

@@ -101,10 +101,61 @@ cyxwiz::runtime::BackendPackMaintenanceRequest RemoveRequest(
     return request;
 }
 
+cyxwiz::runtime::BackendPackMaintenanceRequest RepairRequest() {
+    auto request = RemoveRequest();
+    request.action =
+        cyxwiz::runtime::BackendPackMaintenanceAction::Repair;
+    return request;
+}
+
 }  // namespace
 
 int main() {
     int failures = 0;
+    {
+        Fixture fixture;
+        std::string error;
+        const bool queued =
+            cyxwiz::runtime::QueueBackendPackMaintenanceRequest(
+                fixture.root, RepairRequest(), error);
+        bool called = false;
+        const auto applied =
+            cyxwiz::runtime::ApplyPendingBackendPackMaintenance(
+                fixture.root, Fixture::ActiveWithOpenCl(1),
+                [&](const auto& request, std::string& message) {
+                    called = request.action == cyxwiz::runtime::
+                            BackendPackMaintenanceAction::Repair &&
+                        request.backend == "opencl" &&
+                        request.pack_id == "opencl-v1";
+                    message = "signed repair helper completed";
+                    return called;
+                });
+        failures += !Expect(
+            queued && called && applied.status == cyxwiz::runtime::
+                BackendPackMaintenanceApplyStatus::Applied &&
+                fixture.Active().generation == 1 &&
+                !std::filesystem::exists(
+                    cyxwiz::runtime::BackendPackMaintenanceRequestPath(
+                        fixture.root)),
+            "queued repair must dispatch the exact pack only after exit");
+    }
+    {
+        Fixture fixture;
+        std::string error;
+        const bool queued =
+            cyxwiz::runtime::QueueBackendPackMaintenanceRequest(
+                fixture.root, RepairRequest(), error);
+        const auto failed =
+            cyxwiz::runtime::ApplyPendingBackendPackMaintenance(
+                fixture.root, Fixture::ActiveWithOpenCl(1));
+        failures += !Expect(
+            queued && failed.status == cyxwiz::runtime::
+                BackendPackMaintenanceApplyStatus::Failed &&
+                std::filesystem::exists(
+                    cyxwiz::runtime::BackendPackMaintenanceRequestPath(
+                        fixture.root)),
+            "repair must remain queued when no exit-safe helper is connected");
+    }
     {
         Fixture fixture;
         std::string error;

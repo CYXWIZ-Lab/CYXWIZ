@@ -14,6 +14,7 @@ bootstrapper:
 
 ```text
 cyxwiz-runtime-bootstrapper.exe
+cyxwiz-backend-pack-installer.exe
 runtime/
   trust/
     trusted-keys.json
@@ -37,6 +38,9 @@ runtime/
 The bootstrapper is installed beside `runtime/`, not inside a versioned base.
 It resolves the selected Engine from `active-runtime.json`; a base archive does
 not contain an independently launchable PATH-mutating script.
+The installer helper is installed beside the bootstrapper. It is a separate
+process that does not link the backend or ArrayFire runtime, so it can replace
+an inactive pack without keeping any pack DLL loaded.
 
 The CPU backend is part of the required base and cannot be represented as an
 optional pack. A process resolves exactly one base and at most one pack per
@@ -197,6 +201,15 @@ and stages the complete signed payload, deactivates the affected route,
 rewrites any rollback reference to a complete retained runtime, quarantines
 the corrupt directory, publishes the repaired directory, and only then may
 reactivate it. It never overwrites an active directory in place.
+
+The Engine queues Repair against the exact active backend and pack identity.
+After that Engine process exits, the minimal bootstrapper validates the queued
+identity and launches `cyxwiz-backend-pack-installer.exe`. The helper reuses
+the signed catalog, manifest, extraction, lifecycle, and qualification
+contracts. Qualification runs in the isolated route-probe child process; the
+helper activates the repaired pack only when that exact candidate passes.
+Failure leaves the complete pack inactive and retains the queued request for a
+later retry.
 
 Removal accepts optional backend packs only. It holds the shared runtime
 mutation lease, deactivates an exact active pack, removes any rollback

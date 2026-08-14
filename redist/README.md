@@ -77,6 +77,14 @@ Bootstrap failures are printed to stderr and appended to the package-local
 contains the legacy PATH-mutating batch launcher; activation and the app-level
 bootstrapper are required.
 
+Repair is intentionally split from the minimal launcher. After the Engine
+queues an exact pack Repair and exits, the bootstrapper dispatches the sibling
+`cyxwiz-backend-pack-installer.exe`. That helper verifies the signed catalog
+and pack, stages an immutable replacement, and qualifies it through the
+isolated route probe before activation. It does not link the backend or
+ArrayFire DLLs, and a failed qualification leaves the pack inactive and the
+request available for retry.
+
 This keeps validation, backend closure rules, manifests, hashes, and README
 rendering consistent across platforms.
 

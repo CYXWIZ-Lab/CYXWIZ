@@ -112,6 +112,14 @@ BackendPackActionDecision EvaluateBackendPackAction(
                 return Disabled(
                     "Repair must be applied safely after the Engine exits");
             }
+            if (context.maintenance_pending) {
+                return Disabled(
+                    "A backend maintenance action is already queued");
+            }
+            if (!context.maintenance_identity_matches) {
+                return Disabled(
+                    "Restart into the next-launch runtime before repair");
+            }
             return record->installed &&
                     record->installed_pack_id == record->pack_id
                 ? BackendPackActionDecision{true, {}}

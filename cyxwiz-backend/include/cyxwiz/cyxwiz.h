@@ -3,9 +3,7 @@
 // Main header file for CyxWiz Backend
 // Include this to get access to all backend functionality
 
-#define CYXWIZ_VERSION_MAJOR 0
-#define CYXWIZ_VERSION_MINOR 2
-#define CYXWIZ_VERSION_PATCH 0
+#include "version.h"
 
 // API export macros
 #include "api_export.h"

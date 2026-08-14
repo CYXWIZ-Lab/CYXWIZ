@@ -138,6 +138,7 @@ runtime::BackendPackQualificationDecision QualifyCandidate(
     qualification_options.matrix_id =
         manifest.compatibility.operation_matrix_id;
     qualification_options.pack_id = manifest.pack_id;
+    qualification_options.runtime_version = manifest.arrayfire_version;
     qualification_options.operation_timeout = options.operation_timeout;
     qualification_options.output_limit_bytes = options.output_limit_bytes;
     qualification_options.probe_runtime_root = resolved.runtime_root;

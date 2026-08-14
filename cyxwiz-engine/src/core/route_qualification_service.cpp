@@ -192,7 +192,9 @@ RouteFailureDiagnostic FailureFor(
     return failure;
 }
 
-RouteQualificationRecord RecordFor(const DeviceInfo& route) {
+RouteQualificationRecord RecordFor(
+    const DeviceInfo& route,
+    const std::string& runtime_version) {
     RouteQualificationRecord record;
     record.type = route.type;
     record.device_id = route.device_id;
@@ -203,7 +205,8 @@ RouteQualificationRecord RecordFor(const DeviceInfo& route) {
     record.driver_version = route.driver_version_known
         ? route.driver_version
         : std::string{};
-    record.runtime_version = CurrentRuntimeVersion();
+    record.runtime_version = runtime_version.empty()
+        ? CurrentRuntimeVersion() : runtime_version;
     record.display_name = route.name_known && !route.name_is_fallback
         ? route.name
         : std::string{};
@@ -1118,7 +1121,8 @@ RouteQualificationRunResult RouteQualificationService::Verify(
     const auto operations = RequiredRouteQualificationOperations();
     for (size_t route_index = 0; route_index < routes.size(); ++route_index) {
         const auto& route = routes[route_index];
-        RouteQualificationRecord record = RecordFor(route);
+        RouteQualificationRecord record = RecordFor(
+            route, options.runtime_version);
         if (options.runtime_identity.has_value()) {
             record.pack_id = RuntimePackIdForRoute(
                 *options.runtime_identity, route.type);

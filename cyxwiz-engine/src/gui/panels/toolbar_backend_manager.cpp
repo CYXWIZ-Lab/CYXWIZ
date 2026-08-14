@@ -76,6 +76,12 @@ std::filesystem::path ActiveRuntimeRoot() {
                            : std::filesystem::path{};
 }
 
+std::filesystem::path BackendPackInstallerPath() {
+    std::filesystem::path path = core::WindowManager::GetExecutablePath();
+    path.replace_filename("cyxwiz-backend-pack-installer.exe");
+    return path;
+}
+
 std::string CurrentUtc() {
     const auto now = std::chrono::system_clock::to_time_t(
         std::chrono::system_clock::now());
@@ -286,7 +292,9 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     context.catalog_available = backend_pack_catalog_available_;
     context.delivery_available =
         backend_pack_lifecycle_service_ != nullptr;
-    context.repair_available = false;
+    context.repair_available =
+        next_runtime_available &&
+        std::filesystem::is_regular_file(BackendPackInstallerPath());
     context.maintenance_available = next_runtime_available;
     context.maintenance_identity_matches = current_matches_next;
     context.maintenance_pending = pending_file_present;
@@ -481,9 +489,14 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
                 show_backend_pack_delivery_confirm_ = true;
             }
             ImGui::SameLine();
-            RenderActionButton(
-                "Repair", EvaluateBackendPackAction(
-                    BackendPackAction::Repair, context, &record));
+            const auto repair = EvaluateBackendPackAction(
+                BackendPackAction::Repair, context, &record);
+            if (RenderActionButton("Repair", repair)) {
+                backend_pack_maintenance_action_ = 2;
+                backend_pack_maintenance_backend_ = record.backend;
+                backend_pack_maintenance_pack_id_ = record.pack_id;
+                show_backend_pack_maintenance_confirm_ = true;
+            }
             ImGui::SameLine();
             const auto update = EvaluateBackendPackAction(
                 BackendPackAction::Update, context, &record);
@@ -666,17 +679,23 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             "Confirm Backend Maintenance", nullptr,
             ImGuiWindowFlags_AlwaysAutoResize)) {
         const bool removing = backend_pack_maintenance_action_ == 0;
+        const bool repairing = backend_pack_maintenance_action_ == 2;
         ImGui::TextColored(
             ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
             "%s %s", ICON_FA_TRIANGLE_EXCLAMATION,
             removing ? "Remove backend pack after exit?"
-                     : "Restore the previous runtime after exit?");
+                : repairing ? "Repair backend pack after exit?"
+                            : "Restore the previous runtime after exit?");
         ImGui::Separator();
-        if (removing) {
+        if (removing || repairing) {
             ImGui::BulletText(
                 "Pack: %s / %s",
                 backend_pack_maintenance_backend_.c_str(),
                 backend_pack_maintenance_pack_id_.c_str());
+            if (repairing) {
+                ImGui::TextWrapped(
+                    "The signed helper will replace the complete immutable pack, verify its candidate routes, and reactivate it only if local qualification passes.");
+            }
         } else {
             ImGui::BulletText("Action: Roll back the complete runtime set");
         }
@@ -691,7 +710,9 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             runtime::BackendPackMaintenanceRequest request;
             request.action = removing
                 ? runtime::BackendPackMaintenanceAction::Remove
-                : runtime::BackendPackMaintenanceAction::Rollback;
+                : repairing
+                    ? runtime::BackendPackMaintenanceAction::Repair
+                    : runtime::BackendPackMaintenanceAction::Rollback;
             request.runtime_set_id = next_runtime.runtime_set_id;
             request.runtime_generation = next_runtime.generation;
             request.backend = backend_pack_maintenance_backend_;

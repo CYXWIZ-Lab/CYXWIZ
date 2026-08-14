@@ -111,6 +111,52 @@ bool SetRuntimeIdentityEnvironment(
     return true;
 }
 
+bool RunBackendPackRepair(
+    const std::filesystem::path& executable_directory,
+    const std::filesystem::path& runtime_root,
+    const cyxwiz::runtime::BackendPackMaintenanceRequest& request,
+    std::string& message) {
+    const auto helper =
+        executable_directory / "cyxwiz-backend-pack-installer.exe";
+    if (!std::filesystem::is_regular_file(helper)) {
+        message = "Backend-pack repair helper is missing";
+        return false;
+    }
+    std::wstring command = QuoteArgument(helper.native()) +
+        L" --runtime-root " + QuoteArgument(runtime_root.native()) +
+        L" --pack-id " + QuoteArgument(WidenIdentifier(request.pack_id)) +
+        L" --repair";
+    std::vector<wchar_t> mutable_command(command.begin(), command.end());
+    mutable_command.push_back(L'\0');
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!::CreateProcessW(
+            helper.c_str(), mutable_command.data(), nullptr, nullptr,
+            FALSE, 0, nullptr, executable_directory.c_str(),
+            &startup, &process)) {
+        message = "Cannot launch backend-pack repair helper; Win32 error " +
+            std::to_string(::GetLastError());
+        return false;
+    }
+    ::CloseHandle(process.hThread);
+    const DWORD wait = ::WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD exit_code = 1;
+    if (wait == WAIT_OBJECT_0) {
+        ::GetExitCodeProcess(process.hProcess, &exit_code);
+    }
+    ::CloseHandle(process.hProcess);
+    if (wait != WAIT_OBJECT_0) {
+        message = "Waiting for backend-pack repair helper failed";
+        return false;
+    }
+    message = exit_code == 0
+        ? "Backend pack repaired, locally qualified, and reactivated"
+        : "Backend-pack repair helper failed with exit code " +
+              std::to_string(exit_code);
+    return exit_code == 0;
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -206,7 +252,12 @@ int wmain(int argc, wchar_t** argv) {
     if (wait_result == WAIT_OBJECT_0) {
         const auto maintenance =
             cyxwiz::runtime::ApplyPendingBackendPackMaintenance(
-                runtime.runtime_root, launched_runtime);
+                runtime.runtime_root, launched_runtime,
+                [&](const auto& request, std::string& message) {
+                    return RunBackendPackRepair(
+                        executable_directory, runtime.runtime_root,
+                        request, message);
+                });
         if (maintenance.status != cyxwiz::runtime::
                 BackendPackMaintenanceApplyStatus::NoRequest) {
             cyxwiz::runtime::AppendBootstrapDiagnostic(

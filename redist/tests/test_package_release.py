@@ -43,6 +43,8 @@ class PackageReleaseTests(unittest.TestCase):
         for name in (
             "cyxwiz-engine.exe",
             "cyxwiz-route-probe.exe",
+            "cyxwiz-runtime-bootstrapper.exe",
+            "cyxwiz-backend-pack-installer.exe",
             "cyxwiz-backend.dll",
             "fmt.dll",
             "python312.dll",
@@ -58,7 +60,7 @@ class PackageReleaseTests(unittest.TestCase):
 
         include = self.root / "cyxwiz-backend" / "include" / "cyxwiz"
         include.mkdir(parents=True)
-        (include / "cyxwiz.h").write_text(
+        (include / "version.h").write_text(
             "#define CYXWIZ_VERSION_MAJOR 1\n"
             "#define CYXWIZ_VERSION_MINOR 2\n"
             "#define CYXWIZ_VERSION_PATCH 3\n",

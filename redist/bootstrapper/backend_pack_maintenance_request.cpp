@@ -56,10 +56,12 @@ bool ValidateRequest(
         error = "Maintenance request runtime identity is invalid";
         return false;
     }
-    if (request.action == BackendPackMaintenanceAction::Remove) {
+    if (request.action == BackendPackMaintenanceAction::Remove ||
+        request.action == BackendPackMaintenanceAction::Repair) {
         if (!IsOptionalBackend(request.backend) ||
             !IsIdentifier(request.pack_id)) {
-            error = "Removal request needs an optional backend and pack identity";
+            error =
+                "Pack maintenance needs an optional backend and pack identity";
             return false;
         }
     } else if (!request.backend.empty() || !request.pack_id.empty()) {
@@ -140,6 +142,8 @@ bool ParseDocument(
     const auto action = document["action"].get<std::string>();
     if (action == "remove") {
         output.action = BackendPackMaintenanceAction::Remove;
+    } else if (action == "repair") {
+        output.action = BackendPackMaintenanceAction::Repair;
     } else if (action == "rollback") {
         output.action = BackendPackMaintenanceAction::Rollback;
     } else {
@@ -214,7 +218,7 @@ bool QueueBackendPackMaintenanceRequest(
         }
         return false;
     }
-    if (request.action == BackendPackMaintenanceAction::Remove &&
+    if (request.action != BackendPackMaintenanceAction::Rollback &&
         !HasPack(active, request.backend, request.pack_id)) {
         error = "The exact backend pack is not active in the requested runtime";
         return false;
@@ -263,7 +267,8 @@ bool QueueBackendPackMaintenanceRequest(
 
 BackendPackMaintenanceApplyResult ApplyPendingBackendPackMaintenance(
     const std::filesystem::path& runtime_root,
-    const ActiveRuntimeState& launched_runtime) {
+    const ActiveRuntimeState& launched_runtime,
+    const BackendPackRepairHandler& repair) {
     const auto request_path = BackendPackMaintenanceRequestPath(runtime_root);
     std::error_code filesystem_error;
     if (!std::filesystem::exists(request_path, filesystem_error)) {
@@ -298,11 +303,15 @@ BackendPackMaintenanceApplyResult ApplyPendingBackendPackMaintenance(
         applied = result.status == BackendPackRemovalStatus::Removed ||
                   result.status == BackendPackRemovalStatus::AlreadyAbsent;
         message = result.message;
-    } else {
+    } else if (request.action == BackendPackMaintenanceAction::Rollback) {
         BackendPackStateService state_service(runtime_root);
         const auto result = state_service.Rollback();
         applied = result.status == BackendPackStateStatus::Completed;
         message = result.message;
+    } else if (!repair) {
+        message = "Backend-pack repair helper is not connected";
+    } else {
+        applied = repair(request, message);
     }
     if (!applied) {
         return {BackendPackMaintenanceApplyStatus::Failed, std::move(message)};
@@ -317,9 +326,12 @@ BackendPackMaintenanceApplyResult ApplyPendingBackendPackMaintenance(
 
 const char* BackendPackMaintenanceActionName(
     BackendPackMaintenanceAction action) {
-    return action == BackendPackMaintenanceAction::Remove
-        ? "remove"
-        : "rollback";
+    switch (action) {
+        case BackendPackMaintenanceAction::Remove: return "remove";
+        case BackendPackMaintenanceAction::Repair: return "repair";
+        case BackendPackMaintenanceAction::Rollback: return "rollback";
+    }
+    return "unknown";
 }
 
 const char* BackendPackMaintenanceApplyStatusName(

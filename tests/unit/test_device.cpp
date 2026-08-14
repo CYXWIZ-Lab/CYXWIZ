@@ -1381,6 +1381,7 @@ TEST_CASE("Backend pack lifecycle qualification uses exact staged routes",
     manifest.backend = "opencl";
     manifest.runtime_set_id = "runtime-v1";
     manifest.companion_base_id = "base-v1";
+    manifest.arrayfire_version = "3.10.signed-pack";
     manifest.compatibility.operation_matrix_id =
         cyxwiz::kRouteQualificationMatrixId;
     cyxwiz::runtime::ActiveRuntimeState candidate;
@@ -1394,6 +1395,11 @@ TEST_CASE("Backend pack lifecycle qualification uses exact staged routes",
     REQUIRE(discovery_called);
     CHECK(qualified.disposition ==
           cyxwiz::runtime::BackendPackQualificationDisposition::Qualified);
+    const auto published = cyxwiz::GetRouteQualificationSnapshot();
+    REQUIRE(published.has_value());
+    REQUIRE(published->routes.size() == 1);
+    CHECK(published->routes.front().runtime_version ==
+          manifest.arrayfire_version);
     REQUIRE_FALSE(qualification_invocations.empty());
     for (const auto& invocation : qualification_invocations) {
         REQUIRE(invocation.runtime_identity.has_value());

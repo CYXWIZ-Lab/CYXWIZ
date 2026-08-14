@@ -151,7 +151,7 @@ def parse_backends(value: str) -> tuple[str, ...]:
 
 
 def infer_cyxwiz_version(root: Path) -> str:
-    header = root / "cyxwiz-backend" / "include" / "cyxwiz" / "cyxwiz.h"
+    header = root / "cyxwiz-backend" / "include" / "cyxwiz" / "version.h"
     text = header.read_text(encoding="utf-8")
     values = {}
     for part in ("MAJOR", "MINOR", "PATCH"):
@@ -374,11 +374,25 @@ def copy_build_payload(
         paths.build / f"cyxwiz-route-probe{exe_suffix}",
         "isolated compute-route qualification probe",
     )
+    windows_helpers = []
+    if system == "windows":
+        windows_helpers = [
+            require_file(
+                paths.build / "cyxwiz-runtime-bootstrapper.exe",
+                "package-local runtime bootstrapper",
+            ),
+            require_file(
+                paths.build / "cyxwiz-backend-pack-installer.exe",
+                "signed backend-pack installer",
+            ),
+        ]
     backend_runtime(paths, lib_suffix)
     require_directory(paths.resources, "Engine resources")
 
     copy_file(engine, stage / engine.name)
     copy_file(route_probe, stage / route_probe.name)
+    for helper in windows_helpers:
+        copy_file(helper, stage / helper.name)
     for library in dynamic_library_matches(paths.build, lib_suffix):
         if re.fullmatch(r"python\d+\.dll", library.name, re.IGNORECASE):
             continue

@@ -94,6 +94,11 @@ void TestActionPolicy() {
     Check(cyxwiz::EvaluateBackendPackAction(
               cyxwiz::BackendPackAction::Repair, context, &installed).enabled,
           "An exit-safe delivery host may repair the exact installed pack");
+    context.maintenance_pending = true;
+    Check(!cyxwiz::EvaluateBackendPackAction(
+               cyxwiz::BackendPackAction::Repair, context, &installed).enabled,
+          "A queued maintenance action must block repair");
+    context.maintenance_pending = false;
     context.repair_available = false;
 
     context.training_active = true;
