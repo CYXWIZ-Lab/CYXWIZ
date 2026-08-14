@@ -14,6 +14,7 @@ SIGNATURE_ALGORITHM = "ed25519"
 BACKENDS = ("cpu", "cuda", "opencl", "oneapi")
 PACK_KINDS = ("base", "backend_pack")
 SUPPORT_STATES = ("supported", "diagnostic", "blocked", "revoked")
+TRUST_ROLES = ("catalog", "pack")
 IDENTITY_CONFIDENCE = (
     "unknown",
     "backend_local",
@@ -346,6 +347,44 @@ def validate_catalog(document: Any) -> None:
         _identifier(entry["signing_key_id"], f"{field}.signing_key_id")
         if entry["support_status"] not in SUPPORT_STATES:
             raise ContractError(f"unsupported catalog support status for {pack_id}")
+
+
+def validate_trust_root(document: Any) -> None:
+    """Validate the app-bundled public-key file consumed by native runtime code."""
+    root = _object(document, "document")
+    _exact_keys(root, "document", {"schema_version", "keys"})
+    if root["schema_version"] != SCHEMA_VERSION:
+        raise ContractError(f"schema_version must be {SCHEMA_VERSION}")
+    keys = _list(root["keys"], "keys")
+    if not keys:
+        raise ContractError("keys must not be empty")
+    seen: set[str] = set()
+    for index, raw in enumerate(keys):
+        field = f"keys[{index}]"
+        key = _object(raw, field)
+        _exact_keys(
+            key,
+            field,
+            {"key_id", "algorithm", "public_key", "roles", "revoked"},
+        )
+        key_id = _identifier(key["key_id"], f"{field}.key_id")
+        if key_id in seen:
+            raise ContractError(f"duplicate trust key_id: {key_id}")
+        seen.add(key_id)
+        if key["algorithm"] != SIGNATURE_ALGORITHM:
+            raise ContractError(f"{field}.algorithm must be {SIGNATURE_ALGORITHM}")
+        encoded = _string(key["public_key"], f"{field}.public_key")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{43}", encoded):
+            raise ContractError(
+                f"{field}.public_key must be an unpadded base64url Ed25519 key"
+            )
+        roles = _list(key["roles"], f"{field}.roles")
+        if not roles or any(role not in TRUST_ROLES for role in roles):
+            raise ContractError(f"{field}.roles contains an unsupported role")
+        if len(roles) != len(set(roles)):
+            raise ContractError(f"{field}.roles must be unique")
+        if not isinstance(key["revoked"], bool):
+            raise ContractError(f"{field}.revoked must be boolean")
 
 
 def validate_active_runtime(document: Any) -> None:

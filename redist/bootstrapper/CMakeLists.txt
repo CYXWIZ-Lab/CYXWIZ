@@ -16,6 +16,7 @@ target_link_libraries(cyxwiz-runtime-bootstrap PUBLIC
 
 add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_installer.cpp
+    backend_pack_metadata_verifier.cpp
 )
 target_include_directories(cyxwiz-backend-pack-service PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -83,5 +84,19 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME backend_pack_installer_contract
         COMMAND test_backend_pack_installer
+    )
+
+    add_executable(test_backend_pack_metadata_verifier
+        test_backend_pack_metadata_verifier.cpp
+    )
+    target_link_libraries(test_backend_pack_metadata_verifier PRIVATE
+        cyxwiz-backend-pack-service
+    )
+    set_target_properties(test_backend_pack_metadata_verifier PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME backend_pack_metadata_verifier_contract
+        COMMAND test_backend_pack_metadata_verifier
     )
 endif()

@@ -44,6 +44,14 @@ after all staged files, notices, manifests, and compatibility gates pass.
 No normal workflow modifies the machine-wide `PATH`, `LD_LIBRARY_PATH`, or
 equivalent. Hardware drivers and vendor providers remain host prerequisites.
 
+`trusted-keys.json` is an app-bundled schema-1 document with exactly
+`schema_version` and `keys`. Each key entry contains exactly `key_id`,
+`algorithm=ed25519`, the 32-byte raw public key as 43-character unpadded
+base64url, one or both unique roles (`catalog`, `pack`), and a boolean
+`revoked`. Key IDs are unique, private keys are never present, and unknown
+fields or roles fail closed. Application updates may revoke a bundled key;
+catalog policy independently blocks or revokes individual packs.
+
 ## Signed Envelope
 
 Pack manifests and catalogs use the same envelope:
@@ -147,9 +155,11 @@ configuration.
 - A catalog may reference only an already trusted signing key.
 - Key rotation overlaps old and new public keys for one release window; the
   new key is trusted before it becomes the sole signer.
-- Revocation is distributed in a catalog signed by a still-trusted root key.
-- Offline media includes the signed catalog needed to evaluate revocation and
-  expiry at publication time.
+- Pack revocation is distributed in a catalog signed by a still-trusted
+  catalog key. Signing-key revocation is delivered only through a trusted
+  application update that replaces the app-bundled trust root.
+- Offline media includes the current app-bundled trust root and signed catalog
+  needed to evaluate key/pack revocation and expiry at publication time.
 - Downgrades require explicit policy and cannot select a revoked pack, key,
   runtime set, or unsupported CyxWiz release.
 - Clock or expiry uncertainty fails closed for connected updates and requires

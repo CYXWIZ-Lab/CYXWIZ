@@ -121,6 +121,21 @@ def catalog() -> dict:
     }
 
 
+def trust_root() -> dict:
+    return {
+        "schema_version": 1,
+        "keys": [
+            {
+                "key_id": "release-2026",
+                "algorithm": "ed25519",
+                "public_key": "A" * 43,
+                "roles": ["catalog", "pack"],
+                "revoked": False,
+            }
+        ],
+    }
+
+
 class BackendPackContractTests(unittest.TestCase):
     def test_optional_pack_manifest_passes(self) -> None:
         contract.validate_pack_manifest(pack_manifest())
@@ -193,6 +208,21 @@ class BackendPackContractTests(unittest.TestCase):
         document["signed"]["expires_utc"] = "2026-08-12T20:00:00Z"
         with self.assertRaisesRegex(contract.ContractError, "later than"):
             contract.validate_catalog(document)
+
+    def test_trust_root_passes(self) -> None:
+        contract.validate_trust_root(trust_root())
+
+    def test_trust_root_rejects_duplicate_roles(self) -> None:
+        document = trust_root()
+        document["keys"][0]["roles"] = ["pack", "pack"]
+        with self.assertRaisesRegex(contract.ContractError, "must be unique"):
+            contract.validate_trust_root(document)
+
+    def test_trust_root_rejects_unknown_fields(self) -> None:
+        document = trust_root()
+        document["keys"][0]["private_key"] = "forbidden"
+        with self.assertRaisesRegex(contract.ContractError, "unsupported fields"):
+            contract.validate_trust_root(document)
 
     def test_active_runtime_rejects_duplicate_backend(self) -> None:
         document = {
