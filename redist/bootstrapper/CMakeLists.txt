@@ -2,6 +2,8 @@ if(NOT WIN32)
     return()
 endif()
 
+find_package(LibArchive REQUIRED)
+
 add_library(cyxwiz-runtime-bootstrap STATIC
     backend_pack_state_service.cpp
     runtime_layout.cpp
@@ -15,15 +17,22 @@ target_link_libraries(cyxwiz-runtime-bootstrap PUBLIC
 )
 
 add_library(cyxwiz-backend-pack-service STATIC
+    backend_pack_acquisition.cpp
+    backend_pack_archive_extractor.cpp
+    backend_pack_hash.cpp
+    backend_pack_https_source.cpp
     backend_pack_installer.cpp
     backend_pack_metadata_verifier.cpp
+    backend_pack_path.cpp
 )
 target_include_directories(cyxwiz-backend-pack-service PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
-target_link_libraries(cyxwiz-backend-pack-service PUBLIC
+target_link_libraries(cyxwiz-backend-pack-service PRIVATE
     cyxwiz-runtime-bootstrap
+    LibArchive::LibArchive
     OpenSSL::Crypto
+    winhttp
 )
 
 add_executable(cyxwiz-runtime-bootstrapper main.cpp)
@@ -91,6 +100,7 @@ if(CYXWIZ_BUILD_TESTS)
     )
     target_link_libraries(test_backend_pack_metadata_verifier PRIVATE
         cyxwiz-backend-pack-service
+        OpenSSL::Crypto
     )
     set_target_properties(test_backend_pack_metadata_verifier PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -98,5 +108,20 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME backend_pack_metadata_verifier_contract
         COMMAND test_backend_pack_metadata_verifier
+    )
+
+    add_executable(test_backend_pack_delivery
+        test_backend_pack_delivery.cpp
+    )
+    target_link_libraries(test_backend_pack_delivery PRIVATE
+        cyxwiz-backend-pack-service
+        LibArchive::LibArchive
+    )
+    set_target_properties(test_backend_pack_delivery PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME backend_pack_delivery_contract
+        COMMAND test_backend_pack_delivery
     )
 endif()

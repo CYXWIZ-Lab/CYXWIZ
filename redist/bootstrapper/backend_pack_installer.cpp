@@ -1,19 +1,14 @@
 #include "backend_pack_installer.h"
+#include "backend_pack_hash.h"
+#include "backend_pack_path.h"
 #include "runtime_mutation_gate.h"
 
-#include <openssl/evp.h>
-
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <chrono>
-#include <fstream>
-#include <iomanip>
 #include <limits>
 #include <memory>
 #include <set>
-#include <sstream>
-#include <string_view>
 #include <utility>
 
 namespace cyxwiz::runtime {
@@ -35,114 +30,12 @@ bool IsOptionalBackend(const std::string& backend) {
            backend == "oneapi";
 }
 
-std::string FoldAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char character) {
-                       return static_cast<char>(std::tolower(character));
-                   });
-    return value;
-}
-
-bool IsSha256(const std::string& value) {
-    return value.size() == 64 &&
-           std::all_of(value.begin(), value.end(), [](unsigned char character) {
-               return std::isdigit(character) ||
-                      (character >= 'a' && character <= 'f');
-           });
-}
-
-bool IsCanonicalRelativePath(const std::string& value) {
-    if (value.empty() || value.front() == '/' || value.back() == '/' ||
-        value.find('\\') != std::string::npos ||
-        value.find(':') != std::string::npos) {
-        return false;
-    }
-    std::size_t begin = 0;
-    while (begin < value.size()) {
-        const std::size_t end = value.find('/', begin);
-        const std::string_view part(
-            value.data() + begin,
-            (end == std::string::npos ? value.size() : end) - begin);
-        if (part.empty() || part == "." || part == "..") return false;
-        begin = end == std::string::npos ? value.size() : end + 1;
-    }
-    return true;
-}
-
-std::filesystem::path NativeRelativePath(const std::string& value) {
-    std::filesystem::path output;
-    std::size_t begin = 0;
-    while (begin < value.size()) {
-        const std::size_t end = value.find('/', begin);
-        output /= value.substr(
-            begin,
-            (end == std::string::npos ? value.size() : end) - begin);
-        begin = end == std::string::npos ? value.size() : end + 1;
-    }
-    return output;
-}
-
 bool IsWithin(
     const std::filesystem::path& root,
     const std::filesystem::path& child) {
     const auto relative = child.lexically_relative(root);
     return !relative.empty() && !relative.is_absolute() &&
            *relative.begin() != "..";
-}
-
-bool HashFile(
-    const std::filesystem::path& path,
-    std::string& digest,
-    std::string& error) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) {
-        error = "Cannot open component for hashing: " + path.string();
-        return false;
-    }
-    EVP_MD_CTX* raw_context = EVP_MD_CTX_new();
-    if (!raw_context) {
-        error = "Cannot allocate SHA-256 context";
-        return false;
-    }
-    const auto free_context = [](EVP_MD_CTX* context) {
-        EVP_MD_CTX_free(context);
-    };
-    std::unique_ptr<EVP_MD_CTX, decltype(free_context)> context(
-        raw_context, free_context);
-    if (EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) {
-        error = "Cannot initialize SHA-256";
-        return false;
-    }
-    std::array<char, 64 * 1024> buffer{};
-    while (stream) {
-        stream.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const auto count = stream.gcount();
-        if (count > 0 &&
-            EVP_DigestUpdate(
-                context.get(), buffer.data(), static_cast<std::size_t>(count)) !=
-                1) {
-            error = "Cannot update SHA-256";
-            return false;
-        }
-    }
-    if (!stream.eof()) {
-        error = "Cannot read component while hashing: " + path.string();
-        return false;
-    }
-    std::array<unsigned char, EVP_MAX_MD_SIZE> bytes{};
-    unsigned int size = 0;
-    if (EVP_DigestFinal_ex(context.get(), bytes.data(), &size) != 1 ||
-        size != 32) {
-        error = "Cannot finalize SHA-256";
-        return false;
-    }
-    std::ostringstream output;
-    output << std::hex << std::setfill('0');
-    for (unsigned int index = 0; index < size; ++index) {
-        output << std::setw(2) << static_cast<unsigned int>(bytes[index]);
-    }
-    digest = output.str();
-    return true;
 }
 
 bool ValidateFile(
@@ -164,7 +57,7 @@ bool ValidateFile(
         return false;
     }
     std::string digest;
-    if (!HashFile(path, digest, error)) return false;
+    if (!Sha256File(path, digest, error)) return false;
     if (digest != component.sha256) {
         error = "Component SHA-256 differs from signed metadata: " +
                 component.relative_path;
@@ -204,7 +97,7 @@ bool EnumerateExactPayload(
             error = "Cannot resolve a pack payload path";
             return false;
         }
-        observed.insert(FoldAscii(relative.generic_string()));
+        observed.insert(FoldBackendPackPath(relative.generic_string()));
     }
     if (observed != expected) {
         error = "Pack payload files differ from signed component inventory";
@@ -273,12 +166,12 @@ BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
     std::set<std::string> expected_paths;
     std::uint64_t total_bytes = 0;
     for (const auto& component : payload.components) {
-        if (!IsCanonicalRelativePath(component.relative_path) ||
-            !IsSha256(component.sha256) ||
+        if (!IsCanonicalBackendPackRelativePath(component.relative_path) ||
+            !IsLowercaseSha256(component.sha256) ||
             total_bytes > std::numeric_limits<std::uint64_t>::max() -
                               component.size ||
             !expected_paths.insert(
-                FoldAscii(component.relative_path)).second) {
+                FoldBackendPackPath(component.relative_path)).second) {
             return Finish(
                 BackendPackInstallStatus::InvalidRequest,
                 "Pack component inventory is invalid");
@@ -306,7 +199,7 @@ BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
     for (const auto& component : payload.components) {
         if (!ValidateFile(
                 payload.source_directory /
-                    NativeRelativePath(component.relative_path),
+                    BackendPackNativeRelativePath(component.relative_path),
                 component, error)) {
             return Finish(BackendPackInstallStatus::IntegrityFailure, error);
         }
@@ -331,7 +224,7 @@ BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
         for (const auto& component : payload.components) {
             if (!ValidateFile(
                     destination /
-                        NativeRelativePath(component.relative_path),
+                        BackendPackNativeRelativePath(component.relative_path),
                     component, error)) {
                 return Finish(
                     BackendPackInstallStatus::IntegrityFailure, error);
@@ -363,7 +256,8 @@ BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
                     "Pack installation cancelled");
             }
             const auto& component = payload.components[index];
-            const auto relative = NativeRelativePath(component.relative_path);
+            const auto relative =
+                BackendPackNativeRelativePath(component.relative_path);
             const auto target = staged_payload / relative;
             std::filesystem::create_directories(
                 target.parent_path(), filesystem_error);
@@ -393,7 +287,7 @@ BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
         for (const auto& component : payload.components) {
             if (!ValidateFile(
                     staged_payload /
-                        NativeRelativePath(component.relative_path),
+                        BackendPackNativeRelativePath(component.relative_path),
                     component, error)) {
                 std::filesystem::remove_all(staging_root, filesystem_error);
                 return Finish(

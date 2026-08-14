@@ -82,6 +82,22 @@ only when its manifest signature chains to the app-bundled trust root, its
 catalog entry is current and signed, and its archive and component hashes
 match.
 
+Online and offline artifacts enter one acquisition transaction. The service
+writes only to a sibling `.part` file, resumes from its retained byte length,
+requires the signed final byte size and SHA-256, flushes the completed file,
+and atomically publishes it without replacing an existing destination. HTTPS
+requests reject credentials and fragments, disable redirects, use bounded
+timeouts, and require exact `Content-Length` plus exact `Content-Range` for a
+resume. A changed remote object is rejected by the final signed hash.
+
+ZIP extraction accepts only regular, non-link entries whose canonical UTF-8
+paths, sizes, and case-folded uniqueness exactly match the signed component
+inventory. Directory, traversal, drive/ADS, sparse, hard-link, symbolic-link,
+duplicate, missing, and unexpected entries fail closed. Extracted bytes and
+free-space/caller budgets are bounded before activation, every component is
+rehashed, and any failed or cancelled extraction removes its private staging
+directory.
+
 ## Pack Manifest
 
 The signed pack body contains exactly:

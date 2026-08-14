@@ -1,16 +1,15 @@
 #include "backend_pack_metadata_verifier.h"
+#include "backend_pack_hash.h"
+#include "backend_pack_path.h"
 
 #include <openssl/evp.h>
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <fstream>
 #include <limits>
 #include <memory>
 #include <set>
-#include <sstream>
-#include <string_view>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -44,13 +43,6 @@ bool IsVersion(const std::string& value) {
     });
 }
 
-bool IsSha256(const std::string& value) {
-    return value.size() == 64 &&
-           std::all_of(value.begin(), value.end(), [](unsigned char c) {
-               return std::isdigit(c) || (c >= 'a' && c <= 'f');
-           });
-}
-
 bool IsUtc(const std::string& value) {
     if (value.size() != 20 || value[4] != '-' || value[7] != '-' ||
         value[10] != 'T' || value[13] != ':' || value[16] != ':' ||
@@ -63,32 +55,6 @@ bool IsUtc(const std::string& value) {
         if (!std::isdigit(static_cast<unsigned char>(value[i]))) return false;
     }
     return true;
-}
-
-bool IsRelativePath(const std::string& value) {
-    if (value.empty() || value.front() == '/' || value.back() == '/' ||
-        value.find('\\') != std::string::npos ||
-        value.find(':') != std::string::npos) {
-        return false;
-    }
-    std::size_t begin = 0;
-    while (begin < value.size()) {
-        const auto end = value.find('/', begin);
-        const std::string_view part(
-            value.data() + begin,
-            (end == std::string::npos ? value.size() : end) - begin);
-        if (part.empty() || part == "." || part == "..") return false;
-        begin = end == std::string::npos ? value.size() : end + 1;
-    }
-    return true;
-}
-
-std::string FoldAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) {
-                       return static_cast<char>(std::tolower(c));
-                   });
-    return value;
 }
 
 bool HasExactKeys(
@@ -192,7 +158,7 @@ bool ReadSha256(
     std::string& output,
     std::string& error) {
     return ReadString(object, key, output, error) &&
-           (IsSha256(output) ||
+           (IsLowercaseSha256(output) ||
             (error = std::string(key) + " is not a lowercase SHA-256", false));
 }
 
@@ -278,23 +244,6 @@ bool DecodeBase64Url(
     if (decoded < 0 || static_cast<std::size_t>(decoded) < padding) return false;
     output.resize(static_cast<std::size_t>(decoded) - padding);
     return output.size() == expected_size;
-}
-
-bool HashBytes(const std::string& bytes, std::string& digest) {
-    std::array<unsigned char, 32> output{};
-    unsigned int size = 0;
-    if (EVP_Digest(
-            bytes.data(), bytes.size(), output.data(), &size,
-            EVP_sha256(), nullptr) != 1 || size != output.size()) {
-        return false;
-    }
-    static constexpr char kHex[] = "0123456789abcdef";
-    digest.resize(64);
-    for (std::size_t i = 0; i < output.size(); ++i) {
-        digest[2 * i] = kHex[output[i] >> 4];
-        digest[2 * i + 1] = kHex[output[i] & 0x0f];
-    }
-    return true;
 }
 
 bool VerifyEd25519(
@@ -653,7 +602,7 @@ bool BackendPackMetadataVerifier::VerifyManifest(
     std::string bytes;
     if (!ReadDocument(manifest_path, document, bytes, error)) return false;
     std::string manifest_digest;
-    if (!HashBytes(bytes, manifest_digest) ||
+    if (!Sha256Bytes(bytes, manifest_digest, error) ||
         manifest_digest != catalog_entry.manifest_sha256) {
         error = "Manifest SHA-256 differs from the signed catalog";
         return false;
@@ -793,8 +742,9 @@ bool BackendPackMetadataVerifier::VerifyManifest(
                 component,
                 {"path", "size", "sha256", "source", "executable"}) ||
             !ReadString(component, "path", parsed.relative_path, error) ||
-            !IsRelativePath(parsed.relative_path) ||
-            !folded_paths.insert(FoldAscii(parsed.relative_path)).second ||
+            !IsCanonicalBackendPackRelativePath(parsed.relative_path) ||
+            !folded_paths.insert(
+                FoldBackendPackPath(parsed.relative_path)).second ||
             !ReadUnsigned(component, "size", parsed.size, 0, error) ||
             !ReadSha256(component, "sha256", parsed.sha256, error) ||
             !ReadIdentifier(component, "source", source, error) ||
@@ -817,7 +767,8 @@ bool BackendPackMetadataVerifier::VerifyManifest(
         if (!HasExactKeys(license, {"component", "path"}) ||
             !ReadIdentifier(license, "component", component, error) ||
             !ReadString(license, "path", path, error) ||
-            !IsRelativePath(path) || !component_paths.contains(path)) {
+            !IsCanonicalBackendPackRelativePath(path) ||
+            !component_paths.contains(path)) {
             error = "Manifest license inventory is invalid";
             return false;
         }
@@ -826,7 +777,7 @@ bool BackendPackMetadataVerifier::VerifyManifest(
     const auto& archive = (*signed_body)["archive"];
     if (!HasExactKeys(archive, {"file_name", "size", "sha256"}) ||
         !ReadString(archive, "file_name", output.archive.file_name, error) ||
-        !IsRelativePath(output.archive.file_name) ||
+        !IsCanonicalBackendPackRelativePath(output.archive.file_name) ||
         output.archive.file_name.find('/') != std::string::npos ||
         !ReadUnsigned(archive, "size", output.archive.size, 1, error) ||
         !ReadSha256(archive, "sha256", output.archive.sha256, error)) {
