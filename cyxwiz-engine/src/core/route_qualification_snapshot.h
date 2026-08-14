@@ -3,6 +3,7 @@
 #include <cyxwiz/device.h>
 
 #include <filesystem>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -95,6 +96,8 @@ struct RouteQualificationRecord {
     std::string provider;
     std::string driver_version;
     std::string runtime_version;
+    // Signed pack that supplied this route. CPU routes use base_pack_id.
+    std::string pack_id;
     int operation_count = 0;
     int pass_count = 0;
     int unavailable_count = 0;
@@ -114,10 +117,25 @@ struct RouteQualificationRecord {
     std::string benchmark_message;
 };
 
+struct BackendPackQualificationIdentity {
+    DeviceType type = DeviceType::CPU;
+    std::string pack_id;
+};
+
+struct RuntimeQualificationIdentity {
+    std::string runtime_set_id;
+    std::uint64_t generation = 0;
+    std::string base_pack_id;
+    std::vector<BackendPackQualificationIdentity> backend_packs;
+};
+
 struct RouteQualificationSnapshot {
     int schema = 1;
     std::string matrix_id;
     std::string pack_id;
+    std::string runtime_set_id;
+    std::uint64_t runtime_generation = 0;
+    std::string base_pack_id;
     std::string compute_contract_id;
     std::string operation_manifest_id;
     std::string captured_at;
@@ -169,6 +187,13 @@ bool SaveRouteQualificationSnapshotAtomic(
 void InstallRouteQualificationSnapshot(RouteQualificationSnapshot snapshot);
 void ClearRouteQualificationSnapshot();
 std::optional<RouteQualificationSnapshot> GetRouteQualificationSnapshot();
+std::optional<RuntimeQualificationIdentity>
+ReadActiveRuntimeQualificationIdentity(std::string& error);
+std::string RuntimePackIdForRoute(
+    const RuntimeQualificationIdentity& identity,
+    DeviceType type);
+std::string ValidateRuntimeQualificationIdentity(
+    const RuntimeQualificationIdentity& identity);
 RouteQualificationDecision EvaluateRouteQualification(
     const DeviceInfo& route);
 RouteQualificationDecision EvaluateRouteQualification(

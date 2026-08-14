@@ -7,9 +7,11 @@
 #endif
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -35,6 +37,40 @@ std::mutex& SnapshotMutex() {
 std::optional<RouteQualificationSnapshot>& SnapshotSlot() {
     static std::optional<RouteQualificationSnapshot> snapshot;
     return snapshot;
+}
+
+bool IsRuntimeIdentifier(const std::string& value) {
+    if (value.empty() || value.size() > 128 ||
+        !std::isalnum(static_cast<unsigned char>(value.front()))) {
+        return false;
+    }
+    return std::all_of(value.begin(), value.end(), [](unsigned char character) {
+        return std::islower(character) || std::isdigit(character) ||
+               character == '.' || character == '_' || character == '-';
+    });
+}
+
+std::string EnvironmentValue(const char* name) {
+#ifdef _WIN32
+    std::wstring wide_name(name, name + std::char_traits<char>::length(name));
+    const DWORD required = ::GetEnvironmentVariableW(
+        wide_name.c_str(), nullptr, 0);
+    if (required == 0) return {};
+    std::vector<wchar_t> value(required);
+    const DWORD length = ::GetEnvironmentVariableW(
+        wide_name.c_str(), value.data(), required);
+    if (length == 0 || length >= required) return {};
+    std::string result;
+    result.reserve(length);
+    for (DWORD index = 0; index < length; ++index) {
+        if (value[index] > 0x7f) return {};
+        result.push_back(static_cast<char>(value[index]));
+    }
+    return result;
+#else
+    const char* value = std::getenv(name);
+    return value ? value : std::string{};
+#endif
 }
 
 std::optional<DeviceType> ParseBackend(const std::string& backend) {
@@ -320,6 +356,17 @@ RouteQualificationSnapshot ParseSnapshot(const nlohmann::json& document) {
     }
     snapshot.matrix_id = OptionalString(document, "matrix_id");
     snapshot.pack_id = OptionalString(document, "pack_id");
+    snapshot.runtime_set_id = OptionalString(document, "runtime_set_id");
+    snapshot.base_pack_id = OptionalString(document, "base_pack_id");
+    if (document.contains("runtime_generation") &&
+        !document.at("runtime_generation").is_null()) {
+        if (!document.at("runtime_generation").is_number_unsigned()) {
+            throw std::runtime_error(
+                "Qualification runtime_generation must be an unsigned integer");
+        }
+        snapshot.runtime_generation =
+            document.at("runtime_generation").get<std::uint64_t>();
+    }
     snapshot.compute_contract_id =
         OptionalString(document, "compute_contract_id");
     snapshot.operation_manifest_id =
@@ -347,6 +394,7 @@ RouteQualificationSnapshot ParseSnapshot(const nlohmann::json& document) {
         route.provider = OptionalString(route_json, "provider");
         route.driver_version = OptionalString(route_json, "driver_version");
         route.runtime_version = OptionalString(route_json, "runtime_version");
+        route.pack_id = OptionalString(route_json, "pack_id");
         route.operation_count = RequiredInt(route_json, "operation_count");
         route.pass_count = RequiredInt(route_json, "pass_count");
         route.unavailable_count = RequiredInt(route_json, "unavailable_count");
@@ -447,8 +495,7 @@ bool SaveRouteQualificationSnapshotAtomic(
     const RouteQualificationSnapshot& snapshot,
     std::string& error) {
     error.clear();
-    if (snapshot.schema != 1 || snapshot.matrix_id.empty() ||
-        snapshot.routes.empty()) {
+    if (snapshot.schema != 1 || snapshot.matrix_id.empty()) {
         error = "qualification snapshot is incomplete";
         return false;
     }
@@ -459,6 +506,15 @@ bool SaveRouteQualificationSnapshotAtomic(
         {"pack_id", snapshot.pack_id.empty()
              ? nlohmann::json(nullptr)
              : nlohmann::json(snapshot.pack_id)},
+        {"runtime_set_id", snapshot.runtime_set_id.empty()
+             ? nlohmann::json(nullptr)
+             : nlohmann::json(snapshot.runtime_set_id)},
+        {"runtime_generation", snapshot.runtime_generation == 0
+             ? nlohmann::json(nullptr)
+             : nlohmann::json(snapshot.runtime_generation)},
+        {"base_pack_id", snapshot.base_pack_id.empty()
+             ? nlohmann::json(nullptr)
+             : nlohmann::json(snapshot.base_pack_id)},
         {"compute_contract_id", snapshot.compute_contract_id.empty()
              ? nlohmann::json(nullptr)
              : nlohmann::json(snapshot.compute_contract_id)},
@@ -504,6 +560,9 @@ bool SaveRouteQualificationSnapshotAtomic(
             {"runtime_version", route.runtime_version.empty()
                  ? nlohmann::json(nullptr)
                  : nlohmann::json(route.runtime_version)},
+            {"pack_id", route.pack_id.empty()
+                 ? nlohmann::json(nullptr)
+                 : nlohmann::json(route.pack_id)},
             {"display_name", route.display_name.empty()
                  ? nlohmann::json(nullptr)
                  : nlohmann::json(route.display_name)},
@@ -623,6 +682,91 @@ std::optional<RouteQualificationSnapshot> GetRouteQualificationSnapshot() {
     return SnapshotSlot();
 }
 
+std::string RuntimePackIdForRoute(
+    const RuntimeQualificationIdentity& identity,
+    DeviceType type) {
+    if (type == DeviceType::CPU) return identity.base_pack_id;
+    const auto pack = std::find_if(
+        identity.backend_packs.begin(), identity.backend_packs.end(),
+        [type](const BackendPackQualificationIdentity& candidate) {
+            return candidate.type == type;
+        });
+    return pack == identity.backend_packs.end()
+        ? std::string{}
+        : pack->pack_id;
+}
+
+std::string ValidateRuntimeQualificationIdentity(
+    const RuntimeQualificationIdentity& identity) {
+    if (!IsRuntimeIdentifier(identity.runtime_set_id) ||
+        !IsRuntimeIdentifier(identity.base_pack_id) ||
+        identity.generation == 0) {
+        return "Runtime set, generation, or base pack identity is invalid";
+    }
+    for (size_t index = 0; index < identity.backend_packs.size(); ++index) {
+        const auto& pack = identity.backend_packs[index];
+        if (pack.type == DeviceType::CPU || !BackendJsonName(pack.type) ||
+            !IsRuntimeIdentifier(pack.pack_id)) {
+            return "Backend pack identity is invalid";
+        }
+        const auto duplicate = std::find_if(
+            identity.backend_packs.begin(),
+            identity.backend_packs.begin() + index,
+            [&](const BackendPackQualificationIdentity& candidate) {
+                return candidate.type == pack.type;
+            });
+        if (duplicate != identity.backend_packs.begin() + index) {
+            return "Runtime identity contains a duplicate backend pack";
+        }
+    }
+    return {};
+}
+
+std::optional<RuntimeQualificationIdentity>
+ReadActiveRuntimeQualificationIdentity(std::string& error) {
+    error.clear();
+    if (EnvironmentValue("CYXWIZ_ACTIVE_RUNTIME_ROOT").empty()) {
+        return std::nullopt;
+    }
+
+    RuntimeQualificationIdentity identity;
+    identity.runtime_set_id = EnvironmentValue("CYXWIZ_RUNTIME_SET_ID");
+    identity.base_pack_id = EnvironmentValue("CYXWIZ_BASE_PACK_ID");
+    const std::string generation =
+        EnvironmentValue("CYXWIZ_RUNTIME_GENERATION");
+    const auto parsed = std::from_chars(
+        generation.data(), generation.data() + generation.size(),
+        identity.generation);
+    if (generation.empty() || parsed.ec != std::errc{} ||
+        parsed.ptr != generation.data() + generation.size() ||
+        identity.generation == 0 ||
+        !IsRuntimeIdentifier(identity.runtime_set_id) ||
+        !IsRuntimeIdentifier(identity.base_pack_id)) {
+        error = "The packaged runtime identity environment is incomplete";
+        return std::nullopt;
+    }
+
+    for (const auto& entry : {
+             std::pair{DeviceType::CUDA, "CYXWIZ_RUNTIME_PACK_CUDA"},
+             std::pair{DeviceType::OPENCL, "CYXWIZ_RUNTIME_PACK_OPENCL"},
+             std::pair{DeviceType::ONEAPI, "CYXWIZ_RUNTIME_PACK_ONEAPI"}}) {
+        std::string pack_id = EnvironmentValue(entry.second);
+        if (pack_id.empty()) continue;
+        if (!IsRuntimeIdentifier(pack_id)) {
+            error = "The packaged backend identity environment is invalid";
+            return std::nullopt;
+        }
+        identity.backend_packs.push_back({entry.first, std::move(pack_id)});
+    }
+    if (const std::string validation =
+            ValidateRuntimeQualificationIdentity(identity);
+        !validation.empty()) {
+        error = validation;
+        return std::nullopt;
+    }
+    return identity;
+}
+
 RouteQualificationDecision EvaluateRouteQualification(
     const DeviceInfo& route) {
     return EvaluateRouteQualification(route, GetRouteQualificationSnapshot());
@@ -651,6 +795,29 @@ RouteQualificationDecision EvaluateRouteQualification(
         return decision;
     }
     decision.evidence_available = true;
+
+    std::string active_identity_error;
+    const auto active_identity =
+        ReadActiveRuntimeQualificationIdentity(active_identity_error);
+    if (!active_identity_error.empty() ||
+        (active_identity.has_value() &&
+         (snapshot->runtime_set_id != active_identity->runtime_set_id ||
+          snapshot->base_pack_id != active_identity->base_pack_id ||
+          record->pack_id !=
+              RuntimePackIdForRoute(*active_identity, route.type)))) {
+        decision.message = !active_identity_error.empty()
+            ? active_identity_error
+            : "The active runtime pack differs from the retained qualification evidence";
+        decision.failure.stage = RouteFailureStage::Evidence;
+        decision.failure.category = RouteFailureCategory::EvidenceStale;
+        decision.failure.observed_fact = decision.message;
+        decision.failure.bounded_interpretation =
+            "This evidence was captured for a different signed runtime pack";
+        decision.failure.recommended_action =
+            "Verify the route against the active runtime set";
+        decision.failure.evidence_id = snapshot->matrix_id;
+        return decision;
+    }
 
     if ((!snapshot->compute_contract_id.empty() &&
          snapshot->compute_contract_id != kCyxWizComputeContractId) ||

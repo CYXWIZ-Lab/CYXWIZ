@@ -1237,11 +1237,16 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 cyxwiz::GetRouteQualificationCachePath();
                             options.matrix_id =
                                 cyxwiz::kRouteQualificationMatrixId;
-                            if (const auto current =
-                                    cyxwiz::GetRouteQualificationSnapshot()) {
-                                options.pack_id = current->pack_id;
+                            std::string runtime_identity_error;
+                            options.runtime_identity =
+                                cyxwiz::ReadActiveRuntimeQualificationIdentity(
+                                    runtime_identity_error);
+                            if (!runtime_identity_error.empty()) {
+                                device_selection_error_ =
+                                    runtime_identity_error;
+                                return;
                             }
-                            if (options.pack_id.empty()) {
+                            if (!options.runtime_identity.has_value()) {
                                 options.pack_id =
                                     "local-arrayfire-installation";
                             }

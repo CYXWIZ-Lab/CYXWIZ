@@ -75,10 +75,22 @@ struct RouteQualificationOptions {
     std::filesystem::path cache_path;
     std::string matrix_id;
     std::string pack_id;
+    std::optional<RuntimeQualificationIdentity> runtime_identity;
     std::chrono::milliseconds operation_timeout{20000};
     size_t output_limit_bytes = 64 * 1024;
     bool benchmark_verified_routes = false;
     std::chrono::milliseconds benchmark_timeout{60000};
+};
+
+enum class RuntimeQualificationFailurePolicy {
+    KeepInstalledUnqualified,
+    RequireRollback
+};
+
+enum class RuntimeQualificationDisposition {
+    Qualified,
+    InstalledUnqualified,
+    RollbackRequired
 };
 
 struct RouteQualificationRunResult {
@@ -87,6 +99,13 @@ struct RouteQualificationRunResult {
     bool published = false;
     std::string message;
     std::optional<RouteQualificationSnapshot> snapshot;
+};
+
+struct RuntimeQualificationResult {
+    RouteQualificationRunResult qualification;
+    RuntimeQualificationDisposition disposition =
+        RuntimeQualificationDisposition::InstalledUnqualified;
+    RouteFailureDiagnostic diagnostic;
 };
 
 std::span<const std::string_view> RequiredRouteQualificationOperations();
@@ -106,6 +125,15 @@ public:
         const std::vector<DeviceInfo>& routes,
         const RouteQualificationOptions& options,
         std::function<void(const RouteQualificationProgress&)> on_progress = {});
+    RuntimeQualificationResult VerifyStagedRuntimeRoutes(
+        const std::vector<DeviceInfo>& affected_routes,
+        const RuntimeQualificationIdentity& identity,
+        RuntimeQualificationFailurePolicy failure_policy,
+        RouteQualificationOptions options,
+        std::function<void(const RouteQualificationProgress&)> on_progress = {});
+    RouteQualificationRunResult ReconcileRuntimeEvidence(
+        const RuntimeQualificationIdentity& identity,
+        const RouteQualificationOptions& options);
 
     void Cancel();
     RouteQualificationProgress GetProgress() const;
@@ -133,5 +161,7 @@ private:
 
 const char* RouteQualificationRunStatusName(
     RouteQualificationRunStatus status);
+const char* RuntimeQualificationDispositionName(
+    RuntimeQualificationDisposition disposition);
 
 }  // namespace cyxwiz

@@ -75,6 +75,41 @@ int Fail(const std::filesystem::path& runtime_root, const std::string& message) 
     return 78;
 }
 
+std::wstring WidenIdentifier(const std::string& value) {
+    return std::wstring(value.begin(), value.end());
+}
+
+bool SetRuntimeIdentityEnvironment(
+    const cyxwiz::runtime::ActiveRuntime& runtime) {
+    const std::wstring runtime_set = WidenIdentifier(runtime.runtime_set_id);
+    const std::wstring generation = std::to_wstring(runtime.generation);
+    const std::wstring base_pack = WidenIdentifier(runtime.base_pack_id);
+    if (!::SetEnvironmentVariableW(
+            L"CYXWIZ_RUNTIME_SET_ID", runtime_set.c_str()) ||
+        !::SetEnvironmentVariableW(
+            L"CYXWIZ_RUNTIME_GENERATION", generation.c_str()) ||
+        !::SetEnvironmentVariableW(
+            L"CYXWIZ_BASE_PACK_ID", base_pack.c_str())) {
+        return false;
+    }
+    for (const wchar_t* name : {
+             L"CYXWIZ_RUNTIME_PACK_CUDA",
+             L"CYXWIZ_RUNTIME_PACK_OPENCL",
+             L"CYXWIZ_RUNTIME_PACK_ONEAPI"}) {
+        ::SetEnvironmentVariableW(name, nullptr);
+    }
+    for (const auto& pack : runtime.packs) {
+        const wchar_t* name = pack.backend == "cuda"
+            ? L"CYXWIZ_RUNTIME_PACK_CUDA"
+            : pack.backend == "opencl"
+                ? L"CYXWIZ_RUNTIME_PACK_OPENCL"
+                : L"CYXWIZ_RUNTIME_PACK_ONEAPI";
+        const std::wstring pack_id = WidenIdentifier(pack.pack_id);
+        if (!::SetEnvironmentVariableW(name, pack_id.c_str())) return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -106,7 +141,8 @@ int wmain(int argc, wchar_t** argv) {
     const auto restricted_path = RestrictedPath(runtime);
     if (!::SetEnvironmentVariableW(L"PATH", restricted_path.c_str()) ||
         !::SetEnvironmentVariableW(
-            L"CYXWIZ_ACTIVE_RUNTIME_ROOT", runtime.runtime_root.c_str())) {
+            L"CYXWIZ_ACTIVE_RUNTIME_ROOT", runtime.runtime_root.c_str()) ||
+        !SetRuntimeIdentityEnvironment(runtime)) {
         return Fail(runtime.runtime_root,
                     "cannot prepare child runtime environment; Win32 error " +
                         std::to_string(::GetLastError()));

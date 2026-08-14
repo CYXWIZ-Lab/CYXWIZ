@@ -27,6 +27,15 @@ int main() {
         std::cerr << "child did not receive the active runtime root\n";
         return 1;
     }
+    if (EnvironmentValue(L"CYXWIZ_RUNTIME_SET_ID") != L"set-v1" ||
+        EnvironmentValue(L"CYXWIZ_RUNTIME_GENERATION") != L"1" ||
+        EnvironmentValue(L"CYXWIZ_BASE_PACK_ID") != L"base-v1" ||
+        EnvironmentValue(L"CYXWIZ_RUNTIME_PACK_OPENCL") != L"opencl-v1" ||
+        !EnvironmentValue(L"CYXWIZ_RUNTIME_PACK_CUDA").empty() ||
+        !EnvironmentValue(L"CYXWIZ_RUNTIME_PACK_ONEAPI").empty()) {
+        std::cerr << "child did not receive the exact active runtime identity\n";
+        return 5;
+    }
     if (!EnvironmentValue(L"AF_PATH").empty() ||
         !EnvironmentValue(L"AF_PLUGIN_PATH").empty() ||
         !EnvironmentValue(L"AF_BUILD_PATH").empty() ||

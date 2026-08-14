@@ -165,7 +165,9 @@ int main() {
     }
     {
         Fixture fixture;
-        fixture.WriteState("[]");
+        fixture.AddOpenClPack();
+        fixture.WriteState(
+            "[{\"backend\":\"opencl\",\"pack_id\":\"opencl-v1\"}]");
         std::vector<wchar_t> executable(32768);
         const DWORD executable_length = ::GetModuleFileNameW(
             nullptr, executable.data(), static_cast<DWORD>(executable.size()));

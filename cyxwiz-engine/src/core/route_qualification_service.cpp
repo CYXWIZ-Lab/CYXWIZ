@@ -216,6 +216,35 @@ RouteQualificationRecord RecordFor(const DeviceInfo& route) {
     return record;
 }
 
+bool IsCompleteRuntimeIdentity(
+    const RuntimeQualificationIdentity& identity) {
+    return ValidateRuntimeQualificationIdentity(identity).empty();
+}
+
+bool IsCompatibleRuntimeSnapshot(
+    const RouteQualificationSnapshot& snapshot,
+    const RuntimeQualificationIdentity& identity) {
+    return snapshot.runtime_set_id == identity.runtime_set_id &&
+           snapshot.base_pack_id == identity.base_pack_id &&
+           snapshot.compute_contract_id == kCyxWizComputeContractId &&
+           snapshot.operation_manifest_id ==
+               kRouteQualificationOperationManifestId;
+}
+
+void RemoveEvidenceForChangedPacks(
+    RouteQualificationSnapshot& snapshot,
+    const RuntimeQualificationIdentity& identity) {
+    snapshot.routes.erase(
+        std::remove_if(
+            snapshot.routes.begin(), snapshot.routes.end(),
+            [&](const RouteQualificationRecord& record) {
+                const std::string active_pack =
+                    RuntimePackIdForRoute(identity, record.type);
+                return active_pack.empty() || record.pack_id != active_pack;
+            }),
+        snapshot.routes.end());
+}
+
 #ifdef _WIN32
 std::wstring QuoteWindowsArgument(const std::wstring& value) {
     std::wstring quoted = L"\"";
@@ -469,6 +498,116 @@ RouteQualificationRunResult RouteQualificationService::VerifyAll(
     return Verify(routes, options, false, on_progress);
 }
 
+RuntimeQualificationResult
+RouteQualificationService::VerifyStagedRuntimeRoutes(
+    const std::vector<DeviceInfo>& affected_routes,
+    const RuntimeQualificationIdentity& identity,
+    RuntimeQualificationFailurePolicy failure_policy,
+    RouteQualificationOptions options,
+    std::function<void(const RouteQualificationProgress&)> on_progress) {
+    options.runtime_identity = identity;
+    auto qualification = Verify(
+        affected_routes, options, true, on_progress);
+
+    RuntimeQualificationResult result;
+    result.qualification = std::move(qualification);
+    bool qualified = result.qualification.status ==
+                         RouteQualificationRunStatus::Completed &&
+                     result.qualification.snapshot.has_value();
+    if (qualified) {
+        for (const auto& route : affected_routes) {
+            const auto record = std::find_if(
+                result.qualification.snapshot->routes.begin(),
+                result.qualification.snapshot->routes.end(),
+                [&](const RouteQualificationRecord& candidate) {
+                    return candidate.type == route.type &&
+                           candidate.device_id == route.device_id;
+                });
+            if (record == result.qualification.snapshot->routes.end() ||
+                !record->certified) {
+                qualified = false;
+                if (record != result.qualification.snapshot->routes.end()) {
+                    result.diagnostic = record->failure;
+                }
+                break;
+            }
+        }
+    }
+    if (qualified) {
+        result.disposition = RuntimeQualificationDisposition::Qualified;
+        return result;
+    }
+
+    result.disposition = failure_policy ==
+            RuntimeQualificationFailurePolicy::RequireRollback
+        ? RuntimeQualificationDisposition::RollbackRequired
+        : RuntimeQualificationDisposition::InstalledUnqualified;
+    if (result.diagnostic.category == RouteFailureCategory::None) {
+        result.diagnostic.stage = RouteFailureStage::Policy;
+        result.diagnostic.category = RouteFailureCategory::PolicyBlocked;
+        result.diagnostic.observed_fact = result.qualification.message.empty()
+            ? "The staged runtime routes were not qualified"
+            : result.qualification.message;
+        result.diagnostic.bounded_interpretation =
+            "Package presence does not establish route compatibility";
+        result.diagnostic.recommended_action =
+            result.disposition == RuntimeQualificationDisposition::RollbackRequired
+                ? "Restore the previously active runtime set"
+                : "Keep the pack disabled until its routes pass verification";
+        result.diagnostic.evidence_id = options.matrix_id;
+    }
+    return result;
+}
+
+RouteQualificationRunResult
+RouteQualificationService::ReconcileRuntimeEvidence(
+    const RuntimeQualificationIdentity& identity,
+    const RouteQualificationOptions& options) {
+    std::unique_lock<std::mutex> run_lock(run_mutex_, std::try_to_lock);
+    if (!run_lock.owns_lock()) {
+        return {RouteQualificationRunStatus::Busy, false,
+                "Route qualification is already running", std::nullopt};
+    }
+    if (!IsCompleteRuntimeIdentity(identity) || options.cache_path.empty() ||
+        options.matrix_id.empty()) {
+        return {RouteQualificationRunStatus::InvalidRequest, false,
+                "Runtime evidence reconciliation request is incomplete",
+                std::nullopt};
+    }
+
+    RouteQualificationSnapshot snapshot;
+    if (const auto current = GetRouteQualificationSnapshot();
+        current.has_value() &&
+        IsCompatibleRuntimeSnapshot(*current, identity)) {
+        snapshot = *current;
+        RemoveEvidenceForChangedPacks(snapshot, identity);
+    }
+    snapshot.schema = 1;
+    snapshot.matrix_id = options.matrix_id;
+    snapshot.pack_id = identity.runtime_set_id;
+    snapshot.runtime_set_id = identity.runtime_set_id;
+    snapshot.runtime_generation = identity.generation;
+    snapshot.base_pack_id = identity.base_pack_id;
+    snapshot.compute_contract_id = kCyxWizComputeContractId;
+    snapshot.operation_manifest_id = kRouteQualificationOperationManifestId;
+    snapshot.captured_at = UtcTimestamp();
+    snapshot.report_sha256.clear();
+
+    std::string publish_error;
+    if (!SaveRouteQualificationSnapshotAtomic(
+            options.cache_path, snapshot, publish_error)) {
+        return {RouteQualificationRunStatus::PublishFailure, false,
+                publish_error, std::nullopt};
+    }
+    InstallRouteQualificationSnapshot(snapshot);
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        published_snapshot_ = snapshot;
+    }
+    return {RouteQualificationRunStatus::Completed, true,
+            "Runtime pack evidence reconciled", std::move(snapshot)};
+}
+
 RouteQualificationRunResult RouteQualificationService::Verify(
     const std::vector<DeviceInfo>& routes,
     const RouteQualificationOptions& options,
@@ -488,11 +627,23 @@ RouteQualificationRunResult RouteQualificationService::Verify(
         return {RouteQualificationRunStatus::InvalidRequest, false,
                 "Route qualification request is incomplete", std::nullopt};
     }
+    if (options.runtime_identity.has_value() &&
+        !IsCompleteRuntimeIdentity(*options.runtime_identity)) {
+        return {RouteQualificationRunStatus::InvalidRequest, false,
+                "Route qualification runtime identity is incomplete",
+                std::nullopt};
+    }
     for (size_t route_index = 0; route_index < routes.size(); ++route_index) {
         const auto& route = routes[route_index];
         if (!BackendName(route.type) || route.device_id < 0) {
             return {RouteQualificationRunStatus::InvalidRequest, false,
                     "Route qualification contains an unsupported route",
+                    std::nullopt};
+        }
+        if (options.runtime_identity.has_value() &&
+            RuntimePackIdForRoute(*options.runtime_identity, route.type).empty()) {
+            return {RouteQualificationRunStatus::InvalidRequest, false,
+                    "Route qualification has no signed pack identity for an affected route",
                     std::nullopt};
         }
         const auto duplicate = std::find_if(
@@ -512,7 +663,15 @@ RouteQualificationRunResult RouteQualificationService::Verify(
     RouteQualificationSnapshot snapshot;
     if (merge_current_snapshot) {
         const auto current = GetRouteQualificationSnapshot();
-        if (current.has_value() && current->pack_id == options.pack_id &&
+        if (current.has_value() && options.runtime_identity.has_value() &&
+            IsCompatibleRuntimeSnapshot(
+                *current, *options.runtime_identity)) {
+            snapshot = *current;
+            RemoveEvidenceForChangedPacks(
+                snapshot, *options.runtime_identity);
+        } else if (current.has_value() &&
+            !options.runtime_identity.has_value() &&
+            current->pack_id == options.pack_id &&
             current->compute_contract_id == kCyxWizComputeContractId &&
             current->operation_manifest_id ==
                 kRouteQualificationOperationManifestId) {
@@ -521,7 +680,17 @@ RouteQualificationRunResult RouteQualificationService::Verify(
     }
     snapshot.schema = 1;
     snapshot.matrix_id = options.matrix_id;
-    snapshot.pack_id = options.pack_id;
+    if (options.runtime_identity.has_value()) {
+        snapshot.pack_id = options.runtime_identity->runtime_set_id;
+        snapshot.runtime_set_id = options.runtime_identity->runtime_set_id;
+        snapshot.runtime_generation = options.runtime_identity->generation;
+        snapshot.base_pack_id = options.runtime_identity->base_pack_id;
+    } else {
+        snapshot.pack_id = options.pack_id;
+        snapshot.runtime_set_id.clear();
+        snapshot.runtime_generation = 0;
+        snapshot.base_pack_id.clear();
+    }
     snapshot.compute_contract_id = kCyxWizComputeContractId;
     snapshot.operation_manifest_id =
         kRouteQualificationOperationManifestId;
@@ -532,6 +701,10 @@ RouteQualificationRunResult RouteQualificationService::Verify(
     for (size_t route_index = 0; route_index < routes.size(); ++route_index) {
         const auto& route = routes[route_index];
         RouteQualificationRecord record = RecordFor(route);
+        if (options.runtime_identity.has_value()) {
+            record.pack_id = RuntimePackIdForRoute(
+                *options.runtime_identity, route.type);
+        }
         for (size_t operation_index = 0;
              operation_index < operations.size(); ++operation_index) {
             RouteQualificationProgress progress;
@@ -731,6 +904,18 @@ const char* RouteQualificationRunStatusName(
         case RouteQualificationRunStatus::InfrastructureFailure:
             return "infrastructure_failure";
         case RouteQualificationRunStatus::PublishFailure: return "publish_failure";
+        default: return "unknown";
+    }
+}
+
+const char* RuntimeQualificationDispositionName(
+    RuntimeQualificationDisposition disposition) {
+    switch (disposition) {
+        case RuntimeQualificationDisposition::Qualified: return "qualified";
+        case RuntimeQualificationDisposition::InstalledUnqualified:
+            return "installed_unqualified";
+        case RuntimeQualificationDisposition::RollbackRequired:
+            return "rollback_required";
         default: return "unknown";
     }
 }

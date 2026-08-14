@@ -11,10 +11,13 @@
 #include "../../cyxwiz-engine/src/core/route_recommendation.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <optional>
+#include <tuple>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -105,6 +108,36 @@ public:
 
 private:
     std::optional<cyxwiz::RouteQualificationSnapshot> previous_;
+};
+
+class EnvironmentGuard {
+public:
+    explicit EnvironmentGuard(std::initializer_list<const char*> names) {
+        for (const char* name : names) {
+            const char* value = std::getenv(name);
+            saved_.push_back({name, value
+                ? std::optional<std::string>(value)
+                : std::nullopt});
+        }
+    }
+
+    ~EnvironmentGuard() {
+        for (const auto& [name, value] : saved_) {
+            Set(name.c_str(), value ? value->c_str() : nullptr);
+        }
+    }
+
+    static void Set(const char* name, const char* value) {
+#ifdef _WIN32
+        _putenv_s(name, value ? value : "");
+#else
+        if (value) setenv(name, value, 1);
+        else unsetenv(name);
+#endif
+    }
+
+private:
+    std::vector<std::pair<std::string, std::optional<std::string>>> saved_;
 };
 
 std::vector<cyxwiz::DeviceInfo> InstallCertifiedInventorySnapshot(
@@ -1045,6 +1078,244 @@ TEST_CASE("Single-route verification does not relabel legacy evidence",
     CHECK(result.snapshot->routes.front().type ==
           cyxwiz::DeviceType::OPENCL);
     std::filesystem::remove_all(root, cleanup_error);
+}
+
+TEST_CASE("Staged runtime verification keeps only unchanged pack evidence",
+          "[device][selection][qualification][service][runtime-pack]") {
+    RouteQualificationStateGuard state_guard;
+    const auto root = std::filesystem::temp_directory_path() /
+        "cyxwiz-runtime-pack-qualification-selective";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+
+    cyxwiz::RouteQualificationSnapshot accepted;
+    accepted.matrix_id = cyxwiz::kRouteQualificationMatrixId;
+    accepted.pack_id = "set-v1";
+    accepted.runtime_set_id = "set-v1";
+    accepted.runtime_generation = 4;
+    accepted.base_pack_id = "base-v1";
+    accepted.compute_contract_id = cyxwiz::kCyxWizComputeContractId;
+    accepted.operation_manifest_id =
+        cyxwiz::kRouteQualificationOperationManifestId;
+    for (const auto& identity : {
+             std::tuple{cyxwiz::DeviceType::CPU, 0, "base-v1"},
+             std::tuple{cyxwiz::DeviceType::CUDA, 0, "cuda-v1"},
+             std::tuple{cyxwiz::DeviceType::OPENCL, 0, "opencl-v1"}}) {
+        cyxwiz::RouteQualificationRecord record;
+        record.type = std::get<0>(identity);
+        record.device_id = std::get<1>(identity);
+        record.pack_id = std::get<2>(identity);
+        record.operation_count = cyxwiz::kRouteQualificationOperationCount;
+        record.pass_count = record.operation_count;
+        record.certified = true;
+        accepted.routes.push_back(std::move(record));
+    }
+    cyxwiz::InstallRouteQualificationSnapshot(accepted);
+
+    cyxwiz::RouteQualificationService service(
+        [](const cyxwiz::RouteProbeInvocation&,
+           const cyxwiz::RouteQualificationCancelCheck&) {
+            cyxwiz::RouteProbeResult result;
+            result.status = cyxwiz::RouteProbeStatus::Passed;
+            return result;
+        });
+    cyxwiz::RuntimeQualificationIdentity runtime;
+    runtime.runtime_set_id = "set-v1";
+    runtime.generation = 5;
+    runtime.base_pack_id = "base-v1";
+    runtime.backend_packs = {
+        {cyxwiz::DeviceType::CUDA, "cuda-v1"},
+        {cyxwiz::DeviceType::OPENCL, "opencl-v2"}};
+    cyxwiz::DeviceInfo affected;
+    affected.type = cyxwiz::DeviceType::OPENCL;
+    affected.device_id = 0;
+    cyxwiz::RouteQualificationOptions options;
+    options.probe_executable = root / "fake-probe";
+    options.cache_path = root / "route-qualification.json";
+    options.matrix_id = cyxwiz::kRouteQualificationMatrixId;
+
+    const auto result = service.VerifyStagedRuntimeRoutes(
+        {affected}, runtime,
+        cyxwiz::RuntimeQualificationFailurePolicy::KeepInstalledUnqualified,
+        options);
+
+    INFO(result.qualification.message);
+    REQUIRE(result.disposition ==
+            cyxwiz::RuntimeQualificationDisposition::Qualified);
+    REQUIRE(result.qualification.snapshot.has_value());
+    CHECK(result.qualification.snapshot->runtime_generation == 5);
+    REQUIRE(result.qualification.snapshot->routes.size() == 3);
+    const auto pack_for = [&](cyxwiz::DeviceType type) {
+        const auto route = std::find_if(
+            result.qualification.snapshot->routes.begin(),
+            result.qualification.snapshot->routes.end(),
+            [type](const auto& record) { return record.type == type; });
+        REQUIRE(route != result.qualification.snapshot->routes.end());
+        return route->pack_id;
+    };
+    CHECK(pack_for(cyxwiz::DeviceType::CPU) == "base-v1");
+    CHECK(pack_for(cyxwiz::DeviceType::CUDA) == "cuda-v1");
+    CHECK(pack_for(cyxwiz::DeviceType::OPENCL) == "opencl-v2");
+
+    cyxwiz::ClearRouteQualificationSnapshot();
+    const auto loaded = cyxwiz::LoadAndInstallRouteQualificationSnapshot(
+        options.cache_path);
+    REQUIRE(loaded.loaded);
+    const auto roundtrip = cyxwiz::GetRouteQualificationSnapshot();
+    REQUIRE(roundtrip.has_value());
+    CHECK(roundtrip->runtime_set_id == runtime.runtime_set_id);
+    CHECK(roundtrip->base_pack_id == runtime.base_pack_id);
+    CHECK(roundtrip->runtime_generation == runtime.generation);
+    std::filesystem::remove_all(root, cleanup_error);
+}
+
+TEST_CASE("Staged runtime failure returns typed pack policy disposition",
+          "[device][selection][qualification][service][runtime-pack][diagnostics]") {
+    RouteQualificationStateGuard state_guard;
+    const auto root = std::filesystem::temp_directory_path() /
+        "cyxwiz-runtime-pack-qualification-policy";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+
+    cyxwiz::RouteQualificationService service(
+        [](const cyxwiz::RouteProbeInvocation& invocation,
+           const cyxwiz::RouteQualificationCancelCheck&) {
+            cyxwiz::RouteProbeResult result;
+            result.status = invocation.operation == "sum"
+                ? cyxwiz::RouteProbeStatus::TimedOut
+                : cyxwiz::RouteProbeStatus::Passed;
+            result.last_probe_stage = "expression_begin";
+            return result;
+        });
+    cyxwiz::RuntimeQualificationIdentity runtime;
+    runtime.runtime_set_id = "set-v1";
+    runtime.generation = 7;
+    runtime.base_pack_id = "base-v1";
+    runtime.backend_packs = {
+        {cyxwiz::DeviceType::ONEAPI, "oneapi-v1"}};
+    cyxwiz::DeviceInfo affected;
+    affected.type = cyxwiz::DeviceType::ONEAPI;
+    affected.device_id = 0;
+    cyxwiz::RouteQualificationOptions options;
+    options.probe_executable = root / "fake-probe";
+    options.cache_path = root / "route-qualification.json";
+    options.matrix_id = cyxwiz::kRouteQualificationMatrixId;
+    options.operation_timeout = std::chrono::milliseconds(25);
+
+    const auto keep = service.VerifyStagedRuntimeRoutes(
+        {affected}, runtime,
+        cyxwiz::RuntimeQualificationFailurePolicy::KeepInstalledUnqualified,
+        options);
+    REQUIRE(keep.qualification.published);
+    CHECK(keep.disposition ==
+          cyxwiz::RuntimeQualificationDisposition::InstalledUnqualified);
+    CHECK(keep.diagnostic.category ==
+          cyxwiz::RouteFailureCategory::Timeout);
+    CHECK(keep.diagnostic.timeout_ms == 25);
+
+    ++runtime.generation;
+    options.cache_path = root / "route-qualification-rollback.json";
+    const auto rollback = service.VerifyStagedRuntimeRoutes(
+        {affected}, runtime,
+        cyxwiz::RuntimeQualificationFailurePolicy::RequireRollback,
+        options);
+    REQUIRE(rollback.qualification.published);
+    CHECK(rollback.disposition ==
+          cyxwiz::RuntimeQualificationDisposition::RollbackRequired);
+    CHECK(rollback.diagnostic.category ==
+          cyxwiz::RouteFailureCategory::Timeout);
+    std::filesystem::remove_all(root, cleanup_error);
+}
+
+TEST_CASE("Runtime pack removal invalidates only its retained routes",
+          "[device][selection][qualification][service][runtime-pack]") {
+    RouteQualificationStateGuard state_guard;
+    const auto root = std::filesystem::temp_directory_path() /
+        "cyxwiz-runtime-pack-qualification-removal";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+
+    cyxwiz::RouteQualificationSnapshot accepted;
+    accepted.matrix_id = cyxwiz::kRouteQualificationMatrixId;
+    accepted.runtime_set_id = "set-v1";
+    accepted.base_pack_id = "base-v1";
+    accepted.compute_contract_id = cyxwiz::kCyxWizComputeContractId;
+    accepted.operation_manifest_id =
+        cyxwiz::kRouteQualificationOperationManifestId;
+    for (const auto& identity : {
+             std::pair{cyxwiz::DeviceType::CPU, "base-v1"},
+             std::pair{cyxwiz::DeviceType::CUDA, "cuda-v1"}}) {
+        cyxwiz::RouteQualificationRecord record;
+        record.type = identity.first;
+        record.pack_id = identity.second;
+        record.operation_count = cyxwiz::kRouteQualificationOperationCount;
+        record.pass_count = record.operation_count;
+        record.certified = true;
+        accepted.routes.push_back(std::move(record));
+    }
+    cyxwiz::InstallRouteQualificationSnapshot(accepted);
+
+    cyxwiz::RuntimeQualificationIdentity cpu_only;
+    cpu_only.runtime_set_id = "set-v1";
+    cpu_only.generation = 9;
+    cpu_only.base_pack_id = "base-v1";
+    cyxwiz::RouteQualificationOptions options;
+    options.cache_path = root / "route-qualification.json";
+    options.matrix_id = cyxwiz::kRouteQualificationMatrixId;
+    cyxwiz::RouteQualificationService service;
+    const auto result = service.ReconcileRuntimeEvidence(cpu_only, options);
+
+    INFO(result.message);
+    REQUIRE(result.published);
+    REQUIRE(result.snapshot.has_value());
+    REQUIRE(result.snapshot->routes.size() == 1);
+    CHECK(result.snapshot->routes.front().type == cyxwiz::DeviceType::CPU);
+    CHECK(result.snapshot->routes.front().pack_id == "base-v1");
+    std::filesystem::remove_all(root, cleanup_error);
+}
+
+TEST_CASE("Active packaged runtime identity rejects evidence from another pack",
+          "[device][selection][qualification][runtime-pack][evidence]") {
+    EnvironmentGuard environment({
+        "CYXWIZ_ACTIVE_RUNTIME_ROOT", "CYXWIZ_RUNTIME_SET_ID",
+        "CYXWIZ_RUNTIME_GENERATION", "CYXWIZ_BASE_PACK_ID",
+        "CYXWIZ_RUNTIME_PACK_CUDA", "CYXWIZ_RUNTIME_PACK_OPENCL",
+        "CYXWIZ_RUNTIME_PACK_ONEAPI"});
+    EnvironmentGuard::Set("CYXWIZ_ACTIVE_RUNTIME_ROOT", "runtime-root");
+    EnvironmentGuard::Set("CYXWIZ_RUNTIME_SET_ID", "set-v1");
+    EnvironmentGuard::Set("CYXWIZ_RUNTIME_GENERATION", "2");
+    EnvironmentGuard::Set("CYXWIZ_BASE_PACK_ID", "base-v1");
+    EnvironmentGuard::Set("CYXWIZ_RUNTIME_PACK_CUDA", nullptr);
+    EnvironmentGuard::Set("CYXWIZ_RUNTIME_PACK_OPENCL", "opencl-v2");
+    EnvironmentGuard::Set("CYXWIZ_RUNTIME_PACK_ONEAPI", nullptr);
+
+    cyxwiz::RouteQualificationRecord record;
+    record.type = cyxwiz::DeviceType::OPENCL;
+    record.pack_id = "opencl-v1";
+    record.operation_count = cyxwiz::kRouteQualificationOperationCount;
+    record.pass_count = record.operation_count;
+    record.certified = true;
+    cyxwiz::RouteQualificationSnapshot snapshot;
+    snapshot.matrix_id = cyxwiz::kRouteQualificationMatrixId;
+    snapshot.runtime_set_id = "set-v1";
+    snapshot.runtime_generation = 1;
+    snapshot.base_pack_id = "base-v1";
+    snapshot.compute_contract_id = cyxwiz::kCyxWizComputeContractId;
+    snapshot.operation_manifest_id =
+        cyxwiz::kRouteQualificationOperationManifestId;
+    snapshot.routes = {record};
+    cyxwiz::DeviceInfo route;
+    route.type = cyxwiz::DeviceType::OPENCL;
+
+    const auto stale = cyxwiz::EvaluateRouteQualification(route, snapshot);
+    CHECK_FALSE(stale.qualified);
+    CHECK(stale.evidence_available);
+    CHECK(stale.failure.category ==
+          cyxwiz::RouteFailureCategory::EvidenceStale);
+
+    EnvironmentGuard::Set("CYXWIZ_RUNTIME_PACK_OPENCL", "opencl-v1");
+    const auto current = cyxwiz::EvaluateRouteQualification(route, snapshot);
+    CHECK(current.qualified);
 }
 
 TEST_CASE("Route recommendations require stable identity and certification",
