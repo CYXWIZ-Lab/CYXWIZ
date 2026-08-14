@@ -82,6 +82,14 @@ only when its manifest signature chains to the app-bundled trust root, its
 catalog entry is current and signed, and its archive and component hashes
 match.
 
+Schema 1 resolves a pack archive beside its signed manifest. For an online
+entry, replace the final path segment of the catalog-authorized HTTPS manifest
+URL with the manifest's signed `archive.file_name`; credentials, queries,
+fragments, directory-valued manifest URLs, and nested archive names are
+rejected. Offline media places that same archive file beside its copied signed
+manifest. This deterministic rule is the only implicit artifact-source
+mapping and introduces no unsigned mirror or redirect authority.
+
 Online and offline artifacts enter one acquisition transaction. The service
 writes only to a sibling `.part` file, resumes from its retained byte length,
 requires the signed final byte size and SHA-256, flushes the completed file,

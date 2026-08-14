@@ -4,6 +4,7 @@
 #include <chrono>
 #include <exception>
 #include <limits>
+#include <memory>
 #include <utility>
 
 namespace cyxwiz::runtime {
@@ -91,6 +92,17 @@ bool BackendPackLifecycleService::ReadCatalog(
 BackendPackLifecycleResult BackendPackLifecycleService::Deliver(
     const BackendPackDeliveryRequest& request,
     BackendPackArtifactSource& source) {
+    return DeliverInternal(request, &source);
+}
+
+BackendPackLifecycleResult BackendPackLifecycleService::Deliver(
+    const BackendPackDeliveryRequest& request) {
+    return DeliverInternal(request, nullptr);
+}
+
+BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
+    const BackendPackDeliveryRequest& request,
+    BackendPackArtifactSource* source) {
     std::unique_lock<std::mutex> operation_lock(
         operation_mutex_, std::try_to_lock);
     if (!operation_lock.owns_lock()) {
@@ -171,8 +183,37 @@ BackendPackLifecycleResult BackendPackLifecycleService::Deliver(
     }
     const auto artifact = runtime_root_ / "cache" / "artifacts" /
         manifest.pack_id / manifest.archive.file_name;
+    std::unique_ptr<BackendPackArtifactSource> resolved_source;
+    if (!source) {
+        if (request.source == BackendPackDeliverySource::OfflineSibling) {
+            std::filesystem::path archive_path;
+            if (!ResolveOfflineBackendPackArchivePath(
+                    request.manifest_path, manifest.archive.file_name,
+                    archive_path, error)) {
+                return Finish(
+                    BackendPackLifecycleStatus::MetadataFailure, error,
+                    manifest.pack_id, manifest.backend);
+            }
+            resolved_source =
+                std::make_unique<OfflineBackendPackArtifactSource>(
+                    std::move(archive_path));
+        } else {
+            std::string archive_url;
+            if (!ResolveHttpsBackendPackArchiveUrl(
+                    catalog_entry->manifest_url,
+                    manifest.archive.file_name, archive_url, error)) {
+                return Finish(
+                    BackendPackLifecycleStatus::MetadataFailure, error,
+                    manifest.pack_id, manifest.backend);
+            }
+            resolved_source =
+                std::make_unique<HttpsBackendPackArtifactSource>(
+                    std::move(archive_url));
+        }
+        source = resolved_source.get();
+    }
     const auto acquired = acquirer_.Acquire(
-        source, artifact, manifest.archive.size, manifest.archive.sha256,
+        *source, artifact, manifest.archive.size, manifest.archive.sha256,
         request.acquisition_disk_budget_bytes);
     if (acquired.status != BackendPackAcquisitionStatus::Downloaded &&
         acquired.status != BackendPackAcquisitionStatus::AlreadyPresent) {

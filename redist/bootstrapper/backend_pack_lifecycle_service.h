@@ -34,6 +34,11 @@ using BackendPackQualificationHook = std::function<
         const std::filesystem::path&,
         const ActiveRuntimeState&)>;
 
+enum class BackendPackDeliverySource {
+    CatalogHttps,
+    OfflineSibling
+};
+
 struct BackendPackDeliveryRequest {
     std::filesystem::path catalog_path;
     std::filesystem::path manifest_path;
@@ -42,6 +47,8 @@ struct BackendPackDeliveryRequest {
     std::uint64_t acquisition_disk_budget_bytes = 0;
     std::uint64_t extraction_disk_budget_bytes = 0;
     std::uint64_t installation_disk_budget_bytes = 0;
+    BackendPackDeliverySource source =
+        BackendPackDeliverySource::CatalogHttps;
     bool repair = false;
 };
 
@@ -115,6 +122,8 @@ public:
     BackendPackLifecycleResult Deliver(
         const BackendPackDeliveryRequest& request,
         BackendPackArtifactSource& source);
+    BackendPackLifecycleResult Deliver(
+        const BackendPackDeliveryRequest& request);
     BackendPackLifecycleResult Remove(
         std::string backend,
         std::string pack_id);
@@ -124,6 +133,9 @@ public:
     BackendPackLifecycleProgress GetProgress() const;
 
 private:
+    BackendPackLifecycleResult DeliverInternal(
+        const BackendPackDeliveryRequest& request,
+        BackendPackArtifactSource* source);
     BackendPackLifecycleResult Finish(
         BackendPackLifecycleStatus status,
         std::string message,

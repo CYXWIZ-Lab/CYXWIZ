@@ -145,7 +145,7 @@ public:
             ("cyxwiz-pack-lifecycle-" + std::to_string(
                 std::chrono::steady_clock::now().time_since_epoch().count()));
         runtime = root / "runtime-root";
-        archive = root / "source" / "opencl-v1.zip";
+        archive = root / "opencl-v1.zip";
         catalog_path = root / "catalog.json";
         manifest_path = root / "manifest.json";
         trust_path = root / "trusted-keys.json";
@@ -316,8 +316,9 @@ int main() {
                     BackendPackQualificationDisposition::Qualified,
                     "exact candidate qualified"};
             });
-        OfflineBackendPackArtifactSource source(fixture.archive);
-        const auto result = service.Deliver(fixture.Request(), source);
+        auto request = fixture.Request();
+        request.source = BackendPackDeliverySource::OfflineSibling;
+        const auto result = service.Deliver(request);
         failures += !Expect(
             result.status == BackendPackLifecycleStatus::
                                  InstalledAndActivated &&

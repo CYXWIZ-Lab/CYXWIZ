@@ -176,6 +176,56 @@ bool Expect(bool condition, const std::string& message) {
 
 int main() {
     TemporaryDirectory temporary;
+
+    std::string archive_url;
+    std::string source_error;
+    std::filesystem::path offline_archive;
+    if (!Expect(
+            ResolveHttpsBackendPackArchiveUrl(
+                "https://packs.example.test/stable/opencl-v2.manifest.json",
+                "opencl v2.zip", archive_url, source_error) &&
+                archive_url ==
+                    "https://packs.example.test/stable/opencl%20v2.zip",
+            "HTTPS archive source was not derived beside its signed manifest") ||
+        !Expect(
+            !ResolveHttpsBackendPackArchiveUrl(
+                "https://user@packs.example.test/opencl.json",
+                "opencl.zip", archive_url, source_error),
+            "credential-bearing manifest URL was accepted") ||
+        !Expect(
+            !ResolveHttpsBackendPackArchiveUrl(
+                "https://packs.example.test/opencl.json?channel=stable",
+                "opencl.zip", archive_url, source_error),
+            "query-bearing manifest URL was accepted") ||
+        !Expect(
+            !ResolveHttpsBackendPackArchiveUrl(
+                "https://packs.example.test/opencl.json",
+                "nested/opencl.zip", archive_url, source_error),
+            "nested archive file name was accepted") ||
+        !Expect(
+            !ResolveOfflineBackendPackArchivePath(
+                std::filesystem::absolute(
+                    temporary.Path() / "opencl.manifest.json"),
+                "opencl?.zip", offline_archive, source_error),
+            "non-portable offline archive name was accepted")) {
+        return 1;
+    }
+    const auto offline_manifest =
+        std::filesystem::absolute(temporary.Path() / "opencl.manifest.json");
+    if (!Expect(
+            ResolveOfflineBackendPackArchivePath(
+                offline_manifest, "opencl-v2.zip", offline_archive,
+                source_error) &&
+                offline_archive == offline_manifest.parent_path() /
+                    "opencl-v2.zip",
+            "offline archive source was not derived beside its manifest") ||
+        !Expect(
+            !ResolveOfflineBackendPackArchivePath(
+                offline_manifest, "../opencl-v2.zip", offline_archive,
+                source_error),
+            "offline traversal archive name was accepted")) {
+        return 1;
+    }
     std::string bytes(2 * 1024 * 1024, '\0');
     for (std::size_t i = 0; i < bytes.size(); ++i) {
         bytes[i] = static_cast<char>(i % 251);

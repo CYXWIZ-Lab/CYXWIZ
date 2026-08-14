@@ -1,8 +1,12 @@
 #include "backend_pack_acquisition.h"
 #include "backend_pack_hash.h"
+#include "backend_pack_path.h"
 
+#include <algorithm>
 #include <fstream>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -16,6 +20,34 @@
 
 namespace cyxwiz::runtime {
 namespace {
+
+bool IsArchiveFileName(std::string_view value) {
+    return value.size() <= 255 &&
+           IsCanonicalBackendPackRelativePath(value) &&
+           value.find('/') == std::string_view::npos &&
+           std::all_of(value.begin(), value.end(), [](unsigned char character) {
+               return character >= 0x20 && character < 0x7f &&
+                      std::string_view{"\"<>|?*"}.find(character) ==
+                          std::string_view::npos;
+           });
+}
+
+std::string PercentEncodeUrlPathSegment(std::string_view value) {
+    std::ostringstream encoded;
+    encoded << std::uppercase << std::hex;
+    for (const unsigned char character : value) {
+        if ((character >= 'a' && character <= 'z') ||
+            (character >= 'A' && character <= 'Z') ||
+            (character >= '0' && character <= '9') || character == '-' ||
+            character == '_' || character == '.' || character == '~') {
+            encoded << static_cast<char>(character);
+        } else {
+            encoded << '%' << std::setw(2) << std::setfill('0')
+                    << static_cast<unsigned int>(character);
+        }
+    }
+    return encoded.str();
+}
 
 std::filesystem::path PartialPath(const std::filesystem::path& destination) {
     auto path = destination;
@@ -131,6 +163,68 @@ bool PublishArtifact(
 }
 
 }  // namespace
+
+bool ResolveHttpsBackendPackArchiveUrl(
+    std::string_view manifest_url,
+    std::string_view archive_file_name,
+    std::string& archive_url,
+    std::string& error) {
+    constexpr std::string_view scheme = "https://";
+    archive_url.clear();
+    error.clear();
+    if (!manifest_url.starts_with(scheme) ||
+        manifest_url.size() > 4096 ||
+        std::any_of(
+            manifest_url.begin(), manifest_url.end(),
+            [](unsigned char character) {
+                return character <= 0x20 || character >= 0x7f ||
+                       character == '\\';
+            }) ||
+        manifest_url.find_first_of("?#") != std::string_view::npos ||
+        !IsArchiveFileName(archive_file_name)) {
+        error = "Signed manifest or archive source is invalid";
+        return false;
+    }
+    const auto authority_end = manifest_url.find('/', scheme.size());
+    if (authority_end == std::string_view::npos ||
+        authority_end == scheme.size() ||
+        manifest_url.substr(scheme.size(), authority_end - scheme.size())
+                .find('@') != std::string_view::npos) {
+        error = "Signed manifest HTTPS authority is invalid";
+        return false;
+    }
+    const auto file_separator = manifest_url.rfind('/');
+    if (file_separator < authority_end ||
+        file_separator + 1 == manifest_url.size()) {
+        error = "Signed manifest URL must identify a file";
+        return false;
+    }
+    archive_url.assign(manifest_url.substr(0, file_separator + 1));
+    archive_url += PercentEncodeUrlPathSegment(archive_file_name);
+    if (archive_url.size() > 4096) {
+        archive_url.clear();
+        error = "Derived backend-pack archive URL is too long";
+        return false;
+    }
+    return true;
+}
+
+bool ResolveOfflineBackendPackArchivePath(
+    const std::filesystem::path& manifest_path,
+    std::string_view archive_file_name,
+    std::filesystem::path& archive_path,
+    std::string& error) {
+    archive_path.clear();
+    error.clear();
+    if (!manifest_path.is_absolute() || !manifest_path.has_filename() ||
+        !IsArchiveFileName(archive_file_name)) {
+        error = "Offline manifest or archive source is invalid";
+        return false;
+    }
+    archive_path = manifest_path.parent_path() /
+        BackendPackNativeRelativePath(archive_file_name);
+    return true;
+}
 
 OfflineBackendPackArtifactSource::OfflineBackendPackArtifactSource(
     std::filesystem::path path)

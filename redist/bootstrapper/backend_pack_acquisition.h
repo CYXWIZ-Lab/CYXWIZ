@@ -7,8 +7,20 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <string_view>
 
 namespace cyxwiz::runtime {
+
+bool ResolveHttpsBackendPackArchiveUrl(
+    std::string_view manifest_url,
+    std::string_view archive_file_name,
+    std::string& archive_url,
+    std::string& error);
+bool ResolveOfflineBackendPackArchivePath(
+    const std::filesystem::path& manifest_path,
+    std::string_view archive_file_name,
+    std::filesystem::path& archive_path,
+    std::string& error);
 
 using BackendPackArtifactChunk =
     std::function<bool(const char*, std::size_t, std::string&)>;
