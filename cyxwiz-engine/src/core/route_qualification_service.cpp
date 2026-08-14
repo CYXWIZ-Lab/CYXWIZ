@@ -245,6 +245,12 @@ void RemoveEvidenceForChangedPacks(
         snapshot.routes.end());
 }
 
+bool HasRuntimeOverride(const RouteProbeInvocation& invocation) {
+    return !invocation.runtime_root.empty() ||
+           !invocation.working_directory.empty() ||
+           !invocation.runtime_dll_directories.empty();
+}
+
 #ifdef _WIN32
 std::wstring QuoteWindowsArgument(const std::wstring& value) {
     std::wstring quoted = L"\"";
@@ -265,6 +271,155 @@ std::wstring QuoteWindowsArgument(const std::wstring& value) {
     quoted.append(slashes * 2, L'\\');
     quoted.push_back(L'\"');
     return quoted;
+}
+
+std::wstring WidenIdentity(const std::string& value) {
+    return std::wstring(value.begin(), value.end());
+}
+
+bool BuildRuntimeEnvironment(
+    const RouteProbeInvocation& invocation,
+    std::vector<wchar_t>& output,
+    std::string& error) {
+    if (!invocation.runtime_identity.has_value() ||
+        !IsCompleteRuntimeIdentity(*invocation.runtime_identity) ||
+        invocation.runtime_root.empty() ||
+        !invocation.runtime_root.is_absolute() ||
+        invocation.working_directory.empty() ||
+        !invocation.working_directory.is_absolute() ||
+        invocation.runtime_dll_directories.empty()) {
+        error = "Candidate probe runtime identity and paths are incomplete";
+        return false;
+    }
+    std::error_code filesystem_error;
+    const auto canonical_root = std::filesystem::weakly_canonical(
+        invocation.runtime_root, filesystem_error);
+    if (filesystem_error ||
+        !std::filesystem::is_directory(canonical_root, filesystem_error) ||
+        filesystem_error) {
+        error = "Candidate probe runtime root is unavailable";
+        return false;
+    }
+    const auto contained = [&](const std::filesystem::path& path) {
+        const auto canonical =
+            std::filesystem::weakly_canonical(path, filesystem_error);
+        if (filesystem_error) return false;
+        const auto relative = canonical.lexically_relative(canonical_root);
+        return !relative.empty() && !relative.is_absolute() &&
+               std::none_of(
+                   relative.begin(), relative.end(),
+                   [](const std::filesystem::path& component) {
+                       return component == "..";
+                   });
+    };
+    if (!std::filesystem::is_directory(
+            invocation.working_directory, filesystem_error) ||
+        filesystem_error || !contained(invocation.working_directory) ||
+        !std::filesystem::is_regular_file(
+            invocation.executable, filesystem_error) || filesystem_error ||
+        !contained(invocation.executable)) {
+        error =
+            "Candidate probe executable or working directory is outside the runtime root";
+        return false;
+    }
+    std::wstring path_value;
+    for (const auto& directory : invocation.runtime_dll_directories) {
+        if (directory.empty() || !directory.is_absolute() ||
+            !std::filesystem::is_directory(directory, filesystem_error) ||
+            filesystem_error || !contained(directory)) {
+            error = "Candidate probe DLL directory is unavailable";
+            return false;
+        }
+        if (!path_value.empty()) path_value.push_back(L';');
+        path_value += directory.native();
+    }
+    std::array<wchar_t, MAX_PATH + 1> system_directory{};
+    const UINT system_length = ::GetSystemDirectoryW(
+        system_directory.data(), static_cast<UINT>(system_directory.size()));
+    if (system_length == 0 || system_length >= system_directory.size()) {
+        error = "Cannot resolve the Windows system directory for the candidate probe";
+        return false;
+    }
+    path_value.push_back(L';');
+    path_value.append(system_directory.data(), system_length);
+
+    constexpr std::wstring_view removed_names[] = {
+        L"PATH", L"CYXWIZ_ACTIVE_RUNTIME_ROOT", L"CYXWIZ_RUNTIME_SET_ID",
+        L"CYXWIZ_RUNTIME_GENERATION", L"CYXWIZ_BASE_PACK_ID",
+        L"CYXWIZ_RUNTIME_PACK_CUDA", L"CYXWIZ_RUNTIME_PACK_OPENCL",
+        L"CYXWIZ_RUNTIME_PACK_ONEAPI", L"AF_PATH", L"AF_PLUGIN_PATH",
+        L"CYXWIZ_ARRAYFIRE_DIR", L"AF_BUILD_PATH",
+        L"AF_BUILD_LIB_CUSTOM_PATH", L"PYTHONHOME", L"PYTHONPATH"};
+    const auto removed = [&](std::wstring_view name) {
+        return std::any_of(
+            std::begin(removed_names), std::end(removed_names),
+            [&](std::wstring_view candidate) {
+                return _wcsicmp(
+                           std::wstring(name).c_str(),
+                           std::wstring(candidate).c_str()) == 0;
+            });
+    };
+
+    std::vector<std::wstring> variables;
+    wchar_t* environment = ::GetEnvironmentStringsW();
+    if (!environment) {
+        error = "Cannot read the process environment for the candidate probe";
+        return false;
+    }
+    for (const wchar_t* cursor = environment; *cursor != L'\0';) {
+        std::wstring variable(cursor);
+        cursor += variable.size() + 1;
+        const auto separator = variable.find(L'=');
+        if (separator == 0 || separator == std::wstring::npos ||
+            removed(std::wstring_view(variable).substr(0, separator))) {
+            continue;
+        }
+        variables.push_back(std::move(variable));
+    }
+    ::FreeEnvironmentStringsW(environment);
+
+    const auto& identity = *invocation.runtime_identity;
+    variables.push_back(L"PATH=" + path_value);
+    variables.push_back(
+        L"CYXWIZ_ACTIVE_RUNTIME_ROOT=" + invocation.runtime_root.native());
+    variables.push_back(
+        L"CYXWIZ_RUNTIME_SET_ID=" + WidenIdentity(identity.runtime_set_id));
+    variables.push_back(
+        L"CYXWIZ_RUNTIME_GENERATION=" +
+        std::to_wstring(identity.generation));
+    variables.push_back(
+        L"CYXWIZ_BASE_PACK_ID=" + WidenIdentity(identity.base_pack_id));
+    for (const auto& pack : identity.backend_packs) {
+        const wchar_t* name = pack.type == DeviceType::CUDA
+            ? L"CYXWIZ_RUNTIME_PACK_CUDA="
+            : pack.type == DeviceType::OPENCL
+                ? L"CYXWIZ_RUNTIME_PACK_OPENCL="
+                : pack.type == DeviceType::ONEAPI
+                    ? L"CYXWIZ_RUNTIME_PACK_ONEAPI="
+                    : nullptr;
+        if (!name) {
+            error = "Candidate probe runtime contains an unsupported pack identity";
+            return false;
+        }
+        variables.push_back(std::wstring(name) + WidenIdentity(pack.pack_id));
+    }
+    std::sort(
+        variables.begin(), variables.end(),
+        [](const std::wstring& left, const std::wstring& right) {
+            return _wcsicmp(left.c_str(), right.c_str()) < 0;
+        });
+    size_t characters = 1;
+    for (const auto& variable : variables) {
+        characters += variable.size() + 1;
+    }
+    output.clear();
+    output.reserve(characters);
+    for (const auto& variable : variables) {
+        output.insert(output.end(), variable.begin(), variable.end());
+        output.push_back(L'\0');
+    }
+    output.push_back(L'\0');
+    return true;
 }
 
 void DrainPipe(HANDLE pipe, std::string& output, size_t limit) {
@@ -306,6 +461,14 @@ RouteProbeResult RunIsolatedRouteProbe(
     }
 
 #ifdef _WIN32
+    std::vector<wchar_t> runtime_environment;
+    std::string runtime_environment_error;
+    const bool runtime_override = HasRuntimeOverride(invocation);
+    if (runtime_override && !BuildRuntimeEnvironment(
+            invocation, runtime_environment, runtime_environment_error)) {
+        result.infrastructure_error = std::move(runtime_environment_error);
+        return result;
+    }
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE read_pipe = nullptr;
     HANDLE write_pipe = nullptr;
@@ -334,10 +497,15 @@ RouteProbeResult RunIsolatedRouteProbe(
     startup.hStdError = write_pipe;
     startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     PROCESS_INFORMATION process{};
+    const auto working_directory = runtime_override
+        ? invocation.working_directory
+        : invocation.executable.parent_path();
     if (!CreateProcessW(
             invocation.executable.c_str(), command.data(), nullptr, nullptr,
-            TRUE, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr,
-            invocation.executable.parent_path().c_str(), &startup, &process)) {
+            TRUE, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP |
+                      (runtime_override ? CREATE_UNICODE_ENVIRONMENT : 0),
+            runtime_override ? runtime_environment.data() : nullptr,
+            working_directory.c_str(), &startup, &process)) {
         close_pipes();
         result.infrastructure_error = "Could not launch isolated route probe: " +
             std::system_category().message(static_cast<int>(GetLastError()));
@@ -402,6 +570,11 @@ RouteProbeResult RunIsolatedRouteProbe(
     close_pipes();
     return result;
 #else
+    if (HasRuntimeOverride(invocation)) {
+        result.infrastructure_error =
+            "Candidate probe runtime overrides are currently supported on Windows";
+        return result;
+    }
     int pipe_fds[2] = {-1, -1};
     if (pipe(pipe_fds) != 0) {
         result.infrastructure_error = "Could not create isolated probe output pipe";
@@ -618,6 +791,10 @@ RouteQualificationRunResult RouteQualificationService::Verify(
         return {RouteQualificationRunStatus::Busy, false,
                 "Route qualification is already running", std::nullopt};
     }
+    const bool probe_runtime_override =
+        !options.probe_runtime_root.empty() ||
+        !options.probe_working_directory.empty() ||
+        !options.probe_runtime_dll_directories.empty();
     if (routes.empty() || options.matrix_id.empty() ||
         options.cache_path.empty() || options.probe_executable.empty() ||
         options.operation_timeout.count() <= 0 ||
@@ -626,6 +803,23 @@ RouteQualificationRunResult RouteQualificationService::Verify(
          options.benchmark_timeout.count() <= 0)) {
         return {RouteQualificationRunStatus::InvalidRequest, false,
                 "Route qualification request is incomplete", std::nullopt};
+    }
+    if (probe_runtime_override &&
+        (!options.runtime_identity.has_value() ||
+         options.probe_runtime_root.empty() ||
+         !options.probe_runtime_root.is_absolute() ||
+         options.probe_working_directory.empty() ||
+         !options.probe_working_directory.is_absolute() ||
+         options.probe_runtime_dll_directories.empty() ||
+         std::any_of(
+             options.probe_runtime_dll_directories.begin(),
+             options.probe_runtime_dll_directories.end(),
+             [](const std::filesystem::path& directory) {
+                 return directory.empty() || !directory.is_absolute();
+             }))) {
+        return {RouteQualificationRunStatus::InvalidRequest, false,
+                "Candidate route qualification runtime is incomplete",
+                std::nullopt};
     }
     if (options.runtime_identity.has_value() &&
         !IsCompleteRuntimeIdentity(*options.runtime_identity)) {
@@ -726,6 +920,12 @@ RouteQualificationRunResult RouteQualificationService::Verify(
             invocation.operation = progress.operation;
             invocation.timeout = options.operation_timeout;
             invocation.output_limit_bytes = options.output_limit_bytes;
+            invocation.runtime_root = options.probe_runtime_root;
+            invocation.working_directory =
+                options.probe_working_directory;
+            invocation.runtime_dll_directories =
+                options.probe_runtime_dll_directories;
+            invocation.runtime_identity = options.runtime_identity;
             const auto probe = runner_(invocation, [this] {
                 return cancel_requested_.load();
             });
@@ -783,6 +983,12 @@ RouteQualificationRunResult RouteQualificationService::Verify(
             invocation.operation = "dense_compute_benchmark";
             invocation.timeout = options.benchmark_timeout;
             invocation.output_limit_bytes = options.output_limit_bytes;
+            invocation.runtime_root = options.probe_runtime_root;
+            invocation.working_directory =
+                options.probe_working_directory;
+            invocation.runtime_dll_directories =
+                options.probe_runtime_dll_directories;
+            invocation.runtime_identity = options.runtime_identity;
             const auto benchmark = runner_(invocation, [this] {
                 return cancel_requested_.load();
             });

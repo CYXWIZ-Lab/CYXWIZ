@@ -32,6 +32,10 @@ struct RouteProbeInvocation {
     std::string operation;
     std::chrono::milliseconds timeout{20000};
     size_t output_limit_bytes = 64 * 1024;
+    std::filesystem::path runtime_root;
+    std::filesystem::path working_directory;
+    std::vector<std::filesystem::path> runtime_dll_directories;
+    std::optional<RuntimeQualificationIdentity> runtime_identity;
 };
 
 struct RouteProbeResult {
@@ -80,6 +84,9 @@ struct RouteQualificationOptions {
     size_t output_limit_bytes = 64 * 1024;
     bool benchmark_verified_routes = false;
     std::chrono::milliseconds benchmark_timeout{60000};
+    std::filesystem::path probe_runtime_root;
+    std::filesystem::path probe_working_directory;
+    std::vector<std::filesystem::path> probe_runtime_dll_directories;
 };
 
 enum class RuntimeQualificationFailurePolicy {

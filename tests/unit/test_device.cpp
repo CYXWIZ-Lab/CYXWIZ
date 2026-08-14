@@ -1227,6 +1227,93 @@ TEST_CASE("Staged runtime failure returns typed pack policy disposition",
     std::filesystem::remove_all(root, cleanup_error);
 }
 
+TEST_CASE("Staged runtime verification propagates an exact candidate probe runtime",
+          "[device][selection][qualification][service][runtime-pack][process]") {
+    RouteQualificationStateGuard state_guard;
+    const auto root = std::filesystem::temp_directory_path() /
+        "cyxwiz-runtime-pack-candidate-probe";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+    const auto base = root / "base" / "base-v1";
+    const auto pack = root / "packs" / "opencl" / "opencl-v2";
+    std::filesystem::create_directories(base);
+    std::filesystem::create_directories(pack);
+
+    std::vector<cyxwiz::RouteProbeInvocation> invocations;
+    cyxwiz::RouteQualificationService service(
+        [&](const cyxwiz::RouteProbeInvocation& invocation,
+            const cyxwiz::RouteQualificationCancelCheck&) {
+            invocations.push_back(invocation);
+            cyxwiz::RouteProbeResult result;
+            result.status = cyxwiz::RouteProbeStatus::Passed;
+            if (invocation.operation == "dense_compute_benchmark") {
+                result.output =
+                    "benchmark_id=cyxwiz-dense-compute-v1 samples=3 "
+                    "iterations_per_sample=2 median_iteration_ms=1.25";
+            }
+            return result;
+        });
+    cyxwiz::RuntimeQualificationIdentity identity;
+    identity.runtime_set_id = "set-v1";
+    identity.generation = 8;
+    identity.base_pack_id = "base-v1";
+    identity.backend_packs = {
+        {cyxwiz::DeviceType::OPENCL, "opencl-v2"}};
+    cyxwiz::DeviceInfo affected;
+    affected.type = cyxwiz::DeviceType::OPENCL;
+    affected.device_id = 1;
+    cyxwiz::RouteQualificationOptions options;
+    options.probe_executable = base / "cyxwiz-route-probe.exe";
+    options.cache_path = root / "route-qualification.json";
+    options.matrix_id = cyxwiz::kRouteQualificationMatrixId;
+    options.runtime_identity = identity;
+    options.benchmark_verified_routes = true;
+    options.probe_runtime_root = root;
+    options.probe_working_directory = base;
+    options.probe_runtime_dll_directories = {pack, base};
+
+    const auto result = service.VerifyStagedRuntimeRoutes(
+        {affected}, identity,
+        cyxwiz::RuntimeQualificationFailurePolicy::KeepInstalledUnqualified,
+        options);
+
+    INFO(result.qualification.message);
+    REQUIRE(result.disposition ==
+            cyxwiz::RuntimeQualificationDisposition::Qualified);
+    REQUIRE(invocations.size() ==
+            cyxwiz::RequiredRouteQualificationOperations().size() + 1);
+    for (const auto& invocation : invocations) {
+        CHECK(invocation.runtime_root == root);
+        CHECK(invocation.working_directory == base);
+        CHECK(invocation.runtime_dll_directories ==
+              std::vector<std::filesystem::path>{pack, base});
+        REQUIRE(invocation.runtime_identity.has_value());
+        CHECK(invocation.runtime_identity->runtime_set_id ==
+              identity.runtime_set_id);
+        CHECK(invocation.runtime_identity->generation == identity.generation);
+        REQUIRE(invocation.runtime_identity->backend_packs.size() == 1);
+        CHECK(invocation.runtime_identity->backend_packs.front().pack_id ==
+              "opencl-v2");
+    }
+
+    bool incomplete_probe_called = false;
+    cyxwiz::RouteQualificationService incomplete_service(
+        [&](const cyxwiz::RouteProbeInvocation&,
+            const cyxwiz::RouteQualificationCancelCheck&) {
+            incomplete_probe_called = true;
+            return cyxwiz::RouteProbeResult{};
+        });
+    options.probe_working_directory.clear();
+    const auto incomplete = incomplete_service.VerifyStagedRuntimeRoutes(
+        {affected}, identity,
+        cyxwiz::RuntimeQualificationFailurePolicy::KeepInstalledUnqualified,
+        options);
+    CHECK(incomplete.qualification.status ==
+          cyxwiz::RouteQualificationRunStatus::InvalidRequest);
+    CHECK_FALSE(incomplete_probe_called);
+    std::filesystem::remove_all(root, cleanup_error);
+}
+
 TEST_CASE("Runtime pack removal invalidates only its retained routes",
           "[device][selection][qualification][service][runtime-pack]") {
     RouteQualificationStateGuard state_guard;

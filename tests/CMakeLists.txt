@@ -96,6 +96,9 @@ if(CYXWIZ_BUILD_ENGINE)
         ../cyxwiz-engine/src/core/route_qualification_service.cpp
         ../cyxwiz-engine/src/core/route_qualification_snapshot.cpp
     )
+    add_executable(test_route_probe_environment_child
+        ../cyxwiz-engine/tests/test_route_probe_environment_child.cpp
+    )
     target_include_directories(test_route_qualification_process PRIVATE
         ${CMAKE_SOURCE_DIR}/cyxwiz-engine/src
         ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
@@ -108,11 +111,19 @@ if(CYXWIZ_BUILD_ENGINE)
         CXX_STANDARD 20
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
-    add_dependencies(test_route_qualification_process cyxwiz-route-probe)
+    set_target_properties(test_route_probe_environment_child PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_dependencies(test_route_qualification_process
+        cyxwiz-route-probe
+        test_route_probe_environment_child
+    )
     add_test(
         NAME RouteQualificationProcessContracts
         COMMAND test_route_qualification_process
                 $<TARGET_FILE:cyxwiz-route-probe>
+                $<TARGET_FILE:test_route_probe_environment_child>
     )
 endif()
 
