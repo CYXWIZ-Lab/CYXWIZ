@@ -1,4 +1,5 @@
 #include "runtime_layout.h"
+#include "backend_pack_maintenance_request.h"
 
 #include <filesystem>
 #include <iostream>
@@ -131,6 +132,13 @@ int wmain(int argc, wchar_t** argv) {
     if (!cyxwiz::runtime::ResolveActiveRuntime(runtime_root, runtime, error)) {
         return Fail(runtime_root, error);
     }
+    cyxwiz::runtime::ActiveRuntimeState launched_runtime;
+    launched_runtime.runtime_set_id = runtime.runtime_set_id;
+    launched_runtime.generation = runtime.generation;
+    launched_runtime.base_pack_id = runtime.base_pack_id;
+    for (const auto& pack : runtime.packs) {
+        launched_runtime.packs.push_back({pack.backend, pack.pack_id});
+    }
     if (!::SetDefaultDllDirectories(
             LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)) {
         return Fail(runtime.runtime_root,
@@ -195,5 +203,19 @@ int wmain(int argc, wchar_t** argv) {
             "wait for Engine failed with Win32 error " + std::to_string(::GetLastError()));
     }
     ::CloseHandle(process.hProcess);
+    if (wait_result == WAIT_OBJECT_0) {
+        const auto maintenance =
+            cyxwiz::runtime::ApplyPendingBackendPackMaintenance(
+                runtime.runtime_root, launched_runtime);
+        if (maintenance.status != cyxwiz::runtime::
+                BackendPackMaintenanceApplyStatus::NoRequest) {
+            cyxwiz::runtime::AppendBootstrapDiagnostic(
+                runtime.runtime_root,
+                std::string("backend maintenance ") +
+                    cyxwiz::runtime::BackendPackMaintenanceApplyStatusName(
+                        maintenance.status) +
+                    ": " + maintenance.message);
+        }
+    }
     return static_cast<int>(exit_code);
 }

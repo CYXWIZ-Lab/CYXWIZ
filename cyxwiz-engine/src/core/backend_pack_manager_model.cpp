@@ -46,6 +46,13 @@ BackendPackActionDecision EvaluateBackendPackAction(
         if (!context.maintenance_available) {
             return Disabled("Backend-pack maintenance is not connected");
         }
+        if (!context.maintenance_identity_matches) {
+            return Disabled(
+                "Restart into the next-launch runtime before maintenance");
+        }
+        if (context.maintenance_pending) {
+            return Disabled("A backend maintenance action is already queued");
+        }
         return context.rollback_available
             ? BackendPackActionDecision{true, {}}
             : Disabled("No validated rollback state is available");
@@ -67,6 +74,13 @@ BackendPackActionDecision EvaluateBackendPackAction(
         if (!record->installed) return Disabled("The backend pack is not installed");
         if (record->backend == "cpu") {
             return Disabled("The required CPU base cannot be removed");
+        }
+        if (context.maintenance_pending) {
+            return Disabled("A backend maintenance action is already queued");
+        }
+        if (!context.maintenance_identity_matches) {
+            return Disabled(
+                "Restart into the next-launch runtime before maintenance");
         }
         return context.maintenance_available
             ? BackendPackActionDecision{true, {}}

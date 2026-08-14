@@ -98,6 +98,16 @@ void TestActionPolicy() {
     Check(!cyxwiz::EvaluateBackendPackAction(
                cyxwiz::BackendPackAction::Remove, context, &installed).enabled,
           "UI must not offer a fake removal without lifecycle wiring");
+    context.maintenance_available = true;
+    context.maintenance_pending = true;
+    Check(!cyxwiz::EvaluateBackendPackAction(
+               cyxwiz::BackendPackAction::Remove, context, &installed).enabled,
+          "A queued maintenance request must block a second mutation");
+    context.maintenance_pending = false;
+    context.maintenance_identity_matches = false;
+    Check(!cyxwiz::EvaluateBackendPackAction(
+               cyxwiz::BackendPackAction::Remove, context, &installed).enabled,
+          "Maintenance must reject a process running a stale runtime identity");
 }
 
 void TestDisplayFormatting() {

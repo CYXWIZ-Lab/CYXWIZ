@@ -16,6 +16,17 @@ target_link_libraries(cyxwiz-runtime-bootstrap PUBLIC
     nlohmann_json::nlohmann_json
 )
 
+add_library(cyxwiz-backend-pack-maintenance STATIC
+    backend_pack_maintenance_request.cpp
+    backend_pack_remover.cpp
+)
+target_include_directories(cyxwiz-backend-pack-maintenance PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_link_libraries(cyxwiz-backend-pack-maintenance PUBLIC
+    cyxwiz-runtime-bootstrap
+)
+
 add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_acquisition.cpp
     backend_pack_archive_extractor.cpp
@@ -25,12 +36,12 @@ add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_lifecycle_service.cpp
     backend_pack_metadata_verifier.cpp
     backend_pack_path.cpp
-    backend_pack_remover.cpp
 )
 target_include_directories(cyxwiz-backend-pack-service PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 target_link_libraries(cyxwiz-backend-pack-service PRIVATE
+    cyxwiz-backend-pack-maintenance
     cyxwiz-runtime-bootstrap
     LibArchive::LibArchive
     OpenSSL::Crypto
@@ -39,6 +50,7 @@ target_link_libraries(cyxwiz-backend-pack-service PRIVATE
 
 add_executable(cyxwiz-runtime-bootstrapper main.cpp)
 target_link_libraries(cyxwiz-runtime-bootstrapper PRIVATE
+    cyxwiz-backend-pack-maintenance
     cyxwiz-runtime-bootstrap
 )
 set_target_properties(cyxwiz-runtime-bootstrapper PROPERTIES
@@ -139,6 +151,20 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME backend_pack_maintenance_contract
         COMMAND test_backend_pack_maintenance
+    )
+
+    add_executable(test_backend_pack_maintenance_request
+        test_backend_pack_maintenance_request.cpp
+    )
+    target_link_libraries(test_backend_pack_maintenance_request PRIVATE
+        cyxwiz-backend-pack-maintenance
+    )
+    set_target_properties(test_backend_pack_maintenance_request PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME backend_pack_maintenance_request_contract
+        COMMAND test_backend_pack_maintenance_request
     )
 
     add_executable(test_backend_pack_lifecycle_service

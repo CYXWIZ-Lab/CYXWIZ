@@ -417,7 +417,10 @@ if(NOT CYXWIZ_ANDROID_BUILD)
         endif()
         add_subdirectory(cyxwiz-engine)
         if(WIN32)
-            target_link_libraries(cyxwiz-engine PRIVATE cyxwiz-runtime-bootstrap)
+            target_link_libraries(cyxwiz-engine PRIVATE
+                cyxwiz-backend-pack-maintenance
+                cyxwiz-runtime-bootstrap
+            )
         endif()
         include(CyxWizReleasePackaging)
         cyxwiz_add_release_packaging_targets()

@@ -608,6 +608,12 @@ private:
     bool route_qualification_task_refreshed_ = true;
     int backend_pack_install_choice_ = 0;
     std::string backend_pack_details_id_;
+    bool show_backend_pack_maintenance_confirm_ = false;
+    int backend_pack_maintenance_action_ = 0;
+    std::string backend_pack_maintenance_backend_;
+    std::string backend_pack_maintenance_pack_id_;
+    std::string backend_pack_maintenance_message_;
+    bool backend_pack_maintenance_queued_ = false;
 
     // Go to Line dialog state
     bool show_go_to_line_dialog_ = false;

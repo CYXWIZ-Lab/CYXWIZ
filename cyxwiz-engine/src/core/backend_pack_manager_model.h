@@ -53,6 +53,8 @@ struct BackendPackManagerContext {
     bool catalog_available = false;
     bool delivery_available = false;
     bool maintenance_available = false;
+    bool maintenance_identity_matches = true;
+    bool maintenance_pending = false;
     bool operation_running = false;
     bool training_active = false;
     bool rollback_available = false;

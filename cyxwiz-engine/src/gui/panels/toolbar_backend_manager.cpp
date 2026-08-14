@@ -4,8 +4,11 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/route_qualification_snapshot.h"
+#include "backend_pack_maintenance_request.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -57,6 +60,33 @@ std::string JoinOrUnavailable(const std::vector<std::string>& values) {
     return result;
 }
 
+std::filesystem::path ActiveRuntimeRoot() {
+    const char* value = std::getenv("CYXWIZ_ACTIVE_RUNTIME_ROOT");
+    return value && *value ? std::filesystem::path(value)
+                           : std::filesystem::path{};
+}
+
+bool SameRuntimeIdentity(
+    const runtime::ActiveRuntimeState& active,
+    const RuntimeQualificationIdentity& identity) {
+    if (active.runtime_set_id != identity.runtime_set_id ||
+        active.generation != identity.generation ||
+        active.base_pack_id != identity.base_pack_id ||
+        active.packs.size() != identity.backend_packs.size()) {
+        return false;
+    }
+    for (const auto& pack : active.packs) {
+        const auto match = std::find_if(
+            identity.backend_packs.begin(), identity.backend_packs.end(),
+            [&](const auto& candidate) {
+                return PackBackendId(candidate.type) == pack.backend &&
+                       candidate.pack_id == pack.pack_id;
+            });
+        if (match == identity.backend_packs.end()) return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
@@ -73,15 +103,26 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     std::string identity_error;
     const auto identity =
         ReadActiveRuntimeQualificationIdentity(identity_error);
+    const auto runtime_root = ActiveRuntimeRoot();
+    runtime::ActiveRuntimeState next_runtime;
+    std::string next_runtime_error;
+    const bool next_runtime_available =
+        !runtime_root.empty() && runtime_root.is_absolute() &&
+        runtime::LoadActiveRuntimeState(
+            runtime_root / "active-runtime.json", next_runtime,
+            next_runtime_error);
+    const bool current_matches_next =
+        next_runtime_available && identity.has_value() &&
+        SameRuntimeIdentity(next_runtime, *identity);
     const auto evidence = GetRouteQualificationSnapshot();
     const bool evidence_matches_runtime =
-        identity.has_value() && evidence.has_value() &&
+        current_matches_next && evidence.has_value() &&
         evidence->runtime_set_id == identity->runtime_set_id &&
         evidence->runtime_generation == identity->generation &&
         evidence->base_pack_id == identity->base_pack_id;
 
     std::vector<BackendPackManagerRecord> records;
-    if (identity.has_value()) {
+    if (next_runtime_available) {
         const auto add_record = [&](DeviceType type, const std::string& pack_id) {
             BackendPackManagerRecord record;
             record.backend = PackBackendId(type);
@@ -98,22 +139,47 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             }
             records.push_back(std::move(record));
         };
-        add_record(DeviceType::CPU, identity->base_pack_id);
-        for (const auto& pack : identity->backend_packs) {
-            add_record(pack.type, pack.pack_id);
+        add_record(DeviceType::CPU, next_runtime.base_pack_id);
+        for (const auto& pack : next_runtime.packs) {
+            const auto type = pack.backend == "cuda"
+                ? DeviceType::CUDA
+                : pack.backend == "opencl"
+                    ? DeviceType::OPENCL
+                    : DeviceType::ONEAPI;
+            add_record(type, pack.pack_id);
         }
     }
 
+    runtime::BackendPackMaintenanceRequest pending_request;
+    std::string pending_error;
+    const bool maintenance_pending =
+        next_runtime_available &&
+        runtime::LoadBackendPackMaintenanceRequest(
+            runtime_root, pending_request, pending_error);
+    std::error_code pending_filesystem_error;
+    const bool pending_file_present =
+        next_runtime_available && std::filesystem::exists(
+            runtime::BackendPackMaintenanceRequestPath(runtime_root),
+            pending_filesystem_error);
+    backend_pack_maintenance_queued_ = pending_file_present;
+    std::string rollback_error;
+    const bool rollback_available =
+        next_runtime_available &&
+        runtime::HasValidBackendPackRollback(
+            runtime_root, next_runtime, rollback_error);
+
     BackendPackManagerContext context;
-    context.packaged_runtime = identity.has_value();
+    context.packaged_runtime = next_runtime_available;
     context.operation_running = qualification_running;
     context.training_active = training_active;
-    // Delivery and maintenance become available only when Preferences is
-    // supplied a current signed catalog adapter and the lifecycle service.
+    // Signed delivery waits for the catalog adapter. Maintenance is queued
+    // for the bootstrapper so the running process never mutates loaded DLLs.
     context.catalog_available = false;
     context.delivery_available = false;
-    context.maintenance_available = false;
-    context.rollback_available = false;
+    context.maintenance_available = next_runtime_available;
+    context.maintenance_identity_matches = current_matches_next;
+    context.maintenance_pending = pending_file_present;
+    context.rollback_available = rollback_available;
 
     bool verify_requested = false;
     if (!ImGui::CollapsingHeader(
@@ -143,24 +209,46 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     ImGui::TextDisabled(
         "Recommended never authorizes a route by installation alone; every optional route still needs local verification.");
 
-    if (!identity_error.empty()) {
+    if (!next_runtime_error.empty()) {
         ImGui::TextColored(
             ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
             "%s %s", ICON_FA_TRIANGLE_EXCLAMATION,
-            identity_error.c_str());
-    } else if (!identity.has_value()) {
+            next_runtime_error.c_str());
+    } else if (!next_runtime_available) {
         ImGui::TextDisabled(
             "Development runtime: signed backend-pack installation and maintenance are unavailable.");
     } else {
         ImGui::TextDisabled(
-            "Runtime set %s, generation %llu",
-            identity->runtime_set_id.c_str(),
-            static_cast<unsigned long long>(identity->generation));
+            "Next launch: runtime set %s, generation %llu%s",
+            next_runtime.runtime_set_id.c_str(),
+            static_cast<unsigned long long>(next_runtime.generation),
+            current_matches_next ? " (current process)" : " (restart pending)");
+    }
+    if (!identity_error.empty()) {
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+            "%s Current process identity: %s",
+            ICON_FA_TRIANGLE_EXCLAMATION, identity_error.c_str());
     }
     ImGui::TextColored(
         ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
-        "%s No current signed catalog is connected. Install, repair, update, remove, and rollback stay disabled.",
+        "%s No current signed catalog is connected. Install, repair, and update stay disabled.",
         ICON_FA_CIRCLE_INFO);
+    if (maintenance_pending) {
+        ImGui::TextColored(
+            ImVec4(0.45f, 0.8f, 1.0f, 1.0f),
+            "%s Queued for exit: %s%s%s",
+            ICON_FA_CLOCK,
+            runtime::BackendPackMaintenanceActionName(
+                pending_request.action),
+            pending_request.pack_id.empty() ? "" : " ",
+            pending_request.pack_id.c_str());
+    } else if (pending_file_present) {
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+            "%s Pending maintenance request is invalid: %s",
+            ICON_FA_TRIANGLE_EXCLAMATION, pending_error.c_str());
+    }
 
     if (records.empty()) {
         ImGui::TextDisabled("No packaged backend-pack inventory is available.");
@@ -187,7 +275,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
                 record.active
                     ? ImVec4(0.35f, 0.95f, 0.45f, 1.0f)
                     : ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                "%s", record.active ? "Active" : "Installed");
+                "%s", current_matches_next ? "Active" : "Next launch");
             ImGui::TableNextColumn();
             if (!record.qualification_evidence_available) {
                 ImGui::TextDisabled("Needs verification");
@@ -225,9 +313,14 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
                 "Update", EvaluateBackendPackAction(
                     BackendPackAction::Update, context, &record));
             ImGui::SameLine();
-            RenderActionButton(
-                "Remove", EvaluateBackendPackAction(
-                    BackendPackAction::Remove, context, &record));
+            if (RenderActionButton(
+                    "Remove", EvaluateBackendPackAction(
+                        BackendPackAction::Remove, context, &record))) {
+                backend_pack_maintenance_action_ = 0;
+                backend_pack_maintenance_backend_ = record.backend;
+                backend_pack_maintenance_pack_id_ = record.pack_id;
+                show_backend_pack_maintenance_confirm_ = true;
+            }
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -266,7 +359,91 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
 
     const auto rollback = EvaluateBackendPackAction(
         BackendPackAction::Rollback, context);
-    RenderActionButton(ICON_FA_ROTATE_LEFT " Rollback", rollback);
+    if (RenderActionButton(ICON_FA_ROTATE_LEFT " Rollback", rollback)) {
+        backend_pack_maintenance_action_ = 1;
+        backend_pack_maintenance_backend_.clear();
+        backend_pack_maintenance_pack_id_.clear();
+        show_backend_pack_maintenance_confirm_ = true;
+    }
+    if (backend_pack_maintenance_queued_) {
+        ImGui::SameLine();
+        if (ImGui::Button("Exit and Apply")) {
+            if (exit_callback_) exit_callback_();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "The bootstrapper applies the exact queued action after the Engine exits");
+        }
+    }
+    if (!backend_pack_maintenance_message_.empty()) {
+        ImGui::TextWrapped(
+            "%s", backend_pack_maintenance_message_.c_str());
+    }
+
+    if (show_backend_pack_maintenance_confirm_) {
+        ImGui::OpenPopup("Confirm Backend Maintenance");
+        show_backend_pack_maintenance_confirm_ = false;
+    }
+    ImGui::SetNextWindowPos(
+        ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing,
+        ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(460.0f, 0.0f), ImVec2(640.0f, 420.0f));
+    if (ImGui::IsPopupOpen("Confirm Backend Maintenance")) {
+        ImGui::SetNextWindowFocus();
+    }
+    if (ImGui::BeginPopupModal(
+            "Confirm Backend Maintenance", nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize)) {
+        const bool removing = backend_pack_maintenance_action_ == 0;
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+            "%s %s", ICON_FA_TRIANGLE_EXCLAMATION,
+            removing ? "Remove backend pack after exit?"
+                     : "Restore the previous runtime after exit?");
+        ImGui::Separator();
+        if (removing) {
+            ImGui::BulletText(
+                "Pack: %s / %s",
+                backend_pack_maintenance_backend_.c_str(),
+                backend_pack_maintenance_pack_id_.c_str());
+        } else {
+            ImGui::BulletText("Action: Roll back the complete runtime set");
+        }
+        ImGui::BulletText(
+            "Runtime: %s generation %llu",
+            next_runtime.runtime_set_id.c_str(),
+            static_cast<unsigned long long>(next_runtime.generation));
+        ImGui::TextWrapped(
+            "The device candidate below will not change. The bootstrapper validates the exact runtime identity and applies this action only after the Engine has exited.");
+        ImGui::Spacing();
+        if (ImGui::Button("Queue for Exit")) {
+            runtime::BackendPackMaintenanceRequest request;
+            request.action = removing
+                ? runtime::BackendPackMaintenanceAction::Remove
+                : runtime::BackendPackMaintenanceAction::Rollback;
+            request.runtime_set_id = next_runtime.runtime_set_id;
+            request.runtime_generation = next_runtime.generation;
+            request.backend = backend_pack_maintenance_backend_;
+            request.pack_id = backend_pack_maintenance_pack_id_;
+            std::string queue_error;
+            backend_pack_maintenance_queued_ =
+                runtime::QueueBackendPackMaintenanceRequest(
+                    runtime_root, request, queue_error);
+            backend_pack_maintenance_message_ =
+                backend_pack_maintenance_queued_
+                    ? "Maintenance queued. Exit the Engine to apply it safely."
+                    : "Maintenance was not queued: " + queue_error;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            backend_pack_maintenance_backend_.clear();
+            backend_pack_maintenance_pack_id_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
