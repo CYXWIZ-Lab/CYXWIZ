@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -33,7 +34,10 @@ enum class BackendPackAction {
 struct BackendPackManagerRecord {
     std::string backend;
     std::string pack_id;
+    std::string installed_pack_id;
     std::string package_version;
+    std::filesystem::path catalog_path;
+    std::filesystem::path manifest_path;
     std::uint64_t download_size_bytes = 0;
     std::vector<std::string> licenses;
     std::vector<std::string> provider_requirements;
@@ -46,6 +50,8 @@ struct BackendPackManagerRecord {
     bool training_authorized = false;
     bool update_available = false;
     bool recommended = false;
+    bool delivery_metadata_available = false;
+    std::string delivery_metadata_error;
 };
 
 struct BackendPackManagerContext {

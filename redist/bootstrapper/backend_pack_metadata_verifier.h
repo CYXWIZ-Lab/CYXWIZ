@@ -70,6 +70,7 @@ struct VerifiedBackendPackManifest {
     std::vector<std::string> conflicts;
     BackendPackCompatibility compatibility;
     std::vector<VerifiedPackComponent> components;
+    std::vector<std::string> licenses;
     BackendPackArchiveIdentity archive;
     std::string generated_utc;
 

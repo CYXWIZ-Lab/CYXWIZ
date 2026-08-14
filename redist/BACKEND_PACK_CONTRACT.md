@@ -18,7 +18,9 @@ runtime/
   trust/
     trusted-keys.json
   catalogs/
-    <catalog-id>.json
+    current.json
+    manifests/
+      <pack-id>.json
   base/
     <base-pack-id>/
   packs/
@@ -157,6 +159,14 @@ Duplicate pack IDs, insecure URLs, unknown states, expired catalogs, revoked
 keys, and unsupported client versions fail closed. Offline installation uses
 the same signed catalog and manifests copied onto trusted media; it does not
 introduce an unsigned metadata format.
+
+The application-local catalog cache has one deterministic read boundary:
+`catalogs/current.json` is the complete current signed catalog envelope and
+`catalogs/manifests/<pack-id>.json` is the cached signed manifest authorized by
+that catalog entry. Metadata publication replaces complete files atomically;
+the runtime never follows a mutable unsigned pointer or derives a manifest path
+from its HTTPS host. A valid catalog remains browsable when an individual
+manifest is absent or invalid, but delivery for that entry stays disabled.
 
 ## Active Runtime
 

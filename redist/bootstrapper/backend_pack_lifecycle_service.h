@@ -13,6 +13,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace cyxwiz::runtime {
 
@@ -50,6 +51,19 @@ struct BackendPackDeliveryRequest {
     BackendPackDeliverySource source =
         BackendPackDeliverySource::CatalogHttps;
     bool repair = false;
+};
+
+struct VerifiedBackendPackCatalogRecord {
+    BackendPackCatalogEntry catalog_entry;
+    std::filesystem::path manifest_path;
+    std::optional<VerifiedBackendPackManifest> manifest;
+    std::string manifest_error;
+};
+
+struct VerifiedBackendPackCatalogSnapshot {
+    std::filesystem::path catalog_path;
+    VerifiedBackendPackCatalog catalog;
+    std::vector<VerifiedBackendPackCatalogRecord> records;
 };
 
 enum class BackendPackLifecycleStage {
@@ -119,6 +133,15 @@ public:
         const std::string& current_utc,
         VerifiedBackendPackCatalog& output,
         std::string& error) const;
+    bool ReadManifest(
+        const std::filesystem::path& manifest_path,
+        const BackendPackCatalogEntry& catalog_entry,
+        VerifiedBackendPackManifest& output,
+        std::string& error) const;
+    bool ReadCatalogSnapshot(
+        const std::string& current_utc,
+        VerifiedBackendPackCatalogSnapshot& output,
+        std::string& error) const;
     BackendPackLifecycleResult Deliver(
         const BackendPackDeliveryRequest& request,
         BackendPackArtifactSource& source);
@@ -168,5 +191,11 @@ const char* BackendPackLifecycleStageName(
     BackendPackLifecycleStage stage);
 const char* BackendPackQualificationDispositionName(
     BackendPackQualificationDisposition disposition);
+
+std::filesystem::path BackendPackCurrentCatalogPath(
+    const std::filesystem::path& runtime_root);
+std::filesystem::path BackendPackCachedManifestPath(
+    const std::filesystem::path& runtime_root,
+    const std::string& pack_id);
 
 }  // namespace cyxwiz::runtime

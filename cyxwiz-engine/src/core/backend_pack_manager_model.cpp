@@ -93,6 +93,12 @@ BackendPackActionDecision EvaluateBackendPackAction(
     if (!CatalogAllowsConsent(record->catalog_support)) {
         return Disabled("The signed catalog does not authorize this pack");
     }
+    if (!record->delivery_metadata_available) {
+        return Disabled(
+            record->delivery_metadata_error.empty()
+                ? "The signed pack manifest is unavailable"
+                : record->delivery_metadata_error);
+    }
     if (!context.delivery_available) {
         return Disabled("Signed backend-pack delivery is not connected");
     }
@@ -102,9 +108,11 @@ BackendPackActionDecision EvaluateBackendPackAction(
                 ? Disabled("This backend pack is already installed")
                 : BackendPackActionDecision{true, {}};
         case BackendPackAction::Repair:
-            return record->installed
+            return record->installed &&
+                    record->installed_pack_id == record->pack_id
                 ? BackendPackActionDecision{true, {}}
-                : Disabled("Install the backend pack before repair");
+                : Disabled(
+                      "Repair requires the exact installed catalog pack");
         case BackendPackAction::Update:
             if (!record->installed) {
                 return Disabled("Install the backend pack before updating");

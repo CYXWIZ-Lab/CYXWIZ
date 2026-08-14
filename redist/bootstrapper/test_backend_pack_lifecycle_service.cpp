@@ -255,6 +255,21 @@ public:
         return request;
     }
 
+    void PublishCatalogCache() const {
+        const auto cached_catalog =
+            BackendPackCurrentCatalogPath(runtime);
+        const auto cached_manifest =
+            BackendPackCachedManifestPath(runtime, "opencl-v1");
+        std::filesystem::create_directories(cached_catalog.parent_path());
+        std::filesystem::create_directories(cached_manifest.parent_path());
+        std::filesystem::copy_file(
+            catalog_path, cached_catalog,
+            std::filesystem::copy_options::overwrite_existing);
+        std::filesystem::copy_file(
+            manifest_path, cached_manifest,
+            std::filesystem::copy_options::overwrite_existing);
+    }
+
     ActiveRuntimeState Active() const {
         ActiveRuntimeState state;
         std::string error;
@@ -303,6 +318,45 @@ bool HasPack(const ActiveRuntimeState& state) {
 
 int main() {
     int failures = 0;
+    {
+        Fixture fixture;
+        fixture.PublishCatalogCache();
+        BackendPackLifecycleService service(
+            fixture.runtime, fixture.Verifier(), [] { return false; });
+        VerifiedBackendPackCatalogSnapshot snapshot;
+        std::string error;
+        const bool read = service.ReadCatalogSnapshot(
+            "2026-08-14T12:00:00Z", snapshot, error);
+        failures += !Expect(
+            read && error.empty() &&
+                snapshot.catalog.catalog_id == "production-2026-08" &&
+                snapshot.catalog_path ==
+                    BackendPackCurrentCatalogPath(fixture.runtime) &&
+                snapshot.records.size() == 1 &&
+                snapshot.records.front().manifest.has_value() &&
+                snapshot.records.front().manifest->licenses ==
+                    std::vector<std::string>{"arrayfire"} &&
+                snapshot.records.front().manifest->compatibility.
+                    provider_types ==
+                    std::vector<std::string>{"opencl-icd"} &&
+                snapshot.records.front().manifest_path ==
+                    BackendPackCachedManifestPath(
+                        fixture.runtime, "opencl-v1"),
+            "the catalog snapshot must verify deterministic cached metadata and preserve consent details");
+
+        std::ofstream(
+            BackendPackCachedManifestPath(
+                fixture.runtime, "opencl-v1"),
+            std::ios::binary | std::ios::app)
+            .put('x');
+        const bool reread = service.ReadCatalogSnapshot(
+            "2026-08-14T12:00:00Z", snapshot, error);
+        failures += !Expect(
+            reread && error.empty() && snapshot.records.size() == 1 &&
+                !snapshot.records.front().manifest.has_value() &&
+                !snapshot.records.front().manifest_error.empty(),
+            "an invalid cached manifest must disable only its catalog entry");
+    }
     {
         Fixture fixture;
         bool saw_candidate = false;

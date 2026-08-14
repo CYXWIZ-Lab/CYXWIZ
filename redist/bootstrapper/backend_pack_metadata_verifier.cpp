@@ -772,6 +772,11 @@ bool BackendPackMetadataVerifier::VerifyManifest(
             error = "Manifest license inventory is invalid";
             return false;
         }
+        if (std::find(
+                output.licenses.begin(), output.licenses.end(), component) ==
+            output.licenses.end()) {
+            output.licenses.push_back(std::move(component));
+        }
     }
 
     const auto& archive = (*signed_body)["archive"];

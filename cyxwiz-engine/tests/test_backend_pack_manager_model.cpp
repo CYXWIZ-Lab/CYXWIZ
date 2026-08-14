@@ -1,4 +1,5 @@
 #include "../src/core/backend_pack_manager_model.h"
+#include "../src/core/backend_pack_catalog_adapter.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -110,6 +111,67 @@ void TestActionPolicy() {
           "Maintenance must reject a process running a stale runtime identity");
 }
 
+void TestCatalogAdapter() {
+    cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot snapshot;
+    snapshot.catalog_path = "C:/CyxWiz/runtime/catalogs/current.json";
+    cyxwiz::runtime::VerifiedBackendPackCatalogRecord candidate;
+    candidate.catalog_entry.pack_id = "opencl-v2";
+    candidate.catalog_entry.support_status =
+        cyxwiz::runtime::BackendPackSupportStatus::Supported;
+    candidate.manifest_path =
+        "C:/CyxWiz/runtime/catalogs/manifests/opencl-v2.json";
+    candidate.manifest.emplace();
+    candidate.manifest->pack_id = "opencl-v2";
+    candidate.manifest->backend = "opencl";
+    candidate.manifest->package_version = "2.0.0";
+    candidate.manifest->archive.size = 5 * 1024 * 1024;
+    candidate.manifest->licenses = {"arrayfire"};
+    candidate.manifest->compatibility.provider_types = {"opencl-icd"};
+    snapshot.records.push_back(candidate);
+
+    cyxwiz::runtime::VerifiedBackendPackCatalogRecord unavailable;
+    unavailable.catalog_entry.pack_id = "cuda-v2";
+    unavailable.catalog_entry.support_status =
+        cyxwiz::runtime::BackendPackSupportStatus::Supported;
+    unavailable.manifest_error = "Manifest SHA-256 differs from the signed catalog";
+    snapshot.records.push_back(unavailable);
+
+    cyxwiz::runtime::ActiveRuntimeState active;
+    active.packs.push_back({"opencl", "opencl-v1"});
+    active.packs.push_back({"oneapi", "oneapi-local"});
+    const auto records = cyxwiz::BuildBackendPackCatalogRecords(
+        snapshot, active);
+    Check(records.size() == 3,
+          "Catalog view must retain current packs absent from the catalog");
+    const auto& update = records[0];
+    Check(update.pack_id == "opencl-v2" && update.installed &&
+              update.installed_pack_id == "opencl-v1" &&
+              update.update_available &&
+              update.delivery_metadata_available &&
+              update.licenses == std::vector<std::string>{"arrayfire"} &&
+              update.provider_requirements ==
+                  std::vector<std::string>{"opencl-icd"},
+          "Catalog view must expose signed consent data and exact update identity");
+    Check(!records[1].delivery_metadata_available &&
+              !records[1].delivery_metadata_error.empty(),
+          "Invalid per-pack metadata must stay visible but unavailable");
+
+    cyxwiz::BackendPackManagerContext context;
+    context.packaged_runtime = true;
+    context.catalog_available = true;
+    context.delivery_available = true;
+    Check(cyxwiz::EvaluateBackendPackAction(
+              cyxwiz::BackendPackAction::Update, context, &update).enabled,
+          "A verified catalog target may update an installed backend");
+    Check(!cyxwiz::EvaluateBackendPackAction(
+               cyxwiz::BackendPackAction::Repair, context, &update).enabled,
+          "Repair must not relabel an older installed pack as the catalog target");
+    Check(!cyxwiz::EvaluateBackendPackAction(
+               cyxwiz::BackendPackAction::Install, context,
+               &records[1]).enabled,
+          "Missing verified manifest metadata must disable delivery");
+}
+
 void TestDisplayFormatting() {
     Check(cyxwiz::FormatBackendPackByteSize(0) == "Unavailable",
           "Unknown signed size needs an explicit label");
@@ -122,6 +184,7 @@ void TestDisplayFormatting() {
 int main() {
     TestInstallerChoices();
     TestActionPolicy();
+    TestCatalogAdapter();
     TestDisplayFormatting();
     std::cout << "Backend pack manager model tests passed\n";
     return 0;

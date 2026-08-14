@@ -50,6 +50,17 @@ bool SameRuntimeState(
 
 }  // namespace
 
+std::filesystem::path BackendPackCurrentCatalogPath(
+    const std::filesystem::path& runtime_root) {
+    return runtime_root / "catalogs" / "current.json";
+}
+
+std::filesystem::path BackendPackCachedManifestPath(
+    const std::filesystem::path& runtime_root,
+    const std::string& pack_id) {
+    return runtime_root / "catalogs" / "manifests" / (pack_id + ".json");
+}
+
 BackendPackLifecycleService::BackendPackLifecycleService(
     std::filesystem::path runtime_root,
     BackendPackMetadataVerifier metadata_verifier,
@@ -87,6 +98,54 @@ bool BackendPackLifecycleService::ReadCatalog(
     std::string& error) const {
     return metadata_verifier_.VerifyCatalog(
         catalog_path, current_utc, output, error);
+}
+
+bool BackendPackLifecycleService::ReadManifest(
+    const std::filesystem::path& manifest_path,
+    const BackendPackCatalogEntry& catalog_entry,
+    VerifiedBackendPackManifest& output,
+    std::string& error) const {
+    return metadata_verifier_.VerifyManifest(
+        manifest_path, catalog_entry, output, error);
+}
+
+bool BackendPackLifecycleService::ReadCatalogSnapshot(
+    const std::string& current_utc,
+    VerifiedBackendPackCatalogSnapshot& output,
+    std::string& error) const {
+    output = {};
+    if (runtime_root_.empty() || !runtime_root_.is_absolute()) {
+        error = "An absolute runtime root is required";
+        return false;
+    }
+    output.catalog_path = BackendPackCurrentCatalogPath(runtime_root_);
+    if (!ReadCatalog(
+            output.catalog_path, current_utc, output.catalog, error)) {
+        output = {};
+        return false;
+    }
+    output.records.reserve(output.catalog.packs.size());
+    for (const auto& entry : output.catalog.packs) {
+        VerifiedBackendPackCatalogRecord record;
+        record.catalog_entry = entry;
+        record.manifest_path =
+            BackendPackCachedManifestPath(runtime_root_, entry.pack_id);
+        if (entry.support_status == BackendPackSupportStatus::Blocked ||
+            entry.support_status == BackendPackSupportStatus::Revoked) {
+            record.manifest_error =
+                "Catalog policy blocks this backend pack";
+        } else {
+            VerifiedBackendPackManifest manifest;
+            if (ReadManifest(
+                    record.manifest_path, entry, manifest,
+                    record.manifest_error)) {
+                record.manifest = std::move(manifest);
+            }
+        }
+        output.records.push_back(std::move(record));
+    }
+    error.clear();
+    return true;
 }
 
 BackendPackLifecycleResult BackendPackLifecycleService::Deliver(
