@@ -15,6 +15,8 @@
 #include <thread>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -251,6 +253,189 @@ bool HasRuntimeOverride(const RouteProbeInvocation& invocation) {
            !invocation.runtime_dll_directories.empty();
 }
 
+bool HasExactKeys(
+    const nlohmann::json& value,
+    std::initializer_list<std::string_view> keys) {
+    if (!value.is_object() || value.size() != keys.size()) return false;
+    return std::all_of(keys.begin(), keys.end(), [&](std::string_view key) {
+        return value.contains(std::string(key));
+    });
+}
+
+bool ReadBoundedOptionalText(
+    const nlohmann::json& object,
+    const char* key,
+    size_t maximum_size,
+    std::string& output,
+    bool& known) {
+    const auto& value = object.at(key);
+    output.clear();
+    known = false;
+    if (value.is_null()) return true;
+    if (!value.is_string()) return false;
+    output = value.get<std::string>();
+    if (output.empty() || output.size() > maximum_size ||
+        std::any_of(output.begin(), output.end(), [](unsigned char character) {
+            return character < 0x20;
+        })) {
+        output.clear();
+        return false;
+    }
+    known = true;
+    return true;
+}
+
+bool ParseDeviceKind(const nlohmann::json& value, DeviceKind& output) {
+    if (!value.is_string()) return false;
+    const auto name = value.get<std::string>();
+    if (name == "unknown") output = DeviceKind::Unknown;
+    else if (name == "cpu") output = DeviceKind::CPU;
+    else if (name == "gpu") output = DeviceKind::GPU;
+    else if (name == "accelerator") output = DeviceKind::Accelerator;
+    else return false;
+    return true;
+}
+
+bool ParseIdentityConfidence(
+    const nlohmann::json& value,
+    DeviceIdentityConfidence& output) {
+    if (!value.is_string()) return false;
+    const auto name = value.get<std::string>();
+    if (name == "unknown") output = DeviceIdentityConfidence::Unknown;
+    else if (name == "backend_local") {
+        output = DeviceIdentityConfidence::BackendLocal;
+    } else if (name == "provider_reported") {
+        output = DeviceIdentityConfidence::ProviderReported;
+    } else if (name == "stable_hardware") {
+        output = DeviceIdentityConfidence::StableHardware;
+    } else return false;
+    return true;
+}
+
+bool ParseMetadataStatus(
+    const nlohmann::json& value,
+    DeviceMetadataStatus& output) {
+    if (!value.is_string()) return false;
+    const auto name = value.get<std::string>();
+    if (name == "not_queried") output = DeviceMetadataStatus::NotQueried;
+    else if (name == "available") output = DeviceMetadataStatus::Available;
+    else if (name == "unsupported") output = DeviceMetadataStatus::Unsupported;
+    else if (name == "failed") output = DeviceMetadataStatus::Failed;
+    else return false;
+    return true;
+}
+
+bool ParseRouteInventory(
+    const std::string& output,
+    DeviceType type,
+    std::vector<DeviceInfo>& routes,
+    std::string& error) {
+    constexpr std::string_view prefix = "route_inventory_json=";
+    const auto prefix_position = output.rfind(prefix);
+    if (prefix_position == std::string::npos) {
+        error = "Isolated route inventory output is missing";
+        return false;
+    }
+    const auto start = prefix_position + prefix.size();
+    const auto end = output.find_first_of("\r\n", start);
+    nlohmann::json document;
+    try {
+        document = nlohmann::json::parse(
+            output.substr(start, end == std::string::npos
+                                     ? std::string::npos
+                                     : end - start));
+    } catch (const std::exception& exception) {
+        error = std::string("Isolated route inventory is not valid JSON: ") +
+                exception.what();
+        return false;
+    }
+    const char* backend = BackendName(type);
+    if (!backend ||
+        !HasExactKeys(document, {"schema_version", "backend", "routes"}) ||
+        !document["schema_version"].is_number_unsigned() ||
+        document["schema_version"].get<std::uint64_t>() != 1 ||
+        !document["backend"].is_string() ||
+        document["backend"].get<std::string>() != backend ||
+        !document["routes"].is_array() ||
+        document["routes"].size() > 64) {
+        error = "Isolated route inventory envelope is invalid";
+        return false;
+    }
+    routes.clear();
+    routes.reserve(document["routes"].size());
+    int expected_device_id = 0;
+    for (const auto& route : document["routes"]) {
+        if (!HasExactKeys(
+                route,
+                {"device_id", "name", "kind", "identity_confidence",
+                 "provider", "driver_version", "physical_fingerprint",
+                 "metadata_status", "metadata_error_code",
+                 "metadata_message"}) ||
+            !route["device_id"].is_number_unsigned() ||
+            route["device_id"].get<std::uint64_t>() !=
+                static_cast<std::uint64_t>(expected_device_id)) {
+            error = "Isolated route inventory entry is invalid";
+            return false;
+        }
+        DeviceInfo parsed;
+        parsed.type = type;
+        parsed.device_id = expected_device_id++;
+        parsed.backend_available = true;
+        parsed.device_selectable = true;
+        bool metadata_message_known = false;
+        if (!ReadBoundedOptionalText(
+                route, "name", 512, parsed.name, parsed.name_known) ||
+            !ParseDeviceKind(route["kind"], parsed.kind) ||
+            !ParseIdentityConfidence(
+                route["identity_confidence"], parsed.identity_confidence) ||
+            !ReadBoundedOptionalText(
+                route, "provider", 512, parsed.provider,
+                parsed.provider_known) ||
+            !ReadBoundedOptionalText(
+                route, "driver_version", 512, parsed.driver_version,
+                parsed.driver_version_known) ||
+            !ReadBoundedOptionalText(
+                route, "physical_fingerprint", 512,
+                parsed.physical_fingerprint,
+                parsed.physical_fingerprint_known) ||
+            !ParseMetadataStatus(
+                route["metadata_status"], parsed.metadata_status) ||
+            !ReadBoundedOptionalText(
+                route, "metadata_message", 1024,
+                parsed.metadata_message, metadata_message_known)) {
+            error = "Isolated route inventory metadata is invalid";
+            return false;
+        }
+        std::int64_t metadata_error = 0;
+        const auto& metadata_error_value = route["metadata_error_code"];
+        if (metadata_error_value.is_number_unsigned()) {
+            const auto unsigned_error =
+                metadata_error_value.get<std::uint64_t>();
+            if (unsigned_error >
+                static_cast<std::uint64_t>(
+                    (std::numeric_limits<int>::max)())) {
+                error = "Isolated route inventory error code is invalid";
+                return false;
+            }
+            metadata_error = static_cast<std::int64_t>(unsigned_error);
+        } else if (metadata_error_value.is_number_integer()) {
+            metadata_error = metadata_error_value.get<std::int64_t>();
+        } else {
+            error = "Isolated route inventory error code is invalid";
+            return false;
+        }
+        if (metadata_error < (std::numeric_limits<int>::min)() ||
+            metadata_error > (std::numeric_limits<int>::max)()) {
+            error = "Isolated route inventory error code is invalid";
+            return false;
+        }
+        parsed.metadata_error_code = static_cast<int>(metadata_error);
+        parsed.name_is_fallback = !parsed.name_known;
+        routes.push_back(std::move(parsed));
+    }
+    return true;
+}
+
 #ifdef _WIN32
 std::wstring QuoteWindowsArgument(const std::wstring& value) {
     std::wstring quoted = L"\"";
@@ -452,7 +637,8 @@ RouteProbeResult RunIsolatedRouteProbe(
     const RouteQualificationCancelCheck& should_cancel) {
     RouteProbeResult result;
     const char* backend = BackendName(invocation.type);
-    if (!backend || invocation.device_id < 0 || invocation.operation.empty() ||
+    if (!backend || invocation.device_id < 0 ||
+        (!invocation.enumerate_backend && invocation.operation.empty()) ||
         invocation.executable.empty() ||
         !std::filesystem::is_regular_file(invocation.executable) ||
         invocation.timeout.count() <= 0 || invocation.output_limit_bytes == 0) {
@@ -485,11 +671,16 @@ RouteProbeResult RunIsolatedRouteProbe(
     };
 
     const std::wstring backend_w(backend, backend + std::char_traits<char>::length(backend));
-    const std::wstring operation_w(
-        invocation.operation.begin(), invocation.operation.end());
-    std::wstring command = QuoteWindowsArgument(invocation.executable.wstring()) +
-        L" --backend " + backend_w + L" --device " +
-        std::to_wstring(invocation.device_id) + L" --operation " + operation_w;
+    std::wstring command = QuoteWindowsArgument(invocation.executable.wstring());
+    if (invocation.enumerate_backend) {
+        command += L" --enumerate-backend " + backend_w;
+    } else {
+        const std::wstring operation_w(
+            invocation.operation.begin(), invocation.operation.end());
+        command += L" --backend " + backend_w + L" --device " +
+            std::to_wstring(invocation.device_id) + L" --operation " +
+            operation_w;
+    }
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     startup.dwFlags = STARTF_USESTDHANDLES;
@@ -587,10 +778,16 @@ RouteProbeResult RunIsolatedRouteProbe(
         dup2(pipe_fds[1], STDERR_FILENO);
         close(pipe_fds[0]);
         close(pipe_fds[1]);
-        const std::string device_id = std::to_string(invocation.device_id);
-        execl(invocation.executable.c_str(), invocation.executable.c_str(),
-              "--backend", backend, "--device", device_id.c_str(),
-              "--operation", invocation.operation.c_str(), nullptr);
+        if (invocation.enumerate_backend) {
+            execl(invocation.executable.c_str(), invocation.executable.c_str(),
+                  "--enumerate-backend", backend, nullptr);
+        } else {
+            const std::string device_id =
+                std::to_string(invocation.device_id);
+            execl(invocation.executable.c_str(), invocation.executable.c_str(),
+                  "--backend", backend, "--device", device_id.c_str(),
+                  "--operation", invocation.operation.c_str(), nullptr);
+        }
         _exit(127);
     }
     close(pipe_fds[1]);
@@ -652,6 +849,33 @@ RouteProbeResult RunIsolatedRouteProbe(
     result.last_probe_stage = LastField(result.output, "stage=");
     return result;
 #endif
+}
+
+IsolatedRouteDiscoveryResult DiscoverIsolatedBackendRoutes(
+    RouteProbeInvocation invocation,
+    const RouteQualificationCancelCheck& should_cancel) {
+    invocation.enumerate_backend = true;
+    invocation.operation.clear();
+    invocation.device_id = 0;
+    const auto probe = RunIsolatedRouteProbe(invocation, should_cancel);
+    IsolatedRouteDiscoveryResult result;
+    result.status = probe.status;
+    if (probe.status != RouteProbeStatus::Passed) {
+        result.message = probe.infrastructure_error.empty()
+            ? "Isolated backend route discovery failed"
+            : probe.infrastructure_error;
+        return result;
+    }
+    if (!ParseRouteInventory(
+            probe.output, invocation.type, result.routes, result.message)) {
+        result.status = RouteProbeStatus::InfrastructureFailure;
+        result.routes.clear();
+        return result;
+    }
+    result.message = result.routes.empty()
+        ? "The candidate backend exposed no routes"
+        : "Candidate backend routes discovered";
+    return result;
 }
 
 RouteQualificationService::RouteQualificationService(RouteProbeRunner runner)

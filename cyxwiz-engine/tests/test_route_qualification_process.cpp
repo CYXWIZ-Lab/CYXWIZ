@@ -101,6 +101,78 @@ int main(int argc, char** argv) {
 #endif
     invocation.executable = probe;
 
+    cyxwiz::RouteProbeInvocation discovery_invocation;
+    discovery_invocation.executable = probe;
+    discovery_invocation.type = cyxwiz::DeviceType::CPU;
+    discovery_invocation.timeout = std::chrono::seconds(20);
+    const auto discovered = cyxwiz::DiscoverIsolatedBackendRoutes(
+        discovery_invocation, [] { return false; });
+    if (!Require(discovered.status == cyxwiz::RouteProbeStatus::Passed,
+                 "real CPU route discovery did not pass") ||
+        !Require(!discovered.routes.empty(),
+                 "real CPU route discovery returned no routes") ||
+        !Require(discovered.routes.front().type == cyxwiz::DeviceType::CPU,
+                 "real CPU route discovery relabeled its backend") ||
+        !Require(discovered.routes.front().device_id == 0,
+                 "real CPU route discovery lost the backend-local ordinal")) {
+        std::cerr << discovered.message << '\n';
+        return 1;
+    }
+
+    cyxwiz::RouteProbeInvocation fixture_discovery;
+    fixture_discovery.executable = environment_probe;
+    fixture_discovery.type = cyxwiz::DeviceType::OPENCL;
+    fixture_discovery.timeout = std::chrono::seconds(5);
+#ifdef _WIN32
+    _putenv_s("CYXWIZ_TEST_ROUTE_INVENTORY_MODE", "valid");
+#else
+    setenv("CYXWIZ_TEST_ROUTE_INVENTORY_MODE", "valid", 1);
+#endif
+    const auto fixture_routes = cyxwiz::DiscoverIsolatedBackendRoutes(
+        fixture_discovery, [] { return false; });
+    if (!Require(fixture_routes.status == cyxwiz::RouteProbeStatus::Passed,
+                 "valid strict route inventory fixture was rejected") ||
+        !Require(fixture_routes.routes.size() == 1,
+                 "valid strict route inventory fixture changed route count") ||
+        !Require(fixture_routes.routes.front().provider_known &&
+                     fixture_routes.routes.front().provider ==
+                         "Fixture Provider",
+                 "valid strict route inventory lost provider evidence") ||
+        !Require(fixture_routes.routes.front().physical_fingerprint_known,
+                 "valid strict route inventory lost stable identity")) {
+        std::cerr << fixture_routes.message << '\n';
+        return 1;
+    }
+#ifdef _WIN32
+    _putenv_s("CYXWIZ_TEST_ROUTE_INVENTORY_MODE", "unknown_field");
+#else
+    setenv("CYXWIZ_TEST_ROUTE_INVENTORY_MODE", "unknown_field", 1);
+#endif
+    const auto unknown_field = cyxwiz::DiscoverIsolatedBackendRoutes(
+        fixture_discovery, [] { return false; });
+#ifdef _WIN32
+    _putenv_s("CYXWIZ_TEST_ROUTE_INVENTORY_MODE", "duplicate_id");
+#else
+    setenv("CYXWIZ_TEST_ROUTE_INVENTORY_MODE", "duplicate_id", 1);
+#endif
+    const auto duplicate_id = cyxwiz::DiscoverIsolatedBackendRoutes(
+        fixture_discovery, [] { return false; });
+#ifdef _WIN32
+    _putenv_s("CYXWIZ_TEST_ROUTE_INVENTORY_MODE", "");
+#else
+    unsetenv("CYXWIZ_TEST_ROUTE_INVENTORY_MODE");
+#endif
+    if (!Require(
+            unknown_field.status ==
+                cyxwiz::RouteProbeStatus::InfrastructureFailure,
+            "route inventory accepted an unknown schema field") ||
+        !Require(
+            duplicate_id.status ==
+                cyxwiz::RouteProbeStatus::InfrastructureFailure,
+            "route inventory accepted duplicate backend-local ordinals")) {
+        return 1;
+    }
+
     const auto passed = cyxwiz::RunIsolatedRouteProbe(invocation, [] {
         return false;
     });

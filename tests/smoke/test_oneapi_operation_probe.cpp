@@ -6,6 +6,8 @@
 
 #include <arrayfire.h>
 
+#include <nlohmann/json.hpp>
+
 #include <cyxwiz/device.h>
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
@@ -50,6 +52,7 @@ struct ProbeOptions {
   std::string backend_name = "oneapi";
   int device_id = 0;
   std::string operation;
+  bool enumerate_backend = false;
 };
 
 std::string active_backend_name = "oneapi";
@@ -72,32 +75,42 @@ ProbeOptions ParseOptions(int argc, char **argv) {
     options.operation = argv[1];
     return options;
   }
+  const auto select_backend = [&](const std::string &value) {
+    options.backend_name = value;
+    if (value == "cpu") {
+      options.backend = AF_BACKEND_CPU;
+      options.device_type = cyxwiz::DeviceType::CPU;
+    } else if (value == "cuda") {
+      options.backend = AF_BACKEND_CUDA;
+      options.device_type = cyxwiz::DeviceType::CUDA;
+    } else if (value == "opencl") {
+      options.backend = AF_BACKEND_OPENCL;
+      options.device_type = cyxwiz::DeviceType::OPENCL;
+    } else if (value == "oneapi") {
+      options.backend = AF_BACKEND_ONEAPI;
+      options.device_type = cyxwiz::DeviceType::ONEAPI;
+    } else {
+      throw std::invalid_argument("unknown backend: " + value);
+    }
+  };
+  if (argc == 3 && std::string(argv[1]) == "--enumerate-backend") {
+    select_backend(argv[2]);
+    options.operation = "route_inventory";
+    options.enumerate_backend = true;
+    return options;
+  }
   if (argc != 7) {
     throw std::invalid_argument(
         "usage: test_oneapi_operation_probe <operation> OR "
-        "--backend cpu|cuda|opencl|oneapi --device <id> --operation <name>");
+        "--backend cpu|cuda|opencl|oneapi --device <id> --operation <name> OR "
+        "--enumerate-backend cpu|cuda|opencl|oneapi");
   }
 
   for (int index = 1; index < argc; index += 2) {
     const std::string key = argv[index];
     const std::string value = argv[index + 1];
     if (key == "--backend") {
-      options.backend_name = value;
-      if (value == "cpu") {
-        options.backend = AF_BACKEND_CPU;
-        options.device_type = cyxwiz::DeviceType::CPU;
-      } else if (value == "cuda") {
-        options.backend = AF_BACKEND_CUDA;
-        options.device_type = cyxwiz::DeviceType::CUDA;
-      } else if (value == "opencl") {
-        options.backend = AF_BACKEND_OPENCL;
-        options.device_type = cyxwiz::DeviceType::OPENCL;
-      } else if (value == "oneapi") {
-        options.backend = AF_BACKEND_ONEAPI;
-        options.device_type = cyxwiz::DeviceType::ONEAPI;
-      } else {
-        throw std::invalid_argument("unknown backend: " + value);
-      }
+      select_backend(value);
     } else if (key == "--device") {
       options.device_id = std::stoi(value);
       if (options.device_id < 0) {
@@ -121,6 +134,53 @@ ProbeOptions ParseOptions(int argc, char **argv) {
     }
   }
   return options;
+}
+
+int EnumerateBackendRoutes(const ProbeOptions &options) {
+  Stage(options.operation, "backend_load_begin");
+  af::setBackend(options.backend);
+  Stage(options.operation, "backend_load_complete");
+  const int count = af::getDeviceCount();
+  if (count < 0 || count > 64) {
+    throw std::runtime_error("backend returned an invalid device count");
+  }
+  nlohmann::json routes = nlohmann::json::array();
+  for (int device_id = 0; device_id < count; ++device_id) {
+    const auto info =
+        cyxwiz::Device(options.device_type, device_id).GetInfo();
+    const auto optional_text = [](bool known, const std::string &value) {
+      return known ? nlohmann::json(value) : nlohmann::json(nullptr);
+    };
+    routes.push_back({
+        {"device_id", device_id},
+        {"name", optional_text(
+                     info.name_known && !info.name_is_fallback, info.name)},
+        {"kind", cyxwiz::DeviceKindName(info.kind)},
+        {"identity_confidence",
+         cyxwiz::DeviceIdentityConfidenceName(info.identity_confidence)},
+        {"provider", optional_text(info.provider_known, info.provider)},
+        {"driver_version",
+         optional_text(info.driver_version_known, info.driver_version)},
+        {"physical_fingerprint",
+         optional_text(
+             info.physical_fingerprint_known, info.physical_fingerprint)},
+        {"metadata_status",
+         cyxwiz::DeviceMetadataStatusName(info.metadata_status)},
+        {"metadata_error_code", info.metadata_error_code},
+        {"metadata_message",
+         info.metadata_message.empty()
+             ? nlohmann::json(nullptr)
+             : nlohmann::json(info.metadata_message)}});
+  }
+  Stage(options.operation, "enumeration_complete");
+  std::cout << "route_inventory_json="
+            << nlohmann::json({
+                   {"schema_version", 1},
+                   {"backend", options.backend_name},
+                   {"routes", std::move(routes)}})
+                   .dump()
+            << std::endl;
+  return 0;
 }
 
 #ifdef _WIN32
@@ -459,6 +519,9 @@ int main(int argc, char **argv) {
     active_backend_name = options.backend_name;
     active_device_id = options.device_id;
     active_operation = options.operation;
+    if (options.enumerate_backend) {
+      return EnumerateBackendRoutes(options);
+    }
     Stage(options.operation, "backend_load_begin");
     af::setBackend(options.backend);
     Stage(options.operation, "backend_load_complete");

@@ -36,6 +36,7 @@ struct RouteProbeInvocation {
     std::filesystem::path working_directory;
     std::vector<std::filesystem::path> runtime_dll_directories;
     std::optional<RuntimeQualificationIdentity> runtime_identity;
+    bool enumerate_backend = false;
 };
 
 struct RouteProbeResult {
@@ -44,6 +45,12 @@ struct RouteProbeResult {
     std::string output;
     std::string last_probe_stage;
     std::string infrastructure_error;
+};
+
+struct IsolatedRouteDiscoveryResult {
+    RouteProbeStatus status = RouteProbeStatus::InfrastructureFailure;
+    std::vector<DeviceInfo> routes;
+    std::string message;
 };
 
 using RouteQualificationCancelCheck = std::function<bool()>;
@@ -119,6 +126,9 @@ std::span<const std::string_view> RequiredRouteQualificationOperations();
 RouteProbeResult RunIsolatedRouteProbe(
     const RouteProbeInvocation& invocation,
     const RouteQualificationCancelCheck& should_cancel);
+IsolatedRouteDiscoveryResult DiscoverIsolatedBackendRoutes(
+    RouteProbeInvocation invocation,
+    const RouteQualificationCancelCheck& should_cancel = {});
 
 class RouteQualificationService {
 public:
