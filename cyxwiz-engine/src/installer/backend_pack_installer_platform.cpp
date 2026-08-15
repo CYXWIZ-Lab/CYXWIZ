@@ -98,12 +98,13 @@ std::wstring QuoteWindowsArgument(const std::wstring& value) {
 int RunHelper(
     const std::filesystem::path& helper,
     const std::filesystem::path& runtime_root,
-    const std::string& pack_id,
+    const std::wstring& operation,
+    const std::string& value,
     std::string& error) {
     std::wstring command = QuoteWindowsArgument(helper.native()) +
         L" --runtime-root " + QuoteWindowsArgument(runtime_root.native()) +
-        L" --pack-id " + QuoteWindowsArgument(
-            std::wstring(pack_id.begin(), pack_id.end()));
+        L" " + operation + L" " + QuoteWindowsArgument(
+            std::wstring(value.begin(), value.end()));
     std::vector<wchar_t> mutable_command(command.begin(), command.end());
     mutable_command.push_back(L'\0');
     STARTUPINFOW startup{};
@@ -163,7 +164,8 @@ std::vector<std::string> RecommendedBackends() {
 int RunHelper(
     const std::filesystem::path& helper,
     const std::filesystem::path& runtime_root,
-    const std::string& pack_id,
+    const char* operation,
+    const std::string& value,
     std::string& error) {
     const auto helper_text = helper.string();
     const auto root_text = runtime_root.string();
@@ -175,7 +177,7 @@ int RunHelper(
     if (child == 0) {
         ::execl(
             helper_text.c_str(), helper_text.c_str(), "--runtime-root",
-            root_text.c_str(), "--pack-id", pack_id.c_str(),
+            root_text.c_str(), operation, value.c_str(),
             static_cast<char*>(nullptr));
         ::_exit(127);
     }
@@ -238,6 +240,8 @@ public:
             state.message = "Cannot load the packaged runtime: " + error;
             return state;
         }
+        runtime::VerifiedBackendPackCatalogSnapshot active_only;
+        state.records = BuildBackendPackCatalogRecords(active_only, active);
         auto trust = runtime::BackendPackTrustStore::Load(
             runtime_root_ / "trust" / "trusted-keys.json", error);
         if (!trust) {
@@ -284,7 +288,13 @@ public:
         }
         std::string error;
         const int exit_code = RunHelper(
-            helper, runtime_root_, pack_id, error);
+            helper, runtime_root_,
+#ifdef _WIN32
+            L"--pack-id",
+#else
+            "--pack-id",
+#endif
+            pack_id, error);
         if (exit_code == 0) {
             result.succeeded = true;
             result.activated = true;
@@ -297,6 +307,42 @@ public:
         } else {
             result.message = error.empty()
                 ? "Pack installation failed with helper exit code " +
+                      std::to_string(exit_code)
+                : std::move(error);
+        }
+        return result;
+    }
+
+    InstallerOperationResult DeactivateBackend(
+        const std::string& backend) override {
+        InstallerOperationResult result;
+        if (backend != "cuda" && backend != "opencl" &&
+            backend != "oneapi") {
+            result.message = "The optional backend identity is invalid";
+            return result;
+        }
+        const auto helper = HelperPath(executable_directory_);
+        if (!std::filesystem::is_regular_file(helper)) {
+            result.message =
+                "The signed backend-pack helper is missing from this installation";
+            return result;
+        }
+        std::string error;
+        const int exit_code = RunHelper(
+            helper, runtime_root_,
+#ifdef _WIN32
+            L"--deactivate-backend",
+#else
+            "--deactivate-backend",
+#endif
+            backend, error);
+        if (exit_code == 0) {
+            result.succeeded = true;
+            result.message = backend +
+                " was deactivated; its package files remain installed";
+        } else {
+            result.message = error.empty()
+                ? "Backend deactivation failed with helper exit code " +
                       std::to_string(exit_code)
                 : std::move(error);
         }

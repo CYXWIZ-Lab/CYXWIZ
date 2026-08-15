@@ -29,6 +29,8 @@ public:
     virtual InstallerCatalogState Refresh() = 0;
     virtual InstallerOperationResult InstallOrUpdate(
         const std::string& pack_id) = 0;
+    virtual InstallerOperationResult DeactivateBackend(
+        const std::string& backend) = 0;
     virtual std::string PlatformName() const = 0;
 };
 

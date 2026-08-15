@@ -49,7 +49,8 @@ void TestInstallerChoices() {
 
     const auto cpu = cyxwiz::ResolveBackendPackInstallerSelection(
         cyxwiz::BackendPackInstallChoice::CpuOnly, records);
-    Check(cpu.valid && cpu.pack_ids.empty(),
+    Check(cpu.valid && cpu.deactivate_optional_backends &&
+              cpu.pack_ids.empty(),
           "CPU only must not silently select an optional pack");
 
     const auto custom = cyxwiz::ResolveBackendPackInstallerSelection(
@@ -157,6 +158,29 @@ void TestInstallerPlan() {
         selection, std::vector{current, missing});
     Check(!unavailable.valid,
           "Installer plan must reject missing signed delivery metadata");
+
+    auto update = current;
+    update.pack_id = "cuda-v2";
+    update.active = false;
+    update.installed_pack_id = "cuda-v1";
+    update.update_available = true;
+    cyxwiz::BackendPackInstallerSelection cpu_only;
+    cpu_only.valid = true;
+    cpu_only.deactivate_optional_backends = true;
+    const auto cpu_plan = cyxwiz::BuildBackendPackInstallerPlan(
+        cpu_only, std::vector{current, update, missing});
+    Check(cpu_plan.valid && cpu_plan.pack_ids.empty() &&
+              cpu_plan.deactivate_backends ==
+                  std::vector<std::string>{"cuda"},
+          "CPU-only plan must deactivate each active optional backend once");
+
+    current.installed = false;
+    current.active = false;
+    current.installed_pack_id.clear();
+    const auto already_cpu = cyxwiz::BuildBackendPackInstallerPlan(
+        cpu_only, std::vector{current, missing});
+    Check(already_cpu.valid && already_cpu.deactivate_backends.empty(),
+          "CPU-only plan must be a no-op when no optional route is active");
 }
 
 void TestPackPlatformIdentity() {

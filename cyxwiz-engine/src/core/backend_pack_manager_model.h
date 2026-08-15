@@ -74,6 +74,7 @@ struct BackendPackActionDecision {
 
 struct BackendPackInstallerSelection {
     bool valid = false;
+    bool deactivate_optional_backends = false;
     std::vector<std::string> pack_ids;
     std::string message;
 };
@@ -81,6 +82,7 @@ struct BackendPackInstallerSelection {
 struct BackendPackInstallerPlan {
     bool valid = false;
     std::vector<std::string> pack_ids;
+    std::vector<std::string> deactivate_backends;
     std::uint64_t download_size_bytes = 0;
     std::string message;
 };

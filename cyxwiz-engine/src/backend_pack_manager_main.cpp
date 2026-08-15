@@ -182,6 +182,7 @@ int RunInstaller(
     std::future<InstallBatchResult> operation;
     bool operation_running = false;
     std::string operation_message;
+    cyxwiz::BackendPackInstallerPlan pending_plan;
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -232,7 +233,7 @@ int RunInstaller(
                 "Recommended uses detected display hardware and only catalog-supported packs.");
         } else if (choice == 1) {
             ImGui::TextDisabled(
-                "CPU only keeps the required base and downloads no optional backend pack.");
+                "CPU only keeps the required base, deactivates optional routes, and leaves their package files installed.");
         } else {
             ImGui::TextDisabled(
                 "Choose individual optional packs. Diagnostic-only packs require explicit consent and still cannot authorize normal training without qualification.");
@@ -327,28 +328,15 @@ int RunInstaller(
         ImGui::TextDisabled(
             "Close CyxWiz Engine before applying package changes. Installation does not modify global PATH or system driver settings.");
 
-        const bool can_apply = catalog.available && plan.valid &&
-            !plan.pack_ids.empty() && !operation_running;
+        const bool has_changes = !plan.pack_ids.empty() ||
+            !plan.deactivate_backends.empty();
+        const bool can_apply = plan.valid && has_changes &&
+            (plan.pack_ids.empty() || catalog.available) &&
+            !operation_running;
         ImGui::BeginDisabled(!can_apply);
-        if (ImGui::Button("Apply selected packages")) {
-            operation_running = true;
-            operation_message = "Downloading and verifying signed packages...";
-            const auto pack_ids = plan.pack_ids;
-            auto* worker = platform.get();
-            operation = std::async(
-                std::launch::async, [worker, pack_ids]() {
-                    InstallBatchResult batch;
-                    for (const auto& pack_id : pack_ids) {
-                        const auto result = worker->InstallOrUpdate(pack_id);
-                        if (!batch.message.empty()) batch.message += "\n";
-                        batch.message += result.message;
-                        if (!result.succeeded) {
-                            batch.succeeded = false;
-                            break;
-                        }
-                    }
-                    return batch;
-                });
+        if (ImGui::Button("Review changes")) {
+            pending_plan = plan;
+            ImGui::OpenPopup("Confirm backend changes");
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -361,6 +349,77 @@ int RunInstaller(
         }
         if (!operation_message.empty()) {
             ImGui::TextWrapped("%s", operation_message.c_str());
+        }
+
+        if (ImGui::BeginPopupModal(
+                "Confirm backend changes", nullptr,
+                ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped(
+                "Review the exact changes CyxWiz will make to this runtime.");
+            if (!pending_plan.pack_ids.empty()) {
+                ImGui::Spacing();
+                ImGui::Text("Download, verify, and locally qualify:");
+                for (const auto& pack_id : pending_plan.pack_ids) {
+                    ImGui::BulletText("%s", pack_id.c_str());
+                }
+                ImGui::Text(
+                    "Download total: %s",
+                    cyxwiz::FormatBackendPackByteSize(
+                        pending_plan.download_size_bytes).c_str());
+            }
+            if (!pending_plan.deactivate_backends.empty()) {
+                ImGui::Spacing();
+                ImGui::Text("Deactivate compute routes (files are kept):");
+                for (const auto& backend :
+                     pending_plan.deactivate_backends) {
+                    ImGui::BulletText("%s", backend.c_str());
+                }
+            }
+            ImGui::Spacing();
+            ImGui::TextWrapped(
+                "Close CyxWiz Engine before continuing. A package that fails local qualification will not be activated, and later changes will stop.");
+            if (ImGui::Button("Apply changes")) {
+                const auto pack_ids = pending_plan.pack_ids;
+                const auto deactivate_backends =
+                    pending_plan.deactivate_backends;
+                auto* worker = platform.get();
+                operation_running = true;
+                operation_message = pack_ids.empty()
+                    ? "Applying CPU-only configuration..."
+                    : "Downloading and verifying signed packages...";
+                operation = std::async(
+                    std::launch::async,
+                    [worker, pack_ids, deactivate_backends]() {
+                        InstallBatchResult batch;
+                        for (const auto& pack_id : pack_ids) {
+                            const auto result =
+                                worker->InstallOrUpdate(pack_id);
+                            if (!batch.message.empty()) batch.message += "\n";
+                            batch.message += result.message;
+                            if (!result.succeeded || !result.activated) {
+                                batch.succeeded = false;
+                                return batch;
+                            }
+                        }
+                        for (const auto& backend : deactivate_backends) {
+                            const auto result =
+                                worker->DeactivateBackend(backend);
+                            if (!batch.message.empty()) batch.message += "\n";
+                            batch.message += result.message;
+                            if (!result.succeeded) {
+                                batch.succeeded = false;
+                                return batch;
+                            }
+                        }
+                        return batch;
+                    });
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
 
         ImGui::End();

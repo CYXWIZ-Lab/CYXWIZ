@@ -149,6 +149,7 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
     BackendPackInstallerSelection result;
     if (choice == BackendPackInstallChoice::CpuOnly) {
         result.valid = true;
+        result.deactivate_optional_backends = true;
         result.message = "Required CPU base only";
         return result;
     }
@@ -201,6 +202,18 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
             ? "The installer selection is invalid" : selection.message;
         return plan;
     }
+    if (selection.deactivate_optional_backends) {
+        std::set<std::string> active_backends;
+        for (const auto& record : catalog_records) {
+            if (record.installed && !record.installed_pack_id.empty() &&
+                (record.backend == "cuda" || record.backend == "opencl" ||
+                 record.backend == "oneapi")) {
+                active_backends.insert(record.backend);
+            }
+        }
+        plan.deactivate_backends.assign(
+            active_backends.begin(), active_backends.end());
+    }
     for (const auto& pack_id : selection.pack_ids) {
         const auto record = std::find_if(
             catalog_records.begin(), catalog_records.end(),
@@ -228,10 +241,17 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
         plan.pack_ids.push_back(record->pack_id);
     }
     plan.valid = true;
-    plan.message = plan.pack_ids.empty()
-        ? "No optional backend-pack download is required"
-        : std::to_string(plan.pack_ids.size()) +
-              " signed backend pack(s) will be downloaded and locally qualified";
+    if (!plan.deactivate_backends.empty()) {
+        plan.message = std::to_string(plan.deactivate_backends.size()) +
+            " optional backend route(s) will be deactivated; package files will be kept";
+    } else if (selection.deactivate_optional_backends) {
+        plan.message = "CPU base is already the only active compute route";
+    } else if (plan.pack_ids.empty()) {
+        plan.message = "No optional backend-pack download is required";
+    } else {
+        plan.message = std::to_string(plan.pack_ids.size()) +
+            " signed backend pack(s) will be downloaded and locally qualified";
+    }
     return plan;
 }
 

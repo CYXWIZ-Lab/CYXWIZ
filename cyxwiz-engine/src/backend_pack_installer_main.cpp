@@ -3,6 +3,7 @@
 
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_platform.h"
+#include "backend_pack_state_service.h"
 
 #include <cyxwiz/version.h>
 
@@ -33,6 +34,7 @@ namespace {
 struct Options {
     std::filesystem::path runtime_root;
     std::string pack_id;
+    std::string deactivate_backend;
     bool repair = false;
     bool offline = false;
 };
@@ -118,6 +120,7 @@ bool ParseOptions(
     std::string& error) {
     bool saw_runtime_root = false;
     bool saw_pack_id = false;
+    bool saw_deactivate_backend = false;
     for (int index = 1; index < argc; ++index) {
         const std::wstring_view argument(argv[index]);
         if (argument == L"--runtime-root" && !saw_runtime_root &&
@@ -137,6 +140,21 @@ bool ParseOptions(
                 output.pack_id.push_back(static_cast<char>(character));
             }
             saw_pack_id = true;
+        } else if (argument == L"--deactivate-backend" &&
+                   !saw_deactivate_backend && index + 1 < argc) {
+            const std::wstring value(argv[++index]);
+            if (!IsIdentifier(value)) {
+                error =
+                    "--deactivate-backend must be a safe ASCII identifier";
+                return false;
+            }
+            output.deactivate_backend.clear();
+            output.deactivate_backend.reserve(value.size());
+            for (const wchar_t character : value) {
+                output.deactivate_backend.push_back(
+                    static_cast<char>(character));
+            }
+            saw_deactivate_backend = true;
         } else if (argument == L"--repair" && !output.repair) {
             output.repair = true;
         } else if (argument == L"--offline" && !output.offline) {
@@ -147,8 +165,9 @@ bool ParseOptions(
         }
     }
     if (!saw_runtime_root || !output.runtime_root.is_absolute() ||
-        !saw_pack_id || output.pack_id.empty()) {
-        error = "--runtime-root and --pack-id are required";
+        saw_pack_id == saw_deactivate_backend ||
+        (saw_deactivate_backend && (output.repair || output.offline))) {
+        error = "--runtime-root and exactly one pack operation are required";
         return false;
     }
     return true;
@@ -161,6 +180,7 @@ bool ParseOptions(
     std::string& error) {
     bool saw_runtime_root = false;
     bool saw_pack_id = false;
+    bool saw_deactivate_backend = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--runtime-root" && !saw_runtime_root &&
@@ -175,6 +195,15 @@ bool ParseOptions(
                 return false;
             }
             saw_pack_id = true;
+        } else if (argument == "--deactivate-backend" &&
+                   !saw_deactivate_backend && index + 1 < argc) {
+            output.deactivate_backend = argv[++index];
+            if (!IsIdentifier(output.deactivate_backend)) {
+                error =
+                    "--deactivate-backend must be a safe ASCII identifier";
+                return false;
+            }
+            saw_deactivate_backend = true;
         } else if (argument == "--repair" && !output.repair) {
             output.repair = true;
         } else if (argument == "--offline" && !output.offline) {
@@ -185,8 +214,9 @@ bool ParseOptions(
         }
     }
     if (!saw_runtime_root || !output.runtime_root.is_absolute() ||
-        !saw_pack_id || output.pack_id.empty()) {
-        error = "--runtime-root and --pack-id are required";
+        saw_pack_id == saw_deactivate_backend ||
+        (saw_deactivate_backend && (output.repair || output.offline))) {
+        error = "--runtime-root and exactly one pack operation are required";
         return false;
     }
     return true;
@@ -205,6 +235,39 @@ int main(int argc, char** argv) {
     if (!ParseOptions(argc, argv, options, error)) {
         std::cerr << "CyxWiz backend-pack installer: " << error << '\n';
         return 78;
+    }
+    if (!options.deactivate_backend.empty()) {
+        if (options.deactivate_backend != "cuda" &&
+            options.deactivate_backend != "opencl" &&
+            options.deactivate_backend != "oneapi") {
+            std::cerr << "CyxWiz backend-pack installer: unsupported optional backend\n";
+            return 78;
+        }
+        cyxwiz::runtime::ActiveRuntimeState active;
+        if (!cyxwiz::runtime::LoadActiveRuntimeState(
+                options.runtime_root / "active-runtime.json", active,
+                error)) {
+            std::cerr << "Cannot load the packaged runtime: " << error << '\n';
+            return 1;
+        }
+        const bool already_inactive = std::none_of(
+            active.packs.begin(), active.packs.end(),
+            [&](const auto& pack) {
+                return pack.backend == options.deactivate_backend;
+            });
+        if (already_inactive) {
+            std::cout << options.deactivate_backend
+                      << " is already inactive\n";
+            return 0;
+        }
+        cyxwiz::runtime::BackendPackStateService state_service(
+            options.runtime_root);
+        const auto result = state_service.DeactivateOptionalPack(
+            options.deactivate_backend);
+        std::cout << result.message << '\n';
+        return result.status ==
+                cyxwiz::runtime::BackendPackStateStatus::Completed
+            ? 0 : 1;
     }
     const auto executable_directory = ExecutableDirectory();
     if (executable_directory.empty()) {
