@@ -1,5 +1,6 @@
 #include "../src/core/backend_pack_manager_model.h"
 #include "../src/core/backend_pack_catalog_adapter.h"
+#include "backend_pack_platform.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -126,6 +127,66 @@ void TestActionPolicy() {
           "Maintenance must reject a process running a stale runtime identity");
 }
 
+void TestInstallerPlan() {
+    auto current = Pack(
+        "cuda-v1", cyxwiz::BackendPackCatalogSupport::Supported, true);
+    current.backend = "cuda";
+    current.installed = true;
+    current.active = true;
+    current.delivery_metadata_available = true;
+    current.download_size_bytes = 100;
+    auto missing = Pack(
+        "opencl-v1", cyxwiz::BackendPackCatalogSupport::Supported, false);
+    missing.backend = "opencl";
+    missing.delivery_metadata_available = true;
+    missing.download_size_bytes = 250;
+    const std::vector records{current, missing};
+
+    cyxwiz::BackendPackInstallerSelection selection;
+    selection.valid = true;
+    selection.pack_ids = {"cuda-v1", "opencl-v1"};
+    const auto plan = cyxwiz::BuildBackendPackInstallerPlan(
+        selection, records);
+    Check(plan.valid && plan.pack_ids.size() == 1 &&
+              plan.pack_ids.front() == "opencl-v1" &&
+              plan.download_size_bytes == 250,
+          "Installer plan must skip the exact active pack and size downloads");
+
+    missing.delivery_metadata_available = false;
+    const auto unavailable = cyxwiz::BuildBackendPackInstallerPlan(
+        selection, std::vector{current, missing});
+    Check(!unavailable.valid,
+          "Installer plan must reject missing signed delivery metadata");
+}
+
+void TestPackPlatformIdentity() {
+    const auto platform = cyxwiz::runtime::CurrentBackendPackPlatformId();
+    const auto architecture =
+        cyxwiz::runtime::CurrentBackendPackArchitectureId();
+    Check(platform == "win64" || platform == "linux64" ||
+              platform == "macos",
+          "Desktop pack platform must use a signed manifest identifier");
+    Check(architecture == "x86_64" || architecture == "arm64",
+          "Desktop pack architecture must use a signed manifest identifier");
+#ifdef _WIN32
+    Check(cyxwiz::runtime::CurrentEngineExecutableName() ==
+              "cyxwiz-engine.exe" &&
+              cyxwiz::runtime::CurrentRouteProbeExecutableName() ==
+                  "cyxwiz-route-probe.exe" &&
+              cyxwiz::runtime::CurrentBackendPackInstallerExecutableName() ==
+                  "cyxwiz-backend-pack-installer.exe",
+          "Windows package tools must use executable suffixes");
+#else
+    Check(cyxwiz::runtime::CurrentEngineExecutableName() ==
+              "cyxwiz-engine" &&
+              cyxwiz::runtime::CurrentRouteProbeExecutableName() ==
+                  "cyxwiz-route-probe" &&
+              cyxwiz::runtime::CurrentBackendPackInstallerExecutableName() ==
+                  "cyxwiz-backend-pack-installer",
+          "Unix package tools must use suffix-free executable names");
+#endif
+}
+
 void TestCatalogAdapter() {
     cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot snapshot;
     snapshot.catalog_path = "C:/CyxWiz/runtime/catalogs/current.json";
@@ -200,6 +261,8 @@ void TestDisplayFormatting() {
 int main() {
     TestInstallerChoices();
     TestActionPolicy();
+    TestInstallerPlan();
+    TestPackPlatformIdentity();
     TestCatalogAdapter();
     TestDisplayFormatting();
     std::cout << "Backend pack manager model tests passed\n";

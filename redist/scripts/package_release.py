@@ -374,24 +374,30 @@ def copy_build_payload(
         paths.build / f"cyxwiz-route-probe{exe_suffix}",
         "isolated compute-route qualification probe",
     )
-    windows_helpers = []
+    installer = require_file(
+        paths.build / f"cyxwiz-installer{exe_suffix}",
+        "standalone CyxWiz component manager",
+    )
+    helpers = [
+        require_file(
+            paths.build / f"cyxwiz-backend-pack-installer{exe_suffix}",
+            "signed backend-pack installer",
+        ),
+    ]
     if system == "windows":
-        windows_helpers = [
+        helpers.append(
             require_file(
                 paths.build / "cyxwiz-runtime-bootstrapper.exe",
                 "package-local runtime bootstrapper",
-            ),
-            require_file(
-                paths.build / "cyxwiz-backend-pack-installer.exe",
-                "signed backend-pack installer",
-            ),
-        ]
+            )
+        )
     backend_runtime(paths, lib_suffix)
     require_directory(paths.resources, "Engine resources")
 
     copy_file(engine, stage / engine.name)
     copy_file(route_probe, stage / route_probe.name)
-    for helper in windows_helpers:
+    copy_file(installer, stage / installer.name)
+    for helper in helpers:
         copy_file(helper, stage / helper.name)
     for library in dynamic_library_matches(paths.build, lib_suffix):
         if re.fullmatch(r"python\d+\.dll", library.name, re.IGNORECASE):

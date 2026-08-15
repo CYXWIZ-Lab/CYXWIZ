@@ -161,8 +161,13 @@ BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
     if (!archive_reader ||
         archive_read_support_filter_none(archive_reader.get()) != ARCHIVE_OK ||
         archive_read_support_format_zip(archive_reader.get()) != ARCHIVE_OK ||
+#ifdef _WIN32
         archive_read_open_filename_w(
             archive_reader.get(), archive_path.c_str(), 1024 * 1024) !=
+#else
+        archive_read_open_filename(
+            archive_reader.get(), archive_path.c_str(), 1024 * 1024) !=
+#endif
             ARCHIVE_OK) {
         return Finish(
             BackendPackExtractionStatus::ArchiveFailure,

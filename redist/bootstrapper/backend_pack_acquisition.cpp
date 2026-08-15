@@ -16,6 +16,12 @@
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace cyxwiz::runtime {
@@ -89,6 +95,13 @@ bool IsSafeWritablePartial(
         error = "Partial artifact must be an unlinked regular file";
         return false;
     }
+#else
+    struct stat information {};
+    if (::lstat(path.c_str(), &information) != 0 ||
+        !S_ISREG(information.st_mode) || information.st_nlink != 1) {
+        error = "Partial artifact must be an unlinked regular file";
+        return false;
+    }
 #endif
     return true;
 }
@@ -134,7 +147,26 @@ bool FlushFileToDisk(
         return false;
     }
 #else
-    (void)path;
+    const int descriptor = ::open(
+        path.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) {
+        error = "Cannot safely open completed partial artifact: " +
+            std::string(std::strerror(errno));
+        return false;
+    }
+    struct stat information {};
+    const bool safe = ::fstat(descriptor, &information) == 0 &&
+        S_ISREG(information.st_mode) && information.st_nlink == 1;
+    const bool flushed = safe && ::fsync(descriptor) == 0;
+    const int flush_error = errno;
+    ::close(descriptor);
+    if (!flushed) {
+        error = safe
+            ? "Cannot flush completed partial artifact: " +
+                  std::string(std::strerror(flush_error))
+            : "Completed partial artifact changed before flushing";
+        return false;
+    }
 #endif
     return true;
 }
@@ -158,6 +190,17 @@ bool PublishArtifact(
                 filesystem_error.message();
         return false;
     }
+    const int directory = ::open(
+        destination.parent_path().c_str(),
+        O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+    if (directory < 0 || ::fsync(directory) != 0) {
+        const int publish_error = errno;
+        if (directory >= 0) ::close(directory);
+        error = "Cannot durably publish downloaded artifact: " +
+            std::string(std::strerror(publish_error));
+        return false;
+    }
+    ::close(directory);
 #endif
     return true;
 }

@@ -1,4 +1,5 @@
 #include "backend_pack_maintenance_request.h"
+#include "backend_pack_platform.h"
 
 #include <filesystem>
 #include <fstream>
@@ -27,7 +28,9 @@ public:
             ("cyxwiz-maintenance-request-" +
              std::to_string(process_id) + "-" +
              std::to_string(++sequence));
-        Touch(root / "base" / "base-v1" / "cyxwiz-engine.exe");
+        Touch(
+            root / "base" / "base-v1" /
+            cyxwiz::runtime::CurrentEngineExecutableName());
         Touch(root / "packs" / "opencl" / "opencl-v1" /
               "runtime" / "afopencl.dll");
         Save(ActiveWithOpenCl(1), root / "active-runtime.json");

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <limits>
 #include <set>
 #include <sstream>
 
@@ -189,6 +190,49 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
         ? "Custom packs require explicit consent and local verification"
         : "Choose at least one optional backend pack, or use CPU only";
     return result;
+}
+
+BackendPackInstallerPlan BuildBackendPackInstallerPlan(
+    const BackendPackInstallerSelection& selection,
+    const std::vector<BackendPackManagerRecord>& catalog_records) {
+    BackendPackInstallerPlan plan;
+    if (!selection.valid) {
+        plan.message = selection.message.empty()
+            ? "The installer selection is invalid" : selection.message;
+        return plan;
+    }
+    for (const auto& pack_id : selection.pack_ids) {
+        const auto record = std::find_if(
+            catalog_records.begin(), catalog_records.end(),
+            [&](const auto& candidate) {
+                return candidate.pack_id == pack_id;
+            });
+        if (record == catalog_records.end() ||
+            !CatalogAllowsConsent(record->catalog_support) ||
+            !record->delivery_metadata_available) {
+            plan.message =
+                "A selected pack is not deliverable from the signed catalog";
+            return plan;
+        }
+        if (record->installed && record->active &&
+            !record->update_available) {
+            continue;
+        }
+        if (record->download_size_bytes >
+            std::numeric_limits<std::uint64_t>::max() -
+                plan.download_size_bytes) {
+            plan.message = "Selected pack download size is too large";
+            return plan;
+        }
+        plan.download_size_bytes += record->download_size_bytes;
+        plan.pack_ids.push_back(record->pack_id);
+    }
+    plan.valid = true;
+    plan.message = plan.pack_ids.empty()
+        ? "No optional backend-pack download is required"
+        : std::to_string(plan.pack_ids.size()) +
+              " signed backend pack(s) will be downloaded and locally qualified";
+    return plan;
 }
 
 const char* BackendPackCatalogSupportName(

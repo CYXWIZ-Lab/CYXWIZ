@@ -79,11 +79,24 @@ bootstrapper are required.
 
 Repair is intentionally split from the minimal launcher. After the Engine
 queues an exact pack Repair and exits, the bootstrapper dispatches the sibling
-`cyxwiz-backend-pack-installer.exe`. That helper verifies the signed catalog
+`cyxwiz-backend-pack-installer` (`.exe` on Windows). That helper verifies the signed catalog
 and pack, stages an immutable replacement, and qualifies it through the
 isolated route probe before activation. It does not link the backend or
 ArrayFire DLLs, and a failed qualification leaves the pack inactive and the
 request available for retry.
+
+The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
+Windows), a standalone graphical component manager. Recommended, CPU-only,
+and Custom package selection live there; the Engine Backend Manager launches
+it for Install and Update while retaining runtime and qualification reporting.
+The UI, selection model, signed HTTPS delivery, immutable staging, isolated
+qualification, and exact helper dispatch are cross-platform and provided
+through narrow OS boundaries. Windows uses WinHTTP/process APIs; Linux and
+macOS use certificate-verifying HTTPS plus `fork`/`exec`. Linux hardware
+recommendation reads stable kernel vendor IDs. macOS remains conservative and
+recommends CPU-only unless a later native classifier can prove an eligible
+accelerator. Release publication still requires the clean-machine matrix for
+each shipped OS.
 
 This keeps validation, backend closure rules, manifests, hashes, and README
 rendering consistent across platforms.

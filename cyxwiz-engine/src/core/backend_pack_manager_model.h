@@ -78,6 +78,13 @@ struct BackendPackInstallerSelection {
     std::string message;
 };
 
+struct BackendPackInstallerPlan {
+    bool valid = false;
+    std::vector<std::string> pack_ids;
+    std::uint64_t download_size_bytes = 0;
+    std::string message;
+};
+
 BackendPackActionDecision EvaluateBackendPackAction(
     BackendPackAction action,
     const BackendPackManagerContext& context,
@@ -87,6 +94,10 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
     BackendPackInstallChoice choice,
     const std::vector<BackendPackManagerRecord>& catalog_records,
     const std::vector<std::string>& custom_pack_ids = {});
+
+BackendPackInstallerPlan BuildBackendPackInstallerPlan(
+    const BackendPackInstallerSelection& selection,
+    const std::vector<BackendPackManagerRecord>& catalog_records);
 
 const char* BackendPackCatalogSupportName(
     BackendPackCatalogSupport support);

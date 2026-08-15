@@ -85,6 +85,14 @@ public:
      */
     static std::string GetExecutablePath();
 
+    /**
+     * Launch a validated external application without invoking a shell.
+     * Arguments exclude argv[0], which is supplied from executable_path.
+     */
+    static bool LaunchExecutable(
+        const std::string& executable_path,
+        const std::vector<std::string>& args = {});
+
 private:
     /**
      * @brief Launch a new process with the given command-line arguments.

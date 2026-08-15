@@ -43,6 +43,7 @@ class PackageReleaseTests(unittest.TestCase):
         for name in (
             "cyxwiz-engine.exe",
             "cyxwiz-route-probe.exe",
+            "cyxwiz-installer.exe",
             "cyxwiz-runtime-bootstrapper.exe",
             "cyxwiz-backend-pack-installer.exe",
             "cyxwiz-backend.dll",

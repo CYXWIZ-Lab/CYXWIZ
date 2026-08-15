@@ -1,5 +1,6 @@
 #include "backend_pack_hash.h"
 #include "backend_pack_lifecycle_service.h"
+#include "backend_pack_platform.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -111,7 +112,11 @@ bool WriteZip(const std::filesystem::path& path) {
     std::filesystem::create_directories(path.parent_path());
     archive* writer = archive_write_new();
     if (!writer || archive_write_set_format_zip(writer) != ARCHIVE_OK ||
+#ifdef _WIN32
         archive_write_open_filename_w(writer, path.c_str()) != ARCHIVE_OK) {
+#else
+        archive_write_open_filename(writer, path.c_str()) != ARCHIVE_OK) {
+#endif
         if (writer) archive_write_free(writer);
         return false;
     }
@@ -149,7 +154,7 @@ public:
         catalog_path = root / "catalog.json";
         manifest_path = root / "manifest.json";
         trust_path = root / "trusted-keys.json";
-        Touch(runtime / "base" / "base-v1" / "cyxwiz-engine.exe");
+        Touch(runtime / "base" / "base-v1" / CurrentEngineExecutableName());
         ActiveRuntimeState active;
         active.runtime_set_id = "set-v1";
         active.generation = 1;
@@ -380,7 +385,9 @@ int main() {
                 HasPack(fixture.Active()) &&
                 service.GetProgress().stage ==
                     BackendPackLifecycleStage::Complete,
-            "verified delivery must qualify the prospective identity before activation");
+            "verified delivery must qualify the prospective identity before activation (" +
+                std::string(BackendPackLifecycleStatusName(result.status)) +
+                ": " + result.message + ")");
         const auto rollback = service.Rollback();
         const auto removal = service.Remove("opencl", "opencl-v1");
         failures += !Expect(
@@ -389,7 +396,11 @@ int main() {
                 removal.status == BackendPackLifecycleStatus::Removed &&
                 !std::filesystem::exists(
                     fixture.runtime / "packs" / "opencl" / "opencl-v1"),
-            "the lifecycle facade must expose shared rollback and removal workflows");
+            "the lifecycle facade must expose shared rollback and removal workflows (rollback=" +
+                std::string(BackendPackLifecycleStatusName(rollback.status)) +
+                ": " + rollback.message + ", removal=" +
+                BackendPackLifecycleStatusName(removal.status) + ": " +
+                removal.message + ")");
     }
     {
         Fixture fixture;
@@ -493,7 +504,9 @@ int main() {
                 fixture.Active().generation == 4 &&
                 HasPack(fixture.Active()) &&
                 Fixture::ReadByte(installed_file) == '\0',
-            "lifecycle repair must replace a corrupt active pack through a CPU-only intermediate state and requalify before reactivation");
+            "lifecycle repair must replace a corrupt active pack through a CPU-only intermediate state and requalify before reactivation (" +
+                std::string(BackendPackLifecycleStatusName(repaired.status)) +
+                ": " + repaired.message + ")");
     }
     {
         Fixture fixture;
@@ -516,7 +529,9 @@ int main() {
                     BackendPackLifecycleStatus::InstalledUnqualified &&
                 fixture.Active().generation == 2 &&
                 fixture.Active().packs.empty(),
-            "runtime changes during qualification must make evidence stale and block activation");
+            "runtime changes during qualification must make evidence stale and block activation (" +
+                std::string(BackendPackLifecycleStatusName(result.status)) +
+                ": " + result.message + ")");
     }
 
     if (failures == 0) {

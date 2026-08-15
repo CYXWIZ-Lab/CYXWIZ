@@ -1,4 +1,5 @@
 #include "runtime_layout.h"
+#include "backend_pack_platform.h"
 
 #include <algorithm>
 #include <array>
@@ -49,16 +50,19 @@ bool HasExactKeys(
     });
 }
 
+#ifdef _WIN32
 std::wstring FoldCase(std::wstring value) {
     std::transform(value.begin(), value.end(), value.begin(), [](wchar_t character) {
         return static_cast<wchar_t>(std::towlower(character));
     });
     return value;
 }
+#endif
 
 bool IsWithin(
     const std::filesystem::path& canonical_root,
     const std::filesystem::path& candidate) {
+#ifdef _WIN32
     const auto root = FoldCase(canonical_root.native());
     const auto child = FoldCase(candidate.native());
     if (child == root) {
@@ -69,6 +73,12 @@ bool IsWithin(
     }
     const wchar_t separator = child[root.size()];
     return separator == L'\\' || separator == L'/';
+#else
+    if (candidate == canonical_root) return true;
+    const auto relative = candidate.lexically_relative(canonical_root);
+    return !relative.empty() && !relative.is_absolute() &&
+           *relative.begin() != "..";
+#endif
 }
 
 bool ResolveContainedDirectory(
@@ -367,7 +377,8 @@ bool ResolveRuntimeState(
         return false;
     }
     if (!ResolveContainedFile(
-            canonical_root, output.base_directory / "cyxwiz-engine.exe",
+            canonical_root,
+            output.base_directory / CurrentEngineExecutableName(),
             "active base Engine", output.engine_executable, error)) {
         return false;
     }
@@ -432,7 +443,11 @@ void AppendBootstrapDiagnostic(
         const auto now = std::chrono::system_clock::now();
         const auto time = std::chrono::system_clock::to_time_t(now);
         std::tm utc{};
+#ifdef _WIN32
         gmtime_s(&utc, &time);
+#else
+        gmtime_r(&time, &utc);
+#endif
         stream << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ") << " " << message << '\n';
     } catch (...) {
         // Diagnostics must never obscure the original launch failure.

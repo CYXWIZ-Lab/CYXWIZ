@@ -10,6 +10,7 @@
 #include "../../core/window_manager.h"
 #include "backend_pack_maintenance_request.h"
 #include "backend_pack_lifecycle_service.h"
+#include "backend_pack_platform.h"
 
 #include <algorithm>
 #include <chrono>
@@ -78,7 +79,18 @@ std::filesystem::path ActiveRuntimeRoot() {
 
 std::filesystem::path BackendPackInstallerPath() {
     std::filesystem::path path = core::WindowManager::GetExecutablePath();
-    path.replace_filename("cyxwiz-backend-pack-installer.exe");
+    path.replace_filename(
+        runtime::CurrentBackendPackInstallerExecutableName());
+    return path;
+}
+
+std::filesystem::path BackendPackManagerPath() {
+    std::filesystem::path path = core::WindowManager::GetExecutablePath();
+#ifdef _WIN32
+    path.replace_filename("cyxwiz-installer.exe");
+#else
+    path.replace_filename("cyxwiz-installer");
+#endif
     return path;
 }
 
@@ -114,7 +126,9 @@ std::shared_ptr<runtime::BackendPackLifecycleService> CreatePackService(
     options.probe_executable = probe;
     options.cache_path = GetRouteQualificationCachePath();
     auto verifier = runtime::BackendPackMetadataVerifier(
-        std::move(*trust), GetVersionString(), "win64", "x86_64");
+        std::move(*trust), GetVersionString(),
+        std::string(runtime::CurrentBackendPackPlatformId()),
+        std::string(runtime::CurrentBackendPackArchitectureId()));
     return std::make_shared<runtime::BackendPackLifecycleService>(
         runtime_root, std::move(verifier),
         runtime::BackendPackExecutionActiveCheck{},
@@ -155,20 +169,14 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
         qualification_task &&
         (qualification_task->GetState() == TaskState::Pending ||
          qualification_task->GetState() == TaskState::Running);
-    const auto delivery_task =
-        backend_pack_delivery_task_id_ == 0
-            ? std::shared_ptr<AsyncTask>{}
-            : AsyncTaskManager::Instance().GetTask(
-                  backend_pack_delivery_task_id_);
-    const bool delivery_running =
-        delivery_task &&
-        (delivery_task->GetState() == TaskState::Pending ||
-         delivery_task->GetState() == TaskState::Running);
-
     std::string identity_error;
     const auto identity =
         ReadActiveRuntimeQualificationIdentity(identity_error);
     const auto runtime_root = ActiveRuntimeRoot();
+    const auto installer_manager = BackendPackManagerPath();
+    const bool installer_manager_available =
+        !runtime_root.empty() && runtime_root.is_absolute() &&
+        std::filesystem::is_regular_file(installer_manager);
     runtime::ActiveRuntimeState next_runtime;
     std::string next_runtime_error;
     const bool next_runtime_available =
@@ -285,13 +293,12 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
 
     BackendPackManagerContext context;
     context.packaged_runtime = next_runtime_available;
-    context.operation_running = qualification_running || delivery_running;
+    context.operation_running = qualification_running;
     context.training_active = training_active;
     // Maintenance is queued for the bootstrapper so the running process
     // never mutates loaded DLLs.
     context.catalog_available = backend_pack_catalog_available_;
-    context.delivery_available =
-        backend_pack_lifecycle_service_ != nullptr;
+    context.delivery_available = installer_manager_available;
     context.repair_available =
         next_runtime_available &&
         std::filesystem::is_regular_file(BackendPackInstallerPath());
@@ -299,46 +306,6 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     context.maintenance_identity_matches = current_matches_next;
     context.maintenance_pending = pending_file_present;
     context.rollback_available = rollback_available;
-
-    const auto begin_delivery = [&](const BackendPackManagerRecord& record,
-                                    const char* operation) {
-        if (!backend_pack_lifecycle_service_ || delivery_running) return;
-        runtime::BackendPackDeliveryRequest request;
-        request.catalog_path = record.catalog_path;
-        request.manifest_path = record.manifest_path;
-        request.current_utc = CurrentUtc();
-        request.pack_id = record.pack_id;
-        request.source = runtime::BackendPackDeliverySource::CatalogHttps;
-        const auto service = backend_pack_lifecycle_service_;
-        const auto outcome =
-            std::make_shared<runtime::BackendPackLifecycleResult>();
-        backend_pack_delivery_message_.clear();
-        backend_pack_delivery_task_id_ =
-            AsyncTaskManager::Instance().RunAsync(
-                std::string(operation) + " backend pack",
-                [service, request = std::move(request), outcome](
-                    LambdaTask& task) {
-                    task.ReportProgress(
-                        0.05f, "Verifying signed catalog and manifest");
-                    *outcome = service->Deliver(request);
-                    if (outcome->status !=
-                            runtime::BackendPackLifecycleStatus::
-                                InstalledAndActivated &&
-                        outcome->status !=
-                            runtime::BackendPackLifecycleStatus::
-                                InstalledUnqualified) {
-                        throw std::runtime_error(outcome->message);
-                    }
-                    task.ReportProgress(1.0f, outcome->message);
-                }, nullptr,
-                [this, outcome](bool success, const std::string& error) {
-                    backend_pack_delivery_message_ = success
-                        ? outcome->message
-                        : "Backend-pack delivery failed: " + error;
-                    backend_pack_catalog_loaded_ = false;
-                    devices_initialized_ = false;
-                });
-    };
 
     bool verify_requested = false;
     if (!ImGui::CollapsingHeader(
@@ -350,23 +317,8 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     ImGui::TextDisabled(
         "Browse backend packs here. Device selection below remains unchanged until you click OK.");
     ImGui::Spacing();
-    ImGui::Text("Installer choice");
-    if (ImGui::RadioButton(
-            "Recommended", backend_pack_install_choice_ == 0)) {
-        backend_pack_install_choice_ = 0;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton(
-            "CPU only", backend_pack_install_choice_ == 1)) {
-        backend_pack_install_choice_ = 1;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton(
-            "Custom backend packs", backend_pack_install_choice_ == 2)) {
-        backend_pack_install_choice_ = 2;
-    }
     ImGui::TextDisabled(
-        "Recommended never authorizes a route by installation alone; every optional route still needs local verification.");
+        "Package selection and downloads open in the standalone CyxWiz Installer. This view reports active runtime and qualification truth.");
 
     if (!next_runtime_error.empty()) {
         ImGui::TextColored(
@@ -397,9 +349,22 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
         backend_pack_catalog_message_.empty()
             ? "Signed catalog has not been loaded."
             : backend_pack_catalog_message_.c_str());
-    if (next_runtime_available && !delivery_running &&
+    if (next_runtime_available &&
         ImGui::SmallButton("Refresh signed catalog")) {
         backend_pack_catalog_loaded_ = false;
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!installer_manager_available);
+    if (ImGui::SmallButton("Open CyxWiz Installer...")) {
+        core::WindowManager::LaunchExecutable(
+            installer_manager.string(),
+            {"--runtime-root", runtime_root.string()});
+    }
+    ImGui::EndDisabled();
+    if (!installer_manager_available &&
+        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip(
+            "The standalone installer is available in packaged desktop builds");
     }
     if (maintenance_pending) {
         ImGui::TextColored(
@@ -484,9 +449,10 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             const auto install = EvaluateBackendPackAction(
                 BackendPackAction::Install, context, &record);
             if (RenderActionButton("Install", install)) {
-                backend_pack_delivery_action_ = 0;
-                backend_pack_delivery_pack_id_ = record.pack_id;
-                show_backend_pack_delivery_confirm_ = true;
+                core::WindowManager::LaunchExecutable(
+                    installer_manager.string(),
+                    {"--runtime-root", runtime_root.string(),
+                     "--select", record.pack_id});
             }
             ImGui::SameLine();
             const auto repair = EvaluateBackendPackAction(
@@ -501,9 +467,10 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             const auto update = EvaluateBackendPackAction(
                 BackendPackAction::Update, context, &record);
             if (RenderActionButton("Update", update)) {
-                backend_pack_delivery_action_ = 1;
-                backend_pack_delivery_pack_id_ = record.pack_id;
-                show_backend_pack_delivery_confirm_ = true;
+                core::WindowManager::LaunchExecutable(
+                    installer_manager.string(),
+                    {"--runtime-root", runtime_root.string(),
+                     "--select", record.pack_id});
             }
             ImGui::SameLine();
             if (RenderActionButton(
@@ -550,94 +517,6 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
                            : "Current evidence does not authorize normal training.")
                     : "Required after install and before normal training selection.");
         }
-    }
-
-    if (show_backend_pack_delivery_confirm_) {
-        ImGui::OpenPopup("Confirm Backend Pack Delivery");
-        show_backend_pack_delivery_confirm_ = false;
-    }
-    ImGui::SetNextWindowPos(
-        ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing,
-        ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSizeConstraints(
-        ImVec2(480.0f, 0.0f), ImVec2(680.0f, 520.0f));
-    if (ImGui::IsPopupOpen("Confirm Backend Pack Delivery")) {
-        ImGui::SetNextWindowFocus();
-    }
-    if (ImGui::BeginPopupModal(
-            "Confirm Backend Pack Delivery", nullptr,
-            ImGuiWindowFlags_AlwaysAutoResize)) {
-        const auto selected = std::find_if(
-            records.begin(), records.end(), [&](const auto& record) {
-                return record.pack_id == backend_pack_delivery_pack_id_;
-            });
-        const bool updating = backend_pack_delivery_action_ == 1;
-        ImGui::Text(
-            "%s %s backend pack?", ICON_FA_DOWNLOAD,
-            updating ? "Update" : "Install");
-        ImGui::Separator();
-        if (selected == records.end()) {
-            ImGui::TextColored(
-                ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
-                "The selected signed catalog entry is no longer available.");
-        } else {
-            ImGui::BulletText("Target: %s", selected->pack_id.c_str());
-            if (!selected->installed_pack_id.empty()) {
-                ImGui::BulletText(
-                    "Currently installed: %s",
-                    selected->installed_pack_id.c_str());
-            }
-            ImGui::BulletText(
-                "Download size: %s",
-                FormatBackendPackByteSize(
-                    selected->download_size_bytes).c_str());
-            ImGui::BulletText(
-                "License: %s",
-                JoinOrUnavailable(selected->licenses).c_str());
-            ImGui::BulletText(
-                "Provider requirement: %s",
-                JoinOrUnavailable(
-                    selected->provider_requirements).c_str());
-            ImGui::BulletText(
-                "Catalog support: %s",
-                BackendPackCatalogSupportName(
-                    selected->catalog_support));
-            ImGui::TextWrapped(
-                "The signed payload will be staged and locally verified. Installation alone does not authorize normal training.");
-            const auto action = updating
-                ? BackendPackAction::Update
-                : BackendPackAction::Install;
-            const auto confirm = EvaluateBackendPackAction(
-                action, context, &*selected);
-            if (RenderActionButton(
-                    updating ? "Confirm Update" : "Confirm Install",
-                    confirm)) {
-                begin_delivery(
-                    *selected, updating ? "Update" : "Install");
-                backend_pack_delivery_pack_id_.clear();
-                ImGui::CloseCurrentPopup();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
-            backend_pack_delivery_pack_id_.clear();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-
-    if (delivery_running && backend_pack_lifecycle_service_) {
-        const auto progress = backend_pack_lifecycle_service_->GetProgress();
-        ImGui::TextWrapped(
-            "%s %s", runtime::BackendPackLifecycleStageName(progress.stage),
-            progress.message.c_str());
-        if (ImGui::Button(ICON_FA_STOP " Cancel Pack Delivery")) {
-            backend_pack_lifecycle_service_->Cancel();
-            AsyncTaskManager::Instance().Cancel(
-                backend_pack_delivery_task_id_);
-        }
-    } else if (!backend_pack_delivery_message_.empty()) {
-        ImGui::TextWrapped("%s", backend_pack_delivery_message_.c_str());
     }
 
     const auto rollback = EvaluateBackendPackAction(

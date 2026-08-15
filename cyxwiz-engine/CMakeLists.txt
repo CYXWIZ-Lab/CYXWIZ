@@ -864,51 +864,44 @@ set_target_properties(cyxwiz-route-probe PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-if(WIN32)
-    add_executable(cyxwiz-backend-pack-installer
-        src/backend_pack_installer_main.cpp
-        src/core/backend_pack_qualification_adapter.cpp
-        src/core/route_qualification_service.cpp
-        src/core/route_qualification_snapshot.cpp
-    )
-    target_include_directories(cyxwiz-backend-pack-installer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
-        ${CMAKE_BINARY_DIR}/cyxwiz-backend/include
-        ${CMAKE_SOURCE_DIR}/redist/bootstrapper
-    )
-    target_link_libraries(cyxwiz-backend-pack-installer PRIVATE
-        cyxwiz-backend-pack-service
-        cyxwiz-runtime-bootstrap
-        nlohmann_json::nlohmann_json
-    )
-    add_dependencies(cyxwiz-backend-pack-installer cyxwiz-route-probe)
-    set_target_properties(cyxwiz-backend-pack-installer PROPERTIES
-        CXX_STANDARD 20
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    )
-    install(
-        TARGETS cyxwiz-backend-pack-installer
-        RUNTIME DESTINATION .
-    )
-endif()
+add_executable(cyxwiz-backend-pack-installer
+    src/backend_pack_installer_main.cpp
+    src/core/backend_pack_qualification_adapter.cpp
+    src/core/route_qualification_service.cpp
+    src/core/route_qualification_snapshot.cpp
+)
+target_include_directories(cyxwiz-backend-pack-installer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+    ${CMAKE_BINARY_DIR}/cyxwiz-backend/include
+    ${CMAKE_SOURCE_DIR}/redist/bootstrapper
+)
+target_link_libraries(cyxwiz-backend-pack-installer PRIVATE
+    cyxwiz-backend-pack-service
+    cyxwiz-runtime-bootstrap
+    nlohmann_json::nlohmann_json
+)
+add_dependencies(cyxwiz-backend-pack-installer cyxwiz-route-probe)
+set_target_properties(cyxwiz-backend-pack-installer PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+install(
+    TARGETS cyxwiz-backend-pack-installer
+    RUNTIME DESTINATION .
+)
 
 add_executable(cyxwiz-engine
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
 )
-if(WIN32)
-    target_sources(cyxwiz-engine PRIVATE
-        src/core/backend_pack_qualification_adapter.cpp
-    )
-endif()
+target_sources(cyxwiz-engine PRIVATE
+    src/core/backend_pack_qualification_adapter.cpp
+)
 add_dependencies(cyxwiz-engine cyxwiz-route-probe)
+add_dependencies(cyxwiz-engine cyxwiz-backend-pack-installer)
 if(WIN32)
-    add_dependencies(
-        cyxwiz-engine
-        cyxwiz-backend-pack-installer
-        cyxwiz-runtime-bootstrapper
-    )
+    add_dependencies(cyxwiz-engine cyxwiz-runtime-bootstrapper)
 endif()
 
 if(CYXWIZ_BUILD_TESTS)
@@ -937,6 +930,44 @@ target_include_directories(cyxwiz-engine BEFORE PRIVATE
 
 # Find OpenGL
 find_package(OpenGL REQUIRED)
+
+set(CYXWIZ_INSTALLER_SOURCES
+    src/backend_pack_manager_main.cpp
+    src/installer/backend_pack_installer_platform.cpp
+    src/core/backend_pack_catalog_adapter.cpp
+    src/core/backend_pack_manager_model.cpp
+)
+if(WIN32)
+    add_executable(cyxwiz-installer WIN32 ${CYXWIZ_INSTALLER_SOURCES})
+else()
+    add_executable(cyxwiz-installer ${CYXWIZ_INSTALLER_SOURCES})
+endif()
+target_include_directories(cyxwiz-installer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+    ${CMAKE_BINARY_DIR}/cyxwiz-backend/include
+    ${CMAKE_SOURCE_DIR}/redist/bootstrapper
+)
+target_link_libraries(cyxwiz-installer PRIVATE
+    imgui::imgui
+    glfw
+    glad::glad
+    OpenGL::GL
+    cyxwiz-backend-pack-service
+    cyxwiz-runtime-bootstrap
+)
+if(WIN32)
+    target_link_libraries(cyxwiz-installer PRIVATE
+        shell32
+    )
+endif()
+add_dependencies(cyxwiz-installer cyxwiz-backend-pack-installer)
+set_target_properties(cyxwiz-installer PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+install(TARGETS cyxwiz-installer RUNTIME DESTINATION .)
+add_dependencies(cyxwiz-engine cyxwiz-installer)
 
 # Link libraries
 target_link_libraries(cyxwiz-engine PRIVATE

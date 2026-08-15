@@ -1,4 +1,5 @@
 #include "backend_pack_installer.h"
+#include "backend_pack_platform.h"
 #include "backend_pack_remover.h"
 #include "runtime_mutation_gate.h"
 
@@ -35,7 +36,9 @@ public:
             ("cyxwiz-pack-maintenance-test-" +
              std::to_string(process_id) + "-" +
              std::to_string(++sequence));
-        Touch(root / "base" / "base-v1" / "cyxwiz-engine.exe");
+        Touch(
+            root / "base" / "base-v1" /
+            cyxwiz::runtime::CurrentEngineExecutableName());
         source = root.parent_path() /
             (root.filename().string() + "-source");
         Touch(source / "runtime" / "afopencl.dll");

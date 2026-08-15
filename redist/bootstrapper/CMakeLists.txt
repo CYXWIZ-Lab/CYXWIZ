@@ -1,14 +1,15 @@
-if(NOT WIN32)
-    return()
-endif()
-
 find_package(LibArchive REQUIRED)
+if(NOT WIN32)
+    find_package(httplib CONFIG REQUIRED)
+endif()
 
 add_library(cyxwiz-runtime-bootstrap STATIC
     backend_pack_state_service.cpp
     runtime_layout.cpp
-    windows_dll_search.cpp
 )
+if(WIN32)
+    target_sources(cyxwiz-runtime-bootstrap PRIVATE windows_dll_search.cpp)
+endif()
 target_include_directories(cyxwiz-runtime-bootstrap PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
@@ -45,21 +46,31 @@ target_link_libraries(cyxwiz-backend-pack-service PRIVATE
     cyxwiz-runtime-bootstrap
     LibArchive::LibArchive
     OpenSSL::Crypto
-    winhttp
 )
+if(WIN32)
+    target_link_libraries(cyxwiz-backend-pack-service PRIVATE winhttp)
+else()
+    target_link_libraries(cyxwiz-backend-pack-service PRIVATE
+        httplib::httplib
+        OpenSSL::SSL
+    )
+endif()
 
-add_executable(cyxwiz-runtime-bootstrapper main.cpp)
-target_link_libraries(cyxwiz-runtime-bootstrapper PRIVATE
-    cyxwiz-backend-pack-maintenance
-    cyxwiz-runtime-bootstrap
-)
-set_target_properties(cyxwiz-runtime-bootstrapper PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
+if(WIN32)
+    add_executable(cyxwiz-runtime-bootstrapper main.cpp)
+    target_link_libraries(cyxwiz-runtime-bootstrapper PRIVATE
+        cyxwiz-backend-pack-maintenance
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(cyxwiz-runtime-bootstrapper PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
+endif()
 
 if(CYXWIZ_BUILD_TESTS)
     enable_testing()
+    if(WIN32)
     add_executable(test_runtime_bootstrapper_child test_runtime_child.cpp)
     target_link_libraries(test_runtime_bootstrapper_child PRIVATE
         cyxwiz-runtime-bootstrap
@@ -80,6 +91,7 @@ if(CYXWIZ_BUILD_TESTS)
         test_runtime_bootstrapper_child
     )
     add_test(NAME runtime_bootstrapper_contract COMMAND test_runtime_bootstrapper)
+    endif()
 
     add_executable(test_backend_pack_state_service
         test_backend_pack_state_service.cpp

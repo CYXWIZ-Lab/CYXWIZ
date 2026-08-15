@@ -7,6 +7,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winhttp.h>
+#else
+#define CPPHTTPLIB_OPENSSL_SUPPORT
+#include <httplib.h>
 #endif
 
 #include <algorithm>
@@ -89,6 +92,46 @@ std::string WinHttpError(const char* action) {
 
 #endif
 
+#ifndef _WIN32
+
+bool ParseUnsigned(
+    const std::string& value,
+    std::uint64_t& output) {
+    if (value.empty() ||
+        !std::all_of(value.begin(), value.end(), [](unsigned char character) {
+            return character >= '0' && character <= '9';
+        })) {
+        return false;
+    }
+    try {
+        std::size_t consumed = 0;
+        output = std::stoull(value, &consumed);
+        return consumed == value.size();
+    } catch (...) {
+        return false;
+    }
+}
+
+bool SplitHttpsUrl(
+    const std::string& url,
+    std::string& origin,
+    std::string& path) {
+    constexpr std::string_view scheme = "https://";
+    if (!url.starts_with(scheme) || url.size() > 4096 ||
+        url.find_first_of("?#\\\r\n") != std::string::npos) {
+        return false;
+    }
+    const auto path_start = url.find('/', scheme.size());
+    origin = path_start == std::string::npos
+        ? url : url.substr(0, path_start);
+    path = path_start == std::string::npos
+        ? "/" : url.substr(path_start);
+    const auto authority = origin.substr(scheme.size());
+    return !authority.empty() && authority.find('@') == std::string::npos;
+}
+
+#endif
+
 }  // namespace
 
 HttpsBackendPackArtifactSource::HttpsBackendPackArtifactSource(
@@ -106,14 +149,7 @@ bool HttpsBackendPackArtifactSource::TransferFrom(
     const BackendPackArtifactChunk& consume,
     const BackendPackArtifactCancelCheck& cancelled,
     std::string& error) {
-#ifndef _WIN32
-    (void)offset;
-    (void)expected_size;
-    (void)consume;
-    (void)cancelled;
-    error = "HTTPS backend-pack acquisition is currently supported on Windows";
-    return false;
-#else
+#ifdef _WIN32
     if (offset > expected_size || url_.rfind("https://", 0) != 0 ||
         url_.find('#') != std::string::npos || timeout_.count() <= 0 ||
         timeout_.count() > std::numeric_limits<int>::max()) {
@@ -262,6 +298,108 @@ bool HttpsBackendPackArtifactSource::TransferFrom(
             return false;
         }
         transferred += read;
+    }
+    if (transferred != expected_size) {
+        error = "HTTPS artifact response ended before its signed size";
+        return false;
+    }
+    return true;
+#else
+    if (offset > expected_size || timeout_.count() <= 0) {
+        error = "HTTPS artifact source request is invalid";
+        return false;
+    }
+    std::string origin;
+    std::string path;
+    if (!SplitHttpsUrl(url_, origin, path)) {
+        error = "HTTPS artifact URL cannot be parsed safely";
+        return false;
+    }
+
+    httplib::Client client(origin);
+    if (!client.is_valid()) {
+        error = "Cannot initialize the HTTPS artifact client";
+        return false;
+    }
+    client.enable_server_certificate_verification(true);
+    client.set_follow_location(false);
+    client.set_decompress(false);
+    client.set_connection_timeout(timeout_);
+    client.set_read_timeout(timeout_);
+    client.set_write_timeout(timeout_);
+
+    httplib::Headers headers;
+    headers.emplace("Accept-Encoding", "identity");
+    if (offset > 0) {
+        headers.emplace(
+            "Range", "bytes=" + std::to_string(offset) + "-");
+    }
+    std::uint64_t transferred = offset;
+    bool headers_accepted = false;
+    std::string response_error;
+    if (cancelled()) {
+        error = "Artifact acquisition cancelled";
+        return false;
+    }
+    const auto result = client.Get(
+        path, headers,
+        [&](const httplib::Response& response) {
+            if (response.status != (offset == 0 ? 200 : 206)) {
+                response_error =
+                    "HTTPS artifact server did not honor the exact transfer request";
+                return false;
+            }
+            std::uint64_t content_length = 0;
+            if (!response.has_header("Content-Length") ||
+                !ParseUnsigned(
+                    response.get_header_value("Content-Length"),
+                    content_length) ||
+                content_length != expected_size - offset) {
+                response_error =
+                    "HTTPS Content-Length differs from signed artifact metadata";
+                return false;
+            }
+            if (offset > 0) {
+                const std::string expected_range =
+                    "bytes " + std::to_string(offset) + "-" +
+                    std::to_string(expected_size - 1) + "/" +
+                    std::to_string(expected_size);
+                if (!response.has_header("Content-Range") ||
+                    response.get_header_value("Content-Range") !=
+                        expected_range) {
+                    response_error =
+                        "HTTPS Content-Range does not match the resume request";
+                    return false;
+                }
+            }
+            headers_accepted = true;
+            if (cancelled()) {
+                response_error = "Artifact acquisition cancelled";
+                return false;
+            }
+            return true;
+        },
+        [&](const char* data, std::size_t size) {
+            if (cancelled()) {
+                response_error = "Artifact acquisition cancelled";
+                return false;
+            }
+            if (size > expected_size - transferred ||
+                !consume(data, size, response_error)) {
+                if (response_error.empty()) {
+                    response_error = "HTTPS artifact exceeded signed size";
+                }
+                return false;
+            }
+            transferred += size;
+            return true;
+        });
+    if (!result || !headers_accepted) {
+        error = response_error.empty()
+            ? "HTTPS artifact request failed: " +
+                  httplib::to_string(result.error())
+            : std::move(response_error);
+        return false;
     }
     if (transferred != expected_size) {
         error = "HTTPS artifact response ended before its signed size";

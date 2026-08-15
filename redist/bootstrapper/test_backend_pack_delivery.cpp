@@ -107,7 +107,11 @@ bool WriteZip(
     std::filesystem::create_directories(path.parent_path());
     std::unique_ptr<archive, ArchiveWriteCloser> writer(archive_write_new());
     if (!writer || archive_write_set_format_zip(writer.get()) != ARCHIVE_OK ||
+#ifdef _WIN32
         archive_write_open_filename_w(writer.get(), path.c_str()) != ARCHIVE_OK) {
+#else
+        archive_write_open_filename(writer.get(), path.c_str()) != ARCHIVE_OK) {
+#endif
         return false;
     }
     for (const auto& item : items) {

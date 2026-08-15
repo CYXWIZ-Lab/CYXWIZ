@@ -611,7 +611,6 @@ private:
     std::shared_ptr<RouteQualificationService> route_qualification_service_;
     uint64_t route_qualification_task_id_ = 0;
     bool route_qualification_task_refreshed_ = true;
-    int backend_pack_install_choice_ = 0;
     std::string backend_pack_details_id_;
     bool show_backend_pack_maintenance_confirm_ = false;
     int backend_pack_maintenance_action_ = 0;
@@ -626,11 +625,6 @@ private:
     bool backend_pack_catalog_loaded_ = false;
     bool backend_pack_catalog_available_ = false;
     std::string backend_pack_catalog_message_;
-    uint64_t backend_pack_delivery_task_id_ = 0;
-    std::string backend_pack_delivery_message_;
-    bool show_backend_pack_delivery_confirm_ = false;
-    int backend_pack_delivery_action_ = 0;
-    std::string backend_pack_delivery_pack_id_;
 
     // Go to Line dialog state
     bool show_go_to_line_dialog_ = false;

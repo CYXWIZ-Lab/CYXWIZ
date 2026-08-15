@@ -412,17 +412,13 @@ endif()
 # Platform-specific builds
 if(NOT CYXWIZ_ANDROID_BUILD)
     if(CYXWIZ_BUILD_ENGINE)
-        if(WIN32)
-            add_subdirectory(redist/bootstrapper)
-        endif()
+        add_subdirectory(redist/bootstrapper)
         add_subdirectory(cyxwiz-engine)
-        if(WIN32)
-            target_link_libraries(cyxwiz-engine PRIVATE
-                cyxwiz-backend-pack-maintenance
-                cyxwiz-backend-pack-service
-                cyxwiz-runtime-bootstrap
-            )
-        endif()
+        target_link_libraries(cyxwiz-engine PRIVATE
+            cyxwiz-backend-pack-maintenance
+            cyxwiz-backend-pack-service
+            cyxwiz-runtime-bootstrap
+        )
         include(CyxWizReleasePackaging)
         cyxwiz_add_release_packaging_targets()
     endif()

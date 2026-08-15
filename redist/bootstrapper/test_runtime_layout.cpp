@@ -1,4 +1,5 @@
 #include "runtime_layout.h"
+#include "backend_pack_platform.h"
 
 #include <filesystem>
 #include <fstream>
@@ -19,7 +20,9 @@ public:
                ("cyxwiz-runtime-test-" + std::to_string(::GetCurrentProcessId()) + "-" +
                 std::to_string(++sequence));
         std::filesystem::create_directories(root / "base" / "base-v1");
-        Touch(root / "base" / "base-v1" / "cyxwiz-engine.exe");
+        Touch(
+            root / "base" / "base-v1" /
+            cyxwiz::runtime::CurrentEngineExecutableName());
     }
 
     ~Fixture() {

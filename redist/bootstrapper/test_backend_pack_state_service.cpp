@@ -1,4 +1,5 @@
 #include "backend_pack_state_service.h"
+#include "backend_pack_platform.h"
 #include "runtime_mutation_gate.h"
 
 #include <algorithm>
@@ -34,7 +35,9 @@ public:
         root = std::filesystem::temp_directory_path() /
             ("cyxwiz-pack-state-test-" + std::to_string(process_id) + "-" +
              std::to_string(++sequence));
-        Touch(root / "base" / "base-v1" / "cyxwiz-engine.exe");
+        Touch(
+            root / "base" / "base-v1" /
+            cyxwiz::runtime::CurrentEngineExecutableName());
         AddPack("opencl", "opencl-v1");
         AddPack("opencl", "opencl-v2");
         AddPack("cuda", "cuda-v1");

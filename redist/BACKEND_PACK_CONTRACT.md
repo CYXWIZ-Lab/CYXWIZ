@@ -2,7 +2,7 @@
 
 ## Status
 
-Schema 1 is the frozen release boundary for the Ticket 88 Windows vertical.
+Schema 1 is the frozen desktop release boundary for Ticket 88.
 The implementation is dependency-free and lives in
 `scripts/backend_pack_contract.py`. A schema change requires a new
 `schema_version`; readers must fail closed on unknown versions or fields.
@@ -13,8 +13,9 @@ CyxWiz owns one application-local runtime root selected by an app-level native
 bootstrapper:
 
 ```text
-cyxwiz-runtime-bootstrapper.exe
-cyxwiz-backend-pack-installer.exe
+cyxwiz-runtime-bootstrapper.exe       # Windows app-level launcher
+cyxwiz-installer[.exe]
+cyxwiz-backend-pack-installer[.exe]
 runtime/
   trust/
     trusted-keys.json
@@ -41,6 +42,18 @@ not contain an independently launchable PATH-mutating script.
 The installer helper is installed beside the bootstrapper. It is a separate
 process that does not link the backend or ArrayFire runtime, so it can replace
 an inactive pack without keeping any pack DLL loaded.
+
+The graphical `cyxwiz-installer` component manager is also installed beside
+the bootstrapper (`.exe` on Windows). It owns Recommended, CPU-only, and Custom
+package consent and launches the signed delivery helper with an exact pack ID.
+It uses a portable ImGui/GLFW shell and a narrow desktop adapter; it must not
+link the CyxWiz compute backend or ArrayFire. Windows uses WinHTTP and
+`CreateProcessW`; Linux and macOS use the same certificate-verifying HTTPS
+client and an exact `fork`/`exec` helper invocation. All three preserve the
+same signed catalog, immutable staging, isolated qualification, atomic
+activation, and no-global-environment contract. Recommendation is deliberately
+conservative: an OS with no trusted hardware classification defaults to the
+CPU-only choice instead of guessing an accelerator pack.
 
 The CPU backend is part of the required base and cannot be represented as an
 optional pack. A process resolves exactly one base and at most one pack per
@@ -204,7 +217,8 @@ reactivate it. It never overwrites an active directory in place.
 
 The Engine queues Repair against the exact active backend and pack identity.
 After that Engine process exits, the minimal bootstrapper validates the queued
-identity and launches `cyxwiz-backend-pack-installer.exe`. The helper reuses
+identity and launches the platform's `cyxwiz-backend-pack-installer` executable.
+The helper reuses
 the signed catalog, manifest, extraction, lifecycle, and qualification
 contracts. Qualification runs in the isolated route-probe child process; the
 helper activates the repaired pack only when that exact candidate passes.
