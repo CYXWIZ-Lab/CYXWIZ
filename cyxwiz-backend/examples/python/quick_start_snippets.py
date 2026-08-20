@@ -1,13 +1,13 @@
 """
-Quick Start Snippets for Command Window
+Quick Start Snippets for the Console Python REPL
 
-Copy-paste these snippets into CyxWiz Command Window for quick data analysis.
+Copy-paste these snippets into the CyxWiz Console Python REPL for quick data analysis.
 Each section is self-contained and can be run independently.
 
-Usage in Command Window:
-  1. Open Command Window (View -> Command Window or Ctrl+Shift+P)
+Usage in the Console Python REPL:
+  1. Open Console, select +, then select Python REPL
   2. Copy a snippet below
-  3. Paste and press Ctrl+Enter to run
+  3. Paste and press Enter to run
 """
 
 # =============================================================================
@@ -259,4 +259,4 @@ print(f"ML Dataset: {ml_data.shape()}")
 """
 
 print(__doc__)
-print("\nSnippets ready! Copy any section to Command Window.")
+print("\nSnippets ready! Copy any section to the Console Python REPL.")

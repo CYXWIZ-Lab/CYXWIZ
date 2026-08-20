@@ -1,31 +1,27 @@
 # CyxWiz Assistant Plugin
 
-Experimental read-only assistant panel scaffold for CyxWiz.
+Read-only source-aware assistant provider for CyxWiz Console.
 
 This plugin currently provides:
 
-- a `ProvidesPanels` plugin manifest
-- a `CyxWiz Assistant` panel through `IPanelProvider`
+- an `IAssistantProvider` consumed by `Console > Agent LLM`
 - an in-code `AssistantRequest` / `AssistantResponse` backend contract
 - a retrieval-only C++ backend that loads the local knowledge pack
-- retrieval hits, snippets, and citations in the panel response
+- typed answer sections, retrieval hits, snippets, and citations
 - local runtime calls through `http://127.0.0.1:8768/completion` when
   retrieval-only mode is off
-- a panel knowledge-pack path field with `Reload Pack`
-- a panel runtime endpoint field for local proxy testing
+- General, selected-trace, and training-terminal context requests
 
-It does not yet provide:
-
-- command-window slash commands
-- debugger or training context collection
+The former standalone `CyxWiz Assistant` panel is retired. The plugin owns
+retrieval and runtime integration; Console owns the user experience.
 
 ## Build
 
 Configure with the assistant plugin enabled:
 
 ```powershell
-cmake -S . -B build -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=ON
-cmake --build build --config Debug --target cyxwiz_assistant
+cmake -S . -B build-recovery -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=ON
+cmake --build build-recovery --config Release --target cyxwiz_assistant
 ```
 
 The plugin binary is written to:
@@ -47,22 +43,13 @@ The folder must contain:
 - `plugin.json`
 - `bin/cyxwiz_assistant.dll` on Windows
 
-## Current Panel Controls
+## Use
 
-- `Question`
-- `Context`
-- `Retrieval only`
-- `Show citations`
-- `Top K`
-- `Timeout`
-- `Knowledge pack`
-- `Reload Pack`
-- `Runtime endpoint`
+1. Open a CyxWiz project.
+2. Open `Console`.
+3. Select `+`, then `Agent LLM`.
+4. Use `Retrieval only` for source lookup, or leave it disabled for full local
+   RAG synthesis.
 
-## Next Implementation Step
-
-Move from manual local testing to engine-side context wiring:
-
-- debugger trace context
-- training terminal context
-- selected graph/node context
+See `internal/repository-private/engineering/Data Studio/tofix42/engine_rag_quickstart.md`
+for the accepted model, proxy, plugin-install, test, and troubleshooting flow.

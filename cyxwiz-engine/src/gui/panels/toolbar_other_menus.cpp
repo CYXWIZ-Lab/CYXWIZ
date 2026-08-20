@@ -282,7 +282,7 @@ void ToolbarPanel::RenderScriptMenu() {
             }
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Open interactive Python command window");
+            ImGui::SetTooltip("Open the Python REPL in Console");
         }
 
         ImGui::Separator();

@@ -1,5 +1,6 @@
 #include "plugin_manager_panel.h"
 #include "../icons.h"
+#include "../../core/file_dialogs.h"
 #include "../../plugin/plugin_manager.h"
 #include "../../plugin/security/permission_store.h"
 #include "../../core/async_task_manager.h"
@@ -7,6 +8,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 
 namespace cyxwiz {
@@ -367,20 +369,40 @@ void PluginManagerPanel::RenderInstallPopup() {
 
     if (ImGui::BeginPopupModal("Install Plugin###InstallPluginPopup", nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Enter the path to a plugin directory (containing plugin.json):");
-        ImGui::Spacing();
-
-        if (is_installing_plugin_) {
-            ImGui::BeginDisabled();
+        if (close_install_popup_) {
+            close_install_popup_ = false;
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            return;
         }
 
-        ImGui::SetNextItemWidth(-1);
+        ImGui::Text("Choose a plugin directory containing plugin.json:");
+        ImGui::Spacing();
+
+        ImGui::BeginDisabled(is_installing_plugin_);
+
+        const float browse_width = 100.0f;
+        ImGui::SetNextItemWidth(-browse_width - ImGui::GetStyle().ItemSpacing.x);
         bool enter_pressed = ImGui::InputTextWithHint(
             "##InstallPath",
             "D:\\path\\to\\plugin",
             install_path_buf_,
             sizeof(install_path_buf_),
             ImGuiInputTextFlags_EnterReturnsTrue);
+
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_FOLDER_OPEN " Browse",
+                          ImVec2(browse_width, 0))) {
+            const std::string current_path = TrimCopy(install_path_buf_);
+            const char* default_path = current_path.empty() ? nullptr : current_path.c_str();
+            if (auto selected = cyxwiz::FileDialogs::SelectFolder(
+                    "Select Plugin Directory", default_path)) {
+                std::snprintf(install_path_buf_, sizeof(install_path_buf_),
+                              "%s", selected->c_str());
+            }
+        }
+
+        ImGui::EndDisabled();
 
         ImGui::Spacing();
 
@@ -419,6 +441,15 @@ void PluginManagerPanel::RenderInstallPopup() {
                 return false;
             }
 
+            plugin::PluginManifest manifest;
+            std::string manifest_error;
+            if (!plugin::PluginLoader::ParseManifest(
+                    dir, manifest, manifest_error)) {
+                install_error_ = "Invalid plugin manifest: " + manifest_error;
+                show_install_error_ = true;
+                return false;
+            }
+
             is_installing_plugin_ = true;
             install_status_ = "Installing...";
             const std::string task_name = "Installing plugin: " + dir.filename().string();
@@ -426,7 +457,7 @@ void PluginManagerPanel::RenderInstallPopup() {
             install_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
                 task_name,
                 [dir, path_str](cyxwiz::LambdaTask& task) {
-                    task.ReportProgress(0.15f, "Loading plugin...");
+                    task.ReportProgress(0.30f, "Loading plugin...");
                     if (task.ShouldStop()) return;
 
                     auto& mgr = plugin::PluginManager::Instance();
@@ -435,38 +466,51 @@ void PluginManagerPanel::RenderInstallPopup() {
                         return;
                     }
 
-                    task.ReportProgress(0.65f, "Initializing plugin...");
-                    if (task.ShouldStop()) return;
-
-                    bool initialized = false;
-                    for (const auto* p : mgr.GetAllPlugins()) {
-                        if (p && p->plugin_dir == dir) {
-                            initialized = mgr.InitializePlugin(p->manifest.id);
-                            break;
-                        }
-                    }
-
-                    if (!initialized) {
-                        task.MarkFailed("Plugin loaded but could not be initialized: " + path_str);
-                        return;
-                    }
-
-                    task.MarkCompleted("Plugin installed");
+                    task.MarkCompleted("Plugin loaded");
                 },
                 nullptr,
-                [this, path_str](bool success, const std::string& error) {
+                [this, path_str, plugin_id = manifest.id](
+                    bool success, const std::string& error) {
                     is_installing_plugin_ = false;
                     install_task_id_ = 0;
                     install_status_.clear();
 
-                    if (success) {
-                        spdlog::info("PluginManagerPanel: Installed plugin from {}", path_str);
-                    } else {
+                    if (!success) {
                         install_error_ = error.empty()
                             ? "Failed to install plugin. Check console for details."
                             : error;
                         show_install_error_ = true;
+                        return;
                     }
+
+                    auto& mgr = plugin::PluginManager::Instance();
+                    const auto state = mgr.GetPluginState(plugin_id);
+                    if (state == plugin::PluginState::Disabled) {
+                        install_error_ = "Plugin is already installed but disabled. "
+                            "Close this dialog and use Enable.";
+                        show_install_error_ = true;
+                        return;
+                    }
+                    if (state == plugin::PluginState::Failed) {
+                        install_error_ = "Plugin is already installed but failed. "
+                            "Close this dialog and use Retry.";
+                        show_install_error_ = true;
+                        return;
+                    }
+
+                    const bool initialized = mgr.InitializePlugin(plugin_id);
+                    const auto final_state = mgr.GetPluginState(plugin_id);
+                    if (!initialized && final_state != plugin::PluginState::Loaded) {
+                        install_error_ =
+                            "Plugin loaded but could not be initialized: " + path_str;
+                        show_install_error_ = true;
+                        return;
+                    }
+
+                    close_install_popup_ = true;
+                    spdlog::info(
+                        "PluginManagerPanel: Plugin ready after selecting {}",
+                        path_str);
                 }
             );
             return true;
@@ -476,17 +520,13 @@ void PluginManagerPanel::RenderInstallPopup() {
             start_install();
         }
 
-        if (is_installing_plugin_) {
-            ImGui::BeginDisabled();
-        }
+        ImGui::BeginDisabled(is_installing_plugin_);
 
         if (ImGui::Button(is_installing_plugin_ ? ICON_FA_SPINNER " Installing..." : "Install", ImVec2(button_width, 0))) {
             start_install();
         }
 
-        if (is_installing_plugin_) {
-            ImGui::EndDisabled();
-        }
+        ImGui::EndDisabled();
 
         ImGui::SameLine();
 

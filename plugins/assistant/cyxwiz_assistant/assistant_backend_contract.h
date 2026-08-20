@@ -76,9 +76,9 @@ public:
         response.error_message =
             "Assistant backend scaffold is loaded, but no knowledge pack/runtime is wired yet.";
         response.unknowns =
-            "The in-engine assistant panel is present, but retrieval and runtime calls are not connected.";
+            "The Agent LLM Console session is present, but retrieval and runtime calls are not connected.";
         response.unsupported_or_not_implemented =
-            "Knowledge-pack loading, retrieval, model runtime calls, and command-window routing are not implemented in this plugin scaffold.";
+            "Knowledge-pack loading, retrieval, model runtime calls, and Console routing are not implemented in this plugin scaffold.";
         return response;
     }
 };

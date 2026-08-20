@@ -35,7 +35,6 @@
 #include "panels/training_dashboard.h"
 #include "panels/training_plot_panel.h"
 #include "panels/plot_test_control.h"
-#include "panels/command_window.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "panels/data_explorer_panel.h"
@@ -542,6 +541,12 @@ MainWindow::MainWindow()
 
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
+    console_->SetScriptingEngine(scripting_engine_);
+    console_->SetAssistantCommandHandler(
+        [](const cyxwiz::plugin::AssistantCommandRequest& request) {
+            return cyxwiz::plugin::PluginManager::Instance()
+                .RunAssistantCommand(request);
+        });
 
     // New panel system
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
@@ -549,7 +554,6 @@ MainWindow::MainWindow()
     training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
 
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
-    command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     data_explorer_panel_ = std::make_unique<cyxwiz::DataExplorerPanel>();
@@ -749,12 +753,8 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set scripting engine for command window and script editor
-    command_window_->SetScriptingEngine(scripting_engine_);
-    command_window_->SetAssistantCommandHandler(
-        [](const cyxwiz::plugin::AssistantCommandRequest& request) {
-            return cyxwiz::plugin::PluginManager::Instance().RunAssistantCommand(request);
-        });
+    // Set scripting engine for the Script Editor. The Console-owned Python
+    // REPL already received the same shared engine above.
     script_editor_->SetScriptingEngine(scripting_engine_);
 
     // Expose TrainingPlotPanel to Python scripts through the scripting engine
@@ -766,8 +766,7 @@ MainWindow::MainWindow()
     // Connect Viewport to TrainingPlotPanel for real-time metrics display
     viewport_->SetTrainingPanel(training_plot_panel_.get());
 
-    // Connect script editor to command window for output display
-    script_editor_->SetCommandWindow(command_window_.get());
+    script_editor_->SetScriptOutputSink(console_.get());
 
     // Connect Node Editor to Script Editor for code generation output
     node_editor_->SetScriptEditor(script_editor_.get());
@@ -2109,18 +2108,26 @@ MainWindow::MainWindow()
     toolbar_->SetNodeEditorMinimapPtr(node_editor_->GetShowMinimapPtr());
     toolbar_->SetScriptEditorMinimapPtr(script_editor_->GetShowMinimapPtr());
 
-    // Register callbacks with ProjectManager for project lifecycle events
-    cyxwiz::ProjectManager::Instance().SetOnProjectOpened([this](const std::string& project_root) {
+    // Register callbacks with ProjectManager for project lifecycle events.
+    auto& lifecycle_project_manager = cyxwiz::ProjectManager::Instance();
+    lifecycle_project_manager.SetOnProjectOpened([this](const std::string& project_root) {
         this->OnProjectOpened(project_root);
     });
 
-    cyxwiz::ProjectManager::Instance().SetOnProjectClosed([this](const std::string& project_root) {
+    lifecycle_project_manager.SetOnProjectClosed([this](const std::string& project_root) {
         this->OnProjectClosed(project_root);
     });
 
-    cyxwiz::ProjectManager::Instance().SetOnProjectVenvReady([this](const std::string& project_root) {
+    lifecycle_project_manager.SetOnProjectVenvReady([this](const std::string& project_root) {
         this->OnProjectVenvReady(project_root);
     });
+
+    // Start Page can open a project before MainWindow exists. Synchronize the
+    // newly registered observers because the subsequent same-project open is
+    // intentionally idempotent and does not emit another callback.
+    if (lifecycle_project_manager.HasActiveProject()) {
+        OnProjectOpened(lifecycle_project_manager.GetProjectRoot());
+    }
 
     // Set up New Script callback - creates new untitled script and opens editor
     toolbar_->SetNewScriptCallback([this]() {
@@ -2144,9 +2151,12 @@ MainWindow::MainWindow()
 
     // Set up Open Python Console callback
     toolbar_->SetOpenPythonConsoleCallback([this]() {
-        if (command_window_) {
-            command_window_->SetVisible(true);
-            spdlog::info("Opened Python Console (Command Window)");
+        if (console_) {
+            if (console_->ActivatePythonRepl()) {
+                spdlog::info("Opened Python REPL in Console");
+            } else {
+                spdlog::warn("Python REPL requires an active project");
+            }
         }
     });
 
@@ -2422,7 +2432,7 @@ MainWindow::MainWindow()
     // Load and execute startup scripts
     if (startup_script_manager_->LoadConfig()) {
         spdlog::info("Executing startup scripts...");
-        startup_script_manager_->ExecuteAll(command_window_.get());
+        startup_script_manager_->ExecuteAll(console_.get());
     } else {
         spdlog::debug("No startup scripts configured or startup_scripts.txt not found");
     }
@@ -2481,8 +2491,8 @@ MainWindow::~MainWindow() {
     // IMPORTANT: Destroy panels that hold shared_ptr<ScriptingEngine> BEFORE
     // the MainWindow's scripting_engine_, so all references are released
     // before we begin any Python cleanup
-    spdlog::info("~MainWindow: command_window_ (holds scripting_engine)");
-    command_window_.reset();
+    spdlog::info("~MainWindow: console_ (holds scripting_engine)");
+    console_.reset();
     spdlog::info("~MainWindow: script_editor_ (holds scripting_engine)");
     script_editor_.reset();
     spdlog::info("~MainWindow: variable_explorer_ (holds scripting_engine)");
@@ -2660,7 +2670,7 @@ MainWindow::~MainWindow() {
     table_viewer_.reset();
     spdlog::info("~MainWindow: data_explorer_panel_");
     data_explorer_panel_.reset();
-    // script_editor_, command_window_ already reset at the beginning (with scripting_engine panels)
+    // script_editor_ and console_ already reset with the scripting-engine panels.
     // plot_test_control_, training_plot_panel_ already reset at the beginning
     spdlog::info("~MainWindow: asset_browser_");
     asset_browser_.reset();
@@ -2670,8 +2680,6 @@ MainWindow::~MainWindow() {
     properties_.reset();
     spdlog::info("~MainWindow: viewport_");
     viewport_.reset();
-    spdlog::info("~MainWindow: console_");
-    console_.reset();
     spdlog::info("~MainWindow: node_editor_");
     node_editor_.reset();
 
@@ -2924,7 +2932,6 @@ void MainWindow::Render() {
     if (asset_browser_) asset_browser_->Render();
     if (training_plot_panel_) training_plot_panel_->Render();  // Now "Training Dashboard"
     if (plot_test_control_) plot_test_control_->Render();
-    if (command_window_) command_window_->Render();
     if (script_editor_) script_editor_->Render();
     if (table_viewer_) table_viewer_->Render();
     if (data_explorer_panel_) data_explorer_panel_->Render();
@@ -3242,7 +3249,6 @@ void MainWindow::BuildInitialDockLayout() {
     ImGui::DockBuilderDockWindow("Data Studio", dock_id_center_right); // Beside CyxWiz Studio
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
-    ImGui::DockBuilderDockWindow("Command Window", dock_id_bottom_left); // Tabbed with Console
     ImGui::DockBuilderDockWindow("Training Dashboard", dock_id_bottom_right);
     ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_bottom);
 
@@ -3308,9 +3314,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Bottom panels
     if (console_) {
         dock_style.RegisterPanel("Console", ICON_FA_TERMINAL, console_->GetVisiblePtr());
-    }
-    if (command_window_) {
-        dock_style.RegisterPanel("Command", ICON_FA_CHEVRON_RIGHT, command_window_->GetVisiblePtr());
     }
     if (training_plot_panel_) {
         dock_style.RegisterPanel("Training", ICON_FA_CHART_LINE, training_plot_panel_->GetVisiblePtr());
@@ -3407,7 +3410,6 @@ void MainWindow::SetDefaultPanelVisibility() {
     // Main panels - hide by default
     if (training_plot_panel_) training_plot_panel_->SetVisible(false);
     if (plot_test_control_) plot_test_control_->SetVisible(false);
-    if (command_window_) command_window_->SetVisible(false);
     if (script_editor_) script_editor_->SetVisible(false);
     if (table_viewer_) table_viewer_->SetVisible(false);
     if (job_status_panel_) job_status_panel_->SetVisible(false);
@@ -5620,11 +5622,14 @@ void MainWindow::HandleGlobalShortcuts() {
     // GLOBAL SHORTCUTS - Work in any context
     // ========================================================================
 
-    // Python Console (F12) - Always available
+    // Python REPL (F12) - requires an active project.
     if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F12)) {
-        if (command_window_) {
-            command_window_->SetVisible(true);
-            spdlog::info("Opened Python Console via F12");
+        if (console_) {
+            if (console_->ActivatePythonRepl()) {
+                spdlog::info("Opened Python REPL in Console via F12");
+            } else {
+                spdlog::warn("F12 Python REPL requires an active project");
+            }
         }
     }
 
@@ -5890,6 +5895,8 @@ void MainWindow::LoadProjectSettings() {
 void MainWindow::OnProjectOpened(const std::string& project_root) {
     spdlog::info("Project opened: {}", project_root);
 
+    if (console_) console_->SetProjectRoot(project_root);
+
     // Load project settings and layout
     LoadProjectSettings();
 
@@ -5909,6 +5916,8 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 
 void MainWindow::OnProjectClosed(const std::string& project_root) {
     spdlog::info("Project closed: {}", project_root);
+
+    if (console_) console_->CloseProject(project_root);
 
     // Note: Settings should be saved before CloseProject() is called
     // (the toolbar handles this in its Close Project menu action)

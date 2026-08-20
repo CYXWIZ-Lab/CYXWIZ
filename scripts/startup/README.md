@@ -22,7 +22,7 @@ Startup scripts are Python (.cyx) files that execute automatically on applicatio
    scripts/startup/init_imports.cyx
    ```
 3. Restart CyxWiz Engine
-4. Scripts will run automatically and output to CommandWindow
+4. Scripts will run automatically and output to Console
 
 ### Configuration File Format
 
@@ -91,7 +91,7 @@ scripts/startup/my_startup.cyx
 
 **Handle errors gracefully**: Use try/except to prevent blocking startup
 
-**Use print() for feedback**: Messages appear in CommandWindow
+**Use print() for feedback**: Messages appear in Console
 
 **Test scripts individually**: Run scripts manually before adding to startup
 
@@ -102,7 +102,7 @@ scripts/startup/my_startup.cyx
 **Scripts not running?**
 - Check `startup_scripts.txt` exists next to the Engine executable
 - Verify script paths are correct (absolute or relative)
-- Check CommandWindow for error messages
+- Check Console for error messages
 
 **Application slow to start?**
 - Remove slow scripts from configuration
@@ -111,7 +111,7 @@ scripts/startup/my_startup.cyx
 
 **Script errors?**
 - Scripts continue even if one fails
-- Check CommandWindow for error output
+- Check Console for error output
 - Test script manually first (F5 in Script Editor)
 
 ## Advanced

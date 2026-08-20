@@ -1,7 +1,7 @@
 // Script Editor script execution and section helpers.
 
 #include "script_editor.h"
-#include "command_window.h"
+#include "../../scripting/script_output_sink.h"
 #include "../../scripting/scripting_engine.h"
 
 #include <filesystem>
@@ -67,9 +67,9 @@ void ScriptEditorPanel::DoRunScript() {
         }
     }
 
-    // Show running indicator in command window
-    if (command_window_) {
-        command_window_->DisplayScriptOutput(tab->filename, "Script started...", false);
+    // Route the running indicator through the Console's script-output sink.
+    if (script_output_sink_) {
+        script_output_sink_->AppendScriptOutput(tab->filename, "Script started...", false);
     }
 
     // Execute asynchronously
@@ -194,8 +194,8 @@ void ScriptEditorPanel::RunSelection() {
 
     if (selected_text.empty()) {
         spdlog::warn("No text selected");
-        if (command_window_) {
-            command_window_->DisplayScriptOutput(tab->filename, "No text selected", true);
+        if (script_output_sink_) {
+            script_output_sink_->AppendScriptOutput(tab->filename, "No text selected", true);
         } else {
             last_execution_output_ = "No text selected";
             show_output_notification_ = true;
@@ -205,8 +205,8 @@ void ScriptEditorPanel::RunSelection() {
     }
 
     spdlog::info("Running selection asynchronously");
-    if (command_window_) {
-        command_window_->DisplayScriptOutput(tab->filename + " (selection)", "Running...", false);
+    if (script_output_sink_) {
+        script_output_sink_->AppendScriptOutput(tab->filename + " (selection)", "Running...", false);
     }
 
     // Dedent and execute asynchronously for plot capture support
@@ -226,8 +226,8 @@ void ScriptEditorPanel::RunCurrentSection() {
 
     if (section.code.empty()) {
         spdlog::warn("No section found at cursor");
-        if (command_window_) {
-            command_window_->DisplayScriptOutput(tab->filename, "No section found at cursor", true);
+        if (script_output_sink_) {
+            script_output_sink_->AppendScriptOutput(tab->filename, "No section found at cursor", true);
         } else {
             last_execution_output_ = "No section found at cursor";
             show_output_notification_ = true;
@@ -241,8 +241,8 @@ void ScriptEditorPanel::RunCurrentSection() {
                               std::to_string(section.end_line) + ")";
 
     spdlog::info("Running section {} asynchronously", section_name);
-    if (command_window_) {
-        command_window_->DisplayScriptOutput(section_name, "Running...", false);
+    if (script_output_sink_) {
+        script_output_sink_->AppendScriptOutput(section_name, "Running...", false);
     }
 
     // Dedent and execute asynchronously for plot capture support

@@ -1311,7 +1311,7 @@ def _cyxwiz_setup_matplotlib_capture(capture_callback):
         pass
 
 # ============================================================================
-# MATLAB-Style Command Window Functions (Flat Namespace)
+# MATLAB-style Console functions (flat namespace)
 # ============================================================================
 # Import pycyxwiz and create convenient aliases
 import importlib.util as _cyxwiz_importlib
@@ -1492,7 +1492,7 @@ void ScriptingEngine::InitializeMatlabAliases() {
         // MATLAB-style aliases setup code
         std::string matlab_setup = R"PYTHON(
 # ============================================================================
-# MATLAB-Style Command Window Functions (Flat Namespace)
+# MATLAB-style Console functions (flat namespace)
 # ============================================================================
 # Import pycyxwiz and create convenient aliases
 try:

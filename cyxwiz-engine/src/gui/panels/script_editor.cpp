@@ -1,9 +1,9 @@
 #include "script_editor.h"
-#include "command_window.h"
 #include "output_renderer.h"
 #include "../icons.h"
 #include "../editor_fonts.h"
 #include "../../scripting/scripting_engine.h"
+#include "../../scripting/script_output_sink.h"
 #include "../../core/keyboard_shortcuts.h"
 #include <imgui.h>
 #include <algorithm>
@@ -14,7 +14,6 @@ namespace cyxwiz {
 ScriptEditorPanel::ScriptEditorPanel()
     : Panel("Script Editor", true)
     , active_tab_index_(-1)
-    , command_window_(nullptr)
     , show_editor_menu_(false)
     , request_focus_(false)
     , request_window_focus_(false)
@@ -32,8 +31,9 @@ void ScriptEditorPanel::SetScriptingEngine(std::shared_ptr<scripting::ScriptingE
     scripting_engine_ = engine;
 }
 
-void ScriptEditorPanel::SetCommandWindow(CommandWindowPanel* command_window) {
-    command_window_ = command_window;
+void ScriptEditorPanel::SetScriptOutputSink(
+    scripting::IScriptOutputSink* output_sink) {
+    script_output_sink_ = output_sink;
 }
 
 void ScriptEditorPanel::Render() {
@@ -46,8 +46,8 @@ void ScriptEditorPanel::Render() {
 
         // Get any pending output and display it
         std::string pending = scripting_engine_->GetPendingOutput();
-        if (!pending.empty() && command_window_) {
-            command_window_->DisplayScriptOutput("Running...", pending, false);
+        if (!pending.empty() && script_output_sink_) {
+            script_output_sink_->AppendScriptOutput("Running...", pending, false);
         }
     } else if (script_running_) {
         // Script just finished - check for result
@@ -56,23 +56,23 @@ void ScriptEditorPanel::Render() {
 
         // First, drain any remaining output from the queue (for fast-finishing scripts)
         std::string remaining_output = scripting_engine_->GetPendingOutput();
-        if (!remaining_output.empty() && command_window_) {
-            command_window_->DisplayScriptOutput("Output", remaining_output, false);
+        if (!remaining_output.empty() && script_output_sink_) {
+            script_output_sink_->AppendScriptOutput("Output", remaining_output, false);
         }
 
         auto result = scripting_engine_->GetAsyncResult();
         if (result.has_value()) {
             auto& r = result.value();
-            if (command_window_) {
+            if (script_output_sink_) {
                 if (r.was_cancelled) {
-                    command_window_->DisplayScriptOutput("Script", "Script cancelled by user", true);
+                    script_output_sink_->AppendScriptOutput("Script", "Script cancelled by user", true);
                 } else if (!r.success) {
-                    command_window_->DisplayScriptOutput("Script", "Error: " + r.error_message, true);
+                    script_output_sink_->AppendScriptOutput("Script", "Error: " + r.error_message, true);
                 } else {
                     // Script completed successfully
                     if (remaining_output.empty()) {
                         // No output was produced, show completion message
-                        command_window_->DisplayScriptOutput("Script", "Completed successfully", false);
+                        script_output_sink_->AppendScriptOutput("Script", "Completed successfully", false);
                     }
                     spdlog::info("Script completed successfully");
                 }

@@ -984,6 +984,19 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     std::string mono_regular = font_base_path + "JetBrainsMono-Regular.ttf";
     std::string mono_bold = font_base_path + "JetBrainsMono-Bold.ttf";
 
+    std::string terminal_symbol_fallback;
+#ifdef _WIN32
+    wchar_t windows_directory[MAX_PATH]{};
+    const UINT windows_directory_length =
+        GetWindowsDirectoryW(windows_directory, MAX_PATH);
+    if (windows_directory_length > 0 && windows_directory_length < MAX_PATH) {
+        const auto candidate = std::filesystem::path(windows_directory) /
+                               "Fonts" / "seguisym.ttf";
+        if (std::filesystem::is_regular_file(candidate))
+            terminal_symbol_fallback = candidate.string();
+    }
+#endif
+
     // FontAwesome icon font
     std::string fa_solid = font_base_path + "fa-solid-900.ttf";
 
@@ -1099,7 +1112,12 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         for (size_t i = 0; i < cyxwiz::gui::kEditorFontScales.size(); ++i) {
             const float scale = cyxwiz::gui::kEditorFontScales[i];
             const float pixel_size = cyxwiz::gui::kEditorMonoFontPixels[i];
-            ImFont* mono_font = io.Fonts->AddFontFromFileTTF(mono_regular.c_str(), pixel_size, &font_config);
+            ImFont* mono_font = cyxwiz::gui::AddTerminalCapableMonoFont(
+                io.Fonts, mono_regular.c_str(),
+                terminal_symbol_fallback.empty()
+                    ? nullptr
+                    : terminal_symbol_fallback.c_str(),
+                pixel_size, &font_config);
             if (mono_font) {
                 cyxwiz::gui::RegisterEditorMonoFont(scale, mono_font);
                 if (i == 0) {
