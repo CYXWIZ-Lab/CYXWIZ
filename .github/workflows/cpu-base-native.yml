@@ -95,6 +95,7 @@ jobs:
         run: |
           cmake -S . -B build `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_OVERLAY_PORTS="${{ github.workspace }}/vcpkg-ports" `
             -DCYXWIZ_BUILD_ENGINE=ON `
             -DCYXWIZ_BUILD_SERVER_NODE=OFF `
             -DCYXWIZ_BUILD_TESTS=OFF `
