@@ -1,17 +1,28 @@
 #include "runtime_truth_query.h"
 
+#include "backend_pack_catalog_adapter.h"
 #include "debug_run_store.h"
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
+#include "route_qualification_snapshot.h"
 #include "training_manager.h"
 #include "training_trace_collector.h"
 
+#include "backend_pack_lifecycle_service.h"
+#include "backend_pack_platform.h"
+
+#include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/device.h>
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdlib>
+#include <ctime>
 #include <exception>
+#include <filesystem>
 #include <mutex>
+#include <sstream>
 #include <utility>
 
 namespace cyxwiz {
@@ -265,6 +276,247 @@ bool IsSafeRunId(std::string_view run_id) {
            });
 }
 
+std::filesystem::path ActiveRuntimeRoot() {
+    const char* value = std::getenv("CYXWIZ_ACTIVE_RUNTIME_ROOT");
+    return value && *value ? std::filesystem::path(value)
+                           : std::filesystem::path{};
+}
+
+std::string CurrentUtc() {
+    const auto now = std::chrono::system_clock::to_time_t(
+        std::chrono::system_clock::now());
+    std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &now);
+#else
+    gmtime_r(&now, &utc);
+#endif
+    char buffer[32]{};
+    if (std::strftime(
+            buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc) == 0) {
+        return {};
+    }
+    return buffer;
+}
+
+const char* CatalogSupportId(BackendPackCatalogSupport support) {
+    switch (support) {
+        case BackendPackCatalogSupport::Supported: return "supported";
+        case BackendPackCatalogSupport::Diagnostic: return "diagnostic";
+        case BackendPackCatalogSupport::Blocked: return "blocked";
+        case BackendPackCatalogSupport::Revoked: return "revoked";
+        case BackendPackCatalogSupport::Unavailable: return "unavailable";
+    }
+    return "unavailable";
+}
+
+const char* PackBackendId(DeviceType type) {
+    switch (type) {
+        case DeviceType::CPU: return "cpu";
+        case DeviceType::CUDA: return "cuda";
+        case DeviceType::OPENCL: return "opencl";
+        case DeviceType::ONEAPI: return "oneapi";
+        default: return "unknown";
+    }
+}
+
+bool QualificationMatchesRuntime(
+    const RouteQualificationSnapshot& snapshot,
+    const runtime::ActiveRuntimeState& state) {
+    if (snapshot.matrix_id != kRouteQualificationMatrixId ||
+        snapshot.compute_contract_id != kCyxWizComputeContractId ||
+        snapshot.operation_manifest_id !=
+            kRouteQualificationOperationManifestId ||
+        snapshot.runtime_set_id != state.runtime_set_id ||
+        snapshot.runtime_generation != state.generation ||
+        snapshot.base_pack_id != state.base_pack_id) {
+        return false;
+    }
+    for (const auto& route : snapshot.routes) {
+        if (route.type == DeviceType::CPU) {
+            if (route.pack_id != state.base_pack_id) return false;
+            continue;
+        }
+        const auto active_pack = std::find_if(
+            state.packs.begin(), state.packs.end(), [&](const auto& pack) {
+                return pack.backend == PackBackendId(route.type);
+            });
+        if (active_pack == state.packs.end() ||
+            route.pack_id != active_pack->pack_id) {
+            return false;
+        }
+    }
+    return true;
+}
+
+RuntimeBackendPackEntryTruth MakePackTruth(
+    const BackendPackManagerRecord& record,
+    bool runtime_layout_valid,
+    const std::optional<RouteQualificationSnapshot>& qualification,
+    bool qualification_matches_runtime) {
+    RuntimeBackendPackEntryTruth truth;
+    truth.backend = record.backend;
+    truth.pack_id = record.pack_id;
+    truth.installed_pack_id = record.installed_pack_id;
+    truth.package_version = record.package_version;
+    truth.catalog_support = CatalogSupportId(record.catalog_support);
+    truth.download_size_bytes = record.download_size_bytes;
+    truth.provider_requirements = record.provider_requirements;
+    truth.installed = record.installed;
+    truth.active = record.active;
+    truth.delivery_metadata_available = record.delivery_metadata_available;
+    truth.state = !record.installed
+        ? "not_installed"
+        : (record.active ? "installed_active" : "installed_inactive");
+    truth.layout_status = !record.installed
+        ? "not_installed"
+        : (record.active
+               ? (runtime_layout_valid ? "valid" : "invalid")
+               : "not_checked");
+
+    const std::string installed_id = record.installed_pack_id.empty()
+        ? record.pack_id
+        : record.installed_pack_id;
+    if (!record.installed || !qualification ||
+        !qualification_matches_runtime ||
+        installed_id.empty()) {
+        return truth;
+    }
+    for (const auto& route : qualification->routes) {
+        if (record.backend != PackBackendId(route.type) ||
+            route.pack_id != installed_id) {
+            continue;
+        }
+        truth.qualification_evidence_available = true;
+        truth.training_authorized =
+            truth.training_authorized || route.certified;
+    }
+    return truth;
+}
+
+RuntimeBackendPackTruth ReadBackendPackTruth() {
+    RuntimeBackendPackTruth truth;
+    truth.catalog_source = "local_signed_cache";
+    truth.network_policy = "read_only_no_network";
+#ifdef _WIN32
+    truth.proxy_policy = "winhttp_system_automatic";
+#else
+    truth.proxy_policy = "direct_https_or_explicit_offline";
+#endif
+
+    const auto runtime_root = ActiveRuntimeRoot();
+    if (runtime_root.empty()) {
+        truth.runtime_status = "development_runtime";
+        truth.catalog_status = "not_packaged";
+        return truth;
+    }
+    truth.packaged_runtime = true;
+    if (!runtime_root.is_absolute()) {
+        truth.runtime_status = "invalid_root";
+        truth.catalog_status = "local_cache_unavailable";
+        return truth;
+    }
+
+    runtime::ActiveRuntimeState active;
+    std::string state_error;
+    if (!runtime::LoadActiveRuntimeState(
+            runtime_root / "active-runtime.json", active, state_error)) {
+        truth.runtime_status = "invalid_state";
+        truth.catalog_status = "local_cache_unavailable";
+        return truth;
+    }
+    truth.runtime_set_id = active.runtime_set_id;
+    truth.runtime_generation = active.generation;
+    truth.base_pack_id = active.base_pack_id;
+
+    runtime::ActiveRuntime resolved;
+    std::string layout_error;
+    const bool runtime_layout_valid = runtime::ResolveRuntimeState(
+        runtime_root, active, resolved, layout_error);
+    truth.runtime_status = runtime_layout_valid ? "ready" : "invalid_layout";
+
+    runtime::VerifiedBackendPackCatalogSnapshot catalog;
+    std::string catalog_error;
+    auto trust = runtime::BackendPackTrustStore::Load(
+        runtime_root / "trust" / "trusted-keys.json", catalog_error);
+    bool catalog_available = false;
+    if (trust) {
+        runtime::BackendPackLifecycleService lifecycle(
+            runtime_root,
+            runtime::BackendPackMetadataVerifier(
+                std::move(*trust), GetVersionString(),
+                std::string(runtime::CurrentBackendPackPlatformId()),
+                std::string(runtime::CurrentBackendPackArchitectureId())));
+        catalog_available = lifecycle.ReadCatalogSnapshot(
+            CurrentUtc(), catalog, catalog_error);
+    }
+    truth.catalog_status = catalog_available ? "verified"
+                                             : "local_cache_unavailable";
+    if (catalog_available) truth.catalog_id = catalog.catalog.catalog_id;
+
+    const auto qualification = GetRouteQualificationSnapshot();
+    const bool qualification_matches_runtime =
+        qualification && QualificationMatchesRuntime(*qualification, active);
+
+    BackendPackManagerRecord base;
+    base.backend = "cpu";
+    base.pack_id = active.base_pack_id;
+    base.installed_pack_id = active.base_pack_id;
+    base.catalog_support = BackendPackCatalogSupport::Supported;
+    base.installed = true;
+    base.active = true;
+    base.delivery_metadata_available = true;
+    truth.packs.push_back(MakePackTruth(
+        base, runtime_layout_valid, qualification,
+        qualification_matches_runtime));
+
+    std::vector<BackendPackManagerRecord> records;
+    if (catalog_available) {
+        records = BuildBackendPackCatalogRecords(catalog, active);
+        for (auto& record : records) {
+            if (record.installed && !record.active &&
+                record.pack_id != record.installed_pack_id) {
+                record.installed = false;
+                record.installed_pack_id.clear();
+            }
+        }
+        for (const auto& installed : active.packs) {
+            const bool exact_record = std::any_of(
+                records.begin(), records.end(), [&](const auto& record) {
+                    return record.pack_id == installed.pack_id &&
+                           record.backend == installed.backend &&
+                           record.installed && record.active;
+                });
+            if (exact_record) continue;
+            BackendPackManagerRecord record;
+            record.backend = installed.backend;
+            record.pack_id = installed.pack_id;
+            record.installed_pack_id = installed.pack_id;
+            record.installed = true;
+            record.active = true;
+            records.push_back(std::move(record));
+        }
+    } else {
+        records.reserve(active.packs.size());
+        for (const auto& installed : active.packs) {
+            BackendPackManagerRecord record;
+            record.backend = installed.backend;
+            record.pack_id = installed.pack_id;
+            record.installed_pack_id = installed.pack_id;
+            record.installed = true;
+            record.active = true;
+            records.push_back(std::move(record));
+        }
+    }
+    truth.packs.reserve(truth.packs.size() + records.size());
+    for (const auto& record : records) {
+        truth.packs.push_back(MakePackTruth(
+            record, runtime_layout_valid, qualification,
+            qualification_matches_runtime));
+    }
+    return truth;
+}
+
 class EngineRuntimeTruthProvider final : public RuntimeTruthQueryProvider {
 public:
     RuntimeTrainingTruth GetCurrentTraining() const override {
@@ -408,6 +660,10 @@ public:
         truth.available_devices = inventory_;
         truth.inventory_status = "available";
         return truth;
+    }
+
+    RuntimeBackendPackTruth GetBackendPackTruth() const override {
+        return ReadBackendPackTruth();
     }
 
     RuntimeRunTruth GetCurrentRun() const override {

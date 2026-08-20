@@ -411,6 +411,123 @@ std::string DeviceRouteLabel(const DeviceInfo& route) {
     return backend + ':' + std::to_string(route.device_id);
 }
 
+const char* DevicePackBackendId(DeviceType type) {
+    switch (type) {
+        case DeviceType::CPU: return "cpu";
+        case DeviceType::CUDA: return "cuda";
+        case DeviceType::OPENCL: return "opencl";
+        case DeviceType::ONEAPI: return "oneapi";
+        default: return "unknown";
+    }
+}
+
+const RuntimeBackendPackEntryTruth* FindActivePack(
+    const RuntimeBackendPackTruth& truth,
+    DeviceType type) {
+    const std::string_view backend = DevicePackBackendId(type);
+    const auto match = std::find_if(
+        truth.packs.begin(), truth.packs.end(), [&](const auto& pack) {
+            return pack.backend == backend && pack.installed && pack.active;
+        });
+    return match == truth.packs.end() ? nullptr : &*match;
+}
+
+std::string PackCompatibilityStatus(
+    const RuntimeBackendPackEntryTruth& pack) {
+    if (!pack.installed) return "missing_pack";
+    if (pack.layout_status == "invalid") return "corrupt_pack";
+    if (pack.catalog_support == "blocked" ||
+        pack.catalog_support == "revoked" ||
+        pack.catalog_support == "diagnostic") {
+        return "policy_block";
+    }
+    if (!pack.qualification_evidence_available) return "not_verified";
+    return pack.training_authorized ? "ready" : "failed_matrix";
+}
+
+bool IsIncompatibleDeviceFailure(RouteFailureCategory category) {
+    switch (category) {
+        case RouteFailureCategory::AbiMismatch:
+        case RouteFailureCategory::DependencyMissing:
+        case RouteFailureCategory::BackendLoadFailed:
+        case RouteFailureCategory::DeviceNotEnumerated:
+        case RouteFailureCategory::IdentityMismatch:
+        case RouteFailureCategory::ActivationFailed:
+        case RouteFailureCategory::BackendSubstitution:
+            return true;
+        default:
+            return false;
+    }
+}
+
+std::string RouteCompatibilityStatus(
+    const RuntimeBackendPackEntryTruth* pack,
+    const RouteQualificationDecision& qualification,
+    const RouteTrainingAuthorizationDecision& authorization) {
+    if (!pack || !pack->installed) return "missing_pack";
+    if (pack->layout_status == "invalid") return "corrupt_pack";
+    if (pack->catalog_support == "blocked" ||
+        pack->catalog_support == "revoked" ||
+        pack->catalog_support == "diagnostic" ||
+        qualification.failure.category ==
+            RouteFailureCategory::PolicyBlocked) {
+        return "policy_block";
+    }
+    if (qualification.failure.category ==
+        RouteFailureCategory::ProviderMissing) {
+        return "missing_provider";
+    }
+    if (IsIncompatibleDeviceFailure(qualification.failure.category)) {
+        return "incompatible_device";
+    }
+    if (qualification.failure.stage == RouteFailureStage::StrictTraining ||
+        qualification.failure.category ==
+            RouteFailureCategory::NativeFallback ||
+        qualification.failure.category ==
+            RouteFailureCategory::ResidencyViolation) {
+        return "failed_training_probe";
+    }
+    if (!qualification.evidence_available) return "not_verified";
+    if (!qualification.qualified) return "failed_matrix";
+    return authorization.authorized ? "ready" : "policy_block";
+}
+
+std::string SupportValue(std::string_view value) {
+    constexpr size_t kMaximumSupportValueBytes = 160;
+    std::string output;
+    output.reserve(std::min(value.size(), kMaximumSupportValueBytes));
+    for (const unsigned char character : value) {
+        if (output.size() == kMaximumSupportValueBytes) break;
+        if (character < 0x20 || character >= 0x7f || character == '\'' ||
+            character == '"') {
+            output.push_back('_');
+        } else {
+            output.push_back(static_cast<char>(character));
+        }
+    }
+    return output.empty() ? "not_recorded" : output;
+}
+
+std::string JoinSupportValues(const std::vector<std::string>& values) {
+    constexpr size_t kMaximumJoinedSupportBytes = 320;
+    if (values.empty()) return "none";
+    std::string output;
+    for (const auto& value : values) {
+        const std::string sanitized = SupportValue(value);
+        const size_t separator = output.empty() ? 0 : 1;
+        if (output.size() + separator + sanitized.size() >
+            kMaximumJoinedSupportBytes) {
+            if (output.size() + 4 <= kMaximumJoinedSupportBytes) {
+                output += ",...";
+            }
+            break;
+        }
+        if (separator != 0) output.push_back(',');
+        output += sanitized;
+    }
+    return output;
+}
+
 void AddTrainingSummary(RuntimeConsoleCommandResult& result,
                         const RuntimeTrainingTruth& truth) {
     AddLine(result, RuntimeConsoleOutputLevel::Info,
@@ -628,7 +745,7 @@ RuntimeConsoleCommandService::Registry() {
           "Example:\n"
           "  pip3 list"},
          &RuntimeConsoleCommandService::ExecutePip, false},
-        {{"show", "show logs|errors|code|codes|training|device|run|materialization ...",
+        {{"show", "show logs|errors|code|codes|training|device|backend|run|materialization ...",
           "Query bounded runtime diagnostics",
           "Log queries are read-only, bounded to 1-1000 displayed rows, and "
           "show the newest matching events in sequence order.\n"
@@ -649,6 +766,9 @@ RuntimeConsoleCommandService::Registry() {
           "  show device active|available|queued|backends|oneapi|qualification\n"
           "  show device route <backend>:<id>\n"
           "  show device recommendations <backend>:<id>\n"
+          "  show backend packs\n"
+          "  show backend compatibility\n"
+          "  show backend support-bundle [1-100]\n"
           "  show run current\n"
           "  show run <run_id> summary|events|codes|host-sync|fallback\n"
           "  show run <run_id> code <CW-X-NNNN>\n"
@@ -664,6 +784,8 @@ RuntimeConsoleCommandService::Registry() {
           "  show device active\n"
           "  show device qualification\n"
           "  show device recommendations cuda:0\n"
+          "  show backend compatibility\n"
+          "  show backend support-bundle 32\n"
           "  show run train-1786337176120 fallback\n"
           "  show materialization last"},
          &RuntimeConsoleCommandService::ExecuteShow, true},
@@ -827,7 +949,7 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecuteShow(
     std::string_view command) {
     const auto tokens = TokenizeCommand(command);
     if (tokens.error || tokens.values.size() < 2) {
-        return Usage("show logs|errors|code|codes|training|device|run|materialization ...");
+        return Usage("show logs|errors|code|codes|training|device|backend|run|materialization ...");
     }
     const auto subject = LowerAscii(tokens.values[1].text);
     const auto arguments = tokens.values.size() > 2
@@ -838,6 +960,7 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecuteShow(
     if (subject == "codes") return ShowCodes(arguments);
     if (subject == "training") return ShowTraining(arguments);
     if (subject == "device") return ShowDevice(arguments);
+    if (subject == "backend") return ShowBackend(arguments);
     if (subject == "run") return ShowRun(arguments);
     if (subject == "materialization") {
         return ShowMaterialization(arguments);
@@ -1424,6 +1547,288 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowDevice(
                 "No ArrayFire oneAPI device was reported by the retained "
                 "inventory");
     }
+    return result;
+}
+
+RuntimeConsoleCommandResult RuntimeConsoleCommandService::ShowBackend(
+    std::string_view arguments) {
+    const auto tokens = TokenizeCommand(arguments);
+    if (tokens.error || tokens.values.empty() || tokens.values.size() > 2) {
+        return Usage(
+            "show backend packs|compatibility|support-bundle [1-100]");
+    }
+    if (!truth_provider_) {
+        return ErrorResult("Runtime backend truth provider is unavailable");
+    }
+
+    const auto mode = LowerAscii(tokens.values[0].text);
+    size_t support_limit = kDefaultBackendSupportLimit;
+    if (mode == "support-bundle") {
+        if (tokens.values.size() == 2) {
+            const auto parsed = ParseLimit(tokens.values[1].text);
+            if (!parsed || *parsed > kMaximumBackendSupportLimit) {
+                return Usage("show backend support-bundle [1-100]");
+            }
+            support_limit = *parsed;
+        }
+    } else if (tokens.values.size() != 1 ||
+               (mode != "packs" && mode != "compatibility")) {
+        return Usage(
+            "show backend packs|compatibility|support-bundle [1-100]");
+    }
+
+    const auto packs = truth_provider_->GetBackendPackTruth();
+    RuntimeConsoleCommandResult result;
+    const auto add_runtime_summary = [&] {
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Backend runtime: packaged=" +
+                    std::string(packs.packaged_runtime ? "true" : "false") +
+                    " status=" + RecordedOr(packs.runtime_status) +
+                    " runtime_set=" + RecordedOr(packs.runtime_set_id) +
+                    " generation=" +
+                    std::to_string(packs.runtime_generation) +
+                    " base_pack=" + RecordedOr(packs.base_pack_id));
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Backend catalog: source=" +
+                    RecordedOr(packs.catalog_source) + " status=" +
+                    RecordedOr(packs.catalog_status) + " catalog=" +
+                    RecordedOr(packs.catalog_id) + " network=" +
+                    RecordedOr(packs.network_policy) + " proxy=" +
+                    RecordedOr(packs.proxy_policy));
+    };
+
+    if (mode == "packs") {
+        add_runtime_summary();
+        if (packs.packs.empty()) {
+            AddLine(result, RuntimeConsoleOutputLevel::Warning,
+                    packs.packaged_runtime
+                        ? "No validated backend-pack records are available"
+                        : "Backend packs are not used by this development runtime");
+            return result;
+        }
+        for (const auto& pack : packs.packs) {
+            const auto compatibility = PackCompatibilityStatus(pack);
+            AddLine(result,
+                    compatibility == "ready"
+                        ? RuntimeConsoleOutputLevel::Success
+                        : RuntimeConsoleOutputLevel::Warning,
+                    "  backend=" + SupportValue(pack.backend) +
+                        " pack=" + SupportValue(pack.pack_id) +
+                        " installed_pack=" +
+                        SupportValue(pack.installed_pack_id) +
+                        " version=" + SupportValue(pack.package_version) +
+                        " state=" + RecordedOr(pack.state) +
+                        " layout=" + RecordedOr(pack.layout_status) +
+                        " catalog_support=" +
+                        RecordedOr(pack.catalog_support) +
+                        " qualification=" +
+                        MatrixStatus(
+                            pack.qualification_evidence_available,
+                            pack.training_authorized) +
+                        " compatibility=" + compatibility +
+                        " download=" +
+                        FormatByteCount(pack.download_size_bytes) +
+                        " providers=" +
+                        JoinSupportValues(pack.provider_requirements));
+        }
+        return result;
+    }
+
+    const auto devices = truth_provider_->GetDeviceTruth(true);
+    const auto snapshot = GetRouteQualificationSnapshot();
+    struct RouteReport {
+        DeviceInfo route;
+        RuntimeDeviceEntryTruth device;
+        const RuntimeBackendPackEntryTruth* pack = nullptr;
+        RouteQualificationDecision qualification;
+        RouteTrainingAuthorizationDecision authorization;
+        std::string compatibility;
+    };
+    std::vector<RouteReport> routes;
+    routes.reserve(devices.available_devices.size());
+    for (const auto& device : devices.available_devices) {
+        const auto route = ToDeviceInfo(device);
+        if (!route) continue;
+        RouteReport report;
+        report.route = *route;
+        report.device = device;
+        report.pack = FindActivePack(packs, route->type);
+        report.qualification = EvaluateRouteQualification(*route, snapshot);
+        report.authorization = EvaluateRouteTrainingAuthorization(
+            *route, report.qualification);
+        report.compatibility = !packs.packaged_runtime
+            ? "development_runtime"
+            : RouteCompatibilityStatus(
+                  report.pack, report.qualification,
+                  report.authorization);
+        routes.push_back(std::move(report));
+    }
+
+    if (mode == "compatibility") {
+        add_runtime_summary();
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "Backend compatibility: inventory_source=" +
+                    RecordedOr(devices.inventory_source) + " status=" +
+                    RecordedOr(devices.inventory_status) + " packs=" +
+                    std::to_string(packs.packs.size()) + " routes=" +
+                    std::to_string(routes.size()));
+        for (const auto& pack : packs.packs) {
+            AddLine(result,
+                    PackCompatibilityStatus(pack) == "ready"
+                        ? RuntimeConsoleOutputLevel::Success
+                        : RuntimeConsoleOutputLevel::Warning,
+                    "  pack backend=" + SupportValue(pack.backend) +
+                        " pack=" + SupportValue(pack.pack_id) +
+                        " compatibility=" +
+                        PackCompatibilityStatus(pack) + " state=" +
+                        RecordedOr(pack.state) + " layout=" +
+                        RecordedOr(pack.layout_status) + " policy=" +
+                        RecordedOr(pack.catalog_support));
+        }
+        for (const auto& route : routes) {
+            AddLine(result,
+                    route.compatibility == "ready"
+                        ? RuntimeConsoleOutputLevel::Success
+                        : (route.compatibility == "development_runtime"
+                               ? RuntimeConsoleOutputLevel::Info
+                               : RuntimeConsoleOutputLevel::Warning),
+                    "  route=" + DeviceRouteLabel(route.route) +
+                        " pack=" +
+                        (route.pack
+                             ? SupportValue(route.pack->installed_pack_id)
+                             : "not_installed") +
+                        " compatibility=" + route.compatibility +
+                        " authorization=" +
+                        RouteTrainingAuthorizationStatusName(
+                            route.authorization.status) +
+                        " failure_stage=" +
+                        RouteFailureStageName(
+                            route.qualification.failure.stage) +
+                        " failure_category=" +
+                        RouteFailureCategoryName(
+                            route.qualification.failure.category) +
+                        " operation=" +
+                        SupportValue(
+                            route.qualification.failure.operation) +
+                        " provider=" +
+                        SupportValue(route.device.provider_known
+                                         ? route.device.provider
+                                         : "unknown") +
+                        " driver=" +
+                        SupportValue(route.device.driver_version_known
+                                         ? route.device.driver_version
+                                         : "unknown"));
+        }
+        return result;
+    }
+
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Backend support bundle: schema=cyxwiz.backend.support.v1 "
+            "redaction=shareable upload=not_requested");
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Runtime: packaged=" +
+                std::string(packs.packaged_runtime ? "true" : "false") +
+                " status=" + SupportValue(packs.runtime_status) +
+                " runtime_set=" + SupportValue(packs.runtime_set_id) +
+                " generation=" +
+                std::to_string(packs.runtime_generation) + " base_pack=" +
+                SupportValue(packs.base_pack_id));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Catalog: source=" + SupportValue(packs.catalog_source) +
+                " status=" + SupportValue(packs.catalog_status) +
+                " catalog=" + SupportValue(packs.catalog_id) +
+                " network=" + SupportValue(packs.network_policy) +
+                " proxy=" + SupportValue(packs.proxy_policy));
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            std::string("Contracts: compute=") +
+                kCyxWizComputeContractId + " operations=" +
+                kRouteQualificationOperationManifestId + " matrix=" +
+                kRouteQualificationMatrixId);
+
+    const size_t total_entries = packs.packs.size() + routes.size();
+    size_t shown = 0;
+    for (const auto& pack : packs.packs) {
+        if (shown == support_limit) break;
+        AddLine(result, RuntimeConsoleOutputLevel::Info,
+                "pack backend=" + SupportValue(pack.backend) +
+                    " pack=" + SupportValue(pack.pack_id) +
+                    " installed_pack=" +
+                    SupportValue(pack.installed_pack_id) + " version=" +
+                    SupportValue(pack.package_version) + " state=" +
+                    SupportValue(pack.state) + " layout=" +
+                    SupportValue(pack.layout_status) + " catalog_support=" +
+                    SupportValue(pack.catalog_support) + " compatibility=" +
+                    PackCompatibilityStatus(pack) + " providers=" +
+                    JoinSupportValues(pack.provider_requirements) +
+                    " bytes=" +
+                    std::to_string(pack.download_size_bytes));
+        ++shown;
+    }
+    for (const auto& route : routes) {
+        if (shown == support_limit) break;
+        int passed = 0;
+        int unavailable = 0;
+        int failed = 0;
+        int timeout = 0;
+        int crash = 0;
+        double benchmark_ms = 0.0;
+        if (snapshot) {
+            const auto evidence = std::find_if(
+                snapshot->routes.begin(), snapshot->routes.end(),
+                [&](const auto& record) {
+                    return record.type == route.route.type &&
+                           record.device_id == route.route.device_id;
+                });
+            if (evidence != snapshot->routes.end()) {
+                passed = evidence->pass_count;
+                unavailable = evidence->unavailable_count;
+                failed = evidence->failure_count;
+                timeout = evidence->timeout_count;
+                crash = evidence->crash_count;
+                benchmark_ms = evidence->benchmark_median_iteration_ms;
+            }
+        }
+        std::ostringstream line;
+        line << "route route=" << DeviceRouteLabel(route.route)
+             << " name=" << SupportValue(route.device.name)
+             << " provider="
+             << SupportValue(route.device.provider_known
+                                 ? route.device.provider
+                                 : "unknown")
+             << " driver="
+             << SupportValue(route.device.driver_version_known
+                                 ? route.device.driver_version
+                                 : "unknown")
+             << " pack="
+             << (route.pack
+                     ? SupportValue(route.pack->installed_pack_id)
+                     : "not_installed")
+             << " compatibility=" << route.compatibility
+             << " authorization="
+             << RouteTrainingAuthorizationStatusName(
+                    route.authorization.status)
+             << " failure_stage="
+             << RouteFailureStageName(route.qualification.failure.stage)
+             << " failure_category="
+             << RouteFailureCategoryName(
+                    route.qualification.failure.category)
+             << " operation="
+             << SupportValue(route.qualification.failure.operation)
+             << " passed=" << passed
+             << " unavailable=" << unavailable
+             << " failed=" << failed
+             << " timeout=" << timeout
+             << " crash=" << crash
+             << " benchmark_median_ms=" << std::fixed
+             << std::setprecision(3) << benchmark_ms;
+        AddLine(result, RuntimeConsoleOutputLevel::Info, line.str());
+        ++shown;
+    }
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Entries: total=" + std::to_string(total_entries) +
+                " shown=" + std::to_string(shown) + " omitted=" +
+                std::to_string(total_entries - shown) + " limit=" +
+                std::to_string(support_limit));
     return result;
 }
 

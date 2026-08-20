@@ -185,6 +185,34 @@ the runtime never follows a mutable unsigned pointer or derives a manifest path
 from its HTTPS host. A valid catalog remains browsable when an individual
 manifest is absent or invalid, but delivery for that entry stays disabled.
 
+## Enterprise, Offline, and Proxy Policy
+
+Runtime inspection is local-only. `show backend packs`,
+`show backend compatibility`, and `show backend support-bundle [1-100]` read
+the active runtime, local signed catalog cache, retained device inventory, and
+qualification snapshot without opening a network connection or starting a
+probe. The bounded support output is shareable text: it omits filesystem
+paths, catalog URLs, proxy values, credentials, tokens, and internal ticket
+keys, and it never uploads automatically.
+
+An enterprise administrator can install without network access by placing the
+unchanged signed catalog at `catalogs/current.json`, each unchanged signed
+manifest at `catalogs/manifests/<pack-id>.json`, and the signed archive beside
+its manifest. The exact packaged helper is then invoked with an absolute
+runtime root, one catalog-authorized pack ID, and `--offline`. Offline mode
+uses the same signature, release-policy, byte-size, SHA-256, extraction,
+qualification, and atomic-activation checks as HTTPS delivery. It does not
+accept an unsigned catalog, a rewritten URL, or a local trust override.
+
+Online acquisition begins only after explicit installer consent. On Windows,
+WinHTTP uses the operating system's automatic proxy configuration. On Linux
+and macOS, schema 1 uses direct certificate-verified HTTPS and has no explicit
+proxy-credential input; proxy-only deployments must use the offline workflow.
+Proxy URLs and credentials are never catalog or manifest fields and must not
+be copied into support output. Redirects remain disabled on every platform.
+Failure to reach the network leaves the verified local catalog and installed
+runtime inspectable and does not downgrade to unsigned metadata.
+
 ## Active Runtime
 
 `active-runtime.json` is local transaction state, not signed publication

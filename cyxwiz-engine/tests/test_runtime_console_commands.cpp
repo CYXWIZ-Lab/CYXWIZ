@@ -28,6 +28,7 @@ public:
     cyxwiz::RuntimeTrainingTruth current_training;
     cyxwiz::RuntimeTrainingTruth last_training;
     cyxwiz::RuntimeDeviceTruth device;
+    cyxwiz::RuntimeBackendPackTruth backend_packs;
     cyxwiz::RuntimeRunTruth current_run;
     cyxwiz::RuntimeRunTruth run;
     mutable bool last_inventory_requested = false;
@@ -46,6 +47,10 @@ public:
         auto truth = device;
         if (!include_inventory) truth.available_devices.clear();
         return truth;
+    }
+
+    cyxwiz::RuntimeBackendPackTruth GetBackendPackTruth() const override {
+        return backend_packs;
     }
 
     cyxwiz::RuntimeRunTruth GetCurrentRun() const override {
@@ -628,6 +633,176 @@ void TestRuntimeTruthCommands() {
           "run code queries should combine live and persisted evidence with exact filtering");
 }
 
+void TestBackendSupportCommands() {
+    cyxwiz::RuntimeLogStore store(4);
+    FakeTruthProvider provider;
+    provider.backend_packs.packaged_runtime = true;
+    provider.backend_packs.runtime_status = "ready";
+    provider.backend_packs.runtime_set_id = "runtime-v1";
+    provider.backend_packs.runtime_generation = 4;
+    provider.backend_packs.base_pack_id = "base-v1";
+    provider.backend_packs.catalog_status = "verified";
+    provider.backend_packs.catalog_id = "catalog-v1";
+    provider.backend_packs.catalog_source = "local_signed_cache";
+    provider.backend_packs.network_policy = "read_only_no_network";
+    provider.backend_packs.proxy_policy = "direct_https_or_explicit_offline";
+
+    const auto add_pack = [&](std::string backend, std::string pack_id,
+                              bool installed, bool active,
+                              std::string layout, std::string support,
+                              bool evidence, bool authorized) {
+        cyxwiz::RuntimeBackendPackEntryTruth pack;
+        pack.backend = std::move(backend);
+        pack.pack_id = pack_id;
+        pack.installed_pack_id = installed ? pack_id : std::string{};
+        pack.package_version = "1.0";
+        pack.state = !installed
+            ? "not_installed"
+            : (active ? "installed_active" : "installed_inactive");
+        pack.layout_status = std::move(layout);
+        pack.catalog_support = std::move(support);
+        pack.download_size_bytes = 1024;
+        pack.provider_requirements = {"vendor_runtime"};
+        pack.installed = installed;
+        pack.active = active;
+        pack.delivery_metadata_available = true;
+        pack.qualification_evidence_available = evidence;
+        pack.training_authorized = authorized;
+        provider.backend_packs.packs.push_back(std::move(pack));
+    };
+    add_pack("cpu", "base-v1", true, true, "valid", "supported",
+             true, true);
+    add_pack("cuda", "cuda-v1", true, true, "valid", "supported",
+             true, false);
+    add_pack("opencl", "opencl-v1", true, true, "valid", "supported",
+             true, false);
+    add_pack("oneapi", "oneapi-v1", true, true, "valid", "supported",
+             true, false);
+    add_pack("cuda", "cuda-next", false, false, "not_installed",
+             "supported", false, false);
+    add_pack("opencl", "opencl-corrupt", true, false, "invalid",
+             "supported", false, false);
+    add_pack("oneapi", "oneapi-diagnostic", true, false, "not_checked",
+             "blocked", false, false);
+
+    const auto add_device = [&](std::string backend, int id,
+                                std::string name) {
+        cyxwiz::RuntimeDeviceEntryTruth device;
+        device.backend = std::move(backend);
+        device.device_id = id;
+        device.name = std::move(name);
+        device.backend_available = true;
+        device.device_selectable = true;
+        device.device_kind = id == 0 ? "gpu" : "accelerator";
+        device.identity_confidence = "provider_reported";
+        device.provider = "Fixture Provider";
+        device.driver_version = "1.2.3";
+        device.provider_known = true;
+        device.driver_version_known = true;
+        provider.device.available_devices.push_back(std::move(device));
+    };
+    add_device("arrayfire_cpu", 0, "CPU");
+    add_device("arrayfire_cuda", 0, "CUDA missing provider");
+    add_device("arrayfire_cuda", 1, "CUDA incompatible device");
+    add_device("arrayfire_opencl", 0, "OpenCL failed matrix");
+    add_device("arrayfire_oneapi", 0, "oneAPI failed training probe");
+    provider.device.inventory_source = "cached_discovery";
+    provider.device.inventory_status = "available";
+
+    cyxwiz::RouteQualificationSnapshot qualification;
+    qualification.matrix_id = cyxwiz::kRouteQualificationMatrixId;
+    qualification.runtime_set_id = "runtime-v1";
+    qualification.runtime_generation = 4;
+    qualification.base_pack_id = "base-v1";
+    qualification.compute_contract_id = cyxwiz::kCyxWizComputeContractId;
+    qualification.operation_manifest_id =
+        cyxwiz::kRouteQualificationOperationManifestId;
+    const auto add_route = [&](cyxwiz::DeviceType type, int id,
+                               std::string pack_id,
+                               cyxwiz::RouteFailureStage stage,
+                               cyxwiz::RouteFailureCategory category) {
+        cyxwiz::RouteQualificationRecord route;
+        route.type = type;
+        route.device_id = id;
+        route.pack_id = std::move(pack_id);
+        route.operation_count = cyxwiz::kRouteQualificationOperationCount;
+        if (category == cyxwiz::RouteFailureCategory::None) {
+            route.pass_count = route.operation_count;
+            route.certified = true;
+        } else {
+            route.pass_count = route.operation_count - 1;
+            route.failure_count = 1;
+            route.failure.stage = stage;
+            route.failure.category = category;
+            route.failure.operation = "sum";
+            route.failure.observed_fact = "bounded fixture failure";
+            route.failure.bounded_interpretation = "fixture interpretation";
+            route.failure.recommended_action = "fixture action";
+        }
+        qualification.routes.push_back(std::move(route));
+    };
+    add_route(cyxwiz::DeviceType::CPU, 0, "base-v1",
+              cyxwiz::RouteFailureStage::None,
+              cyxwiz::RouteFailureCategory::None);
+    add_route(cyxwiz::DeviceType::CUDA, 0, "cuda-v1",
+              cyxwiz::RouteFailureStage::BackendLoad,
+              cyxwiz::RouteFailureCategory::ProviderMissing);
+    add_route(cyxwiz::DeviceType::CUDA, 1, "cuda-v1",
+              cyxwiz::RouteFailureStage::Identity,
+              cyxwiz::RouteFailureCategory::IdentityMismatch);
+    add_route(cyxwiz::DeviceType::OPENCL, 0, "opencl-v1",
+              cyxwiz::RouteFailureStage::Operation,
+              cyxwiz::RouteFailureCategory::OperationFailed);
+    add_route(cyxwiz::DeviceType::ONEAPI, 0, "oneapi-v1",
+              cyxwiz::RouteFailureStage::StrictTraining,
+              cyxwiz::RouteFailureCategory::NativeFallback);
+    cyxwiz::InstallRouteQualificationSnapshot(std::move(qualification));
+
+    cyxwiz::RuntimeConsoleCommandService service(store, &provider);
+    const auto packs = service.Execute("show backend packs");
+    Check(packs.success &&
+              ContainsLine(packs, "network=read_only_no_network") &&
+              ContainsLine(packs, "compatibility=missing_pack") &&
+              ContainsLine(packs, "compatibility=corrupt_pack") &&
+              ContainsLine(packs, "compatibility=policy_block"),
+          "pack command should distinguish package and catalog policy states without network access");
+
+    const auto compatibility =
+        service.Execute("show backend compatibility");
+    Check(compatibility.success &&
+              ContainsLine(compatibility, "compatibility=ready") &&
+              ContainsLine(compatibility, "compatibility=missing_provider") &&
+              ContainsLine(compatibility, "compatibility=incompatible_device") &&
+              ContainsLine(compatibility, "compatibility=failed_matrix") &&
+              ContainsLine(compatibility, "compatibility=failed_training_probe"),
+          "compatibility command should preserve distinct package, provider, device, matrix, and training failures");
+
+    const auto support =
+        service.Execute("show backend support-bundle 2");
+    Check(support.success &&
+              ContainsLine(support, "schema=cyxwiz.backend.support.v1") &&
+              ContainsLine(support, "upload=not_requested") &&
+              ContainsLine(support, "shown=2") &&
+              ContainsLine(support, "limit=2") &&
+              ContainsLine(support, cyxwiz::kRouteQualificationMatrixId) &&
+              !ContainsLine(support, "ticket89"),
+          "support output should be bounded, shareable, local-only, and use production contract labels");
+    const auto full_support =
+        service.Execute("show backend support-bundle 100");
+    Check(full_support.success &&
+              ContainsLine(full_support, "route=arrayfire_cuda:0") &&
+              ContainsLine(full_support, "failure_category=provider_missing") &&
+              ContainsLine(full_support, "passed=") &&
+              ContainsLine(full_support, "timeout=0 crash=0") &&
+              ContainsLine(full_support, "benchmark_median_ms="),
+          "support output should retain bounded install, probe, failure, and benchmark facts");
+    Check(!service.Execute("show backend support-bundle 0").success &&
+              !service.Execute("show backend support-bundle 101").success &&
+              !service.Execute("show backend packs extra").success,
+          "backend command limits and forms should fail closed");
+    cyxwiz::ClearRouteQualificationSnapshot();
+}
+
 } // namespace
 
 int main() {
@@ -640,6 +815,7 @@ int main() {
     TestSessionFilters(service);
     TestBoundedHistory();
     TestRuntimeTruthCommands();
+    TestBackendSupportCommands();
     std::cout << "Runtime Console command contracts passed\n";
     return 0;
 }

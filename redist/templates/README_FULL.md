@@ -65,13 +65,46 @@ hardware driver. The CUDA pack likewise excludes the NVIDIA display driver.
 2. Open the Engine runtime console.
 3. Run `show device backends`.
 4. Run `show device available`.
-5. Run the backend-specific device command when applicable.
-6. Select a device and run the bounded execution/training preflight.
-7. Confirm requested and effective backend/device agree.
-8. Confirm the verdict reports no undeclared native fallback.
+5. Run `show backend packs` and `show backend compatibility`.
+6. Run the backend-specific device command when applicable.
+7. Select a device and run the bounded execution/training preflight.
+8. Confirm requested and effective backend/device agree.
+9. Confirm the verdict reports no undeclared native fallback.
 
 A successful GUI launch proves dependency loading only. It is not accelerator
 execution evidence.
+
+## Enterprise and Offline Installation
+
+The `show backend ...` inspection commands read only local retained state;
+they do not contact the network or start a probe. For a bounded, shareable
+diagnostic summary, run:
+
+```text
+show backend support-bundle 32
+```
+
+The output is not uploaded automatically and excludes local paths, catalog
+URLs, credentials, tokens, proxy values, and internal ticket keys.
+
+For a disconnected installation, an administrator copies the unchanged signed
+catalog to `runtime/catalogs/current.json`, the unchanged signed manifest to
+`runtime/catalogs/manifests/<pack-id>.json`, and the signed archive beside that
+manifest. Run the packaged exact helper from an administrative terminal:
+
+```text
+cyxwiz-backend-pack-installer.exe --runtime-root <absolute-runtime-path> --pack-id <pack-id> --offline
+./cyxwiz-backend-pack-installer --runtime-root <absolute-runtime-path> --pack-id <pack-id> --offline
+```
+
+The helper applies the same signature, hash, qualification, and activation
+checks used online. Do not edit the signed files or create an unsigned mirror
+catalog.
+
+Windows online acquisition uses the operating system's automatic WinHTTP proxy
+configuration. Linux and macOS currently use direct certificate-verified HTTPS
+without an explicit proxy-credential setting; proxy-only sites should use the
+offline workflow. Redirects are disabled on all platforms.
 
 ## Troubleshooting
 

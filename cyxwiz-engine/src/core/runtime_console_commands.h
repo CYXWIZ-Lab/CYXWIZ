@@ -50,6 +50,8 @@ class RuntimeConsoleCommandService {
 public:
     static constexpr size_t kDefaultResultLimit = 100;
     static constexpr size_t kMaximumResultLimit = 1000;
+    static constexpr size_t kDefaultBackendSupportLimit = 32;
+    static constexpr size_t kMaximumBackendSupportLimit = 100;
     static constexpr size_t kCommandHistoryCapacity = 100;
 
     explicit RuntimeConsoleCommandService(
@@ -89,6 +91,7 @@ private:
     RuntimeConsoleCommandResult ShowCodes(std::string_view arguments);
     RuntimeConsoleCommandResult ShowTraining(std::string_view arguments);
     RuntimeConsoleCommandResult ShowDevice(std::string_view arguments);
+    RuntimeConsoleCommandResult ShowBackend(std::string_view arguments);
     RuntimeConsoleCommandResult ShowRun(std::string_view arguments);
     RuntimeConsoleCommandResult ShowMaterialization(std::string_view arguments);
     void RecordCommand(std::string_view command);

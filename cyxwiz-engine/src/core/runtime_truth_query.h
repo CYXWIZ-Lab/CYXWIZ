@@ -141,6 +141,37 @@ struct RuntimeDeviceTruth {
     std::string inventory_status;
 };
 
+struct RuntimeBackendPackEntryTruth {
+    std::string backend;
+    std::string pack_id;
+    std::string installed_pack_id;
+    std::string package_version;
+    std::string state;
+    std::string layout_status;
+    std::string catalog_support;
+    std::uint64_t download_size_bytes = 0;
+    std::vector<std::string> provider_requirements;
+    bool installed = false;
+    bool active = false;
+    bool delivery_metadata_available = false;
+    bool qualification_evidence_available = false;
+    bool training_authorized = false;
+};
+
+struct RuntimeBackendPackTruth {
+    bool packaged_runtime = false;
+    std::string runtime_status;
+    std::string runtime_set_id;
+    std::uint64_t runtime_generation = 0;
+    std::string base_pack_id;
+    std::string catalog_status;
+    std::string catalog_id;
+    std::string catalog_source;
+    std::string network_policy;
+    std::string proxy_policy;
+    std::vector<RuntimeBackendPackEntryTruth> packs;
+};
+
 struct RuntimeRunIssueTruth {
     std::string source;
     std::string level;
@@ -202,6 +233,9 @@ public:
     virtual RuntimeTrainingTruth GetCurrentTraining() const = 0;
     virtual RuntimeTrainingTruth GetLastTraining() const = 0;
     virtual RuntimeDeviceTruth GetDeviceTruth(bool include_inventory) = 0;
+    virtual RuntimeBackendPackTruth GetBackendPackTruth() const {
+        return {};
+    }
     virtual RuntimeRunTruth GetCurrentRun() const = 0;
     virtual RuntimeRunTruth GetRun(std::string_view run_id) const = 0;
 };
