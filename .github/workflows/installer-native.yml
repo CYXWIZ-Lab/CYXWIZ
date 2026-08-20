@@ -143,9 +143,10 @@ jobs:
       - name: Configure Ubuntu Release
         if: runner.os == 'Linux'
         run: |
-          AF_DIR="$(find /opt/arrayfire -name ArrayFireConfig.cmake \
-            -exec dirname {} \; | head -1)"
-          test -n "$AF_DIR"
+          AF_CONFIG="$(find /opt/arrayfire -name ArrayFireConfig.cmake \
+            -print | sed -n '1p')"
+          test -n "$AF_CONFIG"
+          AF_DIR="$(dirname "$AF_CONFIG")"
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
@@ -167,9 +168,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           AF_PREFIX="$(brew --prefix arrayfire)"
-          AF_DIR="$(find "$AF_PREFIX" -name ArrayFireConfig.cmake \
-            -exec dirname {} \; | head -1)"
-          test -n "$AF_DIR"
+          AF_CONFIG="$(find "$AF_PREFIX" -name ArrayFireConfig.cmake \
+            -print | sed -n '1p')"
+          test -n "$AF_CONFIG"
+          AF_DIR="$(dirname "$AF_CONFIG")"
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
