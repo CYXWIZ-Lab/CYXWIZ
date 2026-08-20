@@ -168,7 +168,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           AF_PREFIX="$(brew --prefix arrayfire)"
-          AF_CONFIG="$(find "$AF_PREFIX" -name ArrayFireConfig.cmake \
+          AF_CONFIG="$(find -L "$AF_PREFIX" -name ArrayFireConfig.cmake \
             -print | sed -n '1p')"
           test -n "$AF_CONFIG"
           AF_DIR="$(dirname "$AF_CONFIG")"
