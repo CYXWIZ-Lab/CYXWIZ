@@ -1,0 +1,189 @@
+name: Windows CPU Base Native
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/cpu-base-native.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "cyxwiz-backend/**"
+      - "cyxwiz-engine/**"
+      - "redist/bootstrapper/**"
+      - "redist/scripts/backend_pack_contract.py"
+      - "redist/scripts/package_release.py"
+      - "redist/scripts/verify_cpu_base_package.py"
+      - "redist/templates/README_BASE.md"
+      - "redist/tests/test_backend_pack_contract.py"
+      - "redist/tests/test_package_release.py"
+      - "redist/tests/test_verify_cpu_base_package.py"
+      - "tests/smoke/test_oneapi_operation_probe.cpp"
+      - "vcpkg-ci.json"
+  push:
+    branches:
+      - main
+      - Nodes_Implementation
+    paths:
+      - ".github/workflows/cpu-base-native.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "cyxwiz-backend/**"
+      - "cyxwiz-engine/**"
+      - "redist/bootstrapper/**"
+      - "redist/scripts/backend_pack_contract.py"
+      - "redist/scripts/package_release.py"
+      - "redist/scripts/verify_cpu_base_package.py"
+      - "redist/templates/README_BASE.md"
+      - "redist/tests/test_backend_pack_contract.py"
+      - "redist/tests/test_package_release.py"
+      - "redist/tests/test_verify_cpu_base_package.py"
+      - "tests/smoke/test_oneapi_operation_probe.cpp"
+      - "vcpkg-ci.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpu-base-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  build:
+    name: Build Windows CPU base
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Use CI vcpkg manifest
+        shell: pwsh
+        run: Copy-Item vcpkg-ci.json vcpkg.json -Force
+
+      - name: Setup vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          Set-Location vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          .\bootstrap-vcpkg.bat
+          "VCPKG_ROOT=$PWD" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install ArrayFire 3.10.0
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri https://arrayfire.gateway.scarf.sh/windows/3.10.0/ArrayFire.exe `
+            -OutFile arrayfire-installer.exe
+          Start-Process -FilePath .\arrayfire-installer.exe -ArgumentList /S -Wait
+
+      - name: Configure Release CPU build
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DCYXWIZ_BUILD_ENGINE=ON `
+            -DCYXWIZ_BUILD_SERVER_NODE=OFF `
+            -DCYXWIZ_BUILD_TESTS=OFF `
+            -DCYXWIZ_BUILD_TUI=OFF `
+            -DCYXWIZ_ENABLE_PYTHON=OFF `
+            -DCYXWIZ_ENABLE_ONNX=OFF `
+            -DCYXWIZ_ENABLE_GGUF=OFF `
+            -DCYXWIZ_ENABLE_PYTORCH=OFF `
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF `
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF `
+            -DCYXWIZ_ENABLE_CUDA=OFF `
+            -DCYXWIZ_ENABLE_OPENCL=OFF
+
+      - name: Build production CPU-base targets
+        run: >-
+          cmake --build build --config Release --parallel
+          --target cyxwiz-engine cyxwiz-installer
+          cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
+          cyxwiz-route-probe
+
+      - name: Download pinned redistribution inputs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force deps/python | Out-Null
+          Invoke-WebRequest `
+            -Uri https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip `
+            -OutFile deps/python-embed.zip
+          Expand-Archive deps/python-embed.zip -DestinationPath deps/python
+
+          New-Item -ItemType Directory -Force `
+            deps/intel/onemkl-2025.2.0.627 | Out-Null
+          Invoke-WebRequest `
+            -Uri https://api.nuget.org/v3-flatcontainer/intelmkl.redist.win-x64/2025.2.0.627/intelmkl.redist.win-x64.2025.2.0.627.nupkg `
+            -OutFile deps/intelmkl.zip
+          if ((Get-FileHash deps/intelmkl.zip -Algorithm SHA256).Hash -ne `
+              '42BF35A13581AA03ECBEE62E83E2C6397A45F13AE8AA657C1727FD0335E52C9E') {
+            throw 'Intel oneMKL redistribution input digest mismatch'
+          }
+          Expand-Archive deps/intelmkl.zip `
+            -DestinationPath deps/intel/onemkl-2025.2.0.627
+
+      - name: Build deterministic CPU-base artifact
+        shell: pwsh
+        run: |
+          python redist/scripts/package_release.py base `
+            --version 0.2.0 `
+            --pack-version 1 `
+            --arrayfire-dir 'C:\Program Files\ArrayFire\v3' `
+            --python-dir deps/python `
+            --python-version 3.12.8 `
+            --intel-runtime-license-dir deps/intel `
+            --generated-utc 2026-08-20T00:00:00Z
+          New-Item -ItemType Directory -Force cpu-base-artifact | Out-Null
+          Copy-Item redist/output/cyxwiz-base-0.2.0-1-win64.zip* `
+            cpu-base-artifact/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-windows-cpu-base
+          path: cpu-base-artifact/
+          if-no-files-found: error
+
+  clean-runner-smoke:
+    name: Fresh Windows CPU execution
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cyxwiz-windows-cpu-base
+          path: cpu-base-artifact
+
+      - name: Run CPU-base evidence contract
+        run: >-
+          python -m unittest
+          redist.tests.test_verify_cpu_base_package
+
+      - name: Install and verify on fresh runner
+        shell: pwsh
+        run: |
+          python redist/scripts/verify_cpu_base_package.py `
+            cpu-base-artifact/cyxwiz-base-0.2.0-1-win64.zip `
+            --manifest cpu-base-artifact/cyxwiz-base-0.2.0-1-win64.zip.manifest.json `
+            --install-root cpu-base-install `
+            --artifact-id windows-x64-cpu-base `
+            --evidence clean-machine-evidence/windows-x64-cpu-base.json
+
+      - name: Upload clean-machine CPU evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-cpu-base-evidence-windows-x64
+          path: clean-machine-evidence/windows-x64-cpu-base.json
+          if-no-files-found: error

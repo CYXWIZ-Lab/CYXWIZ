@@ -15,6 +15,8 @@
 #include <iostream>
 #include <filesystem>
 #include <cstdlib>
+#include <cmath>
+#include <string_view>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -62,6 +64,85 @@ void SetLaunchCwdEnv(const std::filesystem::path& cwd) {
 #else
     setenv("CYXWIZ_LAUNCH_CWD", cwd.string().c_str(), 1);
 #endif
+}
+
+bool IsPackageSmokeRequested(int argc, char** argv) {
+    return argc == 2 && std::string_view(argv[1]) == "--package-smoke";
+}
+
+const char* EnvironmentValue(const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr ? value : "";
+}
+
+int RunPackageSmoke() {
+    constexpr const char* kForbiddenOverrides[] = {
+        "AF_PATH",
+        "AF_PLUGIN_PATH",
+        "CYXWIZ_ARRAYFIRE_DIR",
+        "AF_BUILD_PATH",
+        "AF_BUILD_LIB_CUSTOM_PATH",
+        "PYTHONHOME",
+        "PYTHONPATH",
+    };
+    if (std::string_view(EnvironmentValue("CYXWIZ_ACTIVE_RUNTIME_ROOT")).empty()) {
+        std::cerr << "package_smoke schema=1 status=fail "
+                     "reason=active_runtime_missing\n";
+        return 78;
+    }
+    for (const char* name : kForbiddenOverrides) {
+        if (!std::string_view(EnvironmentValue(name)).empty()) {
+            std::cerr << "package_smoke schema=1 status=fail "
+                         "reason=runtime_override_present variable="
+                      << name << '\n';
+            return 78;
+        }
+    }
+    if (std::string_view(EnvironmentValue("PATH")).find(
+            "cyxwiz-untrusted-marker") != std::string_view::npos) {
+        std::cerr << "package_smoke schema=1 status=fail "
+                     "reason=inherited_path_present\n";
+        return 78;
+    }
+
+    try {
+        const auto activation =
+            cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
+        if (!activation.success || !activation.execution_validated ||
+            activation.effective_type != cyxwiz::DeviceType::CPU ||
+            activation.effective_device_id != 0) {
+            std::cerr << "package_smoke schema=1 status=fail "
+                         "reason=cpu_activation_failed stage="
+                      << cyxwiz::DeviceActivationStageName(activation.stage)
+                      << " error=" << activation.error_code << '\n';
+            return 1;
+        }
+
+        const float left_values[] = {1.0f, 2.0f, 3.0f, 4.0f};
+        const float right_values[] = {5.0f, 6.0f, 7.0f, 8.0f};
+        const cyxwiz::Tensor left(
+            {2, 2}, left_values, cyxwiz::DataType::Float32);
+        const cyxwiz::Tensor right(
+            {2, 2}, right_values, cyxwiz::DataType::Float32);
+        const cyxwiz::Tensor checksum = (left * right).Sum();
+        const float value = checksum.ReadData<float>()[0];
+        if (!std::isfinite(value) || std::abs(value - 70.0f) > 0.001f) {
+            std::cerr << "package_smoke schema=1 status=fail "
+                         "reason=cpu_result_mismatch\n";
+            return 1;
+        }
+
+        std::cout << "package_smoke schema=1 status=pass "
+                     "effective_backend=cpu effective_device=0 "
+                     "runtime_isolation=pass checksum="
+                  << value << '\n';
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "package_smoke schema=1 status=fail "
+                     "reason=execution_error detail='"
+                  << error.what() << "'\n";
+        return 1;
+    }
 }
 
 } // namespace
@@ -169,6 +250,12 @@ int main(int argc, char** argv) {
     if (!cyxwiz::Initialize()) {
         spdlog::error("Failed to initialize CyxWiz backend");
         return 1;
+    }
+
+    if (IsPackageSmokeRequested(argc, argv)) {
+        const int result = RunPackageSmoke();
+        cyxwiz::Shutdown();
+        return result;
     }
 
     const auto runtime_config_path =

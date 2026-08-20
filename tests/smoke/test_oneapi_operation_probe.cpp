@@ -205,9 +205,9 @@ bool IsRelevantRuntimeModule(std::string name) {
                  [](unsigned char value) {
                    return static_cast<char>(std::tolower(value));
                  });
-  static const char *needles[] = {"af.dll",   "afoneapi", "sycl",   "ur_",
-                                  "opencl",   "intelocl", "igdrcl", "ze_loader",
-                                  "mkl_sycl", "igc"};
+  static const char *needles[] = {
+      "af.dll", "afcpu", "afoneapi", "sycl", "ur_", "opencl",
+      "intelocl", "igdrcl", "ze_loader", "mkl_rt", "mkl_sycl", "igc"};
   for (const char *needle : needles) {
     if (name.find(needle) != std::string::npos)
       return true;

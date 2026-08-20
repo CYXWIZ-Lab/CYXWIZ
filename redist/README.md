@@ -72,6 +72,13 @@ the Engine installs `SetDefaultDllDirectories`/`AddDllDirectory` restrictions
 before it initializes optional runtimes. Direct Engine launch remains
 available for development builds when `CYXWIZ_ACTIVE_RUNTIME_ROOT` is absent.
 
+The Engine's bounded `--package-smoke` diagnostic is accepted only through an
+active runtime layout. It verifies that inherited ArrayFire/Python overrides
+were removed, activates the exact ArrayFire CPU route, executes a small tensor
+calculation, reports machine-readable route truth, and exits before graphical
+initialization. Release automation pairs it with the package-local route probe
+for the denser forward/backward execution check.
+
 Bootstrap failures are printed to stderr and appended to the package-local
 `runtime/bootstrapper.log`. A base archive is a runtime component and no longer
 contains the legacy PATH-mutating batch launcher; activation and the app-level

@@ -23,6 +23,22 @@ Each runner uploads `cyxwiz-installer-evidence-<platform>` containing:
 This proves the standalone installer artifact. It does not prove that a full
 CPU-base Engine package launches or trains.
 
+## Hosted Windows CPU-base evidence
+
+The `Windows CPU Base Native` workflow builds the production CPU-base ZIP and
+transfers only that artifact to a fresh Windows runner. The runner installs it
+into the versioned runtime layout, deliberately contaminates inherited
+ArrayFire, Python, and `PATH` variables, and launches the real Engine through
+the production bootstrapper's bounded `--package-smoke` mode. It then runs the
+package-local route probe on ArrayFire CPU for tensor conversion, BCE forward
+and backward, and a dense forward/backward benchmark.
+
+The evidence artifact records installed bytes, file hashes, Engine/probe
+durations, dense benchmark timing, and the package-relative locations of the
+loaded ArrayFire unified, CPU, and oneMKL runtime modules. CUDA, OpenCL, and
+oneAPI remain explicit `not_run` entries. CI emits an unsigned signing request;
+it is qualification evidence, not a publishable release artifact.
+
 ## Failure-contract coverage
 
 | Release condition | Native contract |
