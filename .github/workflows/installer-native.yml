@@ -77,7 +77,9 @@ jobs:
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
-        run: brew install arrayfire autoconf automake cmake libtool ninja pkg-config
+        run: |
+          brew install arrayfire autoconf automake bison cmake libtool ninja pkg-config
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
 
       - name: Use CI vcpkg manifest
         run: cmake -E copy vcpkg-ci.json vcpkg.json
