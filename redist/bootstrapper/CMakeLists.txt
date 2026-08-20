@@ -54,6 +54,12 @@ else()
         httplib::httplib
         OpenSSL::SSL
     )
+    if(APPLE)
+        find_library(CYXWIZ_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+        target_link_libraries(cyxwiz-backend-pack-service PRIVATE
+            "${CYXWIZ_COREFOUNDATION_FRAMEWORK}"
+        )
+    endif()
 endif()
 
 if(WIN32)
