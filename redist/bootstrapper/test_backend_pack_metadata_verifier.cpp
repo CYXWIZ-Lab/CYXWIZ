@@ -334,6 +334,30 @@ int main() {
                 catalog_path, "2026-08-14T12:00:00Z", catalog, error),
             "catalog referencing a revoked pack key was accepted")) return 1;
 
+    auto future_pack = Manifest(pack_key);
+    future_pack["signed"]["cyxwiz_release"] = {
+        {"minimum", "0.3.0"}, {"maximum", "0.3.x"}};
+    auto future_body = future_pack["signed"];
+    future_pack = Envelope(
+        "cyxwiz-backend-pack-manifest", std::move(future_body),
+        "pack-2026", pack_key);
+    const auto future_bytes = WriteJson(manifest_path, future_pack);
+    WriteJson(catalog_path, Catalog(catalog_key, Sha256(future_bytes)));
+    WriteJson(trust_path, TrustRoot(catalog_key, pack_key));
+    trust = BackendPackTrustStore::Load(trust_path, error);
+    BackendPackMetadataVerifier downgrade_verifier(
+        std::move(*trust), "0.2.0", "win64", "x86_64");
+    if (!Expect(
+            downgrade_verifier.VerifyCatalog(
+                catalog_path, "2026-08-14T12:00:00Z", catalog, error),
+            error.c_str()) ||
+        !Expect(
+            !downgrade_verifier.VerifyManifest(
+                manifest_path, catalog.packs.front(), manifest, error),
+            "a pack for a newer CyxWiz release was accepted after downgrade")) {
+        return 1;
+    }
+
     WriteJson(trust_path, TrustRoot(catalog_key, pack_key));
     trust = BackendPackTrustStore::Load(trust_path, error);
     BackendPackMetadataVerifier policy_verifier(

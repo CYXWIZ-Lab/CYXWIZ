@@ -269,6 +269,11 @@ Before publication:
 A successful GUI launch proves dependency loading only. It does not prove that
 a selected accelerator executed computation.
 
+The portable installer workflow and the remaining physical-hardware evidence
+are defined in [CLEAN_MACHINE_MATRIX.md](CLEAN_MACHINE_MATRIX.md). Hosted
+runners publish installed-size and timing evidence without claiming an
+accelerator route that was not physically exercised.
+
 ## Official Downloads
 
 - ArrayFire: https://arrayfire.com/download/

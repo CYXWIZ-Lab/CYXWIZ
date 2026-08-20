@@ -12,6 +12,7 @@ on:
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/verify_installer_package.py"
+      - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
   push:
     branches:
@@ -26,6 +27,7 @@ on:
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/verify_installer_package.py"
+      - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
 
 permissions:
@@ -143,14 +145,22 @@ jobs:
         run: >-
           cmake --build build --config Release --parallel
           --target cyxwiz-installer cyxwiz-backend-pack-installer
-          test_backend_pack_manager_model
+          test_backend_pack_manager_model test_backend_pack_state_service
+          test_backend_pack_installer test_backend_pack_metadata_verifier
+          test_backend_pack_delivery test_backend_pack_maintenance
+          test_backend_pack_maintenance_request
+          test_backend_pack_lifecycle_service
 
       - name: Build installer targets on Unix
         if: runner.os != 'Windows'
         run: >-
           cmake --build build --parallel
           --target cyxwiz-installer cyxwiz-backend-pack-installer
-          test_backend_pack_manager_model
+          test_backend_pack_manager_model test_backend_pack_state_service
+          test_backend_pack_installer test_backend_pack_metadata_verifier
+          test_backend_pack_delivery test_backend_pack_maintenance
+          test_backend_pack_maintenance_request
+          test_backend_pack_lifecycle_service
 
       - name: Run installer model contract
         run: >-
@@ -165,13 +175,14 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force installer-stage/smoke | Out-Null
-          Copy-Item build/bin/Release/test_backend_pack_manager_model.exe installer-stage/smoke/
+          Get-ChildItem build/bin/Release/test_backend_pack_*.exe |
+            Copy-Item -Destination installer-stage/smoke/
 
       - name: Add Unix package smoke contract
         if: runner.os != 'Windows'
         run: |
           mkdir -p installer-stage/smoke
-          cp build/bin/test_backend_pack_manager_model installer-stage/smoke/
+          cp build/bin/test_backend_pack_* installer-stage/smoke/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -206,5 +217,18 @@ jobs:
           name: cyxwiz-installer-${{ matrix.artifact }}
           path: installer-stage
 
+      - name: Run clean-machine evidence contract
+        run: python -m unittest redist.tests.test_verify_installer_package
+
       - name: Verify staged package on fresh runner
-        run: python redist/scripts/verify_installer_package.py installer-stage
+        run: >-
+          python redist/scripts/verify_installer_package.py installer-stage
+          --artifact-id ${{ matrix.artifact }}
+          --evidence clean-machine-evidence/${{ matrix.artifact }}.json
+
+      - name: Upload clean-machine evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-installer-evidence-${{ matrix.artifact }}
+          path: clean-machine-evidence/${{ matrix.artifact }}.json
+          if-no-files-found: error
