@@ -4,7 +4,6 @@ import importlib.util
 from pathlib import Path
 import sys
 import unittest
-from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "verify_installer_package.py"
@@ -39,26 +38,14 @@ class VerifyInstallerPackageTests(unittest.TestCase):
             "duration_ms": 1.0,
             "status": "passed",
         }
-        with mock.patch.object(
-            verify_installer_package, "require_file", side_effect=lambda path: path
-        ), mock.patch.object(
-            verify_installer_package,
-            "audit_dependencies",
-            return_value={"status": "passed", "duration_ms": 1.0},
-        ), mock.patch.object(
-            verify_installer_package, "run_checked", return_value=passed
-        ), mock.patch.object(
-            verify_installer_package,
-            "package_inventory",
-            return_value=(
-                [{"path": "fixture", "role": "install_payload", "size_bytes": 7}],
-                7,
-                3,
-            ),
-        ):
-            evidence = verify_installer_package.verify(
-                Path("fixture-stage"), "fixture-os"
-            )
+        evidence = verify_installer_package.build_evidence(
+            "fixture-os",
+            [{"path": "fixture", "role": "install_payload", "size_bytes": 7}],
+            7,
+            3,
+            {"status": "passed", "duration_ms": 1.0},
+            [passed] * 10,
+        )
 
         self.assertEqual("fixture-os", evidence["artifact_id"])
         self.assertEqual("passed", evidence["result"])

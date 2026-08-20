@@ -185,6 +185,33 @@ def hardware_matrix() -> list[dict[str, str]]:
     ]
 
 
+def build_evidence(
+    artifact_id: str,
+    files: list[dict[str, Any]],
+    installed_size: int,
+    validation_size: int,
+    dependency_audit: dict[str, Any],
+    checks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "artifact_id": artifact_id,
+        "artifact_kind": "standalone_installer",
+        "host": {
+            "system": platform.system(),
+            "machine": platform.machine(),
+        },
+        "installed_size_bytes": installed_size,
+        "validation_payload_size_bytes": validation_size,
+        "file_count": len(files),
+        "files": files,
+        "dependency_audit": dependency_audit,
+        "checks": checks,
+        "accelerator_routes": hardware_matrix(),
+        "result": "passed",
+    }
+
+
 def verify(stage: Path, artifact_id: str) -> dict[str, Any]:
     stage = stage.resolve()
     suffix = ".exe" if os.name == "nt" else ""
@@ -207,23 +234,14 @@ def verify(stage: Path, artifact_id: str) -> dict[str, Any]:
     ]
     checks.extend(run_checked(test, [], 0, stage) for test in contract_tests)
     files, installed_size, validation_size = package_inventory(stage)
-    evidence = {
-        "schema_version": 1,
-        "artifact_id": artifact_id,
-        "artifact_kind": "standalone_installer",
-        "host": {
-            "system": platform.system(),
-            "machine": platform.machine(),
-        },
-        "installed_size_bytes": installed_size,
-        "validation_payload_size_bytes": validation_size,
-        "file_count": len(files),
-        "files": files,
-        "dependency_audit": dependency_audit,
-        "checks": checks,
-        "accelerator_routes": hardware_matrix(),
-        "result": "passed",
-    }
+    evidence = build_evidence(
+        artifact_id,
+        files,
+        installed_size,
+        validation_size,
+        dependency_audit,
+        checks,
+    )
     print(f"Installer package smoke passed: {stage}")
     return evidence
 
