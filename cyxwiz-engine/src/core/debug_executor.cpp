@@ -361,6 +361,7 @@ DebugResult DebugExecutor::Run() {
         for (const auto& [param_name, param_tensor] : params) {
             GradNormEntry entry;
             entry.param_name = param_name;
+            entry.parameter_shape = param_tensor.Shape();
             entry.parameter_l2_norm = L2Norm(param_tensor);
 
             // Parse layerN from "layerN.<field>"
@@ -398,6 +399,7 @@ DebugResult DebugExecutor::Run() {
             } else {
                 entry.has_gradient = true;
                 const Tensor& g = grad_it->second;
+                entry.gradient_shape = g.Shape();
                 entry.numerics = ScanDebugTensorNumerics(
                     g, gui::NodeType::Dense);
                 entry.is_nan = entry.numerics.nan_count > 0;

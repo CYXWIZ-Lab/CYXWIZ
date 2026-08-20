@@ -161,7 +161,10 @@
 #include "../core/text_preprocessing_tracer.h"
 #include "../core/smoke_run_executor.h"
 #include "../core/debug_recommendation_engine.h"
+#include "../core/debug_gradient_health_analyzer.h"
+#include "../core/debug_loss_metric_explainer.h"
 #include "../core/debug_training_stall_detector.h"
+#include "../core/debug_memory_ownership_tracer.h"
 #include "../core/debug_node_inspector.h"
 #include "../core/training_trace_collector.h"
 #include "../core/debug_run_store.h"
@@ -816,6 +819,7 @@ MainWindow::MainWindow()
         });
         studio_debugger_panel_->SetFocusNodeCallback([this](int node_id) {
             if (node_editor_) {
+                node_editor_->Show();
                 node_editor_->FocusNode(node_id);
             }
         });
@@ -4078,7 +4082,57 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.traces.push_back(detector.BuildTrace(
                 run_id, session.traces, session.training_trace, evidence));
         };
-    auto save_session = [&session, &replay_capsule]() {
+    const cyxwiz::TrainingConfiguration* loss_metric_config = nullptr;
+    auto save_session = [&session, &replay_capsule, &loss_metric_config,
+                         &nodes]() {
+        const bool loss_metric_present = std::any_of(
+            session.traces.begin(), session.traces.end(),
+            [](const cyxwiz::DebugTraceRecord& trace) {
+                return trace.phase == "LossMetricExplanation";
+            });
+        if (loss_metric_config && !loss_metric_present) {
+            cyxwiz::DebugLossMetricExplainer explainer;
+            session.traces.push_back(explainer.BuildTrace(
+                session.run_id, *loss_metric_config, nodes, session.traces));
+        }
+        const bool has_backend_placements = std::any_of(
+            session.traces.begin(), session.traces.end(),
+            [](const cyxwiz::DebugTraceRecord& trace) {
+                return trace.phase == "BackendPlacement";
+            });
+        const bool backend_audit_present = std::any_of(
+            session.traces.begin(), session.traces.end(),
+            [](const cyxwiz::DebugTraceRecord& trace) {
+                return trace.phase == "BackendDecisionAudit";
+            });
+        if (has_backend_placements && !backend_audit_present) {
+            cyxwiz::DebugRuntimeBackendClassifier classifier;
+            session.traces.push_back(classifier.BuildAuditTrace(
+                session.run_id, session.traces, session.execution));
+        }
+        const bool gradient_health_present = std::any_of(
+            session.traces.begin(), session.traces.end(),
+            [](const cyxwiz::DebugTraceRecord& trace) {
+                return trace.phase == "GradientHealth";
+            });
+        if (!gradient_health_present) {
+            cyxwiz::DebugGradientHealthAnalyzer analyzer;
+            session.traces.push_back(analyzer.BuildTrace(
+                session.run_id, session.traces));
+        }
+        const bool lifecycle_present = std::any_of(
+            session.traces.begin(), session.traces.end(),
+            [](const cyxwiz::DebugTraceRecord& trace) {
+                return trace.phase == "TensorLifecycle";
+            });
+        if (!lifecycle_present) {
+            cyxwiz::DebugMemoryOwnershipTracer memory_tracer;
+            session.traces.push_back(
+                memory_tracer.BuildTensorLifecycleTrace(
+                    session.run_id,
+                    session.traces,
+                    session.execution));
+        }
         cyxwiz::DebugRunStoreRecord record;
         record.summary.run_id = session.run_id;
         record.summary.timestamp = NowLocalTimestampForDebugStore();
@@ -4137,6 +4191,9 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         compile_completed = true;
         session.issues = config.issues;
         compile_success = config.is_valid;
+        if (compile_success) {
+            loss_metric_config = &config;
+        }
 
         std::ostringstream out;
         out << "Layers:          " << config.layers.size() << "\n";
@@ -4361,7 +4418,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.studio_events.push_back({
                 run_id, "", session.graph_hash, -1,
                 "TextPreprocessingTrace", "captured",
-                "Captured first-sample text preprocessing trace."
+                "Captured text preprocessing trace for sample " +
+                    std::to_string(selected_sample_index) + "."
             });
         }
 
@@ -4391,7 +4449,11 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     }
 
     if (run_local_debug) try {
-        cyxwiz::DebugExecutor exe(std::move(config));
+        // The debugger continues to use the compiled configuration for
+        // explanations, stall analysis, replay metadata, and persistence
+        // after Local Debug completes. Preserve that session source of truth;
+        // this once-per-debug-run copy is outside training hot loops.
+        cyxwiz::DebugExecutor exe(config);
         session.debug_result = exe.Run();
         session.has_debug_result = true;
         session.success = session.debug_result.success;
@@ -4566,11 +4628,19 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 session.debug_result.reached == cyxwiz::DebugStage::Loss &&
                 !session.debug_result.success &&
                 !session.debug_result.failure_summary.empty();
+            const auto loss_node = std::find_if(
+                nodes.begin(), nodes.end(),
+                [&config](const MLNode& node) {
+                    return node.id == config.loss_node_id;
+                });
+            const std::string loss_node_name = loss_node == nodes.end()
+                ? config.GetLossName()
+                : loss_node->name;
             cyxwiz::DebugTraceRecord record = cyxwiz::DebugNodeTraceContract::Make(
                 run_id,
-                -1,
-                "LocalDebugLoss",
-                "Loss",
+                config.loss_node_id,
+                loss_node_name,
+                config.GetLossName(),
                 "Loss",
                 cyxwiz::DebugTraceRole::Loss,
                 {},
@@ -4650,7 +4720,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 "Backward",
                 cyxwiz::DebugTraceRole::Gradient,
                 {},
-                {},
+                grad.gradient_shape,
                 "float32",
                 "LocalDebug",
                 !grad.has_gradient ? "missing_gradient" :
@@ -4668,6 +4738,11 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 cyxwiz::kDebugNormDenominatorFloor;
             record.payload["update_observed"] = grad.update_observed;
             record.payload["parameter_name"] = grad.param_name;
+            record.payload["parameter_shape"] = grad.parameter_shape;
+            record.payload["gradient_shape"] = grad.gradient_shape;
+            record.payload["parameter_gradient_shapes_match"] =
+                grad.has_gradient &&
+                grad.parameter_shape == grad.gradient_shape;
             record.payload["module_index"] = grad.layer_index;
             record.payload["compiled_layer_index"] =
                 grad.compiled_layer_index;

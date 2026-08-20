@@ -53,6 +53,26 @@ struct BuiltExecutableModel {
     bool ok() const { return model != nullptr; }
 };
 
+// Effective loss settings resolved by the same code path used to construct
+// the runtime Loss. Debugging and UI surfaces consume this value instead of
+// re-parsing graph strings or copying backend defaults.
+struct ResolvedLossConfiguration {
+    gui::NodeType loss_type = gui::NodeType::CrossEntropyLoss;
+    std::string loss_name;
+    Reduction reduction = Reduction::Mean;
+    bool ignore_index_applicable = false;
+    int ignore_index = -100;
+    bool class_weights_applicable = false;
+    std::vector<float> class_weights;
+    bool label_smoothing_applicable = false;
+    float label_smoothing = 0.0f;
+    std::optional<float> pos_weight;
+    std::optional<float> alpha;
+    std::optional<float> beta;
+    std::optional<float> gamma;
+    std::optional<float> smooth;
+};
+
 // Build SequentialModel + Loss + Optimizer from a TrainingConfiguration.
 // Pure function — no side effects beyond logging. Shared between
 // TrainingExecutor (real training) and DebugExecutor (one-step local
@@ -62,6 +82,9 @@ BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config);
 // Build only the configured loss. Test and training execution share this so
 // reduction, class weights, label smoothing, and BCE pos_weight cannot drift.
 std::unique_ptr<Loss> BuildLossFromConfig(
+    const TrainingConfiguration& config);
+
+ResolvedLossConfiguration ResolveLossConfiguration(
     const TrainingConfiguration& config);
 
 // Build the narrow executable model interface. Sequential configs wrap the

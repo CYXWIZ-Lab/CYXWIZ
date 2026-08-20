@@ -1194,28 +1194,82 @@ int ResolveCrossEntropyIgnoreIndex(const TrainingConfiguration& config) {
     return -100;
 }
 
+ResolvedLossConfiguration ResolveLossConfigurationImpl(
+    const TrainingConfiguration& config) {
+    ResolvedLossConfiguration out;
+    out.loss_type = config.loss_type;
+    out.loss_name = config.GetLossName();
+    out.reduction = ResolveLossReduction(config);
+
+    switch (config.loss_type) {
+        case gui::NodeType::CrossEntropyLoss:
+            out.ignore_index_applicable = true;
+            out.ignore_index = ResolveCrossEntropyIgnoreIndex(config);
+            out.class_weights_applicable = true;
+            out.class_weights = ResolveCrossEntropyClassWeights(config);
+            out.label_smoothing_applicable = true;
+            out.label_smoothing = ResolveCrossEntropyLabelSmoothing(config);
+            break;
+        case gui::NodeType::FocalLoss:
+            out.alpha = ResolveLossFloatParam(
+                config, "alpha", 0.25f, 0.0f, "FocalLoss alpha");
+            out.gamma = ResolveLossFloatParam(
+                config, "gamma", 2.0f, 0.0f, "FocalLoss gamma");
+            break;
+        case gui::NodeType::BCEWithLogits:
+            out.pos_weight = ResolveBCEWithLogitsPosWeight(config);
+            break;
+        case gui::NodeType::SmoothL1Loss:
+        case gui::NodeType::HuberLoss:
+            out.beta = ResolveLossFloatParam(
+                config, "beta", 1.0f, 0.000001f,
+                "SmoothL1/Huber beta");
+            break;
+        case gui::NodeType::NLLLoss:
+            out.ignore_index_applicable = true;
+            out.ignore_index = ResolveCrossEntropyIgnoreIndex(config);
+            break;
+        case gui::NodeType::SoftDiceLoss:
+            out.smooth = ResolveLossFloatParam(
+                config, "smooth", 1.0f, 0.0f, "SoftDice smooth");
+            break;
+        case gui::NodeType::TverskyLoss:
+            out.alpha = ResolveLossFloatParam(
+                config, "alpha", 0.5f, 0.0f, "Tversky alpha");
+            out.beta = ResolveLossFloatParam(
+                config, "beta", 0.5f, 0.0f, "Tversky beta");
+            out.smooth = ResolveLossFloatParam(
+                config, "smooth", 1.0f, 0.0f, "Tversky smooth");
+            break;
+        case gui::NodeType::JaccardLoss:
+            out.smooth = ResolveLossFloatParam(
+                config, "smooth", 1.0f, 0.0f, "Jaccard smooth");
+            break;
+        default:
+            break;
+    }
+    return out;
+}
+
 std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& config) {
-    const Reduction reduction = ResolveLossReduction(config);
+    const ResolvedLossConfiguration resolved =
+        ResolveLossConfigurationImpl(config);
+    const Reduction reduction = resolved.reduction;
     switch (config.loss_type) {
         case gui::NodeType::CrossEntropyLoss: {
-            const int ignore_index = ResolveCrossEntropyIgnoreIndex(config);
-            const std::vector<float> class_weights =
-                ResolveCrossEntropyClassWeights(config);
-            const float label_smoothing =
-                ResolveCrossEntropyLabelSmoothing(config);
             spdlog::info("TrainingExecutor: Using CrossEntropy loss "
                          "(reduction={}, ignore_index={}, class_weights={}, "
                          "label_smoothing={})",
-                         ReductionName(reduction), ignore_index,
-                         class_weights.size(), label_smoothing);
+                         ReductionName(reduction), resolved.ignore_index,
+                         resolved.class_weights.size(),
+                         resolved.label_smoothing);
             return std::make_unique<CrossEntropyLoss>(
-                reduction, ignore_index, class_weights, label_smoothing);
+                reduction, resolved.ignore_index, resolved.class_weights,
+                resolved.label_smoothing);
         }
         case gui::NodeType::FocalLoss: {
-            const float alpha = ResolveLossFloatParam(
-                config, "alpha", 0.25f, 0.0f, "FocalLoss alpha");
-            const float gamma = ResolveLossFloatParam(
-                config, "gamma", 2.0f, 0.0f, "FocalLoss gamma");
+            const float alpha = resolved.alpha.value();
+            const float gamma = resolved.gamma.value();
             spdlog::info("TrainingExecutor: Using Focal loss "
                          "(reduction={}, alpha={}, gamma={})",
                          ReductionName(reduction), alpha, gamma);
@@ -1231,7 +1285,7 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
                          ReductionName(reduction));
             return CreateLoss(LossType::BinaryCrossEntropy, reduction);
         case gui::NodeType::BCEWithLogits: {
-            const float pos_weight = ResolveBCEWithLogitsPosWeight(config);
+            const float pos_weight = resolved.pos_weight.value();
             spdlog::info("TrainingExecutor: Using BCEWithLogits loss "
                          "(reduction={}, pos_weight={})",
                          ReductionName(reduction), pos_weight);
@@ -1244,35 +1298,30 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
             return CreateLoss(LossType::L1, reduction);
         case gui::NodeType::SmoothL1Loss:
         case gui::NodeType::HuberLoss: {
-            const float beta = ResolveLossFloatParam(
-                config, "beta", 1.0f, 0.000001f, "SmoothL1/Huber beta");
+            const float beta = resolved.beta.value();
             spdlog::info("TrainingExecutor: Using SmoothL1/Huber loss "
                          "(reduction={}, beta={})",
                          ReductionName(reduction), beta);
             return CreateLoss(LossType::SmoothL1, reduction, beta);
         }
         case gui::NodeType::NLLLoss: {
-            const int ignore_index = ResolveCrossEntropyIgnoreIndex(config);
             spdlog::info("TrainingExecutor: Using NLL loss "
                          "(reduction={}, ignore_index={})",
-                         ReductionName(reduction), ignore_index);
-            return std::make_unique<NLLLoss>(reduction, ignore_index);
+                         ReductionName(reduction), resolved.ignore_index);
+            return std::make_unique<NLLLoss>(
+                reduction, resolved.ignore_index);
         }
         case gui::NodeType::SoftDiceLoss: {
-            const float smooth = ResolveLossFloatParam(
-                config, "smooth", 1.0f, 0.0f, "SoftDice smooth");
+            const float smooth = resolved.smooth.value();
             spdlog::info("TrainingExecutor: Using SoftDice loss "
                          "(reduction={}, smooth={})",
                          ReductionName(reduction), smooth);
             return std::make_unique<SoftDiceLoss>(reduction, smooth);
         }
         case gui::NodeType::TverskyLoss: {
-            const float alpha = ResolveLossFloatParam(
-                config, "alpha", 0.5f, 0.0f, "Tversky alpha");
-            const float beta = ResolveLossFloatParam(
-                config, "beta", 0.5f, 0.0f, "Tversky beta");
-            const float smooth = ResolveLossFloatParam(
-                config, "smooth", 1.0f, 0.0f, "Tversky smooth");
+            const float alpha = resolved.alpha.value();
+            const float beta = resolved.beta.value();
+            const float smooth = resolved.smooth.value();
             spdlog::info("TrainingExecutor: Using Tversky loss "
                          "(reduction={}, alpha={}, beta={}, smooth={})",
                          ReductionName(reduction), alpha, beta, smooth);
@@ -1280,8 +1329,7 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
                 reduction, alpha, beta, smooth);
         }
         case gui::NodeType::JaccardLoss: {
-            const float smooth = ResolveLossFloatParam(
-                config, "smooth", 1.0f, 0.0f, "Jaccard smooth");
+            const float smooth = resolved.smooth.value();
             spdlog::info("TrainingExecutor: Using Jaccard loss "
                          "(reduction={}, smooth={})",
                          ReductionName(reduction), smooth);
@@ -1351,6 +1399,11 @@ Tensor LoadEmbeddingWeightsTextFile(const std::string& path,
 std::unique_ptr<Loss> BuildLossFromConfig(
     const TrainingConfiguration& config) {
     return BuildLossFromConfigImpl(config);
+}
+
+ResolvedLossConfiguration ResolveLossConfiguration(
+    const TrainingConfiguration& config) {
+    return ResolveLossConfigurationImpl(config);
 }
 
 BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {

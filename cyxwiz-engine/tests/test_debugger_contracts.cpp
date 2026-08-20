@@ -1,8 +1,10 @@
 #include "../src/core/debug_recommendation_engine.h"
 #include "../src/core/debug_batch_inspector.h"
 #include "../src/core/debug_error_code_timeline.h"
+#include "../src/core/debug_gradient_health_analyzer.h"
 #include "../src/core/debug_slow_path_detector.h"
 #include "../src/core/debug_training_stall_detector.h"
+#include "../src/core/debug_training_graph_diff.h"
 #include "../src/core/debug_export_correlation_tracer.h"
 #include "../src/core/debug_graph_trace_executor.h"
 #include "../src/core/debug_memory_ownership_tracer.h"
@@ -671,6 +673,106 @@ void TestRuntimeBackendClassificationContract() {
           "backend attention warning should not fail execution trace");
     Check(unknown_trace.payload["success"].get<bool>(),
           "unknown backend attention warning should preserve trace success");
+
+    const auto unknown_placement_trace = classifier.BuildPlacementTrace(
+        "backend-audit-run", 12345, unknown);
+    cyxwiz::DebugTraceRecord observed_actual =
+        cyxwiz::DebugNodeTraceContract::Make(
+            "backend-audit-run",
+            42,
+            "DenseHead",
+            "Dense",
+            "Forward",
+            cyxwiz::DebugTraceRole::Activation,
+            {2, 3}, {2, 4}, "float32", "LocalDebug", "ok");
+    observed_actual.duration_ms = 4.5f;
+    observed_actual.payload["backend_actual"] = "arrayfire_cuda";
+    observed_actual.payload["backend_actual_observed"] = true;
+    observed_actual.payload["backend_fallback_observed_this_run"] = true;
+
+    auto stale_actual = observed_actual;
+    stale_actual.run_id = "another-run";
+    stale_actual.payload["backend_actual"] = "native_cpu";
+
+    cyxwiz::DebugRunExecutionSummary linked_execution;
+    linked_execution.available = true;
+    linked_execution.training_run_id = "linked-training-run";
+    linked_execution.requested_backend = "arrayfire_cuda";
+    linked_execution.effective_backend = "arrayfire_cuda";
+    linked_execution.effective_device_id = 0;
+    linked_execution.effective_device_name = "Test CUDA Device";
+    linked_execution.residency_verdict =
+        "compatibility_mode_no_fallback_observed";
+
+    const auto audit = classifier.BuildAuditTrace(
+        "backend-audit-run",
+        {placement_trace, unknown_placement_trace,
+         stale_actual, observed_actual},
+        linked_execution);
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(audit) &&
+              audit.phase == "BackendDecisionAudit",
+          "backend audit should use the canonical trace contract");
+    Check(audit.payload["backend_decision_audit_schema"].get<std::string>() ==
+              cyxwiz::DebugRuntimeBackendClassifier::kAuditSchema,
+          "backend audit schema should be stable");
+    Check(audit.payload["placement_count"].get<size_t>() == 2 &&
+              audit.payload["retained_row_count"].get<size_t>() == 2,
+          "backend audit should retain each placement once");
+    Check(audit.payload["actual_backend_observed_count"].get<size_t>() == 1 &&
+              audit.payload["same_run_fallback_count"].get<size_t>() == 1,
+          "backend audit should count explicit same-run runtime evidence");
+    Check(audit.payload["unknown_count"].get<size_t>() == 1 &&
+              audit.payload["attention_count"].get<size_t>() == 1,
+          "backend audit should count unknown attention placements");
+    Check(audit.payload["linked_execution_scope"].get<std::string>() ==
+              "linked_training_run" &&
+              !audit.payload["linked_context_is_node_actual_evidence"].get<bool>(),
+          "linked execution context must remain separate from node actual evidence");
+    Check(!audit.payload["cost_estimate_available"].get<bool>() &&
+              !audit.payload["tensor_reads_added"].get<bool>() &&
+              !audit.payload["raw_tensor_values_included"].get<bool>(),
+          "backend audit should not invent cost or add Tensor reads/values");
+
+    const auto& audit_rows = audit.payload["rows"];
+    const auto dense_row = std::find_if(
+        audit_rows.begin(), audit_rows.end(),
+        [](const nlohmann::json& row) {
+            return row.value("node_id", -1) == 42;
+        });
+    Check(dense_row != audit_rows.end(),
+          "backend audit should retain Dense placement row");
+    Check((*dense_row)["intended_backend"] == "ArrayFire active backend" &&
+              (*dense_row)["actual_backend"] == "arrayfire_cuda" &&
+              (*dense_row)["actual_backend_observed"].get<bool>(),
+          "backend audit should distinguish intended and observed backend");
+    Check((*dense_row)["fallback_observed_this_run"].get<bool>() &&
+              (*dense_row)["observed_duration_available"].get<bool>() &&
+              std::abs((*dense_row)["observed_duration_ms"].get<float>() -
+                       4.5f) < 1.0e-6f,
+          "backend audit should retain same-run fallback and timing evidence");
+    Check(!(*dense_row)["cost_estimate_available"].get<bool>() &&
+              (*dense_row)["cost_estimate"] == "unavailable",
+          "observed duration must not be relabeled as estimated cost");
+
+    std::vector<cyxwiz::DebugTraceRecord> many_placements;
+    for (size_t i = 0;
+         i < cyxwiz::DebugRuntimeBackendClassifier::kMaxAuditRows + 10;
+         ++i) {
+        auto placement = gpu;
+        placement.node_id = 1000 + static_cast<int>(i);
+        placement.node_name = "Layer " + std::to_string(i);
+        many_placements.push_back(classifier.BuildPlacementTrace(
+            "bounded-backend-audit", 12345, placement));
+    }
+    const cyxwiz::DebugRunExecutionSummary no_execution;
+    const auto bounded_audit = classifier.BuildAuditTrace(
+        "bounded-backend-audit", many_placements, no_execution);
+    Check(bounded_audit.payload["placement_count"].get<size_t>() ==
+              cyxwiz::DebugRuntimeBackendClassifier::kMaxAuditRows + 10 &&
+              bounded_audit.payload["rows"].size() ==
+                  cyxwiz::DebugRuntimeBackendClassifier::kMaxAuditRows &&
+              bounded_audit.payload["rows_truncated"].get<bool>(),
+          "backend audit should bound row detail while keeping exact counts");
 }
 
 void TestMemoryOwnershipTraceContract() {
@@ -761,6 +863,297 @@ void TestMemoryOwnershipTraceContract() {
           "tensor byte estimate should multiply shape by element size");
     Check(cyxwiz::DebugMemoryOwnershipTracer::EstimateTensorBytes({}, 4) == 0,
           "empty tensor shape should estimate zero bytes");
+
+    auto source = MakeNode(1, gui::NodeType::DataInput, "Source");
+    auto dense = MakeNode(2, gui::NodeType::Dense, "Dense");
+    auto loss = MakeNode(
+        3, gui::NodeType::CrossEntropyLoss, "Cross Entropy");
+    gui::NodeLink source_to_dense;
+    source_to_dense.from_node = 1;
+    source_to_dense.to_node = 2;
+    gui::NodeLink dense_to_loss;
+    dense_to_loss.from_node = 2;
+    dense_to_loss.to_node = 3;
+    const auto debug_session = cyxwiz::DebugSessionManager::StartSession(
+        "tensor-lifecycle-run", "FullWorkflow", 0x5151,
+        {source, dense, loss}, {source_to_dense, dense_to_loss}, 0);
+    std::vector<cyxwiz::DebugTraceRecord> lifecycle_sources =
+        debug_session.traces;
+
+    auto activation = cyxwiz::DebugNodeTraceContract::Make(
+        "tensor-lifecycle-run", 2, "Dense", "Dense", "Forward",
+        cyxwiz::DebugTraceRole::Activation,
+        {2, 3}, {2, 4}, "float32", "LocalDebug", "ok");
+    activation.payload["numeric_element_count"] = 8;
+    activation.payload["numeric_host_read_performed"] = true;
+    lifecycle_sources.push_back(std::move(activation));
+
+    auto loss_trace = cyxwiz::DebugNodeTraceContract::Make(
+        "tensor-lifecycle-run", 3, "Cross Entropy", "Loss", "Loss",
+        cyxwiz::DebugTraceRole::Loss,
+        {}, {}, "float32", "LocalDebug", "ok");
+    loss_trace.payload["prediction_shape"] = {2, 4};
+    loss_trace.payload["target_shape"] = {2};
+    lifecycle_sources.push_back(std::move(loss_trace));
+
+    auto gradient = cyxwiz::DebugNodeTraceContract::Make(
+        "tensor-lifecycle-run", 2, "Dense", "Parameter", "Backward",
+        cyxwiz::DebugTraceRole::Gradient,
+        {}, {}, "float32", "LocalDebug", "ok");
+    gradient.payload["numeric_element_count"] = 12;
+    gradient.payload["numeric_host_read_performed"] = true;
+    gradient.payload["parameter_name"] = "layer0.weight";
+    lifecycle_sources.push_back(std::move(gradient));
+
+    lifecycle_sources.push_back(cyxwiz::DebugNodeTraceContract::Make(
+        "tensor-lifecycle-run", -1, "Optimizer", "Optimizer", "OptimizerStep",
+        cyxwiz::DebugTraceRole::OptimizerStep,
+        {}, {}, "optimizer", "LocalDebug", "ok"));
+
+    cyxwiz::DebugRunExecutionSummary execution;
+    execution.available = true;
+    execution.training_run_id = "tensor-lifecycle-run";
+    execution.effective_backend = "CUDA";
+    execution.effective_device_id = 0;
+    execution.effective_device_name = "Test GPU";
+    execution.execution_context_id = "ctx-test";
+    const auto lifecycle = tracer.BuildTensorLifecycleTrace(
+        "tensor-lifecycle-run", lifecycle_sources, execution);
+    const auto& lifecycle_payload = lifecycle.payload;
+    Check(lifecycle.phase == "TensorLifecycle" &&
+              lifecycle.status == "captured" &&
+              lifecycle_payload["tensor_lifecycle_schema"] ==
+                  cyxwiz::DebugMemoryOwnershipTracer::kLifecycleSchema,
+          "tensor lifecycle should use a stable captured trace contract");
+    Check(lifecycle_payload["entry_count"].get<size_t>() == 5 &&
+              lifecycle_payload["retained_entry_count"].get<size_t>() == 5,
+          "tensor lifecycle should derive model input, prediction, target, loss, and gradient");
+    Check(lifecycle_payload["relation_counts"]["model_input"].get<size_t>() == 1 &&
+              lifecycle_payload["relation_counts"]["prediction"].get<size_t>() == 1 &&
+              lifecycle_payload["relation_counts"]["target"].get<size_t>() == 1 &&
+              lifecycle_payload["relation_counts"]["loss"].get<size_t>() == 1 &&
+              lifecycle_payload["relation_counts"]["gradient"].get<size_t>() == 1,
+          "tensor lifecycle should classify training relations");
+    Check(lifecycle_payload["estimated_total_bytes"].get<uint64_t>() == 116,
+          "tensor lifecycle should estimate bounded metadata bytes without tensor reads");
+    Check(lifecycle_payload["runtime_backend_observed"].get<bool>() &&
+              lifecycle_payload["effective_backend"] == "CUDA" &&
+              lifecycle_payload["effective_device"] == "Test GPU",
+          "tensor lifecycle should reuse observed execution backend truth");
+    Check(!lifecycle_payload["allocator_lifecycle_observed"].get<bool>() &&
+              !lifecycle_payload["retained_freed_state_observed"].get<bool>() &&
+              !lifecycle_payload["host_reads_added"].get<bool>() &&
+              !lifecycle_payload["raw_tensor_values_included"].get<bool>(),
+          "derived lifecycle should not claim allocator truth or add tensor reads");
+    Check(lifecycle_payload["entries"][0]["origin_node_name"] ==
+              "Local Debug batch" &&
+              lifecycle_payload["entries"][0]["consumers"][0]["node_id"] == 2,
+          "model input should originate at the batch boundary and feed the first layer");
+    Check(lifecycle_payload["entries"][1]["consumer_evidence"] ==
+              "graph_snapshot_topology" &&
+              lifecycle_payload["entries"][1]["consumers"][0]["node_id"] == 3,
+          "activation lifecycle should derive consumers from frozen topology");
+    Check(lifecycle_payload["entries"][4]["parameter_name"] ==
+              "layer0.weight" &&
+              lifecycle_payload["entries"][4]["consumer_evidence"] ==
+                  "canonical_trace_sequence",
+          "gradient lifecycle should identify its parameter and optimizer consumer");
+
+    cyxwiz::DebugRunExecutionSummary unobserved_execution;
+    const auto unobserved_lifecycle = tracer.BuildTensorLifecycleTrace(
+        "tensor-lifecycle-empty", {}, unobserved_execution);
+    Check(unobserved_lifecycle.status == "unobserved" &&
+              unobserved_lifecycle.payload["entry_count"].get<size_t>() == 0 &&
+              !unobserved_lifecycle.payload["runtime_backend_observed"].get<bool>(),
+          "missing lifecycle evidence should remain explicitly unobserved");
+
+    auto mismatched_execution = execution;
+    mismatched_execution.training_run_id = "different-training-run";
+    const auto mismatched_lifecycle = tracer.BuildTensorLifecycleTrace(
+        "tensor-lifecycle-run", lifecycle_sources, mismatched_execution);
+    Check(!mismatched_lifecycle.payload["runtime_backend_observed"].get<bool>() &&
+              mismatched_lifecycle.payload["effective_backend"] == "unobserved" &&
+              mismatched_lifecycle.payload["runtime_backend_evidence_scope"] ==
+                  "unobserved",
+          "lifecycle should reject backend evidence from a different run");
+
+    std::vector<cyxwiz::DebugTraceRecord> many_lifecycle_sources;
+    many_lifecycle_sources.reserve(140);
+    for (int node_id = 0; node_id < 140; ++node_id) {
+        many_lifecycle_sources.push_back(cyxwiz::DebugNodeTraceContract::Make(
+            "tensor-lifecycle-bounded", node_id,
+            "Layer " + std::to_string(node_id), "Dense", "Forward",
+            cyxwiz::DebugTraceRole::Activation,
+            {}, {1}, "float32", "LocalDebug", "ok"));
+    }
+    const auto bounded_lifecycle = tracer.BuildTensorLifecycleTrace(
+        "tensor-lifecycle-bounded", many_lifecycle_sources,
+        unobserved_execution);
+    Check(bounded_lifecycle.payload["entry_count"].get<size_t>() == 140 &&
+              bounded_lifecycle.payload["retained_entry_count"].get<size_t>() == 128 &&
+              bounded_lifecycle.payload["entries_truncated"].get<bool>(),
+          "tensor lifecycle should retain exact counts with bounded detail");
+}
+
+void TestGradientHealthAnalyzerContract() {
+    auto make_gradient = [](
+        const std::string& run_id,
+        int node_id,
+        const std::string& node_name,
+        const std::string& parameter_name,
+        double parameter_norm,
+        bool has_gradient,
+        double gradient_norm,
+        bool is_zero,
+        bool is_nan,
+        bool is_inf,
+        bool update_observed,
+        double update_norm,
+        const std::string& missing_reason = std::string{}) {
+        auto trace = cyxwiz::DebugNodeTraceContract::Make(
+            run_id, node_id, node_name, "Parameter", "Backward",
+            cyxwiz::DebugTraceRole::Gradient,
+            {}, {}, "float32", "LocalDebug",
+            !has_gradient ? "missing_gradient"
+                : (is_nan ? "nan" : (is_zero ? "zero" : "ok")));
+        trace.payload["parameter_name"] = parameter_name;
+        trace.payload["module_index"] = node_id;
+        trace.payload["compiled_layer_index"] = node_id;
+        trace.payload["parameter_l2_norm"] = parameter_norm;
+        trace.payload["has_gradient"] = has_gradient;
+        trace.payload["gradient_l2_norm"] = gradient_norm;
+        trace.payload["l2_norm"] = gradient_norm;
+        trace.payload["is_zero"] = is_zero;
+        trace.payload["is_nan"] = is_nan;
+        trace.payload["is_inf"] = is_inf;
+        trace.payload["update_observed"] = update_observed;
+        trace.payload["update_l2_norm"] = update_norm;
+        trace.payload["missing_gradient_reason"] = missing_reason;
+        return trace;
+    };
+
+    std::vector<cyxwiz::DebugTraceRecord> sources;
+    sources.push_back(make_gradient(
+        "gradient-health-run", 10, "Dense A", "layer0.weight",
+        3.0, true, 0.3, false, false, false, true, 0.03));
+    sources.push_back(make_gradient(
+        "gradient-health-run", 10, "Dense A", "layer0.bias",
+        4.0, true, 0.4, false, false, false, true, 0.04));
+    sources.push_back(make_gradient(
+        "gradient-health-run", 20, "Dense Missing", "layer1.weight",
+        2.0, false, 0.0, true, false, false, false, 0.0,
+        "No gradient tensor matched this trainable parameter after backward."));
+    sources.push_back(make_gradient(
+        "gradient-health-run", 30, "Dense Partial", "layer2.weight",
+        2.0, true, 0.2, false, false, false, true, 0.02));
+    sources.push_back(make_gradient(
+        "gradient-health-run", 30, "Dense Partial", "layer2.bias",
+        1.0, true, 0.0, true, false, false, true, 0.0));
+    sources.push_back(make_gradient(
+        "gradient-health-run", 40, "Dense Zero", "layer3.weight",
+        1.0, true, 0.0, true, false, false, true, 0.0));
+    sources.push_back(make_gradient(
+        "gradient-health-run", 50, "Dense NaN", "layer4.weight",
+        1.0, true, 0.0, false, true, false, false, 0.0));
+    sources.push_back(make_gradient(
+        "gradient-health-run", 60, "Dense No Update", "layer5.weight",
+        1.0, true, 0.5, false, false, false, true, 0.0));
+    sources.push_back(make_gradient(
+        "gradient-health-run", 70, "Dense Partial Evidence", "layer6.weight",
+        1.0, true, 0.5, false, false, false, false, 0.0));
+    sources.push_back(make_gradient(
+        "different-run", 80, "Foreign Layer", "layer7.weight",
+        1.0, true, 0.5, false, false, false, true, 0.1));
+
+    cyxwiz::DebugGradientHealthAnalyzer analyzer;
+    const auto summary = analyzer.BuildTrace(
+        "gradient-health-run", sources);
+    const auto& payload = summary.payload;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(summary) &&
+              summary.phase == "GradientHealth" &&
+              payload["gradient_health_schema"] ==
+                  cyxwiz::DebugGradientHealthAnalyzer::kSchema,
+          "gradient health should use canonical and stable schemas");
+    Check(summary.status == "needs_attention" &&
+              summary.role == cyxwiz::DebugTraceRole::Gradient &&
+              !payload["success"].get<bool>(),
+          "attention rows should make the aggregate visibly need attention");
+    Check(payload["layer_count"].get<size_t>() == 7 &&
+              payload["retained_layer_count"].get<size_t>() == 7 &&
+              payload["parameter_trace_count"].get<size_t>() == 9,
+          "gradient health should aggregate only same-run parameter traces per layer");
+    Check(payload["healthy_layer_count"].get<size_t>() == 1 &&
+              payload["attention_layer_count"].get<size_t>() == 5 &&
+              payload["unobserved_layer_count"].get<size_t>() == 1,
+          "gradient health should retain exact layer outcome counts");
+
+    const auto& healthy = payload["layers"][0];
+    Check(healthy["status"] == "healthy" &&
+              healthy["parameter_tensor_count"].get<size_t>() == 2 &&
+              healthy["gradient_tensor_count"].get<size_t>() == 2 &&
+              healthy["update_observation_count"].get<size_t>() == 2,
+          "healthy layer should expose complete parameter, gradient, and update coverage");
+    Check(std::abs(healthy["parameter_l2_norm"].get<double>() - 5.0) < 1e-12 &&
+              std::abs(healthy["gradient_l2_norm"].get<double>() - 0.5) < 1e-12 &&
+              std::abs(healthy["grad_parameter_ratio"].get<double>() - 0.1) < 1e-12 &&
+              std::abs(healthy["update_l2_norm"].get<double>() - 0.05) < 1e-12 &&
+              std::abs(healthy["update_parameter_ratio"].get<double>() - 0.01) < 1e-12,
+          "layer norms and ratios should aggregate by squared L2 composition");
+
+    const auto& missing = payload["layers"][1];
+    Check(missing["status"] == "missing_gradient" &&
+              missing["missing_gradient_count"].get<size_t>() == 1 &&
+              missing["missing_gradient_explanations"][0]["parameter_name"] ==
+                  "layer1.weight" &&
+              !missing["gradient_norm_complete"].get<bool>(),
+          "missing gradients should retain a parameter-specific explanation");
+    Check(payload["layers"][2]["status"] == "partial_zero_gradient" &&
+              payload["layers"][3]["status"] == "zero_gradient" &&
+              payload["layers"][4]["status"] == "non_finite" &&
+              payload["layers"][5]["status"] == "zero_update" &&
+              payload["layers"][6]["status"] == "partial_evidence",
+          "gradient health should distinguish partial-zero, all-zero, non-finite, zero-update, and partial-evidence states");
+    Check(!payload["tensor_reads_added"].get<bool>() &&
+              !payload["raw_tensor_values_included"].get<bool>(),
+          "gradient aggregation should add no Tensor read or raw value capture");
+
+    const auto empty = analyzer.BuildTrace("gradient-health-empty", {});
+    Check(empty.status == "unobserved" &&
+              empty.payload["layer_count"].get<size_t>() == 0 &&
+              !empty.payload.contains("success"),
+          "missing gradient evidence should remain unobserved, not failed");
+
+    std::vector<cyxwiz::DebugTraceRecord> partial_sources;
+    partial_sources.push_back(make_gradient(
+        "gradient-health-partial", 1, "Partial", "layer0.weight",
+        1.0, true, 0.5, false, false, false, false, 0.0));
+    const auto partial = analyzer.BuildTrace(
+        "gradient-health-partial", partial_sources);
+    Check(partial.status == "partial_evidence" &&
+              !partial.payload["success"].get<bool>() &&
+              partial.payload["attention_layer_count"].get<size_t>() == 0 &&
+              partial.payload["unobserved_layer_count"].get<size_t>() == 1,
+          "incomplete optimizer evidence should remain partial, not healthy");
+
+    std::vector<cyxwiz::DebugTraceRecord> many_sources;
+    many_sources.reserve(140);
+    for (int node_id = 0; node_id < 140; ++node_id) {
+        many_sources.push_back(make_gradient(
+            "gradient-health-bounded", node_id,
+            "Layer " + std::to_string(node_id),
+            "layer" + std::to_string(node_id) + ".weight",
+            1.0, true, 1.0, false, false, false, true, 0.1));
+    }
+    const auto bounded = analyzer.BuildTrace(
+        "gradient-health-bounded", many_sources);
+    Check(bounded.payload["layer_count"].get<size_t>() == 140 &&
+              bounded.payload["retained_layer_count"].get<size_t>() ==
+                  cyxwiz::DebugGradientHealthAnalyzer::kMaxLayerRows &&
+              bounded.payload["layers"].size() ==
+                  cyxwiz::DebugGradientHealthAnalyzer::kMaxLayerRows &&
+              bounded.payload["layers_truncated"].get<bool>() &&
+              bounded.payload["healthy_layer_count"].get<size_t>() == 140,
+          "gradient health should retain exact counts while bounding row detail");
 }
 
 void TestExportCorrelationTraceContract() {
@@ -1289,6 +1682,155 @@ void TestSupportBundleContract() {
               bundle["runtime_log_slice"]["events"][0]["details"][0]
                     ["value"] == "[REDACTED_PATH]",
           "support-bundle runtime slices should always use shareable redaction");
+}
+
+void TestTrainingGraphDiffContract() {
+    auto data = MakeNode(1, gui::NodeType::DataInput, "Data");
+    data.parameters = {{"label_column", "target"}};
+    auto dense_before = MakeNode(2, gui::NodeType::Dense, "Classifier");
+    dense_before.parameters = {{"units", "4"}};
+    auto loss = MakeNode(
+        3, gui::NodeType::CrossEntropyLoss, "Cross Entropy");
+
+    gui::NodeLink data_to_dense;
+    data_to_dense.id = 10;
+    data_to_dense.from_node = 1;
+    data_to_dense.from_pin = 100;
+    data_to_dense.to_node = 2;
+    data_to_dense.to_pin = 200;
+    gui::NodeLink dense_to_loss;
+    dense_to_loss.id = 11;
+    dense_to_loss.from_node = 2;
+    dense_to_loss.from_pin = 201;
+    dense_to_loss.to_node = 3;
+    dense_to_loss.to_pin = 300;
+
+    auto dense_after = dense_before;
+    dense_after.parameters["units"] = "8";
+    auto relu = MakeNode(4, gui::NodeType::ReLU, "ReLU");
+    gui::NodeLink dense_to_relu = dense_to_loss;
+    dense_to_relu.id = 99;
+    dense_to_relu.to_node = 4;
+    dense_to_relu.to_pin = 400;
+
+    const auto baseline_session = cyxwiz::DebugSessionManager::StartSession(
+        "graph-diff-baseline", "FullWorkflow", 0x1111,
+        {data, dense_before, loss}, {data_to_dense, dense_to_loss}, 0);
+    const auto current_session = cyxwiz::DebugSessionManager::StartSession(
+        "graph-diff-current", "FullWorkflow", 0x2222,
+        {data, dense_after, relu}, {data_to_dense, dense_to_relu}, 1);
+
+    cyxwiz::DebugRunStoreRecord baseline;
+    baseline.summary.run_id = baseline_session.run_id;
+    baseline.summary.graph_hash = baseline_session.graph_hash;
+    baseline.traces = baseline_session.traces;
+    baseline.replay_capsule.available = true;
+    baseline.replay_capsule.dataset_reference = "dataset_a";
+    baseline.replay_capsule.selected_sample_index = 0;
+    baseline.replay_capsule.compiled_config.available = true;
+    baseline.replay_capsule.compiled_config.valid = true;
+    baseline.replay_capsule.compiled_config.layer_count = 1;
+    baseline.replay_capsule.compiled_config.loss = "CrossEntropy";
+    baseline.replay_capsule.compiled_config.optimizer = "Adam";
+    baseline.replay_capsule.compiled_config.learning_rate = 0.001f;
+    baseline.summary.execution.available = true;
+    baseline.summary.execution.requested_backend = "auto";
+    baseline.summary.execution.effective_backend = "CPU";
+    baseline.summary.execution.placement_fingerprint = "placement-a";
+
+    cyxwiz::DebugRunStoreRecord current;
+    current.summary.run_id = current_session.run_id;
+    current.summary.graph_hash = current_session.graph_hash;
+    current.traces = current_session.traces;
+    current.replay_capsule = baseline.replay_capsule;
+    current.replay_capsule.dataset_reference = "dataset_b";
+    current.replay_capsule.selected_sample_index = 1;
+    current.replay_capsule.compiled_config.optimizer = "AdamW";
+    current.replay_capsule.compiled_config.learning_rate = 0.0005f;
+    current.summary.execution = baseline.summary.execution;
+    current.summary.execution.effective_backend = "CUDA";
+    current.summary.execution.effective_device_name = "Test GPU";
+    current.summary.execution.placement_fingerprint = "placement-b";
+
+    cyxwiz::DebugTrainingGraphDiff differ;
+    const auto changed = differ.BuildTrace(baseline, current);
+    const auto& payload = changed.payload;
+    Check(cyxwiz::DebugNodeTraceContract::IsNodeTrace(changed),
+          "training graph diff should use the canonical trace contract");
+    Check(changed.phase == "TrainingGraphDiff" &&
+              changed.status == "changed" &&
+              payload["training_graph_diff_schema"] ==
+                  cyxwiz::DebugTrainingGraphDiff::kSchema,
+          "training graph diff should expose a stable changed outcome");
+    Check(payload["added_node_count"].get<size_t>() == 1 &&
+              payload["removed_node_count"].get<size_t>() == 1 &&
+              payload["changed_node_count"].get<size_t>() == 1,
+          "graph diff should classify added, removed, and changed nodes");
+    Check(payload["added_link_count"].get<size_t>() == 1 &&
+              payload["removed_link_count"].get<size_t>() == 1,
+          "graph diff should compare semantic link endpoints");
+    Check(payload["changed_nodes"][0]["changed_parameter_keys"][0] ==
+              "units" &&
+              !payload["raw_parameter_values_included"].get<bool>(),
+          "node parameter diff should retain keys without raw values");
+    Check(!payload["structural_details_truncated"].get<bool>() &&
+              payload["structural_detail_limit"].get<size_t>() == 128,
+          "small graph diffs should retain details within a stable bound");
+    Check(payload["dataset_changed"].get<bool>() &&
+              payload["selected_sample_changed"].get<bool>(),
+          "graph diff should compare replay dataset and sample selection");
+    Check(payload["compiled_config_change_count"].get<size_t>() == 2,
+          "graph diff should report changed optimizer and learning rate");
+    Check(payload["backend_change_count"].get<size_t>() == 3,
+          "graph diff should report backend, device name, and placement changes");
+    Check(payload["differences_found"].get<bool>() &&
+              !payload["raw_graph_content_included"].get<bool>(),
+          "graph diff should report bounded differences without raw graph data");
+
+    auto identical = current;
+    identical.summary.run_id = "graph-diff-identical";
+    identical.traces[0].payload["links"][0]["id"] = 123456;
+    const auto unchanged = differ.BuildTrace(current, identical);
+    Check(unchanged.status == "unchanged" &&
+              unchanged.payload["structural_change_count"].get<size_t>() == 0,
+          "link ids alone should not create a structural graph difference");
+
+    cyxwiz::DebugRunStoreRecord unavailable_baseline;
+    unavailable_baseline.summary.run_id = "graph-diff-empty-a";
+    cyxwiz::DebugRunStoreRecord unavailable_current;
+    unavailable_current.summary.run_id = "graph-diff-empty-b";
+    const auto unavailable = differ.BuildTrace(
+        unavailable_baseline, unavailable_current);
+    Check(unavailable.status == "unobserved" &&
+              !unavailable.payload["comparison_available"].get<bool>(),
+          "missing persisted evidence should remain unobserved");
+
+    std::vector<gui::MLNode> many_nodes;
+    many_nodes.reserve(140);
+    for (int id = 1; id <= 140; ++id) {
+        many_nodes.push_back(MakeNode(
+            id, gui::NodeType::ReLU, "Bounded node " + std::to_string(id)));
+    }
+    const auto empty_session = cyxwiz::DebugSessionManager::StartSession(
+        "graph-diff-bounded-empty", "FullWorkflow", 0x3333, {}, {}, 0);
+    const auto many_session = cyxwiz::DebugSessionManager::StartSession(
+        "graph-diff-bounded-many", "FullWorkflow", 0x4444,
+        many_nodes, {}, 0);
+    cyxwiz::DebugRunStoreRecord empty_record;
+    empty_record.summary.run_id = empty_session.run_id;
+    empty_record.summary.graph_hash = empty_session.graph_hash;
+    empty_record.traces = empty_session.traces;
+    cyxwiz::DebugRunStoreRecord many_record;
+    many_record.summary.run_id = many_session.run_id;
+    many_record.summary.graph_hash = many_session.graph_hash;
+    many_record.traces = many_session.traces;
+    const auto bounded = differ.BuildTrace(empty_record, many_record);
+    Check(bounded.payload["added_node_count"].get<size_t>() == 140 &&
+              bounded.payload["added_nodes"].size() == 128 &&
+              bounded.payload["retained_structural_detail_count"]
+                      .get<size_t>() == 128 &&
+              bounded.payload["structural_details_truncated"].get<bool>(),
+          "large graph diffs should retain exact totals and bounded details");
 }
 
 void TestArtifactConsistencyTraceContract() {
@@ -4089,10 +4631,12 @@ void TestTextPreprocessingTraceContract() {
 
 int main() {
     TestDebugSessionSnapshotContract();
+    TestTrainingGraphDiffContract();
     TestNodeTraceContract();
     TestGraphTraceExecutionSlice();
     TestRuntimeBackendClassificationContract();
     TestMemoryOwnershipTraceContract();
+    TestGradientHealthAnalyzerContract();
     TestBatchInspectionContract();
     TestSlowPathDetectorContract();
     TestTrainingStallDetectorContract();

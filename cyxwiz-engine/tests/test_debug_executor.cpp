@@ -8,6 +8,7 @@
 
 #include "../src/core/debug_executor.h"
 #include "../src/core/debug_numerics.h"
+#include "../src/core/debug_loss_metric_explainer.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/synthetic_batch.h"
 #include "../src/core/graph_compiler.h"
@@ -1656,6 +1657,10 @@ void TestDebugExecutorGradNormBookkeeping() {
             std::exit(1);
         }
         assert(g.has_gradient && "golden path grad norm should know the gradient exists");
+        ExpectTrue(!g.parameter_shape.empty(),
+                   "gradient health should retain parameter shape metadata");
+        ExpectTrue(g.gradient_shape == g.parameter_shape,
+                   "gradient shape should match its parameter on the golden path");
         ExpectTrue(g.node_id == 101 || g.node_id == 103,
                    "gradient should resolve to its graph layer node");
         ExpectTrue(!g.node_name.empty(),
@@ -1790,6 +1795,119 @@ void TestTransformerTextComputation() {
                  res.params_with_grad);
 }
 
+void TestLossMetricExplainerContract() {
+    spdlog::info("--- TestLossMetricExplainerContract ---");
+    TrainingConfiguration config;
+    config.output_size = 1;
+    config.preprocessing.num_classes = 2;
+    config.loss_node_id = 12;
+    config.loss_type = gui::NodeType::BCEWithLogits;
+    config.loss_params = {
+        {"pos_weight", "59"},
+        {"reduction", "sum"},
+    };
+
+    gui::MLNode loss_node;
+    loss_node.id = 12;
+    loss_node.type = gui::NodeType::BCEWithLogits;
+    loss_node.name = "Weighted Binary BCE";
+    loss_node.parameters = config.loss_params;
+
+    gui::MLNode metric_node;
+    metric_node.id = 13;
+    metric_node.type = gui::NodeType::ClassificationMetricsNode;
+    metric_node.name = "Class Metrics";
+    metric_node.parameters = {
+        {"metrics", "accuracy,precision,recall,f1"},
+    };
+
+    DebugTraceRecord stale_loss = DebugNodeTraceContract::Make(
+        "other-run", 12, loss_node.name, "BCEWithLogits", "Loss",
+        DebugTraceRole::Loss, {}, {}, "float32", "LocalDebug", "ok");
+    stale_loss.payload["prediction_shape"] = {9, 9};
+    stale_loss.payload["target_shape"] = {9, 9};
+
+    DebugTraceRecord observed_loss = DebugNodeTraceContract::Make(
+        "loss-explainer-run", 12, loss_node.name, "BCEWithLogits", "Loss",
+        DebugTraceRole::Loss, {}, {}, "float32", "LocalDebug", "ok");
+    observed_loss.payload["prediction_shape"] = {1, 1};
+    observed_loss.payload["target_shape"] = {1, 1};
+    observed_loss.payload["prediction_target_shape_check_available"] = true;
+    observed_loss.payload["prediction_target_shapes_compatible"] = true;
+    observed_loss.payload["prediction_target_shape_reason"] = "exact match";
+    observed_loss.payload["loss_finite"] = true;
+
+    const ResolvedLossConfiguration resolved =
+        ResolveLossConfiguration(config);
+    ExpectTrue(resolved.reduction == Reduction::Sum,
+               "shared resolver should expose effective reduction");
+    ExpectTrue(resolved.pos_weight.has_value(),
+               "shared resolver should expose BCE pos_weight");
+    ExpectNear(*resolved.pos_weight, 59.0f, 1e-6f,
+               "shared resolver BCE pos_weight");
+
+    DebugLossMetricExplainer explainer;
+    const DebugTraceRecord summary = explainer.BuildTrace(
+        "loss-explainer-run",
+        config,
+        {loss_node, metric_node},
+        {stale_loss, observed_loss});
+    ExpectTrue(summary.phase == "LossMetricExplanation",
+               "loss explainer phase should be stable");
+    ExpectTrue(summary.node_id == 12,
+               "loss explainer should retain selected graph node id");
+    ExpectTrue(summary.node_name == "Weighted Binary BCE",
+               "loss explainer should retain selected graph node name");
+    ExpectTrue(summary.payload["loss_metric_explanation_schema"] ==
+                   DebugLossMetricExplainer::kSchema,
+               "loss explainer schema should be stable");
+    ExpectTrue(summary.payload["tensor_reads_added"] == false,
+               "loss explainer should not add Tensor reads");
+    ExpectEq(summary.payload["rows"].size(), 3,
+             "selected loss, runtime policy, configured metric rows");
+
+    const auto& loss = summary.payload["rows"][0];
+    ExpectTrue(loss["node_id"] == 12,
+               "selected loss row should retain node id");
+    ExpectTrue(loss["reduction"] == "sum",
+               "selected loss row should expose effective reduction");
+    ExpectNear(loss["pos_weight"].get<float>(), 59.0f, 1e-6f,
+               "selected loss row pos_weight");
+    ExpectTrue(loss["class_count"] == 2,
+               "binary loss should report two decision classes");
+    ExpectTrue(loss["actual_prediction_shape"] ==
+                   nlohmann::json::array({1, 1}),
+               "same-run actual prediction shape should be used");
+    ExpectTrue(loss["shapes_compatible"] == true,
+               "shape compatibility should be retained");
+
+    const auto& policy = summary.payload["rows"][1];
+    ExpectTrue(policy["threshold"] == 0.0f &&
+                   policy["equivalent_probability_threshold"] == 0.5f,
+               "BCEWithLogits policy should expose logit threshold truth");
+    const auto& metric = summary.payload["rows"][2];
+    ExpectTrue(metric["evidence_state"] == "configured_only" &&
+                   metric["result_observed"] == false,
+               "graph metric must not be presented as executed evidence");
+
+    std::vector<gui::MLNode> many_nodes = {loss_node};
+    for (size_t i = 0; i < DebugLossMetricExplainer::kMaxRows + 10; ++i) {
+        gui::MLNode node;
+        node.id = 100 + static_cast<int>(i);
+        node.type = gui::NodeType::RegressionMetricsNode;
+        node.name = "Metric " + std::to_string(i);
+        many_nodes.push_back(std::move(node));
+    }
+    const auto bounded = explainer.BuildTrace(
+        "loss-explainer-run", config, many_nodes, {observed_loss});
+    ExpectEq(bounded.payload["rows"].size(),
+             DebugLossMetricExplainer::kMaxRows,
+             "loss explainer rows should be bounded");
+    ExpectTrue(bounded.payload["rows_truncated"] == true,
+               "loss explainer should report row truncation");
+    spdlog::info("  OK: loss/metric explanation is truthful and bounded");
+}
+
 } // namespace
 
 int main() {
@@ -1825,6 +1943,7 @@ int main() {
         TestDebugExecutorSkippedLayerMapping();
         TestDebugExecutorGradNormBookkeeping();
         TestDebugExecutorTextGraph();
+        TestLossMetricExplainerContract();
         if (run_slow_sentiment) {
             TestSentimentComputationCurrentPath();
             TestSentimentComputationMultiLayerBiGRU();

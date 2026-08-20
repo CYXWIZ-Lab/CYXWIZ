@@ -280,6 +280,9 @@ void NodeEditor::Render() {
         pending_context_reset_ = false;
     }
 
+    if (pending_focus_node_id_ >= 0) {
+        ImGui::SetNextWindowFocus();
+    }
     if (ImGui::Begin("CyxWiz Studio", &show_window_)) {
         ShowToolbar();
 
@@ -319,6 +322,17 @@ void NodeEditor::Render() {
                 ImNodes::ClearNodeSelection();
                 ImNodes::SelectNode(pending_focus_node_id_);
                 selected_node_id_ = pending_focus_node_id_;
+                const auto position = cached_node_positions_.find(
+                    pending_focus_node_id_);
+                if (position != cached_node_positions_.end()) {
+                    const ImVec2 window_size = ImGui::GetWindowSize();
+                    const ImVec2 center(
+                        window_size.x * 0.5f - 100.0f,
+                        window_size.y * 0.5f - 50.0f);
+                    ImNodes::EditorContextResetPanning(ImVec2(
+                        -position->second.x + center.x,
+                        -position->second.y + center.y));
+                }
                 if (properties_panel_) {
                     properties_panel_->SetSelectedNode(&(*it));
                 }

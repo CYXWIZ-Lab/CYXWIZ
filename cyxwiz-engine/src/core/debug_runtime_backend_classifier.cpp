@@ -1,6 +1,9 @@
 #include "debug_runtime_backend_classifier.h"
 
+#include "debug_run_store.h"
 #include "cyxwiz/backend_placement_observation.h"
+
+#include <algorithm>
 
 namespace cyxwiz {
 
@@ -31,6 +34,29 @@ std::string EvidenceScope(const BackendPlacementEntry& placement) {
         return "external_observation";
     }
     return "compiler_capability";
+}
+
+std::string PayloadString(const nlohmann::json& payload,
+                          const char* key,
+                          const std::string& fallback = {}) {
+    const auto it = payload.find(key);
+    return it != payload.end() && it->is_string()
+        ? it->get<std::string>()
+        : fallback;
+}
+
+bool PayloadBool(const nlohmann::json& payload,
+                 const char* key,
+                 bool fallback = false) {
+    const auto it = payload.find(key);
+    return it != payload.end() && it->is_boolean()
+        ? it->get<bool>()
+        : fallback;
+}
+
+bool IsPlacementTrace(const DebugTraceRecord& trace,
+                      const std::string& run_id) {
+    return trace.run_id == run_id && trace.phase == "BackendPlacement";
 }
 
 } // namespace
@@ -164,6 +190,211 @@ DebugTraceRecord DebugRuntimeBackendClassifier::BuildPlacementTrace(
     trace.payload["trace_producer"] = "DebugRuntimeBackendClassifier";
     AttachToTrace(trace, placement);
     return trace;
+}
+
+DebugTraceRecord DebugRuntimeBackendClassifier::BuildAuditTrace(
+    const std::string& run_id,
+    const std::vector<DebugTraceRecord>& traces,
+    const DebugRunExecutionSummary& execution) const {
+    nlohmann::json rows = nlohmann::json::array();
+    size_t placement_count = 0;
+    size_t attention_count = 0;
+    size_t actual_observed_count = 0;
+    size_t same_run_fallback_count = 0;
+    size_t prior_fallback_count = 0;
+    size_t unsupported_count = 0;
+    size_t unknown_count = 0;
+    size_t observed_duration_count = 0;
+
+    for (const auto& placement : traces) {
+        if (!IsPlacementTrace(placement, run_id)) {
+            continue;
+        }
+        ++placement_count;
+
+        std::string actual_backend = PayloadString(
+            placement.payload, "backend_actual", "unobserved");
+        bool actual_observed = PayloadBool(
+            placement.payload, "backend_actual_observed", false);
+        bool fallback_this_run = PayloadBool(
+            placement.payload, "backend_fallback_observed_this_run", false);
+        float observed_duration_ms = 0.0f;
+        size_t duration_trace_count = 0;
+        std::string actual_evidence_phase;
+
+        for (const auto& candidate : traces) {
+            if (candidate.run_id != run_id ||
+                candidate.node_id != placement.node_id ||
+                candidate.phase == "BackendPlacement" ||
+                candidate.phase == "BackendDecisionAudit") {
+                continue;
+            }
+            if (candidate.duration_ms > 0.0f) {
+                observed_duration_ms += candidate.duration_ms;
+                ++duration_trace_count;
+            }
+            fallback_this_run = fallback_this_run || PayloadBool(
+                candidate.payload,
+                "backend_fallback_observed_this_run",
+                false);
+            if (PayloadBool(candidate.payload,
+                            "backend_actual_observed", false)) {
+                const std::string candidate_actual = PayloadString(
+                    candidate.payload, "backend_actual");
+                if (!candidate_actual.empty() &&
+                    candidate_actual != "unobserved") {
+                    actual_backend = candidate_actual;
+                    actual_observed = true;
+                    actual_evidence_phase = candidate.phase;
+                }
+            }
+        }
+
+        const bool prior_fallback = PayloadBool(
+            placement.payload,
+            "backend_prior_runtime_fallback_observed",
+            false);
+        const bool needs_attention = PayloadBool(
+            placement.payload, "backend_needs_attention", false);
+        const std::string status = PayloadString(
+            placement.payload, "backend_status", "Unknown");
+        if (needs_attention) {
+            ++attention_count;
+        }
+        if (actual_observed) {
+            ++actual_observed_count;
+        }
+        if (fallback_this_run) {
+            ++same_run_fallback_count;
+        }
+        if (prior_fallback) {
+            ++prior_fallback_count;
+        }
+        if (status == BackendPlacementStatus::Unsupported) {
+            ++unsupported_count;
+        }
+        if (status == BackendPlacementStatus::Unknown) {
+            ++unknown_count;
+        }
+        if (duration_trace_count > 0) {
+            ++observed_duration_count;
+        }
+
+        if (rows.size() >= kMaxAuditRows) {
+            continue;
+        }
+        nlohmann::json row = {
+            {"node_id", placement.node_id},
+            {"node_name", placement.node_name},
+            {"node_type", placement.node_type},
+            {"requested_backend", PayloadString(
+                placement.payload, "backend_requested", "auto")},
+            {"intended_backend", PayloadString(
+                placement.payload, "backend_intended", "unobserved")},
+            {"placement_status", status},
+            {"actual_backend", actual_observed
+                ? actual_backend
+                : "unobserved"},
+            {"actual_backend_observed", actual_observed},
+            {"actual_evidence_scope", actual_observed
+                ? "same_debug_run_node_trace"
+                : "unobserved"},
+            {"actual_evidence_phase", actual_evidence_phase},
+            {"fallback_target", PayloadString(
+                placement.payload, "backend_fallback")},
+            {"fallback_possible", PayloadBool(
+                placement.payload, "backend_fallback_possible", false)},
+            {"fallback_observed_this_run", fallback_this_run},
+            {"prior_runtime_fallback_observed", prior_fallback},
+            {"reason_code", PayloadString(
+                placement.payload, "backend_reason_code")},
+            {"explanation", PayloadString(
+                placement.payload, "backend_explanation")},
+            {"suggested_fix", PayloadString(
+                placement.payload, "backend_suggested_action")},
+            {"unsupported_reason", PayloadString(
+                placement.payload, "backend_unsupported_reason")},
+            {"needs_attention", needs_attention},
+            {"cost_estimate_available", false},
+            {"cost_estimate", "unavailable"},
+            {"cost_estimate_reason",
+             "No calibrated per-node backend cost model is attached."},
+            {"observed_duration_available", duration_trace_count > 0},
+            {"observed_duration_trace_count", duration_trace_count},
+        };
+        if (duration_trace_count > 0) {
+            row["observed_duration_ms"] = observed_duration_ms;
+            row["observed_duration_scope"] =
+                "same_debug_run_trace_timing_not_cost_estimate";
+        }
+        rows.push_back(std::move(row));
+    }
+
+    const bool has_attention = attention_count > 0 ||
+        unsupported_count > 0 || unknown_count > 0 ||
+        same_run_fallback_count > 0;
+    DebugTraceRecord result = DebugNodeTraceContract::Make(
+        run_id,
+        -1,
+        "Backend Decision Audit",
+        "TrainingDiagnostics",
+        "BackendDecisionAudit",
+        has_attention ? DebugTraceRole::Warning
+                      : DebugTraceRole::CompileArtifact,
+        {}, {}, "backend_decision_metadata", "canonical_debug_evidence",
+        placement_count == 0
+            ? "unobserved"
+            : (has_attention ? "needs_attention" : "captured"));
+    auto& payload = result.payload;
+    payload["backend_decision_audit_schema"] = kAuditSchema;
+    payload["trace_producer"] = "DebugRuntimeBackendClassifier";
+    payload["observation_scope"] =
+        "compiler_placement_plus_same_debug_run_node_evidence";
+    payload["placement_count"] = placement_count;
+    payload["retained_row_count"] = rows.size();
+    payload["row_limit"] = kMaxAuditRows;
+    payload["rows_truncated"] = placement_count > rows.size();
+    payload["attention_count"] = attention_count;
+    payload["actual_backend_observed_count"] = actual_observed_count;
+    payload["same_run_fallback_count"] = same_run_fallback_count;
+    payload["prior_runtime_fallback_count"] = prior_fallback_count;
+    payload["unsupported_count"] = unsupported_count;
+    payload["unknown_count"] = unknown_count;
+    payload["observed_duration_count"] = observed_duration_count;
+    payload["cost_estimate_available"] = false;
+    payload["cost_estimate_reason"] =
+        "No calibrated per-node backend cost model is attached.";
+    payload["linked_execution_context_available"] = execution.available;
+    payload["linked_execution_scope"] = !execution.available
+        ? "unobserved"
+        : (execution.training_run_id == run_id
+            ? "same_run"
+            : "linked_training_run");
+    payload["linked_training_run_id"] = execution.training_run_id;
+    payload["linked_requested_backend"] = execution.requested_backend;
+    payload["linked_effective_backend"] = execution.effective_backend;
+    payload["linked_effective_device_id"] = execution.effective_device_id;
+    payload["linked_effective_device_name"] =
+        execution.effective_device_name;
+    payload["linked_residency_verdict"] = execution.residency_verdict;
+    payload["linked_native_cpu_fallback_count"] =
+        execution.native_cpu_fallback_count;
+    payload["linked_context_is_node_actual_evidence"] = false;
+    payload["tensor_reads_added"] = false;
+    payload["raw_tensor_values_included"] = false;
+    payload["rows"] = std::move(rows);
+    payload["scope_note"] =
+        "Placement is intended execution. Actual backend is populated only "
+        "from a same-debug-run node trace that explicitly marks it observed. "
+        "A linked training context is shown separately and is not promoted "
+        "to per-node actual evidence.";
+    DebugNodeTraceContract::AttachDiagnosticContext(
+        result,
+        "backend_decision_audit",
+        "DebugRuntimeBackendClassifier",
+        "cyxwiz-engine/src/core/debug_runtime_backend_classifier.cpp",
+        "cyxwiz::DebugRuntimeBackendClassifier::BuildAuditTrace");
+    return result;
 }
 
 } // namespace cyxwiz

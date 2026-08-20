@@ -32,6 +32,15 @@ enum class StudioDebuggerLens {
     Recommendations
 };
 
+enum class StudioDebuggerSection {
+    Overview = 0,
+    Data,
+    Model,
+    Training,
+    Runtime,
+    Diagnostics
+};
+
 enum class StudioDebuggerRunMode {
     FullWorkflow = 0,
     Preflight,
@@ -98,6 +107,13 @@ private:
 
     void RenderToolbar();
     void RenderTraceSettings();
+    void RenderSectionNavigation();
+    void RenderSessionStatusStrip();
+    void RenderPreprocessingSampleSelector();
+    void RenderWorkbenchBody();
+    void RenderActiveWorkspace();
+    void RenderInspectorPane();
+    void RenderTraceDrawer(float height);
     void RenderLensContent();
     void RenderRunHistory();
     void RenderRunComparison();
@@ -111,6 +127,13 @@ private:
     void RenderMaterializationTrace(const TrainingTraceSummary& trace);
     void RenderRuntimeTimeline(const TrainingTraceSummary& trace);
     void RenderMemoryTrace(const TrainingTraceSummary& trace);
+    void RenderBatchInspector();
+    void RenderModelConstructionTrace();
+    void RenderShapeProphecyTrace();
+    void RenderGradientHealth();
+    void RenderLossMetricExplainer();
+    void RenderBackendDecisionAudit();
+    void RenderTensorLifecycle();
     void RenderLayerTimingBreakdown(const TrainingTraceSummary& trace);
     void RenderTraceTimeline();
     void RenderTraceFilters();
@@ -122,6 +145,7 @@ private:
     void RenderRecommendations();
     bool TraceMatchesActiveLens(const DebugTraceRecord& trace) const;
     bool TraceMatchesWorkflowFilter(const DebugTraceRecord& trace) const;
+    void SelectSection(StudioDebuggerSection section);
     const char* ActiveLensName() const;
     static std::string FormatShape(const std::vector<size_t>& shape);
 
@@ -140,12 +164,21 @@ private:
     bool trace_persist_enabled_ = true;
     int trace_persist_every_n_events_ = 10;
     int trace_max_recent_events_ = 200;
+    StudioDebuggerSection active_section_ = StudioDebuggerSection::Overview;
+    bool section_selection_pending_ = false;
     StudioDebuggerLens active_lens_ = StudioDebuggerLens::Overview;
     StudioDebuggerRunMode run_mode_ = StudioDebuggerRunMode::FullWorkflow;
     int selected_sample_index_ = 0;
     std::string selected_runtime_event_key_;
+    std::optional<DebugTraceRecord> run_comparison_trace_;
+    std::string run_comparison_baseline_id_;
+    std::string run_comparison_current_id_;
     char trace_search_[128] = {};
     bool trace_attention_only_ = false;
+    bool trace_drawer_open_ = false;
+    float trace_drawer_height_ = 220.0f;
+    float inspector_width_ = 360.0f;
+    bool inspector_expanded_ = false;
     bool run_in_progress_ = false;
     std::string run_status_message_;
 };

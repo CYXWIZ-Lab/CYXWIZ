@@ -1,6 +1,6 @@
 #include "studio_debugger_panel.h"
+#include "../../core/debug_training_graph_diff.h"
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cstdint>
 #include <iomanip>
@@ -160,6 +160,7 @@ bool IsValueTrace(const DebugTraceRecord& trace) {
 
 bool IsRuntimeTrace(const DebugTraceRecord& trace) {
     return trace.duration_ms > 0.0f ||
+        trace.phase == "TensorLifecycle" ||
         trace.phase.find("Backend") != std::string::npos ||
         trace.phase.find("SmokeRun") != std::string::npos ||
         trace.phase.find("Train") != std::string::npos ||
@@ -367,7 +368,7 @@ std::string JsonArrayPreview(const nlohmann::json& payload, const char* key, siz
 
 std::string BatchColumnPreview(const nlohmann::json& payload,
                                const char* key,
-                               size_t limit = 32) {
+                               size_t limit = 8) {
     if (!JsonHas(payload, key) || !payload.at(key).is_array()) {
         return "";
     }
@@ -382,52 +383,173 @@ std::string BatchColumnPreview(const nlohmann::json& payload,
             out << column.dump();
             continue;
         }
-        out << JsonString(column, "name", "(unnamed)") << " ["
-            << JsonString(column, "source_dtype", "unknown") << " -> "
-            << JsonString(column, "tensor_dtype", "unknown") << "]";
+        out << JsonString(column, "name", "(unnamed)");
     }
-    if (columns.size() > limit) out << ", ...";
     return out.str();
 }
 
-void RenderBatchInspection(const DebugTraceRecord& trace) {
+std::string JsonObjectPreview(const nlohmann::json& payload,
+                              const char* key,
+                              size_t limit = 6) {
+    if (!JsonHas(payload, key) || !payload.at(key).is_object()) {
+        return {};
+    }
+    const auto& object = payload.at(key);
+    std::ostringstream out;
+    size_t count = 0;
+    for (auto it = object.begin(); it != object.end() && count < limit;
+         ++it, ++count) {
+        if (count > 0) out << ", ";
+        out << it.key() << "=";
+        if (it.value().is_string()) {
+            out << it.value().get_ref<const std::string&>();
+        } else {
+            out << it.value().dump();
+        }
+    }
+    if (object.size() > limit) out << ", ...";
+    return out.str();
+}
+
+void RenderBatchInspection(const DebugTraceRecord& trace,
+                           bool include_separator = true) {
     const auto& payload = trace.payload;
     if (!JsonBool(payload, "batch_inspector", false)) {
         return;
     }
 
-    ImGui::Separator();
-    ImGui::Text("First Smoke Run batch");
-    ImGui::Text("Dataset: %s", JsonString(payload, "dataset_name", "(unknown)").c_str());
-    ImGui::Text("Batcher: %s", JsonString(payload, "batcher_source", "(unknown)").c_str());
-    ImGui::Text("Rows: %.0f actual / %.0f requested (limit %.0f)",
-                JsonNumber(payload, "actual_row_count"),
-                JsonNumber(payload, "requested_batch_size"),
-                JsonNumber(payload, "bounded_row_limit"));
-    ImGui::Text("Features: %s  %s",
-                JsonArrayPreview(payload, "feature_tensor_shape").c_str(),
-                JsonString(payload, "feature_tensor_dtype", "unknown").c_str());
-    ImGui::Text("Labels: %s  %s",
-                JsonArrayPreview(payload, "label_tensor_shape").c_str(),
-                JsonString(payload, "label_tensor_dtype", "unknown").c_str());
+    if (include_separator) {
+        ImGui::Separator();
+    }
+    ImGui::Text("First bounded Smoke Run batch");
+    ImGui::TextDisabled(
+        "Debug-only evidence; normal training does not perform this inspection pass.");
 
-    const std::string features = BatchColumnPreview(payload, "feature_columns_preview");
-    const std::string labels = BatchColumnPreview(payload, "label_columns_preview");
-    if (!features.empty()) {
-        ImGui::TextWrapped("Feature columns (%.0f): %s%s",
-            JsonNumber(payload, "feature_column_count"), features.c_str(),
-            JsonBool(payload, "feature_columns_truncated", false) ? " (preview truncated)" : "");
+    if (ImGui::BeginTable("BatchInspectionOverview", 2,
+                          ImGuiTableFlags_BordersInnerH |
+                          ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_SizingStretchProp)) {
+        const auto row = [](const char* label, const std::string& value) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextDisabled("%s", label);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextWrapped("%s", value.c_str());
+        };
+        row("Dataset", JsonString(payload, "dataset_name", "(unknown)"));
+        row("Batcher", JsonString(payload, "batcher_source", "(unknown)"));
+        row("Rows", std::to_string(static_cast<size_t>(
+            JsonNumber(payload, "actual_row_count"))) + " actual / " +
+            std::to_string(static_cast<size_t>(
+                JsonNumber(payload, "requested_batch_size"))) +
+            " requested (limit " + std::to_string(static_cast<size_t>(
+                JsonNumber(payload, "bounded_row_limit"))) + ")");
+        row("Feature tensor", "[" +
+            JsonArrayPreview(payload, "feature_tensor_shape") + "]  " +
+            JsonString(payload, "feature_tensor_dtype", "unknown"));
+        row("Label tensor", "[" +
+            JsonArrayPreview(payload, "label_tensor_shape") + "]  " +
+            JsonString(payload, "label_tensor_dtype", "unknown"));
+        ImGui::EndTable();
     }
-    if (!labels.empty()) {
-        ImGui::TextWrapped("Label columns (%.0f): %s%s",
-            JsonNumber(payload, "label_column_count"), labels.c_str(),
-            JsonBool(payload, "label_columns_truncated", false) ? " (preview truncated)" : "");
+
+    if (JsonHas(payload, "dtype_conversions") &&
+        payload.at("dtype_conversions").is_array() &&
+        !payload.at("dtype_conversions").empty()) {
+        ImGui::Spacing();
+        ImGui::Text("Dtype conversion");
+        if (ImGui::BeginTable("BatchInspectionDTypes", 3,
+                              ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Role");
+            ImGui::TableSetupColumn("Arrow source");
+            ImGui::TableSetupColumn("Tensor");
+            ImGui::TableHeadersRow();
+            for (const auto& conversion : payload.at("dtype_conversions")) {
+                if (!conversion.is_object()) continue;
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%s", JsonString(
+                    conversion, "role", "unknown").c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextWrapped("%s", JsonString(
+                    conversion, "source_dtypes", "unknown").c_str());
+                ImGui::TableSetColumnIndex(2);
+                ImGui::Text("%s", JsonString(
+                    conversion, "tensor_dtype", "unknown").c_str());
+            }
+            ImGui::EndTable();
+        }
     }
+
+    const auto render_columns = [&payload](const char* label,
+                                            const char* preview_key,
+                                            const char* count_key,
+                                            const char* truncated_key,
+                                            const char* tree_id,
+                                            const char* table_id) {
+        if (!JsonHas(payload, preview_key) ||
+            !payload.at(preview_key).is_array() ||
+            payload.at(preview_key).empty()) {
+            ImGui::TextDisabled("%s columns: unavailable", label);
+            return;
+        }
+        const auto& columns = payload.at(preview_key);
+        const size_t total = static_cast<size_t>(JsonNumber(payload, count_key));
+        const std::string names = BatchColumnPreview(payload, preview_key);
+        ImGui::TextWrapped("%s columns (%zu total): %s%s",
+            label, total, names.c_str(),
+            (columns.size() > 8 || JsonBool(payload, truncated_key, false))
+                ? ", ..." : "");
+        ImGui::TextDisabled("Showing %zu inline; %zu metadata rows stored%s.",
+            std::min<size_t>(columns.size(), 8), columns.size(),
+            JsonBool(payload, truncated_key, false)
+                ? " (bounded preview)" : "");
+
+        const std::string tree_label = std::string("Stored column metadata##") + tree_id;
+        if (!ImGui::TreeNode(tree_label.c_str())) return;
+        if (ImGui::BeginTable(table_id, 3,
+                              ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Column");
+            ImGui::TableSetupColumn("Arrow dtype");
+            ImGui::TableSetupColumn("Tensor dtype");
+            ImGui::TableHeadersRow();
+            for (const auto& column : columns) {
+                if (!column.is_object()) continue;
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%s", JsonString(
+                    column, "name", "(unnamed)").c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%s", JsonString(
+                    column, "source_dtype", "unknown").c_str());
+                ImGui::TableSetColumnIndex(2);
+                ImGui::Text("%s", JsonString(
+                    column, "tensor_dtype", "unknown").c_str());
+            }
+            ImGui::EndTable();
+        }
+        ImGui::TreePop();
+    };
+
+    ImGui::Spacing();
+    ImGui::Text("Column provenance");
+    render_columns("Feature", "feature_columns_preview",
+                   "feature_column_count", "feature_columns_truncated",
+                   "BatchFeatures", "BatchFeatureColumns");
+    render_columns("Label", "label_columns_preview",
+                   "label_column_count", "label_columns_truncated",
+                   "BatchLabels", "BatchLabelColumns");
 
     if (JsonBool(payload, "null_summary_available", false)) {
-        ImGui::Text("Source nulls: %.0f feature, %.0f label / %.0f inspected values",
-                    JsonNumber(payload, "feature_null_count"),
-                    JsonNumber(payload, "label_null_count"),
+        ImGui::Text("Source nulls");
+        ImGui::Text("Features: %.0f", JsonNumber(payload, "feature_null_count"));
+        ImGui::SameLine(180.0f);
+        ImGui::Text("Labels: %.0f", JsonNumber(payload, "label_null_count"));
+        ImGui::TextDisabled("%.0f selected source cells inspected",
                     JsonNumber(payload, "inspected_source_value_count"));
     } else {
         ImGui::TextDisabled("Source null summary unavailable.");
@@ -449,8 +571,32 @@ void RenderBatchInspection(const DebugTraceRecord& trace) {
     }
 
     if (JsonBool(payload, "class_balance_available", false)) {
-        ImGui::TextWrapped("Class counts: %s",
-                           JsonArrayPreview(payload, "class_counts", 64).c_str());
+        ImGui::Text("First-batch class balance");
+        const auto& counts = payload.at("class_counts");
+        const double row_count = JsonNumber(payload, "actual_row_count");
+        if (counts.is_array() &&
+            ImGui::BeginTable("BatchInspectionClassBalance", 3,
+                              ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Class");
+            ImGui::TableSetupColumn("Count");
+            ImGui::TableSetupColumn("Batch share");
+            ImGui::TableHeadersRow();
+            for (const auto& item : counts) {
+                if (!item.is_object()) continue;
+                const double count = JsonNumber(item, "count");
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%.0f", JsonNumber(item, "class_index"));
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%.0f", count);
+                ImGui::TableSetColumnIndex(2);
+                ImGui::Text("%.1f%%", row_count > 0.0
+                    ? 100.0 * count / row_count : 0.0);
+            }
+            ImGui::EndTable();
+        }
     } else if (JsonHas(payload, "class_balance_reason")) {
         ImGui::TextDisabled("Class balance unavailable: %s",
                             JsonString(payload, "class_balance_reason").c_str());
@@ -523,7 +669,7 @@ void RenderErrorCodeTimeline(const std::vector<DebugTraceRecord>& traces) {
     ImGui::Text("Error-code timeline");
     ImGui::TextDisabled(
         "Ordered by canonical trace capture, then runtime event sequence.");
-    ImGui::BeginChild("StudioDebuggerErrorCodeTimeline", ImVec2(0, 230), true);
+    ImGui::BeginChild("StudioDebuggerErrorCodeTimeline", ImVec2(0, 230), false);
     const auto entries = timeline->payload.find("entries");
     if (entries == timeline->payload.end() || !entries->is_array() ||
         entries->empty()) {
@@ -668,9 +814,14 @@ void StudioDebuggerPanel::SetSession(const StudioDebuggerSnapshot& session) {
     current_session_.run_history = session_.run_history;
     has_session_ = true;
     selected_trace_index_ = session_.debug_result.layer_traces.empty() ? -1 : 0;
+    run_comparison_trace_.reset();
+    run_comparison_baseline_id_.clear();
+    run_comparison_current_id_.clear();
 }
 
 void StudioDebuggerPanel::ShowNodeExplanation(int node_id) {
+    active_section_ = StudioDebuggerSection::Overview;
+    section_selection_pending_ = true;
     active_lens_ = StudioDebuggerLens::Overview;
     selected_trace_index_ = -1;
     for (int index = 0; index < static_cast<int>(session_.traces.size());
@@ -694,6 +845,9 @@ void StudioDebuggerPanel::Clear() {
     has_current_session_ = false;
     current_run_id_.clear();
     selected_trace_index_ = -1;
+    run_comparison_trace_.reset();
+    run_comparison_baseline_id_.clear();
+    run_comparison_current_id_.clear();
 }
 
 std::string StudioDebuggerPanel::GetSelectedTraceIdForAssistant() const {
@@ -815,121 +969,6 @@ std::string StudioDebuggerPanel::FormatShape(const std::vector<size_t>& shape) {
     }
     out += "]";
     return out;
-}
-
-void StudioDebuggerPanel::RenderToolbar() {
-    const std::array<const char*, 5> run_modes = {
-        "Full Workflow", "Preflight", "Local Debug", "Smoke Run", "Runtime Trace"
-    };
-    int run_mode_index = static_cast<int>(run_mode_);
-    ImGui::SetNextItemWidth(145.0f);
-    if (ImGui::Combo("Mode", &run_mode_index, run_modes.data(), static_cast<int>(run_modes.size()))) {
-        run_mode_ = static_cast<StudioDebuggerRunMode>(run_mode_index);
-    }
-    ImGui::SameLine();
-
-    const bool run_button_disabled = run_in_progress_;
-    if (run_button_disabled) {
-        ImGui::BeginDisabled();
-    }
-    if (ImGui::Button(run_in_progress_ ? "Running..." : "Run")) {
-        if (run_debug_callback_) {
-            const StudioDebuggerRunMode mode = run_mode_;
-            const int sample_index = selected_sample_index_;
-            auto task = std::make_shared<std::function<StudioDebuggerSnapshot()>>(
-                run_debug_callback_(mode, sample_index));
-            auto state = std::make_shared<AsyncRunState>();
-            pending_run_state_ = state;
-            run_status_message_ = "Studio Debugger run is executing in the background.";
-            run_in_progress_ = true;
-            pending_task_id_ = AsyncTaskManager::Instance().RunAsync(
-                "Studio Debugger Run",
-                [task, state](LambdaTask& async_task) {
-                    async_task.ReportProgress(0.05f, "Preparing Studio Debugger run");
-                    if (async_task.ShouldStop()) {
-                        return;
-                    }
-                    StudioDebuggerSnapshot result = (*task)();
-                    {
-                        std::lock_guard<std::mutex> lock(state->mutex);
-                        state->result = std::move(result);
-                    }
-                    async_task.ReportProgress(1.0f, "Studio Debugger run completed");
-                },
-                nullptr,
-                [this, state](bool success, const std::string& error) {
-                    run_in_progress_ = false;
-                    pending_task_id_ = 0;
-                    if (!success) {
-                        StudioDebuggerSnapshot failed;
-                        failed.success = false;
-                        failed.failure_summary = error.empty()
-                            ? "Studio Debugger task failed."
-                            : error;
-                        SetSession(failed);
-                        run_status_message_ = failed.failure_summary;
-                        return;
-                    }
-
-                    std::optional<StudioDebuggerSnapshot> result;
-                    {
-                        std::lock_guard<std::mutex> lock(state->mutex);
-                        result = std::move(state->result);
-                    }
-                    if (result) {
-                        SetSession(*result);
-                        run_status_message_.clear();
-                    } else {
-                        run_status_message_ = "Studio Debugger task completed without a result.";
-                    }
-                });
-        }
-    }
-    if (run_button_disabled) {
-        ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    if (run_in_progress_) {
-        ImGui::BeginDisabled();
-    }
-    if (ImGui::Button("Clear")) {
-        Clear();
-    }
-    if (run_in_progress_) {
-        ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    const std::array<const char*, 8> lenses = {
-        "Overview", "Preprocessing", "Shapes", "Numerics",
-        "Gradients", "Runtime", "Studio Events", "Recommendations"
-    };
-    int lens_index = static_cast<int>(active_lens_);
-    ImGui::SetNextItemWidth(170.0f);
-    if (ImGui::Combo("Lens", &lens_index, lenses.data(), static_cast<int>(lenses.size()))) {
-        active_lens_ = static_cast<StudioDebuggerLens>(lens_index);
-        selected_trace_index_ = -1;
-    }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(90.0f);
-    if (ImGui::InputInt("Sample", &selected_sample_index_)) {
-        if (selected_sample_index_ < 0) {
-            selected_sample_index_ = 0;
-        }
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Sample index used by preprocessing inspection. Smoke Run still runs a small subset.");
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Preflight + Local Debug + Smoke Run + Training Trace");
-    if (run_in_progress_) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.45f, 0.7f, 1.0f, 1.0f),
-                           "running in Task View #%llu",
-                           static_cast<unsigned long long>(pending_task_id_));
-    } else if (!run_status_message_.empty()) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", run_status_message_.c_str());
-    }
 }
 
 const char* StudioDebuggerPanel::ActiveLensName() const {
@@ -1059,14 +1098,12 @@ void StudioDebuggerPanel::RenderTraceSettings() {
         trace_settings_initialized_ = true;
     }
 
-    if (!ImGui::CollapsingHeader("Trace Persistence Settings",
-                                 ImGuiTreeNodeFlags_DefaultOpen)) {
-        return;
-    }
-
+    ImGui::TextDisabled("TRACE CAPTURE");
     bool changed = false;
     changed |= ImGui::Checkbox("Persist training trace to disk", &trace_persist_enabled_);
+    ImGui::SetNextItemWidth(110.0f);
     changed |= ImGui::InputInt("Write every N events", &trace_persist_every_n_events_);
+    ImGui::SetNextItemWidth(110.0f);
     changed |= ImGui::InputInt("Keep recent events", &trace_max_recent_events_);
 
     if (trace_persist_every_n_events_ < 1) {
@@ -1114,6 +1151,9 @@ void StudioDebuggerPanel::LoadStoredRun(const std::string& run_id) {
     session_.run_history = history;
     has_session_ = true;
     selected_trace_index_ = session_.traces.empty() ? -1 : 0;
+    run_comparison_trace_.reset();
+    run_comparison_baseline_id_.clear();
+    run_comparison_current_id_.clear();
 }
 
 void StudioDebuggerPanel::RenderRunComparison() {
@@ -1137,7 +1177,7 @@ void StudioDebuggerPanel::RenderRunComparison() {
     }
 
     ImGui::Text("Run Comparison");
-    ImGui::BeginChild("StudioDebuggerRunComparison", ImVec2(0, 155), true);
+    ImGui::BeginChild("StudioDebuggerRunComparison", ImVec2(0, 0), false);
 
     if (!has_current_session_ || current_run_id_.empty()) {
         ImGui::TextDisabled("Run a new debug session to establish a comparison baseline.");
@@ -1151,7 +1191,7 @@ void StudioDebuggerPanel::RenderRunComparison() {
         return;
     }
 
-    ImGui::Text("Selected: %s", session_.run_id.c_str());
+    ImGui::Text("Baseline: %s", session_.run_id.c_str());
     ImGui::Text("Current:  %s", current_session_.run_id.c_str());
     ImGui::Separator();
 
@@ -1193,6 +1233,134 @@ void StudioDebuggerPanel::RenderRunComparison() {
                  static_cast<int>(session_.traces.size()),
                  static_cast<int>(current_session_.traces.size()));
 
+    const bool comparison_pair_changed =
+        run_comparison_baseline_id_ != session_.run_id ||
+        run_comparison_current_id_ != current_run_id_;
+    if (comparison_pair_changed) {
+        run_comparison_trace_.reset();
+        run_comparison_baseline_id_ = session_.run_id;
+        run_comparison_current_id_ = current_run_id_;
+        const auto baseline = DebugRunStore::Load(session_.run_id);
+        const auto current = DebugRunStore::Load(current_run_id_);
+        if (baseline && current) {
+            run_comparison_trace_ =
+                DebugTrainingGraphDiff{}.BuildTrace(*baseline, *current);
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Training graph/config diff");
+    if (!run_comparison_trace_) {
+        ImGui::TextDisabled(
+            "Persisted evidence for one or both runs is unavailable.");
+        ImGui::EndChild();
+        return;
+    }
+
+    const auto& diff = run_comparison_trace_->payload;
+    const std::string outcome = JsonString(
+        diff, "comparison_outcome", "unobserved");
+    ImVec4 outcome_color(0.65f, 0.7f, 0.78f, 1.0f);
+    if (outcome == "unchanged") {
+        outcome_color = ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+    } else if (outcome == "changed") {
+        outcome_color = ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+    }
+    ImGui::TextColored(outcome_color, "Outcome: %s", outcome.c_str());
+
+    if (!JsonBool(diff, "graph_comparison_available", false)) {
+        ImGui::TextDisabled("Graph snapshots are unavailable for this pair.");
+    } else {
+        ImGui::Text("Nodes: +%.0f  -%.0f  changed %.0f",
+                    JsonNumber(diff, "added_node_count"),
+                    JsonNumber(diff, "removed_node_count"),
+                    JsonNumber(diff, "changed_node_count"));
+        ImGui::Text("Links: +%.0f  -%.0f  (link IDs ignored)",
+                    JsonNumber(diff, "added_link_count"),
+                    JsonNumber(diff, "removed_link_count"));
+        if (JsonBool(diff, "structural_details_truncated", false)) {
+            ImGui::TextDisabled("Structural detail is bounded to %.0f items.",
+                JsonNumber(diff, "structural_detail_limit"));
+        }
+    }
+
+    if (JsonBool(diff, "dataset_comparison_available", false)) {
+        const char* marker = JsonBool(diff, "dataset_changed", false)
+            ? "changed" : "unchanged";
+        ImGui::Text("Dataset: %s", marker);
+        if (JsonBool(diff, "dataset_changed", false)) {
+            ImGui::TextWrapped("  baseline: %s",
+                JsonString(diff, "baseline_dataset_reference", "(none)").c_str());
+            ImGui::TextWrapped("  current:  %s",
+                JsonString(diff, "current_dataset_reference", "(none)").c_str());
+        }
+    } else {
+        ImGui::TextDisabled("Dataset replay evidence is unavailable.");
+    }
+
+    if (JsonBool(diff, "compiled_config_comparison_available", false)) {
+        ImGui::Text("Compiled config changes: %.0f",
+                    JsonNumber(diff, "compiled_config_change_count"));
+    } else {
+        ImGui::TextDisabled("Compiled config: unobserved");
+    }
+    ImGui::SameLine(280.0f);
+    if (JsonBool(diff, "backend_comparison_available", false)) {
+        ImGui::Text("Backend/placement changes: %.0f",
+                    JsonNumber(diff, "backend_change_count"));
+    } else {
+        ImGui::TextDisabled("Backend/placement: unobserved");
+    }
+
+    const auto render_field_changes = [&diff](const char* label,
+                                               const char* tree_id,
+                                               const char* payload_key) {
+        if (!JsonHas(diff, payload_key) ||
+            !diff.at(payload_key).is_array() ||
+            diff.at(payload_key).empty()) {
+            return;
+        }
+        const std::string tree_label = std::string(label) + "##" + tree_id;
+        if (!ImGui::TreeNode(tree_label.c_str())) {
+            return;
+        }
+        for (const auto& change : diff.at(payload_key)) {
+            const std::string field = JsonString(change, "field", "(unknown)");
+            const std::string baseline_value = JsonString(
+                change, "baseline", "null");
+            const std::string current_value = JsonString(
+                change, "current", "null");
+            ImGui::TextWrapped("%s: %s -> %s",
+                field.c_str(), baseline_value.c_str(), current_value.c_str());
+        }
+        ImGui::TreePop();
+    };
+    render_field_changes("Compiled config details",
+                         "TrainingGraphDiffConfig",
+                         "compiled_config_changes");
+    render_field_changes("Backend/placement details",
+                         "TrainingGraphDiffBackend",
+                         "backend_changes");
+
+    if (JsonHas(diff, "changed_nodes") &&
+        diff.at("changed_nodes").is_array() &&
+        !diff.at("changed_nodes").empty() &&
+        ImGui::TreeNode("Changed node details##TrainingGraphDiffNodes")) {
+        for (const auto& node : diff.at("changed_nodes")) {
+            const std::string parameter_keys = JsonArrayPreview(
+                node, "changed_parameter_keys");
+            ImGui::TextWrapped("Node %.0f (%s): parameter keys [%s]%s",
+                JsonNumber(node, "node_id", -1.0),
+                JsonString(node, "current_name", "unnamed").c_str(),
+                parameter_keys.c_str(),
+                JsonBool(node, "parameter_keys_truncated", false)
+                    ? " (truncated)" : "");
+        }
+        ImGui::TreePop();
+    }
+    ImGui::TextDisabled(
+        "Comparison omits raw graph content and parameter values.");
+
     ImGui::EndChild();
 }
 
@@ -1215,7 +1383,6 @@ void StudioDebuggerPanel::RenderLiveTrainingStatus() {
 
     ImGui::Separator();
     ImGui::Text("Live Training");
-    ImGui::BeginChild("StudioDebuggerLiveTrainingStatus", ImVec2(0, 92), true);
     ImGui::Text("Run: %s", trace.run_id.c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("Status: %s", trace.status.c_str());
@@ -1233,7 +1400,6 @@ void StudioDebuggerPanel::RenderLiveTrainingStatus() {
                            ClassifyTrainingWarning(trace.warnings.back()),
                            trace.warnings.back().c_str());
     }
-    ImGui::EndChild();
 }
 
 void StudioDebuggerPanel::RenderOverview() {
@@ -1270,27 +1436,22 @@ void StudioDebuggerPanel::RenderOverview() {
 
     if (!session_.preflight.summary.empty()) {
         ImGui::Spacing();
-        ImGui::Text("Preflight summary");
-        ImGui::BeginChild("StudioDebuggerPreflightSummary", ImVec2(0, 120), true);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextWrapped("%s", session_.preflight.summary.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndChild();
+        if (ImGui::CollapsingHeader("Preflight details")) {
+            ImGui::TextWrapped("%s", session_.preflight.summary.c_str());
+        }
     }
 
     if (!session_.graph_summary.empty()) {
         ImGui::Spacing();
-        ImGui::BeginChild("StudioDebuggerSummary", ImVec2(0, 120), true);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextWrapped("%s", session_.graph_summary.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndChild();
+        if (ImGui::CollapsingHeader("Compile details")) {
+            ImGui::TextWrapped("%s", session_.graph_summary.c_str());
+        }
     }
 }
 
 void StudioDebuggerPanel::RenderGraphTraceView() {
     ImGui::Text("Graph Trace");
-    ImGui::BeginChild("StudioDebuggerGraphTrace", ImVec2(0, 280), true,
+    ImGui::BeginChild("StudioDebuggerGraphTrace", ImVec2(0, 0), false,
                       ImGuiWindowFlags_HorizontalScrollbar);
 
     const DebugTraceRecord* snapshot = nullptr;
@@ -1489,7 +1650,7 @@ void StudioDebuggerPanel::RenderRunHistory() {
     }
 
     ImGui::Text("Run History");
-    ImGui::BeginChild("StudioDebuggerRunHistory", ImVec2(0, 145), true);
+    ImGui::BeginChild("StudioDebuggerRunHistory", ImVec2(0, 0), false);
 
     if (session_.run_history.empty()) {
         ImGui::TextDisabled("No saved debugger runs.");
@@ -1566,7 +1727,7 @@ void StudioDebuggerPanel::RenderLastRun() {
     }
 
     ImGui::Text("Crash / Last Run");
-    ImGui::BeginChild("StudioDebuggerLastRun", ImVec2(0, 240), true);
+    ImGui::BeginChild("StudioDebuggerLastRun", ImVec2(0, 0), false);
 
     const auto& run = session_.last_run;
     if (!run.available) {
@@ -1637,7 +1798,7 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
     RefreshLiveTrainingTrace();
 
     ImGui::Text("Training Trace");
-    ImGui::BeginChild("StudioDebuggerTrainingTrace", ImVec2(0, 310), true);
+    ImGui::BeginChild("StudioDebuggerTrainingTrace", ImVec2(0, 0), false);
 
     const auto& trace = session_.training_trace;
     if (!trace.available) {
@@ -1818,10 +1979,6 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
 
     ImGui::EndChild();
 
-    RenderMaterializationTrace(trace);
-    RenderRuntimeTimeline(trace);
-    RenderMemoryTrace(trace);
-    RenderLayerTimingBreakdown(trace);
 }
 
 void StudioDebuggerPanel::RenderMaterializationTrace(
@@ -1829,8 +1986,8 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
     ImGui::Spacing();
     ImGui::Text("Materialization Breakdown");
     ImGui::BeginChild("StudioDebuggerMaterializationTrace",
-                      ImVec2(0, 260),
-                      true,
+                      ImVec2(0, 0),
+                      false,
                       ImGuiWindowFlags_HorizontalScrollbar);
 
     if (trace.materialization_events.empty()) {
@@ -1959,7 +2116,7 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
 void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trace) {
     ImGui::Spacing();
     ImGui::Text("Runtime Timeline");
-    ImGui::BeginChild("StudioDebuggerRuntimeTimeline", ImVec2(0, 220), true,
+    ImGui::BeginChild("StudioDebuggerRuntimeTimeline", ImVec2(0, 220), false,
                       ImGuiWindowFlags_HorizontalScrollbar);
 
     if (trace.recent_events.empty()) {
@@ -2080,7 +2237,7 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
 
     ImGui::Spacing();
     ImGui::Text("Selected Runtime Event");
-    ImGui::BeginChild("StudioDebuggerSelectedRuntimeEvent", ImVec2(0, 120), true);
+    ImGui::BeginChild("StudioDebuggerSelectedRuntimeEvent", ImVec2(0, 120), false);
     if (!selected_event) {
         ImGui::TextDisabled("Click a timeline event to inspect it.");
         ImGui::EndChild();
@@ -2132,7 +2289,7 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
 void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
     ImGui::Spacing();
     ImGui::Text("Memory Trace");
-    ImGui::BeginChild("StudioDebuggerMemoryTrace", ImVec2(0, 255), true);
+    ImGui::BeginChild("StudioDebuggerMemoryTrace", ImVec2(0, 0), false);
 
     const TrainingTraceEvent* latest = nullptr;
     uint64_t max_bytes = 0;
@@ -2277,6 +2434,1031 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
     ImGui::EndChild();
 }
 
+void StudioDebuggerPanel::RenderTensorLifecycle() {
+    ImGui::Text("Tensor Lifecycle");
+    ImGui::BeginChild("StudioDebuggerTensorLifecycle", ImVec2(0, 0), false,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    const auto lifecycle = std::find_if(
+        session_.traces.begin(), session_.traces.end(),
+        [](const DebugTraceRecord& trace) {
+            return trace.phase == "TensorLifecycle";
+        });
+    if (lifecycle == session_.traces.end()) {
+        ImGui::TextDisabled(
+            "No tensor lifecycle evidence is stored for this run.");
+        ImGui::TextDisabled(
+            "Run Local Debug or Full Workflow with the rebuilt engine.");
+        ImGui::EndChild();
+        return;
+    }
+
+    const auto& payload = lifecycle->payload;
+    ImGui::Text("Status: %s  entries %.0f",
+                lifecycle->status.c_str(),
+                JsonNumber(payload, "entry_count"));
+    ImGui::SameLine(260.0f);
+    if (JsonBool(payload, "runtime_backend_observed", false)) {
+        ImGui::Text("Backend: %s / %s",
+                    JsonString(payload, "effective_backend", "unobserved").c_str(),
+                    JsonString(payload, "effective_device", "unobserved").c_str());
+    } else {
+        ImGui::TextDisabled("Backend/device: unobserved");
+    }
+    ImGui::TextDisabled(
+        "Derived from canonical trace metadata and frozen graph topology; "
+        "no Tensor reads are added.");
+    if (!JsonBool(payload, "retained_freed_state_observed", false)) {
+        ImGui::TextDisabled(
+            "Retained/freed state: unobserved (allocator hooks are not installed).");
+    }
+    if (JsonBool(payload, "entries_truncated", false)) {
+        ImGui::TextDisabled("Detail is bounded to %.0f of %.0f entries.",
+            JsonNumber(payload, "retained_entry_count"),
+            JsonNumber(payload, "entry_count"));
+    }
+
+    if (!JsonHas(payload, "entries") ||
+        !payload.at("entries").is_array() ||
+        payload.at("entries").empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled(
+            "No model-input, activation, target, loss, or gradient trace was observed.");
+        ImGui::EndChild();
+        return;
+    }
+
+    if (ImGui::BeginTable("StudioDebuggerTensorLifecycleTable",
+                          8,
+                          ImGuiTableFlags_BordersInnerV |
+                          ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_ScrollY |
+                          ImGuiTableFlags_SizingStretchProp,
+                          ImVec2(0, 245))) {
+        ImGui::TableSetupColumn("Relation", ImGuiTableColumnFlags_WidthFixed, 105.0f);
+        ImGui::TableSetupColumn("Origin", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn("Shape", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+        ImGui::TableSetupColumn("Dtype", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+        ImGui::TableSetupColumn("Backend/device", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("Estimated", ImGuiTableColumnFlags_WidthFixed, 78.0f);
+        ImGui::TableSetupColumn("Consumers", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Lifecycle", ImGuiTableColumnFlags_WidthFixed, 125.0f);
+        ImGui::TableHeadersRow();
+
+        for (const auto& entry : payload.at("entries")) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextWrapped("%s",
+                JsonString(entry, "relation", "tensor").c_str());
+
+            ImGui::TableSetColumnIndex(1);
+            const int node_id = static_cast<int>(
+                JsonNumber(entry, "origin_node_id", -1.0));
+            if (node_id >= 0) {
+                ImGui::TextWrapped("%s (%d)",
+                    JsonString(entry, "origin_node_name", "unnamed").c_str(),
+                    node_id);
+            } else {
+                ImGui::TextWrapped("%s",
+                    JsonString(entry, "origin_node_name", "unobserved").c_str());
+            }
+            const std::string parameter = JsonString(entry, "parameter_name");
+            if (!parameter.empty()) {
+                ImGui::TextDisabled("%s", parameter.c_str());
+            }
+
+            ImGui::TableSetColumnIndex(2);
+            const std::string shape = JsonArrayPreview(entry, "shape");
+            if (shape.empty()) {
+                ImGui::TextDisabled("unobserved");
+            } else {
+                ImGui::Text("[%s]", shape.c_str());
+            }
+
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%s", JsonString(entry, "dtype", "unobserved").c_str());
+
+            ImGui::TableSetColumnIndex(4);
+            if (JsonBool(entry, "runtime_backend_observed", false)) {
+                ImGui::TextWrapped("%s / %s",
+                    JsonString(entry, "backend", "unobserved").c_str(),
+                    JsonString(entry, "device", "unobserved").c_str());
+            } else {
+                ImGui::TextDisabled("unobserved");
+            }
+
+            ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%s", FormatBytesCompact(static_cast<uint64_t>(
+                JsonNumber(entry, "estimated_bytes"))).c_str());
+
+            ImGui::TableSetColumnIndex(6);
+            std::ostringstream consumers;
+            if (JsonHas(entry, "consumers") &&
+                entry.at("consumers").is_array()) {
+                for (size_t i = 0; i < entry.at("consumers").size(); ++i) {
+                    const auto& consumer = entry.at("consumers")[i];
+                    if (i > 0) {
+                        consumers << ", ";
+                    }
+                    consumers << JsonString(
+                        consumer, "node_name", "unnamed");
+                    const int consumer_id = static_cast<int>(
+                        JsonNumber(consumer, "node_id", -1.0));
+                    if (consumer_id >= 0) {
+                        consumers << " (" << consumer_id << ")";
+                    }
+                }
+            }
+            if (consumers.str().empty()) {
+                ImGui::TextDisabled("unobserved");
+            } else {
+                ImGui::TextWrapped("%s", consumers.str().c_str());
+            }
+
+            ImGui::TableSetColumnIndex(7);
+            ImGui::TextDisabled("%s",
+                JsonString(entry, "retention_state", "unobserved").c_str());
+            if (JsonBool(entry, "host_read_observed", false)) {
+                ImGui::TextDisabled("bounded debug read");
+            }
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::EndChild();
+}
+
+void StudioDebuggerPanel::RenderGradientHealth() {
+    ImGui::Text("Gradient Health Dashboard");
+    ImGui::BeginChild("StudioDebuggerGradientHealth", ImVec2(0, 0), false,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    const auto summary = std::find_if(
+        session_.traces.begin(), session_.traces.end(),
+        [](const DebugTraceRecord& trace) {
+            return trace.phase == "GradientHealth";
+        });
+    if (summary == session_.traces.end()) {
+        ImGui::TextDisabled(
+            "No per-layer gradient-health summary is stored for this run.");
+        ImGui::TextDisabled(
+            "Run Local Debug or Full Workflow with the rebuilt engine.");
+        ImGui::EndChild();
+        return;
+    }
+
+    const auto& payload = summary->payload;
+    ImGui::Text("Status: %s  layers %.0f  parameters %.0f",
+                summary->status.c_str(),
+                JsonNumber(payload, "layer_count"),
+                JsonNumber(payload, "parameter_trace_count"));
+    ImGui::SameLine(390.0f);
+    ImGui::TextDisabled("healthy %.0f  attention %.0f  unobserved %.0f",
+                        JsonNumber(payload, "healthy_layer_count"),
+                        JsonNumber(payload, "attention_layer_count"),
+                        JsonNumber(payload, "unobserved_layer_count"));
+    ImGui::TextDisabled(
+        "One synthetic Local Debug step; derived from existing bounded scalar "
+        "evidence with no added Tensor reads.");
+    if (JsonBool(payload, "layers_truncated", false)) {
+        ImGui::TextDisabled("Detail is bounded to %.0f of %.0f layers.",
+                            JsonNumber(payload, "retained_layer_count"),
+                            JsonNumber(payload, "layer_count"));
+    }
+
+    if (!JsonHas(payload, "layers") ||
+        !payload.at("layers").is_array() ||
+        payload.at("layers").empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled(
+            "No per-parameter Local Debug gradient traces were observed.");
+        ImGui::EndChild();
+        return;
+    }
+
+    if (ImGui::BeginTable("StudioDebuggerGradientHealthTable",
+                          9,
+                          ImGuiTableFlags_BordersInnerV |
+                          ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_ScrollY |
+                          ImGuiTableFlags_SizingStretchProp,
+                          ImVec2(0, 260))) {
+        ImGui::TableSetupColumn("Layer", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Health", ImGuiTableColumnFlags_WidthFixed, 115.0f);
+        ImGui::TableSetupColumn("Coverage", ImGuiTableColumnFlags_WidthFixed, 105.0f);
+        ImGui::TableSetupColumn("||p||", ImGuiTableColumnFlags_WidthFixed, 84.0f);
+        ImGui::TableSetupColumn("||g||", ImGuiTableColumnFlags_WidthFixed, 84.0f);
+        ImGui::TableSetupColumn("g / p", ImGuiTableColumnFlags_WidthFixed, 84.0f);
+        ImGui::TableSetupColumn("||update||", ImGuiTableColumnFlags_WidthFixed, 88.0f);
+        ImGui::TableSetupColumn("update / p", ImGuiTableColumnFlags_WidthFixed, 88.0f);
+        ImGui::TableSetupColumn("Explanation", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableHeadersRow();
+
+        for (const auto& row : payload.at("layers")) {
+            if (!row.is_object()) {
+                continue;
+            }
+            ImGui::TableNextRow();
+            const std::string status = JsonString(row, "status", "unobserved");
+            const bool non_finite = status == "non_finite";
+            const bool healthy = status == "healthy";
+            const bool unobserved = status == "unobserved" ||
+                status == "partial_evidence";
+            const ImVec4 status_color = healthy
+                ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                : (non_finite
+                    ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
+                    : (unobserved
+                        ? ImVec4(0.65f, 0.7f, 0.78f, 1.0f)
+                        : ImVec4(1.0f, 0.82f, 0.35f, 1.0f)));
+
+            ImGui::TableSetColumnIndex(0);
+            const int node_id = static_cast<int>(
+                JsonNumber(row, "node_id", -1.0));
+            const std::string node_name = JsonString(
+                row, "node_name", "unresolved layer");
+            if (node_id >= 0) {
+                ImGui::TextWrapped("%s (%d)", node_name.c_str(), node_id);
+            } else {
+                ImGui::TextWrapped("%s", node_name.c_str());
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(status_color, "%s", status.c_str());
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("g %.0f / p %.0f",
+                        JsonNumber(row, "gradient_tensor_count"),
+                        JsonNumber(row, "parameter_tensor_count"));
+            ImGui::TextDisabled("u %.0f / p %.0f",
+                        JsonNumber(row, "update_observation_count"),
+                        JsonNumber(row, "parameter_tensor_count"));
+
+            auto render_metric = [&row](const char* observed_key,
+                                        const char* complete_key,
+                                        const char* value_key) {
+                if (!JsonHas(row, value_key) ||
+                    !JsonBool(row, observed_key, false)) {
+                    ImGui::TextDisabled("unobserved");
+                } else {
+                    ImGui::Text("%.4e", JsonNumber(row, value_key));
+                    if (!JsonBool(row, complete_key, false)) {
+                        ImGui::TextDisabled("partial evidence");
+                    }
+                }
+            };
+
+            ImGui::TableSetColumnIndex(3);
+            render_metric("parameter_norm_complete", "parameter_norm_complete",
+                          "parameter_l2_norm");
+            ImGui::TableSetColumnIndex(4);
+            render_metric("gradient_norm_complete", "gradient_norm_complete",
+                          "gradient_l2_norm");
+            ImGui::TableSetColumnIndex(5);
+            render_metric("grad_parameter_ratio_observed",
+                          "grad_parameter_ratio_complete",
+                          "grad_parameter_ratio");
+            ImGui::TableSetColumnIndex(6);
+            render_metric("update_norm_complete", "update_norm_complete",
+                          "update_l2_norm");
+            ImGui::TableSetColumnIndex(7);
+            render_metric("update_parameter_ratio_observed",
+                          "update_parameter_ratio_complete",
+                          "update_parameter_ratio");
+
+            ImGui::TableSetColumnIndex(8);
+            if (JsonBool(row, "has_nan", false)) {
+                ImGui::TextColored(status_color, "NaN gradient observed");
+            } else if (JsonBool(row, "has_inf", false)) {
+                ImGui::TextColored(status_color, "Inf gradient observed");
+            } else if (JsonNumber(row, "missing_gradient_count") > 0.0) {
+                ImGui::TextColored(status_color, "%.0f missing gradient(s)",
+                    JsonNumber(row, "missing_gradient_count"));
+                if (JsonHas(row, "missing_gradient_explanations") &&
+                    row.at("missing_gradient_explanations").is_array() &&
+                    !row.at("missing_gradient_explanations").empty()) {
+                    const auto& reason =
+                        row.at("missing_gradient_explanations").front();
+                    ImGui::TextWrapped("%s: %s",
+                        JsonString(reason, "parameter_name").c_str(),
+                        JsonString(reason, "reason").c_str());
+                }
+            } else if (JsonBool(row, "all_observed_gradients_zero", false)) {
+                ImGui::TextColored(status_color, "All gradients are zero");
+            } else if (JsonBool(row, "some_gradients_zero", false)) {
+                ImGui::TextColored(status_color, "%.0f gradient(s) are zero",
+                    JsonNumber(row, "zero_gradient_count"));
+            } else if (JsonBool(row, "zero_update_observed", false)) {
+                ImGui::TextColored(status_color, "Optimizer update is zero");
+            } else if (status == "partial_evidence") {
+                ImGui::TextDisabled(
+                    "Some norm or optimizer-update evidence is unobserved");
+            } else {
+                ImGui::TextDisabled("No issue detected in this step");
+            }
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::EndChild();
+}
+
+void StudioDebuggerPanel::RenderLossMetricExplainer() {
+    ImGui::Text("Loss and Metric Explainer");
+    ImGui::BeginChild("StudioDebuggerLossMetricExplainer", ImVec2(0, 0), false,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    const auto summary = std::find_if(
+        session_.traces.begin(), session_.traces.end(),
+        [](const DebugTraceRecord& trace) {
+            return trace.phase == "LossMetricExplanation";
+        });
+    if (summary == session_.traces.end()) {
+        ImGui::TextDisabled(
+            "No loss/metric explanation is stored for this run.");
+        ImGui::TextDisabled(
+            "Run Local Debug or Full Workflow with the rebuilt engine.");
+        ImGui::EndChild();
+        return;
+    }
+
+    const auto& payload = summary->payload;
+    ImGui::Text("Status: %s  rows %.0f",
+                summary->status.c_str(), JsonNumber(payload, "row_count"));
+    ImGui::SameLine(310.0f);
+    ImGui::TextDisabled("selected loss node %d", summary->node_id);
+    ImGui::TextDisabled(
+        "Actual shapes are same-run Local Debug evidence. Configured metric "
+        "nodes are not presented as executed results.");
+    if (JsonBool(payload, "rows_truncated", false)) {
+        ImGui::TextDisabled("Detail is bounded to %.0f of %.0f rows.",
+                            JsonNumber(payload, "retained_row_count"),
+                            JsonNumber(payload, "row_count"));
+    }
+
+    if (!JsonHas(payload, "rows") || !payload.at("rows").is_array() ||
+        payload.at("rows").empty()) {
+        ImGui::TextDisabled("No loss or metric evidence was retained.");
+        ImGui::EndChild();
+        return;
+    }
+
+    if (ImGui::BeginTable("StudioDebuggerLossMetricTable", 7,
+                          ImGuiTableFlags_BordersInnerV |
+                          ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_ScrollY |
+                          ImGuiTableFlags_SizingStretchProp,
+                          ImVec2(0, 270))) {
+        ImGui::TableSetupColumn("Loss / metric",
+            ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Evidence",
+            ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        ImGui::TableSetupColumn("Expected shapes",
+            ImGuiTableColumnFlags_WidthFixed, 145.0f);
+        ImGui::TableSetupColumn("Actual shapes",
+            ImGuiTableColumnFlags_WidthFixed, 145.0f);
+        ImGui::TableSetupColumn("Classes",
+            ImGuiTableColumnFlags_WidthFixed, 72.0f);
+        ImGui::TableSetupColumn("Settings",
+            ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Why it may mislead",
+            ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableHeadersRow();
+
+        for (const auto& row : payload.at("rows")) {
+            if (!row.is_object()) {
+                continue;
+            }
+            ImGui::TableNextRow();
+            const int node_id = static_cast<int>(
+                JsonNumber(row, "node_id", -1.0));
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextWrapped("%s", JsonString(
+                row, "node_name", "unnamed").c_str());
+            ImGui::TextDisabled("%s%s",
+                JsonString(row, "node_type", "unknown").c_str(),
+                node_id >= 0
+                    ? ("  [" + std::to_string(node_id) + "]").c_str()
+                    : "");
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextWrapped("%s", JsonString(
+                row, "evidence_state", "unobserved").c_str());
+            ImGui::TextDisabled("%s", JsonString(
+                row, "source", "unknown").c_str());
+
+            auto shape_text = [&row](const char* key) {
+                return JsonHas(row, key) ? row.at(key).dump() : std::string("unobserved");
+            };
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("pred %s", shape_text(
+                "expected_prediction_shape").c_str());
+            ImGui::Text("target %s", shape_text(
+                "expected_target_shape").c_str());
+
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("pred %s", shape_text(
+                "actual_prediction_shape").c_str());
+            ImGui::Text("target %s", shape_text(
+                "actual_target_shape").c_str());
+            if (JsonBool(row, "shape_compatibility_observed", false)) {
+                const bool compatible = JsonBool(
+                    row, "shapes_compatible", false);
+                ImGui::TextColored(
+                    compatible
+                        ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                        : ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                    "%s", compatible ? "compatible" : "mismatch");
+            }
+
+            ImGui::TableSetColumnIndex(4);
+            if (JsonHas(row, "class_count")) {
+                ImGui::Text("%.0f", JsonNumber(row, "class_count"));
+            } else {
+                ImGui::TextDisabled("n/a");
+            }
+
+            ImGui::TableSetColumnIndex(5);
+            if (JsonHas(row, "reduction")) {
+                ImGui::Text("reduction %s", JsonString(
+                    row, "reduction").c_str());
+            }
+            if (JsonBool(row, "ignore_index_applicable", false)) {
+                ImGui::Text("ignore index %.0f", JsonNumber(
+                    row, "ignore_index"));
+            }
+            if (JsonBool(row, "label_smoothing_applicable", false)) {
+                ImGui::Text("label smoothing %.4g", JsonNumber(
+                    row, "label_smoothing"));
+            }
+            if (JsonBool(row, "class_weights_applicable", false)) {
+                ImGui::Text("class weights %.0f", JsonNumber(
+                    row, "class_weight_count"));
+            }
+            if (JsonBool(row, "pos_weight_applicable", false)) {
+                ImGui::Text("pos weight %.4g", JsonNumber(row, "pos_weight"));
+            }
+            if (JsonBool(row, "threshold_applicable", false)) {
+                ImGui::Text("threshold %.4g (%s)",
+                    JsonNumber(row, "threshold"),
+                    JsonString(row, "threshold_space", "value").c_str());
+            } else if (JsonHas(row, "threshold_configured")) {
+                ImGui::Text("threshold %s (configured)", JsonString(
+                    row, "threshold_configured").c_str());
+            }
+            if (JsonBool(row, "top_k_applicable", false)) {
+                ImGui::Text("top-k %.0f", JsonNumber(row, "top_k"));
+            } else if (JsonHas(row, "top_k_configured")) {
+                ImGui::Text("top-k %s (configured)", JsonString(
+                    row, "top_k_configured").c_str());
+            }
+            if (JsonHas(row, "metrics")) {
+                ImGui::TextWrapped("metrics %s", row.at("metrics").dump().c_str());
+            }
+
+            ImGui::TableSetColumnIndex(6);
+            if (JsonHas(row, "why_misleading") &&
+                row.at("why_misleading").is_array() &&
+                !row.at("why_misleading").empty()) {
+                for (const auto& note : row.at("why_misleading")) {
+                    if (note.is_string()) {
+                        ImGui::BulletText("%s", note.get_ref<
+                            const std::string&>().c_str());
+                    }
+                }
+            } else {
+                ImGui::TextDisabled("No caution recorded.");
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+}
+
+void StudioDebuggerPanel::RenderBatchInspector() {
+    ImGui::Text("Batch Inspector");
+    ImGui::BeginChild("StudioDebuggerBatchInspector", ImVec2(0, 0), false,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    const auto batch = std::find_if(
+        session_.traces.begin(), session_.traces.end(),
+        [](const DebugTraceRecord& trace) {
+            return trace.phase == "SmokeRun.BatchInput" &&
+                   JsonBool(trace.payload, "batch_inspector", false);
+        });
+    if (batch == session_.traces.end()) {
+        ImGui::TextDisabled(
+            "No bounded first-batch inspection is stored for this run.");
+        ImGui::TextDisabled(
+            "Run Smoke Run or Full Workflow with an active dataset.");
+        ImGui::TextDisabled(
+            "Normal training does not enable this debug-only inspection pass.");
+        ImGui::EndChild();
+        return;
+    }
+
+    RenderBatchInspection(*batch, false);
+    ImGui::EndChild();
+}
+
+void StudioDebuggerPanel::RenderModelConstructionTrace() {
+    ImGui::Text("Model Construction Trace");
+    ImGui::BeginChild("StudioDebuggerModelConstruction", ImVec2(0, 0), false,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    std::vector<const DebugTraceRecord*> rows;
+    rows.reserve(session_.traces.size());
+    size_t created_count = 0;
+    size_t skipped_count = 0;
+    size_t attention_count = 0;
+    for (const auto& trace : session_.traces) {
+        if (trace.phase != "BuildModel") continue;
+        rows.push_back(&trace);
+        if (JsonBool(trace.payload, "module_created", false)) {
+            ++created_count;
+        } else {
+            ++skipped_count;
+        }
+        if (trace.status != "ok" || !trace.issues.empty()) {
+            ++attention_count;
+        }
+    }
+
+    if (rows.empty()) {
+        ImGui::TextDisabled(
+            "No exact model-construction provenance is stored for this run.");
+        ImGui::TextDisabled(
+            "Run Local Debug or Full Workflow with a buildable model graph.");
+        ImGui::EndChild();
+        return;
+    }
+
+    ImGui::Text("Compiled layers: %zu  modules created: %zu  skipped: %zu",
+                rows.size(), created_count, skipped_count);
+    ImGui::SameLine(470.0f);
+    ImGui::TextDisabled("attention: %zu", attention_count);
+    ImGui::TextDisabled(
+        "Exact ModelBuilder provenance; backend execution is not inferred here.");
+
+    if (ImGui::BeginTable("StudioDebuggerModelConstructionTable", 7,
+                          ImGuiTableFlags_BordersInnerV |
+                          ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_ScrollY |
+                          ImGuiTableFlags_SizingStretchProp,
+                          ImVec2(0, 355))) {
+        ImGui::TableSetupColumn("Graph node",
+            ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn("Compiled",
+            ImGuiTableColumnFlags_WidthFixed, 72.0f);
+        ImGui::TableSetupColumn("Engine module",
+            ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Inferred shape",
+            ImGuiTableColumnFlags_WidthFixed, 135.0f);
+        ImGui::TableSetupColumn("Trainable parameters",
+            ImGuiTableColumnFlags_WidthFixed, 125.0f);
+        ImGui::TableSetupColumn("Configuration",
+            ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        ImGui::TableSetupColumn("Result",
+            ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableHeadersRow();
+
+        for (const auto* trace : rows) {
+            const auto& payload = trace->payload;
+            const bool created = JsonBool(payload, "module_created", false);
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextWrapped("%s", trace->node_name.c_str());
+            if (trace->node_id >= 0) {
+                ImGui::TextDisabled("node %d", trace->node_id);
+            } else {
+                ImGui::TextDisabled("node unbound");
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("%.0f", JsonNumber(
+                payload, "compiled_layer_index"));
+
+            ImGui::TableSetColumnIndex(2);
+            if (created) {
+                ImGui::TextWrapped("%s", JsonString(
+                    payload, "module_name", "unnamed").c_str());
+                ImGui::TextDisabled("module %.0f", JsonNumber(
+                    payload, "module_index"));
+            } else {
+                ImGui::TextDisabled("not created");
+            }
+
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("[%s] -> [%s]",
+                FormatShape(trace->input_shape).c_str(),
+                FormatShape(trace->output_shape).c_str());
+
+            ImGui::TableSetColumnIndex(4);
+            if (JsonBool(payload, "parameter_summary_available", false)) {
+                ImGui::Text("%.0f elements", JsonNumber(
+                    payload, "parameter_numel"));
+                ImGui::TextDisabled("%.0f tensors", JsonNumber(
+                    payload, "parameter_tensor_count"));
+                if (JsonBool(payload, "parameter_numel_overflow", false)) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                                       "count overflow");
+                }
+            } else {
+                ImGui::TextDisabled("unavailable");
+            }
+
+            ImGui::TableSetColumnIndex(5);
+            const std::string config = JsonObjectPreview(
+                payload, "configured_parameters");
+            if (config.empty()) {
+                ImGui::TextDisabled("defaults / none");
+            } else {
+                ImGui::TextWrapped("%s", config.c_str());
+            }
+
+            ImGui::TableSetColumnIndex(6);
+            const ImVec4 status_color = trace->status == "ok"
+                ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                : ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+            ImGui::TextColored(status_color, "%s", trace->status.c_str());
+            if (!trace->issues.empty()) {
+                ImGui::TextWrapped("%s", trace->issues.front().message.c_str());
+            } else if (!created) {
+                ImGui::TextDisabled("compiled layer was skipped");
+            } else {
+                ImGui::TextDisabled("constructed");
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+}
+
+void StudioDebuggerPanel::RenderShapeProphecyTrace() {
+    ImGui::Text("Shape Prophecy vs Reality");
+    ImGui::BeginChild("StudioDebuggerShapeProphecy", ImVec2(0, 0), false,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    std::vector<const DebugTraceRecord*> rows;
+    rows.reserve(session_.traces.size());
+    size_t mismatch_count = 0;
+    const DebugTraceRecord* first_divergence = nullptr;
+    for (const auto& trace : session_.traces) {
+        const bool is_forward_comparison =
+            trace.phase == "Forward" &&
+            (JsonHas(trace.payload, "predicted_input_shape") ||
+             JsonHas(trace.payload, "predicted_shape"));
+        if (!is_forward_comparison) continue;
+
+        rows.push_back(&trace);
+        const bool mismatch = trace.status == "shape_mismatch" ||
+            !JsonBool(trace.payload, "all_shapes_match", true);
+        if (!mismatch) continue;
+
+        ++mismatch_count;
+        if (JsonBool(trace.payload, "is_first_shape_mismatch", false)) {
+            first_divergence = &trace;
+        } else if (!first_divergence) {
+            // Compatibility for older persisted runs without the explicit
+            // first-divergence marker. Trace order is canonical forward order.
+            first_divergence = &trace;
+        }
+    }
+
+    if (rows.empty()) {
+        ImGui::TextDisabled(
+            "No runtime shape comparison is stored for this run.");
+        ImGui::TextDisabled(
+            "Run Local Debug or Full Workflow with a buildable model graph.");
+        ImGui::EndChild();
+        return;
+    }
+
+    ImGui::Text("Compared layers: %zu  matches: %zu  divergences: %zu",
+                rows.size(), rows.size() - mismatch_count, mismatch_count);
+    if (first_divergence) {
+        if (first_divergence->node_id >= 0) {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                "First divergence: %s  node %d",
+                first_divergence->node_name.c_str(),
+                first_divergence->node_id);
+        } else {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                "First divergence: %s  node unbound",
+                first_divergence->node_name.c_str());
+        }
+    } else {
+        ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
+                           "No shape divergence observed.");
+    }
+    ImGui::TextDisabled(
+        "Compiler predictions compared with Local Debug runtime tensors.");
+
+    const auto shape_text = [](const nlohmann::json& payload,
+                               const char* key,
+                               const std::vector<size_t>& fallback) {
+        if (JsonHas(payload, key) && payload.at(key).is_array() &&
+            !payload.at(key).empty()) {
+            return std::string("[") + JsonArrayPreview(payload, key) + "]";
+        }
+        if (!fallback.empty()) {
+            return StudioDebuggerPanel::FormatShape(fallback);
+        }
+        return std::string("unavailable");
+    };
+
+    if (ImGui::BeginTable("StudioDebuggerShapeProphecyTable", 6,
+                          ImGuiTableFlags_BordersInnerV |
+                          ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_ScrollY |
+                          ImGuiTableFlags_SizingStretchProp,
+                          ImVec2(0, 340))) {
+        ImGui::TableSetupColumn("Graph node",
+            ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("Input: predicted / actual",
+            ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        ImGui::TableSetupColumn("Output: predicted / actual",
+            ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        ImGui::TableSetupColumn("Result",
+            ImGuiTableColumnFlags_WidthStretch, 1.1f);
+        ImGui::TableSetupColumn("Mismatch source",
+            ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("Recovery hint",
+            ImGuiTableColumnFlags_WidthStretch, 1.8f);
+        ImGui::TableHeadersRow();
+
+        for (const auto* trace : rows) {
+            const auto& payload = trace->payload;
+            const bool mismatch = trace->status == "shape_mismatch" ||
+                !JsonBool(payload, "all_shapes_match", true);
+            const bool first = trace == first_divergence;
+            const std::string mismatch_kind = JsonString(
+                payload, "shape_mismatch_kind", mismatch ? "unknown" : "none");
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextWrapped("%s", trace->node_name.c_str());
+            if (trace->node_id >= 0) {
+                ImGui::TextDisabled("node %d", trace->node_id);
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextWrapped("%s",
+                shape_text(payload, "predicted_input_shape", {}).c_str());
+            ImGui::TextDisabled("actual %s",
+                shape_text(payload, "actual_input_shape",
+                           trace->input_shape).c_str());
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextWrapped("%s",
+                shape_text(payload, "predicted_shape", {}).c_str());
+            ImGui::TextDisabled("actual %s",
+                shape_text(payload, "actual_shape",
+                           trace->output_shape).c_str());
+
+            ImGui::TableSetColumnIndex(3);
+            if (mismatch) {
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                                   "%s", mismatch_kind.c_str());
+                if (first) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                                       "first divergence");
+                }
+            } else {
+                ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
+                                   "match");
+            }
+
+            ImGui::TableSetColumnIndex(4);
+            const int upstream_node_id = static_cast<int>(JsonNumber(
+                payload, "upstream_node_id", -1.0));
+            const std::string upstream_node_name = JsonString(
+                payload, "upstream_node_name");
+            if (!mismatch) {
+                ImGui::TextDisabled("none");
+            } else if (mismatch_kind == "output") {
+                ImGui::TextWrapped("This node's output");
+            } else if (upstream_node_id >= 0) {
+                ImGui::TextWrapped("%s", upstream_node_name.empty()
+                    ? "Upstream graph node" : upstream_node_name.c_str());
+                ImGui::TextDisabled("node %d", upstream_node_id);
+                if (mismatch_kind == "input_and_output") {
+                    ImGui::TextDisabled("and this node's output");
+                }
+            } else {
+                ImGui::TextWrapped("Model input");
+                if (mismatch_kind == "input_and_output") {
+                    ImGui::TextDisabled("and this node's output");
+                }
+            }
+
+            ImGui::TableSetColumnIndex(5);
+            const std::string suggested_fix = JsonString(
+                payload, "suggested_fix");
+            if (suggested_fix.empty()) {
+                ImGui::TextDisabled(mismatch
+                    ? "Inspect this node's shape contract."
+                    : "No action required.");
+            } else {
+                ImGui::TextWrapped("%s", suggested_fix.c_str());
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+}
+
+void StudioDebuggerPanel::RenderBackendDecisionAudit() {
+    ImGui::Text("Backend Decision Audit");
+    ImGui::BeginChild("StudioDebuggerBackendDecisionAudit", ImVec2(0, 0), false,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    const auto summary = std::find_if(
+        session_.traces.begin(), session_.traces.end(),
+        [](const DebugTraceRecord& trace) {
+            return trace.phase == "BackendDecisionAudit";
+        });
+    if (summary == session_.traces.end()) {
+        ImGui::TextDisabled(
+            "No aggregate backend-decision audit is stored for this run.");
+        ImGui::TextDisabled(
+            "Run Preflight, Local Debug, or Full Workflow with the rebuilt engine.");
+        ImGui::EndChild();
+        return;
+    }
+
+    const auto& payload = summary->payload;
+    ImGui::Text("Status: %s  placements %.0f  actual observed %.0f",
+                summary->status.c_str(),
+                JsonNumber(payload, "placement_count"),
+                JsonNumber(payload, "actual_backend_observed_count"));
+    ImGui::SameLine(500.0f);
+    ImGui::TextDisabled("attention %.0f  current fallback %.0f",
+                        JsonNumber(payload, "attention_count"),
+                        JsonNumber(payload, "same_run_fallback_count"));
+
+    if (JsonBool(payload, "linked_execution_context_available", false)) {
+        ImGui::TextDisabled(
+            "Linked context: %s | %s | residency %s | fallbacks %.0f",
+            JsonString(payload, "linked_execution_scope", "unobserved").c_str(),
+            JsonString(payload, "linked_effective_backend", "unobserved").c_str(),
+            JsonString(payload, "linked_residency_verdict", "unobserved").c_str(),
+            JsonNumber(payload, "linked_native_cpu_fallback_count"));
+        ImGui::TextDisabled(
+            "Linked context is run-level evidence and is not treated as a per-node actual backend.");
+    } else {
+        ImGui::TextDisabled(
+            "No linked execution context is available; placement remains intended execution only.");
+    }
+    if (JsonBool(payload, "rows_truncated", false)) {
+        ImGui::TextDisabled("Detail is bounded to %.0f of %.0f placements.",
+                            JsonNumber(payload, "retained_row_count"),
+                            JsonNumber(payload, "placement_count"));
+    }
+
+    if (!JsonHas(payload, "rows") || !payload.at("rows").is_array() ||
+        payload.at("rows").empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled("No compiler placement entries were observed.");
+        ImGui::EndChild();
+        return;
+    }
+
+    if (ImGui::BeginTable("StudioDebuggerBackendDecisionAuditTable", 7,
+                          ImGuiTableFlags_BordersInnerV |
+                          ImGuiTableFlags_RowBg |
+                          ImGuiTableFlags_Resizable |
+                          ImGuiTableFlags_ScrollY |
+                          ImGuiTableFlags_SizingStretchProp,
+                          ImVec2(0, 285))) {
+        ImGui::TableSetupColumn("Node",
+            ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn("Intended",
+            ImGuiTableColumnFlags_WidthFixed, 150.0f);
+        ImGui::TableSetupColumn("Actual",
+            ImGuiTableColumnFlags_WidthFixed, 135.0f);
+        ImGui::TableSetupColumn("Fallback",
+            ImGuiTableColumnFlags_WidthFixed, 135.0f);
+        ImGui::TableSetupColumn("Timing / cost",
+            ImGuiTableColumnFlags_WidthFixed, 125.0f);
+        ImGui::TableSetupColumn("Decision reason",
+            ImGuiTableColumnFlags_WidthStretch, 1.8f);
+        ImGui::TableSetupColumn("Suggested fix",
+            ImGuiTableColumnFlags_WidthStretch, 1.7f);
+        ImGui::TableHeadersRow();
+
+        for (const auto& row : payload.at("rows")) {
+            if (!row.is_object()) {
+                continue;
+            }
+            ImGui::TableNextRow();
+            const bool needs_attention = JsonBool(
+                row, "needs_attention", false);
+            const bool actual_observed = JsonBool(
+                row, "actual_backend_observed", false);
+
+            ImGui::TableSetColumnIndex(0);
+            const int node_id = static_cast<int>(
+                JsonNumber(row, "node_id", -1.0));
+            ImGui::TextWrapped("%s%s",
+                JsonString(row, "node_name", "unnamed").c_str(),
+                node_id >= 0
+                    ? ("  [" + std::to_string(node_id) + "]").c_str()
+                    : "");
+            ImGui::TextDisabled("%s", JsonString(
+                row, "node_type", "unknown").c_str());
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextWrapped("%s", JsonString(
+                row, "intended_backend", "unobserved").c_str());
+            ImGui::TextDisabled("requested %s", JsonString(
+                row, "requested_backend", "auto").c_str());
+            ImGui::TextDisabled("status %s", JsonString(
+                row, "placement_status", "Unknown").c_str());
+
+            ImGui::TableSetColumnIndex(2);
+            if (actual_observed) {
+                ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
+                    "%s", JsonString(row, "actual_backend").c_str());
+                ImGui::TextDisabled("%s", JsonString(
+                    row, "actual_evidence_phase", "same-run trace").c_str());
+            } else {
+                ImGui::TextDisabled("unobserved");
+                ImGui::TextDisabled("no same-run node fact");
+            }
+
+            ImGui::TableSetColumnIndex(3);
+            if (JsonBool(row, "fallback_observed_this_run", false)) {
+                ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                    "observed this run");
+            } else if (JsonBool(
+                           row, "prior_runtime_fallback_observed", false)) {
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                    "prior observation");
+            } else if (JsonBool(row, "fallback_possible", false)) {
+                ImGui::TextDisabled("possible");
+            } else {
+                ImGui::TextDisabled("not declared");
+            }
+            const std::string fallback_target = JsonString(
+                row, "fallback_target");
+            if (!fallback_target.empty()) {
+                ImGui::TextDisabled("target %s", fallback_target.c_str());
+            }
+
+            ImGui::TableSetColumnIndex(4);
+            if (JsonBool(row, "observed_duration_available", false)) {
+                ImGui::Text("%.3f ms", JsonNumber(
+                    row, "observed_duration_ms"));
+                ImGui::TextDisabled("same-run timing");
+            } else {
+                ImGui::TextDisabled("timing unobserved");
+            }
+            ImGui::TextDisabled("cost unavailable");
+
+            ImGui::TableSetColumnIndex(5);
+            const ImVec4 reason_color = needs_attention
+                ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
+                : ImVec4(0.78f, 0.82f, 0.88f, 1.0f);
+            ImGui::TextColored(reason_color, "%s", JsonString(
+                row, "reason_code", "unclassified").c_str());
+            const std::string unsupported_reason = JsonString(
+                row, "unsupported_reason");
+            if (!unsupported_reason.empty()) {
+                ImGui::TextWrapped("unsupported: %s",
+                    unsupported_reason.c_str());
+            } else {
+                ImGui::TextWrapped("%s", JsonString(
+                    row, "explanation", "No explanation recorded.").c_str());
+            }
+
+            ImGui::TableSetColumnIndex(6);
+            const std::string suggested_fix = JsonString(
+                row, "suggested_fix");
+            if (suggested_fix.empty()) {
+                ImGui::TextDisabled("No action recorded.");
+            } else {
+                ImGui::TextWrapped("%s", suggested_fix.c_str());
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+}
+
 void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary& trace) {
     std::vector<LayerTimingRow> rows;
     rows.reserve(trace.recent_events.size());
@@ -2288,7 +3470,7 @@ void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary&
 
     ImGui::Spacing();
     ImGui::Text("Layer Timing");
-    ImGui::BeginChild("StudioDebuggerLayerTiming", ImVec2(0, 190), true);
+    ImGui::BeginChild("StudioDebuggerLayerTiming", ImVec2(0, 190), false);
     if (rows.empty()) {
         ImGui::TextDisabled("No layer timing events yet.");
         ImGui::TextDisabled("Restart the rebuilt engine and begin a new training run to capture ModelForward/ModelBackward events.");
@@ -2341,9 +3523,8 @@ void StudioDebuggerPanel::RenderTraceTimeline() {
             }
         }
 
-        ImGui::Text("Trace timeline - %s lens", ActiveLensName());
         RenderTraceFilters();
-        ImGui::BeginChild("StudioDebuggerUnifiedTraceTimeline", ImVec2(0, 220), true);
+        ImGui::BeginChild("StudioDebuggerUnifiedTraceTimeline", ImVec2(0, 0), false);
         int visible_count = 0;
         for (int i = 0; i < static_cast<int>(session_.traces.size()); ++i) {
             const auto& trace = session_.traces[i];
@@ -2395,8 +3576,7 @@ void StudioDebuggerPanel::RenderTraceTimeline() {
     }
 
     const auto& traces = session_.debug_result.layer_traces;
-    ImGui::Text("Trace timeline");
-    ImGui::BeginChild("StudioDebuggerTraceTimeline", ImVec2(0, 220), true);
+    ImGui::BeginChild("StudioDebuggerTraceTimeline", ImVec2(0, 0), false);
 
     if (traces.empty()) {
         ImGui::TextDisabled("No layer traces captured.");
@@ -2457,7 +3637,7 @@ void StudioDebuggerPanel::RenderStudioEvents() {
     RenderErrorCodeTimeline(session_.traces);
     ImGui::Spacing();
     ImGui::Text("Studio events");
-    ImGui::BeginChild("StudioDebuggerStudioEvents", ImVec2(0, 130), true);
+    ImGui::BeginChild("StudioDebuggerStudioEvents", ImVec2(0, 130), false);
 
     if (session_.studio_events.empty()) {
         ImGui::TextDisabled("No Studio events captured for this run.");
@@ -2713,7 +3893,7 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
             session_.traces[selected_trace_index_].node_id < 0;
         ImGui::Text("%s Inspector",
                     graph_level_trace ? "Trace" : "Node");
-        ImGui::BeginChild("StudioDebuggerUnifiedTraceDetails", ImVec2(0, 260), true);
+        ImGui::BeginChild("StudioDebuggerUnifiedTraceDetails", ImVec2(0, 0), false);
 
         if (selected_trace_index_ < 0 ||
             selected_trace_index_ >= static_cast<int>(session_.traces.size())) {
@@ -2748,8 +3928,24 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
             ImGui::Text("Producer: %s",
                         JsonString(trace.payload, "trace_producer").c_str());
         }
-        if (trace.node_id < 0 && trace.input_shape.empty() &&
-            trace.output_shape.empty()) {
+        const bool semantic_text_trace = trace.dtype == "text" &&
+            JsonString(trace.payload, "backend") == "TextPreprocessing";
+        if (semantic_text_trace && trace.phase == "TextTokenizer") {
+            ImGui::Text("Input: raw text (tensor shape not applicable)");
+            ImGui::Text("Output: %.0f tokens",
+                        JsonNumber(trace.payload, "token_count"));
+        } else if (semantic_text_trace &&
+                   trace.phase == "TextVocabulary") {
+            ImGui::Text("Input: tokens (semantic input shape not recorded)");
+            ImGui::Text("Output: %.0f token IDs",
+                        JsonNumber(trace.payload, "output_numel"));
+        } else if (semantic_text_trace && trace.phase == "TextPadding") {
+            ImGui::Text("Input: token IDs (semantic input shape not recorded)");
+            ImGui::Text("Output: %.0f sequence positions (%.0f padding)",
+                        JsonNumber(trace.payload, "final_sequence_length"),
+                        JsonNumber(trace.payload, "pad_count"));
+        } else if (trace.node_id < 0 && trace.input_shape.empty() &&
+                   trace.output_shape.empty()) {
             ImGui::TextDisabled(
                 "Tensor input/output shapes: not applicable to this trace.");
         } else {
@@ -3205,7 +4401,7 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
 
     const auto& traces = session_.debug_result.layer_traces;
     ImGui::Text("Selected trace");
-    ImGui::BeginChild("StudioDebuggerTraceDetails", ImVec2(0, 160), true);
+    ImGui::BeginChild("StudioDebuggerTraceDetails", ImVec2(0, 0), false);
 
     if (traces.empty() || selected_trace_index_ < 0 ||
         selected_trace_index_ >= static_cast<int>(traces.size())) {
@@ -3266,7 +4462,7 @@ void StudioDebuggerPanel::RenderIssueList() {
     }
 
     ImGui::Text("Issues");
-    ImGui::BeginChild("StudioDebuggerIssues", ImVec2(0, 160), true);
+    ImGui::BeginChild("StudioDebuggerIssues", ImVec2(0, 0), false);
     for (const auto& issue : session_.issues) {
         ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(issue.level));
         ImGui::TextUnformatted(issue.node_name.empty() ? "[issue]" : issue.node_name.c_str());
@@ -3283,7 +4479,7 @@ void StudioDebuggerPanel::RenderIssueList() {
 
 void StudioDebuggerPanel::RenderRecommendations() {
     ImGui::Text("Recommendations");
-    ImGui::BeginChild("StudioDebuggerRecommendations", ImVec2(0, 170), true);
+    ImGui::BeginChild("StudioDebuggerRecommendations", ImVec2(0, 0), false);
 
     if (session_.recommendations.empty()) {
         ImGui::TextDisabled("No recommendations generated.");
@@ -3318,124 +4514,6 @@ void StudioDebuggerPanel::RenderRecommendations() {
     }
 
     ImGui::EndChild();
-}
-
-void StudioDebuggerPanel::RenderLensContent() {
-    switch (active_lens_) {
-        case StudioDebuggerLens::Overview:
-            RenderOverview();
-            ImGui::Separator();
-            RenderGraphTraceView();
-            ImGui::Separator();
-            RenderRunHistory();
-            ImGui::Separator();
-            RenderRunComparison();
-            ImGui::Separator();
-            RenderTraceTimeline();
-            ImGui::Separator();
-            RenderSelectedTraceDetails();
-            ImGui::Separator();
-            RenderRecommendations();
-            return;
-
-        case StudioDebuggerLens::Preprocessing:
-            RenderOverview();
-            ImGui::Separator();
-            RenderGraphTraceView();
-            ImGui::Separator();
-            RenderTraceTimeline();
-            ImGui::Separator();
-            RenderSelectedTraceDetails();
-            ImGui::Separator();
-            RenderIssueList();
-            ImGui::Separator();
-            RenderRecommendations();
-            return;
-
-        case StudioDebuggerLens::Shapes:
-            RenderGraphTraceView();
-            ImGui::Separator();
-            RenderTraceTimeline();
-            ImGui::Separator();
-            RenderSelectedTraceDetails();
-            ImGui::Separator();
-            RenderIssueList();
-            ImGui::Separator();
-            RenderRecommendations();
-            return;
-
-        case StudioDebuggerLens::Values:
-            RenderTraceTimeline();
-            ImGui::Separator();
-            RenderSelectedTraceDetails();
-            ImGui::Separator();
-            RenderGraphTraceView();
-            ImGui::Separator();
-            RenderIssueList();
-            return;
-
-        case StudioDebuggerLens::Gradients:
-            RenderTraceTimeline();
-            ImGui::Separator();
-            RenderSelectedTraceDetails();
-            ImGui::Separator();
-            RenderGraphTraceView();
-            ImGui::Separator();
-            RenderRecommendations();
-            return;
-
-        case StudioDebuggerLens::Runtime:
-            RenderLastRun();
-            ImGui::Separator();
-            RenderTrainingTrace();
-            ImGui::Separator();
-            RenderTraceTimeline();
-            ImGui::Separator();
-            RenderSelectedTraceDetails();
-            ImGui::Separator();
-            RenderStudioEvents();
-            ImGui::Separator();
-            RenderRecommendations();
-            return;
-
-        case StudioDebuggerLens::StudioEvents:
-            RenderStudioEvents();
-            ImGui::Separator();
-            RenderTraceTimeline();
-            ImGui::Separator();
-            RenderSelectedTraceDetails();
-            ImGui::Separator();
-            RenderRunHistory();
-            return;
-
-        case StudioDebuggerLens::Recommendations:
-            RenderRecommendations();
-            ImGui::Separator();
-            RenderIssueList();
-            ImGui::Separator();
-            RenderTraceTimeline();
-            ImGui::Separator();
-            RenderSelectedTraceDetails();
-            return;
-    }
-
-    RenderOverview();
-}
-
-void StudioDebuggerPanel::Render() {
-    if (!visible_) {
-        return;
-    }
-
-    std::string title = std::string(ICON_FA_BUG) + " Studio Debugger###StudioDebuggerPanel";
-    if (ImGui::Begin(title.c_str(), &visible_)) {
-        RenderToolbar();
-        ImGui::Separator();
-        RenderTraceSettings();
-        ImGui::Separator();
-        RenderLensContent();
-    }
-    ImGui::End();
 }
 
 } // namespace cyxwiz

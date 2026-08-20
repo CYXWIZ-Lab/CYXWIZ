@@ -76,6 +76,8 @@ struct GradNormEntry {
     size_t compiled_layer_index = 0;
     int node_id = -1;
     std::string node_name;
+    std::vector<size_t> parameter_shape;
+    std::vector<size_t> gradient_shape;
     float parameter_l2_norm = 0.0f;
     float l2_norm = 0.0f;
     float grad_parameter_ratio = 0.0f;

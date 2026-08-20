@@ -178,11 +178,15 @@ set(ENGINE_SOURCES
     src/core/debug_session_manager.cpp
     src/core/debug_export_correlation_tracer.cpp
     src/core/debug_graph_trace_executor.cpp
+    src/core/debug_gradient_health_analyzer.cpp
+    src/core/debug_loss_metric_explainer.cpp
+    src/core/debug_memory_ownership_tracer.cpp
     src/core/debug_operator_trace_adapter.cpp
     src/core/debug_operator_trace_producer.cpp
     src/core/debug_runtime_backend_classifier.cpp
     src/core/debug_slow_path_detector.cpp
     src/core/debug_training_stall_detector.cpp
+    src/core/debug_training_graph_diff.cpp
     src/core/debug_error_code_timeline.cpp
     src/core/preflight_validator.cpp
     src/core/crash_run_recorder.cpp
@@ -413,6 +417,7 @@ set(ENGINE_SOURCES
     src/gui/panels/architecture_diagram.cpp
     src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
+    src/gui/panels/studio_debugger_panel_layout.cpp
     src/gui/panels/data_profiler_panel.cpp
     src/gui/panels/correlation_matrix_panel.cpp
     src/gui/panels/missing_value_panel.cpp
@@ -1337,6 +1342,7 @@ add_executable(test_debug_executor
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
     src/core/debug_numerics.cpp
+    src/core/debug_loss_metric_explainer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/text_arrow_adapter.cpp
     src/core/text_dataset_batcher.cpp
@@ -3800,6 +3806,7 @@ add_executable(test_debugger_contracts
     src/core/debug_batch_inspector.cpp
     src/core/debug_export_correlation_tracer.cpp
     src/core/debug_graph_trace_executor.cpp
+    src/core/debug_gradient_health_analyzer.cpp
     src/core/debug_memory_ownership_tracer.cpp
     src/core/debug_node_inspector.cpp
     src/core/debug_operator_trace_adapter.cpp
@@ -3807,6 +3814,7 @@ add_executable(test_debugger_contracts
     src/core/debug_runtime_backend_classifier.cpp
     src/core/debug_slow_path_detector.cpp
     src/core/debug_training_stall_detector.cpp
+    src/core/debug_training_graph_diff.cpp
     src/core/debug_error_code_timeline.cpp
     src/core/debug_smoke_sample_selector.cpp
     src/core/debug_support_bundle_builder.cpp

@@ -9,6 +9,8 @@
 
 namespace cyxwiz {
 
+struct DebugRunExecutionSummary;
+
 struct DebugMemoryOwnershipInput {
     int node_id = -1;
     std::string node_name;
@@ -29,10 +31,17 @@ class DebugMemoryOwnershipTracer {
 public:
     static constexpr const char* kSchema =
         "cyxwiz.debug.memory_ownership.v1";
+    static constexpr const char* kLifecycleSchema =
+        "cyxwiz.debug.tensor_lifecycle.v1";
 
     DebugTraceRecord BuildTrace(
         const std::string& run_id,
         const DebugMemoryOwnershipInput& input) const;
+
+    DebugTraceRecord BuildTensorLifecycleTrace(
+        const std::string& run_id,
+        const std::vector<DebugTraceRecord>& traces,
+        const DebugRunExecutionSummary& execution) const;
 
     static uint64_t EstimateTensorBytes(
         const std::vector<size_t>& shape,

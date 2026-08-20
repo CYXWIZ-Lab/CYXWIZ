@@ -8,6 +8,8 @@
 
 namespace cyxwiz {
 
+struct DebugRunExecutionSummary;
+
 struct DebugRuntimeBackendClassification {
     std::string requested_backend = "auto";
     std::string expected_backend = BackendPlacementStatus::Unknown;
@@ -36,6 +38,10 @@ struct DebugRuntimeBackendClassification {
 
 class DebugRuntimeBackendClassifier {
 public:
+    static constexpr const char* kAuditSchema =
+        "cyxwiz.debug.backend_decision_audit.v1";
+    static constexpr size_t kMaxAuditRows = 256;
+
     DebugRuntimeBackendClassification Classify(
         const BackendPlacementEntry& placement) const;
 
@@ -46,6 +52,11 @@ public:
         const std::string& run_id,
         uint64_t graph_hash,
         const BackendPlacementEntry& placement) const;
+
+    DebugTraceRecord BuildAuditTrace(
+        const std::string& run_id,
+        const std::vector<DebugTraceRecord>& traces,
+        const DebugRunExecutionSummary& execution) const;
 };
 
 } // namespace cyxwiz
