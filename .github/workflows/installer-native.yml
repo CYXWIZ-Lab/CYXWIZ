@@ -6,10 +6,12 @@ on:
     paths:
       - ".github/workflows/installer-native.yml"
       - "CMakeLists.txt"
+      - "cmake/CyxWizInstallerTargets.cmake"
+      - "cmake/cyxwiz_installer_export.h"
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
-      - "vcpkg-ci.json"
+      - "vcpkg-installer.json"
   push:
     branches:
       - main
@@ -17,10 +19,12 @@ on:
     paths:
       - ".github/workflows/installer-native.yml"
       - "CMakeLists.txt"
+      - "cmake/CyxWizInstallerTargets.cmake"
+      - "cmake/cyxwiz_installer_export.h"
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
-      - "vcpkg-ci.json"
+      - "vcpkg-installer.json"
 
 permissions:
   contents: read
@@ -70,19 +74,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            autoconf automake build-essential cmake gperf libcrypt-dev \
-            libgl1-mesa-dev libgtk-3-dev libtool libwayland-dev \
+            autoconf automake build-essential cmake libtool \
+            libgl1-mesa-dev libgtk-3-dev libwayland-dev \
             libxext-dev libxi-dev libxinerama-dev libxkbcommon-dev \
             libxcursor-dev libxrandr-dev ninja-build pkg-config
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
         run: |
-          brew install arrayfire autoconf automake bison cmake libtool ninja pkg-config
-          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          brew install autoconf automake cmake libtool ninja pkg-config
 
-      - name: Use CI vcpkg manifest
-        run: cmake -E copy vcpkg-ci.json vcpkg.json
+      - name: Use installer vcpkg manifest
+        run: cmake -E copy vcpkg-installer.json vcpkg.json
 
       - name: Setup vcpkg on Windows
         if: runner.os == 'Windows'
@@ -103,93 +106,32 @@ jobs:
           ./bootstrap-vcpkg.sh
           echo "VCPKG_ROOT=$PWD" >> "$GITHUB_ENV"
 
-      - name: Install ArrayFire on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Invoke-WebRequest `
-            -Uri https://arrayfire.gateway.scarf.sh/windows/3.10.0/ArrayFire.exe `
-            -OutFile ArrayFire.exe
-          Start-Process -FilePath ArrayFire.exe -ArgumentList /S -Wait
-
-      - name: Install ArrayFire on Ubuntu
-        if: runner.os == 'Linux'
-        run: |
-          wget -q https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh
-          chmod +x ArrayFire.sh
-          set +o pipefail
-          yes | sudo ./ArrayFire.sh --prefix=/opt/arrayfire
-          installer_status=${PIPESTATUS[1]}
-          set -o pipefail
-          exit "$installer_status"
-
       - name: Configure Windows Release
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -S . -B build `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DCYXWIZ_BUILD_ENGINE=ON `
-            -DCYXWIZ_BUILD_SERVER_NODE=OFF `
-            -DCYXWIZ_BUILD_TESTS=ON `
-            -DCYXWIZ_BUILD_TUI=OFF `
-            -DCYXWIZ_ENABLE_PYTHON=OFF `
-            -DCYXWIZ_ENABLE_ONNX=OFF `
-            -DCYXWIZ_ENABLE_GGUF=OFF `
-            -DCYXWIZ_ENABLE_PYTORCH=OFF `
-            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF `
-            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF `
-            -DCYXWIZ_ENABLE_CUDA=OFF `
-            -DCYXWIZ_ENABLE_OPENCL=OFF
+            -DCYXWIZ_BUILD_INSTALLER_ONLY=ON `
+            -DCYXWIZ_BUILD_TESTS=ON
 
       - name: Configure Ubuntu Release
         if: runner.os == 'Linux'
         run: |
-          AF_CONFIG="$(find /opt/arrayfire -name ArrayFireConfig.cmake \
-            -print | sed -n '1p')"
-          test -n "$AF_CONFIG"
-          AF_DIR="$(dirname "$AF_CONFIG")"
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DCYXWIZ_BUILD_ENGINE=ON \
-            -DCYXWIZ_BUILD_SERVER_NODE=OFF \
-            -DCYXWIZ_BUILD_TESTS=ON \
-            -DCYXWIZ_BUILD_TUI=OFF \
-            -DCYXWIZ_ENABLE_PYTHON=OFF \
-            -DCYXWIZ_ENABLE_ONNX=OFF \
-            -DCYXWIZ_ENABLE_GGUF=OFF \
-            -DCYXWIZ_ENABLE_PYTORCH=OFF \
-            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
-            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
-            -DCYXWIZ_ENABLE_CUDA=OFF \
-            -DCYXWIZ_ENABLE_OPENCL=OFF \
-            ${AF_DIR:+-DArrayFire_DIR="$AF_DIR"}
+            -DCYXWIZ_BUILD_INSTALLER_ONLY=ON \
+            -DCYXWIZ_BUILD_TESTS=ON
 
       - name: Configure macOS Release
         if: runner.os == 'macOS'
         run: |
-          AF_PREFIX="$(brew --prefix arrayfire)"
-          AF_CONFIG="$(find -L "$AF_PREFIX" -name ArrayFireConfig.cmake \
-            -print | sed -n '1p')"
-          test -n "$AF_CONFIG"
-          AF_DIR="$(dirname "$AF_CONFIG")"
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DCYXWIZ_BUILD_ENGINE=ON \
-            -DCYXWIZ_BUILD_SERVER_NODE=OFF \
-            -DCYXWIZ_BUILD_TESTS=ON \
-            -DCYXWIZ_BUILD_TUI=OFF \
-            -DCYXWIZ_ENABLE_PYTHON=OFF \
-            -DCYXWIZ_ENABLE_ONNX=OFF \
-            -DCYXWIZ_ENABLE_GGUF=OFF \
-            -DCYXWIZ_ENABLE_PYTORCH=OFF \
-            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
-            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
-            -DCYXWIZ_ENABLE_CUDA=OFF \
-            -DCYXWIZ_ENABLE_OPENCL=OFF \
-            -DArrayFire_DIR="$AF_DIR"
+            -DCYXWIZ_BUILD_INSTALLER_ONLY=ON \
+            -DCYXWIZ_BUILD_TESTS=ON
 
       - name: Build installer targets on Windows
         if: runner.os == 'Windows'

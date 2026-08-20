@@ -1,0 +1,28 @@
+{
+  "name": "cyxwiz-installer",
+  "version": "0.1.0",
+  "description": "Dependencies for the standalone CyxWiz installer and backend manager",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental",
+        "glfw-binding",
+        "opengl3-binding"
+      ]
+    },
+    "glfw3",
+    "glad",
+    "nlohmann-json",
+    "openssl",
+    {
+      "name": "libarchive",
+      "default-features": false
+    },
+    {
+      "name": "cpp-httplib",
+      "platform": "!windows"
+    }
+  ],
+  "builtin-baseline": "594ad8871e1e8e45f8e626c015fd611163430207"
+}

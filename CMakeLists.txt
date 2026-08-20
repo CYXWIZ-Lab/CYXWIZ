@@ -20,6 +20,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Build options
 option(CYXWIZ_BUILD_ENGINE "Build CyxWiz Engine (Desktop Client)" ON)
 option(CYXWIZ_BUILD_SERVER_NODE "Build CyxWiz Server Node" ON)
+option(CYXWIZ_BUILD_INSTALLER_ONLY "Build only the standalone installer and backend manager" OFF)
 option(CYXWIZ_BUILD_TESTS "Build tests" ON)
 option(CYXWIZ_BUILD_DOCS "Build documentation" OFF)
 option(CYXWIZ_ENABLE_CUDA "Enable CUDA support for ArrayFire" ON)
@@ -112,6 +113,36 @@ if(CYXWIZ_ENABLE_ASAN)
         message(STATUS "  MSVC: ASan available for standalone tests only (test_asan_memory)")
         message(STATUS "  For full ASan, use Clang or rebuild vcpkg with ASan triplet")
     endif()
+endif()
+
+# Keep the standalone installer independent from the Engine dependency graph.
+if(CYXWIZ_BUILD_INSTALLER_ONLY)
+    set(CYXWIZ_BUILD_ENGINE OFF CACHE BOOL "Build CyxWiz Engine" FORCE)
+    set(CYXWIZ_BUILD_SERVER_NODE OFF CACHE BOOL "Build CyxWiz Server Node" FORCE)
+
+    find_package(nlohmann_json CONFIG REQUIRED)
+    find_package(OpenSSL REQUIRED)
+    find_package(imgui CONFIG REQUIRED)
+    find_package(glfw3 CONFIG REQUIRED)
+    find_package(glad CONFIG REQUIRED)
+
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+    add_subdirectory(redist/bootstrapper)
+    include(CyxWizInstallerTargets)
+
+    if(CYXWIZ_BUILD_TESTS)
+        enable_testing()
+        add_test(
+            NAME backend_pack_manager_model_contract
+            COMMAND test_backend_pack_manager_model
+        )
+    endif()
+
+    message(STATUS "Configured standalone CyxWiz installer targets")
+    return()
 endif()
 
 # Find vcpkg packages
